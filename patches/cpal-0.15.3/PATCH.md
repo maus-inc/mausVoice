@@ -19,6 +19,13 @@ CPAL's cross-platform guidance. If start fails, a later `pause` still attempts t
 stop the audio unit rather than assuming that the failed call had no effect.
 Output construction is unchanged.
 
+The shared macOS/iOS stream-description conversion now marks signed integer
+samples as signed and both F32 and F64 as floating-point. Previously I16 and
+other signed integer descriptions were marked unsigned, and F64 was marked as
+integer. Portable tests use CPAL's actual sample-format types and mock CoreAudio
+structures; successful stream support and physical Apple devices remain
+unverified for those formats.
+
 The local CoreAudio listener change replaces the raw callback pointer with a
 monotonic token and a synchronized registry. Notifications already dispatched
 when a listener is removed can resolve only a still-live callback, and an
@@ -65,6 +72,20 @@ CFStrings are released after copying. Sample-rate changes pass a single `f64`
 with its actual size and accept rates inside a reported range. These changes
 have portable bounds tests and a macOS cross-check, but have not been tested on
 macOS hardware. In particular, a device may report a zero buffer-size range.
+
+ALSA stream setup uses the wrapper's fallible poll descriptor count, so a
+native error is returned before allocating descriptors or starting a worker.
+Playback pause now propagates ALSA errors rather than reporting a successful
+pause while the device may still be running. Null-device fault injection covers
+unsupported and I/O errors and a simulated successful return; physical playback
+is unverified. Playback `play` still ignores errors from its resume call and
+needs separate state handling.
+
+ALSA capability discovery and stream setup now use the same native-endian
+sample-format mapping. The previous discovery path always tested little-endian
+formats, so on big-endian systems it could advertise formats that stream setup
+could not use. Portable tests cover both mappings; real big-endian hardware has
+not been tested.
 
 The local ALSA change reports input overruns to the stream error callback before
 attempting the existing prepare operation. An overrun loses samples even if
@@ -123,10 +144,13 @@ stream already observed stays listed: capture-only devices are enumerated from
 that observation rather than by reopening them. The ownership record is dropped
 when a checked close begins and when an unstarted or abandoned stream is
 dropped. A probe therefore runs again as soon as the recording owns no device.
-An observation is also forgotten when the device refuses a capture open, from
-either an admitted stream or a probe, so an unplugged or reclamed device stops
-being listed from a stale observation; enumeration probes it again once no
-stream is live.
+An observation is forgotten when a checked capture open reports ENODEV or
+ENOENT, from either a stream build or a probe. Transient errors such as EBUSY
+and failures after a successful open do not disprove capture capability and no
+longer remove the observation. This can retain a stale name for other failures
+until probing is possible again; it is not a guarantee that a listed device is
+currently available. Isolated capture-only null-device tests exercise setup,
+busy and missing-device failures without opening capture during discovery.
 The `cpal_alsa_discovery_during_recording_leaves_capture_running` test proves
 with the probe-close fixture that discovery during a recording opens no capture
 handle, leaves the gate confirmed, and lets the recording stop normally. Checked capture open also blocks later capture when a failed open
@@ -155,10 +179,24 @@ permanent `EAGAIN`. A shared polling change reports `POLLHUP`, `POLLNVAL`,
 or a disconnected PCM state once and exits the worker rather than silently
 spinning; a failed capture stop still retains the stream for retry. The
 `alsa_disconnect.c` fixture exercises both hangup and disconnected-state
-capture paths. Capture also backs off on nonblocking reads that return
+capture paths. Device removal may also race with descriptor filling, event
+inspection, status and availability queries, or capture reads and playback
+writes; an `ENODEV` from these operations is reported as a terminal device
+disconnect rather than a generic, repeatedly reported backend error. Playback
+recovery also treats `ENODEV` as terminal. The fixture injects removal at each
+of those stages. Capture also backs off on nonblocking reads that return
 `EAGAIN`, `EINTR`, or zero, without delaying shutdown; the short-read fixture
 covers persistent `EAGAIN` and zero reads. These tests do not cover physical
 devices.
+
+The WASAPI worker priority call now uses `GetCurrentThread`'s pseudo-handle
+rather than converting a thread ID into a handle. The existing time-critical
+priority request can therefore take effect; it remains best-effort and may
+increase scheduling contention if a callback runs too long. A portable adapter
+checks the handle and failure path; a standalone Windows CI test is configured
+to check actual priority on its own temporary thread and restore the original
+priority. This does not verify physical audio or guarantee the request succeeds
+elsewhere.
 
 The WASAPI change is local: always join the stream thread and close its event
 handle even if sending the termination command fails because the receiver has
@@ -197,10 +235,10 @@ panicking on an out-of-range driver value.
 
 Upstream tracks the silent-packet defect in [issue 1376](https://github.com/RustAudio/cpal/issues/1376);
 [PR 1384](https://github.com/RustAudio/cpal/pull/1384) proposes broader checks but
-was closed without merging. None of this is verified on Windows: the changed
-code is type-checked for `x86_64-pc-windows-msvc`, and source-contract tests
-assert the ordering and release decisions, but no Windows runtime, driver, or
-physical device has exercised it.
+was closed without merging. Apart from the separate worker-priority test above,
+these WASAPI changes are not runtime-verified on Windows: source-contract tests
+assert the ordering and release decisions, but no Windows audio driver or
+physical device has exercised them.
 
 Remove this patch only after upgrading CPAL and verifying named-device capture,
 disconnection, and teardown on macOS and Windows. The desktop crate also receives
@@ -232,3 +270,15 @@ scripts/ci/run-alsa-fault-tests.sh overrun  # only matching test names
 It takes about 40 seconds, and `Test Desktop Unit` runs it on Linux so the
 faults stay covered rather than only documented. These tests drive an injected
 null device, not a physical microphone.
+
+The macOS and iOS CoreAudio backends use the now-unsafe generic AudioUnit
+property getter only with the documented stream-format, frame-size and range
+representations. The iOS changes have not been exercised on an iOS device.
+
+The CoreAudio input and output callback argument types now carry the lifetime
+of their action-flag handle; the input adapter keeps that lifetime within its
+render borrow. The iOS callback adaptations have not been built or device-tested.
+
+CoreAudio callback arguments now use lifetime-indexed typed data views. CPAL
+uses the raw view and therefore does not clear audio buffers. macOS CI and
+actual iOS builds/device behavior must be checked separately.

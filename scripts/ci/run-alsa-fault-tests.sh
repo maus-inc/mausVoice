@@ -55,13 +55,25 @@ rows=(
   "alsa_probe_close_failure||cpal_alsa_uncertain_probe_blocks_successor_capture"
   "alsa_probe_close_failure||cpal_alsa_capture_build_waits_for_probe_close"
   "alsa_probe_close_failure||cpal_alsa_discovery_during_recording_leaves_capture_running"
+  "alsa_capability_cache||cpal_alsa_cache_survives_setup_failure"
+  "alsa_capability_cache||cpal_alsa_cache_survives_busy_build"
+  "alsa_capability_cache||cpal_alsa_cache_survives_busy_probe"
+  "alsa_capability_cache||cpal_alsa_cache_forgets_missing_build"
+  "alsa_capability_cache||cpal_alsa_cache_forgets_missing_probe"
+  "alsa_capability_cache||cpal_alsa_cache_survives_permission_build"
+  "alsa_capability_cache||cpal_alsa_cache_survives_permission_probe"
+  "alsa_capability_cache||cpal_alsa_cache_forgets_absent_build"
+  "alsa_capability_cache||cpal_alsa_cache_forgets_absent_probe"
   "alsa_build_failure||cpal_alsa_build_failure_distinguishes_confirmed_close"
+  "alsa_build_failure||cpal_alsa_poll_count_error_closes_capture_and_reports_cause"
   "alsa_build_failure||cpal_alsa_uncertain_build_close_blocks_successor_capture"
   "alsa_build_failure||cpal_alsa_uncertain_cached_build_close_blocks_successor_capture"
   "alsa_close_failure||cpal_alsa_failed_close_never_reuses_the_uncertain_handle"
   # Start, stop, pause and resume faults.
   "alsa_start_failure||cpal_alsa_failed_start_retains_an_uncertain_active_device"
   "alsa_stop_failure||cpal_alsa_failed_stop_retains_ownership_until_retry_succeeds"
+  "alsa_pause_failure||cpal_alsa_playback_reports_unsupported_pause"
+  "alsa_pause_failure||cpal_alsa_playback_reports_pause_io_error"
   "alsa_pause_failure||cpal_alsa_unsupported_pause_keeps_recording"
   "alsa_pause_failure||cpal_alsa_failed_pause_marks_partial_capture"
   "alsa_pause_failure||cpal_alsa_failed_resume_marks_partial_capture"
@@ -75,6 +87,13 @@ rows=(
   "alsa_disconnect||cpal_alsa_capture_disconnect_stops_worker"
   "alsa_disconnect||cpal_alsa_disconnect_preserves_incomplete_recording"
   "alsa_disconnect|MAUS_TEST_DISCONNECTED_STATE=1|cpal_alsa_capture_disconnected_state_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=fill|cpal_alsa_disconnect_during_descriptor_fill_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=revents|cpal_alsa_disconnect_during_revents_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=status|cpal_alsa_disconnect_during_status_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=avail|cpal_alsa_disconnect_during_avail_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=read|cpal_alsa_disconnect_during_read_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=write|cpal_alsa_playback_disconnect_during_write_stops_worker"
+  "alsa_disconnect|MAUS_TEST_DISCONNECT_STAGE=recover|cpal_alsa_playback_disconnect_during_recovery_stops_worker"
   # Capture callback delay and the stale poll that follows a resume.
   "alsa_delayed_callback||cpal_alsa_pause_drains_a_read_before_its_callback"
   "alsa_stale_poll||cpal_alsa_stale_poll_xrun_does_not_restart_after_resume"
@@ -125,6 +144,16 @@ pcm.!default {
 ctl.!default {
     type null
 }
+CONFIG
+
+# An additional hinted device is used only by the capture-only cache fixture.
+cat >"$workdir/asound-cache.conf" <<'CONFIG'
+pcm.!default { type null }
+pcm.maus_capture_only {
+    type null
+    hint { show on description "Cache test capture device" }
+}
+ctl.!default { type null }
 CONFIG
 
 shims="$workdir/shims"
@@ -196,6 +225,9 @@ for row in "${rows[@]}"; do
       # shellcheck disable=SC2086
       export $env_spec
     fi
+    if [[ "$fixture" == "alsa_capability_cache" ]]; then
+      export ALSA_CONFIG_PATH="$workdir/asound-cache.conf"
+    fi
     if [[ -n "$preload" ]]; then
       LD_PRELOAD="$preload" "$test_binary" --exact --ignored \
         --test-threads=1 "$test_module::$test"
@@ -203,6 +235,10 @@ for row in "${rows[@]}"; do
       "$test_binary" --exact --ignored --test-threads=1 "$test_module::$test"
     fi
   ) >"$output" 2>&1 || status=$?
+  if [[ $status -eq 0 ]] && ! grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$output"; then
+    echo "expected exactly one executed and passing test" >>"$output"
+    status=1
+  fi
   cat "$output"
   echo "::endgroup::"
 
@@ -221,6 +257,10 @@ done
 
 echo
 echo "run-alsa-fault-tests: $passed passed, ${#failed[@]} failed, $skipped filtered out"
+if [[ $passed -eq 0 && ${#failed[@]} -eq 0 ]]; then
+  echo "::error title=run-alsa-fault-tests::no tests selected"
+  exit 1
+fi
 if [[ ${#failed[@]} -gt 0 ]]; then
   for test in "${failed[@]}"; do
     echo "  FAILED $test"

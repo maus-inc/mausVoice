@@ -16,6 +16,16 @@ pub struct Error(&'static str, i32);
 
 pub type Result<T> = ::std::result::Result<T, Error>;
 
+// ALSA uses -1 for an indefinite wait. Never let a finite u32 timeout
+// wrap into a negative c_int when crossing the FFI boundary.
+pub(crate) fn wait_timeout(timeout_ms: Option<u32>, function: &'static str) -> Result<c_int> {
+    match timeout_ms {
+        None => Ok(-1),
+        Some(value) if value <= c_int::MAX as u32 => Ok(value as c_int),
+        Some(_) => Err(Error::new(function, libc::EINVAL)),
+    }
+}
+
 macro_rules! acheck {
     ($f: ident ( $($x: expr),* ) ) => {{
         let r = unsafe { alsa::$f( $($x),* ) };

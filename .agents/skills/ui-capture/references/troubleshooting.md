@@ -48,12 +48,12 @@ app has a real rendering defect in that environment, which is worth reporting.
 
 `capture.mjs` resolves Chromium the same way `playwright.config.ts` does. In
 order: `PLAYWRIGHT_CHROMIUM_PATH`, the Playwright bundled browser, the
-`@sparticuz/chromium` package, then a few well-known paths. The vendored
-toolchain on `vendor/sandbox-toolchain` does not carry a browser, which is gap
-G9 in `engineering/sandbox-coverage-gaps.md`, so it is not a source for one.
-Supply a Chromium another way, then point `PLAYWRIGHT_CHROMIUM_PATH` at it. On a
-host without NSS and NSPR, set `PLAYWRIGHT_SANDBOX_LIBS` to the directory that
-carries `libnss3` and `libnspr4`, or the browser exits before the first frame.
+`@sparticuz/chromium` package, then a few well-known paths. The fourth delivery
+(G25) now ships Chromium 156 in the vendored toolchain on `vendor/sandbox-toolchain`
+at `system/tools/bin/chromium`, so on the Linux x86-64 sandbox point
+`PLAYWRIGHT_CHROMIUM_PATH` at it instead of supplying one. On a host without NSS and
+NSPR, set `PLAYWRIGHT_SANDBOX_LIBS` to the directory that carries `libnss3` and
+`libnspr4`, or the browser exits before the first frame.
 
 ## `ffmpeg` or `gifsicle` is missing
 

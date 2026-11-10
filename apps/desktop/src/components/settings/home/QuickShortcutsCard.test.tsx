@@ -93,4 +93,5 @@ it("shows the configured primary including an explicit empty binding", () => {
     })),
   );
   expect(row()?.textContent).toContain("B");
+  expect(row()?.querySelector('[data-keycap-view="front"]')).not.toBeNull();
 });

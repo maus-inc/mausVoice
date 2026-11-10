@@ -123,12 +123,23 @@ it("locks style shortcut edits and dismissals while replacing, then allows a fai
 
 it("sends the style group it opened with, and resyncs when another window changed it", async () => {
   mocks.replace.mockReset();
-  mocks.replace.mockRejectedValue(
-    new Error("error returned from database: STYLE_HOTKEYS_CHANGED"),
-  );
+  mocks.replace
+    .mockRejectedValueOnce(
+      new Error("error returned from database: STYLE_HOTKEYS_CHANGED"),
+    )
+    .mockResolvedValueOnce([]);
   mocks.sync.mockReset().mockResolvedValue(undefined);
   mocks.error.mockReset();
-  mocks.load.mockReset().mockResolvedValue(undefined);
+  mocks.load.mockReset().mockImplementation(async () => {
+    produceAppState((draft) => {
+      draft.hotkeyById.existing.keys = ["Cmd", "2"];
+      draft.hotkeyById.unrelated = {
+        id: "unrelated",
+        actionName: "toggle-recording",
+        keys: ["Cmd", "3"],
+      } as (typeof draft.hotkeyById)[string];
+    });
+  });
   setAppState(structuredClone(INITIAL_APP_STATE), true);
   produceAppState((draft) => {
     draft.settings.styleHotkeysDialogOpen = true;
@@ -184,6 +195,22 @@ it("sends the style group it opened with, and resyncs when another window change
     expect(mocks.load).toHaveBeenCalledTimes(1);
     expect(mocks.error).toHaveBeenCalledTimes(1);
     expect(getAppState().settings.styleHotkeysDialogOpen).toBe(true);
+    await act(async () => {
+      button("Save").click();
+    });
+    expect(mocks.replace).toHaveBeenLastCalledWith(
+      "switch-to-style:",
+      expect.any(Array),
+      undefined,
+      [
+        {
+          id: "existing",
+          actionName: "switch-to-style:other",
+          keys: ["Cmd", "2"],
+        },
+      ],
+    );
+    expect(getAppState().settings.styleHotkeysDialogOpen).toBe(false);
   } finally {
     act(() => root.unmount());
     container.remove();

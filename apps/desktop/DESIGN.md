@@ -71,7 +71,8 @@ The two schemes have their own temperature rather than being inversions of each 
 Every change that touches `apps/desktop` or `apps/preview` UI runs this before the first edit. Small polish is not exempt; the generic defaults slip in on the one-line edits.
 
 1. **Load the world.** Read this file and the design-system baseline (`docs/design-system-baseline.md`) fully into context.
-2. **Load the skill sets.** The design skill sets named in the AGENTS.md skill index, currently impeccable and antislopui, including each set's floor or bans document (`craft-floor.md` for impeccable), immediately before the edit. Fetch them from their upstream sources when not vendored.
+2. **Load the skill sets.** The design skill sets named in the AGENTS.md skill index, currently impeccable, antislopui and stageshow, including each set's floor or bans document (`craft-floor.md` for impeccable, `references/craft.md` for stageshow), immediately before the edit. Fetch them from their upstream sources when not vendored; stageshow is vendored at `.agents/skills/stageshow/`.
+   Stageshow is binding for every change that touches any form of UI in any file, with no size exemption: a component, a token, a pill glyph in Rust, an installer page, a docs page, the marketing `index.html`, a README screenshot, an SVG, an i18n string, a GIF on a pull request. For the product itself take its judgment (`craft.md`, the `motion.md` sections on changing text and on things that appear and leave, the `verify.md` You see / You do table) and never its kit or its tokens; this file's values win. For anything that depicts the product (docs, marketing, README, prototypes, captures) run its seven-step workflow, film with `film.mjs --gate` from a `/tmp` copy, and ship `REHEARSAL.md` beside the figure. Name the mode, a rule id (a `framing.md` rule number, one of its five failures, or a film line such as `fat row:`) and the frames or states you looked at. The full mapping and the recorded conflicts are in `engineering/design-skills.md`, section `Stageshow on every UI touch`.
 3. **Recon spree.** Gather current references for the component at hand from premium design sources and comparable shipped product UI (Dribbble, Pinterest, Attio/Linear-class pickers and the like), and pull the before/after QA-artifact screenshots for the touched surface.
 4. **Weigh, then ship.** Measure every radius, slope, density, state, and label against the gathered references and this file. The committed world wins over habit.
 5. **Cite.** The PR description lists the references consulted. A UI diff without them is not reviewable.
@@ -117,66 +118,104 @@ The Windows and Linux caption buttons are three square targets inset from the ba
 
 ## Tips & inline notifications
 
-Onboarding tips are quiet notification _rows_ that float in the app's toast
-corner, not banners anchored to a page. A live tip renders in the bottom-right
-tip stack (`components/onboarding/TipToaster.tsx`), the same corner the
-Sonner toasts occupy, and it shows only on the route the feature lives on
-(`ONBOARDING_TIPS.href`) until dismissed. The Help page keeps the in-flow
-listing of all of them (`TipCardFrame`), dimmed for the dismissed, each with a
-"Show again" control.
+Onboarding tips are quiet notification cards that float in the app's toast
+corner, not banners anchored to a page and not plain rows either. A live tip
+renders in the bottom-right tip stack (`components/onboarding/TipToaster.tsx`),
+the same corner the Sonner toasts occupy, and shows only on the route the
+feature lives on (`ONBOARDING_TIPS.href`) until dismissed. The Help page keeps
+the in-flow listing of all five (`components/onboarding/TipCard.tsx`'s
+`TipCardFrame`), dimmed for the dismissed, each with a "Show again" control in
+place of a dismiss.
 
 Why the corner and not the page. A tip anchored at the top of a page reads as
-a banner pinned over the content — it competes with the page's own heading and
+a banner pinned over the content. It competes with the page's own heading and
 forces the reader to scroll around it to use the page. A nudge that can be
 dismissed belongs with the other dismissible things, in the corner, out of the
-reading path. The row itself is unchanged from the in-flow version, so the two
-surfaces share one source of copy, icons, and layout.
+reading path.
 
-The reference for the row is Linear's inbox rows, the closest published work
-for this exact component; the reference for the placement is the toast stacks
-of Linear, Vercel, and Raycast, all of which float transient and advisory
-messages in a corner rather than in the content flow. Each choice below names
-what it rules out.
+This design went through two revisions before this one. The first put tips
+inline on the page as flat Linear-style rows; the owner judged that pattern
+too easy to mistake for page content worth reading closely. The second moved
+the row into the toast corner (the stack, the route gating, and the
+`tip-actions` registry below all date from that revision and still stand).
+The owner's own Paper.design board then asked for a feature-announcement
+card for the live tip specifically. That card adds a header image on top of
+the icon-title-body block, replacing the bare-glyph row the toast and the
+Help listing had shared until now. This revision gives the live card that face
+while keeping every toast-corner mechanic the second revision already proved.
+The reference for the stack and the corner is Linear, Vercel, and Raycast,
+which all float transient messages in a corner rather than in the content
+flow. The reference for the card face is the owner's Paper.design board and
+Attio's popover and picker work at `dribbble.com/shots/14651427`, both
+restrained floating-card geometry with a header strip over a body. Each
+choice below names what it rules out.
 
 - **One stack, one corner, aligned with the toasts.** The tip stack anchors at
-  `right: 16px; bottom: 16px`, fixed, and every row holds the Sonner toast
+  `right: 16px; bottom: 16px`, fixed, and every card holds the Sonner toast
   column width (356px) so the two stacks line up in the corner. Live tips sit
   under the transient toasts and the MUI overlays (`z-index: 1100`): a
   confirmation toast may sit on a tip for a few seconds, a tip must never sit
   on a toast. A tip is never anchored in the page flow, and there is no second
   corner.
+- **Pattern-image header on the live card, bare glyph on the listing.** One
+  abstract monochrome ink pattern (`assets/tip-toast-pattern.png`), shared by
+  all five tips and generated from the app's own ink/onyx/silver tokens
+  (`palette.ts`), evokes a voice waveform caught mid-motion, the app's actual
+  subject, rather than a stock photo or a per-tip illustration. It sits above
+  the icon, title, and body, fades into the card's own `background.paper` face
+  at its lower edge (built with `surfaceAlpha` against the same hex the paper
+  token resolves to, so the translucent fade and the opaque body can never
+  drift apart), and carries the dismiss control in a scrim chip at its
+  top-right corner. The icon, title, and one-line body below keep the bare
+  16px lucide glyph (stroke 1.9) at `text.secondary` with no tile, the same
+  row the Help listing uses. The Help listing stays without the header image.
+  The art is the live card's one moment of surprise, not something spent
+  again on a list the user opens on purpose.
 - **Floating face for the live tip, flat face for the listing.** A live tip
-  floats over the page, so it takes the floating-layer material the toasts
-  use: a `background.paper` face, a 1px `divider` hairline, the standard card
-  radius, and the `premiumSurface` lift. The Help listing is in flow, so its
-  rows keep the flat `level1` face with hairline and no cast — there, the row
-  separates on its luminance step, per the "borders over shadows" rule (Raycast
-  states it; Linear's rows carry no cast at all). The same `TipCardFrame`
-  serves both; the face is an override, not a second component.
-- **Bare glyph, no tile.** One 16px lucide glyph (stroke 1.9) at
-  `text.secondary`, aligned with the title, the same size as the dismiss X it
-  sits opposite. No icon chip or tile behind it. A solid square backing is the
-  stock "notification card" of template UIs, and a tip is neutral, so it has
-  no status hue to justify a tinted chip. Tinted chips like Atera's serve
-  status-bearing alerts, which tips are not.
+  floats over the page, so its outer card takes the floating-layer material
+  the toasts use: a `background.paper` face, a 1px hairline, the standard card
+  radius, and the `premiumSurface` lift, with `TipCardFrame` rendered
+  transparent and borderless inside it. The Help listing is in flow, so
+  `TipCardFrame` carries that flat `level1` face itself, hairline and no cast.
+  There the row separates on its luminance step, per the "borders over
+  shadows" rule (Raycast states it; Linear's rows carry no cast at all). One
+  component supplies the copy, icons, and layout either way; only the face
+  around it changes.
 - **Type and measure.** `titleSmall` (-0.01em) states the claim. `body2` at
-  `text.secondary` supplies the reason. Both cap at 60ch. The
-  decision-relevant detail comes first. In-app cards do their job in roughly
-  ten words.
-- **One quiet action, one dismiss.** Each tip carries at most one outlined
-  pill (999) with no arrow. An arrow reads as a marketing CTA, and tips are
-  not marketing. Vercel's secondary actions are quiet pills, and none carry
-  arrows. Dismiss is a bare 16px X at `text.secondary`. More than one primary
-  action makes it a modal, never a notification. Where a tip has an in-page
-  action, the handler lives on the tip's own route page (the
-  `tip-actions` registry), so the action completes the task in place and
-  never dismisses the tip.
+  `text.secondary` supplies the reason. Both cap at 60ch. The decision-relevant
+  detail comes first. In-app cards do their job in roughly ten words.
+- **One quiet action, one dismiss, now off the row.** Each tip carries at most
+  one outlined pill (999) with no arrow. An arrow reads as a marketing CTA,
+  and tips are not marketing. Vercel's secondary actions are quiet pills, and
+  none carry arrows. More than one primary action makes it a modal, never a
+  notification. Where a tip has an in-page action, the handler lives on the
+  tip's own route page (the `tip-actions` registry), so the action completes
+  the task in place and never dismisses the tip. Dismiss is a bare 16px X at
+  `text.secondary`, now a scrim chip over the header image instead of a
+  control inline in the row, so the row below stays exactly as quiet as the
+  Help listing's.
+- **The row itself is the activation target when there is nothing else to
+  click.** A tip with no `TIP_LIVE_ACTIONS` entry has only the 24px dismiss
+  glyph as an affordance otherwise, too small a target for the one thing most
+  tips ask of the reader: acknowledge it and move on. `TipCardFrame` takes an
+  `onActivate` prop for this case; the title-and-body row becomes a
+  `role="button"`, keyboard-reachable target that marks the tip read the same
+  way the X does. A tip with a live action leaves `onActivate` unset, so its
+  one explicit button stays the row's only effect and a click never has to
+  pick between running the action and dismissing the card.
 - **Motion.** Reveal and exit run 160ms / 180ms ease-out with a 6px rise, and
   a sibling reflows with `layout` when one clears. No scale, no spring.
   Springs stay with shared-layout indicators (see Motion). Reduced motion
   drops the rise.
 - **Dismissal is a choice that persists**, including when navigation
   interrupts the exit. See the `TipCard` unmount guard.
+- **A live tip announces itself to a screen reader.** Sonner's own toaster
+  wraps every ordinary toast in an `aria-live="polite"` region, so a
+  confirmation toast is announced the moment it appears. `TipToaster` carries
+  the same guarantee for a tip through its own hidden `role="status"` region,
+  populated with the tip's title and body once the tip is actually on screen.
+  The region itself is always mounted, even with nothing to say, since a live
+  region only announces content that changes after it exists in the DOM.
 
 ## Recording state machine (pill + composer)
 

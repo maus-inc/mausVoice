@@ -1,7 +1,28 @@
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { produceAppState, getAppState } from "../store";
+import { getLogger } from "../utils/log.utils";
+import { navigateApp } from "../utils/app-navigation";
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
+
+export const openPostProcessingSettings = (): void => {
+  produceAppState((draft) => {
+    draft.settings.aiPostProcessingDialogOpen = true;
+  });
+};
+
+/**
+ * Opens the transcriptions History list through the registered lazy router.
+ * Both synchronous router construction errors and asynchronous navigation
+ * failures are logged, for the pill toast and retranscription snackbar alike.
+ */
+export const openTranscriptionsHistory = (): void => {
+  navigateApp("/dashboard/transcriptions").catch((error: unknown) => {
+    getLogger().warning(
+      `Failed to open transcription history: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+};
 
 const isTauriEnvironment = (): boolean => {
   if (typeof window === "undefined") {

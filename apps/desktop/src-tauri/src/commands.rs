@@ -174,7 +174,7 @@ const CANCEL_TYPING_GRACE_MS: u64 = 2_000;
 /// so a backwards correction — an NTP step, a manual clock change, a VM
 /// resuming from suspend — of more than `CANCEL_TYPING_GRACE_MS` makes an
 /// already-expired latch satisfy `cancel_is_within_grace` for the whole offset,
-/// and `simulate_type` then returns `Ok(())` while typing nothing at all. A
+/// and `simulate_type` then cancels before typing anything. A
 /// forward jump expires a live cancel instead, which is exactly the loss the
 /// latch exists to prevent. A grace window is an elapsed time, so it is measured
 /// against a source that cannot be adjusted: `Instant`, captured once here.
@@ -590,6 +590,13 @@ pub enum PasteTargetState {
 pub enum PasteOutcome {
     Pasted,
     CopiedToClipboard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SimulatedTypingOutcome {
+    Completed,
+    CancelledBeforeStart,
 }
 
 #[derive(serde::Deserialize, specta::Type)]
@@ -2683,6 +2690,19 @@ pub async fn transcription_update(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn transcription_append_warnings(
+    id: String,
+    warnings: Vec<String>,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<String>, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
+    crate::db::transcription_queries::append_transcription_warnings(database.pool(), &id, &warnings)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn transcription_audio_load(
     app: AppHandle,
     id: String,
@@ -4751,9 +4771,9 @@ pub async fn paste(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
+pub async fn simulate_type(text: String, delay_ms: u64) -> Result<SimulatedTypingOutcome, String> {
     if text.trim().is_empty() {
-        return Ok(());
+        return Ok(SimulatedTypingOutcome::Completed);
     }
 
     // Taking the session slot and consuming any cancel that arrived before this
@@ -4761,11 +4781,8 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
     // case cannot slip between them.
     let (_session, cancelled) = TypingSession::begin()?;
     if cancelled {
-        // A cancel landed before the first keystroke. Report success, not an
-        // error: the user asked for this, and the frontend has no second
-        // message for a failure it did not cause.
         log::info!("Simulated typing cancelled before it started");
-        return Ok(());
+        return Ok(SimulatedTypingOutcome::CancelledBeforeStart);
     }
 
     let join_result = tauri::async_runtime::spawn_blocking(move || {
@@ -4779,7 +4796,7 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
                 log::error!("Simulated typing failed: {err}");
                 return Err(err.clone());
             }
-            Ok(())
+            Ok(SimulatedTypingOutcome::Completed)
         }
         Err(err) => {
             let message = format!("Simulate type task join error: {err}");
@@ -8234,6 +8251,19 @@ mod tests {
         assert!(CANCEL_TYPING.load(Ordering::SeqCst));
     }
 
+    #[test]
+    fn cancelled_typing_reports_that_no_text_was_delivered() {
+        let _serialized = CANCEL_TYPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _signal = CancelSignalTestGuard::take();
+        cancel_typing().unwrap();
+        assert!(matches!(
+            tauri::async_runtime::block_on(simulate_type("not typed".into(), 0)),
+            Ok(SimulatedTypingOutcome::CancelledBeforeStart)
+        ));
+    }
+
     /// The other half of the contract, and the reason the session owns its
     /// latch: a cancel from an unrelated earlier moment must not kill a
     /// session that starts long afterwards.
@@ -8299,8 +8329,8 @@ mod tests {
     /// that cannot be stepped backwards by an NTP correction, a manual clock
     /// change, or a VM resuming from suspend. A backwards step of more than the
     /// grace window is enough on its own: an already-expired latch looks live
-    /// for the whole offset, and `simulate_type` returns `Ok(())` having typed
-    /// nothing, so the user's dictation silently disappears.
+    /// for the whole offset, and `simulate_type` cancels without typing even
+    /// though the user did not cancel this session.
     ///
     /// What is pinned is the *source*, not the arithmetic: `SystemTime` and this
     /// clock both satisfy "within the grace window" for a freshly armed latch,

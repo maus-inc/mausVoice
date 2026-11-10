@@ -37,7 +37,9 @@ pre-commit:
           || { echo "bindings.ts is stale. Commit the output of pnpm gen:bindings."; exit 1; }
 
     - name: vendored skills match the lockfile
-      glob: "{.agents/skills/**,skills-lock.json}"
+      # .gitignore is here because the script also fails on a rule that would
+      # drop a vendored file from a fresh checkout.
+      glob: "{.agents/skills/**,skills-lock.json,.gitignore,scripts/ci/verify-skills.mjs}"
       run: pnpm run skills:verify
 
 pre-push:

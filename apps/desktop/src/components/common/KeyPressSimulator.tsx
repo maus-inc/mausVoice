@@ -1,79 +1,84 @@
-import { Box, Stack, Typography, useTheme } from "@mui/material";
+import { Box, Stack, useMediaQuery } from "@mui/material";
+import { motion } from "framer-motion";
 import { useAppStore } from "../../store";
-import { getPrettyKeyName } from "../../utils/keyboard.utils";
+import { keycapTravel } from "../../styles/keycap";
+import { reducedMotionQuery, springSnappy } from "../../styles/motion";
+import { getKeycapLegend, getPrettyKeyName } from "../../utils/keyboard.utils";
+import { Keycap3d } from "./Keycap3d";
+import { keycapIdentities } from "./keycap-identities";
 
 export type KeyPressSimulatorProps = {
   keys: string[];
 };
 
 export const KeyPressSimulator = ({ keys }: KeyPressSimulatorProps) => {
-  const theme = useTheme();
-  const pressBools = useAppStore((state) => {
-    const result: Record<string, boolean> = {};
-    for (const key of keys) {
-      result[key] = state.keysHeld.includes(key);
-    }
-
-    return result;
-  });
-
-  const allPressed = keys.length > 0 && keys.every((key) => pressBools[key]);
+  const heldKeys = useAppStore((state) => state.keysHeld);
+  const reducedMotion = useMediaQuery(reducedMotionQuery);
+  const allPressed =
+    keys.length > 0 && keys.every((key) => heldKeys.includes(key));
+  const size = keys.length === 1 ? 144 : 96;
 
   return (
     <Stack
       direction="row"
       spacing={1}
       useFlexGap
-      sx={{
-        flexWrap: "wrap",
-        justifyContent: "center",
-      }}
+      role="group"
+      aria-label={keys.map(getPrettyKeyName).join(" + ")}
+      data-combo-state={allPressed ? "pressed" : "idle"}
+      sx={{ flexWrap: "wrap", justifyContent: "center" }}
     >
-      {keys.map((key) => {
-        const displayKey = getPrettyKeyName(key);
-        const isPressed = pressBools[key] || false;
-
+      {keycapIdentities(keys).map(({ key, identity }) => {
+        const isPressed = heldKeys.includes(key);
         return (
           <Box
-            key={key}
+            component="span"
+            key={identity}
+            aria-hidden="true"
+            data-key-state={isPressed ? "pressed" : "idle"}
             sx={{
-              minWidth: 48,
-              height: 48,
-              px: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              bgcolor: allPressed
-                ? "success.main"
-                : isPressed
-                  ? "level2"
-                  : "level1",
-              border: "1px solid",
-              borderColor: allPressed ? "success.dark" : "level3",
-              borderRadius: 1,
-              boxShadow: isPressed
-                ? "none"
-                : `0px 3px 0px ${theme.vars?.palette.level3}`,
-              transform: isPressed ? "translateY(3px)" : "translateY(0px)",
-              transition:
-                "transform 100ms cubic-bezier(0.23, 1, 0.32, 1), background-color 100ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 100ms cubic-bezier(0.23, 1, 0.32, 1)",
-              "@media (prefers-reduced-motion: reduce)": {
-                transform: "none",
-                transition: "none",
-              },
-              userSelect: "none",
+              display: "inline-flex",
+              borderRadius: 2,
+              outline: isPressed ? "2px solid" : "none",
+              outlineColor: allPressed ? "success.main" : "text.secondary",
+              outlineOffset: 2,
+              ...(isPressed && {
+                "@media (forced-colors: active)": {
+                  "& [data-keycap-view]": {
+                    forcedColorAdjust: "none",
+                    backgroundColor: "Highlight",
+                    borderColor: "Highlight",
+                  },
+                  "& [data-keycap-view] [data-keycap-part='label']": {
+                    color: "HighlightText",
+                    forcedColorAdjust: "none",
+                  },
+                },
+              }),
             }}
           >
-            <Typography
-              variant="body2"
-              color={allPressed ? "success.contrastText" : "text.primary"}
-              sx={{
-                fontWeight: "bold",
-                textTransform: "capitalize",
+            <motion.span
+              data-key-motion
+              style={{ display: "inline-flex" }}
+              initial={{ transform: "translateY(0px)" }}
+              animate={{
+                transform: `translateY(${isPressed && !reducedMotion ? size * keycapTravel : 0}px)`,
               }}
+              transition={reducedMotion ? { duration: 0 } : springSnappy}
             >
-              {displayKey}
-            </Typography>
+              <Keycap3d
+                {...getKeycapLegend(key)}
+                view="angle"
+                size={size}
+                sx={{
+                  "& [data-keycap-part='cap']": {
+                    filter: allPressed
+                      ? "sepia(1) saturate(4) hue-rotate(65deg) brightness(1.35)"
+                      : "none",
+                  },
+                }}
+              />
+            </motion.span>
           </Box>
         );
       })}

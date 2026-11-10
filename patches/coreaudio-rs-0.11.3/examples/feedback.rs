@@ -55,14 +55,14 @@ fn main() -> Result<(), coreaudio::Error> {
 
     println!("input={:#?}", &in_stream_format);
     println!("output={:#?}", &out_stream_format);
-    println!("input_asbd={:#?}", &in_stream_format.to_asbd());
-    println!("output_asbd={:#?}", &out_stream_format.to_asbd());
+    println!("input_asbd={:#?}", &in_stream_format.to_asbd()?);
+    println!("output_asbd={:#?}", &out_stream_format.to_asbd()?);
 
     let id = kAudioUnitProperty_StreamFormat;
-    let asbd = in_stream_format.to_asbd();
+    let asbd = in_stream_format.to_asbd()?;
     input_audio_unit.set_property(id, Scope::Output, Element::Input, Some(&asbd))?;
 
-    let asbd = out_stream_format.to_asbd();
+    let asbd = out_stream_format.to_asbd()?;
     output_audio_unit.set_property(id, Scope::Input, Element::Output, Some(&asbd))?;
 
     let buffer_left = Arc::new(Mutex::new(VecDeque::<S>::new()));
@@ -80,7 +80,7 @@ fn main() -> Result<(), coreaudio::Error> {
         }
     }
 
-    type Args = render_callback::Args<data::NonInterleaved<S>>;
+    type Args<'a> = render_callback::Args<'a, data::NonInterleaved<S>>;
 
     input_audio_unit.set_input_callback(move |args| {
         let Args {
@@ -106,7 +106,7 @@ fn main() -> Result<(), coreaudio::Error> {
     })?;
     input_audio_unit.start()?;
 
-    output_audio_unit.set_render_callback(move |args: Args| {
+    output_audio_unit.set_render_callback(move |args: Args<'_>| {
         let Args {
             num_frames,
             mut data,

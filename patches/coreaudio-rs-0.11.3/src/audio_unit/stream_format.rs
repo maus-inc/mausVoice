@@ -4,9 +4,9 @@
 
 use super::audio_format::AudioFormat;
 use super::audio_format::LinearPcmFlags;
+use super::stream_error::{self as error, Error};
+use super::stream_sys as sys;
 use super::SampleFormat;
-use crate::error::{self, Error};
-use sys;
 
 /// A representation of the AudioStreamBasicDescription specifically for use with the AudioUnit API.
 ///
@@ -22,7 +22,7 @@ use sys;
 /// `bits_per_channel = size_of::<S>()` / channels_per_frame * 8
 ///
 /// > A *packet* is a collection of one or more contiguous frames. In linear PCM audio, a packet is
-/// always a single frame.
+/// > always a single frame.
 ///
 /// [from *Core Audio Overview*](https://developer.apple.com/library/ios/documentation/MusicAudio/Conceptual/CoreAudioOverview/WhatisCoreAudio/WhatisCoreAudio.html)
 ///
@@ -30,10 +30,10 @@ use sys;
 /// >
 /// > - iOS input and output: Linear PCM with 16-bit integer samples.
 /// > - iOS audio units and other audio processing: Noninterleaved linear PCM with 8.24-bit
-/// fixed-point samples
+/// >   fixed-point samples
 /// > - Mac input and output: Linear PCM with 32-bit floating point samples.
 /// > - Mac audio units and other audio processing: Noninterleaved linear PCM with 32-bit floating
-/// point samples.
+/// >   point samples.
 #[derive(Copy, Clone, Debug)]
 pub struct StreamFormat {
     /// The number of frames of audio data per second used to represent a signal.
@@ -60,13 +60,14 @@ impl StreamFormat {
     /// specified in the documentation:
     ///
     /// > Specify kAudioFormatLinearPCM for the mFormatID field. Audio units use uncompressed audio
-    /// data, so this is the correct format identifier to use whenever you work with audio units.
+    /// > data, so this is the correct format identifier to use whenever you work with audio units.
     ///
     /// [*Audio Unit Hosting Guide for iOS*](https://developer.apple.com/library/ios/documentation/MusicAudio/Conceptual/AudioUnitHostingGuide_iOS/AudioUnitHostingFundamentals/AudioUnitHostingFundamentals.html)
     ///
     /// Returns an `Error` if the `AudioFormat` inferred by the ASBD is not `LinearPCM`.
     ///
-    /// Returns an `Error` if the sample format of the asbd cannot be matched to a format supported by SampleFormat.
+    /// Returns an `Error` if the sample format or frame and packet layout cannot
+    /// be represented by this packed single-frame-per-packet format.
     #[allow(non_snake_case)]
     pub fn from_asbd(asbd: sys::AudioStreamBasicDescription) -> Result<StreamFormat, Error> {
         const NOT_SUPPORTED: Error = Error::AudioUnit(error::audio_unit::Error::FormatNotSupported);
@@ -75,7 +76,9 @@ impl StreamFormat {
             mSampleRate,
             mFormatID,
             mFormatFlags,
-            mBytesPerFrame: _,
+            mBytesPerPacket,
+            mFramesPerPacket,
+            mBytesPerFrame,
             mChannelsPerFrame,
             mBitsPerChannel,
             ..
@@ -94,6 +97,24 @@ impl StreamFormat {
                 None => return Err(NOT_SUPPORTED),
             };
         let channels = mChannelsPerFrame;
+        if !mSampleRate.is_finite()
+            || mSampleRate <= 0.0
+            || channels == 0
+            || !sample_format.does_match_flags(flags)
+            || mFramesPerPacket != 1
+        {
+            return Err(NOT_SUPPORTED);
+        }
+        let sample_bytes = sample_format.size_in_bytes() as u32;
+        let expected_frame_bytes = if flags.contains(LinearPcmFlags::IS_NON_INTERLEAVED) {
+            Some(sample_bytes)
+        } else {
+            sample_bytes.checked_mul(channels)
+        }
+        .ok_or(NOT_SUPPORTED)?;
+        if mBytesPerFrame != expected_frame_bytes || mBytesPerPacket != expected_frame_bytes {
+            return Err(NOT_SUPPORTED);
+        }
         Ok(StreamFormat {
             sample_rate: mSampleRate,
             flags,
@@ -102,43 +123,50 @@ impl StreamFormat {
         })
     }
 
-    /// Convert a StreamFormat into an AudioStreamBasicDescription.
-    /// Note that this function assumes that only packed formats are used.
-    /// This only affects I24, since all other formats supported by `StreamFormat`
-    /// are always packed.
-    pub fn to_asbd(self) -> sys::AudioStreamBasicDescription {
+    /// Convert a StreamFormat into a packed AudioStreamBasicDescription.
+    ///
+    /// Invalid rates, channels, format flags and sizes that overflow CoreAudio's
+    /// 32-bit fields return an error. This method returns a `Result`; callers of
+    /// the former unchecked API must handle the conversion failure.
+    pub fn to_asbd(self) -> Result<sys::AudioStreamBasicDescription, Error> {
+        const NOT_SUPPORTED: Error = Error::AudioUnit(error::audio_unit::Error::FormatNotSupported);
         let StreamFormat {
             sample_rate,
             flags,
             sample_format,
             channels,
         } = self;
-
-        let (format, maybe_flag) =
-            AudioFormat::LinearPCM(flags | LinearPcmFlags::IS_PACKED).as_format_and_flag();
-
-        let flag = maybe_flag.unwrap_or(::std::u32::MAX - 2147483647);
-
-        let non_interleaved = flags.contains(LinearPcmFlags::IS_NON_INTERLEAVED);
-        let bytes_per_frame = if non_interleaved {
-            sample_format.size_in_bytes() as u32
+        let flags = flags | LinearPcmFlags::IS_PACKED;
+        if !sample_rate.is_finite()
+            || sample_rate <= 0.0
+            || channels == 0
+            || !sample_format.does_match_flags(flags)
+        {
+            return Err(NOT_SUPPORTED);
+        }
+        let sample_bytes = sample_format.size_in_bytes() as u32;
+        let bytes_per_frame = if flags.contains(LinearPcmFlags::IS_NON_INTERLEAVED) {
+            sample_bytes
         } else {
-            sample_format.size_in_bytes() as u32 * channels
+            sample_bytes.checked_mul(channels).ok_or(NOT_SUPPORTED)?
         };
-        const FRAMES_PER_PACKET: u32 = 1;
-        let bytes_per_packet = bytes_per_frame * FRAMES_PER_PACKET;
-        let bits_per_channel = sample_format.size_in_bits();
-
-        sys::AudioStreamBasicDescription {
+        let (format, maybe_flag) = AudioFormat::LinearPCM(flags).as_format_and_flag();
+        let flag = maybe_flag.ok_or(NOT_SUPPORTED)?;
+        Ok(sys::AudioStreamBasicDescription {
             mSampleRate: sample_rate,
             mFormatID: format,
             mFormatFlags: flag,
-            mBytesPerPacket: bytes_per_packet,
-            mFramesPerPacket: FRAMES_PER_PACKET,
+            mBytesPerPacket: bytes_per_frame,
+            mFramesPerPacket: 1,
             mBytesPerFrame: bytes_per_frame,
             mChannelsPerFrame: channels,
-            mBitsPerChannel: bits_per_channel,
+            mBitsPerChannel: sample_format.size_in_bits(),
             mReserved: 0,
-        }
+        })
+    }
+
+    /// Alias for the checked `to_asbd` conversion.
+    pub fn try_to_asbd(self) -> Result<sys::AudioStreamBasicDescription, Error> {
+        self.to_asbd()
     }
 }

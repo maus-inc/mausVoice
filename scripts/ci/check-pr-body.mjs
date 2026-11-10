@@ -21,7 +21,7 @@
  *   R2  every `<details>` is closed
  *   R3  no unfolded heading names a review, babysit, poll, round, check, CI, log, triage or
  *       research record. Those sections are folded, so the heading becomes the `<summary>`
- *   R4  the unfolded part of the body stays within the line budget
+ *   R4  the unfolded part of the authored body stays within the line budget
  *   R5  the footer line appears exactly once, outside any fold
  *   R6  every visible level-2 heading is one of the four the template keeps unfolded. Tool
  *       wrappers, a level-2 heading written entirely in bold, are tolerated because review
@@ -29,6 +29,14 @@
  *   R7  all four of those sections are present, so the gate and the checklist cannot be dropped
  *   R8  no unfolded bullet records a numbered round, a babysit poll or a check run, which is
  *       the section-as-a-bullet version of R3. Checklist items are exempt
+ *
+ * Scope:
+ *   The rules judge the authored body, and the authored body ends at the footer line. Review
+ *   bots append and rewrite their own sections below that footer, without notice, on their own
+ *   schedule and in their own markup, and the author does not control that text. Everything
+ *   below the first unfolded footer line is therefore exempt from every rule except the
+ *   duplicate-footer count in R5. The footer marks the boundary in both directions: records
+ *   above it must fold, and bot material below it never fails the check.
  */
 
 import { readFileSync } from "node:fs";
@@ -116,6 +124,27 @@ function quote(line, limit = 100) {
   return line.length > limit ? `${line.slice(0, limit)}...` : line;
 }
 
+function checkVisibleHeading(scan, lineNo, violations, seenSections) {
+  const section = /^##\s+(.+?)\s*$/.exec(scan);
+  if (section && VISIBLE_HEADING.test(scan)) {
+    seenSections.add(section[1]);
+  }
+  if (
+    /^## /.test(scan) &&
+    !VISIBLE_HEADING.test(scan) &&
+    !TOOL_WRAPPER.test(scan)
+  ) {
+    violations.push(
+      `R6 line ${lineNo}: visible heading "${quote(scan, 60)}" is not one of Summary, Verification gate, Checklist or Footer. Fold it and use the title as the <summary>.`,
+    );
+  }
+  if (/^#{1,6} /.test(scan) && FOLDABLE_HEADING.test(scan)) {
+    violations.push(
+      `R3 line ${lineNo}: unfolded heading "${quote(scan, 60)}" records a review, log or research round. Fold the section and use the title as the <summary>.`,
+    );
+  }
+}
+
 function check(body, maxOpen) {
   const lines = body.split("\n");
   const violations = [];
@@ -125,6 +154,7 @@ function check(body, maxOpen) {
   let openLines = 0;
   let footerCount = 0;
   let footerInsideFold = false;
+  let botTerritory = false;
   const seenSections = new Set();
 
   lines.forEach((raw, index) => {
@@ -134,32 +164,26 @@ function check(body, maxOpen) {
       return;
     }
 
+    if (botTerritory) {
+      // Below the footer the review bots write, and the author cannot control that text.
+      // The only authored mistake still detectable down here is a second footer.
+      if (scan.startsWith("MausAgent | Filed by ")) {
+        footerCount += 1;
+      }
+      return;
+    }
+
     const opens = (scan.match(/<details\b/gi) ?? []).length;
     const closes = (scan.match(/<\/details>/gi) ?? []).length;
     const wasOpen = depth > 0;
 
     if (!wasOpen) {
       openLines += 1;
-      const section = /^##\s+(.+?)\s*$/.exec(scan);
-      if (section && VISIBLE_HEADING.test(scan)) {
-        seenSections.add(section[1]);
-      }
-      if (
-        /^## /.test(scan) &&
-        !VISIBLE_HEADING.test(scan) &&
-        !TOOL_WRAPPER.test(scan)
-      ) {
-        violations.push(
-          `R6 line ${lineNo}: visible heading "${quote(scan, 60)}" is not one of Summary, Verification gate, Checklist or Footer. Fold it and use the title as the <summary>.`,
-        );
-      }
-      if (/^#{1,6} /.test(scan) && FOLDABLE_HEADING.test(scan)) {
-        violations.push(
-          `R3 line ${lineNo}: unfolded heading "${quote(scan, 60)}" records a review, log or research round. Fold the section and use the title as the <summary>.`,
-        );
-      }
+      checkVisibleHeading(scan, lineNo, violations, seenSections);
       if (scan.startsWith("MausAgent | Filed by ")) {
         footerCount += 1;
+        // The authored body ends here. Whatever the bots appended below is out of scope.
+        botTerritory = true;
       }
       if (ROUND_BULLET.test(scan)) {
         violations.push(
@@ -216,7 +240,7 @@ function check(body, maxOpen) {
   }
   if (footerCount > 1) {
     violations.push(
-      `R5: the footer line appears ${footerCount} times. Keep one, at the end.`,
+      `R5: the footer line appears ${footerCount} times. Keep one, at the end of the authored body; the check stops at the first.`,
     );
   }
   if (footerInsideFold) {

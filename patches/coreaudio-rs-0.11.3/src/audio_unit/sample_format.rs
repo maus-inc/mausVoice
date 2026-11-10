@@ -7,7 +7,7 @@ pub enum SampleFormat {
     F32,
     /// 32-bit signed integer.
     I32,
-    /// 24-bit signed integer. Can be packed or not depending on the flags.
+    /// Packed 24-bit signed integer (three bytes per sample).
     I24,
     /// 16-bit signed integer.
     I16,
@@ -21,12 +21,15 @@ impl SampleFormat {
         let is_float = flags.contains(LinearPcmFlags::IS_FLOAT);
         let is_signed_integer = flags.contains(LinearPcmFlags::IS_SIGNED_INTEGER);
         let is_packed = flags.contains(LinearPcmFlags::IS_PACKED);
+        if flags.contains(LinearPcmFlags::IS_ALIGNED_HIGH) {
+            return false;
+        }
         match *self {
             SampleFormat::F32 => is_float && !is_signed_integer && is_packed,
             SampleFormat::I32 | SampleFormat::I16 | SampleFormat::I8 => {
                 is_signed_integer && !is_float && is_packed
             }
-            SampleFormat::I24 => is_signed_integer && !is_float,
+            SampleFormat::I24 => is_signed_integer && !is_float && is_packed,
         }
     }
 
@@ -36,16 +39,21 @@ impl SampleFormat {
         bits_per_sample: u32,
     ) -> Option<Self> {
         let packed = flags.contains(LinearPcmFlags::IS_PACKED);
-        let sample_format = if flags.contains(LinearPcmFlags::IS_FLOAT) {
+        let is_float = flags.contains(LinearPcmFlags::IS_FLOAT);
+        let is_integer = flags.contains(LinearPcmFlags::IS_SIGNED_INTEGER);
+        if is_float == is_integer {
+            return None;
+        }
+        let sample_format = if is_float {
             match (bits_per_sample, packed) {
                 (32, true) => SampleFormat::F32,
                 _ => return None,
             }
-        } else if flags.contains(LinearPcmFlags::IS_SIGNED_INTEGER) {
+        } else if is_integer {
             match (bits_per_sample, packed) {
                 (8, true) => SampleFormat::I8,
                 (16, true) => SampleFormat::I16,
-                (24, _) => SampleFormat::I24,
+                (24, true) => SampleFormat::I24,
                 (32, true) => SampleFormat::I32,
                 _ => return None,
             }
@@ -53,7 +61,11 @@ impl SampleFormat {
             // TODO: Check whether or not we need to consider other formats, like unsigned ints.
             return None;
         };
-        Some(sample_format)
+        if sample_format.does_match_flags(flags) {
+            Some(sample_format)
+        } else {
+            None
+        }
     }
 
     /// Return the size of one sample in bytes, assuming that the format is packed.
@@ -81,7 +93,13 @@ impl SampleFormat {
 }
 
 /// Audio data sample types.
-pub trait Sample {
+///
+/// # Safety
+/// Every bit pattern of the type must be valid, and its size and layout must
+/// match its reported packed sample format. Values must have no ownership or
+/// validity invariants beyond their bits. Audio buffers may contain any sample
+/// bit pattern supplied by CoreAudio.
+pub unsafe trait Sample: Copy + 'static {
     /// Dynamic representation of audio data sample format.
     fn sample_format() -> SampleFormat;
 }
@@ -91,7 +109,7 @@ pub trait Sample {
 macro_rules! impl_sample {
     ($($T:ident $format:ident),* $(,)*) => {
         $(
-            impl Sample for $T {
+            unsafe impl Sample for $T {
                 fn sample_format() -> SampleFormat {
                     SampleFormat::$format
                 }

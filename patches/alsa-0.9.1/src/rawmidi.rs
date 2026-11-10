@@ -15,6 +15,7 @@ pub struct Iter<'a> {
     in_count: i32,
     out_count: i32,
     current: i32,
+    finished: bool,
 }
 
 /// [snd_rawmidi_info_t](http://www.alsa-project.org/alsa-doc/alsa-lib/group___raw_midi.html) wrapper
@@ -43,10 +44,10 @@ impl Info {
     }
 
     fn subdev_count(c: &Ctl, device: c_int) -> Result<(i32, i32)> {
-        let i = Info::from_iter(c, device, 0, Direction::Capture)?;
-        let o = Info::from_iter(c, device, 0, Direction::Playback)?;
-        Ok((unsafe { alsa::snd_rawmidi_info_get_subdevices_count(o.0) as i32 },
-            unsafe { alsa::snd_rawmidi_info_get_subdevices_count(i.0) as i32 }))
+        direction_counts(|direction| {
+            let info = Info::from_iter(c, device, 0, direction)?;
+            Ok(unsafe { alsa::snd_rawmidi_info_get_subdevices_count(info.0) as i32 })
+        })
     }
 
     pub fn get_device(&self) -> i32 { unsafe { alsa::snd_rawmidi_info_get_device(self.0) as i32 }}
@@ -87,35 +88,98 @@ impl Drop for Status {
 
 
 impl<'a> Iter<'a> {
-    pub fn new(c: &'a Ctl) -> Iter<'a> { Iter { ctl: c, device: -1, in_count: 0, out_count: 0, current: 0 }}
+    pub fn new(c: &'a Ctl) -> Iter<'a> { Iter { ctl: c, device: -1, in_count: 0, out_count: 0, current: 0, finished: false }}
 }
 
 impl<'a> Iterator for Iter<'a> {
     type Item = Result<Info>;
     fn next(&mut self) -> Option<Result<Info>> {
-        if self.current < self.in_count {
-            self.current += 1;
-            return Some(Info::from_iter(self.ctl, self.device, self.current-1, Direction::Capture));
-        }
-        if self.current - self.in_count < self.out_count {
-            self.current += 1;
-            return Some(Info::from_iter(self.ctl, self.device, self.current-1-self.in_count, Direction::Playback));
-        }
-
-        let r = acheck!(snd_ctl_rawmidi_next_device(ctl_ptr(self.ctl), &mut self.device));
-        match r {
-            Err(e) => return Some(Err(e)),
-            Ok(_) if self.device == -1 => return None,
-            _ => {},
-        }
-        self.current = 0;
-        match Info::subdev_count(self.ctl, self.device) {
-            Err(e) => Some(Err(e)),
-            Ok((oo, ii)) => {
-                self.in_count = ii;
-                self.out_count = oo;
-                self.next()
+        if self.finished { return None; }
+        loop {
+            if self.current < self.in_count {
+                self.current += 1;
+                return Some(Info::from_iter(self.ctl, self.device, self.current-1, Direction::Capture));
             }
+            if self.current - self.in_count < self.out_count {
+                self.current += 1;
+                return Some(Info::from_iter(self.ctl, self.device, self.current-1-self.in_count, Direction::Playback));
+            }
+
+            let r = acheck!(snd_ctl_rawmidi_next_device(ctl_ptr(self.ctl), &mut self.device));
+            match r {
+                Err(e) => {
+                    // The cursor may not have advanced, so retrying from it can
+                    // yield the same error forever. Return it once, then stop.
+                    self.finished = true;
+                    return Some(Err(e));
+                }
+                Ok(_) if self.device == -1 => {
+                    self.finished = true;
+                    return None;
+                }
+                _ => {},
+            }
+            self.current = 0;
+            // A failed query must not reuse the previous device's counts on
+            // the next call to the iterator.
+            self.in_count = 0;
+            self.out_count = 0;
+            match Info::subdev_count(self.ctl, self.device) {
+                Err(e) => return Some(Err(e)),
+                Ok((oo, ii)) => {
+                    self.in_count = ii;
+                    self.out_count = oo;
+                }
+            }
+        }
+    }
+}
+
+fn direction_counts(mut count: impl FnMut(Direction) -> Result<i32>) -> Result<(i32, i32)> {
+    let mut available = |direction| match count(direction) {
+        // ALSA reports ENOENT when a valid MIDI device has no substreams in
+        // this direction. Other errors, including a removed device, remain errors.
+        Err(error) if error.errno() == libc::ENOENT => Ok(0),
+        result => result,
+    };
+    let input = available(Direction::Capture)?;
+    let output = available(Direction::Playback)?;
+    Ok((output, input))
+}
+
+#[cfg(test)]
+mod direction_count_tests {
+    use super::*;
+
+    #[test]
+    fn reports_independent_input_and_output_counts() {
+        for (input, output) in [(0, 2), (3, 0), (3, 2), (0, 0)] {
+            let result = direction_counts(|direction| {
+                let value = match direction {
+                    Direction::Capture => input,
+                    Direction::Playback => output,
+                };
+                if value == 0 {
+                    Err(Error::new("snd_ctl_rawmidi_info", libc::ENOENT))
+                } else {
+                    Ok(value)
+                }
+            }).unwrap();
+            assert_eq!(result, (output, input));
+        }
+    }
+
+    #[test]
+    fn propagates_errors_other_than_missing_directions() {
+        for errno in [libc::ENXIO, libc::EIO, libc::ENOMEM] {
+            let error = direction_counts(|_| Err(Error::new("snd_ctl_rawmidi_info", errno)))
+                .unwrap_err();
+            assert_eq!(error.errno(), errno);
+            let error = direction_counts(|direction| match direction {
+                Direction::Capture => Err(Error::new("snd_ctl_rawmidi_info", libc::ENOENT)),
+                Direction::Playback => Err(Error::new("snd_ctl_rawmidi_info", errno)),
+            }).unwrap_err();
+            assert_eq!(error.errno(), errno);
         }
     }
 }
@@ -166,7 +230,10 @@ impl Rawmidi {
 
 impl poll::Descriptors for Rawmidi {
     fn count(&self) -> usize {
-        unsafe { alsa::snd_rawmidi_poll_descriptors_count(self.0) as usize }
+        self.try_count().unwrap_or(0)
+    }
+    fn try_count(&self) -> Result<usize> {
+        acheck!(snd_rawmidi_poll_descriptors_count(self.0)).map(|count| count as usize)
     }
     fn fill(&self, p: &mut [pollfd]) -> Result<usize> {
         let z = unsafe { alsa::snd_rawmidi_poll_descriptors(self.0, p.as_mut_ptr(), p.len() as c_uint) };

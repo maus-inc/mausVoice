@@ -50,6 +50,8 @@ export type HandleTranscriptParams = {
   persistTranscriptNow?: (
     input: ReviewedTranscriptPersistenceInput,
   ) => Promise<StoreTranscriptionOutput>;
+  /** Called while local simulated-typing output is pending, including any hands-free delay. */
+  onSimulatedTypingStart?: () => void;
 };
 
 export type HandleTranscriptResult = {
@@ -63,7 +65,8 @@ export type HandleTranscriptResult = {
   historyOwner?: HistoryOwner;
   /**
    * The already-started History write, when persistence ran concurrently with
-   * delivery. The stop path awaits this instead of writing the row itself.
+   * delivery. The stop path must not write a second row; it may attach
+   * truncation and retry side effects without awaiting this promise.
    */
   pendingPersistence?: Promise<StoreTranscriptionOutput>;
 };
@@ -89,7 +92,7 @@ export type HistoryOwner =
   | "pill"
   /**
    * The strategy started the write itself, concurrently with delivery, and
-   * handed the promise back on `pendingPersistence`. The stop path must await
-   * that promise rather than write a second row.
+   * handed the promise back on `pendingPersistence`. The stop path must not
+   * write a second row, and must not wait for this write before going idle.
    */
   | "concurrent";

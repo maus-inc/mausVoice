@@ -39,6 +39,13 @@ type StyleHotkeyRow = {
   keys: string[];
 };
 
+const snapshotStyleHotkeys = (): Hotkey[] =>
+  Object.values(useAppStore.getState().hotkeyById)
+    .filter((hotkey) =>
+      hotkey.actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX),
+    )
+    .map((hotkey) => ({ ...hotkey, keys: [...hotkey.keys] }));
+
 /** Assign one optional global shortcut to each writing style. */
 export const StyleHotkeysDialog = () => {
   const titleId = useId();
@@ -64,12 +71,7 @@ export const StyleHotkeysDialog = () => {
 
   useEffect(() => {
     if (!open) return;
-    const styleGroup = Object.values(useAppStore.getState().hotkeyById).filter(
-      (hotkey) => hotkey.actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX),
-    );
-    setSnapshot(
-      styleGroup.map((hotkey) => ({ ...hotkey, keys: [...hotkey.keys] })),
-    );
+    setSnapshot(snapshotStyleHotkeys());
     setRows(
       tones.map((tone) => {
         const actionName = getSwitchToStyleActionName(tone.id);
@@ -171,14 +173,7 @@ export const StyleHotkeysDialog = () => {
         // re-snapshot, so the user edits the shortcuts that actually exist
         // instead of silently overwriting them on the next save.
         await loadHotkeys();
-        const styleGroup = Object.values(
-          useAppStore.getState().hotkeyById,
-        ).filter((hotkey) =>
-          hotkey.actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX),
-        );
-        setSnapshot(
-          styleGroup.map((hotkey) => ({ ...hotkey, keys: [...hotkey.keys] })),
-        );
+        setSnapshot(snapshotStyleHotkeys());
         setRows((current) =>
           current.map((row) => ({
             ...row,

@@ -28,6 +28,10 @@ vi.mock("../../utils/keyboard.utils", async (original) => ({
 }));
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { getAppState, produceAppState, setAppState } from "../../store";
+import {
+  enqueueHotkeyWrite,
+  markOptimisticHotkeyWrite,
+} from "../../utils/hotkey-write-queue";
 import { saveDictationLanguageSettings } from "./save-dictation-language-settings";
 
 const oldPrimary = {
@@ -137,4 +141,168 @@ it("retries tone loading after the preferred language was already saved", async 
   expect(mocks.language).toHaveBeenCalledTimes(1);
   expect(mocks.tones).toHaveBeenCalledTimes(2);
   expect(mocks.replaceGroup).toHaveBeenCalledTimes(1);
+});
+
+it("does not overwrite a newer optimistic shortcut while a language save is pending", async () => {
+  let finish!: () => void;
+  mocks.replaceGroup.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = () => resolve();
+      }),
+  );
+  const saving = saveDictationLanguageSettings(rows, "en");
+  await vi.waitFor(() => expect(mocks.replaceGroup).toHaveBeenCalled());
+  markOptimisticHotkeyWrite("dictate");
+  produceAppState((draft) => {
+    draft.hotkeyById.primary.keys = ["Z"];
+  });
+  finish();
+  await saving;
+  expect(getAppState().hotkeyById.primary.keys).toEqual(["Z"]);
+});
+
+it("publishes the later of two queued language saves", async () => {
+  let finish!: () => void;
+  mocks.replaceGroup.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = () => resolve();
+      }),
+  );
+  const first = saveDictationLanguageSettings(rows, "en");
+  await vi.waitFor(() => expect(mocks.replaceGroup).toHaveBeenCalled());
+  const second = saveDictationLanguageSettings(
+    [{ language: "en", hotkeyKeys: ["X"] }],
+    "en",
+  );
+  finish();
+  await Promise.all([first, second]);
+  expect(getAppState().hotkeyById.primary.keys).toEqual(["X"]);
+});
+
+it("keeps an optimistic edit to a language the dialog also saves", async () => {
+  // CodeAnt P2: the changed ID is in `saved` too (id reuse), so the committed
+  // group must not republish its stale keys over the optimistic edit.
+  let finish!: () => void;
+  mocks.replaceGroup.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = () => resolve();
+      }),
+  );
+  const saving = saveDictationLanguageSettings(
+    [
+      { language: "en", hotkeyKeys: ["C"] },
+      { language: "fr", hotkeyKeys: ["D"] },
+    ],
+    "en",
+  );
+  await vi.waitFor(() => expect(mocks.replaceGroup).toHaveBeenCalled());
+  markOptimisticHotkeyWrite(oldAdditional.actionName);
+  produceAppState((draft) => {
+    draft.hotkeyById.extra.keys = ["Z"];
+  });
+  finish();
+  await saving;
+  expect(getAppState().hotkeyById.extra.keys).toEqual(["Z"]);
+  expect(
+    Object.values(getAppState().hotkeyById).filter(
+      (hotkey) => hotkey.actionName === oldAdditional.actionName,
+    ),
+  ).toHaveLength(1);
+});
+
+it("preserves a newer optimistic additional shortcut while publishing the saved group", async () => {
+  let finish!: () => void;
+  mocks.replaceGroup.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = () => resolve();
+      }),
+  );
+  const saving = saveDictationLanguageSettings(rows, "en");
+  await vi.waitFor(() => expect(mocks.replaceGroup).toHaveBeenCalled());
+  markOptimisticHotkeyWrite(oldAdditional.actionName);
+  produceAppState((draft) => {
+    draft.hotkeyById.extra.keys = ["Z"];
+  });
+  finish();
+  await saving;
+  expect(getAppState().hotkeyById.extra.keys).toEqual(["Z"]);
+  expect(
+    Object.values(getAppState().hotkeyById).map((hotkey) => hotkey.actionName),
+  ).toContain("additional-language:de");
+});
+
+it("keeps a newer optimistic deletion out of the saved group", async () => {
+  let finish!: () => void;
+  mocks.replaceGroup.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = () => resolve();
+      }),
+  );
+  const saving = saveDictationLanguageSettings(rows, "en");
+  await vi.waitFor(() => expect(mocks.replaceGroup).toHaveBeenCalled());
+  markOptimisticHotkeyWrite(oldAdditional.actionName);
+  produceAppState((draft) => {
+    Reflect.deleteProperty(draft.hotkeyById, "extra");
+    draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
+      (id) => id !== "extra",
+    );
+  });
+  finish();
+  await saving;
+  expect(getAppState().hotkeyById.extra).toBeUndefined();
+  expect(getAppState().settings.hotkeyIds).not.toContain("extra");
+  expect(
+    Object.values(getAppState().hotkeyById).map((item) => item.actionName),
+  ).toContain("additional-language:de");
+});
+
+it("preserves a concurrent deletion when the saved language remains in the group", async () => {
+  let finish!: () => void;
+  const persisted = new Map<string, Hotkey>();
+  mocks.replaceGroup.mockImplementationOnce(
+    (_primary: Hotkey, additional: Hotkey[]) =>
+      new Promise<void>((resolve) => {
+        finish = () => {
+          persisted.clear();
+          for (const hotkey of additional) persisted.set(hotkey.id, hotkey);
+          resolve();
+        };
+      }),
+  );
+  const saving = saveDictationLanguageSettings(
+    [
+      { language: "en", hotkeyKeys: ["C"] },
+      { language: "fr", hotkeyKeys: ["D"] },
+    ],
+    "en",
+  );
+  await vi.waitFor(() => expect(mocks.replaceGroup).toHaveBeenCalled());
+  markOptimisticHotkeyWrite(oldAdditional.actionName);
+  produceAppState((draft) => {
+    Reflect.deleteProperty(draft.hotkeyById, oldAdditional.id);
+    draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
+      (id) => id !== oldAdditional.id,
+    );
+  });
+  const deleting = enqueueHotkeyWrite(() => {
+    persisted.delete(oldAdditional.id);
+    return Promise.resolve();
+  });
+  finish();
+  await Promise.all([saving, deleting]);
+  expect(
+    [...persisted.values()].filter(
+      (hotkey) => hotkey.actionName === oldAdditional.actionName,
+    ),
+  ).toEqual([]);
+  expect(
+    Object.values(getAppState().hotkeyById).filter(
+      (hotkey) => hotkey.actionName === oldAdditional.actionName,
+    ),
+  ).toEqual([]);
 });

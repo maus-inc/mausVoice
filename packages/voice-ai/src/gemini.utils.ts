@@ -146,6 +146,13 @@ class GeminiHttpError extends HttpError {
   }
 }
 
+class GeminiEmptyTranscriptionError extends Error {
+  constructor() {
+    super("Transcription failed - empty response");
+    this.name = "GeminiEmptyTranscriptionError";
+  }
+}
+
 // Permanent 4xx failures (bad key, malformed request, unknown model) are never
 // fixed by resending the same payload; retrying them rebuilds and re-uploads
 // the whole audio body for nothing. Abort/cancel must also stop retrying —
@@ -155,7 +162,7 @@ const isGeminiFailureRetryable = (
   error: unknown,
   signal?: AbortSignal,
 ): boolean => {
-  if (signal?.aborted) {
+  if (signal?.aborted || error instanceof GeminiEmptyTranscriptionError) {
     return false;
   }
   if (error instanceof GeminiHttpError) {
@@ -259,7 +266,7 @@ const getGeminiTranscriptionText = (
         .join(" ")
     : getGeminiResponseText(response);
 
-  if (!text.trim()) throw new Error("Transcription failed - empty response");
+  if (!text.trim()) throw new GeminiEmptyTranscriptionError();
   return text;
 };
 
@@ -384,20 +391,49 @@ const convertJsonSchemaProperties = (
   );
 };
 
+// JSON Schema mixes schema-valued keywords with maps whose values are schemas.
+// Keep those shapes explicit: `default`, `examples`, `const`, and `enum` can
+// contain objects that happen to look like schemas and must remain user data.
+const JSON_SCHEMA_MAP_KEYWORDS = new Set([
+  "properties",
+  "patternProperties",
+  "definitions",
+  "$defs",
+  "dependentSchemas",
+  "dependencies",
+]);
+
+const JSON_SCHEMA_SCHEMA_KEYWORDS = new Set([
+  "additionalItems",
+  "additionalProperties",
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "items",
+  "prefixItems",
+  "contains",
+  "not",
+  "if",
+  "then",
+  "else",
+  "propertyNames",
+  "unevaluatedItems",
+  "unevaluatedProperties",
+  "contentSchema",
+]);
+
 const convertJsonSchemaEntry = (
   key: string,
   value: unknown,
   convertSchema: JsonSchemaConverter,
 ): unknown => {
-  switch (key) {
-    case "properties":
-      return convertJsonSchemaProperties(value, convertSchema);
-    case "items":
-    case "anyOf":
-      return convertJsonSchemaValue(value, convertSchema);
-    default:
-      return value;
+  if (JSON_SCHEMA_MAP_KEYWORDS.has(key)) {
+    return convertJsonSchemaProperties(value, convertSchema);
   }
+  if (JSON_SCHEMA_SCHEMA_KEYWORDS.has(key)) {
+    return convertJsonSchemaValue(value, convertSchema);
+  }
+  return value;
 };
 
 const convertJsonSchemaToGeminiSchema = (

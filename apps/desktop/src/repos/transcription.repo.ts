@@ -1,3 +1,5 @@
+import { transcriptionAudioCache } from "../utils/transcription-audio-cache";
+import { subscribeToLocalDataClearRequested } from "../utils/local-data-write-gate";
 import { Transcription, TranscriptionAudioSnapshot } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
@@ -7,6 +9,8 @@ import { getMyEffectiveUserId } from "../utils/user.utils";
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { BaseRepo, withLocalDataWrite } from "./base.repo";
 import { trackTranscriptionCreation } from "../utils/transcription-creation-tracker";
+
+subscribeToLocalDataClearRequested(() => transcriptionAudioCache.invalidate());
 
 const mapAudioSnapshot = (
   audio: TranscriptionAudioSnapshot | null | undefined,
@@ -170,6 +174,11 @@ export abstract class BaseTranscriptionRepo extends BaseRepo {
     transcription: Transcription,
     lease?: LocalDataWriteLease,
   ): Promise<Transcription>;
+  abstract appendWarnings(
+    id: string,
+    warnings: string[],
+    lease?: LocalDataWriteLease,
+  ): Promise<string[]>;
   abstract loadTranscriptionAudio(
     id: string,
     lease?: LocalDataWriteLease,
@@ -192,6 +201,7 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
               transcription: toLocalTranscription(transcription),
             },
           );
+          transcriptionAudioCache.invalidate(transcription.id);
           return fromLocalTranscription(stored);
         }),
       lease,
@@ -212,23 +222,45 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
     return transcriptions.map(fromLocalTranscription);
   }
 
-  deleteTranscription(id: string, lease?: LocalDataWriteLease): Promise<void> {
-    return withLocalDataWrite(
-      () => invoke<void>("transcription_delete", { id }),
-      lease,
-    );
-  }
+  // Field arrows, not prototype methods: the commands never touch `this`, and
+  // the instance API stays intact for the repo factory.
+  deleteTranscription = (
+    id: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<void> => {
+    return withLocalDataWrite(async () => {
+      transcriptionAudioCache.invalidate(id);
+      await invoke("transcription_delete", { id });
+      transcriptionAudioCache.invalidate(id);
+    }, lease);
+  };
 
-  updateTranscription(
+  updateTranscription = (
     transcription: Transcription,
     lease?: LocalDataWriteLease,
-  ): Promise<Transcription> {
+  ): Promise<Transcription> => {
     return withLocalDataWrite(async () => {
+      transcriptionAudioCache.invalidate(transcription.id);
       const stored = await invoke<LocalTranscription>("transcription_update", {
         transcription: toLocalTranscription(transcription),
       });
+      transcriptionAudioCache.invalidate(transcription.id);
       return fromLocalTranscription(stored);
     }, lease);
+  };
+
+  // This stays an instance method to implement BaseTranscriptionRepo's shared
+  // repository contract; making the stateless command wrapper static would break
+  // the repo factory's instance API.
+  appendWarnings(
+    id: string,
+    warnings: string[],
+    lease?: LocalDataWriteLease,
+  ): Promise<string[]> {
+    return withLocalDataWrite(
+      () => invoke<string[]>("transcription_append_warnings", { id, warnings }),
+      lease,
+    );
   }
 
   loadTranscriptionAudio(
@@ -239,7 +271,10 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
     // semantics. Count it against clear so the read and its possible mkdir
     // cannot run past a local-data wipe.
     return withLocalDataWrite(
-      () => invoke<TranscriptionAudioData>("transcription_audio_load", { id }),
+      () =>
+        transcriptionAudioCache.load(id, () =>
+          invoke<TranscriptionAudioData>("transcription_audio_load", { id }),
+        ),
       lease,
     );
   }
@@ -263,7 +298,9 @@ export class LocalTranscriptionRepo extends BaseTranscriptionRepo {
       const purged = await invoke<string[] | undefined>(
         "purge_stale_transcription_audio",
       );
-      return Array.isArray(purged) ? purged : [];
+      const ids = Array.isArray(purged) ? purged : [];
+      for (const id of ids) transcriptionAudioCache.invalidate(id);
+      return ids;
     }, lease);
   }
 }

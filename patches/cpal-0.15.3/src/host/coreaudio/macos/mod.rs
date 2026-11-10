@@ -757,8 +757,8 @@ impl Device {
             // fed to the audio buffer.
             let bytes_per_channel = sample_format.sample_size();
             let sample_rate = config.sample_rate;
-            type Args = render_callback::Args<data::Raw>;
-            let mut handle_input = move |args: Args| unsafe {
+            type Args<'a> = render_callback::Args<'a, data::Raw>;
+            let mut handle_input = move |args: Args<'_>| unsafe {
                 let ptr = (*args.data.data).mBuffers.as_ptr();
                 let len = (*args.data.data).mNumberBuffers as usize;
                 let buffers: &[AudioBuffer] = slice::from_raw_parts(ptr, len);
@@ -794,8 +794,10 @@ impl Device {
                 Ok(())
             };
 
-            let actual: AudioStreamBasicDescription =
-                audio_unit.get_property(kAudioUnitProperty_StreamFormat, scope, element)?;
+            // CoreAudio's stream-format property returns an AudioStreamBasicDescription.
+            let actual: AudioStreamBasicDescription = unsafe {
+                audio_unit.get_property(kAudioUnitProperty_StreamFormat, scope, element)?
+            };
             let actual_format = coreaudio::audio_unit::StreamFormat::from_asbd(actual)?;
             let expected_format = match sample_format {
                 SampleFormat::F32 => coreaudio::audio_unit::SampleFormat::F32,
@@ -820,11 +822,14 @@ impl Device {
             {
                 return Err(BuildStreamError::StreamConfigNotSupported);
             }
-            let buffer_frames: u32 = audio_unit.get_property(
-                kAudioDevicePropertyBufferFrameSize,
-                Scope::Global,
-                Element::Output,
-            )?;
+            // The buffer-frame-size property is a u32.
+            let buffer_frames: u32 = unsafe {
+                audio_unit.get_property(
+                    kAudioDevicePropertyBufferFrameSize,
+                    Scope::Global,
+                    Element::Output,
+                )?
+            };
             // The callback registry serializes access to this pointer and drains
             // every admitted render before checked disposal begins.
             let native_unit = unsafe { audio_unit.raw_instance() };
@@ -975,8 +980,8 @@ impl Device {
         // fed to the audio buffer.
         let bytes_per_channel = sample_format.sample_size();
         let sample_rate = config.sample_rate;
-        type Args = render_callback::Args<data::Raw>;
-        audio_unit.set_render_callback(move |args: Args| unsafe {
+        type Args<'a> = render_callback::Args<'a, data::Raw>;
+        audio_unit.set_render_callback(move |args: Args<'_>| unsafe {
             // If `run()` is currently running, then a callback will be available from this list.
             // Otherwise, we just fill the buffer with zeroes and return.
 
@@ -1288,11 +1293,14 @@ fn get_device_buffer_frame_size_range(
 fn get_io_buffer_frame_size_range(
     audio_unit: &AudioUnit,
 ) -> Result<SupportedBufferSize, coreaudio::Error> {
-    let buffer_size_range: AudioValueRange = audio_unit.get_property(
-        kAudioDevicePropertyBufferFrameSizeRange,
-        Scope::Global,
-        Element::Output,
-    )?;
+    // The frame-size-range property is an AudioValueRange.
+    let buffer_size_range: AudioValueRange = unsafe {
+        audio_unit.get_property(
+            kAudioDevicePropertyBufferFrameSizeRange,
+            Scope::Global,
+            Element::Output,
+        )?
+    };
 
     Ok(SupportedBufferSize::Range {
         min: buffer_size_range.mMinimum as u32,

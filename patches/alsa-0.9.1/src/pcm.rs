@@ -224,8 +224,9 @@ impl PCM {
         self.recover(err.errno() as c_int, silent)
     }
 
+    /// `None` waits indefinitely; finite values above `i32::MAX` return `EINVAL`.
     pub fn wait(&self, timeout_ms: Option<u32>) -> Result<bool> {
-        acheck!(snd_pcm_wait(self.0, timeout_ms.map(|x| x as c_int).unwrap_or(-1))).map(|i| i == 1) }
+        acheck!(snd_pcm_wait(self.0, wait_timeout(timeout_ms, "snd_pcm_wait")?)).map(|i| i == 1) }
 
     pub fn state(&self) -> State {
         let rawstate = self.state_raw();
@@ -295,13 +296,41 @@ impl PCM {
     pub fn io_bytes(&self) -> IO<u8> { IO::new(self) }
 
     /// Read buffers by talking to the kernel directly, bypassing alsa-lib.
-    pub fn direct_mmap_capture<S>(&self) -> Result<crate::direct::pcm::MmapCapture<S>> {
+    ///
+    /// Types with invalid bit patterns, such as `bool`, cannot be read from raw audio.
+    ///
+    /// ```compile_fail
+    /// fn invalid(pcm: &alsa::PCM) {
+    ///     let _ = pcm.direct_mmap_capture::<bool>();
+    /// }
+    /// ```
+    ///
+    /// Implementing the general `IoFormat` trait alone is not enough to make
+    /// arbitrary types safe to read from mapped bytes:
+    ///
+    /// ```compile_fail
+    /// #[derive(Clone, Copy)]
+    /// struct Bit(bool);
+    /// impl alsa::pcm::IoFormat for Bit {
+    ///     const FORMAT: alsa::pcm::Format = alsa::pcm::Format::U8;
+    /// }
+    /// fn invalid(pcm: &alsa::PCM) {
+    ///     let _ = pcm.direct_mmap_capture::<Bit>();
+    /// }
+    /// ```
+    ///
+    /// ```no_run
+    /// fn valid(pcm: &alsa::PCM) {
+    ///     let _ = pcm.direct_mmap_capture::<i16>();
+    /// }
+    /// ```
+    pub fn direct_mmap_capture<S: crate::direct::pcm::MmapSample>(&self) -> Result<crate::direct::pcm::MmapCapture<S>> {
         self.check_has_io();
         crate::direct::pcm::new_mmap(self)
     }
 
     /// Write buffers by talking to the kernel directly, bypassing alsa-lib.
-    pub fn direct_mmap_playback<S>(&self) -> Result<crate::direct::pcm::MmapPlayback<S>> {
+    pub fn direct_mmap_playback<S: crate::direct::pcm::MmapSample>(&self) -> Result<crate::direct::pcm::MmapPlayback<S>> {
         self.check_has_io();
         crate::direct::pcm::new_mmap(self)
     }
@@ -384,7 +413,10 @@ impl Drop for PCM {
 
 impl poll::Descriptors for PCM {
     fn count(&self) -> usize {
-        unsafe { alsa::snd_pcm_poll_descriptors_count(self.0) as usize }
+        self.try_count().unwrap_or(0)
+    }
+    fn try_count(&self) -> Result<usize> {
+        acheck!(snd_pcm_poll_descriptors_count(self.0)).map(|count| count as usize)
     }
     fn fill(&self, p: &mut [pollfd]) -> Result<usize> {
         let z = unsafe { alsa::snd_pcm_poll_descriptors(self.0, p.as_mut_ptr(), p.len() as c_uint) };
@@ -1145,16 +1177,52 @@ impl<'a> fmt::Debug for SwParams<'a> {
 
 const STATUS_SIZE: usize = 152;
 
+#[test]
+fn status_storage_has_c_allocation_alignment() {
+    assert!(std::mem::align_of::<Status>() >= std::mem::align_of::<libc::max_align_t>());
+    let status = Status::new();
+    assert_eq!(status.ptr() as usize % std::mem::align_of::<libc::max_align_t>(), 0);
+}
+
+#[test]
+fn null_pcm_poll_count_and_descriptors_agree() {
+    use crate::poll::Descriptors;
+    let pcm = PCM::new("null", Direction::Playback, false).unwrap();
+    let count = pcm.try_count().unwrap();
+    assert!(count > 0);
+    assert_eq!(pcm.count(), count);
+    assert_eq!(pcm.get().unwrap().len(), count);
+}
+
+#[test]
+fn status_builder_reads_null_pcm() {
+    let pcm = PCM::new("null", Direction::Playback, false).unwrap();
+    let params = HwParams::any(&pcm).unwrap();
+    params.set_channels(1).unwrap();
+    params.set_rate(48_000, ValueOr::Nearest).unwrap();
+    params.set_format(Format::s16()).unwrap();
+    params.set_access(Access::RWInterleaved).unwrap();
+    pcm.hw_params(&params).unwrap();
+    pcm.prepare().unwrap();
+    let status = StatusBuilder::new()
+        .audio_htstamp_config(AudioTstampType::Default, false)
+        .build(&pcm)
+        .unwrap();
+    assert_eq!(status.get_state(), State::Prepared);
+    assert!(status.get_avail() >= 0);
+}
+
 /// [snd_pcm_status_t](http://www.alsa-project.org/alsa-doc/alsa-lib/group___p_c_m___status.html) wrapper
-pub struct Status([u8; STATUS_SIZE]);
+pub struct Status(crate::CAligned<[u8; STATUS_SIZE]>);
 
 impl Status {
     fn new() -> Status {
         assert!(unsafe { alsa::snd_pcm_status_sizeof() } as usize <= STATUS_SIZE);
-        Status([0; STATUS_SIZE])
+        Status(crate::CAligned::new([0; STATUS_SIZE]))
     }
 
-    fn ptr(&self) -> *mut alsa::snd_pcm_status_t { self.0.as_ptr() as *const _ as *mut alsa::snd_pcm_status_t }
+    fn ptr(&self) -> *const alsa::snd_pcm_status_t { self.0.value.as_ptr() as *const alsa::snd_pcm_status_t }
+    fn ptr_mut(&mut self) -> *mut alsa::snd_pcm_status_t { self.0.value.as_mut_ptr() as *mut alsa::snd_pcm_status_t }
 
     pub fn get_htstamp(&self) -> timespec {
         let mut h = timespec {tv_sec: 0, tv_nsec: 0};
@@ -1183,7 +1251,8 @@ impl Status {
     pub fn get_overrange(&self) -> Frames { unsafe { alsa::snd_pcm_status_get_overrange(self.ptr()) as Frames }}
 
     pub fn dump(&self, o: &mut Output) -> Result<()> {
-        acheck!(snd_pcm_status_dump(self.ptr(), super::io::output_handle(o))).map(|_| ())
+        // alsa-lib declares a mutable pointer, but only reads the status while dumping it.
+        acheck!(snd_pcm_status_dump(self.ptr() as *mut _, super::io::output_handle(o))).map(|_| ())
     }
 }
 
@@ -1199,19 +1268,19 @@ impl StatusBuilder {
     }
 
     pub fn audio_htstamp_config(
-        self,
+        mut self,
         type_requested: AudioTstampType,
         report_delay: bool,
     ) -> Self {
         let mut cfg: alsa::snd_pcm_audio_tstamp_config_t = unsafe { std::mem::zeroed() };
         cfg.set_type_requested(type_requested as _);
         cfg.set_report_delay(report_delay as _);
-        unsafe { alsa::snd_pcm_status_set_audio_htstamp_config(self.0.ptr(), &mut cfg) };
+        unsafe { alsa::snd_pcm_status_set_audio_htstamp_config(self.0.ptr_mut(), &mut cfg) };
         self
     }
 
-    pub fn build(self, pcm: &PCM) -> Result<Status> {
-        acheck!(snd_pcm_status(pcm.0, self.0.ptr())).map(|_| self.0)
+    pub fn build(mut self, pcm: &PCM) -> Result<Status> {
+        acheck!(snd_pcm_status(pcm.0, self.0.ptr_mut())).map(|_| self.0)
     }
 }
 

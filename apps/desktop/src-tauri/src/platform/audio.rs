@@ -94,6 +94,62 @@ mod cpal_alsa_input_start;
 mod cpal_alsa_input_probe;
 
 #[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/src/audio_unit/input_buffer.rs"]
+mod coreaudio_input_buffer;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/macos_listener_adapter.rs"]
+mod coreaudio_macos_listener_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/macos_devices_adapter.rs"]
+mod coreaudio_macos_devices_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/macos_sample_rate_adapter.rs"]
+mod coreaudio_macos_sample_rate_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/macos_physical_format_adapter.rs"]
+mod coreaudio_macos_physical_format_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/macos_device_scope_adapter.rs"]
+mod coreaudio_macos_device_scope_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/macos_hog_adapter.rs"]
+mod coreaudio_macos_hog_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/macos_device_name_adapter.rs"]
+mod coreaudio_macos_device_name_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/property_output_adapter.rs"]
+mod coreaudio_property_output_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/action_flags_handle_adapter.rs"]
+mod coreaudio_action_flags_handle_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/callback_data_adapter.rs"]
+mod coreaudio_callback_data_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/coreaudio-rs-0.11.3/tests/stream_format_adapter.rs"]
+mod coreaudio_stream_format_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/cpal-0.15.3/tests/wasapi_thread_priority_adapter.rs"]
+mod cpal_wasapi_thread_priority_adapter;
+
+#[cfg(test)]
+#[path = "../../../../../patches/cpal-0.15.3/tests/coreaudio_stream_format_adapter.rs"]
+mod cpal_coreaudio_stream_format_adapter;
+
+#[cfg(test)]
 #[path = "../../../../../patches/cpal-0.15.3/tests/macos_input_lifetime.rs"]
 mod cpal_macos_input_lifetime;
 
@@ -1988,6 +2044,43 @@ mod cpal_impl {
         use std::sync::{Arc, Mutex};
 
         #[test]
+        fn coreaudio_property_listeners_use_retirable_tokens() {
+            // Registry lifetime tests run portably; macOS must still test the
+            // actual CoreAudio registration and notification behavior.
+            let listeners = include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../patches/coreaudio-rs-0.11.3/src/audio_unit/macos_listeners.rs"
+            ));
+            assert!(listeners.contains("listener_registry::insert"));
+            assert!(listeners.contains("listener_registry::remove"));
+            assert!(listeners.contains("catch_unwind"));
+            assert!(!listeners.contains("self as *const _ as *mut _"));
+            assert!(!listeners.contains("sender.send(rate).unwrap()"));
+        }
+
+        #[test]
+        fn coreaudio_input_buffer_uses_owned_storage_through_teardown() {
+            // This source contract complements the portable buffer tests; it
+            // cannot exercise AudioUnitRender or callback teardown on macOS.
+            let source = include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../patches/coreaudio-rs-0.11.3/src/audio_unit/render_callback.rs"
+            ));
+            let input = source
+                .split_once("pub fn set_input_callback")
+                .unwrap()
+                .1
+                .split_once("pub fn free_render_callback")
+                .unwrap()
+                .0;
+            let teardown = source.split_once("pub fn free_input_callback").unwrap().1;
+            assert!(input.contains("InputBuffer::new"));
+            assert!(input.contains("data.resize(data_byte_size as usize)"));
+            assert!(!input.contains("mem::forget"));
+            assert!(!teardown.contains("Vec::from_raw_parts"));
+        }
+
+        #[test]
         fn alsa_input_overrun_reports_lost_audio() {
             let source = include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
@@ -3314,6 +3407,63 @@ mod cpal_impl {
         }
 
         #[cfg(target_os = "linux")]
+        fn exercise_alsa_playback_pause_failure(mode: libc::c_int) {
+            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+            use std::sync::mpsc;
+            use std::time::Duration;
+
+            let arm: unsafe extern "C" fn(libc::c_int) =
+                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_arm_alsa_pause")) };
+            let calls: unsafe extern "C" fn() -> libc::c_int =
+                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_pause_calls")) };
+            let device = cpal::default_host().default_output_device().unwrap();
+            let supported = device.default_output_config().unwrap();
+            let format = supported.sample_format();
+            let config: cpal::StreamConfig = supported.into();
+            let (tx, rx) = mpsc::sync_channel(1);
+            let stream = device
+                .build_output_stream_raw(
+                    &config,
+                    format,
+                    move |data, _| {
+                        data.bytes_mut().fill(0);
+                        let _ = tx.try_send(());
+                    },
+                    |_| {},
+                    None,
+                )
+                .unwrap();
+            stream.play().unwrap();
+            rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            unsafe { arm(mode) };
+            let error = stream
+                .pause()
+                .expect_err("ALSA pause failure must be reported");
+            assert!(error.to_string().contains("snd_pcm_pause"));
+            assert_eq!(unsafe { calls() }, 1);
+            // Propagate a simulated successful native return too. The null
+            // PCM can race from running to XRUN before a real retry reaches it.
+            unsafe { arm(6) };
+            stream.pause().unwrap();
+            assert_eq!(unsafe { calls() }, 1);
+            drop(stream);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only pause-failure preload"]
+        fn cpal_alsa_playback_reports_unsupported_pause() {
+            exercise_alsa_playback_pause_failure(4);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only pause-failure preload"]
+        fn cpal_alsa_playback_reports_pause_io_error() {
+            exercise_alsa_playback_pause_failure(5);
+        }
+
+        #[cfg(target_os = "linux")]
         #[test]
         #[ignore = "requires an isolated ALSA null capture device"]
         fn cpal_alsa_input_waits_for_play_and_can_be_dropped_unstarted() {
@@ -3549,6 +3699,179 @@ mod cpal_impl {
         }
 
         #[cfg(target_os = "linux")]
+        fn exercise_alsa_capability_cache(failure: Option<(i32, bool)>) {
+            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            use std::time::{Duration, Instant};
+
+            let fail_open: unsafe extern "C" fn(libc::c_int) = unsafe {
+                std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_fail_open"))
+            };
+            let fail_setup: unsafe extern "C" fn() = unsafe {
+                std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_fail_setup"))
+            };
+            let opens: unsafe extern "C" fn() -> libc::c_int = unsafe {
+                std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_capture_opens"))
+            };
+            let injected: unsafe extern "C" fn() -> libc::c_int =
+                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_injected")) };
+            let host = cpal::default_host();
+            let target = host
+                .devices()
+                .unwrap()
+                .find(|device| device.name().unwrap() == "maus_capture_only")
+                .expect("capture-only device must initially be discovered by probing");
+            let supported = target.default_input_config().unwrap();
+            let format = supported.sample_format();
+            let config: cpal::StreamConfig = supported.into();
+            let default = host.default_input_device().unwrap();
+            let supported = default.default_input_config().unwrap();
+            let default_format = supported.sample_format();
+            let default_config: cpal::StreamConfig = supported.into();
+
+            if let Some((error, true)) = failure {
+                unsafe { fail_open(error) };
+                assert!(target.default_input_config().is_err());
+                assert_eq!(unsafe { injected() }, 1);
+            }
+            let callbacks = Arc::new(AtomicUsize::new(0));
+            let callback_counter = Arc::clone(&callbacks);
+            let mut stream = default
+                .build_input_stream_raw(
+                    &default_config,
+                    default_format,
+                    move |_, _| {
+                        callback_counter.fetch_add(1, Ordering::Relaxed);
+                    },
+                    |_| {},
+                    None,
+                )
+                .unwrap();
+            stream.play().unwrap();
+            let wait_for_progress = |previous| {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while callbacks.load(Ordering::Relaxed) <= previous {
+                    assert!(
+                        Instant::now() < deadline,
+                        "live stream stopped producing callbacks"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            };
+            wait_for_progress(0);
+            if !matches!(failure, Some((_, true))) {
+                unsafe {
+                    if let Some((error, false)) = failure {
+                        fail_open(error)
+                    } else {
+                        fail_setup()
+                    }
+                }
+                assert!(target
+                    .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
+                    .is_err());
+                assert_eq!(unsafe { injected() }, 1);
+            }
+            assert!(!cpal::alsa_capture_cleanup_uncertain());
+            let before = unsafe { opens() };
+            let found = host
+                .devices()
+                .unwrap()
+                .any(|device| device.name().unwrap() == "maus_capture_only");
+            assert_eq!(
+                unsafe { opens() },
+                before,
+                "discovery must not open capture while a stream is live"
+            );
+            assert_eq!(
+                found,
+                !matches!(failure, Some((libc::ENODEV | libc::ENOENT, _))),
+                "unexpected capture-only discovery after {failure:?}"
+            );
+            let previous = callbacks.load(Ordering::Relaxed);
+            wait_for_progress(previous);
+            #[allow(unreachable_patterns)]
+            match stream.as_inner_mut() {
+                cpal::platform::StreamInner::Alsa(inner) => inner.stop_input_for_release().unwrap(),
+                _ => panic!("expected ALSA stream"),
+            }
+            drop(stream);
+            assert!(!cpal::alsa_capture_cleanup_uncertain());
+            let before = unsafe { opens() };
+            assert!(host
+                .devices()
+                .unwrap()
+                .any(|device| device.name().unwrap() == "maus_capture_only"));
+            assert!(
+                unsafe { opens() } > before,
+                "discovery must probe again after release"
+            );
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_survives_setup_failure() {
+            exercise_alsa_capability_cache(None);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_survives_busy_build() {
+            exercise_alsa_capability_cache(Some((libc::EBUSY, false)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_survives_busy_probe() {
+            exercise_alsa_capability_cache(Some((libc::EBUSY, true)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_forgets_missing_build() {
+            exercise_alsa_capability_cache(Some((libc::ENODEV, false)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_forgets_missing_probe() {
+            exercise_alsa_capability_cache(Some((libc::ENODEV, true)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_survives_permission_build() {
+            exercise_alsa_capability_cache(Some((libc::EACCES, false)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_survives_permission_probe() {
+            exercise_alsa_capability_cache(Some((libc::EACCES, true)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_forgets_absent_build() {
+            exercise_alsa_capability_cache(Some((libc::ENOENT, false)));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
+        fn cpal_alsa_cache_forgets_absent_probe() {
+            exercise_alsa_capability_cache(Some((libc::ENOENT, true)));
+        }
+
+        #[cfg(target_os = "linux")]
         fn exercise_alsa_uncertain_open(probe: bool) {
             use super::RecordingManager;
             use crate::platform::Recorder;
@@ -3635,6 +3958,49 @@ mod cpal_impl {
                 result,
                 Err(cpal::BuildStreamError::BackendSpecific { .. })
             ));
+            assert_eq!(unsafe { closes() }, 1);
+            let stream = device
+                .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
+                .unwrap();
+            stream.play().unwrap();
+            drop(stream);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only build-failure preload"]
+        fn cpal_alsa_poll_count_error_closes_capture_and_reports_cause() {
+            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+            let arm = unsafe {
+                libc::dlsym(
+                    libc::RTLD_DEFAULT,
+                    c"maus_test_arm_alsa_poll_count_failure".as_ptr(),
+                )
+            };
+            let closes = unsafe {
+                libc::dlsym(
+                    libc::RTLD_DEFAULT,
+                    c"maus_test_alsa_build_close_calls".as_ptr(),
+                )
+            };
+            assert!(
+                !arm.is_null() && !closes.is_null(),
+                "build-failure preload required"
+            );
+            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
+            let closes: unsafe extern "C" fn() -> libc::c_int =
+                unsafe { std::mem::transmute(closes) };
+            let device = cpal::default_host().default_input_device().unwrap();
+            let supported = device.default_input_config().unwrap();
+            let format = supported.sample_format();
+            let config: cpal::StreamConfig = supported.into();
+            unsafe { arm() };
+            let error = device
+                .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
+                .err()
+                .expect("poll descriptor failure must reject the stream");
+            assert!(error.to_string().contains("snd_pcm_poll_descriptors_count"));
             assert_eq!(unsafe { closes() }, 1);
             let stream = device
                 .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
@@ -4190,10 +4556,11 @@ mod cpal_impl {
             stream.play().unwrap();
             data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
             unsafe { arm() };
-            assert!(matches!(
-                error_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-                cpal::StreamError::DeviceNotAvailable
-            ));
+            let error = error_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(
+                matches!(error, cpal::StreamError::DeviceNotAvailable),
+                "expected a device disconnect, got {error:?}"
+            );
             std::thread::sleep(Duration::from_millis(30));
             assert!(error_rx.try_recv().is_err());
             assert_eq!(unsafe { observations() }, 1);
@@ -4228,6 +4595,113 @@ mod cpal_impl {
         #[ignore = "requires ALSA null and the test-only disconnected-state preload"]
         fn cpal_alsa_capture_disconnected_state_stops_worker() {
             check_alsa_capture_disconnect(true);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_disconnect_during_descriptor_fill_stops_worker() {
+            check_alsa_capture_disconnect(false);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_disconnect_during_revents_stops_worker() {
+            check_alsa_capture_disconnect(false);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_disconnect_during_status_stops_worker() {
+            check_alsa_capture_disconnect(false);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_disconnect_during_avail_stops_worker() {
+            check_alsa_capture_disconnect(false);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_disconnect_during_read_stops_worker() {
+            check_alsa_capture_disconnect(false);
+        }
+
+        #[cfg(target_os = "linux")]
+        fn check_alsa_playback_disconnect() {
+            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+            use std::sync::mpsc;
+            use std::time::Duration;
+
+            let arm = unsafe {
+                libc::dlsym(
+                    libc::RTLD_DEFAULT,
+                    c"maus_test_inject_alsa_disconnect".as_ptr(),
+                )
+            };
+            let observations = unsafe {
+                libc::dlsym(
+                    libc::RTLD_DEFAULT,
+                    c"maus_test_alsa_disconnect_observations".as_ptr(),
+                )
+            };
+            assert!(
+                !arm.is_null() && !observations.is_null(),
+                "disconnect preload required"
+            );
+            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
+            let observations: unsafe extern "C" fn() -> libc::c_uint =
+                unsafe { std::mem::transmute(observations) };
+            let device = cpal::default_host().default_output_device().unwrap();
+            let supported = device.default_output_config().unwrap();
+            let format = supported.sample_format();
+            let config: cpal::StreamConfig = supported.into();
+            let (data_tx, data_rx) = mpsc::sync_channel(1);
+            let (error_tx, error_rx) = mpsc::channel();
+            let stream = device
+                .build_output_stream_raw(
+                    &config,
+                    format,
+                    move |_, _| {
+                        let _ = data_tx.try_send(());
+                    },
+                    move |error| {
+                        let _ = error_tx.send(error);
+                    },
+                    None,
+                )
+                .unwrap();
+            stream.play().unwrap();
+            data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            unsafe { arm() };
+            let error = error_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(
+                matches!(error, cpal::StreamError::DeviceNotAvailable),
+                "expected a device disconnect, got {error:?}"
+            );
+            std::thread::sleep(Duration::from_millis(30));
+            assert!(error_rx.try_recv().is_err());
+            assert_eq!(unsafe { observations() }, 1);
+            drop(stream);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_playback_disconnect_during_write_stops_worker() {
+            check_alsa_playback_disconnect();
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
+        fn cpal_alsa_playback_disconnect_during_recovery_stops_worker() {
+            check_alsa_playback_disconnect();
         }
 
         #[cfg(target_os = "linux")]

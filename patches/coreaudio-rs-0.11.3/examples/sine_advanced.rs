@@ -102,7 +102,7 @@ fn main() -> Result<(), coreaudio::Error> {
     };
 
     println!("stream format={:#?}", &stream_format);
-    println!("asbd={:#?}", &stream_format.to_asbd());
+    println!("asbd={:#?}", &stream_format.to_asbd()?);
 
     // Lets print all supported formats, disabled for now since it often crashes.
     println!("All supported formats");
@@ -136,7 +136,7 @@ fn main() -> Result<(), coreaudio::Error> {
 
     println!("write audio unit StreamFormat property");
     let id = kAudioUnitProperty_StreamFormat;
-    let asbd = stream_format.to_asbd();
+    let asbd = stream_format.to_asbd()?;
     audio_unit.set_property(id, Scope::Input, Element::Output, Some(&asbd))?;
 
     // For this example, our sine wave expects `f32` data.
@@ -150,7 +150,7 @@ fn main() -> Result<(), coreaudio::Error> {
 
     if INTERLEAVED {
         println!("Register interleaved callback");
-        type Args = render_callback::Args<data::Interleaved<f32>>;
+        type Args<'a> = render_callback::Args<'a, data::Interleaved<f32>>;
         audio_unit.set_render_callback(move |args| {
             let Args {
                 num_frames, data, ..
@@ -170,7 +170,7 @@ fn main() -> Result<(), coreaudio::Error> {
         })?;
     } else {
         println!("Register non-interleaved callback");
-        type Args = render_callback::Args<data::NonInterleaved<f32>>;
+        type Args<'a> = render_callback::Args<'a, data::NonInterleaved<f32>>;
         audio_unit.set_render_callback(move |args| {
             let Args {
                 num_frames,

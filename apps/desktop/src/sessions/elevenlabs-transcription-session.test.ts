@@ -264,4 +264,77 @@ describe("ElevenLabs audio retention across a socket close", () => {
     expect(result.rawTranscript).toContain("hi");
     expect(result.warnings).toEqual([]);
   });
+
+  it("surfaces a provider error received after session_started as a failed transcription", async () => {
+    const { session, socket } = await startSession();
+    socket.onmessage?.({
+      data: JSON.stringify({
+        message_type: "error",
+        error: "account access revoked",
+      }),
+    });
+
+    const result = await session.finalize({ samples: [], sampleRate: 16000 });
+    expect(result.rawTranscript).toBeNull();
+    expect(result.warnings).toEqual([
+      "ElevenLabs finalization failed: account access revoked",
+    ]);
+  });
+
+  it("keeps committed text when a provider error arrives later", async () => {
+    const { session, socket } = await startSession();
+    socket.onmessage?.({
+      data: JSON.stringify({
+        message_type: "committed_transcript",
+        text: "heard before rejection",
+      }),
+    });
+    socket.onmessage?.({
+      data: JSON.stringify({ message_type: "error", error: "quota exceeded" }),
+    });
+
+    const result = await session.finalize({ samples: [], sampleRate: 16000 });
+    expect(result.rawTranscript).toBe("heard before rejection");
+    expect(result.warnings).toEqual([
+      "ElevenLabs finalization failed: quota exceeded",
+    ]);
+  });
+
+  it("preserves partial text and a warning when the provider fails during finalization", async () => {
+    const { session, socket } = await startSession();
+    socket.onmessage?.({
+      data: JSON.stringify({
+        message_type: "partial_transcript",
+        text: "unfinished words",
+      }),
+    });
+    const finalizing = session.finalize({ samples: [], sampleRate: 16000 });
+    socket.onmessage?.({
+      data: JSON.stringify({ message_type: "error", error: "quota exceeded" }),
+    });
+    const result = await finalizing;
+    expect(result.rawTranscript).toBe("unfinished words");
+    expect(result.warnings).toEqual([
+      "ElevenLabs finalization failed: quota exceeded",
+    ]);
+  });
+
+  it("preserves partial text and a warning when the provider fails", async () => {
+    const { session, socket } = await startSession();
+    socket.onmessage?.({
+      data: JSON.stringify({
+        message_type: "partial_transcript",
+        text: "unfinished words",
+      }),
+    });
+    socket.onmessage?.({
+      data: JSON.stringify({ message_type: "error", error: "quota exceeded" }),
+    });
+
+    const result = await session.finalize({ samples: [], sampleRate: 16000 });
+    expect(result.rawTranscript).toBe("unfinished words");
+    expect(result.warnings).toEqual([
+      "ElevenLabs finalization failed: quota exceeded",
+    ]);
+  });
 });

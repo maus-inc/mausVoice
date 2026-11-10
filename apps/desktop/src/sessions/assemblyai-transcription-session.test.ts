@@ -88,6 +88,134 @@ describe("AssemblyAITranscriptionSession finalize contract", () => {
     vi.unstubAllGlobals();
   });
 
+  it("surfaces a provider error received after Begin as a failed transcription", async () => {
+    const session = new AssemblyAITranscriptionSession("test-key");
+    await session.onRecordingStart(16000);
+    const socket = createdSockets.at(-1);
+    expect(socket).toBeTruthy();
+
+    socket?.onmessage?.({
+      data: JSON.stringify({ type: "Error", error: "account access revoked" }),
+    });
+
+    const result = await session.finalize({
+      samples: [],
+      sampleRate: 16000,
+    });
+    expect(result.rawTranscript).toBeNull();
+    expect(result.warnings).toEqual([
+      "AssemblyAI finalization failed: account access revoked",
+    ]);
+  });
+
+  it("keeps an accumulated transcript when a provider error arrives later", async () => {
+    const session = new AssemblyAITranscriptionSession("test-key");
+    await session.onRecordingStart(16000);
+    const socket = createdSockets.at(-1);
+    expect(socket).toBeTruthy();
+
+    socket?.onmessage?.({
+      data: JSON.stringify({
+        type: "Turn",
+        end_of_turn: true,
+        turn_order: 0,
+        transcript: "heard before rejection",
+      }),
+    });
+    socket?.onmessage?.({
+      data: JSON.stringify({ type: "Error", error: "quota exceeded" }),
+    });
+
+    const result = await session.finalize({
+      samples: [],
+      sampleRate: 16000,
+    });
+    expect(result.rawTranscript).toBe("heard before rejection");
+    expect(result.warnings).toEqual([
+      "AssemblyAI finalization failed: quota exceeded",
+    ]);
+  });
+
+  it("preserves partial text and a warning when the provider fails during finalization", async () => {
+    const session = new AssemblyAITranscriptionSession("test-key");
+    await session.onRecordingStart(16000);
+    const socket = createdSockets.at(-1);
+    socket?.onmessage?.({
+      data: JSON.stringify({
+        type: "Turn",
+        end_of_turn: false,
+        turn_order: 0,
+        transcript: "unfinished words",
+      }),
+    });
+    const finalizing = session.finalize({ samples: [], sampleRate: 16000 });
+    socket?.onmessage?.({
+      data: JSON.stringify({ type: "Error", error: "quota exceeded" }),
+    });
+    const result = await finalizing;
+    expect(result.rawTranscript).toBe("unfinished words");
+    expect(result.warnings).toEqual([
+      "AssemblyAI finalization failed: quota exceeded",
+    ]);
+  });
+
+  it("preserves partial text and a warning when the provider fails", async () => {
+    const session = new AssemblyAITranscriptionSession("test-key");
+    await session.onRecordingStart(16000);
+    const socket = createdSockets.at(-1);
+    socket?.onmessage?.({
+      data: JSON.stringify({
+        type: "Turn",
+        end_of_turn: false,
+        turn_order: 0,
+        transcript: "unfinished words",
+      }),
+    });
+    socket?.onmessage?.({
+      data: JSON.stringify({ type: "Error", error: "quota exceeded" }),
+    });
+
+    const result = await session.finalize({ samples: [], sampleRate: 16000 });
+    expect(result.rawTranscript).toBe("unfinished words");
+    expect(result.warnings).toEqual([
+      "AssemblyAI finalization failed: quota exceeded",
+    ]);
+  });
+
+  it("retains the latest partial for the first turn when no final turn arrives", async () => {
+    const session = await startAssemblyAIStreaming("test-key", 16000, []);
+    const socket = createdSockets.at(-1)!;
+    for (const transcript of ["hello", "hello world"]) {
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: "Turn",
+          end_of_turn: false,
+          turn_order: 0,
+          transcript,
+        }),
+      });
+    }
+    const result = session.finalize();
+    socket.close();
+    await expect(result).resolves.toBe("hello world");
+  });
+
+  it("replaces a partial with its final turn before retaining the next turn", async () => {
+    const session = await startAssemblyAIStreaming("test-key", 16000, []);
+    const socket = createdSockets.at(-1)!;
+    for (const turn of [
+      { turn_order: 0, end_of_turn: false, transcript: "first partial" },
+      { turn_order: 0, end_of_turn: true, transcript: "first final" },
+      { turn_order: 1, end_of_turn: false, transcript: "second partial" },
+      { turn_order: 1, end_of_turn: false, transcript: "second latest" },
+    ]) {
+      socket.onmessage?.({ data: JSON.stringify({ type: "Turn", ...turn }) });
+    }
+    const result = session.finalize();
+    socket.close();
+    await expect(result).resolves.toBe("first final second latest");
+  });
+
   it("returns the accumulated turn transcript instead of 'session was not established'", async () => {
     const session = new AssemblyAITranscriptionSession("test-key");
     await session.onRecordingStart(16000);

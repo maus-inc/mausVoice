@@ -124,11 +124,67 @@ impl Iterator for ChmapsQuery {
         if p.is_null() { return None; }
         self.1 += 1;
         let t = ChmapType::from_c_int(unsafe { (*p).type_ } as libc::c_int, "snd_pcm_query_chmaps").unwrap();
-        let m = Chmap(unsafe { &mut (*p).map }, false);
-        Some((t, m))
+        // The iterator owns the query allocation. Return an independent map so
+        // it remains valid after the iterator is dropped, preserving raw flags
+        // in each position rather than converting through ChmapPosition.
+        let source = unsafe { std::ptr::addr_of!((*p).map) };
+        let channels = unsafe { (*source).channels as usize };
+        let bytes = channels.checked_mul(mem::size_of::<libc::c_uint>())
+            .and_then(|n| n.checked_add(mem::size_of::<alsa::snd_pcm_chmap_t>()))
+            .expect("channel map size overflow");
+        let copy = unsafe { libc::malloc(bytes) } as *mut alsa::snd_pcm_chmap_t;
+        if copy.is_null() { panic!("Out of memory") }
+        unsafe { std::ptr::copy_nonoverlapping(source as *const u8, copy as *mut u8, bytes) };
+        Some((t, Chmap(copy, true)))
     }
 }
 
+
+#[test]
+fn queried_chmap_owns_a_copy_after_the_query_is_dropped() {
+    use std::ptr;
+    unsafe {
+        let entries = libc::calloc(2, mem::size_of::<*mut alsa::snd_pcm_chmap_query_t>())
+            as *mut *mut alsa::snd_pcm_chmap_query_t;
+        let entry = libc::calloc(1, mem::size_of::<alsa::snd_pcm_chmap_query_t>() + 2 * mem::size_of::<libc::c_uint>())
+            as *mut alsa::snd_pcm_chmap_query_t;
+        assert!(!entries.is_null() && !entry.is_null());
+        *entries = entry;
+        (*entry).type_ = alsa::SND_CHMAP_TYPE_FIXED;
+        (*entry).map.channels = 2;
+        let positions = (*entry).map.pos.as_mut_ptr();
+        *positions = alsa::SND_CHMAP_FL;
+        *positions.add(1) = alsa::SND_CHMAP_FR | (1 << 16);
+        let original = ptr::addr_of_mut!((*entry).map);
+        let mut query = chmaps_query_new(entries);
+        let (kind, map) = query.next().unwrap();
+        assert_eq!(kind, ChmapType::Fixed);
+        assert_ne!(map.0, original, "the returned map must not borrow query-owned memory");
+        assert!(query.next().is_none());
+        drop(query);
+        assert_eq!(map.as_slice(), &[alsa::SND_CHMAP_FL, alsa::SND_CHMAP_FR | (1 << 16)]);
+    }
+}
+
+#[test]
+fn queried_zero_channel_map_and_empty_query_are_safe() {
+    let mut empty = chmaps_query_new(std::ptr::null_mut());
+    assert!(empty.next().is_none());
+    drop(empty);
+    unsafe {
+        let entries = libc::calloc(2, mem::size_of::<*mut alsa::snd_pcm_chmap_query_t>())
+            as *mut *mut alsa::snd_pcm_chmap_query_t;
+        let entry = libc::calloc(1, mem::size_of::<alsa::snd_pcm_chmap_query_t>())
+            as *mut alsa::snd_pcm_chmap_query_t;
+        assert!(!entries.is_null() && !entry.is_null());
+        *entries = entry;
+        (*entry).type_ = alsa::SND_CHMAP_TYPE_FIXED;
+        let mut query = chmaps_query_new(entries);
+        let (_, map) = query.next().unwrap();
+        drop(query);
+        assert!(map.as_slice().is_empty());
+    }
+}
 
 #[test]
 fn chmap_for_first_pcm() {

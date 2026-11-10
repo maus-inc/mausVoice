@@ -30,7 +30,7 @@ use std::ffi::{CStr, CString};
 use super::error::*;
 use std::ptr;
 use super::{ctl_int, poll};
-use libc::{c_short, c_uint, c_int, pollfd};
+use libc::{c_short, c_uint, pollfd};
 
 
 /// [snd_hctl_t](http://www.alsa-project.org/alsa-doc/alsa-lib/group___h_control.html) wrapper
@@ -76,13 +76,17 @@ impl HCtl {
         acheck!(snd_hctl_handle_events(self.0)).map(|x| x as u32)
     }
 
+    /// `None` waits indefinitely; finite values above `i32::MAX` return `EINVAL`.
     pub fn wait(&self, timeout_ms: Option<u32>) -> Result<bool> {
-        acheck!(snd_hctl_wait(self.0, timeout_ms.map(|x| x as c_int).unwrap_or(-1))).map(|i| i == 1) }
+        acheck!(snd_hctl_wait(self.0, wait_timeout(timeout_ms, "snd_hctl_wait")?)).map(|i| i == 1) }
 }
 
 impl poll::Descriptors for HCtl {
     fn count(&self) -> usize {
-        unsafe { alsa::snd_hctl_poll_descriptors_count(self.0) as usize }
+        self.try_count().unwrap_or(0)
+    }
+    fn try_count(&self) -> Result<usize> {
+        acheck!(snd_hctl_poll_descriptors_count(self.0)).map(|count| count as usize)
     }
     fn fill(&self, p: &mut [pollfd]) -> Result<usize> {
         let z = unsafe { alsa::snd_hctl_poll_descriptors(self.0, p.as_mut_ptr(), p.len() as c_uint) };

@@ -38,9 +38,9 @@ so the divergence stays visible rather than being quietly rewritten.
 
 3. **The size cap is "no file exceeds 90 MiB", not "every file is under 90 MiB".**
    Section 1 says "Every file < 90 MiB". Under `split -b 90m` every full part is exactly
-   94,371,840 bytes, which is not less than 90 MiB. Measured on the pushed branch, three
-   parts are exactly 94,371,840 B and the two remainder parts are 37,571,332 B and
-   39,438,244 B.
+   94,371,840 bytes, which is not less than 90 MiB. Measured on the pushed branch at tip
+   `3025c92b`, nine archives are split into twenty-four parts, fifteen of them exactly
+   94,371,840 B and nine shorter remainders.
 
 4. **The packed size estimate is high by about a third.** Section 1 says to expect 1.0 to
    1.4 GB packed and Section 5 says about 0.9 to 1.1 GB. The branch is 798,761,772 bytes
@@ -49,7 +49,10 @@ so the divergence stays visible rather than being quietly rewritten.
 
    That figure is the first delivery. The second delivery, G9 to G13, raised the total to
    1,500,745,192 bytes across 3891 files at its tip, and the third, G16 to G22, raised it
-   again to 2,631,684,475 bytes across 14438 blobs at tip `8442ae0`, measured on 2026-11-05.
+   again to 2,631,684,491 bytes across 14438 blobs at tip `82b2f983`. The fourth delivery,
+   G23 to G27, added the native compiler, the runtime data, a browser, the language
+   runtimes and the document tools, and raised it again to 3,801,318,435 bytes across 22476
+   blobs at tip `3025c92b`, measured on 2026-11-09.
 
 None of these change what the payload contains, and none of them invalidate the gates.
 The branch is correct. The spec's arithmetic and two of its command snippets were not.
@@ -97,13 +100,13 @@ what you build.
 | Repo | `maus-inc/mausVoice` |
 | Branch name | `vendor/sandbox-toolchain` (exactly; the sandbox docs will hardcode it) |
 | History | **Orphan.** `git checkout --orphan`, zero parents, **one** commit |
-| Commit message | `vendor: sandbox toolchain payload (G1-G8, G9-G13)` |
+| Commit message | `vendor: sandbox toolchain payload (G1-G8, G9-G13, G16-G27)` |
 | Mergeable | Never. No PR, no merge, no rebase onto `main` |
 | Base | None. Do not branch from `main` |
 | Git LFS | **Not used.** This repo has no LFS (`.gitattributes` carries only two rules: `-whitespace` on `packages/desktop-native-apis/src/bindings.ts` and `*.sql text eol=lf`). Do not introduce LFS |
 | Per-file size cap | **Every file < 90 MiB.** GitHub rejects pushes over 100 MiB. The reference branch splits at exactly `94371840` bytes (= 90 MiB) |
 | Split naming | `<asset>.part-00`, `<asset>.part-01`, … zero-padded two digits, ascending, produced by `split -b 90m` |
-| Total payload | Reference branch: 880 MB packed / 3777 files. Expect **1.0–1.4 GB packed** here (§5 sizes the delta). As shipped with G9 to G13: **1.5 GB packed / 3891 files**. As shipped with G16 to G22: **2.63 GB packed / 14438 blobs** at tip `8442ae0` |
+| Total payload | Reference branch: 880 MB packed / 3777 files. Expect **1.0–1.4 GB packed** here (§5 sizes the delta). As shipped with G9 to G13: **1.5 GB packed / 3891 files**. As shipped with G16 to G27: **3.8 GB packed / 22476 blobs** at tip `3025c92b` |
 | Manifest | `MANIFEST.sha256` at the branch root, `sha256sum` format (`<64 hex><two spaces><relative path>`), covering **every** file in the tree **plus** each split archive listed a second time under its **reassembled** name |
 | Docs | `README.md` and `FETCH.md` at the branch root (§8, §9) |
 | Source code | **None.** No `apps/`, no `packages/`, no `.github/`. Nothing here is imported by the application at build or run time |
@@ -447,9 +450,10 @@ Two **defects in the reference branch to not copy**:
 | G8 manifest+docs | 0.5 MB | ~0.6 MB | More files → more lines |
 | **Total** | **880 MB** | **~0.9–1.1 GB** | |
 | **Total, G9 to G13 shipped** | — | **1.5 GB packed / 3891 files** | The first-delivery estimate above sizes G1 to G8 only. The second delivery added G9 to G13 on 2026-11-05, which took the shipped total past the estimate. Measure the tree, do not reuse the G1 to G8 figure. |
-| **Total, G16 to G22 shipped** | — | **`system/tools` is 1.4 GB; the whole branch is 2.63 GB** at tip `8442ae0` | The third delivery adds G16 to G22. G21 is most of the growth, because a cross compiler needs its `lib/gcc`, `lib/gcc-cross` and target sysroot trees. The estimate above sized the driver binaries only. Measured with `du` over `system/tools` and `git ls-tree -r -l` over the branch, 2026-11-05. |
+| **Total, G16 to G22 shipped** | — | **`system/tools` is 1.4 GB; the whole branch was 2.63 GB** at tip `82b2f983` | The third delivery adds G16 to G22. G21 is most of the growth, because a cross compiler needs its `lib/gcc`, `lib/gcc-cross` and target sysroot trees. The estimate above sized the driver binaries only. Measured with `du` over `system/tools` and `git ls-tree -r -l` over the branch, 2026-11-05. |
+| **Total, G23 to G27 shipped** | — | **`system/tools` is 2.6 GB; the whole branch is 3.8 GB** at tip `3025c92b` | The fourth delivery adds G23 to G27. G25 (Chromium, 348 MB unpacked) and G26 (the JRE, Ruby, CPython and Perl, 290 MB) are most of the growth, on top of the native compiler closure in G23. Measured with `du` over `system/tools` and `git ls-tree -r -l` over the branch, 2026-11-09. |
 
-Extracted total ≈ **3.5–4.5 GB** in `/tmp`. Against 19 GB free that leaves room for
+Extracted total ≈ **3.5–4.5 GB** in `/tmp` for G1 to G8; the delivered payload with G9 to G27 extracts to about **8.3 GB**. Against 19 GB free that leaves room for
 `target/` dirs, but `README.md` must still tell the consumer to delete the downloaded
 tarball/clone after extraction and to reuse one `CARGO_TARGET_DIR`.
 
@@ -1220,6 +1224,7 @@ archive):
 ```bash
 for f in $(grep -o '^[a-f0-9]\{64\}  .*\.part-00$' MANIFEST.sha256 | sed 's/.*  //; s/\.part-00$//'); do
   cat "$f".part-* > "$f"
+  chmod --reference="$f.part-00" "$f"   # cat drops the mode; keep the parts' bits
 done
 sha256sum -c MANIFEST.sha256
 ```
@@ -1287,8 +1292,8 @@ list). Non-negotiable inclusions:
 
 G1 to G8 make the gates the delivered branch already passes. G9 to G13 close the stages that
 branch cannot cover, measured in `engineering/sandbox-coverage-gaps.md`. They shipped in the
-same orphan commit, which the third delivery moved to
-`8442ae0c4e8d0c6a3e2a54072c53e8db5e0fa9e7`, so a consumer gets every group from the same
+same orphan commit, which the third delivery moved to `82b2f983` and the fourth moved to
+`3025c92b50c9d8977941b689a779068997896d38`, so a consumer gets every group from the same
 fetch. The build notes below stay as the rebuild procedure. Extend a group rather than
 adding a branch when a task needs more.
 

@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   chunkListener: null as
-    | ((event: { payload: { samples: number[]; offset?: number } }) => void)
+    | ((event: {
+        payload: {
+          samples: number[];
+          offset?: number;
+          ownerId?: string;
+          generation?: number;
+        };
+      }) => void)
     | null,
   unlisten: vi.fn(),
   deferListen: false,
@@ -24,7 +31,12 @@ vi.mock("@tauri-apps/api/event", () => ({
     async (
       event: string,
       listener: (event: {
-        payload: { samples: number[]; offset?: number };
+        payload: {
+          samples: number[];
+          offset?: number;
+          ownerId?: string;
+          generation?: number;
+        };
       }) => void,
     ) => {
       if (event !== "audio_chunk") throw new Error(`unexpected ${event}`);
@@ -59,9 +71,10 @@ import {
   type NativeRecordingHandle,
 } from "../../utils/native-recording-session";
 import {
-  attachSessionAudioIntake,
+  attachSessionAudioIntake as attachStrictSessionAudioIntake,
   createCurrentSegmentGuard,
   forwardAudioChunk,
+  hasLiveAudioDiscontinuity,
   isRecordingStartCurrent,
   releaseRecordingResources,
   requiresLiveIntakeRecovery,
@@ -132,11 +145,35 @@ const strategyStub = (): BaseStrategy =>
   ({ cleanup: vi.fn() }) as unknown as BaseStrategy;
 
 const noOverflow = () => undefined;
+const testAdmission = { ownerId: "test-owner", generation: 1 };
+const attachSessionAudioIntake = (
+  session: Parameters<typeof attachStrictSessionAudioIntake>[0],
+  isCurrent: Parameters<typeof attachStrictSessionAudioIntake>[1],
+  shouldForwardLive: Parameters<typeof attachStrictSessionAudioIntake>[2],
+  onOverflow: Parameters<typeof attachStrictSessionAudioIntake>[3],
+  getAdmission: Parameters<typeof attachStrictSessionAudioIntake>[4] = () =>
+    testAdmission,
+) =>
+  attachStrictSessionAudioIntake(
+    session,
+    isCurrent,
+    shouldForwardLive,
+    onOverflow,
+    getAdmission,
+  );
 
 /** Emits one `audio_chunk` Tauri event at the given recording index. */
-const emitChunk = (values: number[], offset: number | null) =>
+const emitChunk = (
+  values: number[],
+  offset: number | null,
+  admission: { ownerId: string; generation: number } | null = testAdmission,
+) =>
   mocks.chunkListener?.({
-    payload: { samples: values, ...(offset === null ? {} : { offset }) },
+    payload: {
+      samples: values,
+      ...(offset === null ? {} : { offset }),
+      ...admission,
+    },
   });
 
 beforeEach(() => {
@@ -167,7 +204,192 @@ describe("requiresLiveIntakeRecovery", () => {
   });
 });
 
+describe("hasLiveAudioDiscontinuity", () => {
+  it("only seals live sessions and treats missing live intake as discontinuous", () => {
+    const audio = { samples: new Float32Array([0.25]), sampleRate: 16_000 };
+    const sealLiveAudio = vi.fn().mockReturnValue(true);
+    expect(
+      hasLiveAudioDiscontinuity("after-stop", { sealLiveAudio }, audio),
+    ).toBe(false);
+    expect(hasLiveAudioDiscontinuity("local", { sealLiveAudio }, audio)).toBe(
+      false,
+    );
+    expect(sealLiveAudio).not.toHaveBeenCalled();
+    expect(hasLiveAudioDiscontinuity("live-streaming", null, audio)).toBe(true);
+    expect(
+      hasLiveAudioDiscontinuity("live-streaming", { sealLiveAudio }, audio),
+    ).toBe(false);
+    expect(sealLiveAudio).toHaveBeenCalledWith(audio.samples, audio.sampleRate);
+    sealLiveAudio.mockReturnValue(false);
+    expect(
+      hasLiveAudioDiscontinuity("live-streaming", { sealLiveAudio }, audio),
+    ).toBe(true);
+  });
+});
+
 describe("audio intake ownership", () => {
+  it("only forwards chunks for its admitted recording, including during startup", async () => {
+    const write = vi.fn();
+    let admission: { ownerId: string; generation: number } | null = null;
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+      () => admission,
+    );
+    emitChunk([0.8], 0, { ownerId: "old", generation: 1 });
+    emitChunk([0.8], null, null);
+    admission = { ownerId: "new", generation: 2 };
+    emitChunk([0.8], null, { ownerId: "old", generation: 1 });
+    emitChunk([0.8], 0, { ownerId: "old", generation: 1 });
+    emitChunk([0.7], 0, { ownerId: "new", generation: 1 });
+    emitChunk([0.25], 0, admission);
+    emitChunk([0.9], 1, { ownerId: "old", generation: 1 });
+    expect(write).toHaveBeenCalledOnce();
+    expect(Array.from(write.mock.calls[0]![0] as Float32Array)).toEqual([0.25]);
+    expect(intake.sealLiveAudio(new Float32Array([0.25]), 16_000)).toBe(true);
+  });
+
+  it("cannot seal a live recording before an admission exists", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+      () => null,
+    );
+    expect(intake.sealLiveAudio(new Float32Array([0.25]), 16_000)).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("rejects untagged audio once a recording is admitted", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+      () => ({ ownerId: "new", generation: 2 }),
+    );
+    emitChunk([0.25], 0, null);
+    expect(write).not.toHaveBeenCalled();
+    expect(intake.sealLiveAudio(new Float32Array([0.25]), 16_000)).toBe(false);
+  });
+
+  it("seals a contiguous live prefix with the captured tail and ignores late events", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    emitChunk([0.25, 0.5], 0);
+    expect(
+      intake.sealLiveAudio(new Float32Array([0.25, 0.5, 0.75]), 16_000),
+    ).toBe(true);
+    expect(
+      intake.sealLiveAudio(new Float32Array([0.25, 0.5, 0.75]), 16_000),
+    ).toBe(true);
+    emitChunk([0.75], 2);
+    emitChunk([0.75], null, null);
+    expect(intake.hasDiscontinuity()).toBe(false);
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(Array.from(write.mock.calls[1]![0] as Float32Array)).toEqual([0.75]);
+    expect(write.mock.calls[1]![1]).toBe(2);
+  });
+
+  it.each([
+    [[0, 3], "middle gap"],
+    [[1], "missing first chunk"],
+    [[0, null], "missing offset"],
+    [[0, 0], "overlap"],
+  ])("rejects %s when the live stream has a %s", async (offsets) => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    for (const offset of offsets) emitChunk([0.25], offset);
+    expect(intake.sealLiveAudio(new Float32Array(4))).toBe(false);
+  });
+
+  it("rejects dropped startup samples even after the startup buffer is reset", async () => {
+    const intake = await attachSessionAudioIntake(
+      sessionWith(vi.fn()),
+      () => true,
+      () => false,
+      noOverflow,
+    );
+    intake.buffer.setSampleRate(1);
+    emitChunk(samples(31), 0);
+    intake.buffer.reset();
+    expect(intake.sealLiveAudio(new Float32Array(31))).toBe(false);
+  });
+
+  it("rejects a live prefix longer than the retained recording", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    emitChunk([0.25, 0.5], 0);
+    expect(intake.sealLiveAudio(new Float32Array(1), 16_000)).toBe(false);
+    expect(intake.hasDiscontinuity()).toBe(true);
+  });
+
+  it("replays a short missing tail in bounded chunks", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    expect(intake.sealLiveAudio(new Float32Array(25), 100)).toBe(true);
+    expect(
+      write.mock.calls.map(([chunk, offset]) => [
+        (chunk as Float32Array).length,
+        offset,
+      ]),
+    ).toEqual([
+      [10, 0],
+      [10, 10],
+      [5, 20],
+    ]);
+  });
+
+  it("rejects a long undelivered suffix rather than flooding the provider", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    expect(intake.sealLiveAudio(new Float32Array(33), 16)).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("rejects a failed live write", async () => {
+    const intake = await attachSessionAudioIntake(
+      sessionWith(() => {
+        throw new Error("write failed");
+      }),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    emitChunk([0.25], 0);
+    expect(intake.sealLiveAudio(new Float32Array([0.25]))).toBe(false);
+  });
+
   it("registers exactly one audio_chunk listener per recording", async () => {
     const session = sessionWith(vi.fn());
     await attachSessionAudioIntake(

@@ -8,6 +8,7 @@ import {
 let activePlaybackOwner: symbol | null = null;
 
 export type AudioPillPlaybackAttempt = {
+  signal: AbortSignal;
   isCurrent: () => boolean;
   isNonceCurrent: () => boolean;
   beginSetup: () => void;
@@ -26,6 +27,8 @@ export const createAudioPillPlaybackSession = (): AudioPillPlaybackSession => {
   let owner: symbol | null = null;
   let setupPending = false;
 
+  let controller: AbortController | null = null;
+
   return {
     stopOwned(): boolean {
       nonce += 1;
@@ -36,10 +39,17 @@ export const createAudioPillPlaybackSession = (): AudioPillPlaybackSession => {
         stopActivePlayback("stopped");
       }
       owner = null;
+      // Teardown owns the abort: it settles in-flight Web Audio setup even
+      // when global ownership already moved on (aborting is always safe).
+      controller?.abort();
+      controller = null;
       return owned;
     },
 
     beginRequest(): AudioPillPlaybackAttempt {
+      controller?.abort();
+      controller = new AbortController();
+      const ownController = controller;
       const requestNonce = ++nonce;
       const requestOwner = Symbol("audio-pill-playback");
       owner = requestOwner;
@@ -53,6 +63,7 @@ export const createAudioPillPlaybackSession = (): AudioPillPlaybackSession => {
         activePlaybackOwner === requestOwner;
 
       return {
+        signal: controller.signal,
         isCurrent,
         isNonceCurrent: () => nonce === requestNonce,
         beginSetup() {
@@ -82,6 +93,9 @@ export const createAudioPillPlaybackSession = (): AudioPillPlaybackSession => {
             if (owner === requestOwner) {
               owner = null;
             }
+            // The attempt is spent once ownership is released: abort settles
+            // any setup still in flight behind it.
+            ownController.abort();
           }
           return true;
         },
@@ -92,6 +106,7 @@ export const createAudioPillPlaybackSession = (): AudioPillPlaybackSession => {
           activePlaybackOwner = null;
           owner = null;
           setupPending = false;
+          ownController.abort();
           return true;
         },
       };

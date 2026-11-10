@@ -6,9 +6,16 @@ import { expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { setAppState } from "../../store";
 import en from "../../i18n/locales/en.json";
+import es from "../../i18n/locales/es.json";
+import { showErrorSnackbar } from "../../actions/app.actions";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 import { HotkeySetting } from "./HotkeySetting";
 
+vi.mock("../../actions/app.actions", () => ({ showErrorSnackbar: vi.fn() }));
+vi.mock("../../utils/local-data-write-gate", async (original) => ({
+  ...(await original<typeof import("../../utils/local-data-write-gate")>()),
+  beginLocalDataWrite: () => null,
+}));
 vi.mock("@tauri-apps/plugin-os", () => ({ platform: () => "macos" }));
 vi.mock("react-intl", async (importOriginal) => {
   const { reactIntlWithIdsModule } =
@@ -58,6 +65,50 @@ it("names the primary and additional recorders using their setting and ordinal",
           ?.textContent,
       ).toBeTruthy();
     }
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
+});
+
+it("translates the delete failure when a local write cannot start", () => {
+  const state = structuredClone(INITIAL_APP_STATE);
+  state.settings.hotkeyIds = ["primary"];
+  state.hotkeyById = {
+    primary: { id: "primary", actionName: "custom", keys: ["KeyA"] },
+  };
+  setAppState(state, true);
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    act(() =>
+      root.render(
+        createElement(
+          IntlProvider,
+          { locale: "es", messages: es },
+          createElement(HotkeySetting, {
+            title: "Atajo",
+            description: "",
+            actionName: "custom",
+          }),
+        ),
+      ),
+    );
+    const button =
+      host.querySelector(
+        'button[aria-label="Eliminar tecla de acceso rápido"]',
+      ) ??
+      Array.from(host.querySelectorAll("button")).find((item) =>
+        item.querySelector('[data-testid="CloseIcon"]'),
+      );
+    expect(button).toBeTruthy();
+    act(() =>
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+    expect(showErrorSnackbar).toHaveBeenCalledWith(
+      "No se pudo eliminar el atajo. Inténtalo de nuevo.",
+    );
   } finally {
     act(() => root.unmount());
     host.remove();

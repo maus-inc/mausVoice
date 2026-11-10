@@ -223,7 +223,7 @@ const TryItPage = () => {
 
         return (
           <Fragment key={key}>
-            <HotkeyBadge keys={combo} sx={{ mx: 0.25 }} />
+            <HotkeyBadge keys={combo} appearance="3d" sx={{ mx: 0.25 }} />
             {separator}
           </Fragment>
         );

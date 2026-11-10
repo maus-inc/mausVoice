@@ -206,8 +206,8 @@ impl DeviceTrait for Device {
         // fed to the audio buffer.
         let bytes_per_channel = sample_format.sample_size();
         let sample_rate = config.sample_rate;
-        type Args = render_callback::Args<data::Raw>;
-        audio_unit.set_input_callback(move |args: Args| unsafe {
+        type Args<'a> = render_callback::Args<'a, data::Raw>;
+        audio_unit.set_input_callback(move |args: Args<'_>| unsafe {
             let ptr = (*args.data.data).mBuffers.as_ptr() as *const AudioBuffer;
             let len = (*args.data.data).mNumberBuffers as usize;
             let buffers: &[AudioBuffer] = slice::from_raw_parts(ptr, len);
@@ -285,8 +285,8 @@ impl DeviceTrait for Device {
         // fed to the audio buffer.
         let bytes_per_channel = sample_format.sample_size();
         let sample_rate = config.sample_rate;
-        type Args = render_callback::Args<data::Raw>;
-        audio_unit.set_render_callback(move |args: Args| unsafe {
+        type Args<'a> = render_callback::Args<'a, data::Raw>;
+        audio_unit.set_render_callback(move |args: Args<'_>| unsafe {
             // If `run()` is currently running, then a callback will be available from this list.
             // Otherwise, we just fill the buffer with zeroes and return.
 
@@ -406,8 +406,9 @@ fn configure_for_recording(audio_unit: &mut AudioUnit) -> Result<(), coreaudio::
 fn default_output_asbd() -> Result<AudioStreamBasicDescription, coreaudio::Error> {
     let audio_unit = create_audio_unit()?;
     let id = kAudioUnitProperty_StreamFormat;
+    // The stream-format property is an AudioStreamBasicDescription.
     let asbd: AudioStreamBasicDescription =
-        audio_unit.get_property(id, Scope::Output, Element::Output)?;
+        unsafe { audio_unit.get_property(id, Scope::Output, Element::Output)? };
     Ok(asbd)
 }
 
@@ -418,8 +419,9 @@ fn default_input_asbd() -> Result<AudioStreamBasicDescription, coreaudio::Error>
     audio_unit.initialize()?;
 
     let id = kAudioUnitProperty_StreamFormat;
+    // The stream-format property is an AudioStreamBasicDescription.
     let asbd: AudioStreamBasicDescription =
-        audio_unit.get_property(id, Scope::Input, Element::Input)?;
+        unsafe { audio_unit.get_property(id, Scope::Input, Element::Input)? };
     Ok(asbd)
 }
 

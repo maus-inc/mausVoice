@@ -1,6 +1,6 @@
 # What the sandbox still lacks, beyond this repository's gates
 
-Scope. This file describes one environment: the Arena agent sandbox that runs this repository's agent, measured on 2026-11-05, with `vendor/sandbox-toolchain` at `8442ae0` fetched. It is not a property of the repository, of CI, or of your machine. On a host with normal internet, none of this applies: install the tool and move on. Probe before you repeat a line here, because a limit that does not hold where you run is not a limit.
+Scope. This file describes one environment: the Arena agent sandbox that runs this repository's agent, measured on 2026-11-05 and 2026-11-09, with `vendor/sandbox-toolchain` at `3025c92b` fetched. It is not a property of the repository, of CI, or of your machine. On a host with normal internet, none of this applies: install the tool and move on. Probe before you repeat a line here, because a limit that does not hold where you run is not a limit.
 
 Purpose. `engineering/sandbox-coverage-gaps.md` covers the gaps that block this repository's own gates (G9 to G15). This file covers everything else a development cycle needs, in this repository and in any other, so a builder on an unrestricted machine knows what to add to the payload and what can never be added.
 
@@ -12,7 +12,7 @@ Machine: 2 vCPU, 3,939 MB of RAM, 21 GB free disk, no Docker daemon, no GPU, no 
 
 Base image has: `git`, `gh`, node 22 with npm, pnpm and yarn, python 3.11 with pip, gcc and g++ 12, make, binutils, `curl`, `wget`, `jq`, `openssl`, `perl`, `tar`, `xz`, `zip`, `unzip`, `nc`, `socat`, `ssh`, `scp`, `ps`, `top`, `free`, `convert`, `ldd`.
 
-The payload at `8442ae0` adds the Rust 1.88 toolchain and vendored crate tree, a Debian 12 development sysroot of 634 packages, the WebDriver drivers, the model set, the cross-target standard libraries, and `system/tools` with the G9, G13 and G16 to G22 binaries. `system/tools` grew from 249 MB to 1.4 GB unpacked across the three deliveries.
+The payload at `3025c92b` adds the Rust 1.88 toolchain and vendored crate tree, a Debian 12 development sysroot of 634 packages, the WebDriver drivers, the model set, the cross-target standard libraries, and `system/tools` with the G9, G13, G16 to G22 and G23 to G27 binaries. `system/tools` grew from 249 MB to 2.6 GB unpacked across the four deliveries.
 
 ## Tier 0: partly in the payload, partly a download
 
@@ -46,7 +46,7 @@ Measured on the host, then checked against `system/PKGS.txt` so nothing here is 
 | `hyperfine`                                                          | compare two builds or two implementations when a change claims a speedup                                                                        | about 2 MB  | low      |
 | `valgrind`, `perf`, `heaptrack`                                      | memory and CPU work on the native paths                                                                                                         | about 40 MB | low      |
 
-Total for Tier 1: about 200 MB. Most of it now ships in the third delivery: `gdb`, `strace`, `ltrace`, `valgrind`, `ninja`, `meson`, `autoconf`, `automake`, `libtool`, `bison`, `flex`, `sqlite3`, `psql`, `mariadb`, `redis-cli`, `tesseract`, `shellcheck`, `shfmt`, `gpg`, `git-lfs`, `zstd`, `brotli`, `7z`, `dig` and `tcpdump` are all in G16 to G22. What still does not ship is `mtr`, `perf`, `heaptrack` and `hyperfine`. The whole payload is about 7 GB unpacked.
+Total for Tier 1: about 200 MB. Most of it now ships: `gdb`, `strace`, `ltrace`, `valgrind`, `ninja`, `meson`, `autoconf`, `automake`, `libtool`, `bison`, `flex`, `sqlite3`, `psql`, `mariadb`, `redis-cli`, `tesseract`, `shellcheck`, `shfmt`, `gpg`, `git-lfs`, `zstd`, `brotli`, `7z`, `dig` and `tcpdump` are in G16 to G22, and `mtr`, `perf`, `heaptrack` and `hyperfine` are in G27. The whole payload is about 8.3 GB unpacked.
 
 ## Tier 2: missing by domain, for any project
 
@@ -142,14 +142,14 @@ These are properties of the sandbox, not missing software. Record them as limits
 - Audio input. No sound card, so microphone capture and the pill overlay against a live stream cannot run; use wav fixtures.
 - Display. No X server until `xvfb-run` starts one, and then only a virtual one.
 - RAM and CPU. 2 vCPU and 3,939 MB, which is why `CARGO_BUILD_JOBS=1` is required.
-- Disk. 21 GB free, against a 5.5 GB payload and a multi-gigabyte Rust target tree.
+- Disk. 21 GB free, against an 8.3 GB payload and a multi-gigabyte Rust target tree.
 - Credentials. No API keys, no cloud identity, no signing keys. CI supplies the ones this repository needs.
 
 ## Handoff for the builder
 
 The payload keeps one orphan commit on `vendor/sandbox-toolchain`, so a further delivery folds into the same commit and moves the tip. Everything here follows the rules already in `docs/sandbox-toolchain-vendor-spec.md`:
 
-1. No file over 90 MiB, and split with `.part-NN` at exactly 94,371,840 bytes to match the vendor contract, recording the reassembly in `FETCH.md`, as the sysroot, the crate tree, `ggml-base.bin` and the SenseVoice model already do. GitHub rejects a push over 100 MiB, so 90 MiB leaves headroom.
+1. No file over 90 MiB, and split with `.part-NN` at exactly 94,371,840 bytes to match the vendor contract, recording the reassembly in `FETCH.md`, as the sysroot, the crate tree, `ggml-base.bin`, the SenseVoice model, `chromium` and the JVM's `lib/modules` already do. GitHub rejects a push over 100 MiB, so 90 MiB leaves headroom.
 2. Every artifact gets its upstream URL, its published sha256 and its licence under `LICENSES/`. `MANIFEST.sha256` carries one line per file plus one per reassembled archive.
 3. Every binary is checked under `env -i` with no `LD_LIBRARY_PATH`, and prints a version banner. A binary that needs a library the payload does not carry is a payload defect. Some binaries need a documented env var to run relocatably, and each one is recorded in `FETCH.md` rather than treated as a defect: `gdb` needs `--data-directory=<tools>/share/gdb`, `valgrind` needs `VALGRIND_LIB=<tools>/libexec/valgrind`, `meson` needs a `python3` on `PATH`, and the cross compilers need `--sysroot=<tools>` for `aarch64-linux-gnu-gcc`.
 4. Record what each group opens, in `README.md` on the branch and in `engineering/sandbox-coverage-gaps.md` here. A group that opens nothing must not ship.
@@ -174,3 +174,5 @@ Tier 0 first: put the sysroot's `usr/bin` on `PATH`, point `FONTCONFIG_PATH` at 
 ## Prompt to hand to the builder
 
 > Update the `vendor/sandbox-toolchain` orphan branch on `maus-inc/mausVoice`. Read `engineering/sandbox-capability-gaps.md` in the repository first, then `docs/sandbox-toolchain-vendor-spec.md`. Ship the free Tier 0 wiring (the `clang` PATH entry and the fontconfig wiring) with no new downloads, then groups G16 to G20 from the handoff table, and G21 and G22 only if the size is acceptable to you. Add `tzdata` and `locales` as downloads when you build the groups. Keep one orphan commit and move its tip, keep every file under 90 MiB with `.part-NN` splitting at 94,371,840 bytes, record an upstream URL, a published sha256 and a licence for every artifact, verify each binary under `env -i`, and put the measured packed and unpacked size of each group in `README.md` on the branch. Then report the new commit SHA, the manifest line count, and what each group opens, so the repository's register can be updated to match.
+
+> Delivered: G16 to G22 shipped 2026-11-05 at tip `82b2f983`; G23 to G27 shipped 2026-11-09 at tip `3025c92b`. Both are folded into the single orphan commit, so a consumer fetches every group from `3025c92b`.

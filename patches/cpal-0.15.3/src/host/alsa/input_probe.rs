@@ -105,13 +105,11 @@ pub(super) fn record_capture_capable(name: &str) {
     }
 }
 
-/// Forget a capability that a failed capture open just disproved.
+/// Forget a capability when a checked capture open reports a missing device.
 ///
-/// The cache exists so enumeration during a recording can list a capture-only
-/// device without opening it again. Keeping a name after the device refused a
-/// capture open would keep listing an input that can no longer record, so a
-/// failed open forgets it and a later enumeration (once no stream is live)
-/// probes again.
+/// The cache is only a previous observation: transient open failures and
+/// failures after opening do not disprove it. Enumeration can probe again
+/// once no capture stream is live.
 pub(super) fn forget_capture_capable(name: &str) {
     if let Ok(mut names) = capable_names().lock() {
         names.remove(name);
@@ -237,8 +235,7 @@ mod tests {
         assert!(is_known_capture_capable("maus-test-never-opened"));
     }
 
-    /// A device that refuses a capture open must stop being advertised from
-    /// the cache that exists to serve enumeration during a recording.
+    /// Explicit invalidation removes the observation used during recording.
     #[test]
     fn a_failed_open_forgets_a_recorded_capability() {
         record_capture_capable("maus-test-opened-then-failed");

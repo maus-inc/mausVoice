@@ -5,7 +5,10 @@ import {
   buildProviderVocabulary,
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
-import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
+import {
+  BaseApiTranscriptionSession,
+  withPartialTranscript,
+} from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import { createAudioChunkBuffer } from "./transcription-stream.utils";
 import {
@@ -13,6 +16,7 @@ import {
   closeStreamingSocket,
   createBufferedChunkWriter,
   createStartupSettler,
+  describeProviderError,
 } from "./streaming-session.utils";
 import { getStartupAbortReason } from "./provider-startup.utils";
 
@@ -42,6 +46,9 @@ export const startAssemblyAIStreaming = async (
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let isFinalized = false;
+    // A provider rejection after Begin otherwise leaves the session alive to
+    // finalize as an empty, warning-free transcript when the socket closes.
+    let sessionError: Error | null = null;
     const transcriptState = createTranscriptAccumulator();
 
     const buffer = createAudioChunkBuffer(() => ws, {
@@ -51,13 +58,13 @@ export const startAssemblyAIStreaming = async (
       loggerPrefix: LOGGER_PREFIX,
     });
 
-    let currentTurn = 0;
+    let currentTurn: number | undefined;
 
     const getText = () => transcriptState.text();
 
     const writeAudioChunk = createBufferedChunkWriter({
       buffer,
-      isFinalized: () => isFinalized,
+      isFinalized: () => isFinalized || sessionError !== null,
       loggerPrefix: LOGGER_PREFIX,
     });
 
@@ -70,7 +77,16 @@ export const startAssemblyAIStreaming = async (
     };
 
     const finalize = (): Promise<string> => {
-      return new Promise((resolveFinalize) => {
+      return new Promise((resolveFinalize, rejectFinalize) => {
+        const settleFinalize = () => {
+          const text = getText();
+          if (sessionError) {
+            rejectFinalize(withPartialTranscript(sessionError, text));
+          } else {
+            resolveFinalize(text);
+          }
+        };
+
         getLogger().info(
           `[${LOGGER_PREFIX}] Finalize called, isFinalized:`,
           isFinalized,
@@ -81,7 +97,7 @@ export const startAssemblyAIStreaming = async (
           getLogger().info(
             `[${LOGGER_PREFIX}] Already finalized, returning transcript`,
           );
-          resolveFinalize(getText());
+          settleFinalize();
           return;
         }
 
@@ -102,7 +118,7 @@ export const startAssemblyAIStreaming = async (
               getText().length,
             );
             cleanup();
-            resolveFinalize(getText());
+            settleFinalize();
           }, 2000);
 
           const originalOnClose = ws.onclose;
@@ -116,11 +132,11 @@ export const startAssemblyAIStreaming = async (
               `[${LOGGER_PREFIX}] WebSocket closed, finalizing with transcript length:`,
               getText().length,
             );
-            resolveFinalize(getText());
+            settleFinalize();
           };
         } else {
           cleanup();
-          resolveFinalize(transcriptState.text());
+          settleFinalize();
         }
       });
     };
@@ -160,54 +176,85 @@ export const startAssemblyAIStreaming = async (
       getLogger().info(`[${LOGGER_PREFIX}] WebSocket opened, awaiting Begin`);
     };
 
+    type AssemblyAIMessage = {
+      type?: string;
+      error?: unknown;
+      message?: unknown;
+      turn_order?: number;
+      end_of_turn?: boolean;
+      transcript?: string;
+    };
+
+    const handleSessionBegin = () => {
+      getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
+      buffer.flush(false);
+      settler.resolveStartup();
+    };
+
+    const handleProviderError = (data: AssemblyAIMessage) => {
+      const error = new Error(
+        describeProviderError(data, "AssemblyAI rejected the session"),
+      );
+      getLogger().error(`[${LOGGER_PREFIX}] Error from server:`, data);
+      if (!settler.settled) {
+        settler.rejectStartup(error);
+        return;
+      }
+      sessionError = error;
+      cleanup();
+    };
+
+    const handleFinalTurn = (data: AssemblyAIMessage) => {
+      const turnTranscript = data.transcript || "";
+      transcriptState.appendFinal(turnTranscript);
+      getLogger().info(
+        `[${LOGGER_PREFIX}] Final formatted transcript received, length:`,
+        transcriptState.finalLength(),
+      );
+      if (onInterimResult && turnTranscript) {
+        onInterimResult(turnTranscript);
+      }
+      if (currentTurn === data.turn_order) {
+        transcriptState.setPartial("");
+      }
+    };
+
+    const handlePartialTurn = (data: AssemblyAIMessage) => {
+      currentTurn = data.turn_order;
+      transcriptState.setPartial(data.transcript ?? "");
+    };
+
+    const handleTurnMessage = (data: AssemblyAIMessage) => {
+      if (data.end_of_turn) {
+        handleFinalTurn(data);
+        return;
+      }
+      handlePartialTurn(data);
+    };
+
+    const handleMessageData = (data: AssemblyAIMessage) => {
+      getLogger().info(`[${LOGGER_PREFIX}] Received message`, {
+        type: data.type,
+        turnOrder: data.turn_order,
+        endOfTurn: data.end_of_turn,
+        transcriptLength:
+          typeof data.transcript === "string" ? data.transcript.length : 0,
+      });
+
+      if (data.type === "Begin") {
+        handleSessionBegin();
+        return;
+      }
+      if (data.type === "Error") {
+        handleProviderError(data);
+        return;
+      }
+      if (data.type === "Turn") handleTurnMessage(data);
+    };
+
     ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        getLogger().info(`[${LOGGER_PREFIX}] Received message`, {
-          type: data.type,
-          turnOrder: data.turn_order,
-          endOfTurn: data.end_of_turn,
-          transcriptLength:
-            typeof data.transcript === "string" ? data.transcript.length : 0,
-        });
-
-        if (data.type === "Begin") {
-          getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
-          buffer.flush(false);
-          settler.resolveStartup();
-          return;
-        }
-        if (data.type === "Error" && !settler.settled) {
-          settler.rejectStartup(
-            new Error(
-              String(
-                data.error ?? data.message ?? "AssemblyAI rejected the session",
-              ),
-            ),
-          );
-          return;
-        }
-
-        if (data.type === "Turn" && data.end_of_turn) {
-          const turnTranscript = data.transcript || "";
-          transcriptState.appendFinal(turnTranscript);
-          getLogger().info(
-            `[${LOGGER_PREFIX}] Final formatted transcript received, length:`,
-            transcriptState.finalLength(),
-          );
-          if (onInterimResult && turnTranscript) {
-            onInterimResult(turnTranscript);
-          }
-          if (currentTurn === data.turn_order) {
-            transcriptState.setPartial("");
-          }
-        } else if (data.type === "Turn") {
-          if (currentTurn != data.turn_order) {
-            currentTurn = data.turn_order;
-
-            transcriptState.setPartial(data.transcript);
-          }
-        }
+        handleMessageData(JSON.parse(event.data));
       } catch (error) {
         getLogger().error(`[${LOGGER_PREFIX}] Error parsing message:`, error);
       }

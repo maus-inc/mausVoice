@@ -913,7 +913,7 @@ async setTrayVisible(visible: boolean) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async simulateType(text: string, delayMs: number) : Promise<Result<null, string>> {
+async simulateType(text: string, delayMs: number) : Promise<Result<SimulatedTypingOutcome, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("simulate_type", { text, delayMs }) };
 } catch (e) {
@@ -1072,6 +1072,14 @@ async toneList() : Promise<Result<Tone[], string>> {
 async toneUpsert(tone: Tone) : Promise<Result<Tone, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tone_upsert", { tone }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async transcriptionAppendWarnings(id: string, warnings: string[]) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcription_append_warnings", { id, warnings }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1402,6 +1410,7 @@ export type RemoteSenderPairArgs = { receiverDeviceId: string; receiverName: str
 export type RunTerminalCommandResponse = { stdout: string; stderr: string; exitCode: number }
 export type ScreenContextInfo = { screenContext: string | null }
 export type ScreenVisibleArea = { topInset: number; bottomInset: number; leftInset: number; rightInset: number }
+export type SimulatedTypingOutcome = "completed" | "cancelled_before_start"
 export type StartRecordingArgs = { preferredMicrophone: string | null; waitForRelease?: boolean }
 export type StartRecordingResponse = { sampleRate: number }
 export type StartRemoteReceiverArgs = { port?: number | null }

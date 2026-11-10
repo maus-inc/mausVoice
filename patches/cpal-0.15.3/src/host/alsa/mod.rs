@@ -28,6 +28,46 @@ mod input_start;
 mod output_pending;
 mod stream_buffer;
 
+const ALSA_SAMPLE_FORMATS: [SampleFormat; 8] = [
+    SampleFormat::I8,
+    SampleFormat::U8,
+    SampleFormat::I16,
+    SampleFormat::U16,
+    SampleFormat::I32,
+    SampleFormat::U32,
+    SampleFormat::F32,
+    SampleFormat::F64,
+];
+
+fn alsa_format_for_sample(sample: SampleFormat, big_endian: bool) -> Option<alsa::pcm::Format> {
+    use alsa::pcm::Format;
+    match (sample, big_endian) {
+        (SampleFormat::I8, _) => Some(Format::S8),
+        (SampleFormat::U8, _) => Some(Format::U8),
+        (SampleFormat::I16, false) => Some(Format::S16LE),
+        (SampleFormat::I16, true) => Some(Format::S16BE),
+        (SampleFormat::U16, false) => Some(Format::U16LE),
+        (SampleFormat::U16, true) => Some(Format::U16BE),
+        (SampleFormat::I32, false) => Some(Format::S32LE),
+        (SampleFormat::I32, true) => Some(Format::S32BE),
+        (SampleFormat::U32, false) => Some(Format::U32LE),
+        (SampleFormat::U32, true) => Some(Format::U32BE),
+        (SampleFormat::F32, false) => Some(Format::FloatLE),
+        (SampleFormat::F32, true) => Some(Format::FloatBE),
+        (SampleFormat::F64, false) => Some(Format::Float64LE),
+        (SampleFormat::F64, true) => Some(Format::Float64BE),
+        _ => None,
+    }
+}
+
+fn formats_for_discovery(
+    big_endian: bool,
+) -> impl Iterator<Item = (SampleFormat, alsa::pcm::Format)> {
+    ALSA_SAMPLE_FORMATS.into_iter().filter_map(move |sample| {
+        alsa_format_for_sample(sample, big_endian).map(|format| (sample, format))
+    })
+}
+
 static CAPTURE_GATE: input_probe::CaptureGate = input_probe::CaptureGate::new();
 
 pub(crate) fn capture_cleanup_uncertain() -> bool {
@@ -123,10 +163,6 @@ impl DeviceTrait for Device {
             match self.build_stream_inner(conf, sample_format, alsa::Direction::Capture) {
                 Ok(inner) => inner,
                 Err(error) => {
-                    // The device refused capture, so stop advertising it from
-                    // the capability cache: enumeration during a later
-                    // recording would otherwise keep listing a dead input.
-                    input_probe::forget_capture_capable(&self.name);
                     if matches!(error, BuildStreamError::CleanupUncertain { .. }) {
                         gate.uncertain();
                     } else {
@@ -239,6 +275,15 @@ fn map_config_open_error(error: alsa::Error) -> SupportedStreamConfigsError {
     }
 }
 
+// Only errors that identify a missing device disprove an earlier successful
+// capture open. Busy, permissions, configuration and other failures can be
+// transient and must not hide a known input while capture probes are disabled.
+fn forget_missing_capture_device(name: &str, error: &alsa::Error) {
+    if matches!(error.errno(), libc::ENODEV | libc::ENOENT) {
+        input_probe::forget_capture_capable(name);
+    }
+}
+
 enum CaptureProbeError<E> {
     Open(alsa::Error),
     Query(E),
@@ -272,9 +317,7 @@ fn probe_capture<T, E>(
     let handle = match alsa::PCM::new_checked(name, alsa::Direction::Capture, true) {
         Ok(handle) => handle,
         Err(alsa::pcm::CheckedOpenError::Failed(error)) => {
-            // A device that used to open for capture and now does not must not
-            // stay in the cache that enumeration trusts while recording.
-            input_probe::forget_capture_capable(name);
+            forget_missing_capture_device(name, &error);
             gate.confirmed();
             return Err(CaptureProbeError::Open(error));
         }
@@ -358,7 +401,10 @@ impl Device {
         let handle_result = if stream_type == alsa::Direction::Capture {
             match alsa::PCM::new_checked(&self.name, stream_type, true) {
                 Ok(handle) => Ok(handle),
-                Err(alsa::pcm::CheckedOpenError::Failed(error)) => Err(error),
+                Err(alsa::pcm::CheckedOpenError::Failed(error)) => {
+                    forget_missing_capture_device(&self.name, &error);
+                    Err(error)
+                }
                 Err(alsa::pcm::CheckedOpenError::Uncertain(error)) => {
                     return Err(BuildStreamError::CleanupUncertain {
                         err: BackendSpecificError {
@@ -388,10 +434,8 @@ impl Device {
             let period_len = set_sw_params_from_format(&handle, conf, stream_type)?;
             handle.prepare()?;
 
-            let num_descriptors = handle.count();
-            // alsa-rs casts the native signed result to usize, including
-            // negative errors. Never treat those as enormous descriptor counts.
-            if num_descriptors == 0 || num_descriptors > libc::c_int::MAX as usize {
+            let num_descriptors = handle.try_count()?;
+            if num_descriptors == 0 {
                 return Err(BackendSpecificError {
                     description: "invalid poll descriptor count for ALSA stream".to_string(),
                 }
@@ -478,50 +522,10 @@ impl Device {
     ) -> Result<VecIntoIter<SupportedStreamConfigRange>, SupportedStreamConfigsError> {
         let hw_params = alsa::pcm::HwParams::any(handle)?;
 
-        // TODO: check endianness
-        const FORMATS: [(SampleFormat, alsa::pcm::Format); 8] = [
-            (SampleFormat::I8, alsa::pcm::Format::S8),
-            (SampleFormat::U8, alsa::pcm::Format::U8),
-            (SampleFormat::I16, alsa::pcm::Format::S16LE),
-            //SND_PCM_FORMAT_S16_BE,
-            (SampleFormat::U16, alsa::pcm::Format::U16LE),
-            //SND_PCM_FORMAT_U16_BE,
-            //SND_PCM_FORMAT_S24_LE,
-            //SND_PCM_FORMAT_S24_BE,
-            //SND_PCM_FORMAT_U24_LE,
-            //SND_PCM_FORMAT_U24_BE,
-            (SampleFormat::I32, alsa::pcm::Format::S32LE),
-            //SND_PCM_FORMAT_S32_BE,
-            (SampleFormat::U32, alsa::pcm::Format::U32LE),
-            //SND_PCM_FORMAT_U32_BE,
-            (SampleFormat::F32, alsa::pcm::Format::FloatLE),
-            //SND_PCM_FORMAT_FLOAT_BE,
-            (SampleFormat::F64, alsa::pcm::Format::Float64LE),
-            //SND_PCM_FORMAT_FLOAT64_BE,
-            //SND_PCM_FORMAT_IEC958_SUBFRAME_LE,
-            //SND_PCM_FORMAT_IEC958_SUBFRAME_BE,
-            //SND_PCM_FORMAT_MU_LAW,
-            //SND_PCM_FORMAT_A_LAW,
-            //SND_PCM_FORMAT_IMA_ADPCM,
-            //SND_PCM_FORMAT_MPEG,
-            //SND_PCM_FORMAT_GSM,
-            //SND_PCM_FORMAT_SPECIAL,
-            //SND_PCM_FORMAT_S24_3LE,
-            //SND_PCM_FORMAT_S24_3BE,
-            //SND_PCM_FORMAT_U24_3LE,
-            //SND_PCM_FORMAT_U24_3BE,
-            //SND_PCM_FORMAT_S20_3LE,
-            //SND_PCM_FORMAT_S20_3BE,
-            //SND_PCM_FORMAT_U20_3LE,
-            //SND_PCM_FORMAT_U20_3BE,
-            //SND_PCM_FORMAT_S18_3LE,
-            //SND_PCM_FORMAT_S18_3BE,
-            //SND_PCM_FORMAT_U18_3LE,
-            //SND_PCM_FORMAT_U18_3BE,
-        ];
+        let formats = formats_for_discovery(cfg!(target_endian = "big"));
 
         let mut supported_formats = Vec::new();
-        for &(sample_format, alsa_format) in FORMATS.iter() {
+        for (sample_format, alsa_format) in formats {
             if hw_params.test_format(alsa_format).is_ok() {
                 supported_formats.push(sample_format);
             }
@@ -791,7 +795,8 @@ fn input_stream_worker(
                 match flow {
                     Ok(PollDescriptorsFlow::XRun) => report_input_xrun(error_callback),
                     Ok(PollDescriptorsFlow::Disconnected) => {
-                        error_callback(StreamError::DeviceNotAvailable)
+                        error_callback(StreamError::DeviceNotAvailable);
+                        return;
                     }
                     Err(err) => error_callback(err.into()),
                     _ => {}
@@ -851,6 +856,10 @@ fn input_stream_worker(
                         }
                     }
                     Ok(InputReadFlow::XRun) => recover_input_xrun(stream, error_callback),
+                    Ok(InputReadFlow::Disconnected) => {
+                        error_callback(StreamError::DeviceNotAvailable);
+                        return;
+                    }
                     Err(err) => error_callback(err.into()),
                 }
             }
@@ -954,11 +963,14 @@ fn output_stream_worker(
                     delay_frames,
                     data_callback,
                 ) {
-                    Ok(should_wait) => {
-                        if !should_wait {
-                            reported_error = false;
-                        }
-                        should_wait
+                    Ok(OutputWriteFlow::Continue) => {
+                        reported_error = false;
+                        false
+                    }
+                    Ok(OutputWriteFlow::Retry) => true,
+                    Ok(OutputWriteFlow::Disconnected) => {
+                        error_callback(StreamError::DeviceNotAvailable);
+                        return;
                     }
                     Err(err) => {
                         if !reported_error {
@@ -1004,6 +1016,12 @@ enum PollDescriptorsFlow {
     XRun,
 }
 
+// ALSA wrappers use positive errno for some calls and negative errno for others.
+fn is_alsa_disconnected(error: &alsa::Error) -> bool {
+    let code = error.errno();
+    code == libc::ENODEV || code == -libc::ENODEV
+}
+
 // This block is shared between both input and output stream worker functions.
 fn poll_descriptors_and_prepare_buffer(
     rx: &TriggerReceiver,
@@ -1042,16 +1060,23 @@ fn poll_descriptors_and_prepare_buffer(
             .map_err(|_| BackendSpecificError {
                 description: "ALSA input state is poisoned".into(),
             })? {
-            Some(result) => result?,
+            Some(result) => result,
             None => return Ok(PollDescriptorsFlow::Continue),
         }
     } else {
-        stream.channel().fill(&mut descriptors[len..])?
+        stream.channel().fill(&mut descriptors[len..])
+    };
+    let filled = match filled {
+        Err(error) if is_alsa_disconnected(&error) => return Ok(PollDescriptorsFlow::Disconnected),
+        result => result?,
     };
     debug_assert_eq!(filled, stream.num_descriptors);
 
     // Don't timeout, wait forever.
-    let res = alsa::poll::poll(descriptors, *poll_timeout)?;
+    let res = match alsa::poll::poll(descriptors, *poll_timeout) {
+        Err(error) if is_alsa_disconnected(&error) => return Ok(PollDescriptorsFlow::Disconnected),
+        result => result?,
+    };
     if res == 0 {
         let description = String::from("`alsa::poll()` spuriously returned");
         return Err(BackendSpecificError { description });
@@ -1083,7 +1108,10 @@ fn inspect_ready_descriptors(
     buffer: &mut stream_buffer::StreamBuffer,
     pending_output: bool,
 ) -> Result<PollDescriptorsFlow, BackendSpecificError> {
-    let revents = stream.channel().revents(descriptors)?;
+    let revents = match stream.channel().revents(descriptors) {
+        Err(error) if is_alsa_disconnected(&error) => return Ok(PollDescriptorsFlow::Disconnected),
+        result => result?,
+    };
     if revents.intersects(alsa::poll::Flags::HUP | alsa::poll::Flags::NVAL) {
         return Ok(PollDescriptorsFlow::Disconnected);
     }
@@ -1108,8 +1136,12 @@ fn inspect_ready_descriptors(
         }
     };
 
-    let status = stream.channel().status()?;
+    let status = match stream.channel().status() {
+        Err(error) if is_alsa_disconnected(&error) => return Ok(PollDescriptorsFlow::Disconnected),
+        result => result?,
+    };
     let native_avail = match stream.channel().avail() {
+        Err(error) if is_alsa_disconnected(&error) => return Ok(PollDescriptorsFlow::Disconnected),
         Err(err) if err.errno() == libc::EPIPE => return Ok(PollDescriptorsFlow::XRun),
         res => res,
     }?;
@@ -1160,6 +1192,7 @@ enum InputReadFlow {
     Continue,
     Retry,
     XRun,
+    Disconnected,
 }
 
 // Read input data from ALSA and deliver it to the user.
@@ -1186,6 +1219,7 @@ fn process_input(
             return Ok(InputReadFlow::Retry)
         }
         Err(err) if err.errno() == libc::EPIPE => return Ok(InputReadFlow::XRun),
+        Err(err) if is_alsa_disconnected(&err) => return Ok(InputReadFlow::Disconnected),
         result => result?,
     };
     let sample_format = stream.sample_format;
@@ -1215,7 +1249,12 @@ fn process_input(
     Ok(InputReadFlow::Continue)
 }
 
-// Return true when a transient failure needs a termination-aware backoff.
+enum OutputWriteFlow {
+    Continue,
+    Retry,
+    Disconnected,
+}
+
 fn process_output(
     stream: &StreamInner,
     buffer: &mut [u8],
@@ -1224,7 +1263,7 @@ fn process_output(
     available_frames: usize,
     delay_frames: usize,
     data_callback: &mut (dyn FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static),
-) -> Result<bool, BackendSpecificError> {
+) -> Result<OutputWriteFlow, BackendSpecificError> {
     if pending.is_none() {
         let sample_format = stream.sample_format;
         let frame_bytes = sample_format
@@ -1255,14 +1294,18 @@ fn process_output(
     let range = remaining.request(available_frames);
     let requested_bytes = range.len();
     if requested_bytes == 0 {
-        return Ok(true);
+        return Ok(OutputWriteFlow::Retry);
     }
     match stream.channel().io_bytes().writei(&buffer[range]) {
-        Err(err) if err.errno() == libc::EAGAIN || err.errno() == libc::EINTR => Ok(true),
-        Err(err) if err.errno() == libc::EPIPE => {
-            stream.channel().try_recover(err, false)?;
-            Ok(true)
+        Err(err) if err.errno() == libc::EAGAIN || err.errno() == libc::EINTR => {
+            Ok(OutputWriteFlow::Retry)
         }
+        Err(err) if err.errno() == libc::EPIPE => match stream.channel().try_recover(err, false) {
+            Err(error) if is_alsa_disconnected(&error) => Ok(OutputWriteFlow::Disconnected),
+            Err(error) => Err(error.into()),
+            Ok(_) => Ok(OutputWriteFlow::Retry),
+        },
+        Err(err) if is_alsa_disconnected(&err) => Ok(OutputWriteFlow::Disconnected),
         Err(err) => Err(err.into()),
         Ok(written) => {
             let complete = remaining.advance(requested_bytes, written).ok_or_else(|| {
@@ -1273,7 +1316,11 @@ fn process_output(
             if complete {
                 *pending = None;
             }
-            Ok(written == 0)
+            if written == 0 {
+                Ok(OutputWriteFlow::Retry)
+            } else {
+                Ok(OutputWriteFlow::Continue)
+            }
         }
     }
 }
@@ -1590,8 +1637,7 @@ impl StreamTrait for Stream {
                 })
                 .map_err(|description| BackendSpecificError { description }.into());
         }
-        self.inner.channel().pause(true).ok();
-        Ok(())
+        self.inner.channel().pause(true).map_err(Into::into)
     }
 }
 
@@ -1603,57 +1649,13 @@ fn set_hw_params_from_format(
     let hw_params = alsa::pcm::HwParams::any(pcm_handle)?;
     hw_params.set_access(alsa::pcm::Access::RWInterleaved)?;
 
-    let sample_format = if cfg!(target_endian = "big") {
-        match sample_format {
-            SampleFormat::I8 => alsa::pcm::Format::S8,
-            SampleFormat::I16 => alsa::pcm::Format::S16BE,
-            // SampleFormat::I24 => alsa::pcm::Format::S24BE,
-            SampleFormat::I32 => alsa::pcm::Format::S32BE,
-            // SampleFormat::I48 => alsa::pcm::Format::S48BE,
-            // SampleFormat::I64 => alsa::pcm::Format::S64BE,
-            SampleFormat::U8 => alsa::pcm::Format::U8,
-            SampleFormat::U16 => alsa::pcm::Format::U16BE,
-            // SampleFormat::U24 => alsa::pcm::Format::U24BE,
-            SampleFormat::U32 => alsa::pcm::Format::U32BE,
-            // SampleFormat::U48 => alsa::pcm::Format::U48BE,
-            // SampleFormat::U64 => alsa::pcm::Format::U64BE,
-            SampleFormat::F32 => alsa::pcm::Format::FloatBE,
-            SampleFormat::F64 => alsa::pcm::Format::Float64BE,
-            sample_format => {
-                return Err(BackendSpecificError {
-                    description: format!(
-                        "Sample format '{}' is not supported by this backend",
-                        sample_format
-                    ),
-                })
-            }
-        }
-    } else {
-        match sample_format {
-            SampleFormat::I8 => alsa::pcm::Format::S8,
-            SampleFormat::I16 => alsa::pcm::Format::S16LE,
-            // SampleFormat::I24 => alsa::pcm::Format::S24LE,
-            SampleFormat::I32 => alsa::pcm::Format::S32LE,
-            // SampleFormat::I48 => alsa::pcm::Format::S48LE,
-            // SampleFormat::I64 => alsa::pcm::Format::S64LE,
-            SampleFormat::U8 => alsa::pcm::Format::U8,
-            SampleFormat::U16 => alsa::pcm::Format::U16LE,
-            // SampleFormat::U24 => alsa::pcm::Format::U24LE,
-            SampleFormat::U32 => alsa::pcm::Format::U32LE,
-            // SampleFormat::U48 => alsa::pcm::Format::U48LE,
-            // SampleFormat::U64 => alsa::pcm::Format::U64LE,
-            SampleFormat::F32 => alsa::pcm::Format::FloatLE,
-            SampleFormat::F64 => alsa::pcm::Format::Float64LE,
-            sample_format => {
-                return Err(BackendSpecificError {
-                    description: format!(
-                        "Sample format '{}' is not supported by this backend",
-                        sample_format
-                    ),
-                })
-            }
-        }
-    };
+    let sample_format = alsa_format_for_sample(sample_format, cfg!(target_endian = "big"))
+        .ok_or_else(|| BackendSpecificError {
+            description: format!(
+                "Sample format '{}' is not supported by this backend",
+                sample_format
+            ),
+        })?;
 
     hw_params.set_format(sample_format)?;
     hw_params.set_rate(config.sample_rate.0, alsa::ValueOr::Nearest)?;
@@ -1761,5 +1763,69 @@ impl From<alsa::Error> for StreamError {
     fn from(err: alsa::Error) -> Self {
         let err: BackendSpecificError = err.into();
         err.into()
+    }
+}
+
+#[cfg(test)]
+mod sample_format_tests {
+    use super::*;
+
+    #[test]
+    fn discovery_uses_the_requested_native_byte_order() {
+        let little: Vec<_> = formats_for_discovery(false).collect();
+        let big: Vec<_> = formats_for_discovery(true).collect();
+        assert_eq!(little.len(), 8);
+        assert_eq!(big.len(), 8);
+        for (sample, little_format, big_format) in [
+            (
+                SampleFormat::I8,
+                alsa::pcm::Format::S8,
+                alsa::pcm::Format::S8,
+            ),
+            (
+                SampleFormat::U8,
+                alsa::pcm::Format::U8,
+                alsa::pcm::Format::U8,
+            ),
+            (
+                SampleFormat::I16,
+                alsa::pcm::Format::S16LE,
+                alsa::pcm::Format::S16BE,
+            ),
+            (
+                SampleFormat::U16,
+                alsa::pcm::Format::U16LE,
+                alsa::pcm::Format::U16BE,
+            ),
+            (
+                SampleFormat::I32,
+                alsa::pcm::Format::S32LE,
+                alsa::pcm::Format::S32BE,
+            ),
+            (
+                SampleFormat::U32,
+                alsa::pcm::Format::U32LE,
+                alsa::pcm::Format::U32BE,
+            ),
+            (
+                SampleFormat::F32,
+                alsa::pcm::Format::FloatLE,
+                alsa::pcm::Format::FloatBE,
+            ),
+            (
+                SampleFormat::F64,
+                alsa::pcm::Format::Float64LE,
+                alsa::pcm::Format::Float64BE,
+            ),
+        ] {
+            assert!(little.contains(&(sample, little_format)));
+            assert!(big.contains(&(sample, big_format)));
+            assert_eq!(alsa_format_for_sample(sample, false), Some(little_format));
+            assert_eq!(alsa_format_for_sample(sample, true), Some(big_format));
+        }
+        for sample in [SampleFormat::I64, SampleFormat::U64] {
+            assert_eq!(alsa_format_for_sample(sample, false), None);
+            assert_eq!(alsa_format_for_sample(sample, true), None);
+        }
     }
 }

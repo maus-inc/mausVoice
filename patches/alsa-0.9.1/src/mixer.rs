@@ -1,7 +1,7 @@
 //! Mixer API - Simple Mixer API for mixer control
 //!
 use std::ffi::{CStr, CString};
-use std::{ptr, mem, fmt, ops};
+use std::{ptr, fmt, ops};
 use libc::{c_long, c_int, c_uint, c_short, pollfd};
 use crate::poll;
 
@@ -61,8 +61,9 @@ impl Mixer {
         acheck!(snd_mixer_handle_events(self.0)).map(|x| x as u32)
     }
 
+    /// `None` waits indefinitely; finite values above `i32::MAX` return `EINVAL`.
     pub fn wait(&self, timeout_ms: Option<u32>) -> Result<()> {
-        acheck!(snd_mixer_wait(self.0, timeout_ms.map(|x| x as c_int).unwrap_or(-1))).map(|_| ()) }
+        acheck!(snd_mixer_wait(self.0, wait_timeout(timeout_ms, "snd_mixer_wait")?)).map(|_| ()) }
 }
 
 /// Closes mixer and frees used resources
@@ -75,7 +76,10 @@ impl Drop for Mixer {
 
 impl poll::Descriptors for Mixer {
     fn count(&self) -> usize {
-        unsafe { alsa::snd_mixer_poll_descriptors_count(self.0) as usize }
+        self.try_count().unwrap_or(0)
+    }
+    fn try_count(&self) -> Result<usize> {
+        acheck!(snd_mixer_poll_descriptors_count(self.0)).map(|count| count as usize)
     }
     fn fill(&self, p: &mut [pollfd]) -> Result<usize> {
         let z = unsafe { alsa::snd_mixer_poll_descriptors(self.0, p.as_mut_ptr(), p.len() as c_uint) };
@@ -159,10 +163,21 @@ impl<'a> Iterator for Iter<'a> {
 
 }
 
+#[test]
+fn selem_id_storage_has_c_allocation_alignment() {
+    assert!(std::mem::align_of::<SelemId>() >= std::mem::align_of::<libc::max_align_t>());
+    let mut id = SelemId::new("Master", 7);
+    assert_eq!(id.as_ptr() as usize % std::mem::align_of::<libc::max_align_t>(), 0);
+    assert_eq!(id.get_name().unwrap(), "Master");
+    assert_eq!(id.get_index(), 7);
+    id.set_index(9);
+    assert_eq!(id.get_index(), 9);
+}
+
 /// Wrapper for [snd_mixer_selem_id_t](http://www.alsa-project.org/alsa-doc/alsa-lib/group___simple_mixer.html)
 /// No allocation (uses fixed array)
 // #[derive(Copy, Clone, Debug)]
-pub struct SelemId([u8; SELEM_ID_SIZE]);
+pub struct SelemId(crate::CAligned<[u8; SELEM_ID_SIZE]>);
 
 impl SelemId {
 
@@ -178,14 +193,18 @@ impl SelemId {
     pub fn empty() -> SelemId {
         assert!(unsafe { alsa::snd_mixer_selem_id_sizeof() } as usize <= SELEM_ID_SIZE);
         // Create empty selem_id and fill from mixer
-        SelemId(unsafe { mem::zeroed() })
+        SelemId(crate::CAligned::new([0; SELEM_ID_SIZE]))
     }
 
-    /// Convert SelemId into ``*mut snd_mixer_selem_id_t` that the alsa call needs.
-    /// See [snd_mixer_selem_id_t](http://www.alsa-project.org/alsa-doc/alsa-lib/group___simple_mixer.html)
+    /// Convert SelemId to the opaque pointers that ALSA needs.
     #[inline]
-    fn as_ptr(&self) -> *mut alsa::snd_mixer_selem_id_t {
-        self.0.as_ptr() as *const _ as *mut alsa::snd_mixer_selem_id_t
+    fn as_ptr(&self) -> *const alsa::snd_mixer_selem_id_t {
+        self.0.value.as_ptr() as *const alsa::snd_mixer_selem_id_t
+    }
+
+    #[inline]
+    fn as_mut_ptr(&mut self) -> *mut alsa::snd_mixer_selem_id_t {
+        self.0.value.as_mut_ptr() as *mut alsa::snd_mixer_selem_id_t
     }
 
     pub fn get_name(&self) -> Result<&str> {
@@ -198,11 +217,11 @@ impl SelemId {
     }
 
     pub fn set_name(&mut self, name: &CStr) {
-        unsafe { alsa::snd_mixer_selem_id_set_name(self.as_ptr(), name.as_ptr()) };
+        unsafe { alsa::snd_mixer_selem_id_set_name(self.as_mut_ptr(), name.as_ptr()) };
     }
 
     pub fn set_index(&mut self, index: u32) {
-        unsafe { alsa::snd_mixer_selem_id_set_index(self.as_ptr(), index) };
+        unsafe { alsa::snd_mixer_selem_id_set_index(self.as_mut_ptr(), index) };
     }
 
 }
@@ -224,8 +243,8 @@ impl<'a> Selem<'a> {
     }
 
     pub fn get_id(&self) -> SelemId {
-        let id = SelemId::empty();
-        unsafe { alsa::snd_mixer_selem_get_id(self.handle, id.as_ptr()) };
+        let mut id = SelemId::empty();
+        unsafe { alsa::snd_mixer_selem_get_id(self.handle, id.as_mut_ptr()) };
         id
     }
 

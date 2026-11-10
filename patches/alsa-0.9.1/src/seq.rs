@@ -229,7 +229,10 @@ fn polldir(o: Option<Direction>) -> c_short {
 impl<'a> poll::Descriptors for (&'a Seq, Option<Direction>) {
 
     fn count(&self) -> usize {
-        unsafe { alsa::snd_seq_poll_descriptors_count((self.0).0, polldir(self.1)) as usize }
+        self.try_count().unwrap_or(0)
+    }
+    fn try_count(&self) -> Result<usize> {
+        acheck!(snd_seq_poll_descriptors_count((self.0).0, polldir(self.1))).map(|count| count as usize)
     }
 
     fn fill(&self, p: &mut [pollfd]) -> Result<usize> {

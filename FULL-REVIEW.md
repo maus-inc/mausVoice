@@ -141,8 +141,9 @@ Use stable identifiers when one concern spans multiple files.
 Before reviewing behavior:
 
 1. Identify the base branch and reviewed head SHA.
-2. Check whether the branch contains merge conflicts and whether an automated
-   rebase is safe.
+2. Check that the head contains the current tip of the base, brought in by
+   merge and not by rebase, and that the round log says what that merge
+   brought in. A head behind its base was not gated on the tree that ships.
 3. Identify commits that belong to the pull request.
 4. Identify generated files, lockfiles, and vendored output.
 5. Identify changed dependency versions and workspace overrides.

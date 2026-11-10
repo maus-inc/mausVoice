@@ -18,6 +18,7 @@ import {
   createBufferedChunkWriter,
   createFinalizeBookkeeper,
   createStartupSettler,
+  describeProviderError,
   type StartupSettler,
 } from "./streaming-session.utils";
 
@@ -48,6 +49,32 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+describe("describeProviderError", () => {
+  it("prefers non-empty string provider details", () => {
+    expect(
+      describeProviderError(
+        { error: "specific error", message: "secondary message" },
+        "provider rejected the session",
+      ),
+    ).toBe("specific error");
+    expect(
+      describeProviderError(
+        { error: "  ", message: "provider message" },
+        "provider rejected the session",
+      ),
+    ).toBe("provider message");
+  });
+
+  it("uses the provider fallback instead of stringifying object details", () => {
+    expect(
+      describeProviderError(
+        { error: { message: "nested error" }, message: { code: 42 } },
+        "provider rejected the session",
+      ),
+    ).toBe("provider rejected the session");
+  });
 });
 
 describe("closeStreamingSocket", () => {

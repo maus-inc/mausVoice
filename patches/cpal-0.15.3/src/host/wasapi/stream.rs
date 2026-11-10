@@ -9,17 +9,18 @@ use std::ptr;
 use std::sync::mpsc::{channel, Receiver, SendError, Sender};
 use std::thread::{self, JoinHandle};
 use windows::Win32::Foundation;
-use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Foundation::WAIT_OBJECT_0;
 use windows::Win32::Media::Audio;
 use windows::Win32::System::SystemServices;
 use windows::Win32::System::Threading;
 
+#[path = "thread_priority.rs"]
+mod thread_priority;
+use thread_priority::boost_current_thread_priority;
+
 pub struct Stream {
-    /// The high-priority audio processing thread calling callbacks.
+    /// The audio processing thread calling callbacks. Priority boost is best-effort.
     /// Option used for moving out in destructor.
-    ///
-    /// TODO: Actually set the thread priority.
     thread: Option<JoinHandle<()>>,
 
     // Commands processed by the `run()` method that is currently running.
@@ -415,17 +416,6 @@ fn run_output(
             ControlFlow::Break => break,
             ControlFlow::Continue => continue,
         }
-    }
-}
-
-fn boost_current_thread_priority() {
-    unsafe {
-        let thread_id = Threading::GetCurrentThreadId();
-
-        let _ = Threading::SetThreadPriority(
-            HANDLE(thread_id as isize),
-            Threading::THREAD_PRIORITY_TIME_CRITICAL,
-        );
     }
 }
 

@@ -46,6 +46,10 @@ pub struct Ctl(*mut alsa::snd_ctl_t);
 
 unsafe impl Send for Ctl {}
 
+fn ctl_wait_timeout(timeout_ms: Option<u32>) -> Result<c_int> {
+    wait_timeout(timeout_ms, "snd_ctl_wait")
+}
+
 impl Ctl {
     /// Wrapper around open that takes a &str instead of a &CStr
     pub fn new(c: &str, nonblock: bool) -> Result<Self> {
@@ -67,8 +71,10 @@ impl Ctl {
     pub fn card_info(&self) -> Result<CardInfo> { CardInfo::new().and_then(|c|
         acheck!(snd_ctl_card_info(self.0, c.0)).map(|_| c)) }
 
+    /// Wait indefinitely with `None`, or for at most `i32::MAX` milliseconds.
+    /// Larger finite timeouts return `EINVAL` instead of becoming negative.
     pub fn wait(&self, timeout_ms: Option<u32>) -> Result<bool> {
-        acheck!(snd_ctl_wait(self.0, timeout_ms.map(|x| x as c_int).unwrap_or(-1))).map(|i| i == 1) }
+        acheck!(snd_ctl_wait(self.0, ctl_wait_timeout(timeout_ms)?)).map(|i| i == 1) }
 
     pub fn get_db_range(&self, id: &ElemId) -> Result<(MilliBel, MilliBel)> {
         let mut min: c_long = 0;
@@ -133,7 +139,10 @@ impl Drop for Ctl {
 
 impl poll::Descriptors for Ctl {
     fn count(&self) -> usize {
-        unsafe { alsa::snd_ctl_poll_descriptors_count(self.0) as usize }
+        self.try_count().unwrap_or(0)
+    }
+    fn try_count(&self) -> Result<usize> {
+        acheck!(snd_ctl_poll_descriptors_count(self.0)).map(|count| count as usize)
     }
     fn fill(&self, p: &mut [pollfd]) -> Result<usize> {
         let z = unsafe { alsa::snd_ctl_poll_descriptors(self.0, p.as_mut_ptr(), p.len() as c_uint) };
@@ -258,7 +267,7 @@ impl ElemValue {
     }
 
     pub fn set_integer64(&mut self, idx: u32, val: i64) -> Option<()> {
-        if self.etype != ElemType::Integer || idx >= self.count { None }
+        if self.etype != ElemType::Integer64 || idx >= self.count { None }
         else { unsafe { alsa::snd_ctl_elem_value_set_integer64(self.ptr, idx as c_uint, val) }; Some(()) }
     }
 
@@ -356,22 +365,35 @@ impl ElemInfo {
 // Non-allocating version of ElemId
 //
 
+#[test]
+fn elem_id_storage_has_c_allocation_alignment() {
+    assert!(mem::align_of::<ElemId>() >= mem::align_of::<libc::max_align_t>());
+    let mut id = elem_id_new().unwrap();
+    assert_eq!(elem_id_ptr(&id) as usize % mem::align_of::<libc::max_align_t>(), 0);
+    id.set_device(17);
+    let mut cloned = id.clone();
+    assert_eq!(elem_id_ptr(&cloned) as usize % mem::align_of::<libc::max_align_t>(), 0);
+    assert_eq!(cloned.get_device(), 17);
+    cloned.set_device(23);
+    assert_eq!(id.get_device(), 17);
+}
+
 /// [snd_ctl_elem_id_t](http://www.alsa-project.org/alsa-doc/alsa-lib/group___control.html) wrapper
-pub struct ElemId(UnsafeCell<[u8; ELEM_ID_SIZE]>);
+pub struct ElemId(crate::CAligned<UnsafeCell<[u8; ELEM_ID_SIZE]>>);
 
 pub fn elem_id_new() -> Result<ElemId> {
     assert!(unsafe { alsa::snd_ctl_elem_id_sizeof() } as usize <= ELEM_ID_SIZE);
-    Ok(ElemId(UnsafeCell::new(unsafe { mem::zeroed() })))
+    Ok(ElemId(crate::CAligned::new(UnsafeCell::new([0; ELEM_ID_SIZE]))))
 }
 
 #[inline]
-pub fn elem_id_ptr(a: &ElemId) -> *mut alsa::snd_ctl_elem_id_t { a.0.get() as *mut _ as *mut alsa::snd_ctl_elem_id_t }
+pub fn elem_id_ptr(a: &ElemId) -> *mut alsa::snd_ctl_elem_id_t { a.0.value.get() as *mut _ as *mut alsa::snd_ctl_elem_id_t }
 
 unsafe impl Send for ElemId {}
 
 impl Clone for ElemId {
     fn clone(&self) -> Self {
-        ElemId(UnsafeCell::new(unsafe { *self.0.get() }))
+        ElemId(crate::CAligned::new(UnsafeCell::new(unsafe { *self.0.value.get() })))
     }
 }
 
@@ -480,6 +502,32 @@ impl EventMask {
    pub fn info(&self) -> bool { return (!self.remove()) && (self.0 & (1 << 1) != 0); }
    pub fn add(&self) -> bool { return (!self.remove()) && (self.0 & (1 << 2) != 0); }
    pub fn tlv(&self) -> bool { return (!self.remove()) && (self.0 & (1 << 3) != 0); }
+}
+
+#[test]
+fn ctl_wait_rejects_finite_timeouts_that_would_wrap_negative() {
+    assert_eq!(ctl_wait_timeout(None).unwrap(), -1);
+    assert_eq!(ctl_wait_timeout(Some(0)).unwrap(), 0);
+    assert_eq!(ctl_wait_timeout(Some(i32::MAX as u32)).unwrap(), i32::MAX);
+    for too_large in [i32::MAX as u32 + 1, u32::MAX] {
+        assert_eq!(ctl_wait_timeout(Some(too_large)).unwrap_err().errno(), libc::EINVAL);
+    }
+}
+
+#[test]
+fn integer64_values_require_the_matching_type_and_round_trip() {
+    let mut integer64 = elem_value_new(ElemType::Integer64, 2).unwrap();
+    assert_eq!(integer64.set_integer64(0, i64::MIN), Some(()));
+    assert_eq!(integer64.set_integer64(1, i64::MAX), Some(()));
+    assert_eq!(integer64.get_integer64(0), Some(i64::MIN));
+    assert_eq!(integer64.get_integer64(1), Some(i64::MAX));
+    assert_eq!(integer64.set_integer64(2, 42), None);
+    assert_eq!(integer64.set_integer(0, 42), None);
+
+    let mut integer = elem_value_new(ElemType::Integer, 1).unwrap();
+    assert_eq!(integer.set_integer64(0, 42), None);
+    assert_eq!(integer.set_integer(0, 7), Some(()));
+    assert_eq!(integer.get_integer(0), Some(7));
 }
 
 #[test]

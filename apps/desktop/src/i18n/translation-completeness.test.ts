@@ -18,14 +18,66 @@ const UNIVERSAL_SAFE = [
   /^(SenseVoice|NVIDIA|Whisper)\b/,
 ];
 
-// These user-facing controls were added with the failed-transcription audio
-// preservation setting. Unlike a model identifier, they must not fall back to
+// These user-facing controls and feedback messages must not fall back to
 // English in any supported locale.
 const FAILURE_AUDIO_MESSAGES = [
+  "incomplete_transcription_recording_audio_not_saved_some_text",
+  "incomplete_transcription_recording_saved_for_retry_some_text",
   "keeps_the_audio_of_a_failed_transcription_so_you_can_replay",
   "preserve_audio_on_failure",
   "transcription_failed_the_recording_audio_was_not_saved",
+];
+
+const REQUIRED_TRANSLATION_MESSAGES = [
+  "could_not_activate_the_current_hotkey_please_try_again",
+  "does_the_shortcut_highlight_when_pressed",
+  "failed_to_save_hotkey_please_try_again",
+  "preserve_audio_on_failure",
+  "fast_styling_left_the_last_droppedchars_characters_of_that_d",
+  "fast_styling_left_the_last_droppedchars_characters_of_the_au",
+  "fast_styling_left_the_last_droppedchars_characters_unstyled",
+  "online_styling_could_not_be_used_for_this_dictation",
+  "online_styling_failed_because_reason_your_local_style_was_ap",
+  "styling_failed_because_reason",
+  "styling_failed_because_reason_the_app_did_not_insert_the_tra",
+  "styling_failed_because_reason_the_raw_transcript_is_availabl",
+  "styling_failed_because_reason_the_raw_transcript_is_saved_in",
+  "styling_failed_because_reason_the_transcript_could_not_be_sa",
+  "the_incomplete_styling_reply_was_discarded_at_the_model_s_ou",
+  "the_invalid_styling_reply_was_discarded_and_the_raw_transcri",
+  "the_online_styling_reply_was_unusable_and_the_transcript_cou",
+  "the_online_styling_reply_was_unusable_the_original_transcrip",
+  "the_original_transcript_was_saved_because_the_online_styling",
+  "the_post_processing_provider_returned_an_error",
+  "the_provider_could_not_be_reached",
+  "the_provider_rate_limit_was_reached",
+  "the_provider_rejected_authentication_or_access",
+  "the_provider_reply_was_unusable_so_the_previous_transcript_w",
+  "the_provider_reply_was_unusable_so_the_raw_transcript_was_sa",
+  "the_provider_reply_was_unusable_the_raw_transcript_is_availa",
+  "the_provider_reported_a_quota_or_billing_issue",
+  "the_provider_request_or_usage_limit_was_reached",
+  "the_request_timed_out",
+  "the_request_was_cancelled",
+  "the_truncated_styling_reply_was_discarded_at_the_model_s_out",
+  "the_unreadable_styling_reply_was_discarded_leaving_the_previ",
 ] as const;
+
+const REQUIRED_MESSAGE_PLACEHOLDERS: Record<string, readonly string[]> = {
+  fast_styling_left_the_last_droppedchars_characters_of_that_d: [
+    "droppedChars",
+  ],
+  fast_styling_left_the_last_droppedchars_characters_of_the_au: [
+    "droppedChars",
+  ],
+  fast_styling_left_the_last_droppedchars_characters_unstyled: ["droppedChars"],
+  online_styling_failed_because_reason_your_local_style_was_ap: ["reason"],
+  styling_failed_because_reason: ["reason"],
+  styling_failed_because_reason_the_app_did_not_insert_the_tra: ["reason"],
+  styling_failed_because_reason_the_raw_transcript_is_availabl: ["reason"],
+  styling_failed_because_reason_the_raw_transcript_is_saved_in: ["reason"],
+  styling_failed_because_reason_the_transcript_could_not_be_sa: ["reason"],
+};
 
 type Messages = Record<string, string>;
 
@@ -169,6 +221,20 @@ describe("i18n catalogs", () => {
       }
     },
   );
+
+  it("uses the translated tip prefix in onboarding announcements", () => {
+    const locales = loadLocales();
+    for (const locale of manifest.supportedLocales as string[]) {
+      const messages = locales[locale];
+      expect(messages.tip, locale).toBeTruthy();
+      expect(
+        messages.tip_choose_a_stronger_model_for_better_results_smaller_or_we.startsWith(
+          messages.tip,
+        ),
+        locale,
+      ).toBe(true);
+    }
+  });
 
   it("localizes the dashboard navigation landmark and page list", () => {
     const locales = loadLocales();
@@ -328,12 +394,18 @@ describe("i18n catalogs", () => {
       "these ko messages say transcript with a word that means captured audio",
     ).toEqual([]);
 
-    // And the four that carried it are covered, so the guard above cannot pass
+    // And every transcript message is covered, so the guard above cannot pass
     // by those keys falling out of the catalog.
     for (const key of [
       "could_not_open_the_review_window_your_transcript_was_saved_t",
       "review_expired_the_transcript_is_kept_in_your_history",
-      "styling_failed_reason_the_raw_transcript_is_saved_in_history",
+      "styling_failed_because_reason_the_raw_transcript_is_saved_in",
+      "styling_failed_because_reason_the_app_did_not_insert_the_tra",
+      "styling_failed_because_reason_the_raw_transcript_is_availabl",
+      "styling_failed_because_reason_the_transcript_could_not_be_sa",
+      "the_online_styling_reply_was_unusable_and_the_transcript_cou",
+      "the_online_styling_reply_was_unusable_the_original_transcrip",
+      "the_provider_reply_was_unusable_the_raw_transcript_is_availa",
       "could_not_copy_the_transcript_it_is_saved_in_your_history",
     ]) {
       expect(korean[key], `ko:${key} must exist`).toBeTypeOf("string");
@@ -368,6 +440,25 @@ describe("i18n catalogs", () => {
         const translation = locales[locale]?.[key];
         expect(translation, `${locale}:${key} must exist`).toBeTypeOf("string");
         expect(translation, `${locale}:${key}`).not.toBe(keyedEnglish[key]);
+      }
+    }
+  });
+
+  it("translates audio-preservation controls and fast-style feedback in every locale", () => {
+    const locales = loadLocales();
+    const keyedEnglish = messagesFor(locales, manifest.defaultLocale);
+    const translatedCodes = (manifest.supportedLocales as string[]).filter(
+      (code) => code !== manifest.defaultLocale,
+    );
+
+    for (const key of REQUIRED_TRANSLATION_MESSAGES) {
+      for (const locale of translatedCodes) {
+        const translation = locales[locale]?.[key];
+        expect(translation, `${locale}:${key} must exist`).toBeTypeOf("string");
+        expect(translation, `${locale}:${key}`).not.toBe(keyedEnglish[key]);
+        for (const placeholder of REQUIRED_MESSAGE_PLACEHOLDERS[key] ?? []) {
+          expect(translation, `${locale}:${key}`).toContain(`{${placeholder}}`);
+        }
       }
     }
   });
