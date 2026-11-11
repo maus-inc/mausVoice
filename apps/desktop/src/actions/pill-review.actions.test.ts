@@ -537,6 +537,26 @@ describe("reviewTranscriptOnPill", () => {
     }
   });
 
+  it("marks a listener-fallback composer expiry as expired", async () => {
+    const id = "00000000-0000-4000-8000-000000000002";
+    const idSpy = vi.spyOn(crypto, "randomUUID").mockReturnValue(id);
+    try {
+      mocks.listen.mockRejectedValueOnce(new Error("no event bus"));
+      mocks.reviewTextInComposer.mockImplementationOnce(
+        (_text: string, options?: { onExpire?: () => void }) => {
+          options?.onExpire?.();
+          return Promise.resolve(null);
+        },
+      );
+
+      await expect(reviewTranscriptOnPill("stranded")).resolves.toBeNull();
+      expect(getReviewSession(id)?.status).toBe("expired");
+      expect(getReviewSession(id)?.decision).toBeNull();
+    } finally {
+      idSpy.mockRestore();
+    }
+  });
+
   it("gives up on a review nobody answers instead of blocking the insert", async () => {
     vi.useFakeTimers();
     try {

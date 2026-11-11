@@ -111,8 +111,12 @@ const touchSession = (
 };
 
 const markSessionExpired = (id: string): void => {
-  const status = sessions.get(id)?.status;
-  if (status === "open" || status === "queued") {
+  const session = sessions.get(id);
+  if (
+    session?.status === "open" ||
+    session?.status === "queued" ||
+    (session?.status === "failed" && session.presentation === "composer")
+  ) {
     touchSession(id, { status: "expired", decidedAt: Date.now() });
   }
 };
