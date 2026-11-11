@@ -234,6 +234,44 @@ describe("PasteTool review", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("does not navigate if the Open save finishes after its timeout", async () => {
+    let finishSave: (() => void) | undefined;
+    createPendingPasteReviewMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      async (
+        _text: string,
+        _source: string,
+        options?: {
+          onOpen?: (text: string, signal?: AbortSignal) => Promise<void>;
+        },
+      ) => {
+        const controller = new AbortController();
+        const saving = options?.onOpen?.("edited in pill", controller.signal);
+        await Promise.resolve();
+        controller.abort();
+        finishSave?.();
+        await saving;
+        return null;
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ canceled: true });
+
+    expect(createPendingPasteReviewMock).toHaveBeenCalledOnce();
+    expect(emitMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("returns a successful clipboard result when the user chooses Copy", async () => {
     reviewTranscriptBeforeInsertMock.mockImplementation(
       (_text: string, _source: string, options?: { onCopy?: () => void }) => {

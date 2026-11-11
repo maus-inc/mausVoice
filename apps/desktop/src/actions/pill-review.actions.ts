@@ -31,8 +31,8 @@ export type ReviewSource = "dictation" | "assistant-tool";
 export type ReviewTranscriptBeforeInsertOptions = {
   /** Record a successful clipboard hand-off for the assistant tool result. */
   onCopy?: () => void;
-  /** Persist and surface a manual-paste hand-off when an agent chooses Open. */
-  onOpen?: (text: string) => Promise<void>;
+  /** Persist an Open hand-off; its signal aborts if the save exceeds 30 seconds. */
+  onOpen?: (text: string, signal?: AbortSignal) => Promise<void>;
   /** Distinguish an unanswered review timeout from an explicit user cancel. */
   onExpire?: () => void;
   /** Report when the composer cannot be created or becomes unresponsive. */
@@ -75,7 +75,7 @@ type QueuedReview = {
   /** Reports a successful clipboard hand-off to the assistant tool caller. */
   onCopy?: () => void;
   /** Agent Paste's Open action persists a manual hand-off in its conversation. */
-  onOpen?: (text: string) => Promise<void>;
+  onOpen?: (text: string, signal?: AbortSignal) => Promise<void>;
   onExpire?: () => void;
   onFailure?: () => void;
   /** Set while a decision runs, so a second click cannot start it twice. */
@@ -180,6 +180,7 @@ export const getQueuedSessions = (): ReviewSession[] =>
  * The transcript stays in history, so nothing is lost when it expires.
  */
 const REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
+const OPEN_SAVE_TIMEOUT_MS = 30_000;
 
 let unlistenDecision: (() => void) | null = null;
 let listenerSetup: Promise<void> | null = null;
@@ -447,8 +448,18 @@ const openAssistantPasteInChats = async (
   // caller must durably save the edited text before this review can settle.
   current.openSavePending = true;
   clearReviewTimeout();
+  const abortController = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
-    await current.onOpen(text);
+    await Promise.race([
+      current.onOpen(text, abortController.signal),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          abortController.abort();
+          reject(new Error("The Paste review save timed out"));
+        }, OPEN_SAVE_TIMEOUT_MS);
+      }),
+    ]);
   } catch {
     runToast(
       showToast({
@@ -461,6 +472,8 @@ const openAssistantPasteInChats = async (
       }),
     );
     throw new Error("Could not save the pending Paste review");
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
   }
   settle(id, null, "open");
   return true;

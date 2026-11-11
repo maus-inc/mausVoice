@@ -740,7 +740,7 @@ describe("reviewTranscriptOnPill", () => {
     const { id, pending } = await beginAssistantToolOpen(onOpen);
     await expect(pending).resolves.toBeNull();
 
-    expect(onOpen).toHaveBeenCalledWith("pill draft");
+    expect(onOpen).toHaveBeenCalledWith("pill draft", expect.any(AbortSignal));
     expect(mocks.reviewTextInComposer).not.toHaveBeenCalled();
     const session = getReviewSession(id);
     expect(session?.status).toBe("decided");
@@ -761,17 +761,21 @@ describe("reviewTranscriptOnPill", () => {
     await cancelPillReview(pending);
   });
 
-  it("does not expire an Open hand-off while its durable save is pending", async () => {
+  it("recovers when an Open hand-off save stalls and remains retryable", async () => {
     vi.useFakeTimers();
     let finishOpen: () => void = () => undefined;
+    let openSignal: AbortSignal | undefined;
     try {
       const onExpire = vi.fn();
-      const onOpen = vi.fn(
-        () =>
-          new Promise<void>((resolve) => {
+      const onOpen = vi
+        .fn()
+        .mockImplementationOnce((_text: string, signal: AbortSignal) => {
+          openSignal = signal;
+          return new Promise<void>((resolve) => {
             finishOpen = resolve;
-          }),
-      );
+          });
+        })
+        .mockResolvedValueOnce(undefined);
       const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
         onOpen,
         onExpire,
@@ -785,14 +789,21 @@ describe("reviewTranscriptOnPill", () => {
       await flush(() => onOpen.mock.calls.length > 0);
       const next = startPillReview("next review");
       await flush(() => getQueuedSessions().length === 2);
-      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      await vi.advanceTimersByTimeAsync(30_000);
 
       expect(getReviewSession(id)?.status).toBe("open");
       expect(getAppState().pendingPillReview?.id).toBe(id);
       expect(onExpire).not.toHaveBeenCalled();
+      expect(openSignal?.aborted).toBe(true);
+      expect(mocks.showToast).toHaveBeenCalledWith(
+        expect.objectContaining({ toastType: "error" }),
+      );
 
-      finishOpen();
+      decide?.({
+        payload: { reviewId: id, action: "open", text: "pill draft" },
+      });
       await expect(pending).resolves.toBeNull();
+      expect(onOpen).toHaveBeenCalledTimes(2);
       expect(getReviewSession(id)?.status).toBe("decided");
       expect(getReviewSession(id)?.decision).toBe("open");
       expect(getAppState().pendingPillReview?.text).toBe("next review");

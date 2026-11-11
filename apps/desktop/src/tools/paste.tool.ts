@@ -59,10 +59,12 @@ export class PasteTool extends BaseTool {
       },
       ...(conversationId
         ? {
-            onOpen: async (reviewedText: string) => {
+            onOpen: async (reviewedText: string, signal?: AbortSignal) => {
               // Save first: once Chats takes focus the pill cannot safely insert
               // into the app that had focus when the tool began.
+              if (signal?.aborted) return;
               await createPendingPasteReview(conversationId, reviewedText);
+              if (signal?.aborted) return;
               openedPendingPaste = true;
               try {
                 await emit("open-pill-conversation", { conversationId });
