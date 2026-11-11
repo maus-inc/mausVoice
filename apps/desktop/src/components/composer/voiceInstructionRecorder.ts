@@ -372,9 +372,13 @@ export class VoiceInstructionRecorder {
         );
         if (this.deps.speechRecognitionSupported) {
           await this.startBrowser(gen);
-          return null;
+        } else {
+          this.deps.onError(this.deps.unsupportedMessage());
         }
-        this.deps.onError(this.deps.unsupportedMessage());
+        // The failed stop restored the native handle, which is why the
+        // fallback above is refused the slot: drop the dead capture here
+        // or the microphone stays live behind an idle recorder.
+        await discardNativeRecording();
         return null;
       }
     } finally {
