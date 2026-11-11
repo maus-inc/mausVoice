@@ -477,10 +477,13 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     );
     assert.match(source.gtkX11, /x11_release_persisted\.set\(true\)/);
     assert.match(source.gtkX11, /pub\(crate\) fn persist_drop_position/);
-    assert.match(
-      source.gtkX11,
-      /!state_tick\.x11_release_persisted\.replace\(false\)/,
-    );
+    // Reading the flag without clearing it is the point. Clearing it in the
+    // condition (`replace(false)`) consumed a release even when the save guard
+    // deferred or refused the save, so the missed-release net then had nothing left
+    // to act on and the drop was lost. The flag is only cleared by a save that
+    // actually happened.
+    assert.match(source.gtkX11, /!state_tick\.x11_release_persisted\.get\(\)/);
+    assert.doesNotMatch(source.gtkX11, /x11_release_persisted\.replace\(false\)/);
   });
 
   it("emits the frontend reset state event after a native position change", () => {
@@ -2190,10 +2193,18 @@ describe("native gesture adapter contracts", () => {
     ];
     for (const [name, marker] of guards) {
       const reposition = scope(name, marker);
+      // The decision is the shared anchor, not a local pair of flags. A guard on
+      // the local expression would pass again the moment someone rebuilt the same
+      // two-flag check, which is exactly how Windows and macOS drifted apart.
       assert.match(
         reposition,
-        /if !state\.has_saved_position\.get\(\) && !reset_to_cursor \{[^}]*return;/,
-        `${name}: an unsaved pill is re-homed, so forgetting moves it`,
+        /rust_pill_shared::layout::pill_anchor\(/,
+        `${name}: placement does not consult the shared anchor model`,
+      );
+      assert.match(
+        reposition,
+        /if !anchor\.places\(\) \{[^}]*return;/,
+        `${name}: a cleared pill is placed anyway, so forgetting moves it`,
       );
     }
     // The GTK equivalent is a fallback rather than a guard, and has to keep
@@ -2203,6 +2214,114 @@ describe("native gesture adapter contracts", () => {
       gtkAnchor,
       /prev\.0 as f64 \+ center_x, prev\.1 as f64 \+ center_y/,
       "gtkX11: the unsaved fallback stopped reusing the last applied origin",
+    );
+  });
+
+  it("reuses one display source for reconciliation and restore", () => {
+    // A record names its display, so the enumeration that resolves it has to carry
+    // the identity token. Restore used the token-less enumeration, which silently
+    // reduced every restore to geometry matching: a pill saved on a display that
+    // was resized or rearranged came back on whichever display sat nearest.
+    const restore = scope("windowsPill", "fn restore_position(");
+    assert.match(
+      restore,
+      /enumerate_work_areas_with_identity\(\)\?/,
+      "windowsPill: restore enumerates displays without their identity",
+    );
+    assert.doesNotMatch(restore, /enumerate_work_areas\(\)\?/);
+    // One callback serves both enumerations, so the token cannot be attached in
+    // one and forgotten in the other.
+    const windows = source.windowsPill;
+    assert.equal(
+      (windows.match(/unsafe extern "system" fn collect_monitor_rect\(/g) || []).length,
+      1,
+      "windowsPill: two enumeration callbacks, so their fields can diverge",
+    );
+    assert.match(windows, /fn enumerate_work_areas_with_identity\(\)/);
+    assert.match(windows, /candidate\.id = monitor_display_id\(monitor\)/);
+  });
+
+  it("gives every pill one anchor model instead of one flag per platform", () => {
+    // Three flags described the same thing in three dialects, which is how two of
+    // them came to answer "cleared" differently from the third.
+    const shared = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(shared, /pub enum Anchor \{/);
+    assert.match(shared, /pub fn pill_anchor\(saved: bool, restarted: bool\) -> Anchor/);
+    assert.match(shared, /pub fn places\(self\) -> bool/);
+    // No platform may keep its own reset-strategy field again: the anchor plus the
+    // follow-the-pointer flag are the whole state.
+    for (const name of ["windowsPill", "macApp", "gtkPill", "gtkX11"]) {
+      assert.doesNotMatch(
+        source[name],
+        /reset_strategy/,
+        `${name}: a private reset strategy is back alongside the shared anchor`,
+      );
+    }
+    // Every reset and every forget sets the anchor, so neither can leave it stale.
+    for (const [name, marker] of [
+      ["windowsPill", "InMessage::ResetPosition"],
+      ["macApp", "InMessage::ResetPosition"],
+      ["gtkPill", "InMessage::ResetPosition"],
+    ]) {
+      const handler = scope(name, marker);
+      assert.match(
+        handler,
+        /pill_anchor\(false, (?:true|false)\)/,
+        `${name}: a reset leaves the anchor stale`,
+      );
+      assert.match(handler, /follow_pointer_anchor/);
+    }
+  });
+
+  it("clears the interrupted-drag latch when a drag starts", () => {
+    // The latch means "a layout change landed under this drag". Nothing cleared it
+    // on GTK, so one interrupted drag refused every later save and the pill
+    // silently stopped remembering its position at all.
+    const pill = read("packages/rust_gtk_pill/src/pill.rs");
+    // The reader collapses whitespace, so a comment between the two statements
+    // shows up as ordinary text and the guard has to span it.
+    assert.match(
+      pill,
+      /state\.dragging\.set\(true\);.*?state\.save_guard\.borrow_mut\(\)\.drag_started\(\);/,
+      "gtkPill: a drag starts without clearing the interrupted-drag latch",
+    );
+    // GTK's missed-release net publishes a position, so it takes the same guard.
+    const x11 = read("packages/rust_gtk_pill/src/x11.rs");
+    const fallback = scope("gtkX11", "pub(crate) fn persist_drop_position(");
+    assert.match(
+      fallback,
+      /!state\.save_guard\.borrow\(\)\.allows_save\(now\)/,
+      "gtkX11: the missed-release fallback saves without consulting the guard",
+    );
+  });
+
+  it("resizes the layered surface when the DPI suggestion resizes the window", () => {
+    // Every frame presents exactly the surface's own dimensions, so a surface left
+    // at its old size resizes the window back on the next frame and undoes
+    // WM_DPICHANGED entirely.
+    const gfx = read("packages/rust_windows_pill/src/gfx.rs");
+    assert.match(gfx, /pub\(crate\) fn resize\(&mut self, width: i32, height: i32\)/);
+    const dpi = scope("windowsPill", "WM_DPICHANGED => {");
+    assert.match(dpi, /gfx\.resize\(w, h\)/, "windowsPill: the surface ignores the DPI size");
+    // The surface is what UpdateLayeredWindow presents, so this is the only place
+    // the suggestion can survive.
+    const layered = scope("windowsPill", "fn update_layered(");
+    assert.match(layered, /cx: gfx\.width/);
+    assert.match(layered, /cy: gfx\.height/);
+  });
+
+  it("saves a pending final position before the window is destroyed", () => {
+    // The message arrives asynchronously, so latched input can still be pending
+    // with the pill's last position sitting in it. Once the window is gone the
+    // frame loop that would have delivered it never runs.
+    const destroy = scope("windowsPill", "WM_DESTROY => {");
+    assert.match(destroy, /pending_drag_position\.get\(\)/);
+    assert.match(destroy, /persist_drag_position\(hwnd, state\)/);
+    const save = scope("windowsPill", "fn persist_drag_position(");
+    assert.match(
+      save,
+      /state\.pending_drag_position\.set\(false\)/,
+      "windowsPill: a consumed pending save is not cleared, so destroy stores it twice",
     );
   });
 

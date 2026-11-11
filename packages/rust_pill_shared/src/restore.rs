@@ -330,10 +330,17 @@ where
         return Placement::PlatformDefault;
     };
 
+    let destination_bounds = bounds_for(areas[index], (width, height));
     let anchor = if exact {
         (parked.x, parked.y)
     } else {
-        remap(parked, areas[index], (width, height))
+        // The saved origin is a fixed point of the clamp it was stored under, so
+        // the fraction has to be measured in the same room the destination is
+        // measured in. Asking the caller for both is what keeps the two boxes the
+        // same box: the boxes are footprint-dependent, and only the caller knows
+        // the footprint.
+        let saved_bounds = bounds_for(parked.display, (parked.width, parked.height));
+        remap(parked, destination_bounds, saved_bounds)
     };
     if !anchor.0.is_finite() || !anchor.1.is_finite() {
         return Placement::PlatformDefault;
@@ -357,15 +364,27 @@ fn choose_display(parked: &ParkedWindow, displays: &[MonitorRect]) -> Option<(us
     // A named display is matched by name first. This is the case geometry cannot
     // get right: a panel that comes back at a different resolution, or one that
     // swapped places with a panel of the same size.
+    // A token is not always unique. Two panels of the same make and model share
+    // one on X11, where the backend exposes no serial number, and mirrors of the
+    // same panel share one on every platform. Taking the first candidate would
+    // then move the pill to the wrong panel even though the right one was
+    // connected and its geometry matched exactly, so a geometry match among the
+    // candidates is preferred before the first one is accepted.
     if let Some(saved) = parked.display_id {
-        if let Some(index) = displays
+        let candidates: Vec<usize> = displays
             .iter()
             .enumerate()
-            .find(|(_, display)| display.id == Some(saved))
+            .filter(|(_, display)| display.id == Some(saved))
             .map(|(index, _)| index)
+            .collect();
+        if let Some(&index) = candidates
+            .iter()
+            .find(|&&index| displays[index].same_geometry(parked.display))
         {
-            let exact = displays[index].same_geometry(parked.display);
-            return Some((index, exact));
+            return Some((index, true));
+        }
+        if let Some(&index) = candidates.first() {
+            return Some((index, false));
         }
     }
     if let Some(index) = displays
@@ -405,31 +424,25 @@ fn choose_display(parked: &ParkedWindow, displays: &[MonitorRect]) -> Option<(us
 /// window is wider than the display there is no room, and
 /// [`relative_fraction`] pins the origin to the leading edge for the clamp to
 /// finish.
-fn remap(parked: ParkedWindow, work: MonitorRect, window: (f64, f64)) -> (f64, f64) {
-    // The fraction of the saved display the pill had travelled, measured against
-    // the room it could slide there with the size it had then. `parked.x` is a
-    // root coordinate, so the saved display's own origin comes off it first.
-    let saved_x = relative_fraction(
-        parked.x,
-        parked.display.x,
-        parked.display.width,
-        parked.width,
-    );
-    let saved_y = relative_fraction(
-        parked.y,
-        parked.display.y,
-        parked.display.height,
-        parked.height,
-    );
-    // The destination room belongs to the new display and the pill's current
-    // size, not the size it had when it was parked. Using the saved size here
-    // sends the pill past the new display's edge as soon as a release changes
-    // how big the pill is, and the clamp then pins it to a corner it was never
-    // parked near.
-    let (window_w, window_h) = window;
+fn remap(parked: ParkedWindow, destination: DragBounds, saved: DragBounds) -> (f64, f64) {
+    // Both ends are measured in the room the pill's visible footprint can move
+    // in, which is exactly what the clamp that stored the origin used. Measuring
+    // the saved end against the transparent window instead gives the origin
+    // hundreds of pixels of travel the visible pill never had, so the same
+    // fraction of the new display lands somewhere the user would not recognise.
+    let saved_x = relative_fraction(parked.x, saved.min_x, saved.max_x - saved.min_x, 0.0);
+    let saved_y = relative_fraction(parked.y, saved.min_y, saved.max_y - saved.min_y, 0.0);
     (
-        work.x + saved_x * (work.width - window_w),
-        work.y + saved_y * (work.height - window_h),
+        place_at_fraction(
+            destination.min_x,
+            destination.max_x - destination.min_x,
+            saved_x,
+        ),
+        place_at_fraction(
+            destination.min_y,
+            destination.max_y - destination.min_y,
+            saved_y,
+        ),
     )
 }
 
@@ -488,13 +501,8 @@ pub fn centered_bottom_footprint(
 
 /// Where the origin sat inside the display, as a fraction of the room it could
 /// slide, clamped to `0.0` to `1.0`. Returns `0.0` when there is no room.
-fn relative_fraction(origin: f64, display_origin: f64, display_span: f64, window_span: f64) -> f64 {
-    let room = display_span - window_span;
-    if !room.is_finite() || room <= 0.0 || !origin.is_finite() || !display_span.is_finite() {
-        return 0.0;
-    }
-    ((origin - display_origin) / room).clamp(0.0, 1.0)
-}
+/// The fraction and the inverse, re-exported so the remap math has one home.
+pub use crate::layout::{place_at_fraction, relative_fraction};
 
 #[cfg(test)]
 mod tests {
@@ -1094,5 +1102,37 @@ mod tests {
             encoded.contains("\"display_id\":1234"),
             "missing token: {encoded}"
         );
+    }
+
+    /// Two panels of the same make and model share a token on X11, where the
+    /// backend exposes no serial number. The token alone must not decide which
+    /// one the pill returns to: the connected panel whose geometry matches is
+    /// the one the pill was actually on, and taking the first candidate moved it
+    /// to the other panel even though the right one was connected.
+    #[test]
+    fn a_shared_token_prefers_the_panel_whose_geometry_matches() {
+        let panel = |x: f64| MonitorRect {
+            x,
+            y: 0.0,
+            width: 1920.0,
+            height: 1040.0,
+            id: Some(7),
+        };
+        let left = panel(0.0);
+        let right = panel(1920.0);
+        let displays = [left, right];
+
+        let parked_on_right =
+            ParkedWindow::new_named(2400.0, 400.0, 600.0, 362.0, right, Some(7)).expect("parked");
+        let bounds = |work: MonitorRect, _window: (f64, f64)| {
+            footprint_bounds(work, (247.0, 309.0), (48.0, 6.0))
+        };
+        match restore(parked_on_right, &displays, (600.0, 362.0), bounds) {
+            Placement::Restore { x, .. } => assert!(
+                x >= 1920.0,
+                "restored to the left panel at {x}, though the pill was parked on the right one"
+            ),
+            Placement::PlatformDefault => panic!("a matching panel was connected"),
+        }
     }
 }

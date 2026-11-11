@@ -1,8 +1,6 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{
-    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
-};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Visibility};
 
 use crate::constants::*;
 use crate::pill::Backend;
@@ -311,7 +309,6 @@ pub(crate) struct PillState {
     // ends so the toplevel stays parked until the user moves it again.
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
-    pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
     /// Stable token of the display the saved position belongs to, or `None` when
@@ -339,6 +336,11 @@ pub(crate) struct PillState {
     // Last window origin the frame tick applied during an X11 drag, so steady
     // frames skip the X round trip. Seeded out of range to force the first move.
     pub(crate) x11_drag_applied: Cell<(i32, i32)>,
+    /// Why this pill has no stored position, so placement can tell a first launch
+    /// from a position that was deliberately cleared.
+    pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
+    /// Whether a due placement follows the pointer.
+    pub(crate) follow_pointer_anchor: Cell<bool>,
     // PlainWayland draws the pill on a maximized overlay window, so dragging
     // translates the pill's draw position rather than moving the toplevel.
     pub(crate) drag_draw_offset_x: Cell<f64>,

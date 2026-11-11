@@ -440,6 +440,199 @@ impl SaveGuard {
     }
 }
 
+/// Why an unsaved pill has no stored position.
+///
+/// "The pill has no saved position" used to be a complete description, and each
+/// platform rebuilt the meaning from a different pair of flags: Windows from
+/// `reset_strategy`, macOS from `first_placement_done`, GTK from
+/// `x11_drag_applied`. That is how one of them came to answer the same question
+/// two different ways, and how clearing the stored position started moving the
+/// pill instead of leaving it alone.
+///
+/// The distinction is the whole point: an unsaved pill must be re-homed when it
+/// has never been placed, and must be left exactly where it is when the stored
+/// position was deliberately dropped. The difference is not in the pill's
+/// current position, which is identical in both cases, so it has to be stated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Anchor {
+    /// A stored position survived, so the pill belongs there.
+    Saved,
+    /// The pill has never been placed in this process and no position survived:
+    /// it is due a first placement.
+    FirstPlacement,
+    /// The stored position was dropped, either by a reset the user asked for or
+    /// by clearing local data. The pill is already where it should be.
+    Cleared,
+}
+
+impl Anchor {
+    /// Whether the pill is due to be placed somewhere by the platform.
+    ///
+    /// A cleared pill is not: it is already sitting where the user left it, and
+    /// the only thing that changed is that the position is no longer recorded.
+    /// Moving it here is what made clearing local data drag the pill to a corner.
+    pub fn places(self) -> bool {
+        !matches!(self, Self::Cleared)
+    }
+
+    /// Whether the pill follows the pointer when it is placed.
+    ///
+    /// Only a first placement does. A reset names its own destination, and a
+    /// cleared pill has nowhere to go at all.
+    pub fn follows_pointer(self) -> bool {
+        matches!(self, Self::FirstPlacement)
+    }
+}
+
+/// What the anchor is, given whether a position is stored and how the pill
+/// reached this state.
+///
+/// The reach is what the platforms disagree about, so it is an argument rather
+/// than something each one re-derives: a reset or a forget started the pill over,
+/// and nothing else did.
+pub fn pill_anchor(saved: bool, restarted: bool) -> Anchor {
+    if saved {
+        Anchor::Saved
+    } else if restarted {
+        Anchor::Cleared
+    } else {
+        Anchor::FirstPlacement
+    }
+}
+
+/// Where a saved position falls in the room its display gives it to slide.
+///
+/// Zero when the pill cannot slide at all, which is also the answer for a window
+/// wider than its display: there is no room, so the leading edge is the only
+/// position that means anything and the clamp does the rest. Anything unmeasurable
+/// also resolves to `0.0` rather than to the trailing edge: a non-finite sample is
+/// a bug, and the leading edge is the one answer that stays predictable next to a
+/// clamp that is about to run on the same values.
+pub fn relative_fraction(origin: f64, area_origin: f64, area_size: f64, window_size: f64) -> f64 {
+    let room = area_size - window_size;
+    if !room.is_finite() || room <= 0.0 {
+        return 0.0;
+    }
+    let offset = (origin - area_origin) / room;
+    if offset.is_finite() {
+        offset.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// The inverse of [`relative_fraction`]: a fraction of the room becomes an origin.
+///
+/// `room` is passed already resolved, because the caller knows it from the
+/// footprint it clamps with, and recomputing it from a window size here is what
+/// made a remapped origin disagree with the clamp that followed it.
+pub fn place_at_fraction(area_origin: f64, room: f64, fraction: f64) -> f64 {
+    if !room.is_finite() || room <= 0.0 {
+        return area_origin;
+    }
+    let fraction = if fraction.is_finite() {
+        fraction.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    area_origin + fraction * room
+}
+
+/// The display a point belongs to, or the nearest one when it belongs to none.
+///
+/// Both halves earn their place. Containment is exact and has to win when it
+/// applies, and it fails in two situations that are not errors: a point in the
+/// gap between two displays of different heights, and a point outside every
+/// display because the arrangement shrank under a pill that has not moved yet.
+/// In both, the nearest display is the one the user means, and its work area is
+/// what the pill has to be clamped into.
+///
+/// The nearest tie is broken by index, so the answer is stable frame to frame
+/// rather than depending on iteration order.
+pub fn display_for_point(areas: &[MonitorRect], x: f64, y: f64) -> Option<usize> {
+    if areas.is_empty() {
+        return None;
+    }
+    if let Some(index) = areas
+        .iter()
+        .position(|area| x >= area.x && x < area.right() && y >= area.y && y < area.bottom())
+    {
+        return Some(index);
+    }
+    let mut nearest: Option<(usize, f64)> = None;
+    for (index, area) in areas.iter().enumerate() {
+        let dx = x - area.x;
+        let dy = y - area.y;
+        let distance = (dx * dx + dy * dy).sqrt();
+        if !distance.is_finite() {
+            continue;
+        }
+        if nearest.is_none_or(|(_, known)| distance < known) {
+            nearest = Some((index, distance));
+        }
+    }
+    nearest.map(|(index, _)| index)
+}
+
+/// Describe the pill as parked for [`reconcile`], naming the display it is on.
+///
+/// Three call sites need exactly this, and each one got a piece of it wrong on its
+/// own: one reconciled against a stored origin the user had just cleared, one
+/// dropped the display token before saving and silently downgraded every later
+/// restore to geometry matching, and one built a stand-in rectangle from a stale
+/// coordinate when no display contained the pill. One function means one answer.
+///
+/// `named_id` is the token the record carries. It is honoured only when a display
+/// with that token is connected, because a token for a display that is gone must
+/// not outlive it; otherwise the display is the one containing the pill's
+/// footprint centre, else the nearest one.
+pub fn describe_parked(
+    areas: &[MonitorRect],
+    origin: (f64, f64),
+    window: (f64, f64),
+    footprint_centre: (f64, f64),
+    named_id: Option<u64>,
+) -> Option<ParkedWindow> {
+    let display = named_id
+        .and_then(|id| areas.iter().copied().find(|area| area.id == Some(id)))
+        .or_else(|| {
+            display_for_point(areas, footprint_centre.0, footprint_centre.1)
+                .map(|index| areas[index])
+        })
+        .unwrap_or_else(|| MonitorRect::without_id(origin.0, origin.1, window.0, window.1));
+    ParkedWindow::new_named(origin.0, origin.1, window.0, window.1, display, named_id)
+}
+
+/// The display a reconciled origin now belongs to.
+///
+/// Called after a [`Relocation::Move`] is applied, so the record names the display
+/// the pill was actually moved onto rather than the one it left.
+pub fn display_id_of(
+    areas: &[MonitorRect],
+    origin: (f64, f64),
+    footprint_centre: (f64, f64),
+) -> Option<u64> {
+    let _ = origin;
+    display_for_point(areas, footprint_centre.0, footprint_centre.1)
+        .and_then(|index| areas[index].id)
+}
+
+/// Whether a layout poll at `now` should reconcile.
+///
+/// All three pills poll an arrangement signature because the native notification
+/// can be dropped. Each one wrote this same sequence by hand, including the subtle
+/// part: the first poll only records a baseline, because reconciling against
+/// "nothing seen yet" would treat the launch itself as a display change and move a
+/// freshly restored pill off the position it was just restored to.
+///
+/// Returns the new signature to store, and whether the caller should reconcile.
+pub fn poll_should_reconcile(previous: Option<u64>, signature: u64) -> (u64, bool) {
+    if previous == Some(signature) {
+        return (signature, false);
+    }
+    (signature, previous.is_some())
+}
+
 /// Whether `now` is at least `threshold` after `then`.
 ///
 /// A clock that ran backwards, or a non-finite sample, is never "long enough".
@@ -852,5 +1045,92 @@ mod tests {
             (x, y),
             "relocation and the idle clamp disagree"
         );
+    }
+
+    // -- Anchoring ----------------------------------------------------------
+
+    /// A pill that has never been placed is placed, and follows the pointer while
+    /// it is. A pill whose stored position was dropped is not placed at all.
+    ///
+    /// This is the whole reason the anchor exists. Reading "no saved position" as
+    /// one state made every reset and every local-data clear look like a first
+    /// launch, which moved a pill the user had deliberately parked.
+    #[test]
+    fn a_cleared_anchor_neither_places_nor_follows_the_pointer() {
+        let first = pill_anchor(false, false);
+        assert_eq!(first, Anchor::FirstPlacement);
+        assert!(first.places());
+        assert!(first.follows_pointer());
+
+        let cleared = pill_anchor(false, true);
+        assert_eq!(cleared, Anchor::Cleared);
+        assert!(!cleared.places(), "a cleared pill must not be moved");
+        assert!(!cleared.follows_pointer());
+
+        // A stored position outranks how the pill got here: a reset followed by a
+        // restore has a position again and belongs at it.
+        assert_eq!(pill_anchor(true, true), Anchor::Saved);
+        assert_eq!(pill_anchor(true, false), Anchor::Saved);
+    }
+
+    // -- Fractions ---------------------------------------------------------
+
+    #[test]
+    fn a_fraction_is_clamped_and_pinned_without_room() {
+        assert_eq!(relative_fraction(50.0, 0.0, 200.0, 100.0), 0.5);
+        assert_eq!(relative_fraction(-50.0, 0.0, 200.0, 100.0), 0.0);
+        assert_eq!(relative_fraction(500.0, 0.0, 200.0, 100.0), 1.0);
+        // No room: the leading edge is the only meaningful position.
+        assert_eq!(relative_fraction(10.0, 0.0, 100.0, 100.0), 0.0);
+        assert_eq!(relative_fraction(10.0, 0.0, 100.0, 200.0), 0.0);
+        // Non-finite input is a bug, not a vote for the trailing edge.
+        assert_eq!(relative_fraction(f64::NAN, 0.0, 200.0, 100.0), 0.0);
+        assert_eq!(relative_fraction(f64::INFINITY, 0.0, 200.0, 100.0), 0.0);
+    }
+
+    /// Placing at a fraction and measuring that placement give back the same
+    /// number, which is what lets a remapped origin survive the clamp that
+    /// follows it without drifting.
+    #[test]
+    fn placing_at_a_fraction_round_trips() {
+        for step in 0..=10 {
+            let fraction = step as f64 / 10.0;
+            let placed = place_at_fraction(120.0, 640.0, fraction);
+            let measured = relative_fraction(placed, 120.0, 640.0, 0.0);
+            assert!((measured - fraction).abs() < 1e-12, "fraction {fraction}");
+        }
+        // No room falls back to the area origin rather than to a negative offset.
+        assert_eq!(place_at_fraction(300.0, 0.0, 0.5), 300.0);
+        assert_eq!(place_at_fraction(300.0, -10.0, 0.5), 300.0);
+        // A corrupt fraction is clamped, not extrapolated off the display.
+        assert_eq!(place_at_fraction(0.0, 100.0, 9.0), 100.0);
+        assert_eq!(place_at_fraction(0.0, 100.0, f64::NAN), 0.0);
+    }
+
+    // -- Point to display --------------------------------------------------
+
+    /// Containment wins when it applies, and the nearest display answers when it
+    /// does not. Both are needed: a pill can sit in the notch between two displays
+    /// of different heights, and a shrinking arrangement can leave it outside
+    /// every display before anything has moved it.
+    #[test]
+    fn a_point_resolves_to_its_display_or_the_nearest_one() {
+        let areas = [
+            MonitorRect::without_id(0.0, 0.0, 1920.0, 1080.0),
+            MonitorRect::without_id(1920.0, 0.0, 1280.0, 720.0),
+        ];
+        assert_eq!(display_for_point(&areas, 100.0, 100.0), Some(0));
+        assert_eq!(display_for_point(&areas, 2000.0, 100.0), Some(1));
+        // Below the short display: outside every area, nearest is the short one.
+        assert_eq!(display_for_point(&areas, 2000.0, 900.0), Some(1));
+        // Above both: nearest is still a display rather than nothing.
+        assert_eq!(display_for_point(&areas, 100.0, -40.0), Some(0));
+        // Negative-origin layouts work because containment is signed.
+        let left = [MonitorRect::without_id(-1920.0, 0.0, 1920.0, 1080.0)];
+        assert_eq!(display_for_point(&left, -100.0, 100.0), Some(0));
+        // No displays at all is `None`, not a panic or a guess.
+        assert_eq!(display_for_point(&[], 0.0, 0.0), None);
+        // A non-finite point cannot contain anything and has no distance.
+        assert_eq!(display_for_point(&areas, f64::NAN, 0.0), None);
     }
 }

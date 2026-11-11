@@ -1,8 +1,6 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{
-    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
-};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Visibility};
 
 use crate::constants::*;
 
@@ -238,7 +236,6 @@ pub(crate) struct PillState {
     pub(crate) selector_placement: RefCell<rust_pill_shared::placement::SelectorPlacement>,
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
-    pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
     /// Stable token of the display the saved position belongs to, or `None` when
@@ -261,6 +258,11 @@ pub(crate) struct PillState {
     /// chasing the cursor; this flag lets the first placement follow the cursor
     /// and then stays put.
     pub(crate) first_placement_done: Cell<bool>,
+    /// Why this pill has no stored position, so placement can tell a first launch
+    /// from a position that was deliberately cleared.
+    pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
+    /// Whether a due placement follows the pointer.
+    pub(crate) follow_pointer_anchor: Cell<bool>,
 
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,

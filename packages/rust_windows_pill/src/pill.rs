@@ -214,7 +214,9 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
         // state starts saved. Without this the first cursor tick re-homes the
         // pill to the default corner, undoing the restore 60 ms after launch.
         has_saved_position: Cell::new(restored.is_some()),
-        reset_strategy: Cell::new(ResetStrategy::Current),
+        anchor: Cell::new(rust_pill_shared::layout::Anchor::FirstPlacement),
+        follow_pointer_anchor: Cell::new(true),
+        pending_drag_position: Cell::new(false),
         saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
         saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
         saved_display_id: Cell::new(restored_display_id),
@@ -330,6 +332,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             unsafe {
                 let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
             }
+            // The surface has to take the new size too. Every frame presents exactly
+            // the surface's own dimensions, so leaving it at the old size resizes the
+            // window back on the very next frame and undoes this suggestion.
+            GFX.with(|gfx| {
+                if let Some(ref mut gfx) = *gfx.borrow_mut() {
+                    let _ = gfx.resize(w, h);
+                }
+            });
             STATE.with(|s| {
                 if let Some(ref state) = *s.borrow() {
                     reconcile_display_layout(hwnd, state);
@@ -497,6 +507,20 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_DESTROY => {
+            // The message arrives asynchronously, so latched input can still be
+            // pending here with the pill's final position sitting in it. A
+            // destroy is deliberately not gated on the input lock, because the
+            // window may be going away while that latch is held; once this returns
+            // the pill is gone and the frame loop that would have delivered the
+            // position never runs. Draining it now is the only chance the last
+            // position has of being stored.
+            STATE.with(|s| {
+                if let Some(ref state) = *s.borrow() {
+                    if state.pending_drag_position.get() {
+                        persist_drag_position(hwnd, state);
+                    }
+                }
+            });
             unsafe {
                 PostQuitMessage(0);
             }
@@ -612,15 +636,12 @@ fn poll_display_layout(hwnd: HWND, state: &PillState) {
         // Same rule as the message path: a failed enumeration is not evidence.
         return;
     };
-    let signature = rust_pill_shared::layout::layout_signature(&areas);
-    let previous = state.layout_signature.get();
+    let (signature, reconcile_now) = rust_pill_shared::layout::poll_should_reconcile(
+        state.layout_signature.get(),
+        rust_pill_shared::layout::layout_signature(&areas),
+    );
     state.layout_signature.set(Some(signature));
-    if previous == Some(signature) {
-        return;
-    }
-    if previous.is_some() {
-        // The first poll only establishes a baseline; reconciling against it
-        // would treat the launch itself as a layout change.
+    if reconcile_now {
         reconcile_display_layout(hwnd, state);
     }
 }
@@ -882,7 +903,14 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.saved_display_id.set(None);
             state.selector_placement.borrow_mut().reset();
             state.crossing.borrow_mut().reset();
-            state.reset_strategy.set(strategy);
+            // How the pill reached this state is what tells placement whether to
+            // follow the pointer. A reset names its destination; a forget does not.
+            state
+                .anchor
+                .set(rust_pill_shared::layout::pill_anchor(false, true));
+            state
+                .follow_pointer_anchor
+                .set(strategy == ResetStrategy::Cursor);
             state.dirty.set(true);
             reposition_to_cursor_monitor(hwnd, state);
             check_hover(hwnd, state);
@@ -900,6 +928,15 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             // republishes this flag, so leaving it set would write the row back.
             state.has_saved_position.set(false);
             state.saved_display_id.set(None);
+            // A pending final position is a save the user did not ask for and the
+            // clear has just made wrong, so it must not survive into the destroy.
+            state.pending_drag_position.set(false);
+            // Clearing local data drops the stored position without moving the
+            // pill, so placement must leave the window exactly where it is.
+            state
+                .anchor
+                .set(rust_pill_shared::layout::pill_anchor(false, true));
+            state.follow_pointer_anchor.set(false);
         }
         InMessage::RequestPosition => {
             let hwnd = HWND_CELL.with(|c| c.get());
@@ -1500,6 +1537,31 @@ fn check_hover(hwnd: HWND, state: &PillState) {
     }
 }
 
+/// Move the window to `(x, y)` without touching its size, z order or activation.
+///
+/// Both the drag frame loop and display reconciliation reposition the pill, and
+/// both want the identical flags. A move to where the window already is is skipped
+/// outright: on Windows a redundant position change costs a message that the rest
+/// of the pill has to spend work filtering out.
+fn move_window(hwnd: HWND, x: i32, y: i32, current_x: i32, current_y: i32) {
+    if x == current_x && y == current_y {
+        return;
+    }
+    // SAFETY: repositioning our own window; the flags keep size, z order and
+    // activation untouched.
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
 fn update_layered(hwnd: HWND, gfx: &Gfx) {
     unsafe {
         let size = SIZE {
@@ -1635,7 +1697,11 @@ fn default_position(win_h: i32) -> (i32, i32) {
 /// `None` means the stored display is gone and nothing in the current layout
 /// relates to it, so the caller keeps the default placement instead of guessing.
 fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<(i32, i32)> {
-    let work_areas = enumerate_work_areas()?;
+    // Identity-aware, because the record names a display: matching it against
+    // rectangles that carry no token reduces every restore to geometry, so a pill
+    // saved on a display that was resized or rearranged comes back on whichever
+    // display happens to sit nearest its old origin.
+    let work_areas = enumerate_work_areas_with_identity()?;
     let placement = rust_pill_shared::restore::restore(
         parked,
         &work_areas,
@@ -1650,67 +1716,11 @@ fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<(i32, i32)> {
     }
 }
 
-/// The work areas of the monitors connected right now.
-///
-/// Separate from `enumerate_monitor_topology`, which keeps the last complete
-/// snapshot for seam hysteresis. Restore must use only what is connected at this
-/// moment: a remembered monitor is the thing being checked for.
-fn enumerate_work_areas() -> Option<Vec<MonitorRect>> {
-    let mut snapshot = MonitorSnapshotList {
-        monitors: Vec::new(),
-        failed: false,
-    };
-    let data = LPARAM(&mut snapshot as *mut _ as isize);
-    // SAFETY: EnumDisplayMonitors completes its callbacks synchronously, so
-    // `data` stays a valid pointer to `snapshot` for the whole enumeration.
-    let succeeded =
-        unsafe { EnumDisplayMonitors(None, None, Some(collect_monitor_snapshot), data) };
-    (succeeded.as_bool() && !snapshot.failed && !snapshot.monitors.is_empty())
-        .then_some(snapshot.monitors)
-}
-
-struct MonitorSnapshotList {
-    monitors: Vec<MonitorRect>,
-    failed: bool,
-}
-
 /// Enumerate the work areas of the connected displays, each with its stable
-/// token, which is what reconciliation needs to tell a returning display from a
-/// different one that took its place.
+/// token, which is what reconciliation and restore both need to tell a returning
+/// display from a different one that took its place.
 fn enumerate_work_areas_with_identity() -> Option<Vec<MonitorRect>> {
-    unsafe extern "system" fn collect(
-        monitor: HMONITOR,
-        _hdc: HDC,
-        _rect: *mut RECT,
-        data: LPARAM,
-    ) -> BOOL {
-        // SAFETY: EnumDisplayMonitors calls this synchronously with the pointer
-        // handed to it in `dwData` below.
-        let list = unsafe { &mut *(data.0 as *mut Vec<MonitorRect>) };
-        let Some(info) = query_monitor_info(monitor) else {
-            return BOOL(0);
-        };
-        // SAFETY: `monitor` came from the enumeration above and is live for the
-        // duration of the callback.
-        let id = monitor_display_id(monitor);
-        let rect = info.rcWork;
-        let area = MonitorRect {
-            x: rect.left as f64,
-            y: rect.top as f64,
-            width: (rect.right - rect.left) as f64,
-            height: (rect.bottom - rect.top) as f64,
-            id,
-        };
-        if !list.contains(&area) {
-            list.push(area);
-        }
-        BOOL(1)
-    }
-
-    let mut areas: Vec<MonitorRect> = Vec::new();
-    let data = LPARAM(&mut areas as *mut _ as isize);
-    let succeeded = unsafe { EnumDisplayMonitors(None, None, Some(collect), data) }.as_bool();
-    (succeeded && !areas.is_empty()).then_some(areas)
+    enumerate_displays(false).map(|snapshot| snapshot.monitors)
 }
 
 /// Reconcile the pill's window against the displays connected right now.
@@ -1760,29 +1770,24 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
         return;
     }
 
-    let saved_display = state
-        .saved_display_id
-        .get()
-        .and_then(|id| areas.iter().copied().find(|area| area.id == Some(id)));
-    let parked = ParkedWindow::new_named(
-        rect.left as f64,
-        rect.top as f64,
-        win_w as f64,
-        win_h as f64,
-        state
-            .saved_display_id
-            .get()
-            .and(saved_display)
-            .or_else(|| {
-                // No recorded identity: describe the display the window is on, so
-                // the record gains one from this change onward.
-                let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
-                query_monitor_info(monitor).map(|info| monitor_rect(info.rcWork))
-            })
-            .unwrap_or_else(|| monitor_rect(rect)),
-        state.saved_display_id.get(),
+    let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
+        (win_w as f64, win_h as f64),
+        (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
+        COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
     );
-    let Some(parked) = parked else {
+    // The pill's own centre inside the window, so the display is resolved from the
+    // thing the user sees rather than the transparent canvas corner.
+    let footprint_centre = (
+        rect.left as f64 + offset.0 + size.0 / 2.0,
+        rect.top as f64 + offset.1 + size.1 / 2.0,
+    );
+    let Some(parked) = rust_pill_shared::layout::describe_parked(
+        &areas,
+        (rect.left as f64, rect.top as f64),
+        (win_w as f64, win_h as f64),
+        footprint_centre,
+        state.saved_display_id.get(),
+    ) else {
         return;
     };
 
@@ -1790,16 +1795,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
         parked,
         &areas,
         (win_w as f64, win_h as f64),
-        |work, window| {
-            let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
-                window,
-                (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
-                COLLAPSED_BOTTOM_INSET
-                    + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
-            );
-            let _ = work;
-            (offset, size)
-        },
+        |_work, _window| (offset, size),
         |work, window| window_clamp_bounds_for_size(work, window.0, window.1),
     );
 
@@ -1812,32 +1808,23 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
         }
         rust_pill_shared::layout::Relocation::Move { x, y } => {
             let (x, y) = (x.round() as i32, y.round() as i32);
-            if x != rect.left || y != rect.top {
-                // SAFETY: repositioning our own window; the flags keep size, z
-                // order and activation untouched.
-                unsafe {
-                    let _ = SetWindowPos(
-                        hwnd,
-                        None,
-                        x,
-                        y,
-                        0,
-                        0,
-                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-                    );
-                }
-            }
+            move_window(hwnd, x, y, rect.left, rect.top);
             // The move was the pill's, so the persisted position follows it.
             state.saved_x.set(x);
             state.saved_y.set(y);
             state.has_saved_position.set(true);
-            if let Some(area) = areas
-                .iter()
-                .copied()
-                .find(|area| area_contains(area, x + win_w / 2, y + win_h / 2))
-            {
-                state.saved_display_id.set(area.id);
-            }
+            // Nearest when containment fails, so a pill moved to a shared edge keeps
+            // naming the display it is on instead of losing the token.
+            state
+                .saved_display_id
+                .set(rust_pill_shared::layout::display_id_of(
+                    &areas,
+                    (x as f64, y as f64),
+                    (
+                        x as f64 + offset.0 + size.0 / 2.0,
+                        y as f64 + offset.1 + size.1 / 2.0,
+                    ),
+                ));
             let (published, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
                 has_saved_position: true,
@@ -1847,32 +1834,6 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             });
         }
     }
-}
-
-/// Whether a display's work area contains a point.
-fn area_contains(area: &MonitorRect, x: i32, y: i32) -> bool {
-    let (x, y) = (x as f64, y as f64);
-    x >= area.x && x < area.right() && y >= area.y && y < area.bottom()
-}
-
-unsafe extern "system" fn collect_monitor_snapshot(
-    monitor: HMONITOR,
-    _hdc: HDC,
-    _rect: *mut RECT,
-    data: LPARAM,
-) -> BOOL {
-    // SAFETY: EnumDisplayMonitors invokes this synchronously with the pointer to
-    // the live enumeration context passed in `dwData` below.
-    let snapshot = unsafe { &mut *(data.0 as *mut MonitorSnapshotList) };
-    let Some(info) = query_monitor_info(monitor) else {
-        snapshot.failed = true;
-        return BOOL(0);
-    };
-    let candidate = monitor_rect(info.rcWork);
-    if !snapshot.monitors.contains(&candidate) {
-        snapshot.monitors.push(candidate);
-    }
-    BOOL(1)
 }
 
 // Drawing and the native entry use the fixed typing canvas. Extra selector
@@ -1923,8 +1884,14 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let (cox, coy) = state.content_offset();
         let footprint_cx = (cox + px + pw / 2.0).round() as i32;
         let footprint_cy = (coy + py + ph / 2.0).round() as i32;
-        let reset_to_cursor =
-            !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
+        // One question, answered in one place: is this pill due a placement, and
+        // does that placement follow the pointer? The shared model owns both
+        // halves so the three pills cannot answer differently.
+        let anchor = rust_pill_shared::layout::pill_anchor(
+            state.has_saved_position.get(),
+            !state.anchor.get().places(),
+        );
+        let reset_to_cursor = anchor.follows_pointer() && state.follow_pointer_anchor.get();
         let monitor = if reset_to_cursor {
             MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
         } else if state.has_saved_position.get() {
@@ -1945,19 +1912,18 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         };
         if reset_to_cursor {
             // Consume the one-shot re-home only after lookup succeeds.
-            state.reset_strategy.set(ResetStrategy::Current);
+            state.follow_pointer_anchor.set(false);
         }
         let wa = info.rcWork;
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
 
-        if !state.has_saved_position.get() && !reset_to_cursor {
-            // The pill is not saved and the user did not ask for a re-home, which
-            // leaves exactly one meaning: something deliberately cleared the flag
-            // without moving the window. That is `ForgetPosition`, sent because
-            // local data was just wiped, and its whole contract is that the pill
-            // stays where it is. Falling through to the default corner would move
-            // a visible, deliberate pill as a side effect of a database clear.
+        if !anchor.places() {
+            // No stored position and nothing asked for a placement: the flag was
+            // cleared deliberately, by `ForgetPosition` after a local-data clear.
+            // That command's whole contract is that the pill stays where it is, so
+            // falling through to the default corner would move a visible pill as a
+            // side effect of wiping the database.
             return;
         }
         let bounds = window_clamp_bounds(state, wa, win_w, win_h);
@@ -2069,9 +2035,20 @@ fn monitor_rect(rect: RECT) -> rust_pill_shared::edge::MonitorRect {
     )
 }
 
+/// Enumeration context shared by both callers.
+///
+/// One callback serves the topology snapshot and the restore enumeration, because
+/// they differ only in which rectangle they want: the full monitor for seam
+/// hysteresis, the work area for placement. Two callbacks meant the identity token
+/// was attached in one and forgotten in the other, which is exactly how restore
+/// ended up matching geometry only.
 struct MonitorEnumeration {
     monitors: Vec<MonitorRect>,
     failed: bool,
+    /// Use the work area rather than the whole monitor.
+    work_area: bool,
+    /// Attach the display's stable token.
+    identities: bool,
 }
 
 unsafe extern "system" fn collect_monitor_rect(
@@ -2087,27 +2064,45 @@ unsafe extern "system" fn collect_monitor_rect(
         snapshot.failed = true;
         return BOOL(0);
     };
-    let candidate = monitor_rect(info.rcMonitor);
+    let rect = if snapshot.work_area {
+        info.rcWork
+    } else {
+        info.rcMonitor
+    };
+    let mut candidate = monitor_rect(rect);
+    if snapshot.identities {
+        // SAFETY: `monitor` came from the enumeration above and is live for the
+        // duration of the callback.
+        candidate.id = monitor_display_id(monitor);
+    }
     if !snapshot.monitors.contains(&candidate) {
         snapshot.monitors.push(candidate);
     }
     BOOL(1)
 }
 
-/// Enumerate a complete monitor snapshot in virtual-screen pixel coordinates.
-/// Any callback or API failure marks the snapshot unknown; callers must not
-/// interpret a partial list as a monitor being unplugged.
-fn enumerate_monitor_topology(current: MonitorRect) -> Option<Vec<MonitorRect>> {
+/// Run one enumeration. `work_area` selects the rectangle, `identities` the token.
+fn enumerate_displays(work_area: bool) -> Option<MonitorEnumeration> {
     let mut snapshot = MonitorEnumeration {
         monitors: Vec::new(),
         failed: false,
+        work_area,
+        identities: true,
     };
     let data = LPARAM(&mut snapshot as *mut _ as isize);
     // SAFETY: EnumDisplayMonitors completes callbacks synchronously, so `data`
     // remains a valid pointer to `snapshot` for the entire enumeration.
     let succeeded = unsafe { EnumDisplayMonitors(None, None, Some(collect_monitor_rect), data) };
-    (succeeded.as_bool() && !snapshot.failed && snapshot.monitors.contains(&current))
-        .then_some(snapshot.monitors)
+    (succeeded.as_bool() && !snapshot.failed && !snapshot.monitors.is_empty()).then_some(snapshot)
+}
+
+/// Enumerate a complete monitor snapshot in virtual-screen pixel coordinates.
+/// Any callback or API failure marks the snapshot unknown; callers must not
+/// interpret a partial list as a monitor being unplugged.
+fn enumerate_monitor_topology(current: MonitorRect) -> Option<Vec<MonitorRect>> {
+    enumerate_displays(false)
+        .filter(|snapshot| snapshot.monitors.contains(&current))
+        .map(|snapshot| snapshot.monitors)
 }
 
 fn retain_monitor_topology(
@@ -2245,21 +2240,14 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
     });
     let x = output.x.round() as i32;
     let y = output.y.round() as i32;
-    if current.left != x || current.top != y {
-        unsafe {
-            let _ = SetWindowPos(
-                hwnd,
-                None,
-                x,
-                y,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-        }
-    }
+    move_window(hwnd, x, y, current.left, current.top);
     if settling && output.settled {
         persist_drag_position(hwnd, state);
+    } else if settling || dragging {
+        // The frame loop owns the window, but its position is not final yet. Mark
+        // it so a destroy arriving before the settle completes still has something
+        // to store: the window is going away, so this is the last frame there is.
+        state.pending_drag_position.set(true);
     }
 }
 
@@ -2538,6 +2526,8 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
 /// window origin (not the cursor) and tells the desktop, so the saved point
 /// matches the parked pill exactly.
 fn persist_drag_position(hwnd: HWND, state: &PillState) {
+    // Consumed here so a later destroy cannot store it a second time.
+    state.pending_drag_position.set(false);
     let now = drag_now();
     state.save_guard.borrow_mut().drag_ended(now);
     if !state.save_guard.borrow().allows_save(now) {

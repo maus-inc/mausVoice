@@ -870,7 +870,12 @@ fn perform_tick() {
                     ctx.state.drag_motion.borrow_mut().reset();
                     ctx.state.selector_placement.borrow_mut().reset();
                     ctx.state.crossing.borrow_mut().reset();
-                    ctx.state.reset_strategy.set(strategy);
+                    ctx.state
+                        .anchor
+                        .set(rust_pill_shared::layout::pill_anchor(false, true));
+                    ctx.state
+                        .follow_pointer_anchor
+                        .set(strategy == ResetStrategy::Cursor);
                     reposition_window(ctx.window, &ctx.state, dt, now);
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
@@ -885,6 +890,15 @@ fn perform_tick() {
                     // Local data was just cleared, and the next `RequestPosition`
                     // republishes this flag, so leaving it set would write the row back.
                     ctx.state.has_saved_position.set(false);
+                    // A clear drops the record without moving the window, and it also
+                    // cancels any placement still owed: a pill the user has been
+                    // looking at must not follow the pointer because a database was
+                    // wiped.
+                    ctx.state
+                        .anchor
+                        .set(rust_pill_shared::layout::pill_anchor(false, true));
+                    ctx.state.first_placement_done.set(true);
+                    ctx.state.follow_pointer_anchor.set(false);
                 }
                 InMessage::RequestPosition => {
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
@@ -1820,10 +1834,20 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         // pointer crossed a screen edge.
         let dragging = state.dragging.get();
         let settling = state.drag_motion.borrow().is_settling();
-        // The pill's first placement (before any saved position) should follow
-        // the cursor's screen once; afterwards it stays put even if it happens
-        // to sit at (0, 0), so a legitimately-placed window is never chased.
-        let first_placement = !state.first_placement_done.get();
+        // One question, answered in one place: is this pill due a placement, and
+        // does that placement follow the pointer? The shared model owns both
+        // halves so the three pills cannot answer differently.
+        let anchor = rust_pill_shared::layout::pill_anchor(
+            state.has_saved_position.get(),
+            !state.anchor.get().places(),
+        );
+        // A reset is a placement the user asked for, so it is due even though the
+        // pill has already been placed once in this process. Only an initial launch
+        // is one-shot; `follow_pointer_anchor` is what makes a reset follow the
+        // pointer, and it is consumed the first time it is acted on.
+        let first_placement =
+            anchor.places() && !state.has_saved_position.get() && !state.first_placement_done.get();
+        let reset_placement = anchor.places() && state.follow_pointer_anchor.get();
         let (px, py, pw, ph) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
@@ -1833,31 +1857,39 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let footprint_center = |origin_x: f64, origin_y: f64| {
             (origin_x + fx + pw / 2.0, origin_y + win_h - fy - ph / 2.0)
         };
-        // A reset with the "cursor" strategy re-homes onto the screen under
-        // the pointer exactly once; the strategy is consumed so later ticks
-        // keep the pill where it landed instead of chasing the cursor.
-        let reset_to_cursor =
-            !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
-        let (anchor_x, anchor_y) =
-            if dragging || settling || (!state.has_saved_position.get() && first_placement) {
-                // First placement at the cursor: mark it done so subsequent ticks
-                // keep the window where it landed instead of re-chasing the cursor.
-                if !dragging && !settling && !state.has_saved_position.get() {
-                    state.first_placement_done.set(true);
-                    state.reset_strategy.set(ResetStrategy::Current);
-                }
-                state
-                    .drag_motion
-                    .borrow()
-                    .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
-            } else if reset_to_cursor {
-                state.reset_strategy.set(ResetStrategy::Current);
-                (mouse_loc.x, mouse_loc.y)
-            } else if state.has_saved_position.get() {
-                footprint_center(state.saved_x.get(), state.saved_y.get())
-            } else {
-                footprint_center(win_frame.origin.x, win_frame.origin.y)
-            };
+        // Three placements, in priority order, and they are not the same thing:
+        //
+        //   * a held or settling drag owns the window and follows the pointer;
+        //   * a first placement happens once per process and follows the pointer;
+        //   * a reset the user asked for is due a placement even though one has
+        //     already happened, and follows the pointer only when it asked to.
+        //
+        // Only the first two are one-shot. A reset must not be, or the pill the
+        // user just asked to re-home stays exactly where it was, and a first
+        // placement must be, or it chases the pointer forever.
+        let follows_pointer = dragging || settling || first_placement;
+        let (anchor_x, anchor_y) = if follows_pointer {
+            if first_placement {
+                // Mark it done only when it is acted on, so a frame that bails out
+                // earlier does not consume the one-shot placement.
+                state.first_placement_done.set(true);
+                state.follow_pointer_anchor.set(false);
+            }
+            state
+                .drag_motion
+                .borrow()
+                .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
+        } else if reset_placement {
+            // Consumed on the frame it is used. A cleared pill never reaches here:
+            // the guard below returns before placement, so this branch only serves a
+            // reset, which means the pointer.
+            state.follow_pointer_anchor.set(false);
+            (mouse_loc.x, mouse_loc.y)
+        } else if state.has_saved_position.get() {
+            footprint_center(state.saved_x.get(), state.saved_y.get())
+        } else {
+            footprint_center(win_frame.origin.x, win_frame.origin.y)
+        };
 
         // Resolve monitor bounds in Cocoa's global point space. A connected
         // neighbor opens only its shared edge; the visible frame remains the
@@ -2017,12 +2049,12 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             return;
         }
 
-        if !state.has_saved_position.get() && !reset_to_cursor {
-            // Not saved, and the user did not ask for a re-home: something cleared
-            // the flag without moving the window, which is `ForgetPosition` after a
-            // local-data clear. That command's contract is that the pill stays put,
-            // so falling through to the default bottom-centre anchor would move a
-            // visible pill as a side effect of wiping the database.
+        if !anchor.places() {
+            // No stored position and nothing asked for a placement: the flag was
+            // cleared deliberately, by `ForgetPosition` after a local-data clear.
+            // That command's contract is that the pill stays where it is, so
+            // falling through to the default anchor would move a visible pill as a
+            // side effect of wiping the database.
             return;
         }
 
@@ -2147,34 +2179,22 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
     } else {
         screen_display_id(current_screen).or(state.saved_display_id.get())
     };
-    // The display the pill believes it is on: named if possible, else the one
-    // under the window, else the window's own rect as a last resort. That last
-    // case is what keeps a record usable on a screen macOS cannot name.
-    let saved_display = areas
-        .iter()
-        .copied()
-        .find(|area| area.id.is_some() && area.id == current_id)
-        .or_else(|| {
-            let (cx, cy) = (top_down.x + window_w / 2.0, top_down.y + window_h / 2.0);
-            areas
-                .iter()
-                .copied()
-                .find(|area| area_contains_point(*area, cx, cy))
-        })
-        .unwrap_or_else(|| {
-            rust_pill_shared::edge::MonitorRect::without_id(
-                top_down.x,
-                top_down.y,
-                top_down.width,
-                top_down.height,
-            )
-        });
-    let Some(parked) = rust_pill_shared::restore::ParkedWindow::new_named(
-        top_down.x,
-        top_down.y,
-        window_w,
-        window_h,
-        saved_display,
+    // The display the pill is on: named when possible, else the one containing the
+    // footprint centre, else the nearest. The shared helper owns all three so no
+    // platform can pick a different fallback.
+    let (footprint_offset, footprint_size) = rust_pill_shared::restore::centered_bottom_footprint(
+        (window_w, window_h),
+        (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
+        COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+    );
+    let Some(parked) = rust_pill_shared::layout::describe_parked(
+        &areas,
+        (top_down.x, top_down.y),
+        (window_w, window_h),
+        (
+            top_down.x + footprint_offset.0 + footprint_size.0 / 2.0,
+            top_down.y + footprint_offset.1 + footprint_size.1 / 2.0,
+        ),
         current_id,
     ) else {
         return;
@@ -2192,16 +2212,10 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
                     + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
             )
         },
-        |work, window| {
+        |work, _window| {
             // The same footprint clamp `reposition_window` applies when idle, so
             // a reconciled origin is a fixed point of the idle tick.
-            let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
-                window,
-                (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
-                COLLAPSED_BOTTOM_INSET
-                    + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
-            );
-            rust_pill_shared::restore::footprint_bounds(work, offset, size)
+            rust_pill_shared::restore::footprint_bounds(work, footprint_offset, footprint_size)
         },
     );
 
@@ -2218,13 +2232,16 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             state.saved_x.set(origin.x);
             state.saved_y.set(origin.y);
             state.has_saved_position.set(true);
-            if let Some(area) = areas
-                .iter()
-                .copied()
-                .find(|area| area_contains_point(*area, x + window_w / 2.0, y + window_h / 2.0))
-            {
-                state.saved_display_id.set(area.id);
-            }
+            state
+                .saved_display_id
+                .set(rust_pill_shared::layout::display_id_of(
+                    &areas,
+                    (origin.x, origin.y),
+                    (
+                        x + footprint_offset.0 + footprint_size.0 / 2.0,
+                        y + footprint_offset.1 + footprint_size.1 / 2.0,
+                    ),
+                ));
             persist_reconciled_position(state, window);
         }
     }
@@ -2245,22 +2262,14 @@ unsafe fn poll_display_layout(window: id, state: &PillState, now: f64) {
     let Some((areas, _)) = display_areas() else {
         return;
     };
-    let signature = rust_pill_shared::layout::layout_signature(&areas);
-    let previous = state.layout_signature.get();
+    let (signature, reconcile_now) = rust_pill_shared::layout::poll_should_reconcile(
+        state.layout_signature.get(),
+        rust_pill_shared::layout::layout_signature(&areas),
+    );
     state.layout_signature.set(Some(signature));
-    if previous == Some(signature) {
-        return;
-    }
-    if previous.is_some() {
-        // The first poll only establishes a baseline. Reconciling against it
-        // would treat the launch itself as a layout change.
+    if reconcile_now {
         reconcile_display_layout(window, state);
     }
-}
-
-/// Whether a display's work area contains a point, in top-down points.
-fn area_contains_point(area: rust_pill_shared::edge::MonitorRect, x: f64, y: f64) -> bool {
-    x >= area.x && x < area.right() && y >= area.y && y < area.bottom()
 }
 
 /// Tell the desktop where the pill ended up after a display change made the pill
@@ -2523,7 +2532,6 @@ unsafe fn setup(
         crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
         selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
         has_saved_position: Cell::new(restored.is_some()),
-        reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(restored.map_or(0.0, |window| window.origin.x)),
         saved_y: Cell::new(restored.map_or(0.0, |window| window.origin.y)),
         saved_display_id: Cell::new(saved_position.and_then(|window| window.display_id)),
@@ -2531,6 +2539,8 @@ unsafe fn setup(
         layout_signature: Cell::new(None),
         layout_polled_at: Cell::new(0.0),
         first_placement_done: Cell::new(false),
+        anchor: Cell::new(rust_pill_shared::layout::Anchor::FirstPlacement),
+        follow_pointer_anchor: Cell::new(true),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
         drag_label_t: Cell::new(0.0),

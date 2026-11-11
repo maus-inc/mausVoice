@@ -235,12 +235,13 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
         save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
         layout_signature: Cell::new(None),
         layout_polled_at: Cell::new(0.0),
-        reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
         restored_position: Cell::new(restored_position),
         x11_release_persisted: Cell::new(false),
         x11_drag_applied: Cell::new((i32::MIN, i32::MIN)),
+        anchor: Cell::new(rust_pill_shared::layout::Anchor::FirstPlacement),
+        follow_pointer_anchor: Cell::new(true),
         drag_draw_offset_x: Cell::new(0.0),
         drag_draw_offset_y: Cell::new(0.0),
         cancel_flash: Cell::new(0.0),
@@ -739,7 +740,14 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                     state_tick.crossing.borrow_mut().reset();
                     state_tick.has_saved_position.set(false);
                     state_tick.saved_display_id.set(None);
-                    state_tick.reset_strategy.set(strategy);
+                    // A reset is a placement the user asked for, so the pill is due
+                    // one even though nothing is stored.
+                    state_tick
+                        .anchor
+                        .set(rust_pill_shared::layout::pill_anchor(false, false));
+                    state_tick
+                        .follow_pointer_anchor
+                        .set(strategy == ResetStrategy::Cursor);
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
                     ipc::send(&OutMessage::PositionChanged {
                         has_saved_position: false,
@@ -754,6 +762,12 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                     // republishes this flag, so leaving it set would write the row back.
                     state_tick.has_saved_position.set(false);
                     state_tick.saved_display_id.set(None);
+                    // A clear drops the record without moving the window, and it
+                    // cancels any placement still owed.
+                    state_tick
+                        .anchor
+                        .set(rust_pill_shared::layout::pill_anchor(false, true));
+                    state_tick.follow_pointer_anchor.set(false);
                 }
                 InMessage::RequestPosition => {
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
@@ -929,7 +943,8 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
             // A reset with the "cursor" strategy forces one re-home pass onto
             // the pointer's monitor; the strategy is consumed once applied.
             let reset_to_cursor = !state_monitor.dragging.get()
-                && state_monitor.reset_strategy.get() == ResetStrategy::Cursor;
+                && state_monitor.follow_pointer_anchor.get()
+                && state_monitor.anchor.get().follows_pointer();
             if placed_once && !state_monitor.dragging.get() && !reset_to_cursor {
                 let stored = last_geom.get();
                 let still_connected = (0..display.n_monitors()).any(|i| {
@@ -965,7 +980,7 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                     window_ref.set_monitor(&monitor);
                 }
                 if reset_to_cursor {
-                    state_monitor.reset_strategy.set(ResetStrategy::Current);
+                    state_monitor.follow_pointer_anchor.set(false);
                 }
             }
             ControlFlow::Continue
@@ -1051,40 +1066,14 @@ fn monitor_areas(
     display: &gdk::Display,
     scale: f64,
 ) -> Option<Vec<rust_pill_shared::edge::MonitorRect>> {
-    let mut areas = Vec::with_capacity(display.n_monitors().max(0) as usize);
-    for index in 0..display.n_monitors() {
-        let Some(monitor) = display.monitor(index) else {
-            continue;
-        };
-        let work = logical_rect_to_physical(&monitor.workarea(), scale);
-        areas.push(rust_pill_shared::edge::MonitorRect {
-            x: work.x,
-            y: work.y,
-            width: work.width,
-            height: work.height,
-            id: monitor_display_id(&monitor),
-        });
-    }
+    // The rectangle and the token are both built by x11.rs, so the work area a
+    // restore resolves against and the one a reconcile resolves against cannot
+    // disagree about which monitor is which.
+    let areas: Vec<_> = (0..display.n_monitors().max(0))
+        .filter_map(|index| display.monitor(index))
+        .map(|monitor| crate::x11::work_area_rect(&monitor, scale))
+        .collect();
     (!areas.is_empty()).then_some(areas)
-}
-
-/// A stable token for a monitor, matching the one the restore path uses.
-fn monitor_display_id(monitor: &gdk::Monitor) -> Option<u64> {
-    let manufacturer = monitor.manufacturer().unwrap_or_default();
-    let model = monitor.model().unwrap_or_default();
-    if manufacturer.is_empty() && model.is_empty() {
-        return None;
-    }
-    // Unit separator between fields, so a manufacturer or model that happens to
-    // contain the separator cannot make two different panels hash alike.
-    let name = format!(
-        "{}\u{1f}-{}\u{1f}-{}x{}",
-        manufacturer,
-        model,
-        monitor.width_mm(),
-        monitor.height_mm()
-    );
-    rust_pill_shared::layout::display_identity(&name)
 }
 
 /// Reconcile the pill's toplevel against the monitors connected right now.
@@ -1137,40 +1126,32 @@ fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
     );
     let footprint_size = (pill_w * scale, pill_h * scale);
 
-    // Describe the display the pill believes it is on: named when possible, else
-    // whichever monitor contains the pill's centre.
+    // Where the pill actually is. `saved_x`/`saved_y` are only the stored record,
+    // and a reset or a forget deliberately leaves them holding the previous
+    // position: reconciling against them would re-save a position the user just
+    // cleared, on a display the window may no longer be on at all. The applied
+    // origin is what the window was last moved to, so it is the honest answer.
+    let (origin_x, origin_y) = state.x11_drag_applied.get();
+    let (origin_x, origin_y) = (origin_x as f64, origin_y as f64);
+    if origin_x < 0.0 && origin_y < 0.0 {
+        // Nothing has been applied yet, so there is no window to reconcile.
+        return;
+    }
+    // Describe the display the pill is on: named when possible, else whichever
+    // monitor contains the pill's centre, else the nearest one. Containment alone
+    // fails at a shared edge and in the notch between two displays of different
+    // heights, and that "nowhere" answer used to be replaced with a rectangle
+    // built from the stale stored origin.
     let footprint_centre = (
-        state.saved_x.get() + footprint_offset.0 + footprint_size.0 / 2.0,
-        state.saved_y.get() + footprint_offset.1 + footprint_size.1 / 2.0,
+        origin_x + footprint_offset.0 + footprint_size.0 / 2.0,
+        origin_y + footprint_offset.1 + footprint_size.1 / 2.0,
     );
-    let current_id = state.saved_display_id.get();
-    let saved_display = areas
-        .iter()
-        .copied()
-        .find(|area| area.id.is_some() && area.id == current_id)
-        .or_else(|| {
-            areas.iter().copied().find(|area| {
-                footprint_centre.0 >= area.x
-                    && footprint_centre.0 < area.right()
-                    && footprint_centre.1 >= area.y
-                    && footprint_centre.1 < area.bottom()
-            })
-        })
-        .unwrap_or_else(|| {
-            rust_pill_shared::edge::MonitorRect::without_id(
-                state.saved_x.get(),
-                state.saved_y.get(),
-                window_w,
-                window_h,
-            )
-        });
-    let Some(parked) = rust_pill_shared::restore::ParkedWindow::new_named(
-        state.saved_x.get(),
-        state.saved_y.get(),
-        window_w,
-        window_h,
-        saved_display,
-        current_id,
+    let Some(parked) = rust_pill_shared::layout::describe_parked(
+        &areas,
+        (origin_x, origin_y),
+        (window_w, window_h),
+        footprint_centre,
+        state.saved_display_id.get(),
     ) else {
         return;
     };
@@ -1193,16 +1174,19 @@ fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
             state.saved_x.set(x.round());
             state.saved_y.set(y.round());
             state.has_saved_position.set(true);
-            let centre_x = x.round() + footprint_offset.0 + footprint_size.0 / 2.0;
-            let centre_y = y.round() + footprint_offset.1 + footprint_size.1 / 2.0;
-            if let Some(area) = areas.iter().copied().find(|area| {
-                centre_x >= area.x
-                    && centre_x < area.right()
-                    && centre_y >= area.y
-                    && centre_y < area.bottom()
-            }) {
-                state.saved_display_id.set(area.id);
-            }
+            // Nearest when containment fails, so a pill parked at a shared edge
+            // still records the display it is meant to be on instead of losing the
+            // identity and downgrading every later save to geometry matching.
+            state
+                .saved_display_id
+                .set(rust_pill_shared::layout::display_id_of(
+                    &areas,
+                    (x.round(), y.round()),
+                    (
+                        x.round() + footprint_offset.0 + footprint_size.0 / 2.0,
+                        y.round() + footprint_offset.1 + footprint_size.1 / 2.0,
+                    ),
+                ));
             // The move was the pill's, not a drag, so it does not go through the
             // save guard: this position is the only place the pill can be, and
             // storing it is what stops the next launch restoring a stranded
@@ -1243,15 +1227,12 @@ fn poll_display_layout(window: &gtk::Window, state: &PillState) {
     let Some(areas) = monitor_areas(&display, scale) else {
         return;
     };
-    let signature = rust_pill_shared::layout::layout_signature(&areas);
-    let previous = state.layout_signature.get();
+    let (signature, reconcile_now) = rust_pill_shared::layout::poll_should_reconcile(
+        state.layout_signature.get(),
+        rust_pill_shared::layout::layout_signature(&areas),
+    );
     state.layout_signature.set(Some(signature));
-    if previous == Some(signature) {
-        return;
-    }
-    if previous.is_some() {
-        // The first poll only establishes a baseline. Reconciling against it
-        // would treat the launch itself as a layout change.
+    if reconcile_now {
         reconcile_display_layout(window, state);
     }
 }
@@ -1961,6 +1942,11 @@ fn tick_long_press(state: &PillState, dt: f64) {
         state.long_press_elapsed.set(0.0);
         state.dragging.set(true);
         state.x11_release_persisted.set(false);
+        // Every drag starts by clearing the "a layout change interrupted this"
+        // latch. Without this the latch set during one interrupted drag outlived
+        // it and refused every later save, so a pill that once had a display pulled
+        // out from under it silently stopped remembering its position at all.
+        state.save_guard.borrow_mut().drag_started();
         // Confirm the arm with the expanding halo, on the exact frame it fires.
         state.arm_pulse.set(rust_pill_shared::pulse_armed());
     }
