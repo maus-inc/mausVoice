@@ -188,15 +188,23 @@ pub(crate) fn persist_drop_position(
 pub(crate) fn persist_window_position(window: &gtk::Window, state: &PillState, x: f64, y: f64) {
     let now = crate::pill::drag_clock_now();
     state.save_guard.borrow_mut().drag_ended(now);
+    // Read before the save is attempted: a successful save clears it.
+    let due = state.save_guard.borrow().save_due_at(now);
     if !state.save_guard.borrow().allows_save(now) {
         // A display change landed while this drag was held, so the frame it ended
         // on is one the layout chose. Storing it would replace the position the
         // user picked with the one RandR left behind.
+        //
+        // The release is still the user's, and it is reported once per settle, so
+        // the deadline is what stops the drop from being lost outright.
+        state.drag_save_due.set(due);
         return;
     }
     state.saved_x.set(x);
     state.saved_y.set(y);
     state.has_saved_position.set(true);
+    // The pending release has been recorded, so no retry is owed.
+    state.drag_save_due.set(None);
     state.saved_display_id.set(display_id_at(window, x, y));
     state.x11_release_persisted.set(true);
     let (rect, monitor) = crate::pill::pill_geometry(window, state);

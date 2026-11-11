@@ -428,6 +428,45 @@ impl SaveGuard {
         }
     }
 
+    /// When a save refused at `now` can be written, if the drop that caused it
+    /// still deserves to be stored.
+    ///
+    /// A refused save is not a cancelled one. The caller learns the drop once and
+    /// cannot learn it again, so without a deadline the drop is simply lost and
+    /// the pill reopens at the position it had before the user moved it. The
+    /// deadline is the later of the two holds still in force: the layout settle,
+    /// and, for an interrupted drag, the drop's own window.
+    ///
+    /// `None` when no later write is due: the save is allowed now, or there is no
+    /// settled frame to record at all.
+    pub fn save_due_at(&self, now: f64) -> Option<f64> {
+        if self.allows_save(now) {
+            return None;
+        }
+        // A clock that is not a number cannot measure a deadline from itself, and
+        // a caller subtracting it from one would schedule a retry at NaN.
+        if !now.is_finite() {
+            return None;
+        }
+        let settle = match self.last_layout_change {
+            Some(changed) if !self.layout_settled(now) => changed + LAYOUT_SETTLE_SECONDS,
+            _ => now,
+        };
+        let drop = match (self.drag_spans_layout_change, self.last_drag_end) {
+            (true, Some(ended)) if !elapsed_at_least(now, ended, DRAG_HOLD_SECONDS) => {
+                Some(ended + DRAG_HOLD_SECONDS)
+            }
+            // An interrupted drag that never ended has nothing to record, and a
+            // deadline would only retry a frame that does not exist.
+            (true, None) => return None,
+            _ => None,
+        };
+        let at = drop.map_or(settle, |ended| settle.max(ended));
+        // A non-finite deadline could never fire, which would leave the caller
+        // holding a save forever. Refusing it is the same answer as no deadline.
+        at.is_finite().then_some(at)
+    }
+
     /// Whether the hold has outlived anything the pill could still be reacting
     /// to, so it can be dropped rather than kept as a timestamp forever.
     pub fn hold_expired(&self, now: f64) -> bool {
@@ -1043,6 +1082,65 @@ mod tests {
         let mut guard = SaveGuard::new();
         guard.layout_changed_during_drag(10.0);
         assert!(!guard.allows_save(100.0));
+    }
+
+    /// The bug this deadline exists to prevent: the drop is reported once, the
+    /// save is refused because the layout has not settled, and nothing ever asks
+    /// again, so the position the user chose is lost rather than deferred.
+    #[test]
+    fn a_refused_save_reports_when_it_can_be_written() {
+        let mut guard = SaveGuard::new();
+        guard.drag_started();
+        guard.layout_changed_during_drag(10.0);
+        guard.drag_ended(10.2);
+        assert!(!guard.allows_save(10.3));
+        // The layout settle outlasts the drop's own window, so that is the
+        // deadline: 1.5 s after the change, not 0.5 s after the drop.
+        let due = guard.save_due_at(10.3).expect("the save is still owed");
+        assert!((due - (10.0 + LAYOUT_SETTLE_SECONDS)).abs() < 1e-9);
+        assert!(guard.allows_save(due), "the deadline is when it is allowed");
+    }
+
+    /// A drop that lands after the settle has passed waits only for its own
+    /// window, so the pill is not kept waiting for a settle that already passed.
+    #[test]
+    fn a_drop_after_the_settle_waits_only_for_the_drop_window() {
+        let mut guard = SaveGuard::new();
+        guard.drag_started();
+        guard.layout_changed_during_drag(10.0);
+        guard.drag_ended(10.0 + LAYOUT_SETTLE_SECONDS + 0.1);
+        let now = 10.0 + LAYOUT_SETTLE_SECONDS + 0.2;
+        assert!(!guard.allows_save(now));
+        let due = guard.save_due_at(now).expect("the save is still owed");
+        let expected = 10.0 + LAYOUT_SETTLE_SECONDS + 0.1 + DRAG_HOLD_SECONDS;
+        assert!((due - expected).abs() < 1e-9);
+        assert!(guard.allows_save(due));
+    }
+
+    /// No deadline when there is nothing left to write, so a caller cannot park a
+    /// retry that would fire forever.
+    #[test]
+    fn there_is_no_deadline_when_no_save_is_owed() {
+        let guard = SaveGuard::new();
+        assert_eq!(guard.save_due_at(0.0), None, "nothing is being held");
+
+        let mut interrupted = SaveGuard::new();
+        interrupted.layout_changed_during_drag(10.0);
+        assert_eq!(
+            interrupted.save_due_at(10.1),
+            None,
+            "a drag that never ended has no frame to record"
+        );
+    }
+
+    /// A clock that jumps backwards leaves a deadline that can never pass, so it
+    /// must not be reported as one: the caller would drop the save waiting.
+    #[test]
+    fn a_deadline_from_a_broken_clock_is_not_reported() {
+        let mut guard = SaveGuard::new();
+        guard.layout_changed(10.0);
+        assert_eq!(guard.save_due_at(f64::NAN), None);
+        assert_eq!(guard.save_due_at(f64::INFINITY), None);
     }
 
     /// A drag that ended before the layout changed is an ordinary save once the

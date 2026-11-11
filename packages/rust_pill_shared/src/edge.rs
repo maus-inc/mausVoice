@@ -770,7 +770,7 @@ mod tests {
             y: 200.0,
             width: 1000.0,
             height: 600.0,
-            id: None,
+            ..monitor
         };
         let mut tracker = SeamTracker::default();
 

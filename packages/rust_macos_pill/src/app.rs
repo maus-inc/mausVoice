@@ -895,6 +895,7 @@ fn perform_tick() {
                     // cancels any placement still owed: a pill the user has been
                     // looking at must not follow the pointer because a database was
                     // wiped.
+                    ctx.state.drag_save_due.set(None);
                     ctx.state
                         .anchor
                         .set(rust_pill_shared::layout::Anchor::from_forget());
@@ -1030,17 +1031,25 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
 fn persist_drag_position(state: &PillState, window: id) {
     let now = drag_now();
     state.save_guard.borrow_mut().drag_ended(now);
+    // Read before the save is attempted: a successful save clears it.
+    let due = state.save_guard.borrow().save_due_at(now);
     if !state.save_guard.borrow().allows_save(now) {
         // The layout changed under this drag, so the frame it ended on is one
         // AppKit chose. Storing it would replace the position the user actually
         // picked with the one macOS improvised, and afterwards the two are
         // indistinguishable.
+        //
+        // The drop is still the user's, and the controller reports `settled` only
+        // once, so the deadline is what keeps it from being lost.
+        state.drag_save_due.set(due);
         return;
     }
     let frame = unsafe { window_frame(window) };
     state.saved_x.set(frame.origin.x);
     state.saved_y.set(frame.origin.y);
     state.has_saved_position.set(true);
+    // The pending drop has been recorded, so no retry is owed.
+    state.drag_save_due.set(None);
     // Name the display in the same breath as the origin, so the record can
     // recognise this panel after it is unplugged and replugged.
     let display_id = unsafe {
@@ -2089,6 +2098,21 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             let origin = NSPoint::new(target_x, target_y);
             set_window_origin(window, origin);
         }
+        // The clamp above is what the window is held at, so it is what the stored
+        // record has to say. Leaving the pre-clamp origin behind publishes a spot
+        // the pill is not on, and the next tick would put it back there.
+        if (target_x - state.saved_x.get()).abs() > f64::EPSILON
+            || (target_y - state.saved_y.get()).abs() > f64::EPSILON
+        {
+            state.saved_x.set(target_x);
+            state.saved_y.set(target_y);
+        }
+        // A drop the display change held back is written as soon as both holds
+        // have passed: the controller reports `settled` once, so nothing else
+        // would come back for it.
+        if state.drag_save_due.get().is_some() {
+            persist_drag_position(state, window);
+        }
     }
 }
 
@@ -2546,6 +2570,7 @@ unsafe fn setup(
         saved_x: Cell::new(restored.map_or(0.0, |window| window.origin.x)),
         saved_y: Cell::new(restored.map_or(0.0, |window| window.origin.y)),
         saved_display_id: Cell::new(saved_position.and_then(|window| window.display_id)),
+        drag_save_due: Cell::new(None),
         save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
         layout_signature: Cell::new(None),
         layout_polled_at: Cell::new(0.0),

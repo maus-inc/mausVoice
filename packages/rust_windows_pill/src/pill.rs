@@ -216,6 +216,7 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
         has_saved_position: Cell::new(restored.is_some()),
         anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
         pending_drag_position: Cell::new(false),
+        drag_save_due: Cell::new(None),
         saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
         saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
         saved_display_id: Cell::new(restored_display_id),
@@ -567,6 +568,12 @@ fn on_anim_tick(hwnd: HWND) {
             // takes a second immutable borrow. Two immutable RefCell borrows are
             // safe; do NOT upgrade either to borrow_mut() or this path panics.
             tick_drag_release_fallback(hwnd, state);
+            // A drop the display change held back is written as soon as both
+            // holds have passed. The frame loop is the retry: the drop is
+            // reported once, so nothing else would come back for it.
+            if state.drag_save_due.get().is_some() {
+                persist_drag_position(hwnd, state);
+            }
             // Hover intent is sampled every animation frame (~16.7 ms at
             // 60 Hz) so the 50 ms ARM_DWELL is measured at display rate.
             // The 60 ms WM_TIMER remains only for monitor repositioning;
@@ -928,6 +935,10 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             // A pending final position is a save the user did not ask for and the
             // clear has just made wrong, so it must not survive into the destroy.
             state.pending_drag_position.set(false);
+            // A retry parked against the old position is the same hazard one
+            // tick later: it would republish `has_saved_position` and recreate
+            // the row the clear just removed.
+            state.drag_save_due.set(None);
             // Clearing local data drops the stored position without moving the
             // pill, so placement must leave the window exactly where it is.
             state
@@ -1718,7 +1729,12 @@ fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<(i32, i32)> {
 /// token, which is what reconciliation and restore both need to tell a returning
 /// display from a different one that took its place.
 fn enumerate_work_areas_with_identity() -> Option<Vec<MonitorRect>> {
-    enumerate_displays(false).map(|snapshot| snapshot.monitors)
+    // `true` asks for `rcWork`, not `rcMonitor`. The pill lives inside the work
+    // area: restore clamps into these rects and reconcile treats them as where
+    // the pill may be, so asking for the full monitor rect puts the taskbar and
+    // the dock back inside the space this function promises to exclude, and a
+    // saved work-area record stops matching the same display on the next launch.
+    enumerate_displays(true).map(|snapshot| snapshot.monitors)
 }
 
 /// Reconcile the pill's window against the displays connected right now.
@@ -2536,11 +2552,18 @@ fn persist_drag_position(hwnd: HWND, state: &PillState) {
     state.pending_drag_position.set(false);
     let now = drag_now();
     state.save_guard.borrow_mut().drag_ended(now);
+    // Read before the save is attempted: a successful save clears it.
+    let due = state.save_guard.borrow().save_due_at(now);
     if !state.save_guard.borrow().allows_save(now) {
         // The layout changed under this drag, so the frame it ended on is one the
         // system chose, not the user. Storing it would replace the position the
         // user actually picked with the one Windows improvised during the
         // display change, and there is no way to tell them apart afterwards.
+        //
+        // The drop itself is the user's, though, and it is reported exactly once.
+        // Parking the deadline keeps it rather than discarding it: without this
+        // the pill reopens wherever it sat before the user moved it.
+        state.drag_save_due.set(due);
         return;
     }
     // Leave the pill where it was dropped instead of snapping back.
@@ -2551,6 +2574,8 @@ fn persist_drag_position(hwnd: HWND, state: &PillState) {
     state.saved_x.set(rect.left);
     state.saved_y.set(rect.top);
     state.has_saved_position.set(true);
+    // The pending drop has been recorded, so no retry is owed.
+    state.drag_save_due.set(None);
     // Name the display in the same breath as the rect, so the stored record can
     // recognise this panel after it is unplugged and replugged.
     let monitor_handle = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };

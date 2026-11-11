@@ -220,8 +220,12 @@ pub fn notify_forget_position(app: &tauri::AppHandle) -> Result<(), String> {
 
 pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     // The stored record is what the next launch restores, so a reset has to
-    // forget it before it tells the pill to re-home.
-    crate::pill_position::clear_saved_position(app);
+    // forget it before it tells the pill to re-home. A clear that failed would
+    // leave that record to undo the reset on the next launch, so it is reported
+    // rather than swallowed.
+    if !crate::pill_position::clear_saved_position(app) {
+        return Err("Could not clear the pill's stored position, so it was not reset".to_string());
+    }
     let strategy = if strategy == "cursor" {
         ResetStrategy::Cursor
     } else {

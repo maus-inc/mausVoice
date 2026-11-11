@@ -242,6 +242,10 @@ pub(crate) struct PillState {
     /// it could not be named. Published with the position so the stored record
     /// can name the display rather than only its rectangle.
     pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// When a drop that the display-change hold refused may be written, or `None`
+    /// when no save is owed. The drag controller reports `settled` exactly once,
+    /// so a refused save has to be retried from here or the drop is lost.
+    pub(crate) drag_save_due: Cell<Option<f64>>,
     /// Holds position saves until the display layout has been steady, so a frame
     /// macOS forced during a display change is never stored as the user's
     /// position. See rust_pill_shared::layout::SaveGuard.

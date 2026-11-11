@@ -333,6 +333,10 @@ pub(crate) struct PillState {
     // the slow timer so a later cursor poll cannot overwrite the saved point.
     // The slow-timer fallback itself does not set this flag.
     pub(crate) x11_release_persisted: Cell<bool>,
+    /// When a drop that the display-change hold refused may be written, or `None`
+    /// when no save is owed. The release is reported once per settle, so a refused
+    /// save has to be retried from the frame loop or the drop is lost.
+    pub(crate) drag_save_due: Cell<Option<f64>>,
     // Last window origin the frame tick applied during an X11 drag, so steady
     // frames skip the X round trip. Seeded out of range to force the first move.
     pub(crate) x11_drag_applied: Cell<(i32, i32)>,

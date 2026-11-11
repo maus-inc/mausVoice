@@ -123,22 +123,32 @@ pub fn store_published_position(
 ///
 /// Runs on the same path that tells the pill to re-home, so a reset that the
 /// user confirms is not undone by the next launch.
-pub fn clear_saved_position(app: &tauri::AppHandle) {
+///
+/// Returns whether the record is gone. A reset that reports success while the row
+/// survives moves the window and then restores the old spot next launch, so the
+/// caller has to be able to tell the difference.
+pub fn clear_saved_position(app: &tauri::AppHandle) -> bool {
     let Some(database) = app.try_state::<OptionKeyDatabase>() else {
-        return;
+        return false;
     };
     let pool = database.pool();
     let cleared = tauri::async_runtime::block_on(async {
         let _guard = crate::db::local_data_write_gate::lock_local_data_write(None).await?;
         pill_position_queries::clear_pill_position(pool).await
     });
-    if let Err(err) = cleared {
-        // Nothing is stored if local data is being cleared right now, which is
-        // the outcome this wanted. Only a real database error is worth a warning.
-        if crate::db::local_data_write_gate::current_write_generation().is_none() {
-            log::debug!("Skipped clearing the pill position because local data is being cleared");
-        } else {
-            log::warn!("Could not clear the pill's stored position: {err}");
+    match cleared {
+        Ok(()) => true,
+        Err(err) => {
+            // Nothing is stored if local data is being cleared right now, which is
+            // the outcome this wanted. Only a real database error is worth a warning.
+            if crate::db::local_data_write_gate::current_write_generation().is_none() {
+                log::debug!(
+                    "Skipped clearing the pill position because local data is being cleared"
+                );
+            } else {
+                log::warn!("Could not clear the pill's stored position: {err}");
+            }
+            false
         }
     }
 }

@@ -22,6 +22,12 @@ pub(crate) enum Backend {
     PlainWayland,
 }
 
+/// The value `x11_drag_applied` holds until a position has actually been applied.
+///
+/// Distinct from zero and from any negative origin, both of which are real places
+/// on an X11 virtual screen.
+pub(crate) const UNAPPLIED_ORIGIN: i32 = i32::MIN;
+
 // Wayland cannot expose a portable absolute work area. This finite safety
 // envelope replaces an unbounded clamp on every held/release frame.
 const WAYLAND_DRAG_BOUNDS: rust_pill_shared::drag::DragBounds =
@@ -239,7 +245,8 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
         saved_y: Cell::new(0.0),
         restored_position: Cell::new(restored_position),
         x11_release_persisted: Cell::new(false),
-        x11_drag_applied: Cell::new((i32::MIN, i32::MIN)),
+        drag_save_due: Cell::new(None),
+        x11_drag_applied: Cell::new((UNAPPLIED_ORIGIN, UNAPPLIED_ORIGIN)),
         anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
         drag_draw_offset_x: Cell::new(0.0),
         drag_draw_offset_y: Cell::new(0.0),
@@ -759,6 +766,10 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                     // republishes this flag, so leaving it set would write the row back.
                     state_tick.has_saved_position.set(false);
                     state_tick.saved_display_id.set(None);
+                    // A retry parked against the pre-clear position is the same
+                    // hazard one frame later: it would publish the flag back as
+                    // true and recreate the row the clear just removed.
+                    state_tick.drag_save_due.set(None);
                     // A clear drops the record without moving the window, and it
                     // cancels any placement still owed.
                     state_tick
@@ -807,6 +818,12 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
             drag_clock_now(),
             dt_tick,
         );
+        // A drop the display change held back is written as soon as both holds
+        // have passed. The frame loop is the retry: the release is reported once,
+        // so nothing else would come back for it.
+        if state_tick.drag_save_due.get().is_some() {
+            persist_drag_position(&win_tick, &state_tick);
+        }
         tick_hover_frame(&state_tick);
         tick_selector_placement(&win_tick, &state_tick, dt_tick);
         tick_crossing_frame(&win_tick, &state_tick, dt_tick);
@@ -1134,8 +1151,12 @@ fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
     // origin is what the window was last moved to, so it is the honest answer.
     let (origin_x, origin_y) = state.x11_drag_applied.get();
     let (origin_x, origin_y) = (origin_x as f64, origin_y as f64);
-    if origin_x < 0.0 && origin_y < 0.0 {
+    if is_unapplied(origin_x, origin_y) {
         // Nothing has been applied yet, so there is no window to reconcile.
+        // The sentinel is the only negative value the latch can hold: testing
+        // "both negative" treated a window parked on a monitor to the left of the
+        // primary one, above it, or both, as never having been moved at all, so
+        // unplugging that display left the pill with nowhere to reconcile from.
         return;
     }
     // Describe the display the pill is on: named when possible, else whichever
@@ -1322,6 +1343,15 @@ fn tick_drag_frame(window: &gtk::Window, state: &PillState, backend: Backend, no
     }
 }
 
+/// Whether the applied-origin latch has never been set.
+///
+/// X11 virtual screen coordinates are signed, and a second monitor placed to the
+/// left of or above the primary one owns negative coordinates. The latch therefore
+/// cannot use "negative" to mean unset; it uses one sentinel value, set at startup.
+fn is_unapplied(x: f64, y: f64) -> bool {
+    x == UNAPPLIED_ORIGIN as f64 && y == UNAPPLIED_ORIGIN as f64
+}
+
 fn persist_drag_position(window: &gtk::Window, state: &PillState) {
     if state.backend.get() == Backend::X11 {
         let (x, y) = state.x11_drag_applied.get();
@@ -1452,10 +1482,11 @@ fn selector_headroom(window: &gtk::Window, state: &PillState) -> f64 {
     }
     let work = logical_rect_to_physical(&monitor.workarea(), scale);
     let surface_y = if state.backend.get() == Backend::X11 {
-        let y = state.x11_drag_applied.get().1;
-        if y == i32::MIN {
+        let (applied_x, applied_y) = state.x11_drag_applied.get();
+        if is_unapplied(applied_x as f64, applied_y as f64) {
             return local_top;
         }
+        let y = applied_y;
         y as f64
     } else {
         let geometry = logical_rect_to_physical(&monitor.geometry(), scale);
@@ -1507,7 +1538,7 @@ pub(crate) fn x11_pill_center(state: &PillState, scale: f64) -> Option<X11PillCe
         draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
     let offset = ((ox + px + pw / 2.0) * scale, (oy + py + ph / 2.0) * scale);
     let (window_x, window_y) = state.x11_drag_applied.get();
-    let root = if window_x == i32::MIN || window_y == i32::MIN {
+    let root = if is_unapplied(window_x as f64, window_y as f64) {
         None
     } else {
         Some((window_x as f64 + offset.0, window_y as f64 + offset.1))

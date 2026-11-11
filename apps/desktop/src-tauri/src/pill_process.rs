@@ -358,7 +358,13 @@ pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(
     // The stored record is what the next launch restores, so a reset has to
     // forget it before it tells the pill to re-home. Otherwise the pill moves
     // back to the default corner now and returns to the old spot next launch.
-    crate::pill_position::clear_saved_position(app);
+    //
+    // A reset that reports success while the row survives is the failure this
+    // guards: the window moves, the user sees it move, and the next launch
+    // undoes it. Failing leaves the pill where it is, which is recoverable.
+    if !crate::pill_position::clear_saved_position(app) {
+        return Err("Could not clear the pill's stored position, so it was not reset".to_string());
+    }
     match app.try_state::<std::sync::Arc<PillProcess>>() {
         Some(pill) => {
             let msg = format!(r#"{{"type":"reset_position","strategy":"{strategy}"}}"#);

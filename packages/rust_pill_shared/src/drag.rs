@@ -985,7 +985,7 @@ mod tests {
             y: 200.0,
             width: 1000.0,
             height: 600.0,
-            id: None,
+            ..monitor
         };
         let mut drag = DragController::new();
         drag.begin_drag(0.0, 0.0, 100.0, 100.0, 0.0);

@@ -243,6 +243,10 @@ pub(crate) struct PillState {
     /// the frame loop wants to save but the input lock is held, so a destroy that
     /// arrives before the lock clears can still store it.
     pub(crate) pending_drag_position: Cell<bool>,
+    /// When a drop that the display-change hold refused may be written, or `None`
+    /// when no save is owed. The drop is reported once, so a refused save has to
+    /// be retried from here or the position is lost.
+    pub(crate) drag_save_due: Cell<Option<f64>>,
     pub(crate) saved_x: Cell<i32>,
     pub(crate) saved_y: Cell<i32>,
     /// Stable token of the display the saved position belongs to, or `None` when

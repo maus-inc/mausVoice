@@ -2287,6 +2287,113 @@ describe("native gesture adapter contracts", () => {
     }
   });
 
+  it("keeps a drop the display change held back instead of losing it", () => {
+    // The drop is reported once. A guard that returned here without recording a
+    // deadline lost the position outright: the pill reopened where it sat before
+    // the user moved it, on every platform, silently.
+    const shared = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(shared, /pub fn save_due_at\(&self, now: f64\) -> Option<f64>/);
+    for (const [name, persist] of [
+      ["windowsPill", "fn persist_drag_position(hwnd: HWND, state: &PillState)"],
+      ["macApp", "fn persist_drag_position(state: &PillState, window: id)"],
+      ["gtkX11", "pub(crate) fn persist_window_position"],
+    ]) {
+      const body = scope(name, persist);
+      assert.match(
+        body,
+        /save_due_at\(now\)/,
+        `${name}: a refused save has no deadline, so the drop is lost`,
+      );
+      assert.match(
+        body,
+        /drag_save_due\.set\(due\)/,
+        `${name}: the deadline is computed and then dropped`,
+      );
+    }
+    // And something has to come back for it, otherwise the deadline is a comment.
+    for (const [name, marker] of [
+      ["windowsPill", "fn on_anim_tick"],
+      ["macApp", "fn reposition_window"],
+      ["gtkPill", "fn run"],
+    ]) {
+      assert.match(
+        scope(name, marker),
+        /drag_save_due\.get\(\)\.is_some\(\)/,
+        `${name}: nothing retries a held-back save`,
+      );
+    }
+    // Clearing local data must cancel the retry, or it writes the row back.
+    for (const [name, marker] of [
+      ["windowsPill", "InMessage::ForgetPosition"],
+      ["macApp", "InMessage::ForgetPosition"],
+      ["gtkPill", "InMessage::ForgetPosition"],
+    ]) {
+      assert.match(
+        scope(name, marker),
+        /drag_save_due\.set\(None\)/,
+        `${name}: a retry outlives the clear and recreates the row`,
+      );
+    }
+  });
+
+  it("never reads a negative X11 origin as an unmoved window", () => {
+    // X11 virtual screens are signed: a second monitor left of or above the
+    // primary one owns negative coordinates. `x < 0 && y < 0` therefore described
+    // a real window as unapplied, and unplugging that display left the pill with
+    // nothing to reconcile from.
+    assert.match(source.gtkPill, /pub\(crate\) const UNAPPLIED_ORIGIN: i32 = i32::MIN;/);
+    assert.doesNotMatch(
+      source.gtkPill,
+      /origin_x < 0\.0 && origin_y < 0\.0/,
+      "gtkPill: negative coordinates are real places, not an unset latch",
+    );
+    assert.doesNotMatch(
+      source.gtkPill,
+      /x11_drag_applied\.get\(\)\.1\s*==\s*i32::MIN/,
+      "gtkPill: one axis of the sentinel is not the sentinel",
+    );
+    assert.match(source.gtkPill, /if is_unapplied\(origin_x, origin_y\)/);
+  });
+
+  it("restores and reconciles against work areas, not full monitor rects", () => {
+    // The pill lives inside the work area. Asking for `rcMonitor` put the taskbar
+    // and the dock back into the space the pill may occupy, so restore could park
+    // it behind them and a saved work-area record stopped matching its display.
+    const marker = "fn enumerate_work_areas_with_identity";
+    const fn = scope("windowsPill", marker);
+    assert.match(
+      fn,
+      /enumerate_displays\(true\)/,
+      "windowsPill: the work-area enumeration asks for full monitor rects",
+    );
+    assert.doesNotMatch(fn, /enumerate_displays\(false\)/);
+  });
+
+  it("fails a reset whose stored record survived the clear", () => {
+    // A reset that reports success while the row is still there moves the window
+    // and then restores the old spot next launch. The clear has to answer, and the
+    // reset has to act on the answer.
+    assert.match(
+      source.pillPosition,
+      /pub fn clear_saved_position\(app: &tauri::AppHandle\) -> bool/,
+    );
+    for (const [name, marker] of [
+      ["pillProcess", "pub fn notify_reset_position"],
+    ]) {
+      const body = scope(name, marker);
+      assert.match(
+        body,
+        /if !crate::pill_position::clear_saved_position\(app\)/,
+        `${name}: a failed clear still resets, and the next launch undoes it`,
+      );
+    }
+    assert.match(
+      read("apps/desktop/src-tauri/src/platform/macos/overlay.rs"),
+      /if !crate::pill_position::clear_saved_position\(app\)/,
+      "the macOS overlay reset has the same hole as the generic path",
+    );
+  });
+
   it("polls the arrangement through one shared policy", () => {
     // The baseline rule is the part that is easy to get wrong and invisible when
     // wrong: acting on the first signature treats the launch as a display change
@@ -2730,11 +2837,21 @@ describe("macOS saved-position scope", () => {
     // Anything else means a second code path writes the saved origin.
     const seeds = source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
     assert.equal(seeds, 1, "the restored origin must be seeded exactly once");
-    // Exactly two writers of the saved origin: the drop, and the reconciliation
-    // that runs when a display change moves the pill itself. Anything else is a
-    // second code path deciding where the pill was parked.
-    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 2);
-    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 2);
+    // Exactly three writers of the saved origin, each with its own reason: the
+    // drop, the reconciliation that runs when a display change moves the pill
+    // itself, and the idle clamp that holds the window at a moved origin. Anything
+    // else is another code path deciding where the pill was parked.
+    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 3);
+    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 3);
+    // The clamp writer is the one that cannot be dropped without the record
+    // disagreeing with the window it describes: the tick clamps `saved_x` into
+    // the visible frame and then holds the window there, so a stored origin the
+    // clamp moved is a spot the pill is not on.
+    assert.match(
+      source.macApp,
+      /state\.saved_x\.set\(target_x\)/,
+      "macApp: the clamped origin is never recorded, so the next tick re-parks",
+    );
     const capture = source.macApp
       .split("fn persist_drag_position(")[1]
       .split("fn reduced_motion(")[0];
