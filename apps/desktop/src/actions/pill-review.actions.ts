@@ -123,6 +123,20 @@ const reportSessionExpiry =
     report?.();
   };
 
+const markSessionFailed = (id: string): void => {
+  const status = sessions.get(id)?.status;
+  if (status === "open" || status === "queued") {
+    touchSession(id, { status: "failed", decidedAt: Date.now() });
+  }
+};
+
+const reportSessionFailure =
+  (id: string, report?: () => void): (() => void) =>
+  () => {
+    markSessionFailed(id);
+    report?.();
+  };
+
 const pruneSessions = (): void => {
   const settled = [...sessions.values()]
     .filter((session) => session.decidedAt !== null)
@@ -138,7 +152,8 @@ const pruneSessions = (): void => {
 
 /** Mark the session decided from a composer result and drop old sessions. */
 const decideSession = (id: string, result: string | null): string | null => {
-  if (sessions.get(id)?.status !== "expired") {
+  const status = sessions.get(id)?.status;
+  if (status === "open" || status === "queued") {
     touchSession(id, {
       status: "decided",
       decision: result === null ? "cancel" : "insert",
@@ -241,7 +256,9 @@ const publishPendingReview = (current: QueuedReview | undefined): void => {
   });
 };
 
-let advanceQueue!: (answer?: ReviewAnswer) => void;
+const queueAdvancer: { advance: (answer?: ReviewAnswer) => void } = {
+  advance: () => undefined,
+};
 
 const armReviewTimeout = (current: QueuedReview | undefined): void => {
   if (!current) return;
@@ -295,7 +312,7 @@ const armReviewTimeout = (current: QueuedReview | undefined): void => {
         }),
       );
     }
-    advanceQueue({ text: null });
+    queueAdvancer.advance({ text: null });
   }, REVIEW_TIMEOUT_MS);
 };
 
@@ -309,7 +326,7 @@ const armReviewTimeout = (current: QueuedReview | undefined): void => {
  * timer and arms a fresh one, so a timer that does fire always belongs to the
  * review still on the pill.
  */
-advanceQueue = (answer?: ReviewAnswer): void => {
+const advanceQueue = (answer?: ReviewAnswer): void => {
   clearReviewTimeout();
 
   const answered = answer ? queue.shift() : undefined;
@@ -321,6 +338,7 @@ advanceQueue = (answer?: ReviewAnswer): void => {
   stopUnusedListener();
   armReviewTimeout(current);
 };
+queueAdvancer.advance = advanceQueue;
 
 /**
  * The queued review that `id` refers to, or null when it is no longer the one
@@ -400,7 +418,7 @@ const reviewInComposer = async (
       originalText,
       source,
       onExpire: reportSessionExpiry(id, current.onExpire),
-      onFailure: current.onFailure,
+      onFailure: reportSessionFailure(id, current.onFailure),
     });
     settle(id, composed, action);
   } catch (error) {
@@ -628,7 +646,7 @@ export const reviewTranscriptOnPill = async (
           originalText: text,
           source,
           onExpire: reportSessionExpiry(id, options?.onExpire),
-          onFailure: options?.onFailure,
+          onFailure: reportSessionFailure(id, options?.onFailure),
         }),
       );
     }
@@ -725,7 +743,7 @@ export const reviewTranscriptBeforeInsert = async (
       originalText: text,
       source,
       onExpire: reportSessionExpiry(id, options?.onExpire),
-      onFailure: options?.onFailure,
+      onFailure: reportSessionFailure(id, options?.onFailure),
     }),
   );
 };

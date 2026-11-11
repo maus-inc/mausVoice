@@ -790,6 +790,28 @@ describe("reviewTranscriptOnPill", () => {
     expect(onExpire).toHaveBeenCalledOnce();
   });
 
+  it("records a composer setup failure instead of an explicit cancel", async () => {
+    const onFailure = vi.fn();
+    mocks.reviewTextInComposer.mockImplementationOnce(
+      (_text: string, options?: { onFailure?: () => void }) => {
+        options?.onFailure?.();
+        return Promise.resolve(null);
+      },
+    );
+    const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
+      onFailure,
+    });
+    await flush(() => getAppState().pendingPillReview !== null);
+
+    const id = currentReviewId();
+    decide?.({ payload: { reviewId: id, action: "edit" } });
+    await expect(pending).resolves.toBeNull();
+
+    expect(getReviewSession(id)?.status).toBe("failed");
+    expect(getReviewSession(id)?.decision).toBeNull();
+    expect(onFailure).toHaveBeenCalledOnce();
+  });
+
   it("does not overwrite teardown cancellation with a late composer expiry", async () => {
     let expireReview: (() => void) | undefined;
     let finishComposer!: (value: string | null) => void;

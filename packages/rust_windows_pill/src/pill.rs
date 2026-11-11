@@ -740,7 +740,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         InMessage::AssistantState {
             active,
             input_mode,
-            type_message_label: _type_message_label,
+            type_message_label,
             compact,
             conversation_id,
             user_prompt,
@@ -758,6 +758,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             let review_id = review.as_ref().map(|r| r.id.clone());
             let review_text = review.as_ref().map(|r| r.text.clone());
             *state.assistant_review.borrow_mut() = review.map(|review| *review);
+            set_edit_placeholder(type_message_label.as_deref());
 
             // The entry is the review surface: a new transcript loads into it
             // for editing, and answering the review empties it again. An
@@ -2197,6 +2198,7 @@ const ES_WANTRETURN: u32 = 0x1000;
 const EN_CHANGE_NOTIFICATION: u16 = 0x0300;
 const EM_SETMARGINS: u32 = 0x00D3;
 const EM_GETSEL: u32 = 0x00B0;
+const EM_SETCUEBANNER: u32 = 0x1501;
 const EM_SETSEL: u32 = 0x00B1;
 const EM_REPLACESEL: u32 = 0x00C2;
 const EC_LEFTMARGIN: u32 = 1;
@@ -2557,6 +2559,24 @@ fn set_edit_text(text: &str) {
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         let _ = SetWindowTextW(edit, PCWSTR(wide.as_ptr()));
+    }
+}
+
+fn set_edit_placeholder(text: Option<&str>) {
+    let edit = EDIT_HWND.with(|e| e.get());
+    let wide = text.map(|text| {
+        text.encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>()
+    });
+    let text_ptr = wide.as_ref().map_or(std::ptr::null(), |text| text.as_ptr());
+    unsafe {
+        SendMessageW(
+            edit,
+            EM_SETCUEBANNER,
+            Some(WPARAM(1)),
+            Some(LPARAM(text_ptr as isize)),
+        );
     }
 }
 

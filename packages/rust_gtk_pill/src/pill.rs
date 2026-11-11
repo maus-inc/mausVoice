@@ -547,11 +547,7 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_review_changed = state.clone();
     review_buffer.connect_changed(move |buffer| {
-        let text = buffer
-            .text(&buffer.start_iter(), &buffer.end_iter(), true)
-            .expect("review text range")
-            .to_string();
-        *state_review_changed.entry_text.borrow_mut() = text;
+        *state_review_changed.entry_text.borrow_mut() = review_buffer_text(buffer);
     });
 
     let state_review_submit = state.clone();
@@ -1175,12 +1171,15 @@ fn clipboard_result_is_current(expected_review_id: &str, current_review_id: Opti
     current_review_id == Some(expected_review_id)
 }
 
-fn review_editor_text(view: &gtk::TextView) -> String {
-    let buffer = view.buffer().expect("review editor buffer");
+fn review_buffer_text(buffer: &gtk::TextBuffer) -> String {
     buffer
         .text(&buffer.start_iter(), &buffer.end_iter(), true)
         .expect("review text range")
         .to_string()
+}
+
+fn review_editor_text(view: &gtk::TextView) -> String {
+    review_buffer_text(&view.buffer().expect("review editor buffer"))
 }
 
 fn set_review_editor_text(text: &str) {
