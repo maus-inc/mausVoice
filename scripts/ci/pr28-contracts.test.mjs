@@ -2442,10 +2442,14 @@ describe("native gesture adapter contracts", () => {
     const shared = read("packages/rust_pill_shared/src/layout.rs");
     assert.match(shared, /pub fn poll_layout\(/);
     assert.match(shared, /pub enum PollOutcome \{/);
+    // The pair a poll carries between frames is `LayoutPoll`, and the pills hold
+    // one. Keeping the two values as loose cells is what let a caller store one
+    // and not the other, which polls forever without ever looking wrong.
+    assert.match(shared, /pub struct LayoutPoll \{/);
     for (const name of ["windowsPill", "macApp", "gtkPill"]) {
       assert.match(
         source[name],
-        /rust_pill_shared::layout::poll_layout\(/,
+        /\.observe\(now, rust_pill_shared::layout::layout_signature\(&areas\)\)/,
         `${name}: the layout poll is hand-rolled again`,
       );
       assert.match(
@@ -2453,6 +2457,23 @@ describe("native gesture adapter contracts", () => {
         /PollOutcome::Changed/,
         `${name}: the poll does not gate reconciliation on a change`,
       );
+    }
+    for (const [name, marker] of [
+      ["windowsState", "layout_poll"],
+      ["macState", "layout_poll"],
+      ["gtkState", "layout_poll"],
+    ]) {
+      assert.match(
+        source[name],
+        /layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>/,
+        `${name}: the poll state is back to loose cells`,
+      );
+      assert.doesNotMatch(
+        source[name],
+        /layout_polled_at|layout_signature/,
+        `${name}: a second copy of the poll state exists beside the first`,
+      );
+      assert.ok(marker);
     }
   });
 

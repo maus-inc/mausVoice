@@ -176,23 +176,17 @@ pub enum InMessage {
         #[serde(default)]
         review: Option<Box<PillReview>>,
     },
-    /// Clears the saved position; `strategy` picks which monitor the pill
-    /// re-homes onto ("current" = the monitor it lives on, "cursor" = the
-    /// monitor under the pointer).
+    /// Clear the saved record; `strategy` names the display the window re-homes
+    /// onto. See `rust_pill_shared::layout::Anchor::from_reset`.
     ResetPosition {
         #[serde(default)]
         strategy: ResetStrategy,
     },
-    /// Forget the parked position without moving the pill, so a `RequestPosition`
-    /// that follows a local-data clear cannot publish the wiped row straight back.
+    /// Drop the parked position but leave the window alone, so a request that
+    /// follows a local-data clear cannot republish the wiped row.
     ForgetPosition,
-    /// Ask the pill to re-publish its current geometry.
-    ///
-    /// The pill only emits `PositionChanged` when the user moves it, so a
-    /// freshly started session has no geometry on the desktop side and
-    /// windows anchored to the pill (the review composer) fall back to the
-    /// OS-centred placement. The desktop asks for the geometry once the
-    /// listener is live instead of waiting for the first drag.
+    /// Re-publish the window geometry; see `restore::PositionReport` for why a
+    /// fresh session has none to publish.
     RequestPosition,
     Quit,
 }

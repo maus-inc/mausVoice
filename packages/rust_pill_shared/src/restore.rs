@@ -503,6 +503,12 @@ pub use crate::layout::{place_at_fraction, relative_fraction};
 /// The platform's own rectangle type is a parameter rather than a declaration, so
 /// each crate keeps serialising its own `Rect` and only the shape of the record is
 /// shared.
+///
+/// A pill only publishes this when the user moves it, so a freshly started
+/// session has no geometry on the desktop side. Windows anchored to the pill (the
+/// review composer) then fall back to OS-centred placement, which is why the
+/// desktop asks for the geometry once its listener is live (`RequestPosition`)
+/// rather than waiting for the first drag.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct PositionReport<R> {
     pub has_saved_position: bool,

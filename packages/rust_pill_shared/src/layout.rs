@@ -733,6 +733,58 @@ pub fn poll_layout(
     }
 }
 
+/// The two values a poll carries between frames, and the one place they are
+/// written.
+///
+/// All three pills copied the same four lines of bookkeeping around
+/// [`poll_layout`]: read the pair, call, store the pair back. That is the shape
+/// that goes wrong quietly, because a caller that forgets to store one of the two
+/// polls every frame forever while looking correct.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LayoutPoll {
+    polled_at: f64,
+    signature: Option<u64>,
+}
+
+impl LayoutPoll {
+    /// A poll that has never run, so the first observation is the baseline.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A poll resuming from persisted values.
+    pub fn from_parts(polled_at: f64, signature: Option<u64>) -> Self {
+        Self {
+            polled_at,
+            signature,
+        }
+    }
+
+    /// When the arrangement was last read.
+    pub fn polled_at(self) -> f64 {
+        self.polled_at
+    }
+
+    /// The last arrangement signature, if one has been read yet.
+    pub fn signature(self) -> Option<u64> {
+        self.signature
+    }
+
+    /// Read `signature` at `now`, storing both values, and report what changed.
+    ///
+    /// The baseline rule is the part that is easy to get wrong and invisible when
+    /// wrong: acting on the first signature treats the launch as a display change
+    /// and moves a pill that had just been restored. Only [`PollOutcome::Changed`]
+    /// is a reason to reconcile.
+    pub fn observe(&mut self, now: f64, signature: u64) -> PollOutcome {
+        let (polled_at, stored, outcome) =
+            poll_layout(self.polled_at, self.signature, now, signature);
+        self.polled_at = polled_at;
+        self.signature = stored;
+        outcome
+    }
+}
+
 /// Whether `now` is at least `threshold` after `then`.
 ///
 /// A clock that ran backwards, or a non-finite sample, is never "long enough".
@@ -745,6 +797,31 @@ fn elapsed_at_least(now: f64, then: f64, threshold: f64) -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    /// The two-panel arrangement the seam and drag tests share: a panel with a
+    /// shorter neighbour to its right, which is what makes a seam appear at all.
+    pub(crate) fn seam_fixture() -> (MonitorRect, MonitorRect, MonitorRect) {
+        let monitor = MonitorRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1200.0,
+            height: 1000.0,
+            id: None,
+        };
+        let work = MonitorRect {
+            width: 1180.0,
+            height: 900.0,
+            ..monitor
+        };
+        let neighbor = MonitorRect {
+            x: 1200.0,
+            y: 200.0,
+            width: 1000.0,
+            height: 600.0,
+            ..monitor
+        };
+        (monitor, work, neighbor)
+    }
+
     /// One rectangle for the whole crate's tests. `restore`'s tests import it over
     /// the same shape rather than writing it a second time.
     pub(crate) fn display(x: f64, y: f64, width: f64, height: f64, id: Option<u64>) -> MonitorRect {

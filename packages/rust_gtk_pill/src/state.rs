@@ -323,8 +323,7 @@ pub(crate) struct PillState {
     /// when it last looked. The RandR event is the primary signal; the poll covers
     /// a change that lands before the event is selected or while the window is
     /// unmapped.
-    pub(crate) layout_signature: Cell<Option<u64>>,
-    pub(crate) layout_polled_at: Cell<f64>,
+    pub(crate) layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>,
     /// Position the host stored for this pill in a previous session, already
     /// parsed. Taken once during realize and resolved against the monitors that
     /// are connected then; see `rust_pill_shared::restore`.

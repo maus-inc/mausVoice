@@ -222,8 +222,7 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
         saved_display_id: Cell::new(restored_display_id),
         drag_started_at: Cell::new(None),
         save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
-        layout_signature: Cell::new(None),
-        layout_polled_at: Cell::new(0.0),
+        layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
         drag_label_t: Cell::new(0.0),
@@ -637,14 +636,10 @@ fn poll_display_layout(hwnd: HWND, state: &PillState) {
         // Same rule as the message path: a failed enumeration is not evidence.
         return;
     };
-    let (polled_at, stored, outcome) = rust_pill_shared::layout::poll_layout(
-        state.layout_polled_at.get(),
-        state.layout_signature.get(),
-        now,
-        rust_pill_shared::layout::layout_signature(&areas),
-    );
-    state.layout_polled_at.set(polled_at);
-    state.layout_signature.set(stored);
+    let outcome = state
+        .layout_poll
+        .borrow_mut()
+        .observe(now, rust_pill_shared::layout::layout_signature(&areas));
     if outcome == rust_pill_shared::layout::PollOutcome::Changed {
         reconcile_display_layout(hwnd, state);
     }

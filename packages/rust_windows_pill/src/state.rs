@@ -265,8 +265,7 @@ pub(crate) struct PillState {
     /// when. Used to notice a layout change even if the platform message is
     /// missed: a hidden window receives no `WM_DPICHANGED`, and a window that is
     /// briefly off-screen may receive no `WM_DISPLAYCHANGE` either.
-    pub(crate) layout_signature: Cell<Option<u64>>,
-    pub(crate) layout_polled_at: Cell<f64>,
+    pub(crate) layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>,
 
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,

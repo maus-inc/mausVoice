@@ -254,8 +254,7 @@ pub(crate) struct PillState {
     /// when it last looked. `didChangeScreenParameters` is the primary signal;
     /// the poll covers a notification that arrives while the app is not
     /// frontmost, which macOS can drop.
-    pub(crate) layout_signature: Cell<Option<u64>>,
-    pub(crate) layout_polled_at: Cell<f64>,
+    pub(crate) layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>,
     /// True once the pill has been placed at least once. A brand-new window
     /// sits at (0, 0) before its first layout, so an origin check alone would
     /// mistake a legitimately-placed window for "never positioned" and keep

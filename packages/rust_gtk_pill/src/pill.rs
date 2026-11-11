@@ -239,8 +239,7 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
         has_saved_position: Cell::new(false),
         saved_display_id: Cell::new(None),
         save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
-        layout_signature: Cell::new(None),
-        layout_polled_at: Cell::new(0.0),
+        layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
         restored_position: Cell::new(restored_position),
@@ -1246,14 +1245,10 @@ fn poll_display_layout(window: &gtk::Window, state: &PillState) {
     let Some(areas) = monitor_areas(&display, scale) else {
         return;
     };
-    let (polled_at, stored, outcome) = rust_pill_shared::layout::poll_layout(
-        state.layout_polled_at.get(),
-        state.layout_signature.get(),
-        now,
-        rust_pill_shared::layout::layout_signature(&areas),
-    );
-    state.layout_polled_at.set(polled_at);
-    state.layout_signature.set(stored);
+    let outcome = state
+        .layout_poll
+        .borrow_mut()
+        .observe(now, rust_pill_shared::layout::layout_signature(&areas));
     if outcome == rust_pill_shared::layout::PollOutcome::Changed {
         reconcile_display_layout(window, state);
     }

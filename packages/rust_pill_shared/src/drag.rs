@@ -968,25 +968,7 @@ mod tests {
 
     #[test]
     fn ending_a_drag_clears_the_partial_seam_latch() {
-        let monitor = MonitorRect {
-            x: 0.0,
-            y: 0.0,
-            width: 1200.0,
-            height: 1000.0,
-            id: None,
-        };
-        let work = MonitorRect {
-            width: 1180.0,
-            height: 900.0,
-            ..monitor
-        };
-        let neighbor = MonitorRect {
-            x: 1200.0,
-            y: 200.0,
-            width: 1000.0,
-            height: 600.0,
-            ..monitor
-        };
+        let (monitor, work, neighbor) = crate::layout::tests::seam_fixture();
         let mut drag = DragController::new();
         drag.begin_drag(0.0, 0.0, 100.0, 100.0, 0.0);
 

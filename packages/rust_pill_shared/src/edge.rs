@@ -568,26 +568,11 @@ mod tests {
 
     #[test]
     fn drag_region_opens_a_vertical_monitor_seam() {
-        let top = MonitorRect {
-            x: 0.0,
-            y: 0.0,
-            width: 1920.0,
-            height: 1080.0,
-            id: None,
-        };
-        let bottom = MonitorRect {
-            x: 0.0,
-            y: 1080.0,
-            width: 1920.0,
-            height: 1080.0,
-            id: None,
-        };
+        let top = full_hd();
+        let bottom = MonitorRect { y: 1080.0, ..top };
         let work = MonitorRect {
-            x: 0.0,
-            y: 0.0,
-            width: 1920.0,
             height: 1040.0,
-            id: None,
+            ..top
         };
         let region = drag_region(top, work, &[bottom], (900.0, 1039.0));
         assert_eq!(region.bounds.bottom(), 1080.0);
@@ -658,13 +643,7 @@ mod tests {
 
     #[test]
     fn a_shared_vertical_seam_preserves_exposed_top_and_bottom_workarea_bounds() {
-        let monitor = MonitorRect {
-            x: 0.0,
-            y: 0.0,
-            width: 1200.0,
-            height: 1000.0,
-            id: None,
-        };
+        let (monitor, _, _) = crate::layout::tests::seam_fixture();
         let work = MonitorRect {
             x: 0.0,
             y: 40.0,
@@ -719,13 +698,7 @@ mod tests {
 
     #[test]
     fn a_shared_horizontal_seam_preserves_exposed_left_and_right_workarea_bounds() {
-        let monitor = MonitorRect {
-            x: 0.0,
-            y: 0.0,
-            width: 1200.0,
-            height: 1000.0,
-            id: None,
-        };
+        let (monitor, _, _) = crate::layout::tests::seam_fixture();
         let work = MonitorRect {
             x: 40.0,
             y: 20.0,
@@ -751,27 +724,21 @@ mod tests {
         assert_eq!(region.bounds.y, monitor.y);
     }
 
-    #[test]
-    fn partial_seam_latch_prevents_mask_flips_until_the_center_reenters() {
-        let monitor = MonitorRect {
+    /// A 1920x1080 panel at the origin, which is what most of these tests mean by
+    /// "a display".
+    fn full_hd() -> MonitorRect {
+        MonitorRect {
             x: 0.0,
             y: 0.0,
-            width: 1200.0,
-            height: 1000.0,
+            width: 1920.0,
+            height: 1080.0,
             id: None,
-        };
-        let work = MonitorRect {
-            width: 1180.0,
-            height: 900.0,
-            ..monitor
-        };
-        let neighbor = MonitorRect {
-            x: 1200.0,
-            y: 200.0,
-            width: 1000.0,
-            height: 600.0,
-            ..monitor
-        };
+        }
+    }
+
+    #[test]
+    fn partial_seam_latch_prevents_mask_flips_until_the_center_reenters() {
+        let (monitor, work, neighbor) = crate::layout::tests::seam_fixture();
         let mut tracker = SeamTracker::default();
 
         let near_end = tracker.resolve(monitor, work, &[neighbor], (1190.0, 760.0));
@@ -867,13 +834,7 @@ mod tests {
 
     #[test]
     fn release_from_a_shared_seam_uses_work_area_bounds() {
-        let monitor = MonitorRect {
-            x: 0.0,
-            y: 0.0,
-            width: 1200.0,
-            height: 1000.0,
-            id: None,
-        };
+        let (monitor, _, _) = crate::layout::tests::seam_fixture();
         let work = MonitorRect {
             width: 1180.0,
             height: 900.0,
