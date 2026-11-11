@@ -2270,6 +2270,21 @@ describe("native gesture adapter contracts", () => {
         `${name}: a reset leaves the anchor stale`,
       );
     }
+    // Forgetting is the other half. A cleared pill that keeps its old anchor
+    // still follows the pointer on the next launch, which is exactly the
+    // placement the clear was meant to cancel.
+    for (const [name, marker] of [
+      ["windowsPill", "InMessage::ForgetPosition"],
+      ["macApp", "InMessage::ForgetPosition"],
+      ["gtkPill", "InMessage::ForgetPosition"],
+    ]) {
+      const handler = scope(name, marker);
+      assert.match(
+        handler,
+        /Anchor::from_forget\(\)/,
+        `${name}: a forget leaves the anchor stale`,
+      );
+    }
   });
 
   it("polls the arrangement through one shared policy", () => {
