@@ -895,6 +895,14 @@ mod cpal_impl {
         /// Held across a warm open so a press arriving mid-open waits for it
         /// instead of building a second stream on the same device.
         warm_open_gate: Arc<Mutex<()>>,
+        /// How many warm opens got past every guard and touched the device.
+        ///
+        /// Test-visible, and the only way to observe the decision `open_warm`
+        /// makes after taking the gate: on a host with no capture device every
+        /// path ends in the same failed open and an empty warm slot, so
+        /// "declined" and "proceeded and failed" are indistinguishable from
+        /// outside. Counting attempts separates them.
+        warm_open_attempts: Arc<std::sync::atomic::AtomicU64>,
         /// The tail of recent audio, filled while nothing is recording.
         preroll: Arc<Mutex<Preroll>>,
         /// The most recent capture start, for `capture_startup_timing`.
@@ -1210,6 +1218,7 @@ mod cpal_impl {
                 linger_ms: Arc::new(AtomicU64::new(0)),
                 preroll_micros: Arc::new(AtomicU64::new(500_000)),
                 warm_open_gate: Arc::new(Mutex::new(())),
+                warm_open_attempts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 preroll: Arc::new(Mutex::new(Preroll::new(0))),
                 last_startup: Arc::new(Mutex::new(None)),
             }
@@ -1888,6 +1897,46 @@ mod cpal_impl {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
+
+            // Re-read `inner` now that the gate is held, and this is not
+            // redundant with the check above.
+            //
+            // The check above happens before the gate, which is necessary for
+            // the lock order (see the comment there) but means it is answered by
+            // a different moment than the one that matters. A press can start in
+            // the window between that check and this one: `start_recording`
+            // takes `inner` and then waits for this gate, so the press is
+            // *inside* that window by construction whenever the two overlap.
+            // Without this second read the sequence is:
+            //
+            //   1. `open_warm` reads `inner` as empty.
+            //   2. A press takes `inner` and blocks on the gate.
+            //   3. `open_warm` takes the gate and opens a capture device.
+            //   4. `open_warm` stores the stream in `warm` and releases the gate.
+            //   5. The press resumes, finds a warm stream, and adopts it.
+            //
+            // Step 3 is a second stream opened on the device the press is about
+            // to capture from. On a device that allows it, two captures run and
+            // the system captures the microphone twice; on one that does not, the
+            // open fails and the press pays a device-open it did not need. Either
+            // way the press has already started, and this function is holding a
+            // stream nothing is recording from.
+            //
+            // Declining here is the same trade the earlier check makes: the
+            // press opens its own device, and the stop path opens the hold when
+            // it ends.
+            if self
+                .inner
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(true)
+            {
+                log::debug!(
+                    "a recording started while waiting for the warm open gate; not opening a warm stream over it"
+                );
+                return Ok(());
+            }
+
             let mut warm_guard = match self.warm.lock() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
@@ -1910,6 +1959,10 @@ mod cpal_impl {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string);
 
+            // Past every guard, so this counts real device opens rather than
+            // declined requests. See the field's own comment.
+            self.warm_open_attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             // The ring is left empty until the successful stream tells us the
             // real rate; `open_warm_stream` sizes it.
             let warm = self.open_warm_stream(preferred_trimmed.clone(), preroll)?;
@@ -4974,6 +5027,77 @@ mod cpal_impl {
             manager
                 .open_warm(Duration::from_millis(500))
                 .expect("declining is not an error");
+            assert!(!manager.has_warm_stream());
+        }
+
+        /// The second `inner` check, the one taken after the gate.
+        ///
+        /// `a_running_recording_is_never_handed_to_a_warm_open` covers the read
+        /// taken before the gate. This covers the window after it, which is the
+        /// one a press lands in: `start_recording` takes `inner` and *then* waits
+        /// for `warm_open_gate`, so whenever the two overlap the press is already
+        /// recording by the time the gate is released to the opener. The first
+        /// read cannot see that, because it answered a question asked earlier.
+        ///
+        /// The window is forced open here rather than raced for. The test holds
+        /// the gate itself, so the opener is parked at exactly the acquisition
+        /// the real interleaving would park it at, and the recording is
+        /// published while it waits. Nothing about the ordering is left to
+        /// timing, so this fails every run without the fix rather than rarely.
+        #[test]
+        fn a_recording_that_starts_before_the_gate_is_not_opened_over() {
+            let manager = std::sync::Arc::new(RecordingManager::new());
+            manager.set_linger(Duration::from_millis(u64::MAX));
+
+            // Stand in for the press that slipped in: `open_warm` will read
+            // `inner` as empty before it blocks, which is the whole point.
+            let recording = |label: &str| super::ActiveRecording {
+                stream: None,
+                sink: None,
+                preroll_after_stop: None,
+                seed_samples: 0,
+                start: std::time::Instant::now(),
+                buffer: None,
+                sample_rate: 48_000,
+                device_label: label.to_string(),
+                preferred: None,
+                channels: 1,
+            };
+
+            // Hold the gate, so the opener is guaranteed to be parked on it
+            // rather than merely likely to be. A sleep would make this a race in
+            // the test as well as in the code.
+            let gate = manager.warm_open_gate.lock().unwrap();
+
+            let opened = std::sync::Arc::clone(&manager);
+            let opener = std::thread::spawn(move || {
+                let _ = opened.open_warm(Duration::from_millis(500));
+            });
+
+            // The opener cannot have taken the gate; give it time to reach it,
+            // then publish the recording it will not see in its first read.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            *manager.inner.lock().unwrap() = Some(recording("a device the press opened"));
+            drop(gate);
+
+            opener.join().expect("the warm open thread must not panic");
+
+            // `has_warm_stream` cannot see the difference on this host: with no
+            // capture device the open fails and leaves the slot empty whether or
+            // not the opener got that far, so asserting only that would pass on
+            // a build with no re-check at all.
+            //
+            // The attempt counter can see it. `open_warm` increments after its
+            // last guard, so a declined request leaves it at zero and a request
+            // that went on to touch the device leaves it at one.
+            assert_eq!(
+                manager
+                    .warm_open_attempts
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "open_warm went on to open a device over a recording that started \
+                 while it waited for the gate"
+            );
             assert!(!manager.has_warm_stream());
         }
 

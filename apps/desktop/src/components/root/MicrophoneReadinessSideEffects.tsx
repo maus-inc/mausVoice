@@ -579,19 +579,46 @@ export const MicrophoneReadinessSideEffects = () => {
   // Whether a focus retry should reopen the device: the same conditions the hold
   // effect uses, asked of the live store rather than of React state.
   //
-  // A named predicate rather than five `||` terms inline, because the inline
-  // version put the whole decision inside a callback that runs on every window
-  // focus and read as one long negation. The terms are unchanged.
-  const shouldHoldNow = useCallback(() => {
+  // Five conditions, each named.
+  //
+  // The inline version was one five-term `&&` expression inside a callback that
+  // runs on every window focus. It scored 8 on cyclomatic complexity and, worse,
+  // read as a single long negation: the two terms in the middle were the ones
+  // that mattered and they were the hardest to find. Naming them costs nothing
+  // at run time and makes the decision legible. The terms themselves are
+  // unchanged.
+  //
+  // Each predicate takes the state it reads rather than closing over a copy, so
+  // the set is readable in one place and a caller cannot accidentally read a
+  // stale snapshot between two of them.
+  const holdsNothingYet = useCallback(() => {
     const state = getAppState();
-    return (
-      state.userPrefs?.keepMicrophoneReady === true &&
-      state.settings.microphoneHeld !== true &&
-      state.activeRecordingMode === null &&
-      isPermissionAuthorized(state.permissions.microphone?.state) &&
-      !isLocalDataClearRequested()
-    );
+    // `!== true` rather than `!`: `microphoneHeld` is `null` before the first
+    // read comes back, and null is not "not held", it is "not known yet".
+    return state.settings.microphoneHeld !== true;
   }, []);
+
+  const isIdle = useCallback(
+    () => getAppState().activeRecordingMode === null,
+    [],
+  );
+
+  const mayUseMicrophone = useCallback(
+    () => isPermissionAuthorized(getAppState().permissions.microphone?.state),
+    [],
+  );
+
+  const dataIsIntact = useCallback(() => !isLocalDataClearRequested(), []);
+
+  const shouldHoldNow = useCallback(() => {
+    return (
+      getAppState().userPrefs?.keepMicrophoneReady === true &&
+      holdsNothingYet() &&
+      isIdle() &&
+      mayUseMicrophone() &&
+      dataIsIntact()
+    );
+  }, [holdsNothingYet, isIdle, mayUseMicrophone, dataIsIntact]);
 
   // A hold that failed has no state change to retry on: the preference did not
   // change, the device did. Coming back to the window is the moment a user has
