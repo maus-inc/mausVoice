@@ -1,7 +1,6 @@
 import { getIntl } from "../i18n/intl";
 import { runToast, showToast } from "../actions/toast.actions";
 
-/** Show the recovery notice for an unanswered dictation transcript review. */
 export const showDictationReviewExpiredToast = (): void => {
   runToast(
     showToast({

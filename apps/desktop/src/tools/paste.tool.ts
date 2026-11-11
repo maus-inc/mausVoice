@@ -9,6 +9,8 @@ import {
 } from "../utils/tool-permission.utils";
 import { getAppState } from "../store";
 import { getLogger } from "../utils/log.utils";
+import { getIntl } from "../i18n/intl";
+import { runToast, showToast } from "../actions/toast.actions";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import { createPendingPasteReview } from "../actions/pending-paste-review.actions";
 
@@ -46,6 +48,21 @@ export class PasteTool extends BaseTool {
     let copiedReviewedText = false;
     let reviewExpired = false;
     let reviewFailed = false;
+    let pendingReviewSave: Promise<void> | null = null;
+    const saveReviewOnce = (
+      conversationId: string,
+      text: string,
+    ): Promise<void> => {
+      if (pendingReviewSave) return pendingReviewSave;
+      const save = createPendingPasteReview(conversationId, text).then(
+        () => undefined,
+      );
+      pendingReviewSave = save.catch((error: unknown) => {
+        pendingReviewSave = null;
+        throw error;
+      });
+      return pendingReviewSave;
+    };
     const conversationId = context?.conversationId;
     const reviewOptions = {
       onCopy: () => {
@@ -63,7 +80,7 @@ export class PasteTool extends BaseTool {
               // Save first: once Chats takes focus the pill cannot safely insert
               // into the app that had focus when the tool began.
               if (signal?.aborted) return;
-              await createPendingPasteReview(conversationId, reviewedText);
+              await saveReviewOnce(conversationId, reviewedText);
               if (signal?.aborted) return;
               openedPendingPaste = true;
               try {
@@ -73,6 +90,16 @@ export class PasteTool extends BaseTool {
                 // surfacing or navigation could not be requested.
                 getLogger().warning(
                   `Could not open the Paste review in Chats: ${error}`,
+                );
+                runToast(
+                  showToast({
+                    message: getIntl().formatMessage({
+                      defaultMessage:
+                        "Your Paste review was saved. Open Chats to find it and finish the paste.",
+                    }),
+                    toastType: "info",
+                    duration: 8000,
+                  }),
                 );
               }
             },

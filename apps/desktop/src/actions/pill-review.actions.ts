@@ -153,8 +153,16 @@ const pruneSessions = (): void => {
 
 /** Mark the session decided from a composer result and drop old sessions. */
 const decideSession = (id: string, result: string | null): string | null => {
-  const status = sessions.get(id)?.status;
-  if (status === "open" || status === "queued") {
+  const session = sessions.get(id);
+  const status = session?.status;
+  if (
+    status === "open" ||
+    status === "queued" ||
+    (session !== undefined &&
+      status === "failed" &&
+      result !== null &&
+      session.presentation === "composer")
+  ) {
     touchSession(id, {
       status: "decided",
       decision: result === null ? "cancel" : "insert",

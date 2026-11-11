@@ -476,19 +476,33 @@ describe("reviewTranscriptOnPill", () => {
     await cancelPillReview(pending);
   });
 
-  it("falls back to the composer when the decision listener cannot be registered", async () => {
-    mocks.listen.mockRejectedValueOnce(new Error("no event bus"));
-    mocks.reviewTextInComposer.mockResolvedValue("from the composer");
+  it("settles the review when the listener-failure composer accepts text", async () => {
+    const idSpy = vi
+      .spyOn(crypto, "randomUUID")
+      .mockReturnValue("00000000-0000-4000-8000-000000000001");
+    try {
+      mocks.listen.mockRejectedValueOnce(new Error("no event bus"));
+      mocks.reviewTextInComposer.mockResolvedValue("from the composer");
 
-    await expect(reviewTranscriptOnPill("stranded")).resolves.toBe(
-      "from the composer",
-    );
-    // Nothing was queued, so the next review can still use the pill.
-    expect(getAppState().pendingPillReview).toBeNull();
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
-      "stranded",
-      expect.objectContaining({ source: "dictation" }),
-    );
+      await expect(reviewTranscriptOnPill("stranded")).resolves.toBe(
+        "from the composer",
+      );
+      // Nothing was queued, so the next review can still use the pill.
+      expect(getAppState().pendingPillReview).toBeNull();
+      expect(mocks.reviewTextInComposer).toHaveBeenCalledWith(
+        "stranded",
+        expect.objectContaining({ source: "dictation" }),
+      );
+      expect(
+        getReviewSession("00000000-0000-4000-8000-000000000001"),
+      ).toMatchObject({
+        status: "decided",
+        decision: "insert",
+        draftText: "from the composer",
+      });
+    } finally {
+      idSpy.mockRestore();
+    }
   });
 
   it("gives up on a review nobody answers instead of blocking the insert", async () => {
@@ -775,7 +789,7 @@ describe("reviewTranscriptOnPill", () => {
             finishOpen = resolve;
           });
         })
-        .mockResolvedValueOnce(undefined);
+        .mockImplementationOnce(() => Promise.resolve());
       const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
         onOpen,
         onExpire,
