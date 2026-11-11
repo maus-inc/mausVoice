@@ -109,6 +109,20 @@ const touchSession = (
   return next;
 };
 
+const markSessionExpired = (id: string): void => {
+  const status = sessions.get(id)?.status;
+  if (status === "open" || status === "queued") {
+    touchSession(id, { status: "expired", decidedAt: Date.now() });
+  }
+};
+
+const reportSessionExpiry =
+  (id: string, report?: () => void): (() => void) =>
+  () => {
+    markSessionExpired(id);
+    report?.();
+  };
+
 const pruneSessions = (): void => {
   const settled = [...sessions.values()]
     .filter((session) => session.decidedAt !== null)
@@ -274,7 +288,7 @@ const armReviewTimeout = (current: QueuedReview): void => {
   }, REVIEW_TIMEOUT_MS);
 };
 
-const advanceQueue = (answer?: ReviewAnswer): void => {
+function advanceQueue(answer?: ReviewAnswer): void {
   if (timeoutId !== null) {
     clearTimeout(timeoutId);
     timeoutId = null;
@@ -298,7 +312,7 @@ const advanceQueue = (answer?: ReviewAnswer): void => {
   if (!current) return;
 
   armReviewTimeout(current);
-};
+}
 
 /**
  * The queued review that `id` refers to, or null when it is no longer the one
@@ -377,10 +391,7 @@ const reviewInComposer = async (
     const composed = await reviewTextInComposer(text, {
       originalText,
       source,
-      onExpire: () => {
-        markSessionExpired(id);
-        current.onExpire?.();
-      },
+      onExpire: reportSessionExpiry(id, current.onExpire),
       onFailure: current.onFailure,
     });
     settle(id, composed, action);
@@ -407,6 +418,40 @@ const updateReviewDraft = (
   }
 };
 
+const openAssistantPasteInChats = async (
+  current: QueuedReview,
+  id: string,
+  text: string,
+): Promise<boolean> => {
+  if (current.session.source !== "assistant-tool" || !current.onOpen)
+    return false;
+
+  // Opening Chats changes focus away from the destination application. The
+  // caller must durably save the edited text before this review can settle.
+  current.openSavePending = true;
+  if (timeoutId !== null) {
+    clearTimeout(timeoutId);
+    timeoutId = null;
+  }
+  try {
+    await current.onOpen(text);
+  } catch {
+    runToast(
+      showToast({
+        message: getIntl().formatMessage({
+          defaultMessage:
+            "Could not save this Paste review. It remains open so you can retry.",
+        }),
+        toastType: "error",
+        duration: 8000,
+      }),
+    );
+    throw new Error("Could not save the pending Paste review");
+  }
+  settle(id, null, "open");
+  return true;
+};
+
 const applyDecision = async (
   id: string,
   action: PillReviewAction,
@@ -429,34 +474,9 @@ const applyDecision = async (
     }
     if (
       action === "open" &&
-      session.source === "assistant-tool" &&
-      current.onOpen
-    ) {
-      // Opening Chats changes focus away from the destination application. The
-      // caller must durably save the edited text before this review can settle.
-      current.openSavePending = true;
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      try {
-        await current.onOpen(text);
-      } catch {
-        runToast(
-          showToast({
-            message: getIntl().formatMessage({
-              defaultMessage:
-                "Could not save this Paste review. It remains open so you can retry.",
-            }),
-            toastType: "error",
-            duration: 8000,
-          }),
-        );
-        throw new Error("Could not save the pending Paste review");
-      }
-      settle(id, null, action);
+      (await openAssistantPasteInChats(current, id, text))
+    )
       return;
-    }
     if (action === "edit" || action === "open") {
       await reviewInComposer(current, text, action);
       return;
@@ -542,13 +562,6 @@ const markSessionCancelled = (id: string): void => {
   }
 };
 
-const markSessionExpired = (id: string): void => {
-  const status = sessions.get(id)?.status;
-  if (status === "open" || status === "queued") {
-    touchSession(id, { status: "expired", decidedAt: Date.now() });
-  }
-};
-
 const cancelUnpublishedReview = (id: string): null => {
   markSessionCancelled(id);
   pruneSessions();
@@ -606,10 +619,7 @@ export const reviewTranscriptOnPill = async (
         await reviewTextInComposer(text, {
           originalText: text,
           source,
-          onExpire: () => {
-            markSessionExpired(id);
-            options?.onExpire?.();
-          },
+          onExpire: reportSessionExpiry(id, options?.onExpire),
           onFailure: options?.onFailure,
         }),
       );
@@ -706,10 +716,7 @@ export const reviewTranscriptBeforeInsert = async (
     await reviewTextInComposer(text, {
       originalText: text,
       source,
-      onExpire: () => {
-        markSessionExpired(id);
-        options?.onExpire?.();
-      },
+      onExpire: reportSessionExpiry(id, options?.onExpire),
       onFailure: options?.onFailure,
     }),
   );

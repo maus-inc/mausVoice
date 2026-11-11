@@ -1836,7 +1836,10 @@ fn draw_thinking_text(cr: &cairo::Context, x: f64, y: f64, alpha: f64, state: &P
 /// Pango applies font fallback per run, unlike Cairo's toy `show_text` API.
 fn review_heading_layout(cr: &cairo::Context, label: &str) -> pango::Layout {
     let layout = pangocairo::functions::create_layout(cr);
-    let font = pango::FontDescription::from_string("Satoshi Bold 11");
+    let mut font = pango::FontDescription::new();
+    font.set_family("Satoshi");
+    font.set_weight(pango::Weight::Bold);
+    font.set_absolute_size(11.0 * pango::SCALE as f64);
     layout.set_font_description(Some(&font));
     layout.set_text(label);
     layout

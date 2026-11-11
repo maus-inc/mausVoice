@@ -769,8 +769,8 @@ pub fn run(receiver: Receiver<InMessage>) {
                     let was_active = state_tick.assistant_active.get();
                     state_tick.assistant_active.set(active);
                     *state_tick.assistant_input_mode.borrow_mut() = input_mode;
-                    *state_tick.assistant_type_message.borrow_mut() = type_message_label
-                        .unwrap_or_else(|| "Type a message…".to_string());
+                    *state_tick.assistant_type_message.borrow_mut() =
+                        type_message_label.unwrap_or_else(|| "Type a message…".to_string());
                     entry_tick.set_placeholder_text(Some(
                         state_tick.assistant_type_message.borrow().as_str(),
                     ));
@@ -787,6 +787,13 @@ pub fn run(receiver: Receiver<InMessage>) {
                         .map(|r| r.id.clone());
                     let review_id = review.as_ref().map(|r| r.id.clone());
                     let review_text = review.as_ref().map(|r| r.text.clone());
+                    let review_accessible_name = review
+                        .as_ref()
+                        .and_then(|r| r.review_label.clone())
+                        .unwrap_or_else(|| "Review transcript".to_string());
+                    if let Some(accessible) = review_editor_tick.accessible() {
+                        accessible.set_name(&review_accessible_name);
+                    }
                     *state_tick.assistant_review.borrow_mut() = review.map(|review| *review);
 
                     // The entry is the review surface: a new transcript loads

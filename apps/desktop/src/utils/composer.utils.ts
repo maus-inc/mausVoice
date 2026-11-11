@@ -313,7 +313,7 @@ class ComposerReview {
       if (activeComposer === this) activeComposer = null;
       for (const dispose of this.cleanups) releaseComposerListener(dispose);
       this.cleanups.clear();
-      await invoke("composer_discard_text", {
+      void invoke("composer_discard_text", {
         requestId: this.requestId,
       }).catch(() => {
         // The composer may already have consumed the request.
@@ -455,7 +455,21 @@ class ComposerReview {
       return;
     }
 
-    if (expired) notifyReviewExpiry(this.options);
+    if (expired) {
+      notifyReviewExpiry(this.options);
+      runToast(
+        showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Review expired — the transcript is kept in your history.",
+          }),
+          toastType: "info",
+          duration: 8000,
+          action: "open_transcriptions",
+        }),
+      );
+      return;
+    }
 
     runToast(
       showToast({

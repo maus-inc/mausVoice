@@ -740,7 +740,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         InMessage::AssistantState {
             active,
             input_mode,
-            type_message_label: _,
+            type_message_label: _type_message_label,
             compact,
             conversation_id,
             user_prompt,
@@ -2304,7 +2304,7 @@ unsafe extern "system" fn edit_container_proc(
             SetTextColor(hdc, COLORREF(EDIT_TEXT_COLOR));
             SetBkMode(hdc, OPAQUE);
             SetBkColor(hdc, COLORREF(EDIT_SURFACE));
-            let brush = EDIT_SURFACE_BRUSH.with(|b| b.get());
+            let brush = EDIT_SURFACE_BRUSH.with(Cell::get);
             LRESULT(brush.0 as isize)
         }
         WM_COMMAND => {
@@ -2401,9 +2401,16 @@ fn ctrl_backspace_start(text: &[u16], caret: usize) -> usize {
 
 fn ctrl_backspace(edit: HWND) {
     unsafe {
-        // Get caret position from return value: LOWORD=start, HIWORD=end
-        let result = SendMessageW(edit, EM_GETSEL, None, None);
-        let caret = ((result.0 >> 16) & 0xFFFF) as usize;
+        // Use the output pointers to avoid the return value's 16-bit offsets.
+        let mut selection_start = 0u32;
+        let mut selection_end = 0u32;
+        SendMessageW(
+            edit,
+            EM_GETSEL,
+            Some(WPARAM(&mut selection_start as *mut u32 as usize)),
+            Some(LPARAM(&mut selection_end as *mut u32 as isize)),
+        );
+        let caret = selection_end as usize;
         if caret == 0 {
             return;
         }

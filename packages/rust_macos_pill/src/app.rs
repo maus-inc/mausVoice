@@ -718,8 +718,8 @@ fn perform_tick() {
                     }
                     ctx.state.assistant_active.set(active);
                     *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
-                    *ctx.state.assistant_type_message.borrow_mut() = type_message_label
-                        .unwrap_or_else(|| "Type a message…".to_string());
+                    *ctx.state.assistant_type_message.borrow_mut() =
+                        type_message_label.unwrap_or_else(|| "Type a message…".to_string());
                     ctx.state.assistant_compact.set(compact);
                     *ctx.state.assistant_conversation_id.borrow_mut() = conversation_id;
                     *ctx.state.assistant_user_prompt.borrow_mut() = user_prompt;
