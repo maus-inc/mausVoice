@@ -474,6 +474,7 @@ const applyDecision = async (
   const current = openReview(id);
   if (!current || current.busy) return;
   current.busy = true;
+  clearReviewTimeout();
   const session = current.session;
   const text = reviewAnswerText(session.originalText, editedText);
   updateReviewDraft(current, editedText);

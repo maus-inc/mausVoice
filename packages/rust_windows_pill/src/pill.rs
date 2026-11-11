@@ -2209,6 +2209,7 @@ const EM_SETMARGINS: u32 = 0x00D3;
 const EM_GETSEL: u32 = 0x00B0;
 const EM_SETSEL: u32 = 0x00B1;
 const EDIT_LABEL_HEIGHT: i32 = 16;
+const STATIC_CENTER_IMAGE: u32 = 0x0200;
 const EM_REPLACESEL: u32 = 0x00C2;
 const EC_LEFTMARGIN: u32 = 1;
 const EC_RIGHTMARGIN: u32 = 2;
@@ -2254,7 +2255,7 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
             WS_EX_TRANSPARENT,
             w!("STATIC"),
             w!("Type a message…"),
-            WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | SS_LEFT | SS_CENTERIMAGE),
+            WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | STATIC_CENTER_IMAGE),
             8,
             0,
             384,
@@ -2432,6 +2433,23 @@ fn handle_edit_message(msg: &MSG) -> bool {
     }
 }
 
+fn ctrl_backspace_range(
+    text: &[u16],
+    selection_start: usize,
+    selection_end: usize,
+) -> Option<(usize, usize)> {
+    let start = selection_start.min(selection_end).min(text.len());
+    let end = selection_start.max(selection_end).min(text.len());
+    if start != end {
+        return Some((start, end));
+    }
+    if end == 0 {
+        return None;
+    }
+    let word_start = ctrl_backspace_start(text, end);
+    (word_start < end).then_some((word_start, end))
+}
+
 fn ctrl_backspace_start(text: &[u16], caret: usize) -> usize {
     let mut pos = caret.min(text.len());
     while pos > 0 && (text[pos - 1] == b' ' as u16 || text[pos - 1] == b'\t' as u16) {
@@ -2454,10 +2472,6 @@ fn ctrl_backspace(edit: HWND) {
             Some(WPARAM(&mut selection_start as *mut u32 as usize)),
             Some(LPARAM(&mut selection_end as *mut u32 as isize)),
         );
-        let caret = selection_end as usize;
-        if caret == 0 {
-            return;
-        }
 
         // Get text as UTF-16
         let len = GetWindowTextLengthW(edit);
@@ -2466,19 +2480,19 @@ fn ctrl_backspace(edit: HWND) {
         }
         let mut buf = vec![0u16; (len + 1) as usize];
         GetWindowTextW(edit, &mut buf);
-
-        let caret = caret.min(len as usize);
-        let pos = ctrl_backspace_start(&buf[..len as usize], caret);
-        if pos == caret {
+        let text = &buf[..len as usize];
+        let Some((start, end)) =
+            ctrl_backspace_range(text, selection_start as usize, selection_end as usize)
+        else {
             return;
-        }
+        };
 
-        // Select from word start to caret and replace with empty
+        // Delete the selected range or the previous word, whichever applies.
         SendMessageW(
             edit,
             EM_SETSEL,
-            Some(WPARAM(pos)),
-            Some(LPARAM(caret as isize)),
+            Some(WPARAM(start)),
+            Some(LPARAM(end as isize)),
         );
         let empty: [u16; 1] = [0];
         SendMessageW(
@@ -2645,6 +2659,22 @@ mod tests {
         let line_start = "first\r\n  ".encode_utf16().count();
         assert_eq!(ctrl_backspace_start(&text, line_start), line_start - 2);
         assert_eq!(ctrl_backspace_start(&text, text.len()), line_start);
+    }
+
+    #[test]
+    fn ctrl_backspace_deletes_a_selection_without_extending_past_it() {
+        let text: Vec<u16> = "first selected last".encode_utf16().collect();
+        let selection_start = "first ".encode_utf16().count();
+        let selection_end = "first selected".encode_utf16().count();
+
+        assert_eq!(
+            ctrl_backspace_range(&text, selection_start, selection_end),
+            Some((selection_start, selection_end)),
+        );
+        assert_eq!(
+            ctrl_backspace_range(&text, selection_end, selection_start),
+            Some((selection_start, selection_end)),
+        );
     }
 
     #[test]

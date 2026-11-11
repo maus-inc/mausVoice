@@ -582,6 +582,42 @@ describe("reviewTranscriptOnPill", () => {
     expect(session?.decidedAt).not.toBeNull();
   });
 
+  it("pauses expiry while clipboard insertion is pending", async () => {
+    vi.useFakeTimers();
+    let finishClipboard: (() => void) | undefined;
+    const onExpire = vi.fn();
+    const onCopy = vi.fn();
+    mocks.invoke.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClipboard = resolve;
+        }),
+    );
+    try {
+      const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
+        onExpire,
+        onCopy,
+      });
+      await flush(() => getAppState().pendingPillReview !== null);
+      const id = currentReviewId();
+      decide?.({ payload: { reviewId: id, action: "copy" } });
+      await flush(() => mocks.invoke.mock.calls.length > 0);
+
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      expect(getReviewSession(id)?.status).toBe("open");
+      expect(onExpire).not.toHaveBeenCalled();
+
+      finishClipboard?.();
+      await expect(pending).resolves.toBeNull();
+      expect(onCopy).toHaveBeenCalledOnce();
+    } finally {
+      finishClipboard?.();
+      cancelAllPillReviews();
+      vi.useRealTimers();
+    }
+  });
+
   it("transfers the timeout to the composer without rearming it on enqueue", async () => {
     vi.useFakeTimers();
     // Replaced by the Promise executor below; the initializer only types the
