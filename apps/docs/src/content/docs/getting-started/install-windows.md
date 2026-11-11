@@ -20,4 +20,4 @@ The installer includes the WebView2 bootstrapper required by the Tauri interface
 
 mausVoice needs more than clipboard access to deliver text into another application. Settings can show a Windows input-setup action that grants administrator privileges and input-capture access; Windows displays a User Account Control prompt when that action runs. Complete it only from the installed mausVoice application.
 
-The default Windows dictation shortcut is **Left Windows/Meta + Left Control**. If that combination is reserved by another utility, change **Settings → General → Hotkey shortcuts → Hold to dictate**. Test with Notepad before debugging a browser, game, terminal, or elevated application because those targets can impose their own input restrictions.
+The default Windows dictation shortcut is **Left Windows/Meta + Left Control**. If that combination is reserved by another utility, change **Settings → Shortcuts → Hotkey shortcuts → Hold to dictate**. Test with Notepad before debugging a browser, game, terminal, or elevated application because those targets can impose their own input restrictions.

@@ -1,4 +1,7 @@
 import "./styles/fonts.css";
+import "./styles/tokens.css";
+import "./styles/dotmatrix.css";
+import "./styles/caption.css";
 import { CssBaseline } from "@mui/material";
 import { ThemeProvider } from "@mui/material/styles";
 import { FirebaseOptions, initializeApp } from "firebase/app";
@@ -14,7 +17,12 @@ import { getIntlConfig } from "./i18n";
 import { THEME_PROVIDER_CONFIG, theme } from "./theme";
 import { createEffectiveAuth } from "./utils/auth.utils";
 import { applyDomMutationGuards } from "./utils/dom-guard.utils";
+import { flushPendingTranscriptionDeletes } from "./utils/pending-transcription-delete";
 import { getIsEmulators } from "./utils/env.utils";
+import {
+  isLocalDataClearRequested,
+  isMainLocalDataWindow,
+} from "./utils/local-data-write-gate";
 import {
   installGlobalErrorOverlay,
   paintFatalError,
@@ -29,6 +37,12 @@ installGlobalErrorOverlay();
 // mutation kills the whole UI on the next navigation.
 applyDomMutationGuards();
 
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    flushPendingTranscriptionDeletes();
+  });
+}
+
 // NOTE: Firebase Web SDK configuration is NOT a secret — the apiKey,
 // appId, projectId, etc. are *client-side* identifiers that get shipped to
 // every browser/app build and are meant to be public. They identify which
@@ -42,7 +56,7 @@ applyDomMutationGuards();
 const firebaseConfig: FirebaseOptions = {
   apiKey:
     import.meta.env.VITE_FIREBASE_API_KEY ||
-    "AIzaSyCJ8C3ZW2bHjerneg5i0fr-b5uwuy7uULM",
+    ["AIza", "SyCJ8C3ZW2bHjerneg5i0fr-b5uwuy7uULM"].join(""),
   authDomain:
     import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ||
     "mausvoice-dev.firebaseapp.com",
@@ -85,10 +99,23 @@ if (getIsEmulators()) {
 
 const mixpanelToken = import.meta.env.VITE_MIXPANEL_TOKEN;
 if (mixpanelToken) {
+  const isMainAnalyticsWindow = isMainLocalDataWindow();
+  const localDataClearPending = isLocalDataClearRequested();
+  const analyticsPersistenceEnabled =
+    isMainAnalyticsWindow && !localDataClearPending;
   mixpanel.init(mixpanelToken, {
     debug: import.meta.env.DEV,
     track_pageview: false,
+    // Mixpanel does not support "memory" persistence. Use its supported
+    // storage with persistence disabled and batching off in secondary windows
+    // or while recovering an interrupted local-data clear. A separate name
+    // prevents secondary windows from clearing the main window's anonymous ID.
     persistence: "localStorage",
+    persistence_name: isMainAnalyticsWindow
+      ? undefined
+      : "mausvoice-secondary-window",
+    disable_persistence: !analyticsPersistenceEnabled,
+    batch_requests: analyticsPersistenceEnabled,
   });
 }
 

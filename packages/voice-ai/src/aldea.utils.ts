@@ -1,4 +1,4 @@
-import { retry, countWords } from "@maus-inc/utilities";
+import { HttpError, retry, countWords } from "@maus-inc/utilities";
 
 const ALDEA_API_URL = "https://api.aldea.ai/v1/listen";
 
@@ -7,6 +7,7 @@ export type AldeaTranscriptionArgs = {
   blob: ArrayBuffer | Buffer;
   ext?: string;
   language?: string;
+  signal?: AbortSignal;
 };
 
 export type AldeaTranscribeAudioOutput = {
@@ -34,24 +35,35 @@ type AldeaResponse = {
 export const aldeaTranscribeAudio = async ({
   apiKey,
   blob,
+  language,
+  signal,
 }: AldeaTranscriptionArgs): Promise<AldeaTranscribeAudioOutput> => {
   return retry({
     retries: 3,
+    isRetryable: () => !signal?.aborted,
     fn: async () => {
+      signal?.throwIfAborted();
       const bodyData =
         blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
-      const response = await fetch(ALDEA_API_URL, {
+      const url = new URL(ALDEA_API_URL);
+      if (language && language !== "auto") {
+        url.searchParams.set("language", language);
+      }
+      const response = await fetch(url.toString(), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey.trim()}`,
         },
         body: bodyData,
+        signal,
       });
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
+        throw new HttpError(
+          response.status,
           `Aldea API request failed with status ${response.status}: ${errorText}`,
+          { retryAfter: response.headers.get("retry-after") },
         );
       }
 

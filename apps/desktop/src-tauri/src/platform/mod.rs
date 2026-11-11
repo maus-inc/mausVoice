@@ -28,6 +28,16 @@ pub enum PasteKeybindSupport {
     Global,
 }
 
+pub mod common;
+pub mod event_dispatch;
+pub mod latest_dispatch;
+pub mod recording_ownership;
+
+// Deliberately not `cfg`-gated. The decision the Windows resume watcher makes
+// from a `PBT_POWERSETTINGCHANGE` payload is pure data, and no CI job runs
+// `cargo test` on Windows, so it lives where it is tested on every platform.
+pub mod power_broadcast;
+
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "linux")]
@@ -181,7 +191,10 @@ impl SavedClipboard {
 }
 
 pub type LevelCallback = Arc<dyn Fn(Vec<f32>) + Send + Sync>;
-pub type ChunkCallback = Arc<dyn Fn(Vec<f32>) + Send + Sync>;
+/// Receives a batch of samples plus the absolute index of the batch's first
+/// sample in the recording, so consumers can place audio on an absolute
+/// timeline instead of assuming every batch is contiguous.
+pub type ChunkCallback = Arc<dyn Fn(Vec<f32>, u64) + Send + Sync>;
 
 pub trait Recorder: Send + Sync {
     fn start(
@@ -190,6 +203,17 @@ pub trait Recorder: Send + Sync {
         chunk_callback: Option<ChunkCallback>,
     ) -> Result<(), Box<dyn std::error::Error>>;
     fn stop(&self) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>>;
+    /// A successful result must contain a sealed buffer. Implementations may
+    /// return an explicitly failed capture while physical release is pending.
+    fn stop_for_handoff(
+        &self,
+    ) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+        let result = self.stop();
+        if self.is_recording() {
+            return Err("Recording is still active after stop".into());
+        }
+        result
+    }
     fn pause(&self) -> Result<(), Box<dyn std::error::Error>>;
     fn resume(&self) -> Result<(), Box<dyn std::error::Error>>;
     fn set_preferred_input_device(&self, _name: Option<String>) {}
@@ -197,4 +221,5 @@ pub trait Recorder: Send + Sync {
     fn current_sample_rate(&self) -> Option<u32> {
         None
     }
+    fn is_recording(&self) -> bool;
 }

@@ -10,7 +10,7 @@ Use a plain text editor for the first test. It removes web-page shortcuts, rich-
 ## Test sequence
 
 1. Open **Settings → General → Microphone** and select the intended device.
-2. Open **Settings → Processing → AI transcription**. Choose **Local** with a downloaded model, or **API** with a tested transcription key.
+2. Open **Settings → AI and processing → AI transcription**. Choose **Local** with a downloaded model, or **API** with a tested transcription key.
 3. For the clearest baseline, set **AI post processing** to **Off**. You can enable styles after raw transcription works.
 4. Open TextEdit, Notepad, or a simple Linux editor. Click in a blank document until the caret is visible.
 5. Hold the configured **Hold to dictate** shortcut. Say: "This is my first mausVoice test, with the number forty-two."

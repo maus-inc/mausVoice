@@ -1,5 +1,7 @@
 import { Box, type BoxProps } from "@mui/material";
-import appLogo from "../../assets/app-logo.png";
+import appLogo32 from "../../assets/app-logo-32.png";
+import appLogo64 from "../../assets/app-logo-64.png";
+import appLogo192 from "../../assets/app-logo-192.png";
 import { darkInk, highlight } from "../../styles/palette";
 
 export type LogoProps = BoxProps & {
@@ -13,13 +15,21 @@ export const Logo = ({
   height = "2.2rem",
   ...rest
 }: LogoProps) => {
+  // Provide 1x/2x/3x sources so the logo stays sharp at 125%, 150% and 200%
+  // Windows display scaling instead of upscaling the source bitmap. `x`
+  // descriptors are correct for a fixed-density candidate (the element is
+  // sized in CSS px); `sizes` tells the browser that density is what matters.
+  const srcSet = `${appLogo32} 1x, ${appLogo64} 2x, ${appLogo192} 3x`;
+  const sizes = typeof width === "number" ? `${width}px` : width;
+
   return (
     <Box
       component="img"
-      src={appLogo}
+      src={appLogo64}
+      srcSet={srcSet}
+      sizes={sizes}
       alt="mausVoice"
       draggable={false}
-      {...rest}
       sx={[
         {
           width: width,

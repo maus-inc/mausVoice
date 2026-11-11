@@ -1,4 +1,10 @@
-import { ArrowForward, Check, Email, TouchApp } from "@mui/icons-material";
+import {
+  ArrowForward,
+  Check,
+  Email,
+  Refresh,
+  TouchApp,
+} from "@mui/icons-material";
 import {
   Box,
   Button,
@@ -8,7 +14,7 @@ import {
   Typography,
 } from "@mui/material";
 import { motion } from "framer-motion";
-import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showConfetti, showErrorSnackbar } from "../../actions/app.actions";
 import { clearLocalStorageValue } from "../../actions/local-storage.actions";
@@ -16,6 +22,7 @@ import {
   finishOnboarding,
   submitOnboarding,
 } from "../../actions/onboarding.actions";
+import { isOnboardingNameDraftOwnedByAuth } from "../../state/onboarding.state";
 import { setSelectedToneId } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
@@ -35,15 +42,15 @@ import {
 } from "./OnboardingCommon";
 
 // The surrounding card deliberately mimics a third-party notes app, so its
-// greys stay literal; only the focus accent follows the mausVoice brand blue.
+// greys stay literal; only the focus accent follows the mausVoice chrome token.
 const pulseNotes = keyframes`
   0%, 100% {
-    border-color: color-mix(in srgb, var(--app-palette-blue) 40%, transparent);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--app-palette-blue) 40%, transparent);
+    border-color: color-mix(in srgb, var(--app-palette-chrome) 40%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--app-palette-chrome) 40%, transparent);
   }
   50% {
-    border-color: var(--app-palette-blue);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-palette-blue) 30%, transparent);
+    border-color: var(--app-palette-chrome);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-palette-chrome) 30%, transparent);
   }
 `;
 
@@ -60,228 +67,135 @@ const pulseEmail = keyframes`
 
 const PAGE_COUNT = 2;
 
-export const TutorialForm = () => {
-  const intl = useIntl();
-  const [stepIndex, setStepIndex] = useState(0);
-  const [dictationValue, setDictationValue] = useState("");
-  const [initializing, setInitializing] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [isFieldFocused, setIsFieldFocused] = useState(false);
-  const [hasStartedDictating, setHasStartedDictating] = useState(false);
-  const userExists = useAppStore((state) => Boolean(getMyUser(state)));
-  const submittedRef = useRef(false);
-  const submissionCompleteRef = useRef(false);
-
-  const hotkeyCombos = useAppStore((state) =>
-    getHotkeyCombosForAction(state, DICTATE_HOTKEY),
+/**
+ * The notes/email demo card mimics a third-party app window: white card with a
+ * grey header strip. `overlay` is rendered inside the relative container so
+ * absolutely-positioned tooltips keep anchoring to the card. The bottom padding
+ * is the strip the tooltip occupies, which is what keeps it from reaching the
+ * step dots below; BouncyTooltip is bottom-anchored into it.
+ */
+const TutorialWindow = ({
+  header,
+  children,
+  overlay,
+}: {
+  header: React.ReactNode;
+  children: React.ReactNode;
+  overlay?: React.ReactNode;
+}) => {
+  return (
+    <Box sx={{ position: "relative", pb: 6 }}>
+      <Stack
+        spacing={0}
+        sx={{
+          bgcolor: "#ffffff",
+          borderRadius: 1.33,
+          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.15)",
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            px: 2,
+            py: 1.5,
+            borderBottom: "1px solid #e0e0e0",
+            bgcolor: "#f5f5f5",
+          }}
+        >
+          {header}
+        </Box>
+        <Box sx={{ p: 2 }}>{children}</Box>
+      </Stack>
+      {overlay}
+    </Box>
   );
-  const primaryHotkey = hotkeyCombos[0] ?? [];
-  const keysHeld = useAppStore((state) => state.keysHeld);
-  const userName = useAppStore((state) => state.onboarding.name) || "Alex";
+};
 
-  useEffect(() => {
-    if (primaryHotkey.length === 0) return;
-    const hotkeySet = new Set(primaryHotkey);
-    const allHotkeyKeysHeld = primaryHotkey.every((key) =>
-      keysHeld.includes(key),
-    );
-    if (
-      allHotkeyKeysHeld &&
-      keysHeld.length >= hotkeySet.size &&
-      isFieldFocused
-    ) {
-      setHasStartedDictating(true);
-    }
-  }, [keysHeld, primaryHotkey]);
-
-  const setChatTone = async (toneId: string, force = false): Promise<void> => {
-    if (!userExists && !force) {
-      return;
-    }
-
-    await setSelectedToneId(toneId);
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    const init = async () => {
-      try {
-        if (!submittedRef.current) {
-          submittedRef.current = true;
-          await submitOnboarding();
-          submissionCompleteRef.current = true;
-        }
-
-        if (cancelled) {
-          return;
-        }
-
-        produceAppState((draft) => {
-          draft.onboarding.dictationOverrideEnabled = true;
-        });
-      } finally {
-        if (!cancelled) {
-          setInitializing(false);
-        }
-      }
-    };
-
-    init();
-    return () => {
-      cancelled = true;
-      setChatTone(POLISHED_TONE_ID, submissionCompleteRef.current).then(() => {
-        clearLocalStorageValue("mausvoice:checklist-writing-style");
-      });
-      produceAppState((draft) => {
-        draft.onboarding.dictationOverrideEnabled = false;
-      });
-    };
-  }, []);
-
-  const isLastStep = stepIndex === PAGE_COUNT - 1;
-  const canContinue = dictationValue.trim().length > 0;
-
-  const handleDictationChange = (
-    event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) => {
-    setDictationValue(event.target.value);
-  };
-
-  const handleContinue = async () => {
-    if (!isLastStep) {
-      trackButtonClick("onboarding_tutorial_continue");
-      setStepIndex(stepIndex + 1);
-      setDictationValue("");
-    } else {
-      trackButtonClick("onboarding_tutorial_finish");
-      await handleFinish();
-    }
-  };
-
-  const handleSkip = async () => {
-    trackButtonClick("onboarding_tutorial_skip");
-    await handleFinish();
-  };
-
-  const handleFinish = async () => {
-    setSubmitting(true);
-    try {
-      await finishOnboarding();
-      showConfetti();
-    } catch (err) {
-      showErrorSnackbar(err);
-      setSubmitting(false);
-    }
-  };
-
-  const step1Placeholder = intl.formatMessage({
-    defaultMessage: "Bagels are the breakfast of champions.",
-  });
-
-  const step2Placeholder = `Hey Bob,
-
-Great meeting you yesterday! Looking forward to next steps.
-
-Best,
-${userName}`;
-
-  useEffect(() => {
-    if (!userExists) {
-      return;
-    }
-
-    if (stepIndex === 0) {
-      // Notes step
-      setChatTone(POLISHED_TONE_ID);
-    } else if (stepIndex === 1) {
-      // Email step
-      setChatTone(EMAIL_TONE_ID);
-    }
-  }, [stepIndex, userExists]);
-
-  const form = (
-    <OnboardingFormLayout
-      back={<BackButton />}
-      actions={
-        <Stack direction="row" spacing={2}>
-          <Button
-            variant="text"
-            onClick={() => void handleSkip()}
-            disabled={submitting}
-          >
-            <FormattedMessage defaultMessage="Skip" />
-          </Button>
-          <Button
-            variant="contained"
-            onClick={() => void handleContinue()}
-            disabled={!canContinue || submitting}
-            endIcon={isLastStep ? <Check /> : <ArrowForward />}
-          >
-            {isLastStep ? (
-              <FormattedMessage defaultMessage="Finish" />
-            ) : (
-              <FormattedMessage defaultMessage="Continue" />
-            )}
-          </Button>
-        </Stack>
-      }
+const TutorialStepIntro = ({
+  title,
+  description,
+}: {
+  title: React.ReactNode;
+  description: React.ReactNode;
+}) => {
+  return (
+    <Stack
+      spacing={2}
+      sx={{
+        pb: 8,
+      }}
     >
-      {stepIndex === 0 && (
-        <Stack
-          spacing={2}
-          sx={{
-            pb: 8,
-          }}
-        >
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-            }}
-          >
-            <FormattedMessage defaultMessage="Try out dictation" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
-            <FormattedMessage defaultMessage="Press and hold your hotkey, then start talking. When you release the key, your speech will be converted to text." />
-          </Typography>
-          <DictationInstruction />
-        </Stack>
-      )}
-      {stepIndex === 1 && (
-        <Stack
-          spacing={2}
-          sx={{
-            pb: 8,
-          }}
-        >
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-            }}
-          >
-            <FormattedMessage defaultMessage="Now try an email" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
-            <FormattedMessage defaultMessage="Dictate a short email. mausVoice works great for longer-form content like messages, notes, and documents." />
-          </Typography>
-          <DictationInstruction />
-        </Stack>
-      )}
-    </OnboardingFormLayout>
+      <Typography
+        variant="h4"
+        sx={{
+          fontWeight: 600,
+        }}
+      >
+        {title}
+      </Typography>
+      <Typography
+        variant="body1"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        {description}
+      </Typography>
+      <DictationInstruction />
+    </Stack>
   );
+};
 
-  const bouncyTooltips = (
+const TutorialActionButtons = ({
+  isLastStep,
+  canContinue,
+  submitting,
+  disabled,
+  onSkip,
+  onContinue,
+}: {
+  isLastStep: boolean;
+  canContinue: boolean;
+  submitting: boolean;
+  disabled?: boolean;
+  onSkip: () => void;
+  onContinue: () => void;
+}) => {
+  return (
+    <Stack direction="row" spacing={2}>
+      <Button variant="text" onClick={onSkip} disabled={submitting || disabled}>
+        <FormattedMessage defaultMessage="Skip" />
+      </Button>
+      <Button
+        variant="contained"
+        onClick={onContinue}
+        disabled={!canContinue || submitting || disabled}
+        endIcon={isLastStep ? <Check /> : <ArrowForward />}
+      >
+        {isLastStep ? (
+          <FormattedMessage defaultMessage="Finish" />
+        ) : (
+          <FormattedMessage defaultMessage="Continue" />
+        )}
+      </Button>
+    </Stack>
+  );
+};
+
+const TutorialTooltips = ({
+  isFieldFocused,
+  hasStartedDictating,
+  primaryHotkey,
+}: {
+  isFieldFocused: boolean;
+  hasStartedDictating: boolean;
+  primaryHotkey: string[];
+}) => {
+  return (
     <>
       <BouncyTooltip
         visible={!isFieldFocused && !hasStartedDictating}
@@ -312,9 +226,9 @@ ${userName}`;
         <HotkeyBadge
           keys={primaryHotkey}
           sx={{
-            bgcolor: "rgba(255,255,255,0.2)",
-            borderColor: "rgba(255,255,255,0.3)",
-            color: "primary.contrastText",
+            bgcolor: "level2",
+            borderColor: "divider",
+            color: "text.primary",
           }}
         />
         <Typography
@@ -328,106 +242,135 @@ ${userName}`;
       </BouncyTooltip>
     </>
   );
+};
 
-  const notesContent = (
-    <Box sx={{ position: "relative", pb: 6 }}>
-      <Stack
-        spacing={0}
-        sx={{
-          bgcolor: "#ffffff",
-          borderRadius: 1.33,
-          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.15)",
-          overflow: "hidden",
-          position: "relative",
-        }}
-      >
-        <Box
+type TutorialFieldProps = {
+  value: string;
+  submitting: boolean;
+  isFieldFocused: boolean;
+  placeholder: string;
+  overlay: React.ReactNode;
+  onChange: (
+    event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => void;
+  onFocus: () => void;
+  onBlur: () => void;
+};
+
+type TutorialFieldSxArgs = {
+  isFieldFocused: boolean;
+  pulse: string;
+  focusBorderColor: string;
+  placeholderColor?: string;
+};
+
+// Shared demo-window field styling: white card, pulse animation until focused,
+// brand focus color, and (for the notes field) a muted placeholder.
+const tutorialFieldSx = ({
+  isFieldFocused,
+  pulse,
+  focusBorderColor,
+  placeholderColor,
+}: TutorialFieldSxArgs) => ({
+  "& .MuiOutlinedInput-root": {
+    bgcolor: "#ffffff",
+    borderRadius: 1,
+    "& fieldset": isFieldFocused
+      ? { borderColor: "#e0e0e0" }
+      : {
+          borderWidth: 2,
+          animation: `${pulse} 1.5s ease-in-out infinite`,
+        },
+    "&:hover fieldset": {
+      borderColor: isFieldFocused ? "#e0e0e0" : undefined,
+    },
+    "&.Mui-focused fieldset": {
+      borderColor: focusBorderColor,
+    },
+  },
+  "& .MuiInputBase-input": {
+    color: "#202124",
+    ...(placeholderColor
+      ? {
+          "&::placeholder": {
+            color: placeholderColor,
+            opacity: 1,
+          },
+        }
+      : {}),
+  },
+});
+
+const NotesStep = ({
+  value,
+  submitting,
+  isFieldFocused,
+  placeholder,
+  overlay,
+  onChange,
+  onFocus,
+  onBlur,
+}: TutorialFieldProps) => {
+  return (
+    <TutorialWindow
+      header={
+        <Typography
+          variant="body2"
           sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-            px: 2,
-            py: 1.5,
-            borderBottom: "1px solid #e0e0e0",
-            bgcolor: "#f5f5f5",
+            fontWeight: 600,
+            color: "#202124",
           }}
         >
-          <Typography
-            variant="body2"
-            sx={{
-              fontWeight: 600,
-              color: "#202124",
-            }}
-          >
-            Notes
-          </Typography>
-        </Box>
-        <Box sx={{ p: 2 }}>
-          <TextField
-            multiline
-            minRows={4}
-            fullWidth
-            placeholder={step1Placeholder}
-            value={dictationValue}
-            onChange={handleDictationChange}
-            disabled={submitting}
-            onFocus={() => setIsFieldFocused(true)}
-            onBlur={() => setIsFieldFocused(false)}
-            sx={{
-              "& .MuiOutlinedInput-root": {
-                bgcolor: "#ffffff",
-                borderRadius: 1,
-                "& fieldset": isFieldFocused
-                  ? { borderColor: "#e0e0e0" }
-                  : {
-                      borderWidth: 2,
-                      animation: `${pulseNotes} 1.5s ease-in-out infinite`,
-                    },
-                "&:hover fieldset": {
-                  borderColor: isFieldFocused ? "#e0e0e0" : undefined,
-                },
-                "&.Mui-focused fieldset": {
-                  borderColor: "var(--app-palette-blue)",
-                },
-              },
-              "& .MuiInputBase-input": {
-                color: "#202124",
-                "&::placeholder": {
-                  color: "#5f6368",
-                  opacity: 1,
-                },
-              },
-            }}
-          />
-        </Box>
-      </Stack>
-      {bouncyTooltips}
-    </Box>
+          Notes
+        </Typography>
+      }
+      overlay={overlay}
+    >
+      <TextField
+        multiline
+        minRows={4}
+        fullWidth
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        disabled={submitting}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        sx={tutorialFieldSx({
+          isFieldFocused,
+          pulse: pulseNotes,
+          focusBorderColor: "var(--app-palette-chrome)",
+          placeholderColor: "#5f6368",
+        })}
+      />
+    </TutorialWindow>
   );
+};
 
-  const emailContent = (
-    <Box sx={{ position: "relative", pb: 6 }}>
-      <Stack
-        spacing={0}
-        sx={{
-          bgcolor: "#ffffff",
-          borderRadius: 1.33,
-          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.15)",
-          overflow: "hidden",
-          position: "relative",
-        }}
-      >
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-            px: 2,
-            py: 1.5,
-            borderBottom: "1px solid #e0e0e0",
-            bgcolor: "#f5f5f5",
-          }}
-        >
+const EmailStep = ({
+  value,
+  submitting,
+  isFieldFocused,
+  placeholder,
+  overlay,
+  onChange,
+  onFocus,
+  onBlur,
+}: TutorialFieldProps) => {
+  // Focus the field explicitly once it has mounted rather than with a DOM
+  // `autoFocus` prop: `autoFocus` fires as an attribute and cannot be deferred,
+  // so it races anything that moves focus in the same commit. This mirrors
+  // ContextMenu's own "focus after commit, not via autoFocus" rule. `EmailStep`
+  // mounts when the tutorial reaches this step, so the mount effect lands at the
+  // same point the removed `autoFocus` attribute did.
+  const fieldRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    fieldRef.current?.focus();
+  }, []);
+  return (
+    <TutorialWindow
+      header={
+        <>
           <Email sx={{ fontSize: 20, color: "#d93025" }} />
           <Typography
             variant="body2"
@@ -438,100 +381,91 @@ ${userName}`;
           >
             Email
           </Typography>
+        </>
+      }
+      overlay={overlay}
+    >
+      <Box sx={{ mb: 2 }}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            mb: 1,
+            pb: 1,
+            borderBottom: "1px solid #e0e0e0",
+          }}
+        >
+          <Typography variant="caption" sx={{ color: "#5f6368" }}>
+            To:
+          </Typography>
+          <Typography variant="body2" sx={{ color: "#202124" }}>
+            sarah@company.com
+          </Typography>
         </Box>
-        <Box sx={{ p: 2 }}>
-          <Box sx={{ mb: 2 }}>
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 0.5,
-                mb: 1,
-                pb: 1,
-                borderBottom: "1px solid #e0e0e0",
-              }}
-            >
-              <Typography variant="caption" sx={{ color: "#5f6368" }}>
-                To:
-              </Typography>
-              <Typography variant="body2" sx={{ color: "#202124" }}>
-                sarah@company.com
-              </Typography>
-            </Box>
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 0.5,
-                pb: 1,
-                borderBottom: "1px solid #e0e0e0",
-              }}
-            >
-              <Typography variant="caption" sx={{ color: "#5f6368" }}>
-                Subject:
-              </Typography>
-              <Typography variant="body2" sx={{ color: "#202124" }}>
-                Great chatting yesterday! 🎉
-              </Typography>
-            </Box>
-          </Box>
-          <Box sx={{ position: "relative" }}>
-            <TextField
-              multiline
-              minRows={8}
-              fullWidth
-              autoFocus={true}
-              value={dictationValue}
-              onChange={handleDictationChange}
-              disabled={submitting}
-              onFocus={() => setIsFieldFocused(true)}
-              onBlur={() => setIsFieldFocused(false)}
-              sx={{
-                "& .MuiOutlinedInput-root": {
-                  bgcolor: "#ffffff",
-                  borderRadius: 1,
-                  "& fieldset": isFieldFocused
-                    ? { borderColor: "#e0e0e0" }
-                    : {
-                        borderWidth: 2,
-                        animation: `${pulseEmail} 1.5s ease-in-out infinite`,
-                      },
-                  "&:hover fieldset": {
-                    borderColor: isFieldFocused ? "#e0e0e0" : undefined,
-                  },
-                  "&.Mui-focused fieldset": {
-                    borderColor: "#1a73e8",
-                  },
-                },
-                "& .MuiInputBase-input": {
-                  color: "#202124",
-                },
-              }}
-            />
-            {dictationValue.length === 0 && (
-              <Typography
-                variant="body1"
-                sx={{
-                  position: "absolute",
-                  top: 16.5,
-                  left: 14,
-                  right: 14,
-                  color: "#5f6368",
-                  pointerEvents: "none",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {step2Placeholder}
-              </Typography>
-            )}
-          </Box>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            pb: 1,
+            borderBottom: "1px solid #e0e0e0",
+          }}
+        >
+          <Typography variant="caption" sx={{ color: "#5f6368" }}>
+            Subject:
+          </Typography>
+          <Typography variant="body2" sx={{ color: "#202124" }}>
+            Great chatting yesterday! 🎉
+          </Typography>
         </Box>
-      </Stack>
-      {bouncyTooltips}
-    </Box>
+      </Box>
+      <Box sx={{ position: "relative" }}>
+        <TextField
+          inputRef={fieldRef}
+          multiline
+          minRows={8}
+          fullWidth
+          value={value}
+          onChange={onChange}
+          disabled={submitting}
+          onFocus={onFocus}
+          onBlur={onBlur}
+          sx={tutorialFieldSx({
+            isFieldFocused,
+            pulse: pulseEmail,
+            focusBorderColor: "#1a73e8",
+          })}
+        />
+        {value.length === 0 && (
+          <Typography
+            variant="body1"
+            sx={{
+              position: "absolute",
+              top: 16.5,
+              left: 14,
+              right: 14,
+              color: "#5f6368",
+              pointerEvents: "none",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {placeholder}
+          </Typography>
+        )}
+      </Box>
+    </TutorialWindow>
   );
+};
 
-  const stepper = (
+const TutorialStepper = ({
+  stepIndex,
+  onSelect,
+}: {
+  stepIndex: number;
+  onSelect: (index: number) => void;
+}) => {
+  return (
     <Stack
       direction="row"
       spacing={1}
@@ -543,11 +477,7 @@ ${userName}`;
       {[0, 1].map((index) => (
         <Box
           key={index}
-          onClick={() => {
-            setStepIndex(index);
-            setDictationValue("");
-            setHasStartedDictating(false);
-          }}
+          onClick={() => onSelect(index)}
           sx={{
             width: 8,
             height: 8,
@@ -563,6 +493,339 @@ ${userName}`;
       ))}
     </Stack>
   );
+};
+
+/**
+ * Runs the onboarding submission once on mount and keeps the dictation
+ * override enabled for the tutorial session, restoring it on unmount.
+ */
+const useTutorialSubmission = ({
+  setChatTone,
+}: {
+  setChatTone: (toneId: string, force?: boolean) => Promise<void>;
+}) => {
+  const submittedRef = useRef(false);
+  const submissionCompleteRef = useRef(false);
+  const [initializing, setInitializing] = useState(true);
+  const [submissionFailed, setSubmissionFailed] = useState(false);
+  const setChatToneRef = useRef(setChatTone);
+  const initRef = useRef<() => Promise<void>>(() => Promise.resolve());
+
+  useEffect(() => {
+    setChatToneRef.current = setChatTone;
+  }, [setChatTone]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const init = async () => {
+      setInitializing(true);
+      setSubmissionFailed(false);
+      try {
+        if (!submittedRef.current) {
+          submittedRef.current = true;
+          const savedUser = await submitOnboarding();
+          if (savedUser === null) {
+            submittedRef.current = false;
+            if (cancelled) return;
+            produceAppState((draft) => {
+              draft.onboarding.dictationOverrideEnabled = true;
+            });
+            setSubmissionFailed(true);
+            return;
+          }
+          submissionCompleteRef.current = Boolean(savedUser);
+        }
+
+        if (cancelled) return;
+
+        produceAppState((draft) => {
+          draft.onboarding.dictationOverrideEnabled = true;
+        });
+      } catch (error) {
+        // submitOnboarding wraps all awaits in its own try/catch and
+        // returns null, so this branch is defensive. It still needs
+        // to surface a retry path rather than leaving the page inert.
+        if (cancelled) return;
+        submittedRef.current = false;
+        produceAppState((draft) => {
+          draft.onboarding.dictationOverrideEnabled = true;
+        });
+        setSubmissionFailed(true);
+        showErrorSnackbar(error);
+      } finally {
+        if (!cancelled) {
+          setInitializing(false);
+        }
+      }
+    };
+    initRef.current = init;
+
+    void init();
+    return () => {
+      cancelled = true;
+      // Unmount-only cleanup (tone reset, checklist clear, override
+      // disable). Not run on retry.
+      void setChatToneRef
+        .current(POLISHED_TONE_ID, submissionCompleteRef.current)
+        .catch((error) => {
+          console.error("Failed to reset tutorial tone on unmount", error);
+        })
+        .finally(() => {
+          clearLocalStorageValue("mausvoice:checklist-writing-style");
+        });
+      produceAppState((draft) => {
+        draft.onboarding.dictationOverrideEnabled = false;
+      });
+    };
+  }, []);
+
+  // Retry re-runs init() without tearing the effect down (so the unmount
+  // cleanup does not run between retries and no tone/checklist/dictation
+  // state is lost mid-session).
+  const retry = useCallback(() => {
+    submittedRef.current = false;
+    submissionCompleteRef.current = false;
+    void initRef.current();
+  }, []);
+
+  return { initializing, submissionFailed, retry };
+};
+
+/** Marks the tutorial as "started" once the user holds the hotkey combo. */
+const useTutorialDictationStart = ({
+  primaryHotkey,
+  keysHeld,
+  isFieldFocused,
+  onStarted,
+}: {
+  primaryHotkey: string[];
+  keysHeld: string[];
+  isFieldFocused: boolean;
+  onStarted: () => void;
+}) => {
+  const onStartedRef = useRef(onStarted);
+
+  useEffect(() => {
+    onStartedRef.current = onStarted;
+  }, [onStarted]);
+
+  useEffect(() => {
+    if (primaryHotkey.length === 0) {
+      return;
+    }
+    const hotkeySet = new Set(primaryHotkey);
+    const allHotkeyKeysHeld = primaryHotkey.every((key) =>
+      keysHeld.includes(key),
+    );
+    if (
+      allHotkeyKeysHeld &&
+      keysHeld.length >= hotkeySet.size &&
+      isFieldFocused
+    ) {
+      onStartedRef.current();
+    }
+  }, [keysHeld, primaryHotkey, isFieldFocused]);
+};
+
+/** Applies the writing style matching the current tutorial step. */
+const useTutorialToneSync = ({
+  stepIndex,
+  userExists,
+  setChatTone,
+}: {
+  stepIndex: number;
+  userExists: boolean;
+  setChatTone: (toneId: string, force?: boolean) => Promise<void>;
+}) => {
+  const setChatToneRef = useRef(setChatTone);
+
+  useEffect(() => {
+    setChatToneRef.current = setChatTone;
+  }, [setChatTone]);
+
+  // `setChatTone` rejects when the tone cannot be persisted: it awaits
+  // `setSelectedToneId`, which awaits `updateUser`, whose own catch rethrows after
+  // showing the snackbar. Nothing in between catches, so a failed tone write
+  // surfaces as a rejection on the promise this effect discards. The `userExists`
+  // guard does not help -- it gates this effect to `true`, which is the one case
+  // where `setChatTone` does not return early. The unmount cleanup earlier in this
+  // file already handles this for the same function; this effect did not, which is
+  // why a save failure during onboarding became an unhandled rejection rather than
+  // a logged one.
+  const reportToneFailure = (error: unknown): void => {
+    console.error("Failed to apply the tutorial writing style", error);
+  };
+
+  useEffect(() => {
+    if (!userExists) {
+      return;
+    }
+    if (stepIndex === 0) {
+      // Notes step
+      void setChatToneRef.current(POLISHED_TONE_ID).catch(reportToneFailure);
+    } else if (stepIndex === 1) {
+      // Email step
+      void setChatToneRef.current(EMAIL_TONE_ID).catch(reportToneFailure);
+    }
+  }, [stepIndex, userExists]);
+};
+
+export const TutorialForm = () => {
+  const intl = useIntl();
+  const [stepIndex, setStepIndex] = useState(0);
+  const [dictationValue, setDictationValue] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [isFieldFocused, setIsFieldFocused] = useState(false);
+  const [hasStartedDictating, setHasStartedDictating] = useState(false);
+  const userExists = useAppStore((state) => Boolean(getMyUser(state)));
+
+  const hotkeyCombos = useAppStore((state) =>
+    getHotkeyCombosForAction(state, DICTATE_HOTKEY),
+  );
+  const primaryHotkey = hotkeyCombos[0] ?? [];
+  const keysHeld = useAppStore((state) => state.keysHeld);
+  const onboardingFullName = useAppStore((state) => {
+    const draftBelongsToUser = isOnboardingNameDraftOwnedByAuth(
+      state.local.onboardingNameDraftUserId,
+      state.auth?.uid,
+    );
+    if (!draftBelongsToUser) return getMyUser(state)?.name || "Alex";
+    return (
+      state.onboarding.name ||
+      state.local.onboardingNameDraft ||
+      getMyUser(state)?.name ||
+      "Alex"
+    );
+  });
+  const userName = onboardingFullName;
+
+  const setChatTone = async (toneId: string, force = false): Promise<void> => {
+    if (!userExists && !force) {
+      return;
+    }
+
+    await setSelectedToneId(toneId);
+  };
+
+  const { initializing, submissionFailed, retry } = useTutorialSubmission({
+    setChatTone,
+  });
+  useTutorialDictationStart({
+    primaryHotkey,
+    keysHeld,
+    isFieldFocused,
+    onStarted: () => setHasStartedDictating(true),
+  });
+  useTutorialToneSync({ stepIndex, userExists, setChatTone });
+
+  const isLastStep = stepIndex === PAGE_COUNT - 1;
+  const canContinue = dictationValue.trim().length > 0;
+
+  const handleDictationChange = (
+    event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    setDictationValue(event.target.value);
+  };
+
+  const handleFinish = async () => {
+    setSubmitting(true);
+    try {
+      const savedUser = await finishOnboarding();
+      if (!savedUser) {
+        setSubmitting(false);
+        return;
+      }
+      showConfetti();
+    } catch (err) {
+      showErrorSnackbar(err);
+      setSubmitting(false);
+    }
+  };
+
+  const handleContinue = async () => {
+    if (!isLastStep) {
+      trackButtonClick("onboarding_tutorial_continue");
+      setStepIndex(stepIndex + 1);
+      setDictationValue("");
+    } else {
+      trackButtonClick("onboarding_tutorial_finish");
+      await handleFinish();
+    }
+  };
+
+  const handleSkip = async () => {
+    trackButtonClick("onboarding_tutorial_skip");
+    await handleFinish();
+  };
+
+  const step1Placeholder = intl.formatMessage({
+    defaultMessage: "Bagels are the breakfast of champions.",
+  });
+
+  const step2Placeholder = `Hey Bob,
+
+Great meeting you yesterday! Looking forward to next steps.
+
+Best,
+${userName}`;
+
+  const form = (
+    <OnboardingFormLayout
+      back={<BackButton />}
+      actions={
+        <TutorialActionButtons
+          isLastStep={isLastStep}
+          canContinue={canContinue}
+          submitting={submitting}
+          disabled={submissionFailed || initializing}
+          onSkip={() => void handleSkip()}
+          onContinue={() => void handleContinue()}
+        />
+      }
+    >
+      {stepIndex === 0 && (
+        <TutorialStepIntro
+          title={<FormattedMessage defaultMessage="Try out dictation" />}
+          description={
+            <FormattedMessage defaultMessage="Press and hold your hotkey, then start talking. When you release the key, your speech will be converted to text." />
+          }
+        />
+      )}
+      {stepIndex === 1 && (
+        <TutorialStepIntro
+          title={<FormattedMessage defaultMessage="Now try an email" />}
+          description={
+            <FormattedMessage defaultMessage="Dictate a short email. mausVoice works great for longer-form content like messages, notes, and documents." />
+          }
+        />
+      )}
+    </OnboardingFormLayout>
+  );
+
+  const fieldProps: Omit<TutorialFieldProps, "overlay"> = {
+    value: dictationValue,
+    submitting,
+    isFieldFocused,
+    placeholder: stepIndex === 0 ? step1Placeholder : step2Placeholder,
+    onChange: handleDictationChange,
+    onFocus: () => setIsFieldFocused(true),
+    onBlur: () => setIsFieldFocused(false),
+  };
+
+  const tooltips = (
+    <TutorialTooltips
+      isFieldFocused={isFieldFocused}
+      hasStartedDictating={hasStartedDictating}
+      primaryHotkey={primaryHotkey}
+    />
+  );
+
+  const stepContent =
+    stepIndex === 0 ? (
+      <NotesStep {...fieldProps} overlay={tooltips} />
+    ) : (
+      <EmailStep {...fieldProps} overlay={tooltips} />
+    );
 
   const rightContent = (
     <Stack sx={{ width: "100%", maxWidth: 400, alignItems: "stretch" }}>
@@ -572,8 +835,35 @@ ${userName}`;
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: "easeOut" }}
         >
-          {stepIndex === 0 ? notesContent : emailContent}
-          {stepper}
+          {submissionFailed ? (
+            <Stack spacing={2} sx={{ alignItems: "center", py: 2 }}>
+              <Typography variant="body1" sx={{ textAlign: "center" }}>
+                <FormattedMessage defaultMessage="Something went wrong." />
+              </Typography>
+              <Button
+                variant="contained"
+                onClick={retry}
+                startIcon={<Refresh />}
+              >
+                <FormattedMessage defaultMessage="Try again" />
+              </Button>
+            </Stack>
+          ) : (
+            stepContent
+          )}
+          {!submissionFailed && (
+            <TutorialStepper
+              stepIndex={stepIndex}
+              onSelect={(index) => {
+                if (index === stepIndex) {
+                  return;
+                }
+                setStepIndex(index);
+                setDictationValue("");
+                setHasStartedDictating(false);
+              }}
+            />
+          )}
         </motion.div>
       )}
     </Stack>

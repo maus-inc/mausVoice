@@ -5,13 +5,13 @@ sidebar:
   order: 16
 ---
 
-Real-time output inserts completed speech segments while you are still recording instead of waiting to paste one final block. It is off by default. Enable it under **Settings → General → More settings → Real-time output**.
+Real-time output inserts completed speech segments while you are still recording instead of waiting to paste one final block. It is off by default. Enable it under **Settings → Dictation → Real-time output**.
 
 Three conditions must be true in the current implementation:
 
-1. Set **Styling mode** to **Manual** under **Settings → General → More settings**.
+1. Set **Styling mode** to **Manual** under **Settings → AI and processing**.
 2. Select the built-in **Verbatim** writing style.
-3. Use an API transcription key for **AssemblyAI**, **Deepgram**, or **ElevenLabs**.
+3. Use an API transcription key for **AssemblyAI**, **Deepgram**, **ElevenLabs**, or **Gladia**.
 
 Those providers maintain live transcription sessions and report committed segments. Azure also has a dedicated live recognition session, but it deliberately reports no real-time-output support. Local transcription and the other API paths return a completed transcript in bulk. Assigning Verbatim to an app in **Based on app** mode does not currently activate segment insertion; select it in Manual mode.
 

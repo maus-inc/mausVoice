@@ -30,11 +30,15 @@ export class RunTerminalCommandTool extends BaseTool {
     };
   }
 
-  getAlwaysAllow(): boolean {
-    return getToolAlwaysAllow(this.info.id);
+  getAlwaysAllow(_params: Record<string, unknown>, scope = "global"): boolean {
+    return getToolAlwaysAllow(this.info.id, scope);
   }
 
-  setAlwaysAllow(_params: Record<string, unknown>, allowed: boolean): void {
-    setToolAlwaysAllow(this.info.id, allowed);
+  setAlwaysAllow(
+    _params: Record<string, unknown>,
+    allowed: boolean,
+    scope = "global",
+  ): void {
+    setToolAlwaysAllow(this.info.id, allowed, scope);
   }
 }

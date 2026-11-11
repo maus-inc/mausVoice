@@ -1,8 +1,11 @@
-import { ArrowForward, Check, OpenInNew } from "@mui/icons-material";
-import { Box, Button, Stack, Typography } from "@mui/material";
-import { useCallback, useState } from "react";
+import { Box, Stack } from "@mui/material";
+import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { goToOnboardingPage } from "../../actions/onboarding.actions";
+import {
+  advanceResumedPermissionPage,
+  goToOnboardingPage,
+  markPrerequisite,
+} from "../../actions/onboarding.actions";
 import enableMicVideo from "../../assets/enable-mic.mp4";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
@@ -12,14 +15,18 @@ import {
 } from "../../utils/permission.utils";
 import { isPersonalUseEnabled } from "../../utils/personal-use.utils";
 import { isMacOS } from "../../utils/env.utils";
+import { PermissionAccessButton } from "./PermissionAccessButton";
 import {
   BackButton,
   DualPaneLayout,
+  OnboardingContinueButton,
+  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
 export const MicPermsForm = () => {
   const [requesting, setRequesting] = useState(false);
+  const isResuming = useAppStore((state) => state.onboarding.isResuming);
   const micPermission = useAppStore((state) => state.permissions.microphone);
   const isAuthorized = isPermissionAuthorized(micPermission?.state);
   const canContinue =
@@ -47,65 +54,40 @@ export const MicPermsForm = () => {
 
   const handleContinue = () => {
     trackButtonClick("onboarding_mic_perms_continue");
+    markPrerequisite("microphone");
     goToOnboardingPage(isMacOS() ? "a11yPerms" : "keybindings");
   };
+
+  // A restored flow may skip granted permissions; Back must still revisit them.
+  useEffect(() => {
+    if (isAuthorized && isResuming) {
+      advanceResumedPermissionPage("micPerms");
+    }
+  }, [isAuthorized, isResuming]);
 
   const form = (
     <OnboardingFormLayout
       back={<BackButton />}
       actions={
-        <Button
-          variant="contained"
-          endIcon={<ArrowForward />}
+        <OnboardingContinueButton
           onClick={handleContinue}
           disabled={!canContinue}
-        >
-          <FormattedMessage defaultMessage="Continue" />
-        </Button>
+        />
       }
     >
       <Stack spacing={3}>
-        <Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-              pb: 1,
-            }}
-          >
-            <FormattedMessage defaultMessage="Set up your microphone" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
+        <OnboardingFormHeader
+          title={<FormattedMessage defaultMessage="Set up your microphone" />}
+          subtitle={
             <FormattedMessage defaultMessage="mausVoice only activates your microphone when you choose to start recording." />
-          </Typography>
-        </Box>
+          }
+        />
 
-        {isAuthorized ? (
-          <Button
-            variant="outlined"
-            color="success"
-            startIcon={<Check />}
-            disabled
-            sx={{ alignSelf: "flex-start" }}
-          >
-            <FormattedMessage defaultMessage="Access granted" />
-          </Button>
-        ) : (
-          <Button
-            variant="outlined"
-            onClick={() => void handleAllow()}
-            disabled={requesting}
-            endIcon={<OpenInNew />}
-            sx={{ alignSelf: "flex-start" }}
-          >
-            <FormattedMessage defaultMessage="Allow access" />
-          </Button>
-        )}
+        <PermissionAccessButton
+          isAuthorized={isAuthorized}
+          requesting={requesting}
+          onAllow={() => void handleAllow()}
+        />
       </Stack>
     </OnboardingFormLayout>
   );
@@ -113,7 +95,7 @@ export const MicPermsForm = () => {
   const rightContent = (
     <Box
       sx={{
-        borderRadius: "24px",
+        borderRadius: 2,
         border: "1px solid gray",
         overflow: "hidden",
         maxHeight: "100%",

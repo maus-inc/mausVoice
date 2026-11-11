@@ -15,6 +15,7 @@ export const CANCEL_TRANSCRIPTION_HOTKEY = "cancel-transcription";
 export const OPEN_CHAT_HOTKEY = "open-chat";
 export const ADD_TO_DICTIONARY_HOTKEY = "add-to-dictionary";
 export const ADDITIONAL_LANGUAGE_HOTKEY_PREFIX = "additional-language:";
+export const SWITCH_TO_STYLE_HOTKEY_PREFIX = "switch-to-style:";
 
 type CompositorBinding = {
   actionName: string;
@@ -32,7 +33,8 @@ const STATIC_COMPOSITOR_TRIGGER_ACTIONS = [
 
 const isCompositorTriggerAction = (actionName: string): boolean =>
   STATIC_COMPOSITOR_TRIGGER_ACTIONS.includes(actionName) ||
-  actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX);
+  actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) ||
+  actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX);
 
 export const getAdditionalLanguageActionName = (language: string): string =>
   `${ADDITIONAL_LANGUAGE_HOTKEY_PREFIX}${language}`;
@@ -46,6 +48,166 @@ export const getAdditionalLanguageCode = (
 
   const raw = actionName.slice(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX.length);
   return raw.length > 0 ? raw : null;
+};
+
+export const getSwitchToStyleActionName = (toneId: string): string =>
+  `${SWITCH_TO_STYLE_HOTKEY_PREFIX}${toneId}`;
+
+export const getSwitchToStyleToneId = (actionName: string): string | null => {
+  if (!actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX)) {
+    return null;
+  }
+
+  const raw = actionName.slice(SWITCH_TO_STYLE_HOTKEY_PREFIX.length);
+  return raw.length > 0 ? raw : null;
+};
+
+/**
+ * Every platform the app builds for, so a default cannot be added for one and
+ * forgotten for another.
+ *
+ * `linux` was missing from this type and from the table below, and the lookup
+ * had no branch for it either: on Linux every shortcut that ships with a
+ * default came up unbound, which is the one platform where the person is least
+ * likely to guess what the key should be. Listing the platforms exhaustively
+ * makes the next default a compile error until it is answered for all three.
+ *
+ * Not `Record<Platform, …>`: `Platform` includes `unknown`, which is the
+ * absence of an answer rather than a platform to answer for.
+ */
+type PlatformHotkeyCombos = {
+  macos: string[][];
+  windows: string[][];
+  linux: string[][];
+};
+
+export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
+  [DICTATE_HOTKEY]: {
+    macos: [["Function"]],
+    windows: [["MetaLeft", "ControlLeft"]],
+    // Compositor bridges cannot register a modifier-only shortcut. Include a
+    // regular key so the Linux default works on both Wayland and X11.
+    linux: [["ControlLeft", "AltLeft", "Space"]],
+  },
+  [CANCEL_TRANSCRIPTION_HOTKEY]: {
+    macos: [["Escape"]],
+    windows: [["Escape"]],
+    linux: [["Escape"]],
+  },
+  [SWITCH_WRITING_STYLE_FORWARD_HOTKEY]: {
+    macos: [["RightArrow"]],
+    windows: [["RightArrow"]],
+    linux: [["RightArrow"]],
+  },
+  [SWITCH_WRITING_STYLE_BACKWARD_HOTKEY]: {
+    macos: [["LeftArrow"]],
+    windows: [["LeftArrow"]],
+    linux: [["LeftArrow"]],
+  },
+};
+
+export const getHasDefaultHotkeyForAction = (actionName: string): boolean => {
+  return Boolean(DEFAULT_HOTKEY_COMBOS[actionName]);
+};
+
+export const getDefaultHotkeyCombosForAction = (
+  actionName: string,
+): string[][] => {
+  const defaultCombos = DEFAULT_HOTKEY_COMBOS[actionName];
+  if (!defaultCombos) {
+    return [];
+  }
+
+  const platform = getPlatform();
+  // `unknown` is the absence of a platform, not a third case to guess at, so it
+  // is the one answer that stays empty.
+  return platform === "unknown" ? [] : defaultCombos[platform];
+};
+
+export const getHotkeyCombosForAction = (
+  state: AppState,
+  actionName: string,
+): string[][] => {
+  const configured = Object.values(state.hotkeyById).filter(
+    (hotkey) => hotkey.actionName === actionName,
+  );
+  // An explicit empty binding is a cleared shortcut, not a missing record.
+  // Only a genuinely unconfigured action inherits the platform default.
+  return configured.length > 0
+    ? configured
+        .filter((hotkey) => hotkey.keys.length > 0)
+        .map((hotkey) => hotkey.keys)
+    : getDefaultHotkeyCombosForAction(actionName);
+};
+
+export type SwitchToStyleEntry = {
+  actionName: string;
+  toneId: string;
+  toneName: string;
+  hotkeyCombos: string[][];
+};
+
+export const getSwitchToStyleEntries = (
+  state: AppState,
+): SwitchToStyleEntry[] =>
+  Object.values(state.toneById)
+    .filter((tone) => !tone.isDeprecated)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((tone) => ({
+      actionName: getSwitchToStyleActionName(tone.id),
+      toneId: tone.id,
+      toneName: tone.name,
+      hotkeyCombos: getHotkeyCombosForAction(
+        state,
+        getSwitchToStyleActionName(tone.id),
+      ),
+    }));
+
+/**
+ * Action-name prefixes for style-switch hotkeys. The hotkey spam filter may
+ * debounce these while the pill is active. Kept in one place so the filter
+ * (hotkey-filter.utils.ts) and the release wiring (AppSideEffects keys_held
+ * handler) can't drift apart.
+ */
+export const STYLE_SWITCH_ACTION_PREFIXES: readonly string[] = [
+  "switch-writing-style-",
+  SWITCH_TO_STYLE_HOTKEY_PREFIX,
+];
+
+/**
+ * Return the style-switch action names bound to the given physical key.
+ *
+ * Used to release the hotkey filter's "held" state when the physical key is
+ * released — the previous wiring released only on *all* keys up, which never
+ * happens during hold-to-talk dictation (the dictate key stays held), wedging
+ * style switching after the first press.
+ */
+export const getStyleSwitchActionNamesForKey = (
+  state: AppState,
+  key: string,
+): string[] => {
+  const normalized = key.toLowerCase();
+  // Include every configured action covered by the shared debounce prefixes,
+  // plus built-ins which can resolve to platform defaults on macOS/Windows.
+  // Linux has no default cycle bindings, so absent user configuration there is
+  // correctly not releasable: it could not have triggered or become held.
+  const isStyleSwitchAction = (actionName: string): boolean =>
+    STYLE_SWITCH_ACTION_PREFIXES.some((prefix) =>
+      actionName.toLowerCase().startsWith(prefix),
+    );
+  const actionNames = new Set(
+    Object.keys(DEFAULT_HOTKEY_COMBOS).filter(isStyleSwitchAction),
+  );
+  for (const hotkey of Object.values(state.hotkeyById)) {
+    if (isStyleSwitchAction(hotkey.actionName)) {
+      actionNames.add(hotkey.actionName);
+    }
+  }
+  return [...actionNames].filter((actionName) =>
+    getHotkeyCombosForAction(state, actionName).some((combo) =>
+      combo.some((comboKey) => comboKey.toLowerCase() === normalized),
+    ),
+  );
 };
 
 export const isHoldActionHotkey = (actionName: string): boolean => {
@@ -72,6 +234,17 @@ export const isModifierOnlyCombo = (combo: string[]): boolean => {
   return combo.length > 0 && combo.every((key) => isModifierLikeKey(key));
 };
 
+const MODIFIER_SIDE_RE = /(Left|Right)$/i;
+
+const appendSideLabel = (base: string, key: string): string => {
+  // `match[1]` is the only capture group and it is non-optional in the pattern,
+  // so a successful `exec` always yields it. Reading it through `?.[1]` and
+  // bailing on `undefined` keeps that fact explicit instead of asserting it.
+  const side = MODIFIER_SIDE_RE.exec(key)?.[1];
+  if (side === undefined) return base;
+  return `${base} ${side.charAt(0).toUpperCase()}`;
+};
+
 export const getPrettyKeyName = (key: string): string => {
   const lower = key.toLowerCase();
   if (lower.startsWith("key")) {
@@ -79,19 +252,19 @@ export const getPrettyKeyName = (key: string): string => {
   }
 
   if (lower.startsWith("meta")) {
-    return getPlatform() === "macos" ? "⌘" : "⊞";
+    return appendSideLabel(getPlatform() === "macos" ? "⌘" : "⊞", key);
   }
 
   if (lower.startsWith("control")) {
-    return getPlatform() === "macos" ? "⌃" : "Ctrl";
+    return appendSideLabel(getPlatform() === "macos" ? "⌃" : "Ctrl", key);
   }
 
   if (lower.startsWith("shift")) {
-    return getPlatform() === "macos" ? "⇧" : "Shift";
+    return appendSideLabel(getPlatform() === "macos" ? "⇧" : "Shift", key);
   }
 
   if (lower.startsWith("alt") || lower.startsWith("option")) {
-    return getPlatform() === "macos" ? "⌥" : "Alt";
+    return appendSideLabel(getPlatform() === "macos" ? "⌥" : "Alt", key);
   }
 
   if (lower.startsWith("function")) {
@@ -106,62 +279,42 @@ export const getPrettyKeyName = (key: string): string => {
   return key;
 };
 
-type PlatformHotkeyCombos = {
-  macos: string[][];
-  windows: string[][];
+export type KeycapLegend = {
+  /** The glyph or word on the face. */
+  label: string;
+  /** Side of the board the key sits on, stacked above the label. */
+  sublabel?: string;
 };
 
-export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
-  [DICTATE_HOTKEY]: {
-    macos: [["Function"]],
-    windows: [["MetaLeft", "ControlLeft"]],
-  },
-  [CANCEL_TRANSCRIPTION_HOTKEY]: {
-    macos: [["Escape"]],
-    windows: [["Escape"]],
-  },
-  [SWITCH_WRITING_STYLE_FORWARD_HOTKEY]: {
-    macos: [["RightArrow"]],
-    windows: [["RightArrow"]],
-  },
-  [SWITCH_WRITING_STYLE_BACKWARD_HOTKEY]: {
-    macos: [["LeftArrow"]],
-    windows: [["LeftArrow"]],
-  },
+/**
+ * Legend for a key drawn on a keycap.
+ *
+ * A modifier with a side reads as "Left" stacked over the glyph rather than as
+ * "Shift L" on one line: the side label is small and sits above the symbol, and
+ * the inline form reads like two separate keys.
+ */
+const KEYCAP_LABELS: Readonly<Record<string, string>> = {
+  Space: "SPC",
+  Escape: "Esc",
+  "⌘": "Cmd",
+  "⊞": "Win",
+  "⌃": "Ctrl",
+  "⌥": "Alt",
+  Shift: "⇧",
 };
 
-export const getHasDefaultHotkeyForAction = (actionName: string): boolean => {
-  return Boolean(DEFAULT_HOTKEY_COMBOS[actionName]);
-};
+const keycapLabel = (pretty: string): string =>
+  Object.hasOwn(KEYCAP_LABELS, pretty) ? KEYCAP_LABELS[pretty] : pretty;
 
-export const getDefaultHotkeyCombosForAction = (
-  actionName: string,
-): string[][] => {
-  const defaultCombos = DEFAULT_HOTKEY_COMBOS[actionName];
-  if (defaultCombos) {
-    if (getPlatform() === "macos") {
-      return defaultCombos.macos;
-    }
-    if (getPlatform() === "windows") {
-      return defaultCombos.windows;
-    }
-  }
-  return [];
-};
-
-export const getHotkeyCombosForAction = (
-  state: AppState,
-  actionName: string,
-): string[][] => {
-  const combos = Object.values(state.hotkeyById)
-    .filter((h) => h.actionName === actionName && h.keys.length > 0)
-    .map((h) => h.keys);
-
-  if (combos.length > 0) {
-    return combos;
-  }
-
-  return getDefaultHotkeyCombosForAction(actionName);
+export const getKeycapLegend = (key: string): KeycapLegend => {
+  const side = MODIFIER_SIDE_RE.exec(key)?.[1];
+  if (side === undefined || !isModifierLikeKey(key))
+    return { label: keycapLabel(getPrettyKeyName(key)) };
+  const base = getPrettyKeyName(key.slice(0, -side.length));
+  return {
+    label: keycapLabel(base),
+    sublabel: side.charAt(0).toUpperCase() + side.slice(1).toLowerCase(),
+  };
 };
 
 export type AdditionalLanguageEntry = {
@@ -187,7 +340,10 @@ export const getAdditionalLanguageEntries = (
       return {
         actionName: hotkey.actionName,
         language,
-        hotkeyCombos: getHotkeyCombosForAction(state, hotkey.actionName),
+        // Rows represent individual bindings, even when several use the same
+        // language. Looking up all combos by action would give each row the
+        // first binding and silently overwrite the others on the next save.
+        hotkeyCombos: hotkey.keys.length > 0 ? [hotkey.keys] : [],
       };
     })
     .filter((entry): entry is AdditionalLanguageEntry => Boolean(entry));
@@ -217,22 +373,6 @@ const isActionGrabbable = (state: AppState, actionName: string): boolean => {
   }
 
   return true;
-};
-
-// Serializes native combo syncs. The store subscription in AppSideEffects
-// fires this once per grab-relevant change, and those arrive in bursts while
-// startup data loads — overlapping calls snapshot `getState()` at call time,
-// so an older push could resolve last and leave the native listener grabbing
-// a stale combo set. Chaining each run onto the previous one (and reading the
-// store when the run actually starts, not when it was requested) guarantees
-// the last applied set is always the latest state. A failed run must not
-// break the chain, hence the trailing catch.
-let syncQueue: Promise<void> = Promise.resolve();
-
-export const syncHotkeyCombosToNative = (): Promise<void> => {
-  const run = syncQueue.then(() => syncHotkeyCombosToNativeNow());
-  syncQueue = run.catch(() => undefined);
-  return run;
 };
 
 const collectActionNames = (state: AppState): Set<string> => {
@@ -299,17 +439,29 @@ const syncHotkeyCombosToNativeNow = async (): Promise<void> => {
     }
   }
 
-  try {
-    await invoke("sync_hotkey_combos", { combos });
-  } catch (err) {
-    console.error("Failed to sync hotkey combos to native", err);
-  }
+  await invoke("sync_hotkey_combos", { combos });
 
   if (state.hotkeyStrategy === "bridge") {
-    try {
-      await invoke("sync_compositor_hotkeys", { bindings: compositorBindings });
-    } catch (err) {
-      console.error("Failed to sync compositor hotkeys", err);
-    }
+    await invoke("sync_compositor_hotkeys", { bindings: compositorBindings });
   }
+};
+
+// Serializes native combo syncs. The store subscription in AppSideEffects
+// fires this once per grab-relevant change, and those arrive in bursts while
+// startup data loads — overlapping calls snapshot `getState()` at call time,
+// so an older push could resolve last and leave the native listener grabbing
+// a stale combo set. Chaining each run onto the previous one (and reading the
+// store when the run actually starts, not when it was requested) guarantees
+// the last applied set is always the latest state. A failed run must not
+// break the chain for later callers, hence the separate caught `syncQueue`.
+// The returned promise is the run itself (NOT `syncQueue`): callers like
+// AppSideEffects, hotkey.actions and StyleHotkeysDialog deliberately catch
+// rejections to surface native-grab failures — returning the caught queue
+// value would silently swallow them.
+let syncQueue: Promise<void> = Promise.resolve();
+
+export const syncHotkeyCombosToNative = (): Promise<void> => {
+  const run = syncQueue.then(() => syncHotkeyCombosToNativeNow());
+  syncQueue = run.catch(() => undefined);
+  return run;
 };

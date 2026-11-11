@@ -27,9 +27,56 @@ export const getEffectiveDictationLimitMinutes = (
   return normalizeDictationLimitMinutes(preferences?.dictationLimitMinutes);
 };
 
+/**
+ * Parses the minutes field. Returns the minutes to store, or null when the
+ * value cannot be saved.
+ *
+ * A value above the maximum is refused rather than clamped: the field reports
+ * the bound and keeps what was typed, so the number someone entered is never
+ * quietly replaced with a different one. `0` stays valid and means no limit,
+ * and so is a fraction refused: the preference is stored in whole minutes, so
+ * accepting `1.9` would save a one-minute cap while the field said otherwise.
+ */
+export const parseDictationLimitMinutes = (input: string): number | null => {
+  const trimmed = input.trim();
+  if (trimmed === "") {
+    return null;
+  }
+
+  const minutes = Number(trimmed);
+  if (
+    !Number.isFinite(minutes) ||
+    !Number.isInteger(minutes) ||
+    minutes < 0 ||
+    minutes > MAX_DICTATION_LIMIT_MINUTES
+  ) {
+    return null;
+  }
+
+  return minutes;
+};
+
 export type DictationRecordingTimerDurations = {
   warningDurationMs: number | null;
   autoStopDurationMs: number | null;
+};
+
+export const getProviderRecordingTimerDurations = (
+  maximumDurationMs: number | null | undefined,
+): DictationRecordingTimerDurations => {
+  if (
+    typeof maximumDurationMs !== "number" ||
+    !Number.isFinite(maximumDurationMs) ||
+    maximumDurationMs <= 0 ||
+    maximumDurationMs > MAX_TIMEOUT_MS
+  ) {
+    return { warningDurationMs: null, autoStopDurationMs: null };
+  }
+  return {
+    warningDurationMs:
+      maximumDurationMs > 60_000 ? maximumDurationMs - 60_000 : null,
+    autoStopDurationMs: maximumDurationMs,
+  };
 };
 
 export const getDictationRecordingTimerDurations = (

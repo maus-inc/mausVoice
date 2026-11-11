@@ -1,6 +1,28 @@
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { produceAppState, getAppState } from "../store";
+import { getLogger } from "../utils/log.utils";
+import { navigateApp } from "../utils/app-navigation";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
+
+export const openPostProcessingSettings = (): void => {
+  produceAppState((draft) => {
+    draft.settings.aiPostProcessingDialogOpen = true;
+  });
+};
+
+/**
+ * Opens the transcriptions History list through the registered lazy router.
+ * Both synchronous router construction errors and asynchronous navigation
+ * failures are logged, for the pill toast and retranscription snackbar alike.
+ */
+export const openTranscriptionsHistory = (): void => {
+  navigateApp("/dashboard/transcriptions").catch((error: unknown) => {
+    getLogger().warning(
+      `Failed to open transcription history: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+};
 
 const isTauriEnvironment = (): boolean => {
   if (typeof window === "undefined") {
@@ -42,12 +64,15 @@ export const syncAutoLaunchSetting = async (): Promise<void> => {
   }
 };
 
-export const setAutoLaunchEnabled = async (enabled: boolean): Promise<void> => {
+export const setAutoLaunchEnabled = async (
+  enabled: boolean,
+  lease?: LocalDataWriteLease,
+): Promise<void> => {
   if (!isTauriEnvironment()) {
     produceAppState((draft) => {
       draft.settings.autoLaunchEnabled = enabled;
       draft.settings.autoLaunchStatus = "success";
-    });
+    }, lease);
     return;
   }
 
@@ -61,7 +86,7 @@ export const setAutoLaunchEnabled = async (enabled: boolean): Promise<void> => {
   produceAppState((draft) => {
     draft.settings.autoLaunchEnabled = enabled;
     draft.settings.autoLaunchStatus = "loading";
-  });
+  }, lease);
 
   try {
     if (enabled) {
@@ -72,13 +97,13 @@ export const setAutoLaunchEnabled = async (enabled: boolean): Promise<void> => {
 
     produceAppState((draft) => {
       draft.settings.autoLaunchStatus = "success";
-    });
+    }, lease);
   } catch (error) {
     console.error("Failed to update auto-start preference", error);
     produceAppState((draft) => {
       draft.settings.autoLaunchEnabled = previous;
       draft.settings.autoLaunchStatus = "error";
-    });
+    }, lease);
     showErrorSnackbar(
       "Unable to update auto start preference. Please try again.",
     );

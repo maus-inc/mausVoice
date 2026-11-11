@@ -1,9 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
-import { OPEN_CHAT_HOTKEY, syncHotkeyCombosToNative } from "./keyboard.utils";
+import {
+  getDefaultHotkeyCombosForAction,
+  getHotkeyCombosForAction,
+  getKeycapLegend,
+  getPrettyKeyName,
+  getStyleSwitchActionNamesForKey,
+  DICTATE_HOTKEY,
+  OPEN_CHAT_HOTKEY,
+  syncHotkeyCombosToNative,
+} from "./keyboard.utils";
 
-const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+const { invokeMock, getPlatformMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  getPlatformMock: vi.fn(() => "linux"),
+}));
+vi.mock("./platform.utils", () => ({ getPlatform: getPlatformMock }));
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
@@ -104,7 +117,11 @@ describe("syncHotkeyCombosToNative", () => {
       return Promise.resolve(undefined);
     });
 
-    await syncHotkeyCombosToNative();
+    // The failure must reach this caller (run rejects), not be swallowed by
+    // the queue-keeping catch.
+    await expect(syncHotkeyCombosToNative()).rejects.toThrow(
+      "native bridge down",
+    );
     setHotkeyCombo(["ControlLeft", "KeyP"]);
     await syncHotkeyCombosToNative();
 
@@ -112,5 +129,215 @@ describe("syncHotkeyCombosToNative", () => {
     expect(calls).toHaveLength(2);
     expect(calls[1][1].combos).toContainEqual(["ControlLeft", "KeyP"]);
     errorSpy.mockRestore();
+  });
+});
+
+describe("getPrettyKeyName", () => {
+  it.each([
+    ["MetaLeft", "⊞ L"],
+    ["MetaRight", "⊞ R"],
+    ["ControlLeft", "Ctrl L"],
+    ["ControlRight", "Ctrl R"],
+    ["ShiftLeft", "Shift L"],
+    ["ShiftRight", "Shift R"],
+    ["AltLeft", "Alt L"],
+    ["AltRight", "Alt R"],
+    ["OptionLeft", "Alt L"],
+    ["KeyA", "A"],
+    ["Escape", "Escape"],
+    ["LeftArrow", "←"],
+    ["RightArrow", "→"],
+    ["UpArrow", "↑"],
+    ["DownArrow", "↓"],
+  ])("renders %s as %s", (input, expected) => {
+    expect(getPrettyKeyName(input)).toBe(expected);
+  });
+
+  it("preserves side suffix on bare Meta* without a side", () => {
+    expect(getPrettyKeyName("Meta")).toBe("⊞");
+  });
+});
+
+describe("getKeycapLegend", () => {
+  it("uses compact bundled-font labels for Space and Meta", () => {
+    expect(getKeycapLegend("Space")).toEqual({ label: "SPC" });
+    expect(getKeycapLegend("Meta")).toEqual({ label: "Win" });
+  });
+
+  it("uses bundled-font modifier labels on macOS without changing accessible names", () => {
+    getPlatformMock.mockReturnValueOnce("macos");
+    expect(getKeycapLegend("MetaLeft")).toEqual({
+      label: "Cmd",
+      sublabel: "Left",
+    });
+    getPlatformMock.mockReturnValueOnce("macos");
+    expect(getKeycapLegend("AltRight")).toEqual({
+      label: "Alt",
+      sublabel: "Right",
+    });
+    getPlatformMock.mockReturnValueOnce("macos");
+    expect(getKeycapLegend("ControlLeft")).toEqual({
+      label: "Ctrl",
+      sublabel: "Left",
+    });
+    getPlatformMock.mockReturnValueOnce("macos");
+    expect(getPrettyKeyName("MetaLeft")).toBe("⌘ L");
+  });
+
+  it.each([
+    ["ShiftLeft", "⇧", "Left"],
+    ["ShiftRight", "⇧", "Right"],
+    ["ControlLeft", "Ctrl", "Left"],
+    ["AltRight", "Alt", "Right"],
+    ["OptionLeft", "Alt", "Left"],
+    ["MetaRight", "Win", "Right"],
+  ])("stacks %s as %s over %s", (input, label, sublabel) => {
+    expect(getKeycapLegend(input)).toEqual({ label, sublabel });
+  });
+
+  it.each([
+    "KeyA",
+    "LeftArrow",
+    "ArrowLeft",
+    "CustomRight",
+    "constructor",
+    "__proto__",
+  ])("leaves %s as a single line", (input) => {
+    expect(getKeycapLegend(input)).toEqual({
+      label: getPrettyKeyName(input),
+    });
+  });
+});
+
+describe("getStyleSwitchActionNamesForKey", () => {
+  it("maps a released physical key to its bound style-switch actions", () => {
+    const state = {
+      ...INITIAL_APP_STATE,
+      hotkeyById: {
+        fwd: {
+          id: "fwd",
+          actionName: "switch-writing-style-forward",
+          keys: ["RightArrow"],
+        },
+        bwd: {
+          id: "bwd",
+          actionName: "switch-writing-style-backward",
+          keys: ["LeftArrow"],
+        },
+        casual: {
+          id: "casual",
+          actionName: "switch-to-style:casual",
+          keys: ["KeyC"],
+        },
+        futureStyleAction: {
+          id: "future-style-action",
+          actionName: "switch-writing-style-custom",
+          keys: ["KeyF"],
+        },
+        chat: {
+          id: "chat",
+          actionName: OPEN_CHAT_HOTKEY,
+          keys: ["KeyO"],
+        },
+      },
+    };
+
+    expect(getStyleSwitchActionNamesForKey(state, "RightArrow")).toEqual([
+      "switch-writing-style-forward",
+    ]);
+    expect(getStyleSwitchActionNamesForKey(state, "KeyC")).toEqual([
+      "switch-to-style:casual",
+    ]);
+    expect(getStyleSwitchActionNamesForKey(state, "KeyF")).toEqual([
+      "switch-writing-style-custom",
+    ]);
+    expect(getStyleSwitchActionNamesForKey(state, "KeyO")).toEqual([]);
+    expect(getStyleSwitchActionNamesForKey(state, "KeyZ")).toEqual([]);
+  });
+
+  it("is case-insensitive about the physical key", () => {
+    const state = {
+      ...INITIAL_APP_STATE,
+      hotkeyById: {
+        fwd: {
+          id: "fwd",
+          actionName: "switch-writing-style-forward",
+          keys: ["RightArrow"],
+        },
+      },
+    };
+    expect(getStyleSwitchActionNamesForKey(state, "rightarrow")).toEqual([
+      "switch-writing-style-forward",
+    ]);
+  });
+});
+
+/**
+ * The platform is mocked as Linux for this file, which is the case the table
+ * used to answer with nothing at all.
+ */
+describe("default hotkeys", () => {
+  it("does not restore a platform default after an explicit clear", async () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.onboarding.dictationOverrideEnabled = true;
+    state.hotkeyStrategy = "bridge";
+    state.hotkeyById.cleared = {
+      id: "cleared",
+      actionName: DICTATE_HOTKEY,
+      keys: [],
+    };
+    state.settings.hotkeyIds = ["cleared"];
+    expect(getHotkeyCombosForAction(state, DICTATE_HOTKEY)).toEqual([]);
+    setAppState(state, true);
+    invokeMock.mockReset().mockResolvedValue(undefined);
+    await syncHotkeyCombosToNative();
+    expect(invokeMock).toHaveBeenCalledWith("sync_compositor_hotkeys", {
+      bindings: [],
+    });
+  });
+
+  it("keeps additional configured shortcuts when the primary is cleared", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.hotkeyById = {
+      primary: { id: "primary", actionName: DICTATE_HOTKEY, keys: [] },
+      extra: { id: "extra", actionName: DICTATE_HOTKEY, keys: ["KeyA"] },
+    };
+    expect(getHotkeyCombosForAction(state, DICTATE_HOTKEY)).toEqual([["KeyA"]]);
+  });
+  it("binds the dictate key on Linux, and not only on macOS", () => {
+    expect(getDefaultHotkeyCombosForAction(DICTATE_HOTKEY)).toEqual([
+      ["ControlLeft", "AltLeft", "Space"],
+    ]);
+  });
+
+  it("sends the default dictation binding to the Wayland compositor bridge", async () => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+    setAppState(
+      {
+        ...structuredClone(INITIAL_APP_STATE),
+        hotkeyStrategy: "bridge",
+        onboarding: {
+          ...INITIAL_APP_STATE.onboarding,
+          dictationOverrideEnabled: true,
+        },
+      },
+      true,
+    );
+    await syncHotkeyCombosToNative();
+    expect(invokeMock).toHaveBeenCalledWith("sync_compositor_hotkeys", {
+      bindings: expect.arrayContaining([
+        {
+          actionName: DICTATE_HOTKEY,
+          keys: ["ControlLeft", "AltLeft", "Space"],
+        },
+      ]),
+    });
+  });
+
+  it("leaves an action with no default unbound", () => {
+    // Nothing ships a key for this one: an empty list is the honest answer, and
+    // is what a row with no binding shows as "Not set".
+    expect(getDefaultHotkeyCombosForAction(OPEN_CHAT_HOTKEY)).toEqual([]);
   });
 });

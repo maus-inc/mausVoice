@@ -23,7 +23,21 @@ pub(crate) fn machine_id() -> Option<&'static str> {
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn run_and_read_stdout(program: &str, args: &[&str]) -> Option<String> {
     use std::process::Command;
-    let out = Command::new(program).args(args).output().ok()?;
+    let mut command = Command::new(program);
+    command.args(args);
+
+    // The release binary is a GUI-subsystem app, so it owns no console. A
+    // console-subsystem child started without CREATE_NO_WINDOW is allocated a
+    // new one, which flashes a terminal window on screen. This arm is Windows
+    // only; the macOS path compiles it out.
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let out = command.output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -45,18 +59,14 @@ fn read_machine_guid() -> Option<String> {
         ],
     )?;
     // Output line looks like: "    MachineGuid    REG_SZ    {0E12...}"
-    text.split_whitespace().find(|part| {
-        part.len() >= 2 && part.as_bytes()[0] == b'{' && part.ends_with('}')
-    })
-    .map(str::to_string)
+    text.split_whitespace()
+        .find(|part| part.len() >= 2 && part.as_bytes()[0] == b'{' && part.ends_with('}'))
+        .map(str::to_string)
 }
 
 #[cfg(target_os = "macos")]
 fn read_platform_uuid() -> Option<String> {
-    let text = run_and_read_stdout(
-        "/usr/sbin/ioreg",
-        &["-rd1", "-c", "IOPlatformExpertDevice"],
-    )?;
+    let text = run_and_read_stdout("/usr/sbin/ioreg", &["-rd1", "-c", "IOPlatformExpertDevice"])?;
     text.lines()
         .find(|line| line.contains("IOPlatformUUID"))
         .and_then(|line| line.split('"').nth(3))
@@ -67,7 +77,10 @@ fn read_platform_uuid() -> Option<String> {
 
 #[cfg(target_os = "linux")]
 fn read_machine_id_file() -> Option<String> {
-    let trimmed = std::fs::read_to_string("/etc/machine-id").ok()?.trim().to_string();
+    let trimmed = std::fs::read_to_string("/etc/machine-id")
+        .ok()?
+        .trim()
+        .to_string();
     if trimmed.is_empty() {
         None
     } else {

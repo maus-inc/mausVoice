@@ -1,6 +1,7 @@
 import { Box, Button, Typography, type TypographyProps } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
+import { noHoverQuery } from "../../styles/motion";
 
 type TypographyWithMoreProps = TypographyProps & {
   maxLines?: number;
@@ -9,6 +10,8 @@ type TypographyWithMoreProps = TypographyProps & {
   lessLabel?: React.ReactNode;
   fontSize?: number | string;
   lineHeight?: number | string;
+  clampPaddingRight?: number | string;
+  inlineToggleRight?: number | string;
 };
 
 const defaultClampStyles = (maxLines: number) => ({
@@ -17,6 +20,10 @@ const defaultClampStyles = (maxLines: number) => ({
   WebkitBoxOrient: "vertical" as const,
   overflow: "hidden",
 });
+
+const coarseTouchQuery = "(hover: none) and (pointer: coarse)";
+const narrowInlineToggleQuery =
+  "@container typography-with-more (max-width: 480px)";
 
 const normalizeSxProp = (
   baseClampStyles: Record<string, unknown>,
@@ -39,6 +46,8 @@ export function TypographyWithMore({
   sx,
   fontSize,
   lineHeight,
+  clampPaddingRight,
+  inlineToggleRight,
   ...typographyProps
 }: TypographyWithMoreProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
@@ -112,31 +121,47 @@ export function TypographyWithMore({
       return normalized;
     }
 
-    const paddingAdjustment = { pr: 6 } as const;
+    const paddingAdjustments = [
+      { pr: clampPaddingRight ?? 6 },
+      ...(inlineToggleRight === undefined
+        ? []
+        : [{ [narrowInlineToggleQuery]: { pr: 0 } }]),
+    ];
 
     if (Array.isArray(normalized)) {
-      return [...normalized, paddingAdjustment];
+      return [...normalized, ...paddingAdjustments];
     }
 
     if (normalized) {
-      return [normalized, paddingAdjustment];
+      return [normalized, ...paddingAdjustments];
     }
 
-    return paddingAdjustment;
-  }, [clampStyles, shouldClamp, sx]);
+    return paddingAdjustments;
+  }, [clampPaddingRight, clampStyles, inlineToggleRight, shouldClamp, sx]);
   const hiddenTypographySx = useMemo(() => {
     const baseDisplay = { display: "block" } as const;
 
-    if (!sx) {
+    if (
+      clampPaddingRight === undefined &&
+      inlineToggleRight === undefined &&
+      !sx
+    ) {
       return baseDisplay;
     }
 
-    if (Array.isArray(sx)) {
-      return [baseDisplay, ...sx];
+    const styles = Array.isArray(sx) ? [...sx] : [];
+    if (sx && !Array.isArray(sx)) {
+      styles.push(sx);
+    }
+    if (clampPaddingRight !== undefined) {
+      styles.push({ pr: clampPaddingRight });
+    }
+    if (inlineToggleRight !== undefined) {
+      styles.push({ [narrowInlineToggleQuery]: { pr: 0 } });
     }
 
-    return [baseDisplay, sx];
-  }, [sx]);
+    return [baseDisplay, ...styles];
+  }, [clampPaddingRight, inlineToggleRight, sx]);
 
   const renderToggleButton = (inline: boolean) => (
     <Button
@@ -154,6 +179,25 @@ export function TypographyWithMore({
           lineHeight !== undefined
             ? lineHeight
             : (variantStyles.lineHeight ?? 1.35);
+        const textPrimary =
+          theme.vars?.palette.text.primary ?? theme.palette.text.primary;
+        const textSecondary =
+          theme.vars?.palette.text.secondary ?? theme.palette.text.secondary;
+
+        // The revealed state for the inline control, and for the out-of-flow
+        // chip. Declared once each and reused by hover, keyboard focus and
+        // touch states so their interaction affordances cannot drift apart.
+        const inlineReveal = {
+          color: textPrimary,
+          textDecorationColor: "currentColor",
+          backgroundColor:
+            theme.vars?.palette.level0 ?? theme.palette.background.paper,
+        };
+        const chipReveal = {
+          color: textPrimary,
+          backgroundColor:
+            theme.vars?.palette.level2 ?? theme.palette.action.hover,
+        };
 
         return {
           px: 0,
@@ -161,25 +205,75 @@ export function TypographyWithMore({
           fontSize: fontSizeResolved,
           lineHeight: lineHeightResolved,
           textTransform: "none",
-          color: theme.vars?.palette.text.primary ?? theme.palette.text.primary,
+          // De-emphasized at rest so the disclosure control never competes
+          // with the content. Inline links reveal their cue on hover/focus and
+          // at rest for coarse-touch pointers; chips reveal a surface cue on
+          // devices that cannot hover.
+          fontWeight: theme.typography.fontWeightMedium,
+          color: textSecondary,
+          textDecoration: "underline",
+          textDecorationColor: "transparent",
+          textUnderlineOffset: 3,
+          transition: `color 150ms ${theme.transitions.easing.easeOut}, background-color 150ms ${theme.transitions.easing.easeOut}, text-decoration-color 150ms ${theme.transitions.easing.easeOut}, transform 120ms ${theme.transitions.easing.easeOut}`,
           ...(inline
             ? {
                 position: "absolute" as const,
-                right: 0,
-                bottom: 0,
+                right: inlineToggleRight ?? 0,
+                bottom: inlineToggleRight === undefined ? 0 : theme.spacing(1),
                 mt: 0,
                 py: 0,
                 borderRadius: 999,
+                // This background doubles as the truncation fade. Keep it
+                // painted on reveal (a repaint would double-tone the mask)
+                // and signal interactivity with color + underline instead —
+                // the link affordance for in-flow text toggles.
                 backgroundColor:
                   theme.vars?.palette.level0 ?? theme.palette.background.paper,
                 boxShadow: `-12px 0 12px ${
                   theme.vars?.palette.level0 ?? theme.palette.background.paper
                 }`,
+                "&:hover": inlineReveal,
+                "&:focus-visible": inlineReveal,
+                // Touch devices have no hover state; the resting underline
+                // keeps the inline disclosure recognizable. A no-pointer
+                // environment can still reveal it on keyboard focus.
+                [`@media ${coarseTouchQuery}`]: inlineReveal,
+                ...(inlineToggleRight === undefined
+                  ? {}
+                  : {
+                      [narrowInlineToggleQuery]: {
+                        position: "static",
+                        right: "auto",
+                        bottom: "auto",
+                        display: "block",
+                        width: "fit-content",
+                        ml: "auto",
+                        mt: 0,
+                        backgroundColor: "transparent",
+                        boxShadow: "none",
+                        borderRadius: 0,
+                      },
+                    }),
               }
             : {
+                // Ghost chip for the out-of-flow toggle: comfortable padding
+                // and the surface ladder's hover tier, same language as the
+                // theme's other quiet buttons.
                 mt: 0.5,
                 display: "block",
                 ml: "auto",
+                px: 1,
+                py: 0.25,
+                borderRadius: 0.75,
+                "&:hover": chipReveal,
+                "&:focus-visible": chipReveal,
+                // Same reasoning as the inline variant: the chip's surface
+                // tier is its affordance, and a touch device never hovers.
+                [`@media ${noHoverQuery}`]: chipReveal,
+                "&:active": {
+                  backgroundColor:
+                    theme.vars?.palette.level3 ?? theme.palette.action.selected,
+                },
               }),
         };
       }}
@@ -190,7 +284,14 @@ export function TypographyWithMore({
 
   return (
     <Box>
-      <Box ref={containerRef} sx={{ position: "relative" }}>
+      <Box
+        ref={containerRef}
+        sx={{
+          position: "relative",
+          containerName: "typography-with-more",
+          containerType: "inline-size",
+        }}
+      >
         <Typography {...typographyProps} sx={typographySx}>
           {children}
         </Typography>

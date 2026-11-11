@@ -1,0 +1,52 @@
+name: Verify Vendored Skills
+
+on:
+  push:
+    paths:
+      - ".agents/skills/**"
+      - "skills-lock.json"
+      - ".gitignore"
+      - "scripts/ci/verify-skills.mjs"
+      - "scripts/ci/verify-skills.test.mjs"
+      - ".github/workflows/verify-skills.yml"
+
+permissions: {}
+
+# trigger-manual: false
+
+# Every vendored skill under .agents/skills is committed byte for byte and
+# skills-lock.json records a folder hash for it. Until this workflow existed the
+# only thing checking that was the lefthook pre-commit job, which a `--no-verify`
+# or a hook-less clone skips. The same script also fails when a root .gitignore
+# rule matches a file inside a locked tree, because such a file is part of the
+# hash on the installing machine and absent from every fresh checkout. That is
+# why .gitignore is in the trigger filter.
+#
+# Plain `node`, no pnpm: the script and its suite depend on nothing in the
+# workspace, so the job installs nothing.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Skills match the lockfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Test the checker
+        run: node --test scripts/ci/verify-skills.test.mjs
+      - name: Verify every locked skill
+        run: node scripts/ci/verify-skills.mjs

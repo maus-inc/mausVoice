@@ -63,21 +63,18 @@ export class AsyncDataController<T> {
       this.sink.setLoading(false);
     }, timeoutMs);
 
-    let settled = false;
     try {
       const result = await promise();
       if (this.generation !== myGeneration) return;
       this.sink.setData(result);
-      settled = true;
     } catch (err) {
       if (this.generation !== myGeneration) return;
       this.sink.setError(String(err));
-      settled = true;
     }
-    if (settled && this.generation === myGeneration) {
-      this.clearPendingTimeout();
-      this.sink.setLoading(false);
-    }
+    // Both branches above return early when the generation has moved on,
+    // so reaching here implies the call is still current and settled.
+    this.clearPendingTimeout();
+    this.sink.setLoading(false);
   }
 }
 

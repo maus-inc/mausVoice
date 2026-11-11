@@ -1,3 +1,4 @@
+import { Stack } from "@mui/material";
 import { useAppStore } from "../../store";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import { AppStylingLayout } from "./AppStylingLayout";
@@ -8,13 +9,20 @@ export default function StylingPage() {
   const stylingMode = useAppStore((state) => getEffectiveStylingMode(state));
 
   return (
-    <>
+    <Stack
+      spacing={2}
+      sx={{
+        height: "100%",
+        minHeight: 0,
+        overflow: "hidden",
+      }}
+    >
       {stylingMode === "manual" ? (
         <ManualStylingLayout />
       ) : (
         <AppStylingLayout />
       )}
       <StylingDialog />
-    </>
+    </Stack>
   );
 }
