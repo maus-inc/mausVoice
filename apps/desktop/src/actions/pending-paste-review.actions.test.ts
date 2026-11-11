@@ -36,6 +36,7 @@ import {
   copyPendingPasteReview,
   createPendingPasteReview,
   getPendingPasteReview,
+  updatePendingPasteReviewDraft,
 } from "./pending-paste-review.actions";
 
 /** The Error a call rejected with, so an assertion can read `error.message`. */
@@ -101,6 +102,23 @@ describe("pending Paste reviews", () => {
         status: "pending",
       }),
     );
+  });
+
+  it("updates an existing pending card when Open is retried with new text", async () => {
+    const message = pendingMessage();
+    const saved = await updatePendingPasteReviewDraft(message, "latest draft");
+
+    expect(updateChatMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: message.id,
+        conversationId: message.conversationId,
+        metadata: expect.objectContaining({
+          text: "latest draft",
+          status: "pending",
+        }),
+      }),
+    );
+    expect(saved.id).toBe(message.id);
   });
 
   it("persists the latest edit before copying it for manual paste", async () => {
