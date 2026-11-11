@@ -97,6 +97,12 @@ CoreAudio, ALSA and WASAPI each spell the same headset differently. That is why
 it only ever *adds* a sentence and never changes behaviour: a false positive
 costs a line of copy, and a false negative costs an unexplained battery drain.
 
+The flag is documented with plain `//` comments rather than `///`. Specta
+exports a field's doc comment into `bindings.ts`, and it inlines the whole of it
+into the middle of a one-line TypeScript type -- so a `///` here does not just
+add a comment, it changes the generated file and fails the bindings check. The
+rationale below is the long form; the code keeps the short one.
+
 Two corrections came out of building it. The keyword list lived inside the cpal
 module, so the PulseAudio lister could not reach it and built every Linux
 descriptor with `caution: false` and no Bluetooth flag at all -- on the platform

@@ -11,22 +11,27 @@ pub struct InputDeviceDescriptor {
     pub label: String,
     pub is_default: bool,
     pub caution: bool,
-    /// Whether this looks like a Bluetooth headset.
-    ///
-    /// A separate flag from `caution`, because the two answer different
-    /// questions and are consumed in different places. `caution` is a *ranking*
-    /// verdict -- this device will sound worse than an alternative, so prefer
-    /// another -- and the selector shows it as "May provide lower audio
-    /// quality". This one is a *cost* verdict about the device the user has
-    /// already picked: holding it open on behalf of keep-ready moves the link to
-    /// its hands-free profile, which degrades output audio and drains the
-    /// headset for as long as the hold lasts. A device can be worth choosing and
-    /// still carry that cost, which is why one flag could not carry it.
-    ///
-    /// Still a name heuristic: cpal exposes no transport and CoreAudio/ALSA/
-    /// WASAPI each spell it differently. It is used only to add a sentence of
-    /// copy, never to change behaviour, so a false positive costs wording and a
-    /// false negative costs an unexplained battery drain.
+    // Whether this looks like a Bluetooth headset.
+    //
+    // Deliberately a plain comment rather than a doc comment: specta exports
+    // `///` on a field into `bindings.ts`, which would inline all of this into
+    // the middle of a one-line TypeScript type. The full rationale lives in
+    // `docs/decisions/warm-microphone-policy.md`.
+    //
+    // A separate flag from `caution`, because the two answer different
+    // questions. `caution` is a *ranking* verdict -- this device will sound
+    // worse than an alternative, so prefer another -- and the selector shows it
+    // as "May provide lower audio quality". This one is a *cost* verdict about
+    // the device the user has already picked: holding it open on behalf of
+    // keep-ready moves the link to its hands-free profile, which degrades output
+    // audio and drains the headset for as long as the hold lasts. A device can
+    // be worth choosing and still carry that cost, which is why one flag could
+    // not carry it.
+    //
+    // Still a name heuristic: cpal exposes no transport and CoreAudio/ALSA/
+    // WASAPI each spell it differently. It is used only to add a sentence of
+    // copy, never to change behaviour, so a false positive costs wording and a
+    // false negative costs an unexplained battery drain.
     pub bluetooth: bool,
 }
 
