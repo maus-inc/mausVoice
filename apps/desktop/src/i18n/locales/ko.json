@@ -223,6 +223,7 @@
   "could_not_save_the_api_key": "API 키를 저장하지 못했습니다.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "수정한 받아쓰기를 저장하지 못했습니다. 다시 시도할 수 있도록 알약 창에 그대로 유지됩니다.",
   "could_not_save_your_profile_please_try_again": "프로필을 저장하지 못했습니다. 다시 시도하세요.",
+  "could_not_start_recording_please_try_again": "녹음을 시작하지 못했습니다. 다시 시도해 주세요.",
   "count_count_plural_one_transcription_other_transcriptions": "{count}개 {count, plural, one {음성 인식} other {음성 인식}}",
   "count_incognito_dictation_in_streaks_and_word_counts_without": "텍스트 자체는 저장하지 않고 시크릿 모드 받아쓰기를 연속 기록과 단어 수에 포함합니다.",
   "count_plural_0_no_settings_found_one_setting_found_other_set": "{count, plural, =0 {일치하는 설정이 없습니다.} other {설정 #개를 찾았습니다.}}",
@@ -505,6 +506,8 @@
   "include_incognito_in_stats": "통계에 시크릿 모드 포함",
   "include_v1_path": "/v1 경로 포함",
   "incognito_mode": "시크릿 모드",
+  "incomplete_transcription_recording_audio_not_saved_some_text": "전사가 불완전합니다. 녹음 오디오가 저장되지 않았습니다. 일부 텍스트가 이미 삽입되었을 수 있습니다.",
+  "incomplete_transcription_recording_saved_for_retry_some_text": "전사가 불완전합니다. 다시 시도할 수 있도록 녹음이 저장되었습니다. 일부 텍스트가 이미 삽입되었을 수 있습니다.",
   "input_output": "입력: ... 출력: ...",
   "input_permissions": "입력 권한",
   "input_permissions_configured": "입력 권한이 설정되었습니다.",
@@ -779,6 +782,7 @@
   "recommended_with_gpu_acceleration": "GPU 가속 권장",
   "record": "녹음",
   "recording_failed": "녹음에 실패했습니다",
+  "recording_failed_partway_transcribing_what_was_captured": "녹음이 도중에 실패했습니다. 지금까지 녹음된 부분을 전사합니다.",
   "recording_keys": "키를 기록 중...",
   "recording_stopped_duration_limit_reached": "녹음이 중지되었습니다: 제한 시간에 도달했습니다",
   "recording_stopped_provider_duration_limit_reached": "녹음 중지됨: 제공자 길이 제한에 도달했습니다",
@@ -1022,7 +1026,7 @@
   "this_will_prompt_for_administrator_privileges_uac_so_the_pil": "팰이 전역으로 입력을 캡처하고 입력할 수 있도록 관리자 권한(UAC)을 요청합니다. 계속할까요?",
   "this_will_request_accessibility_and_microphone_access_so_the": "팰이 전역으로 입력을 캡처하고 입력할 수 있도록 접근성 및 마이크 권한을 요청합니다. 계속할까요?",
   "thought_process": "생각의 흐름",
-  "tip": "Tip:",
+  "tip": "팁:",
   "tip_choose_a_stronger_model_for_better_results_smaller_or_we": "팁: 더 나은 결과를 위해 강력한 모델을 선택하세요. 작거나 약한 모델은 품질이 낮은 결과를 생성할 수 있습니다.",
   "tip_run_agent_mode_multiple_times_to_keep_refining_it_rememb": "팁: 계속 다듬으려면 에이전트 모드를 여러 번 실행하세요! 텍스트 상자에 있는 내용을 기억합니다.",
   "title": "제목",
@@ -1195,5 +1199,6 @@
   "your_profile_name_and_photo": "프로필 이름과 사진",
   "your_profile_your_sign_in_and_your_account": "프로필, 로그인, 계정 정보입니다.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "녹음은 말하는 사이를 멈출 때마다 {provider}에 조각으로 전송되고, 나머지는 멈춘 뒤에 전송됩니다. 이미 전송된 오디오는 되돌릴 수 없습니다.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "저장된 녹음과 기록은 삭제되었지만 mausVoice가 이 컴퓨터의 저장소에 접근하지 못해 일부 환경 설정이 남아 있을 수 있습니다. 앱이 데이터를 저장할 수 있는지 확인한 뒤 다시 시도하세요."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "저장된 녹음과 기록은 삭제되었지만 mausVoice가 이 컴퓨터의 저장소에 접근하지 못해 일부 환경 설정이 남아 있을 수 있습니다. 앱이 데이터를 저장할 수 있는지 확인한 뒤 다시 시도하세요.",
+  "your_style_shortcuts_changed_in_another_window_review_them_a": "다른 창에서 스타일 단축키가 변경되었습니다. 확인한 뒤 다시 저장하세요."
 }

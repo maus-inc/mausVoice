@@ -336,6 +336,7 @@ describe("simulated typing route hooks", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockReset();
+    produceAppStateMock.mockReset();
     getAppStateMock.mockReturnValue({
       appTargetById: {},
       supportsPasteKeybinds: "none",
@@ -353,6 +354,40 @@ describe("simulated typing route hooks", () => {
   afterEach(() => {
     vi.useRealTimers();
     delete (globalThis as { window?: unknown }).window;
+  });
+
+  it("reports an interim cancelled before typing as undelivered", async () => {
+    invokeMock.mockResolvedValue("cancelled_before_start");
+    await expect(
+      routeTranscriptOutput({
+        text: "interim words",
+        mode: "dictation",
+        currentAppId: null,
+        isInterim: true,
+      }),
+    ).resolves.toEqual({
+      delivered: false,
+      remote: false,
+      deliveredText: null,
+    });
+  });
+
+  it("does not clear the backlog when typing was cancelled before it started", async () => {
+    const state = {
+      appTargetById: {},
+      supportsPasteKeybinds: "none",
+      dictationBacklog: ["earlier"],
+      dictationBacklogNonce: 7,
+    };
+    getAppStateMock.mockReturnValue(state);
+    produceAppStateMock.mockImplementation((fn) => fn(state));
+    invokeMock.mockResolvedValue("cancelled_before_start");
+    const { drainDictationBacklog } = await import("./output-routing.utils");
+    await expect(drainDictationBacklog("later")).resolves.toEqual({
+      delivered: false,
+      copiedToClipboard: false,
+    });
+    expect(state.dictationBacklog).toEqual(["earlier"]);
   });
 
   it("announces the pending typing route before delays and settles after native typing", async () => {

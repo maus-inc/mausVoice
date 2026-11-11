@@ -223,6 +223,7 @@
   "could_not_save_the_api_key": "Could not save the API key.",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Could not save the edited transcript. It remains on the pill so you can retry.",
   "could_not_save_your_profile_please_try_again": "Could not save your profile. Please try again.",
+  "could_not_start_recording_please_try_again": "Could not start recording. Please try again.",
   "count_count_plural_one_transcription_other_transcriptions": "{count} {count, plural, one {transcription} other {transcriptions}}",
   "count_incognito_dictation_in_streaks_and_word_counts_without": "Count incognito dictation in streaks and word counts, without saving the text itself.",
   "count_plural_0_no_settings_found_one_setting_found_other_set": "{count, plural, =0 {No settings found.} one {# setting found.} other {# settings found.}}",
@@ -505,6 +506,8 @@
   "include_incognito_in_stats": "Include incognito in stats",
   "include_v1_path": "Include /v1 path",
   "incognito_mode": "Incognito mode",
+  "incomplete_transcription_recording_audio_not_saved_some_text": "Incomplete transcription: recording audio not saved. Some text may already have been inserted.",
+  "incomplete_transcription_recording_saved_for_retry_some_text": "Incomplete transcription: recording saved for retry. Some text may already have been inserted.",
   "input_output": "Input: ... Output: ...",
   "input_permissions": "Input permissions",
   "input_permissions_configured": "Input permissions configured.",
@@ -779,6 +782,7 @@
   "recommended_with_gpu_acceleration": "Recommended with GPU acceleration",
   "record": "Record",
   "recording_failed": "Recording failed",
+  "recording_failed_partway_transcribing_what_was_captured": "Recording failed partway. Transcribing what was captured.",
   "recording_keys": "Recording keys...",
   "recording_stopped_duration_limit_reached": "Recording stopped: duration limit reached",
   "recording_stopped_provider_duration_limit_reached": "Recording stopped: provider duration limit reached",
@@ -1195,5 +1199,6 @@
   "your_profile_name_and_photo": "Your profile name and photo",
   "your_profile_your_sign_in_and_your_account": "Your profile, your sign-in, and your account.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "Your recording is sent to {provider} in pieces as you pause, and the rest once you stop. Audio already sent cannot be recalled.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Your saved recordings and history were removed, but mausVoice could not reach this computer’s storage, so some preferences may remain. Check that the app is allowed to store data, then try again."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Your saved recordings and history were removed, but mausVoice could not reach this computer’s storage, so some preferences may remain. Check that the app is allowed to store data, then try again.",
+  "your_style_shortcuts_changed_in_another_window_review_them_a": "Your style shortcuts changed in another window. Review them and save again."
 }

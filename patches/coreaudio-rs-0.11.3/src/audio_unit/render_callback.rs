@@ -1,0 +1,487 @@
+use super::audio_format::LinearPcmFlags;
+use super::audio_format::LinearPcmFlags as DataLinearPcmFlags;
+use super::{Sample as DataSample, StreamFormat as DataStreamFormat};
+use sys as data_sys;
+use super::input_buffer::{buffer_byte_size, InputBuffer};
+use super::{AudioUnit, Element, Scope};
+use crate::error::{self, Error};
+use std::os::raw::c_void;
+use sys;
+use sys as flags_sys;
+
+mod action_flags_handle;
+
+pub use self::action_flags::ActionFlags;
+pub use self::data::Data;
+
+/// When `set_render_callback` is called, a closure of this type will be used to wrap the given
+/// render callback function.
+///
+/// This allows the user to provide a custom, more rust-esque callback function type that takes
+/// greater advantage of rust's type safety.
+pub type InputProcFn = dyn FnMut(
+    *mut sys::AudioUnitRenderActionFlags,
+    *const sys::AudioTimeStamp,
+    sys::UInt32,
+    sys::UInt32,
+    *mut sys::AudioBufferList,
+) -> sys::OSStatus;
+
+/// This type allows us to safely wrap a boxed `RenderCallback` to use within the input proc.
+pub struct InputProcFnWrapper {
+    callback: Box<InputProcFn>,
+}
+
+/// Arguments given to the render callback function.
+pub struct Args<'a, D: Data> {
+    /// A type wrapping the the buffer that matches the expected audio format.
+    pub data: D::Buffer<'a>,
+    /// Timing information for the callback.
+    pub time_stamp: sys::AudioTimeStamp,
+    /// TODO
+    pub bus_number: u32,
+    /// The number of frames in the buffer as `usize` for easier indexing.
+    pub num_frames: usize,
+    /// Flags for configuring audio unit rendering.
+    ///
+    /// This parameter lets a callback provide various hints to the audio unit.
+    ///
+    /// For example: if there is no audio to process, we can insert the `OUTPUT_IS_SILENCE` flag to
+    /// indicate to the audio unit that the buffer does not need to be processed.
+    pub flags: action_flags::Handle<'a>,
+}
+
+impl<'a, D: Data> ::std::fmt::Debug for Args<'a, D>
+where
+    D::Buffer<'a>: ::std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.debug_struct("Args")
+            .field("data", &self.data)
+            .field("time_stamp", &self.time_stamp)
+            .field("bus_number", &self.bus_number)
+            .field("num_frames", &self.num_frames)
+            .field("flags", &self.flags)
+            .finish()
+    }
+}
+
+/// Format specific render callback data.
+pub mod data;
+
+pub mod action_flags {
+    use sys;
+
+    bitflags! {
+        pub struct ActionFlags: u32 {
+            /// Called on a render notification Proc, which is called either before or after the
+            /// render operation of the audio unit. If this flag is set, the proc is being called
+            /// before the render operation is performed.
+            ///
+            /// **Available** in OS X v10.0 and later.
+            const PRE_RENDER = sys::kAudioUnitRenderAction_PreRender;
+            /// Called on a render notification Proc, which is called either before or after the
+            /// render operation of the audio unit. If this flag is set, the proc is being called
+            /// after the render operation is completed.
+            ///
+            /// **Available** in OS X v10.0 and later.
+            const POST_RENDER = sys::kAudioUnitRenderAction_PostRender;
+            /// This flag can be set in a render input callback (or in the audio unit's render
+            /// operation itself) and is used to indicate that the render buffer contains only
+            /// silence. It can then be used by the caller as a hint to whether the buffer needs to
+            /// be processed or not.
+            ///
+            /// **Available** in OS X v10.2 and later.
+            const OUTPUT_IS_SILENCE = sys::kAudioUnitRenderAction_OutputIsSilence;
+            /// This is used with offline audio units (of type 'auol'). It is used when an offline
+            /// unit is being preflighted, which is performed prior to when the actual offline
+            /// rendering actions are performed. It is used for those cases where the offline
+            /// process needs it (for example, with an offline unit that normalizes an audio file,
+            /// it needs to see all of the audio data first before it can perform its
+            /// normalization).
+            ///
+            /// **Available** in OS X v10.3 and later.
+            const OFFLINE_PREFLIGHT = sys::kAudioOfflineUnitRenderAction_Preflight;
+            /// Once an offline unit has been successfully preflighted, it is then put into its
+            /// render mode. This flag is set to indicate to the audio unit that it is now in that
+            /// state and that it should perform processing on the input data.
+            ///
+            /// **Available** in OS X v10.3 and later.
+            const OFFLINE_RENDER = sys::kAudioOfflineUnitRenderAction_Render;
+            /// This flag is set when an offline unit has completed either its preflight or
+            /// performed render operation.
+            ///
+            /// **Available** in OS X v10.3 and later.
+            const OFFLINE_COMPLETE = sys::kAudioOfflineUnitRenderAction_Complete;
+            /// If this flag is set on the post-render call an error was returned by the audio
+            /// unit's render operation. In this case, the error can be retrieved through the
+            /// `lastRenderError` property and the audio data in `ioData` handed to the post-render
+            /// notification will be invalid.
+            ///
+            /// **Available** in OS X v10.5 and later.
+            const POST_RENDER_ERROR = sys::kAudioUnitRenderAction_PostRenderError;
+            /// If this flag is set, then checks that are done on the arguments provided to render
+            /// are not performed. This can be useful to use to save computation time in situations
+            /// where you are sure you are providing the correct arguments and structures to the
+            /// various render calls.
+            ///
+            /// **Available** in OS X v10.7 and later.
+            const DO_NOT_CHECK_RENDER_ARGS = sys::kAudioUnitRenderAction_DoNotCheckRenderArgs;
+        }
+    }
+
+    pub use super::action_flags_handle::Handle;
+
+    impl ::std::fmt::Display for ActionFlags {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+            write!(
+                f,
+                "{:?}",
+                match self.bits() {
+                    sys::kAudioUnitRenderAction_PreRender => "PRE_RENDER",
+                    sys::kAudioUnitRenderAction_PostRender => "POST_RENDER",
+                    sys::kAudioUnitRenderAction_OutputIsSilence => "OUTPUT_IS_SILENCE",
+                    sys::kAudioOfflineUnitRenderAction_Preflight => "OFFLINE_PREFLIGHT",
+                    sys::kAudioOfflineUnitRenderAction_Render => "OFFLINE_RENDER",
+                    sys::kAudioOfflineUnitRenderAction_Complete => "OFFLINE_COMPLETE",
+                    sys::kAudioUnitRenderAction_PostRenderError => "POST_RENDER_ERROR",
+                    sys::kAudioUnitRenderAction_DoNotCheckRenderArgs => "DO_NOT_CHECK_RENDER_ARGS",
+                    _ => "<Unknown ActionFlags>",
+                }
+            )
+        }
+    }
+}
+
+impl AudioUnit {
+    /// Pass a render callback (aka "Input Procedure") to the **AudioUnit**.
+    pub fn set_render_callback<F, D>(&mut self, mut f: F) -> Result<(), Error>
+    where
+        F: for<'a> FnMut(Args<'a, D>) -> Result<(), ()> + 'static,
+        D: Data,
+    {
+        // First, we'll retrieve the stream format so that we can ensure that the given callback
+        // format matches the audio unit's format.
+        let id = sys::kAudioUnitProperty_StreamFormat;
+        // Stream-format properties return an AudioStreamBasicDescription.
+        let asbd = unsafe { self.get_property(id, Scope::Input, Element::Output)? };
+        let stream_format = super::StreamFormat::from_asbd(asbd)?;
+
+        // If the stream format does not match, return an error indicating this.
+        if !D::does_stream_format_match(&stream_format) {
+            return Err(Error::RenderCallbackBufferFormatDoesNotMatchAudioUnitStreamFormat);
+        }
+
+        // Here, we call the given render callback function within a closure that matches the
+        // arguments of the required coreaudio "input_proc".
+        //
+        // This allows us to take advantage of rust's type system and provide format-specific
+        // `Args` types which can be checked at compile time.
+        let input_proc_fn = move |io_action_flags: *mut sys::AudioUnitRenderActionFlags,
+                                  in_time_stamp: *const sys::AudioTimeStamp,
+                                  in_bus_number: sys::UInt32,
+                                  in_number_frames: sys::UInt32,
+                                  io_data: *mut sys::AudioBufferList|
+              -> sys::OSStatus {
+            if io_action_flags.is_null() || in_time_stamp.is_null() || io_data.is_null() {
+                return Error::Unspecified.as_os_status();
+            }
+            let args = unsafe {
+                let data = match D::from_input_proc_args(in_number_frames, io_data, true) {
+                    Some(data) => data,
+                    None => return Error::Unspecified.as_os_status(),
+                };
+                let flags = action_flags::Handle::from_ptr(io_action_flags);
+                Args::<D> {
+                    data,
+                    time_stamp: *in_time_stamp,
+                    flags,
+                    bus_number: in_bus_number as u32,
+                    num_frames: in_number_frames as usize,
+                }
+            };
+
+            match f(args) {
+                Ok(()) => 0,
+                Err(()) => error::Error::Unspecified.as_os_status(),
+            }
+        };
+
+        let input_proc_fn_wrapper = Box::new(InputProcFnWrapper {
+            callback: Box::new(input_proc_fn),
+        });
+
+        // Setup render callback. Notice that we relinquish ownership of the Callback
+        // here so that it can be used as the C render callback via a void pointer.
+        // We do however store the *mut so that we can convert back to a Box<InputProcFnWrapper>
+        // within our AudioUnit's Drop implementation (otherwise it would leak).
+        let input_proc_fn_wrapper_ptr = Box::into_raw(input_proc_fn_wrapper) as *mut c_void;
+
+        let render_callback = sys::AURenderCallbackStruct {
+            inputProc: Some(input_proc),
+            inputProcRefCon: input_proc_fn_wrapper_ptr,
+        };
+
+        self.set_property(
+            sys::kAudioUnitProperty_SetRenderCallback,
+            Scope::Input,
+            Element::Output,
+            Some(&render_callback),
+        )?;
+
+        self.free_render_callback();
+        self.maybe_render_callback = Some(input_proc_fn_wrapper_ptr as *mut InputProcFnWrapper);
+        Ok(())
+    }
+
+    /// Pass an input callback (aka "Input Procedure") to the **AudioUnit**.
+    pub fn set_input_callback<F, D>(&mut self, mut f: F) -> Result<(), Error>
+    where
+        F: for<'a> FnMut(Args<'a, D>) -> Result<(), ()> + 'static,
+        D: Data,
+    {
+        // First, we'll retrieve the stream format so that we can ensure that the given callback
+        // format matches the audio unit's format.
+        let id = sys::kAudioUnitProperty_StreamFormat;
+        // Stream-format properties return an AudioStreamBasicDescription.
+        let asbd = unsafe { self.get_property(id, Scope::Output, Element::Input)? };
+        let stream_format = super::StreamFormat::from_asbd(asbd)?;
+
+        // If the stream format does not match, return an error indicating this.
+        if !D::does_stream_format_match(&stream_format) {
+            return Err(Error::RenderCallbackBufferFormatDoesNotMatchAudioUnitStreamFormat);
+        }
+
+        // Interleaved or non-interleaved?
+        let non_interleaved = stream_format
+            .flags
+            .contains(LinearPcmFlags::IS_NON_INTERLEAVED);
+
+        // Pre-allocate a buffer list for input stream.
+        //
+        // First, get the current buffer size for pre-allocating the `AudioBuffer`s.
+        #[cfg(target_os = "macos")]
+        let mut buffer_frame_size: u32 = {
+            let id = sys::kAudioDevicePropertyBufferFrameSize;
+            // The buffer-frame-size property returns a u32.
+            let buffer_frame_size: u32 = unsafe { self.get_property(id, Scope::Global, Element::Output)? };
+            buffer_frame_size
+        };
+        #[cfg(target_os = "ios")]
+        let mut buffer_frame_size: u32 = {
+            let id = sys::kAudioSessionProperty_CurrentHardwareIOBufferDuration;
+            // The hardware buffer duration is an f32.
+            let seconds: f32 = unsafe { super::audio_session_get_property(id)? };
+            let id = sys::kAudioSessionProperty_CurrentHardwareSampleRate;
+            // The hardware sample rate is an f64.
+            let sample_rate: f64 = unsafe { super::audio_session_get_property(id)? };
+            (sample_rate * seconds as f64).round() as u32
+        };
+        let sample_bytes = stream_format.sample_format.size_in_bytes();
+        let n_channels = stream_format.channels;
+        if non_interleaved && n_channels > 1 {
+            return Err(Error::NonInterleavedInputOnlySupportsMono);
+        }
+
+        let data_byte_size = buffer_byte_size(buffer_frame_size, sample_bytes, n_channels)
+            .ok_or(Error::Unspecified)?;
+        // The callback owns this buffer. CoreAudio's mDataByteSize is not the
+        // Vec's capacity and must never be used to reconstruct its allocation.
+        let mut data = InputBuffer::new(data_byte_size as usize);
+        let audio_buffer = sys::AudioBuffer {
+            mDataByteSize: data_byte_size,
+            mNumberChannels: n_channels,
+            mData: data.as_mut_ptr() as *mut _,
+        };
+
+        let audio_buffer_list = Box::new(sys::AudioBufferList {
+            mNumberBuffers: 1,
+            mBuffers: [audio_buffer],
+        });
+
+        // Relinquish ownership of the audio buffer list. Instead, we'll store a raw pointer and
+        // convert it back into a `Box` when `free_input_callback` is next called.
+        let audio_buffer_list_ptr = Box::into_raw(audio_buffer_list);
+
+        // Here, we call the given input callback function within a closure that matches the
+        // arguments of the required coreaudio "input_proc".
+        //
+        // This allows us to take advantage of rust's type system and provide format-specific
+        // `Args` types which can be checked at compile time.
+        let audio_unit = self.instance;
+        let input_proc_fn = move |io_action_flags: *mut sys::AudioUnitRenderActionFlags,
+                                  in_time_stamp: *const sys::AudioTimeStamp,
+                                  in_bus_number: sys::UInt32,
+                                  in_number_frames: sys::UInt32,
+                                  _io_data: *mut sys::AudioBufferList|
+              -> sys::OSStatus {
+            if io_action_flags.is_null() || in_time_stamp.is_null() {
+                return Error::Unspecified.as_os_status();
+            }
+            // If the buffer size has changed, ensure the AudioBuffer is the correct size.
+            if buffer_frame_size != in_number_frames {
+                unsafe {
+                    // Retrieve the up-to-date stream format.
+                    let id = sys::kAudioUnitProperty_StreamFormat;
+                    let asbd =
+                        match super::get_property(audio_unit, id, Scope::Output, Element::Input) {
+                            Err(err) => return err.as_os_status(),
+                            Ok(asbd) => asbd,
+                        };
+                    let stream_format = match super::StreamFormat::from_asbd(asbd) {
+                        Err(err) => return err.as_os_status(),
+                        Ok(fmt) => fmt,
+                    };
+                    if !D::does_stream_format_match(&stream_format)
+                        || (stream_format.flags.contains(LinearPcmFlags::IS_NON_INTERLEAVED)
+                            && stream_format.channels > 1)
+                    {
+                        return Error::Unspecified.as_os_status();
+                    }
+                    let sample_bytes = stream_format.sample_format.size_in_bytes();
+                    let n_channels = stream_format.channels;
+                    let data_byte_size =
+                        match buffer_byte_size(in_number_frames, sample_bytes, n_channels) {
+                            Some(size) => size,
+                            None => return error::Error::Unspecified.as_os_status(),
+                        };
+                    // This callback allocated exactly one AudioBuffer above.
+                    data.resize(data_byte_size as usize);
+                    let buffer = &mut (*audio_buffer_list_ptr).mBuffers[0];
+                    buffer.mData = data.as_mut_ptr() as *mut _;
+                    buffer.mDataByteSize = data_byte_size;
+                    buffer.mNumberChannels = n_channels;
+                }
+                buffer_frame_size = in_number_frames;
+            }
+
+            unsafe {
+                let status = sys::AudioUnitRender(
+                    audio_unit,
+                    io_action_flags,
+                    in_time_stamp,
+                    in_bus_number,
+                    in_number_frames,
+                    audio_buffer_list_ptr,
+                );
+                if status != 0 {
+                    return status;
+                }
+            }
+
+            // This callback owns exactly one initialized allocation. Reject a
+            // driver that substitutes a pointer or reports a different length.
+            unsafe {
+                let list = &*audio_buffer_list_ptr;
+                if list.mNumberBuffers != 1
+                    || list.mBuffers[0].mData != data.as_mut_ptr().cast()
+                    || list.mBuffers[0].mDataByteSize as usize != data.len()
+                {
+                    return Error::Unspecified.as_os_status();
+                }
+            }
+            let args = unsafe {
+                let data = match D::from_input_proc_args(in_number_frames, audio_buffer_list_ptr, false) {
+                    Some(data) => data,
+                    None => return Error::Unspecified.as_os_status(),
+                };
+                let flags = action_flags::Handle::from_ptr(io_action_flags);
+                Args::<D> {
+                    data,
+                    time_stamp: *in_time_stamp,
+                    flags,
+                    bus_number: in_bus_number as u32,
+                    num_frames: in_number_frames as usize,
+                }
+            };
+
+            match f(args) {
+                Ok(()) => 0,
+                Err(()) => error::Error::Unspecified.as_os_status(),
+            }
+        };
+
+        let input_proc_fn_wrapper = Box::new(InputProcFnWrapper {
+            callback: Box::new(input_proc_fn),
+        });
+
+        // Setup input callback. Notice that we relinquish ownership of the Callback
+        // here so that it can be used as the C render callback via a void pointer.
+        // We do however store the *mut so that we can convert back to a Box<InputProcFnWrapper>
+        // within our AudioUnit's Drop implementation (otherwise it would leak).
+        let input_proc_fn_wrapper_ptr = Box::into_raw(input_proc_fn_wrapper) as *mut c_void;
+
+        let render_callback = sys::AURenderCallbackStruct {
+            inputProc: Some(input_proc),
+            inputProcRefCon: input_proc_fn_wrapper_ptr,
+        };
+
+        self.set_property(
+            sys::kAudioOutputUnitProperty_SetInputCallback,
+            Scope::Global,
+            Element::Output,
+            Some(&render_callback),
+        )?;
+
+        let input_callback = super::InputCallback {
+            buffer_list: audio_buffer_list_ptr,
+            callback: input_proc_fn_wrapper_ptr as *mut InputProcFnWrapper,
+        };
+        self.free_input_callback();
+        self.maybe_input_callback = Some(input_callback);
+        Ok(())
+    }
+
+    /// Retrieves ownership over the render callback and returns it where it can be re-used or
+    /// safely dropped.
+    pub fn free_render_callback(&mut self) -> Option<Box<InputProcFnWrapper>> {
+        if let Some(callback) = self.maybe_render_callback.take() {
+            // Here, we transfer ownership of the callback back to the current scope so that it
+            // is dropped and cleaned up. Without this line, we would leak the Boxed callback.
+            let callback: Box<InputProcFnWrapper> = unsafe { Box::from_raw(callback) };
+            return Some(callback);
+        }
+        None
+    }
+
+    /// Retrieves ownership over the input callback and returns it where it can be re-used or
+    /// safely dropped.
+    pub fn free_input_callback(&mut self) -> Option<Box<InputProcFnWrapper>> {
+        if let Some(input_callback) = self.maybe_input_callback.take() {
+            let super::InputCallback {
+                buffer_list,
+                callback,
+            } = input_callback;
+            unsafe {
+                // The callback owns the sample allocation; this list contains
+                // only a borrowed pointer to it.
+                let _buffer_list: Box<sys::AudioBufferList> = Box::from_raw(buffer_list);
+                // Take ownership over the callback so that it can be freed.
+                let callback: Box<InputProcFnWrapper> = Box::from_raw(callback);
+                return Some(callback);
+            }
+        }
+        None
+    }
+}
+
+/// Callback procedure that will be called each time our audio_unit requests audio.
+extern "C" fn input_proc(
+    in_ref_con: *mut c_void,
+    io_action_flags: *mut sys::AudioUnitRenderActionFlags,
+    in_time_stamp: *const sys::AudioTimeStamp,
+    in_bus_number: sys::UInt32,
+    in_number_frames: sys::UInt32,
+    io_data: *mut sys::AudioBufferList,
+) -> sys::OSStatus {
+    let wrapper = in_ref_con as *mut InputProcFnWrapper;
+    unsafe {
+        (*(*wrapper).callback)(
+            io_action_flags,
+            in_time_stamp,
+            in_bus_number,
+            in_number_frames,
+            io_data,
+        )
+    }
+}

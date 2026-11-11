@@ -910,7 +910,7 @@ export const AppSideEffects = () => {
       surfaceMainWindowDetached();
     } else if (payload.action === "open_transcriptions") {
       surfaceMainWindowDetached();
-      // The shared action lazily imports the router and logs navigation
+      // The shared action uses the lazy router entry point and logs navigation
       // failures, so it works before Router mounts and stays identical to the
       // retranscription snackbar's History action.
       openTranscriptionsHistory();

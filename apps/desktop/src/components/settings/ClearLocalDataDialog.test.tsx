@@ -2,6 +2,10 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  beginNativeRecording,
+  resetNativeRecordingSession,
+} from "../../utils/native-recording-session";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -84,11 +88,31 @@ describe("ClearLocalDataDialog", () => {
       (button) => button.textContent?.trim() === "Clear local data",
     );
 
+  /** Open a native recording so the teardown below has a stream to stop. */
+  const startLiveRecording = async (): Promise<void> => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "recording_generation") return Promise.resolve(1);
+      if (command === "start_recording") {
+        return Promise.resolve({ sampleRate: 16_000 });
+      }
+      return Promise.resolve(new ArrayBuffer(4));
+    });
+    await beginNativeRecording(null);
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "start_recording"
+          ? { sampleRate: 16_000 }
+          : new ArrayBuffer(4),
+      ),
+    );
+  };
+
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     window.localStorage.clear();
+    resetNativeRecordingSession();
     mocks.invoke.mockReset();
     mocks.invoke.mockResolvedValue(undefined);
     setAppState(structuredClone(INITIAL_APP_STATE), true);
@@ -138,6 +162,7 @@ describe("ClearLocalDataDialog", () => {
   });
 
   it("wipes local data even when a subsystem stop fails and keeps recovery pending without exposing native error details", async () => {
+    await startLiveRecording();
     window.localStorage.setItem(LOCAL_STATE_STORAGE_KEY, "{}");
     const reload = vi.fn();
     Object.defineProperty(window, "location", {
@@ -161,7 +186,10 @@ describe("ClearLocalDataDialog", () => {
     expect(document.body.textContent).not.toContain(
       "private native diagnostic",
     );
-    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "stop_recording",
+      expect.anything(),
+    );
     expect(mocks.invoke).toHaveBeenCalledWith("clear_local_data");
     expect(mocks.invoke).not.toHaveBeenCalledWith("complete_local_data_clear");
     expect(window.localStorage.getItem(LOCAL_STATE_STORAGE_KEY)).toBeNull();
@@ -212,6 +240,7 @@ describe("ClearLocalDataDialog", () => {
   });
 
   it("stops the recorder and the key listener before wiping", async () => {
+    await startLiveRecording();
     openDialog();
     render();
     typeConfirmation("clear");

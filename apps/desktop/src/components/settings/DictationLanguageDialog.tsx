@@ -16,7 +16,8 @@ import {
 } from "@mui/material";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { produceAppState, useAppStore } from "../../store";
+import { getAppState, produceAppState, useAppStore } from "../../store";
+import type { Hotkey } from "@maus-inc/types";
 import { createId } from "../../utils/id.utils";
 import {
   DICTATE_HOTKEY,
@@ -153,11 +154,15 @@ export const DictationLanguageDialog = () => {
   const contentRef = useRef<HTMLDivElement>(null);
   const saveInFlight = useRef(false);
   const initialLanguage = useRef(storePrimaryLanguage);
+  const hotkeySnapshot = useRef<Hotkey[] | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setSaveFailed(false);
     initialLanguage.current = storePrimaryLanguage;
+    // The rows below are a draft of this moment; the save asserts it, so a
+    // shortcut written while the dialog is open is reported, not overwritten.
+    hotkeySnapshot.current = Object.values(getAppState().hotkeyById);
     setRows([
       {
         rowId: createId(),
@@ -220,6 +225,7 @@ export const DictationLanguageDialog = () => {
         rows,
         storePrimaryLanguage,
         initialLanguage.current,
+        hotkeySnapshot.current ?? undefined,
       );
       produceAppState((draft) => {
         draft.settings.dictationLanguageDialogOpen = false;

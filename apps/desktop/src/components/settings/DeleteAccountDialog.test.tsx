@@ -2,6 +2,10 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  beginNativeRecording,
+  resetNativeRecordingSession,
+} from "../../utils/native-recording-session";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -107,11 +111,31 @@ describe("DeleteAccountDialog", () => {
     });
   };
 
+  /** Open a native recording so the teardown below has a stream to stop. */
+  const startLiveRecording = async (): Promise<void> => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "recording_generation") return Promise.resolve(1);
+      if (command === "start_recording") {
+        return Promise.resolve({ sampleRate: 16_000 });
+      }
+      return Promise.resolve(new ArrayBuffer(4));
+    });
+    await beginNativeRecording(null);
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "start_recording"
+          ? { sampleRate: 16_000 }
+          : new ArrayBuffer(4),
+      ),
+    );
+  };
+
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     window.localStorage.clear();
+    resetNativeRecordingSession();
     mocks.invoke.mockReset();
     // The explicit `undefined` is the argument these mocks' types ask for:
     // `mockResolvedValue()` does not compile against them ("Expected 1
@@ -210,15 +234,23 @@ describe("DeleteAccountDialog", () => {
     expect(mocks.signOut).not.toHaveBeenCalled();
   });
   it("wipes local data and keeps cleanup pending if the recorder cannot stop", async () => {
+    await startLiveRecording();
     mocks.invoke.mockImplementation((command: unknown) =>
       command === "stop_recording"
         ? Promise.reject(new Error("recorder still active"))
-        : Promise.resolve(),
+        : command === "recording_generation"
+          ? Promise.resolve(1)
+          : command === "start_recording"
+            ? Promise.resolve({ sampleRate: 16_000 })
+            : Promise.resolve(),
     );
     render();
     await submit();
     expect(mocks.invoke).toHaveBeenCalledWith("stop_key_listener");
-    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "stop_recording",
+      expect.anything(),
+    );
     expect(mocks.invoke).toHaveBeenCalledWith("clear_local_data");
     expect(mocks.invoke).not.toHaveBeenCalledWith("complete_local_data_clear");
     expect(getAppState().local.profileImageByUserId).toEqual({});
