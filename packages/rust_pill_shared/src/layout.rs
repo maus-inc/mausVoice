@@ -1440,4 +1440,47 @@ pub(crate) mod tests {
             assert_eq!(at, 10.0);
         }
     }
+
+    /// The reason the pair is one value: the caller cannot store half of it.
+    /// Before this, each pill read two cells, called `poll_layout`, and wrote both
+    /// back, and a caller that wrote one polled every frame without ever looking
+    /// wrong.
+    #[test]
+    fn observing_stores_both_halves_every_time() {
+        let mut poll = LayoutPoll::new();
+        assert_eq!(poll.signature(), None);
+
+        assert_eq!(poll.observe(10.0, 42), PollOutcome::Baseline);
+        assert_eq!(poll.polled_at(), 10.0);
+        assert_eq!(poll.signature(), Some(42));
+
+        // Too soon: neither half moves, so the next real tick still has the
+        // interval it thinks it has.
+        assert_eq!(poll.observe(10.2, 99), PollOutcome::TooSoon);
+        assert_eq!(poll.polled_at(), 10.0);
+        assert_eq!(poll.signature(), Some(42));
+
+        // A real change stores the new pair, which is what makes the following
+        // tick compare against this arrangement rather than the launch one.
+        assert_eq!(poll.observe(10.6, 43), PollOutcome::Changed);
+        assert_eq!(poll.polled_at(), 10.6);
+        assert_eq!(poll.signature(), Some(43));
+
+        assert_eq!(poll.observe(11.2, 43), PollOutcome::Unchanged);
+        assert_eq!(poll.signature(), Some(43));
+    }
+
+    /// A poll resumed from stored values must not re-baseline, or a restart would
+    /// swallow the first change after it.
+    #[test]
+    fn a_resumed_poll_keeps_the_signature_it_was_given() {
+        let mut poll = LayoutPoll::from_parts(10.0, Some(42));
+        assert_eq!(poll.polled_at(), 10.0);
+        assert_eq!(poll.signature(), Some(42));
+        assert_eq!(
+            poll.observe(10.6, 43),
+            PollOutcome::Changed,
+            "a resumed poll compared against the wrong arrangement"
+        );
+    }
 }
