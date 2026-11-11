@@ -189,6 +189,7 @@ export const getQueuedSessions = (): ReviewSession[] =>
  */
 const REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 const OPEN_SAVE_TIMEOUT_MS = 30_000;
+const CLIPBOARD_TIMEOUT_MS = 30_000;
 
 let unlistenDecision: (() => void) | null = null;
 let listenerSetup: Promise<void> | null = null;
@@ -376,8 +377,17 @@ const settle = (
 };
 
 const copyReviewToClipboard = async (text: string): Promise<boolean> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
-    await invoke("copy_to_clipboard", { text });
+    await Promise.race([
+      invoke("copy_to_clipboard", { text }),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error("Clipboard hand-off timed out")),
+          CLIPBOARD_TIMEOUT_MS,
+        );
+      }),
+    ]);
     runToast(
       showToast({
         message: getIntl().formatMessage({
@@ -401,6 +411,8 @@ const copyReviewToClipboard = async (text: string): Promise<boolean> => {
       }),
     );
     return false;
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
   }
 };
 

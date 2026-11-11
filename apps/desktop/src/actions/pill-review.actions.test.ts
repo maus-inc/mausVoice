@@ -331,6 +331,38 @@ describe("reviewTranscriptOnPill", () => {
     });
   });
 
+  it("recovers when a clipboard hand-off stalls and remains retryable", async () => {
+    vi.useFakeTimers();
+    let first: Promise<string | null> | null = null;
+    try {
+      mocks.invoke
+        .mockImplementationOnce(() => new Promise(() => undefined))
+        .mockResolvedValueOnce(undefined);
+      first = startPillReview("copy me");
+      await flush(() => getAppState().pendingPillReview !== null);
+      const id = currentReviewId();
+      const second = startPillReview("queued review");
+      await flush(() => getQueuedSessions().length === 2);
+
+      decide?.({ payload: { reviewId: id, action: "copy" } });
+      await flush(() => mocks.invoke.mock.calls.length === 1);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(getAppState().pendingPillReview).toEqual({ id, text: "copy me" });
+      expect(getReviewSession(id)?.status).toBe("open");
+      expect(getQueuedSessions()).toHaveLength(2);
+
+      decide?.({ payload: { reviewId: id, action: "copy" } });
+      await expect(first).resolves.toBeNull();
+      expect(getReviewSession(id)?.decision).toBe("copy");
+      expect(getAppState().pendingPillReview?.text).toBe("queued review");
+      await cancelPillReview(second);
+    } finally {
+      cancelAllPillReviews();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps a failed copy open with its edited draft and lets the user retry", async () => {
     const first = startPillReview("original");
     await flush(() => getAppState().pendingPillReview !== null);
@@ -617,8 +649,8 @@ describe("reviewTranscriptOnPill", () => {
       decide?.({ payload: { reviewId: id, action: "copy" } });
       await flush(() => mocks.invoke.mock.calls.length > 0);
 
-      expect(vi.getTimerCount()).toBe(0);
-      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(29_999);
       expect(getReviewSession(id)?.status).toBe("open");
       expect(onExpire).not.toHaveBeenCalled();
 
