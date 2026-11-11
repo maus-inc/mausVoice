@@ -329,12 +329,14 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     crate::system::audio_feedback::play_thock(&kind);
                 }
                 OutMessage::Hover { .. } => {}
-                OutMessage::PositionChanged {
-                    has_saved_position,
-                    rect,
-                    monitor,
-                    display_id,
-                } => {
+                OutMessage::PositionChanged { report } => {
+                    // The four fields are one record on the wire, so they are read
+                    // as one: a variant that carried them separately could be
+                    // destructured into a position with no display, or a display
+                    // with no position.
+                    let has_saved_position = report.has_saved_position;
+                    let (rect, monitor) = (report.rect, report.monitor);
+                    let display_id = report.display.display_id;
                     let rect_json = rect.map(|r| {
                         serde_json::json!({ "x": r.x, "y": r.y, "width": r.width, "height": r.height })
                     });

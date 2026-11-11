@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
@@ -38,6 +38,22 @@ const read = (relativePath) =>
   relativePath.endsWith(".rs")
     ? collapse(readRaw(relativePath))
     : readRaw(relativePath);
+
+// Every Rust file under a directory. A guard that has to prove a shape holds on
+// all of them cannot list them: the file it misses is the drift it exists for,
+// and a platform-gated file compiles only on that platform's CI job.
+const rustFilesUnder = (directory) => {
+  const found = [];
+  const walk = (relativePath) => {
+    for (const entry of readdirSync(join(repoRoot, relativePath), { withFileTypes: true })) {
+      const child = `${relativePath}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else if (entry.name.endsWith(".rs")) found.push(child);
+    }
+  };
+  walk(directory);
+  return found.sort();
+};
 
 // The lines of the item declared at `marker`, up to and including the line that
 // closes it, collapsed as `read` collapses a whole file. A guard that inspects
@@ -2392,6 +2408,31 @@ describe("native gesture adapter contracts", () => {
       /if !crate::pill_position::clear_saved_position\(app\)/,
       "the macOS overlay reset has the same hole as the generic path",
     );
+  });
+
+  it("reads the published position as one record on every desktop path", () => {
+    // The variant carries a single `report`. A consumer that still destructured
+    // the pre-refactor fields compiled nowhere, so the only platform whose code
+    // path it lived on was the one that failed: the macOS overlay kept three
+    // fields through the whole refactor and only CI's macOS lint noticed.
+    const files = rustFilesUnder("apps/desktop/src-tauri/src");
+    for (const file of files) {
+      const text = read(file);
+      const pieces = text.split("OutMessage::PositionChanged");
+      for (const piece of pieces.slice(1)) {
+        const head = piece.slice(0, 400);
+        assert.match(
+          head,
+          /^\s*\{\s*report\s*\}/,
+          `${file}: destructures the published position into loose fields again`,
+        );
+        assert.doesNotMatch(
+          head,
+          /has_saved_position\s*[,}]/,
+          `${file}: reads a field the shared record owns`,
+        );
+      }
+    }
   });
 
   it("polls the arrangement through one shared policy", () => {
