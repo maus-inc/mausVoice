@@ -19,18 +19,24 @@ const mocks = vi.hoisted(() => {
   const state: Record<string, unknown> = {};
   return {
     state,
+    // `Promise.resolve` rather than `async` with no `await`: these stand in for
+    // Tauri commands that really do return promises, so the promise is part of
+    // the thing being imitated and must not be dropped. An `async` body with
+    // nothing to await says "this is asynchronous work" when there is none.
     warmMicrophone: vi.fn<
       (preroll: number, linger: number) => Promise<unknown>
-    >(async () => ({ status: "ok", data: null })),
-    closeMicrophone: vi.fn(async () => undefined),
-    microphoneReady: vi.fn(async () => false),
-    prepareMicrophone: vi.fn(async () => ({ status: "ok", data: "mic" })),
-    setMicrophoneLinger: vi.fn(async () => undefined),
-    setMicrophonePreroll: vi.fn(async () => undefined),
+    >(() => Promise.resolve({ status: "ok", data: null })),
+    closeMicrophone: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+    microphoneReady: vi.fn(() => Promise.resolve(false)),
+    prepareMicrophone: vi.fn(() =>
+      Promise.resolve({ status: "ok", data: "mic" }),
+    ),
+    setMicrophoneLinger: vi.fn(() => Promise.resolve(undefined)),
+    setMicrophonePreroll: vi.fn(() => Promise.resolve(undefined)),
     showSnackbar: vi.fn(),
-    emit: vi.fn(async () => undefined),
-    listen: vi.fn(async () => () => undefined),
-    refreshCurrentUser: vi.fn(async () => undefined),
+    emit: vi.fn(() => Promise.resolve(undefined)),
+    listen: vi.fn(() => Promise.resolve(() => undefined)),
+    refreshCurrentUser: vi.fn(() => Promise.resolve(undefined)),
     clearListeners: new Set<() => void>(),
   };
 });
@@ -121,7 +127,7 @@ const setState = (overrides: Record<string, unknown>) => {
 
 /** Renders and lets the effect's promise continuations settle. */
 const render = async () => {
-  await act(async () => {
+  await act(() => {
     root.render(<MicrophoneReadinessSideEffects />);
   });
   await act(async () => {
@@ -131,7 +137,7 @@ const render = async () => {
 };
 
 const rerender = async () => {
-  await act(async () => {
+  await act(() => {
     root.render(<MicrophoneReadinessSideEffects />);
   });
   await act(async () => {
@@ -294,7 +300,7 @@ describe("MicrophoneReadinessSideEffects", () => {
 
     // The clear is requested outside React state, so only the subscription can
     // see it. Reading the latch once at mount would miss this entirely.
-    await act(async () => {
+    await act(() => {
       mocks.state.__clearing = true;
       for (const listener of mocks.clearListeners) listener();
     });
@@ -321,7 +327,7 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.state.settings).toMatchObject({ microphoneHeld: true });
     mocks.closeMicrophone.mockClear();
 
-    await act(async () => {
+    await act(() => {
       mocks.state.__clearing = true;
       for (const listener of mocks.clearListeners) listener();
     });
@@ -337,7 +343,7 @@ describe("MicrophoneReadinessSideEffects", () => {
     await render();
     mocks.closeMicrophone.mockClear();
 
-    await act(async () => {
+    await act(() => {
       mocks.state.__clearing = true;
       for (const listener of mocks.clearListeners) listener();
     });
@@ -576,6 +582,56 @@ describe("MicrophoneReadinessSideEffects", () => {
 
     // Two closes: the release the preference asked for, and the one that undoes
     // the open which arrived after it.
+    expect(mocks.closeMicrophone.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("re-reads the device when the close of a superseded open fails", async () => {
+    // The chain that undoes a late open used to have no failure path, unlike
+    // every other close in the component. If `closeMicrophone` rejected there,
+    // the read that follows it never ran: the dialog kept displaying whatever it
+    // showed before, which after a late open can be "held" for a stream this
+    // component has just given up on. The close is still attempted, the failure
+    // is logged, and the state is re-read regardless, because a close that failed
+    // leaves the stream open and that is exactly what the user must be shown.
+    setState({});
+    let finishOpen: (value: unknown) => void = () => undefined;
+    mocks.warmMicrophone.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
+    await render();
+
+    // The release the preference change asks for succeeds; the corrective close
+    // that follows the late open is the one that fails.
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await rerender();
+
+    const readsBefore = mocks.microphoneReady.mock.calls.length;
+    mocks.closeMicrophone.mockRejectedValueOnce(new Error("device busy"));
+
+    await act(async () => {
+      finishOpen({ status: "ok", data: null });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Without the failure path the close rejects and the read below it is
+    // skipped, so this count never moves.
+
+    expect(mocks.microphoneReady.mock.calls.length).toBeGreaterThan(
+      readsBefore,
+    );
+    // The close was still attempted rather than abandoned on the strength of
+    // having failed.
     expect(mocks.closeMicrophone.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -835,12 +891,14 @@ describe("MicrophoneReadinessSideEffects", () => {
 
     // Hold the close open so its continuation can be ordered deliberately.
     let finishClose: (() => void) | undefined;
-    // Typed as the mock's own return type rather than `void`: `closeMicrophone`
-    // resolves to `undefined`, and a `Promise<void>` is not assignable to it.
+    // `Promise<void>`, matching the generated `closeMicrophone`. It used to be
+    // `Promise<undefined>`, which resolved only because the resolver was passed
+    // an explicit `undefined`; `resolve()` is the same thing without the
+    // redundant argument, and it needs the `void` type to accept no arguments.
     mocks.closeMicrophone.mockImplementationOnce(
       () =>
-        new Promise<undefined>((resolve) => {
-          finishClose = () => resolve(undefined);
+        new Promise<void>((resolve) => {
+          finishClose = () => resolve();
         }),
     );
     mocks.setMicrophoneLinger.mockClear();

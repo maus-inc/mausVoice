@@ -104,7 +104,7 @@ describe("MicrophoneDialog readiness settings", () => {
   let root: Root;
 
   const renderDialog = async () => {
-    await act(async () => {
+    await act(() => {
       root.render(
         createElement(
           IntlProvider,
@@ -139,7 +139,7 @@ describe("MicrophoneDialog readiness settings", () => {
 
   const toggle = async (label: string) => {
     const input = switchFor(label);
-    await act(async () => {
+    await act(() => {
       input.click();
     });
   };
@@ -251,7 +251,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("keeps the pre-roll slider reachable when the value is zero", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         draft.userPrefs = prefs({ microphonePrerollSeconds: 0 });
       });
@@ -275,7 +275,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("shows the real held state only while keeping ready", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         // The backend has not reported a hold yet, which is the state right
         // after switching on and before the side effects open anything.
@@ -299,7 +299,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("reports a refused hold as not held", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         draft.userPrefs = prefs({ keepMicrophoneReady: true });
         // The backend tried and could not open the device, and that is worth
@@ -315,7 +315,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("reports a confirmed hold once the backend says so", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         draft.userPrefs = prefs({ keepMicrophoneReady: true });
         draft.settings.microphoneHeld = true;
@@ -328,7 +328,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("commits a new pre-roll value", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         draft.userPrefs = prefs({
           keepMicrophoneReady: true,
@@ -343,7 +343,7 @@ describe("MicrophoneDialog readiness settings", () => {
     if (!commit) {
       throw new Error("Missing pre-roll commit");
     }
-    await act(async () => {
+    await act(() => {
       commit.click();
     });
 
@@ -356,7 +356,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("disables the linger switch and explains why when keeping ready is on", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         draft.userPrefs = prefs({
           keepMicrophoneReady: true,
@@ -385,7 +385,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("does not change the linger window when the overridden switch is toggled", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         draft.userPrefs = prefs({
           keepMicrophoneReady: true,
@@ -407,7 +407,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("offers the documented linger windows once the switch is on", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         draft.userPrefs = prefs({ microphoneLingerMs: 5_000 });
       });
@@ -424,7 +424,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("shows the nearest offered window for a stored value that is not one of them", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         // A value from an older build, or a hand-edited row. The control has to
         // display something, and the closest option is the honest choice.
@@ -441,7 +441,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("does not show the duration choices while keeping ready owns the device", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         draft.userPrefs = prefs({
           keepMicrophoneReady: true,
@@ -468,7 +468,7 @@ describe("MicrophoneDialog readiness settings", () => {
   it("turns the linger window off back to zero", async () => {
     await renderDialog();
 
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         draft.userPrefs = prefs({ microphoneLingerMs: 5_000 });
       });

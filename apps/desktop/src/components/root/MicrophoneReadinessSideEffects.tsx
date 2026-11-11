@@ -7,6 +7,7 @@ import { getAppState, produceAppState, useAppStore } from "../../store";
 import { showSnackbar } from "../../actions/app.actions";
 import { getIntl } from "../../i18n/intl";
 import { getLogger } from "../../utils/log.utils";
+import { logOnRejection } from "../../utils/promise.utils";
 import {
   isLocalDataClearRequested,
   isMainLocalDataWindow,
@@ -78,30 +79,54 @@ export const MicrophoneReadinessSideEffects = () => {
    * The switch reflects the preference; this reflects the device. They differ
    * whenever an open fails, which is the case a user notices as "it says ready
    * but the first word is still late".
+   *
+   * Returns `void` rather than a promise, and that is load-bearing. Every one of
+   * the nine call sites below wants the read and nothing else: none of them
+   * awaits it, and none can act on a rejection. A function that returns
+   * `Promise<void>` and is never awaited forces each caller to write `void` to
+   * say "I know this is a floating promise", which is a marker with no effect on
+   * what happens at runtime. Absorbing the promise here instead means the
+   * callers are synchronous calls that genuinely have nothing to wait for, and
+   * the rejection handling lives at the one place that owns it.
+   *
+   * The rejection cannot escape either way: `commands.microphoneReady()` is
+   * awaited inside the `try`, and the broadcast promise is caught. The change is
+   * to the type, so a future caller cannot accidentally depend on the timing of
+   * a read that is deliberately fire-and-forget.
    */
-  const publishHeld = useCallback(async () => {
-    try {
-      const held = await commands.microphoneReady();
-      if (getAppState().settings.microphoneHeld === held) {
-        return;
+  const publishHeld = useCallback((): void => {
+    const read = async () => {
+      try {
+        const held = await commands.microphoneReady();
+        if (getAppState().settings.microphoneHeld === held) {
+          return;
+        }
+        produceAppState((draft) => {
+          draft.settings.microphoneHeld = held;
+        });
+        // Only the main window broadcasts: several windows each emitting would
+        // multiply the traffic, and every listener would then re-read N times.
+        if (isMainLocalDataWindow()) {
+          logOnRejection(
+            emit(MICROPHONE_READINESS_EVENT, { held }).catch(
+              (error: unknown) => {
+                getLogger().verbose(
+                  `Could not broadcast the microphone state: ${error}`,
+                );
+              },
+            ),
+            "microphone readiness broadcast",
+          );
+        }
+      } catch (error) {
+        getLogger().warning(`Could not read the microphone state: ${error}`);
       }
-      produceAppState((draft) => {
-        draft.settings.microphoneHeld = held;
-      });
-      // Only the main window broadcasts: several windows each emitting would
-      // multiply the traffic, and every listener would then re-read N times.
-      if (isMainLocalDataWindow()) {
-        void emit(MICROPHONE_READINESS_EVENT, { held }).catch(
-          (error: unknown) => {
-            getLogger().verbose(
-              `Could not broadcast the microphone state: ${error}`,
-            );
-          },
-        );
-      }
-    } catch (error) {
-      getLogger().warning(`Could not read the microphone state: ${error}`);
-    }
+    };
+    // Deliberately not awaited: see the doc comment. `logOnRejection` is the
+    // repository's wrapper for a promise nobody awaits, and it is a second net
+    // rather than the primary one -- `read` catches everything it awaits, so
+    // this only fires if the logger itself throws inside that catch.
+    logOnRejection(read(), "microphone state read");
   }, []);
 
   // What this component last told the backend, so a render that does not change
@@ -236,47 +261,82 @@ export const MicrophoneReadinessSideEffects = () => {
     (seconds: number) => {
       heldRef.current = true;
       const request = ++requestRef.current;
-      void commands
-        .warmMicrophone(seconds, MICROPHONE_READY_FOREVER_MS)
-        .then((result) => {
-          if (requestRef.current !== request) {
-            // The answer arrived for a request this window has already
-            // superseded. The common case is the preference being turned off
-            // while the device was opening: `close_microphone` ran first and
-            // found nothing, because the stream did not exist yet, and this open
-            // then created one that nothing would close. Closing it here is what
-            // makes a late answer harmless rather than a leaked microphone.
-            getLogger().info(
-              "a microphone open finished after this window stopped asking for it; closing it",
-            );
-            void commands.closeMicrophone().then(() => {
-              void publishHeld();
-            });
-            return;
-          }
-          void publishHeld();
-          if (result.status === "error") {
-            // A device that will not open is not a preference failure: the next
-            // press opens it the normal way and reports the real problem. The
-            // preference stays on, because the user asked for it and it may work
-            // once the device comes back.
-            reportHoldFailure(result.error);
-            // The ring did not take the request, so the next attempt must not
-            // believe a stream is held.
+      logOnRejection(
+        commands
+          .warmMicrophone(seconds, MICROPHONE_READY_FOREVER_MS)
+          .then((result) => {
+            if (requestRef.current !== request) {
+              // The answer arrived for a request this window has already
+              // superseded. The common case is the preference being turned off
+              // while the device was opening: `close_microphone` ran first and
+              // found nothing, because the stream did not exist yet, and this open
+              // then created one that nothing would close. Closing it here is what
+              // makes a late answer harmless rather than a leaked microphone.
+              getLogger().info(
+                "a microphone open finished after this window stopped asking for it; closing it",
+              );
+              //
+              // This chain used to have no failure path at all, unlike every other
+              // close in this file. A `closeMicrophone` that rejects left the read
+              // below unrun, so the dialog went on displaying "held" for a stream
+              // this component had just given up on, and the rejection surfaced as
+              // an unhandled one. The close is still attempted and the state is
+              // still re-read, because a close that failed leaves the stream open
+              // and that is exactly the state the user needs to be shown.
+              logOnRejection(
+                commands.closeMicrophone().then(
+                  () => publishHeld(),
+                  (error: unknown) => {
+                    getLogger().warning(
+                      `Could not close the microphone opened after this window stopped asking for it: ${error}`,
+                    );
+                    publishHeld();
+                  },
+                ),
+                "close of a superseded microphone open",
+              );
+              return;
+            }
+            publishHeld();
+            if (result.status === "error") {
+              // A device that will not open is not a preference failure: the next
+              // press opens it the normal way and reports the real problem. The
+              // preference stays on, because the user asked for it and it may work
+              // once the device comes back.
+              reportHoldFailure(result.error);
+              // The ring did not take the request, so the next attempt must not
+              // believe a stream is held.
+              openedPrerollRef.current = null;
+              appliedRef.current = null;
+              return;
+            }
+            clearHoldFailure();
+          })
+          .catch((error: unknown) => {
+            reportHoldFailure(error);
             openedPrerollRef.current = null;
             appliedRef.current = null;
-            return;
-          }
-          clearHoldFailure();
-        })
-        .catch((error: unknown) => {
-          reportHoldFailure(error);
-          openedPrerollRef.current = null;
-          appliedRef.current = null;
-        });
+          }),
+        "microphone warm open",
+      );
     },
     [clearHoldFailure, publishHeld, reportHoldFailure],
   );
+
+  /**
+   * Puts the post-recording window back after a release zeroed it.
+   *
+   * Read from a ref rather than a closure because `release` is created once and
+   * must not carry a staleness-prone copy of the preference.
+   */
+  const restoreLinger = useCallback((milliseconds: number) => {
+    logOnRejection(
+      commands.setMicrophoneLinger(milliseconds).catch((error: unknown) => {
+        getLogger().warning(`Could not restore the linger window: ${error}`);
+      }),
+      "linger restore after release",
+    );
+  }, []);
 
   const release = useCallback(() => {
     openedPrerollRef.current = null;
@@ -284,50 +344,33 @@ export const MicrophoneReadinessSideEffects = () => {
     // Invalidates every open still in flight: any answer from one of them is for
     // a hold this window no longer wants, and `hold` closes it on arrival.
     requestRef.current += 1;
-    void commands
-      .closeMicrophone()
-      .then(() => {
-        // `closeMicrophone` is `release_hold`, which zeroes the linger policy as
-        // part of letting go of the device. The post-recording window is a
-        // *separate* preference, so closing the hold silently turned it off:
-        // every later recording stopped and closed the device instead of leaving
-        // it open for the next press.
-        //
-        // Restoring it here rather than unconditionally is what makes that safe
-        // against the ordering. The effect that pushes this policy deliberately
-        // skips while the preference is on (a zero there would close the stream
-        // the hold is about to open), so a window whose policy the release has
-        // just zeroed is exactly the case this covers. The channel is
-        // command-ordered like every other write on this component, so the
-        // restore lands after the close it is undoing.
-        // Not while something has opened since. `set_microphone_linger`
-        // re-applies the whole policy to the stream that is open, so a restore
-        // landing after a new hold would overwrite the sentinel `warm_microphone`
-        // opened it with and the hold would close itself on a 5 s timer:
-        // keep-ready would silently stop being keep-ready. The close and the
-        // hold are separately issued commands, so their continuations can
-        // interleave; this is the one that has to yield.
-        //
-        // Skipping the restore must not skip the read: `publishHeld` is how the
-        // dialog learns what the device is doing, and returning early here
-        // would leave it showing the state from before this release.
-        if (!heldRef.current && lingerRef.current > 0) {
-          void commands
-            .setMicrophoneLinger(lingerRef.current)
-            .catch((error: unknown) => {
-              getLogger().warning(
-                `Could not restore the linger window: ${error}`,
-              );
-            });
-        }
-        void publishHeld();
-      })
-      .catch((error: unknown) => {
-        getLogger().warning(`Could not release the microphone: ${error}`);
-        appliedRef.current = null;
-        void publishHeld();
-      });
-  }, [publishHeld]);
+    // `release_hold` zeroes the linger policy on its way out, and the
+    // post-recording window is a *separate* preference: closing the hold used to
+    // turn it off silently, so every later recording stopped and closed the
+    // device instead of leaving it open for the next press. Restoring it here is
+    // what makes that harmless. Not while something has opened since: the close
+    // and the hold are separately issued commands, so their continuations can
+    // interleave, and a restore landing after a new hold would overwrite the
+    // sentinel `warm_microphone` opened it with, closing the hold on a timer.
+    // Skipping the restore must not skip the read, because the dialog learns
+    // what the device is doing from that read.
+    logOnRejection(
+      commands
+        .closeMicrophone()
+        .then(() => {
+          if (!heldRef.current && lingerRef.current > 0) {
+            restoreLinger(lingerRef.current);
+          }
+          publishHeld();
+        })
+        .catch((error: unknown) => {
+          getLogger().warning(`Could not release the microphone: ${error}`);
+          appliedRef.current = null;
+          publishHeld();
+        }),
+      "microphone release",
+    );
+  }, [publishHeld, restoreLinger]);
 
   useEffect(() => {
     // A running recording adopts the held stream -- that is the entire point of
@@ -429,25 +472,29 @@ export const MicrophoneReadinessSideEffects = () => {
     if (!prefsLoaded) {
       return;
     }
-    void commands
-      .setMicrophonePreroll(prerollSeconds)
-      .catch((error: unknown) => {
+    logOnRejection(
+      commands.setMicrophonePreroll(prerollSeconds).catch((error: unknown) => {
         getLogger().warning(`Could not set the microphone pre-roll: ${error}`);
-      });
+      }),
+      "microphone pre-roll update",
+    );
   }, [prefsLoaded, prerollSeconds]);
 
   useEffect(() => {
     if (enabled || !prefsLoaded) {
       return;
     }
-    void commands.setMicrophoneLinger(lingerMs).catch((error: unknown) => {
-      getLogger().warning(`Could not set the linger window: ${error}`);
-    });
+    logOnRejection(
+      commands.setMicrophoneLinger(lingerMs).catch((error: unknown) => {
+        getLogger().warning(`Could not set the linger window: ${error}`);
+      }),
+      "linger window update",
+    );
   }, [enabled, prefsLoaded, lingerMs]);
 
   // One read on mount, so the dialog shows the truth before anything is toggled.
   useEffect(() => {
-    void publishHeld();
+    publishHeld();
   }, [publishHeld]);
 
   // The preference can be changed in another window, and a window whose copy
@@ -457,9 +504,12 @@ export const MicrophoneReadinessSideEffects = () => {
   // and the write path is a single row.
   useEffect(() => {
     const reread = () => {
-      void refreshCurrentUser().catch((error: unknown) => {
-        getLogger().verbose(`Could not re-read preferences: ${error}`);
-      });
+      logOnRejection(
+        refreshCurrentUser().catch((error: unknown) => {
+          getLogger().verbose(`Could not re-read preferences: ${error}`);
+        }),
+        "preference re-read on focus",
+      );
     };
     window.addEventListener("focus", reread);
     return () => window.removeEventListener("focus", reread);
@@ -473,22 +523,28 @@ export const MicrophoneReadinessSideEffects = () => {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen(MICROPHONE_READINESS_EVENT, () => {
-      void publishHeld();
-      void refreshCurrentUser().catch(() => undefined);
-    })
-      .then((cleanup) => {
-        // The listener may resolve after the component unmounted, which happens
-        // in tests and on a fast route change.
-        if (disposed) {
-          cleanup();
-          return;
-        }
-        unlisten = cleanup;
+    logOnRejection(
+      listen(MICROPHONE_READINESS_EVENT, () => {
+        publishHeld();
+        logOnRejection(
+          refreshCurrentUser().catch(() => undefined),
+          "preference re-read on readiness event",
+        );
       })
-      .catch((error: unknown) => {
-        getLogger().verbose(`Could not watch microphone readiness: ${error}`);
-      });
+        .then((cleanup) => {
+          // The listener may resolve after the component unmounted, which
+          // happens in tests and on a fast route change.
+          if (disposed) {
+            cleanup();
+            return;
+          }
+          unlisten = cleanup;
+        })
+        .catch((error: unknown) => {
+          getLogger().verbose(`Could not watch microphone readiness: ${error}`);
+        }),
+      "microphone readiness subscription",
+    );
     return () => {
       disposed = true;
       unlisten?.();
@@ -554,7 +610,7 @@ export const MicrophoneReadinessSideEffects = () => {
     const ownsRetry = () => isMainLocalDataWindow() && shouldHoldNow();
 
     const retryOnFocus = () => {
-      void publishHeld();
+      publishHeld();
       if (!ownsRetry()) {
         return;
       }
@@ -584,10 +640,13 @@ export const MicrophoneReadinessSideEffects = () => {
     if (!shouldPrepare) {
       return;
     }
-    void commands.prepareMicrophone().catch((error: unknown) => {
-      // A device that cannot be resolved now is resolved by the next press.
-      getLogger().warning(`Could not prepare the microphone: ${error}`);
-    });
+    logOnRejection(
+      commands.prepareMicrophone().catch((error: unknown) => {
+        // A device that cannot be resolved now is resolved by the next press.
+        getLogger().warning(`Could not prepare the microphone: ${error}`);
+      }),
+      "microphone preparation",
+    );
   }, [enabled, isRecording, permissionGranted]);
 
   // A clear is requested outside React state, so subscribe to the transition
