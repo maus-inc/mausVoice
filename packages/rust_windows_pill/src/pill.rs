@@ -2611,7 +2611,7 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
 }
 
 fn should_show_edit_label(is_review: bool, text: &str) -> bool {
-    is_review || text.is_empty()
+    !is_review && text.is_empty()
 }
 
 fn update_edit_label_visibility(state: &PillState, text: &str) {
@@ -2674,10 +2674,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn composer_prompt_hides_while_typing_but_review_heading_stays_visible() {
+    fn composer_prompt_hides_while_typing_and_review_heading_is_not_duplicated() {
         assert!(should_show_edit_label(false, ""));
         assert!(!should_show_edit_label(false, "assistant message"));
-        assert!(should_show_edit_label(true, "transcript text"));
+        // The review heading is rendered by draw_review_text, so the overlay
+        // label must stay hidden to avoid displaying it twice.
+        assert!(!should_show_edit_label(true, "transcript text"));
     }
 
     #[test]
