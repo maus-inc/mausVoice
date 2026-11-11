@@ -79,12 +79,7 @@ pub fn store_published_position(
         window_rect.y,
         window_rect.width,
         window_rect.height,
-        MonitorRect::without_id(
-            work_area.x,
-            work_area.y,
-            work_area.width,
-            work_area.height,
-        ),
+        MonitorRect::without_id(work_area.x, work_area.y, work_area.width, work_area.height),
         display_id,
     ) else {
         log::debug!("Ignoring a pill geometry that does not describe a usable window");
