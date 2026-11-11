@@ -463,8 +463,11 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
           if (cmd === "floating_window_create") {
             return Promise.resolve({ id: "floating-review" });
           }
-          if (cmd === "composer_discard_text") {
-            return new Promise(() => undefined);
+          if (
+            cmd === "composer_discard_text" ||
+            cmd === "floating_window_destroy"
+          ) {
+            return new Promise<void>(() => {});
           }
           return Promise.resolve();
         });

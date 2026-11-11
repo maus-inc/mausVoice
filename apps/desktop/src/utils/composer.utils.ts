@@ -444,10 +444,12 @@ class ComposerReview {
     }, COMPOSER_TIMEOUT_MS);
   }
 
-  private async destroyWindow(): Promise<void> {
+  private destroyWindow(): void {
     const id = this.windowId;
     this.windowId = "";
-    await destroyComposerWindow(id);
+    // Window disposal is best-effort; a stuck native IPC must not hold up the
+    // review result after the composer has already timed out or closed.
+    void destroyComposerWindow(id);
   }
 
   private showRecovery(expired = false): void {
