@@ -336,8 +336,8 @@ describe("reviewTranscriptOnPill", () => {
     let first: Promise<string | null> | null = null;
     try {
       mocks.invoke
-        .mockImplementationOnce(() => new Promise(() => undefined))
-        .mockResolvedValueOnce(undefined);
+        .mockImplementationOnce(() => new Promise<void>(() => {}))
+        .mockImplementationOnce(() => Promise.resolve());
       first = startPillReview("copy me");
       await flush(() => getAppState().pendingPillReview !== null);
       const id = currentReviewId();
