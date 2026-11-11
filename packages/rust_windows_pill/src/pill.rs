@@ -2355,11 +2355,13 @@ unsafe extern "system" fn edit_container_proc(
         WM_COMMAND => {
             let notification = ((wparam.0 >> 16) & 0xFFFF) as u16;
             if notification == EN_CHANGE_NOTIFICATION {
-                // Sync native Edit text → state.entry_text
+                // Sync native Edit text → state.entry_text and keep the static
+                // composer prompt from covering text as the user types.
                 let text = get_edit_text();
                 STATE.with(|s| {
                     if let Some(ref state) = *s.borrow() {
-                        *state.entry_text.borrow_mut() = text;
+                        *state.entry_text.borrow_mut() = text.clone();
+                        update_edit_label_visibility(state, &text);
                     }
                 });
             }
@@ -2605,6 +2607,24 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     if state_text.is_empty() && !edit_text.is_empty() {
         set_edit_text("");
     }
+    update_edit_label_visibility(state, &get_edit_text());
+}
+
+fn should_show_edit_label(is_review: bool, text: &str) -> bool {
+    is_review || text.is_empty()
+}
+
+fn update_edit_label_visibility(state: &PillState, text: &str) {
+    let is_review = state.assistant_review.borrow().is_some();
+    let label = EDIT_LABEL_HWND.with(Cell::get);
+    unsafe {
+        let command = if should_show_edit_label(is_review, text) {
+            SW_SHOWNOACTIVATE
+        } else {
+            SW_HIDE
+        };
+        let _ = ShowWindow(label, command);
+    }
 }
 
 fn get_edit_text() -> String {
@@ -2652,6 +2672,13 @@ pub(crate) fn focus_edit_control() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn composer_prompt_hides_while_typing_but_review_heading_stays_visible() {
+        assert!(should_show_edit_label(false, ""));
+        assert!(!should_show_edit_label(false, "assistant message"));
+        assert!(should_show_edit_label(true, "transcript text"));
+    }
 
     #[test]
     fn ctrl_backspace_never_crosses_a_line_break() {
