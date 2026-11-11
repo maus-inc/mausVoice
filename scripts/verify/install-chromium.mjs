@@ -21,6 +21,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -102,22 +103,63 @@ if (existsSync(path.join(OUT, "chromium"))) {
   }
   mkdirSync(STAGING, { recursive: true });
 
-  if (!existsSync(path.join(PKG_DIR, "package.json"))) {
+  // The cache is ours by construction: `PKG_DIR` lives inside `CHR_DIR`, which is
+  // this script's own directory, not a caller-chosen one. Guarded anyway, and on
+  // the same rule as above, because a recursive delete is a recursive delete.
+  if (existsSync(PKG_DIR) && !existsSync(path.join(PKG_DIR, MARKER))) {
+    const contents = readdirSync(PKG_DIR);
+    if (contents.length > 0) {
+      throw new Error(
+        `${PKG_DIR} is not empty and has no ${MARKER}, so it was not created by this script. ` +
+          `Remove it yourself.`,
+      );
+    }
+  }
+
+  // The installed version, not just the presence of a package. A cache left by
+  // an older run at a different version would extract the wrong browser and
+  // report success, because the only check was that a `package.json` exists.
+  const cachedVersion = (() => {
+    try {
+      const manifest = JSON.parse(
+        readFileSync(path.join(PKG_DIR, "package.json"), "utf8"),
+      );
+      return manifest.dependencies?.["@sparticuz/chromium"] ?? null;
+    } catch {
+      return null;
+    }
+  })();
+
+  if (cachedVersion !== VERSION) {
     log(`Installing @sparticuz/chromium@${VERSION} into ${PKG_DIR} …`);
     rmSync(PKG_DIR, { recursive: true, force: true });
     mkdirSync(PKG_DIR, { recursive: true });
     // npm, not pnpm: this tree must not join the workspace or the lockfile.
-    execFileSync(
-      "npm",
-      [
-        "install",
-        "--no-save",
-        "--no-audit",
-        "--no-fund",
-        `@sparticuz/chromium@${VERSION}`,
-      ],
-      { cwd: PKG_DIR, stdio: "inherit" },
-    );
+    //
+    // Bounded, and npm's own retries are off. Unbounded, a registry that accepts
+    // the connection and then stalls holds the script forever with no output,
+    // which reads as a hang in the verification run rather than a network fault.
+    try {
+      execFileSync(
+        "npm",
+        [
+          "install",
+          "--no-save",
+          "--no-audit",
+          "--no-fund",
+          "--fetch-retries=1",
+          "--fetch-timeout=60000",
+          `@sparticuz/chromium@${VERSION}`,
+        ],
+        { cwd: PKG_DIR, stdio: "inherit", timeout: 300_000 },
+      );
+    } catch (error) {
+      throw new Error(
+        `could not install @sparticuz/chromium@${VERSION} within 5 minutes: ${error}`,
+      );
+    }
+    // Claim the directory, so a later run can tell it apart from someone else's.
+    writeFileSync(path.join(PKG_DIR, MARKER), `${VERSION}\n`);
   }
 
   // Resolved through the package directory rather than through

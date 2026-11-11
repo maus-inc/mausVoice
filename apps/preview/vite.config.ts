@@ -7,6 +7,19 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 const desktopSrc = path.resolve(rootDir, "../desktop/src");
 
+/**
+ * The `/@fs/` URL that serves an absolute filesystem path.
+ *
+ * Mirrors what Vite itself does (`/@fs/` plus the path with its leading slash
+ * removed, separators normalised), rather than concatenating `"/@fs" + dir`.
+ * That concatenation is wrong in two ways: it yields a double slash on POSIX and
+ * `/@fsC:\\...` on Windows, where the drive letter follows `@fs` directly. The
+ * Windows form is not an fs URL at all, so the proxy 404s before the request
+ * reaches the plugin that was supposed to rewrite it.
+ */
+const fsUrlFor = (absolutePath: string): string =>
+  "/@fs/" + absolutePath.replace(/\\/g, "/").replace(/^\/+/, "");
+
 // The preview renders REAL desktop components (`@desktop/*`), and those write
 // their user-facing strings as `FormattedMessage`/`useIntl` literals with no
 // `id`. The desktop app compiles them with `babel-plugin-formatjs`, which turns
@@ -123,7 +136,12 @@ export default defineConfig({
       // rewritten to fetch those files through this server.
       "/@desktop": {
         target: "http://127.0.0.1:5193",
-        rewrite: (p) => p.replace(/^\/@desktop/, "/@fs" + desktopSrc),
+        // `@fs` takes a URL path, so the separator has to be a forward slash.
+        // `desktopSrc` is an absolute filesystem path, which on Windows starts
+        // with a drive letter and uses backslashes: concatenated raw it forms
+        // `/@fsC:\...`, which is not a Vite fs URL at all and fails before the
+        // request leaves the server.
+        rewrite: (p) => p.replace(/^\/@desktop/, fsUrlFor(desktopSrc)),
       },
     },
   },

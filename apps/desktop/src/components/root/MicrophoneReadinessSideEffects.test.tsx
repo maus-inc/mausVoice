@@ -31,12 +31,12 @@ const mocks = vi.hoisted(() => {
     prepareMicrophone: vi.fn(() =>
       Promise.resolve({ status: "ok", data: "mic" }),
     ),
-    setMicrophoneLinger: vi.fn(() => Promise.resolve(undefined)),
-    setMicrophonePreroll: vi.fn(() => Promise.resolve(undefined)),
+    setMicrophoneLinger: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+    setMicrophonePreroll: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     showSnackbar: vi.fn(),
-    emit: vi.fn(() => Promise.resolve(undefined)),
+    emit: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     listen: vi.fn(() => Promise.resolve(() => undefined)),
-    refreshCurrentUser: vi.fn(() => Promise.resolve(undefined)),
+    refreshCurrentUser: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     clearListeners: new Set<() => void>(),
   };
 });
