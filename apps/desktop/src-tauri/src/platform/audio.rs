@@ -2584,7 +2584,6 @@ mod cpal_impl {
         }
     }
 
-
     fn should_avoid_input_device(device: &Device, default_output_name: Option<&str>) -> bool {
         let device_name = device.name().ok();
         let name_match = device_name
