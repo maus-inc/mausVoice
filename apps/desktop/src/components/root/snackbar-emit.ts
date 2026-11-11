@@ -23,7 +23,16 @@ export const emitSnackbarIfNew = (payload: SnackbarEmitPayload): boolean => {
   if (snackbarCounter <= 0) {
     return false;
   }
-  if (lastEmittedSnackbarCounter === snackbarCounter) {
+  // `<=`, not `===`. The caller walks the entire queue on every counter
+  // change, so it asks about counters that have already been shown: the queue
+  // still holds 1 and 2 when 3 arrives. Equality only rejected the one that
+  // matched exactly, so every older entry looked new and was toasted again --
+  // a dismissed message came back on the next snackbar, and a burst of N
+  // messages produced roughly N² of them.
+  //
+  // The name is a high-water mark, and this is what makes it one. A counter
+  // below it has been shown; at or below it must not be shown again.
+  if (snackbarCounter <= lastEmittedSnackbarCounter) {
     return false;
   }
 

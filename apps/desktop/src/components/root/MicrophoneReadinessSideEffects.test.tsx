@@ -445,17 +445,28 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
 
     // A second attempt fails the same way; the user has already been told.
-    await act(async () => {
-      setState({
-        userPrefs: {
-          keepMicrophoneReady: true,
-          microphonePrerollSeconds: 1,
-          microphoneLingerMs: 0,
-        },
-      });
-      await Promise.resolve();
+    //
+    // `rerender`, not `setState`: this file's store mock is a plain object, so
+    // changing it cannot re-render anything on its own. The first version of
+    // this test only called `setState` inside `act`, which ran no effect, so
+    // `warmMicrophone` was never called a second time and the assertion below
+    // passed whether or not `holdFailedRef` suppressed anything. It was
+    // asserting that one snackbar had been shown, not that the second failure
+    // stayed quiet.
+    const opensBefore = mocks.warmMicrophone.mock.calls.length;
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        // A different pre-roll, which is what makes the hold effect re-run.
+        microphonePrerollSeconds: 1,
+        microphoneLingerMs: 0,
+      },
     });
+    await rerender();
 
+    // The second attempt really happened, so the assertion is about the
+    // suppression rather than about the first attempt's outcome.
+    expect(mocks.warmMicrophone.mock.calls.length).toBeGreaterThan(opensBefore);
     expect(mocks.showSnackbar).toHaveBeenCalledTimes(1);
   });
 

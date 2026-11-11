@@ -28,6 +28,7 @@ import {
 } from "../../utils/microphone-readiness.utils";
 import type { MicrophoneOption } from "../microphone/MicrophoneSelector";
 import { MicrophoneTester } from "../microphone/MicrophoneTester";
+import { duration } from "../../styles/motion";
 import { useScrollEdges, type ScrollEdges } from "./use-scroll-edges";
 import { useMicrophoneDialogSave } from "./use-microphone-dialog-save";
 import { PreferredMicrophoneSection } from "./PreferredMicrophoneSection";
@@ -39,9 +40,14 @@ import { savePreference } from "./save-preference";
  * Fades that mark an edge of the scrollable content.
  *
  * `pointerEvents: "none"` because a gradient is decoration: it must never eat a
- * click meant for the control underneath. Under `prefers-reduced-motion` the
- * transition is dropped rather than the fade itself. The fade carries no
- * motion, and removing it would take away the only cue that text is cut off.
+ * click meant for the control underneath. The duration comes from
+ * `styles/motion` rather than being written here: a hard-coded duration is a
+ * defect in this codebase, and two of them would drift the moment the token
+ * changed.
+ *
+ * Under `prefers-reduced-motion` the transition is dropped rather than the fade
+ * itself. The fade carries no motion, and removing it would take away the only
+ * cue that text is cut off.
  */
 const ScrollEdgeFades = ({ edges }: { edges: ScrollEdges }) => {
   // `vars` is the CSS-variable theme and is absent wherever the component is
@@ -65,7 +71,7 @@ const ScrollEdgeFades = ({ edges }: { edges: ScrollEdges }) => {
           height: 18,
           pointerEvents: "none",
           opacity: edges.top ? 1 : 0,
-          transition: "opacity 150ms ease",
+          transition: `opacity ${duration.fast * 1000}ms ease`,
           background: gradient("to bottom"),
         }}
       />
@@ -79,7 +85,7 @@ const ScrollEdgeFades = ({ edges }: { edges: ScrollEdges }) => {
           height: 18,
           pointerEvents: "none",
           opacity: edges.bottom ? 1 : 0,
-          transition: "opacity 150ms ease",
+          transition: `opacity ${duration.fast * 1000}ms ease`,
           background: gradient("to top"),
         }}
       />

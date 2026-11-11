@@ -62,18 +62,26 @@ before a press is only meaningful while a stream is running, but a stream is not
 required by it, and a zero-second pre-roll on a held device is a supported and
 useful configuration.
 
-**The pre-roll applies to a cold press too, and the copy says so.**
+**The pre-roll needs a stream that is already running.**
 
-`set_microphone_preroll` is a policy-only command in the same shape as
-`set_microphone_linger`: it opens nothing and applies to whichever path opens
-next, so a press that has to open the device still honours the slider. The
-dialog briefly carried a caveat saying the opposite -- that pre-roll "only
-applies while the microphone is already open" -- written before that command
-existed and left behind after it landed. A caption that tells a user their
-setting does nothing is worse than no caption, because it is a claim about the
-code that a later change can quietly falsify. The rule that follows: a caveat
-must name the unit it is about (the device, the window, the buffer), and any
-commit that changes that unit has to revisit every sentence describing it.
+This section used to say the opposite, and it was wrong. It claimed a cold press
+honours the slider because `set_microphone_preroll` is a policy-only command that
+"applies to whichever path opens next". The command being policy-only is true and
+is not the point: policy says how much to keep, and a cold press has nothing to
+keep it from. `try_start_on_device` seeds a cold recording from
+`cold_start_seed`, which returns an empty vector by construction, and the ring a
+cold start collects into is only filled while that stream runs. So a cold press
+begins with silence by definition, and the pre-roll reaches it only when a
+previous stream stayed open, which means keep-ready on or a linger window above
+zero.
+
+The dialog's caption said "How much speech to keep from just before you press"
+with no mention of the condition, which promised something the code does not do
+for the default configuration. Both are corrected here and in the caption.
+
+The rule that follows is the one this mistake earns: a sentence about the
+pre-roll has to say whether the stream was already running, because that is the
+condition it depends on and the one a reader cannot see.
 
 **Holding a Bluetooth microphone is a different bargain, and the dialog says so.**
 

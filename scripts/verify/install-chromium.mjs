@@ -83,7 +83,23 @@ if (existsSync(path.join(OUT, "chromium"))) {
     }
     rmSync(OUT, { recursive: true, force: true });
   }
-  rmSync(STAGING, { recursive: true, force: true });
+  // `STAGING` is `OUT.partial`, and `OUT` is caller-supplied, so this is a
+  // recursive delete of a path the caller chose one suffix away from. A `--dir`
+  // of `/tmp/work` makes this `/tmp/work.partial`, which may well be somebody
+  // else's directory. The same rule the guard above applies to `OUT` applies
+  // here: only remove it if it is ours, meaning empty or carrying our marker.
+  if (existsSync(STAGING)) {
+    const ours =
+      readdirSync(STAGING).length === 0 ||
+      existsSync(path.join(STAGING, MARKER));
+    if (!ours) {
+      throw new Error(
+        `${STAGING} is not empty and has no ${MARKER}, so it is not an extraction this script made. ` +
+          `Remove it yourself, or pass a different --dir.`,
+      );
+    }
+    rmSync(STAGING, { recursive: true, force: true });
+  }
   mkdirSync(STAGING, { recursive: true });
 
   if (!existsSync(path.join(PKG_DIR, "package.json"))) {
