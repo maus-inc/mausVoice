@@ -293,21 +293,7 @@ export class VoiceInstructionRecorder {
 
   private async stop(gen: number): Promise<void> {
     if (this.state === "browser") {
-      // Capture the slot before requesting the stop: the lease must stay
-      // claimed until the recognizer reports `onend`, or a start that follows
-      // this stop could open a recording beside a capture still winding down.
-      const lease = this.browserLease;
-      const recognition = this.recognition;
-      const stopped = !recognition || this.stopBrowserRecognition(recognition);
-      const ended = recognition && stopped ? this.recognitionEnded : null;
-      if (ended) await ended.catch(() => undefined);
-      if (lease) {
-        if (this.browserLease === lease) this.browserLease = null;
-        // Idempotent with the release `onend` performs; awaiting it means a
-        // start that follows this stop sees a free slot only after native
-        // has acknowledged the release.
-        await lease.release().catch(() => undefined);
-      }
+      const stopped = await this.stopBrowserCapture();
       if (gen === this.opGen && !this.disposed) {
         // stop() can deliver its final result asynchronously. Keep this
         // recognizer's callbacks until end, dispose, or the next recording.
@@ -320,6 +306,29 @@ export class VoiceInstructionRecorder {
     if (this.state === "provider") {
       await this.stopProviderRecording(gen);
     }
+  }
+
+  /**
+   * Stop the webview recognizer and free the native slot, in that order.
+   *
+   * The lease is captured before the stop request so it stays claimed until
+   * the recognizer reports `onend`: releasing on the request alone would free
+   * the slot while browser capture is still winding down, letting another
+   * recording start beside it. The final release is idempotent with `onend`'s
+   * own call and is awaited so a start that follows this stop sees a free
+   * slot only after native has acknowledged it.
+   */
+  private async stopBrowserCapture(): Promise<boolean> {
+    const lease = this.browserLease;
+    const recognition = this.recognition;
+    const stopped = !recognition || this.stopBrowserRecognition(recognition);
+    const ended = recognition && stopped ? this.recognitionEnded : null;
+    if (ended) await ended.catch(() => undefined);
+    if (lease) {
+      if (this.browserLease === lease) this.browserLease = null;
+      await lease.release().catch(() => undefined);
+    }
+    return stopped;
   }
 
   /**
