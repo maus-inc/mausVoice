@@ -37,6 +37,7 @@ import {
   createPendingPasteReview,
   getPendingPasteReview,
   updatePendingPasteReviewDraft,
+  updatePendingPasteReviewDraftById,
 } from "./pending-paste-review.actions";
 
 /** The Error a call rejected with, so an assertion can read `error.message`. */
@@ -104,6 +105,21 @@ describe("pending Paste reviews", () => {
     );
   });
 
+  it("uses a caller-provided id so Open retries target the same card", async () => {
+    await createPendingPasteReview(
+      "conversation-1",
+      "saved draft",
+      "stable-review-id",
+    );
+
+    expect(createChatMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "stable-review-id",
+        conversationId: "conversation-1",
+      }),
+    );
+  });
+
   it("updates an existing pending card when Open is retried with new text", async () => {
     const message = pendingMessage();
     const saved = await updatePendingPasteReviewDraft(message, "latest draft");
@@ -119,6 +135,25 @@ describe("pending Paste reviews", () => {
       }),
     );
     expect(saved.id).toBe(message.id);
+  });
+
+  it("updates a card by its stable id after a create response is lost", async () => {
+    await updatePendingPasteReviewDraftById(
+      "conversation-1",
+      "pending-review-1",
+      "latest draft",
+    );
+
+    expect(updateChatMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "pending-review-1",
+        conversationId: "conversation-1",
+        metadata: expect.objectContaining({
+          text: "latest draft",
+          status: "pending",
+        }),
+      }),
+    );
   });
 
   it("persists the latest edit before copying it for manual paste", async () => {

@@ -52,6 +52,7 @@ export const getPendingPasteReview = (
 export const createPendingPasteReview = async (
   conversationId: string,
   text: string,
+  id = createId(),
 ): Promise<ChatMessage> => {
   if (!text.trim()) {
     // The bubble hands a thrown Error to `showErrorSnackbar`, which stringifies
@@ -64,7 +65,7 @@ export const createPendingPasteReview = async (
   }
 
   return createChatMessage({
-    id: createId(),
+    id,
     conversationId,
     role: "system",
     content: "",
@@ -93,6 +94,33 @@ const updatePendingPasteReview = (
       status,
     } satisfies PendingPasteReviewMetadata,
   });
+
+/**
+ * Recover a save retry whose earlier create committed but never returned to
+ * the caller. The duplicate id proves that this pending card already exists.
+ */
+export const updatePendingPasteReviewDraftById = (
+  conversationId: string,
+  id: string,
+  text: string,
+): Promise<ChatMessage> =>
+  updatePendingPasteReviewDraft(
+    {
+      id,
+      conversationId,
+      role: "system",
+      content: "",
+      createdAt: nowIso(),
+      metadata: {
+        type: PENDING_PASTE_REVIEW_TYPE,
+        toolName: "paste",
+        toolCallState: "awaiting-manual-paste",
+        text,
+        status: "pending",
+      } satisfies PendingPasteReviewMetadata,
+    },
+    text,
+  );
 
 /** Persist a newer pill draft on an existing, still-pending Paste review card. */
 export const updatePendingPasteReviewDraft = (

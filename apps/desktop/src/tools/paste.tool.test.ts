@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const reviewTranscriptBeforeInsertMock = vi.hoisted(() => vi.fn());
 const createPendingPasteReviewMock = vi.hoisted(() => vi.fn());
 const updatePendingPasteReviewDraftMock = vi.hoisted(() => vi.fn());
+const updatePendingPasteReviewDraftByIdMock = vi.hoisted(() => vi.fn());
 const invokeMock = vi.hoisted(() => vi.fn());
 const emitMock = vi.hoisted(() => vi.fn());
 const loggerErrorMock = vi.hoisted(() => vi.fn());
@@ -19,6 +20,7 @@ vi.mock("../actions/pill-review.actions", () => ({
 vi.mock("../actions/pending-paste-review.actions", () => ({
   createPendingPasteReview: createPendingPasteReviewMock,
   updatePendingPasteReviewDraft: updatePendingPasteReviewDraftMock,
+  updatePendingPasteReviewDraftById: updatePendingPasteReviewDraftByIdMock,
 }));
 vi.mock("../store", () => ({ getAppState: () => state }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
@@ -62,6 +64,9 @@ describe("PasteTool review", () => {
     updatePendingPasteReviewDraftMock.mockImplementation((message: unknown) =>
       Promise.resolve(message),
     );
+    updatePendingPasteReviewDraftByIdMock.mockResolvedValue({
+      id: "pending-review",
+    });
     // What the Rust `paste` command returns when the text reached the target.
     invokeMock.mockResolvedValue("pasted");
   });
@@ -244,6 +249,7 @@ describe("PasteTool review", () => {
     expect(createPendingPasteReviewMock).toHaveBeenCalledWith(
       "conv-1",
       "edited in pill",
+      expect.any(String),
     );
     expect(emitMock).toHaveBeenCalledWith("open-pill-conversation", {
       conversationId: "conv-1",
@@ -370,6 +376,111 @@ describe("PasteTool review", () => {
     expect(createPendingPasteReviewMock).toHaveBeenCalledOnce();
     expect(emitMock).toHaveBeenCalledOnce();
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("lets Open retry proceed when an earlier save promise is stalled", async () => {
+    createPendingPasteReviewMock
+      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockRejectedValueOnce(
+        new Error("UNIQUE constraint failed: chat_messages.id"),
+      );
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      async (
+        _text: string,
+        _source: string,
+        options?: {
+          onOpen?: (text: string, signal?: AbortSignal) => Promise<void>;
+        },
+      ) => {
+        const stalledAttempt = new AbortController();
+        const firstSave = options?.onOpen?.(
+          "first draft",
+          stalledAttempt.signal,
+        );
+        for (
+          let attempt = 0;
+          attempt < 10 && createPendingPasteReviewMock.mock.calls.length === 0;
+          attempt += 1
+        ) {
+          await Promise.resolve();
+        }
+        stalledAttempt.abort();
+
+        await options?.onOpen?.("latest draft", new AbortController().signal);
+        // The first save never settles, but the retry still saves the latest
+        // draft under the same id and opens Chats.
+        expect(firstSave).toBeInstanceOf(Promise);
+        return null;
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ awaitingManualPaste: true });
+
+    expect(createPendingPasteReviewMock).toHaveBeenCalledTimes(2);
+    expect(createPendingPasteReviewMock.mock.calls[0][2]).toBe(
+      createPendingPasteReviewMock.mock.calls[1][2],
+    );
+    expect(updatePendingPasteReviewDraftByIdMock).toHaveBeenCalledWith(
+      "conv-1",
+      createPendingPasteReviewMock.mock.calls[0][2],
+      "latest draft",
+    );
+    expect(emitMock).toHaveBeenCalledOnce();
+  });
+
+  it("reapplies the latest draft when a stalled update completes after a retry", async () => {
+    let finishStaleUpdate: ((message: { id: string }) => void) | undefined;
+    updatePendingPasteReviewDraftMock.mockImplementationOnce(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          finishStaleUpdate = resolve;
+        }),
+    );
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      async (
+        _text: string,
+        _source: string,
+        options?: {
+          onOpen?: (text: string, signal?: AbortSignal) => Promise<void>;
+        },
+      ) => {
+        await options?.onOpen?.("initial draft", new AbortController().signal);
+        const staleAttempt = new AbortController();
+        const staleSave = options?.onOpen?.("stale draft", staleAttempt.signal);
+        for (
+          let attempt = 0;
+          attempt < 10 &&
+          updatePendingPasteReviewDraftMock.mock.calls.length === 0;
+          attempt += 1
+        ) {
+          await Promise.resolve();
+        }
+        staleAttempt.abort();
+
+        await options?.onOpen?.("latest draft", new AbortController().signal);
+        finishStaleUpdate?.({ id: "pending-review" });
+        await staleSave;
+        return null;
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ awaitingManualPaste: true });
+
+    expect(updatePendingPasteReviewDraftMock).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ id: "pending-review" }),
+      "latest draft",
+    );
   });
 
   it("persists edited text on an Open retry without duplicating the card", async () => {

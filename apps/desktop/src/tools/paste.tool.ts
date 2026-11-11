@@ -9,12 +9,14 @@ import {
 } from "../utils/tool-permission.utils";
 import { getAppState } from "../store";
 import { getLogger } from "../utils/log.utils";
+import { createId } from "../utils/id.utils";
 import { getIntl } from "../i18n/intl";
 import { runToast, showToast } from "../actions/toast.actions";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import {
   createPendingPasteReview,
   updatePendingPasteReviewDraft,
+  updatePendingPasteReviewDraftById,
 } from "../actions/pending-paste-review.actions";
 
 /**
@@ -52,34 +54,72 @@ export class PasteTool extends BaseTool {
     let reviewExpired = false;
     let reviewFailed = false;
     let pendingReviewMessage: ChatMessage | null = null;
-    let savedReviewText: string | null = null;
-    let pendingReviewSave: Promise<void> = Promise.resolve();
-    const saveLatestReviewDraft = (
+    let latestSaveText: string | null = null;
+    let latestSaveGeneration = 0;
+    const conversationId = context?.conversationId;
+    const pendingReviewId = conversationId ? createId() : null;
+    const saveLatestReviewDraft = async (
       conversationId: string,
       text: string,
     ): Promise<void> => {
-      const save = pendingReviewSave
-        .catch(() => undefined)
-        .then(async () => {
-          if (pendingReviewMessage) {
-            if (savedReviewText !== text) {
-              pendingReviewMessage = await updatePendingPasteReviewDraft(
-                pendingReviewMessage,
-                text,
-              );
-            }
-          } else {
-            pendingReviewMessage = await createPendingPasteReview(
-              conversationId,
-              text,
+      // Do not queue behind an earlier request: a timed-out native hand-off
+      // can leave its write promise unresolved. Reuse one id so a retry can
+      // recover an already-committed create rather than making a second card.
+      const generation = ++latestSaveGeneration;
+      latestSaveText = text;
+      if (pendingReviewMessage) {
+        const saved = await updatePendingPasteReviewDraft(
+          pendingReviewMessage,
+          text,
+        );
+        if (generation !== latestSaveGeneration) {
+          let corrected = saved;
+          let correctedText = text;
+          while (
+            generation !== latestSaveGeneration &&
+            latestSaveText &&
+            correctedText !== latestSaveText
+          ) {
+            correctedText = latestSaveText;
+            corrected = await updatePendingPasteReviewDraft(
+              corrected,
+              correctedText,
             );
           }
-          savedReviewText = text;
-        });
-      pendingReviewSave = save;
-      return save;
+          return;
+        }
+        pendingReviewMessage = saved;
+        return;
+      }
+
+      try {
+        const saved = await createPendingPasteReview(
+          conversationId,
+          text,
+          pendingReviewId ?? undefined,
+        );
+        if (!pendingReviewMessage || generation === latestSaveGeneration) {
+          pendingReviewMessage = saved;
+        }
+      } catch (error) {
+        const saveError = String(error).toLowerCase();
+        const isDuplicateMessageId =
+          saveError.includes("unique constraint failed") &&
+          saveError.includes("chat_messages.id");
+        if (
+          !isDuplicateMessageId ||
+          generation !== latestSaveGeneration ||
+          !pendingReviewId
+        ) {
+          throw error;
+        }
+        pendingReviewMessage = await updatePendingPasteReviewDraftById(
+          conversationId,
+          pendingReviewId,
+          text,
+        );
+      }
     };
-    const conversationId = context?.conversationId;
     const reviewOptions = {
       onCopy: () => {
         copiedReviewedText = true;
