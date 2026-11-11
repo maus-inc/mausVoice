@@ -24,7 +24,7 @@ const mount = async () => {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  await act(async () => {
+  await act(() => {
     root.render(
       <ThemeProvider theme={theme} {...THEME_PROVIDER_CONFIG}>
         <SnackbarEmitter />
@@ -52,7 +52,9 @@ it("shows every snackbar raised in one tick, not only the last", async () => {
   // before the emitter ever looked: not delayed, dropped.
   const { root, container } = await mount();
   try {
-    await act(async () => {
+    // Synchronous on purpose: the point is that both land in one batched store
+    // update, which an awaited callback would let React split.
+    await act(() => {
       showSnackbar("first message");
       showSnackbar("second message");
     });
@@ -68,7 +70,7 @@ it("shows every snackbar raised in one tick, not only the last", async () => {
 it("keeps the counter order when three are raised together", async () => {
   const { root, container } = await mount();
   try {
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         setSnackbar(draft, "one", { duration: 1000 });
         setSnackbar(draft, "two", { duration: 1000 });
@@ -84,7 +86,7 @@ it("keeps the counter order when three are raised together", async () => {
   }
 });
 
-it("keeps the newest requests when the queue overflows", async () => {
+it("keeps the newest requests when the queue overflows", () => {
   produceAppState((draft) => {
     for (let index = 0; index < SNACKBAR_QUEUE_LIMIT + 5; index += 1) {
       setSnackbar(draft, `message ${index}`);

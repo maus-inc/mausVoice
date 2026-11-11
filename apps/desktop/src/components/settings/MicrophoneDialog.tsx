@@ -86,6 +86,24 @@ const revealFeedback = (
 };
 
 /**
+ * Fire a preference write from a change handler.
+ *
+ * The write is asynchronous and `updateUserPreferences` already raises its own
+ * error toast, so there is nothing to await and nothing to report here. It is
+ * deliberately not `void x().catch(() => {})`, which is the pattern elsewhere in
+ * settings: that swallows the rejection, and these writes do not need a silent
+ * catch because the action never rejects -- it reports through the snackbar and
+ * resolves. `void` only says the promise is intentionally not awaited, which is
+ * the part a reader needs.
+ *
+ * Clamped and rounded inside the action, so a switch or slider that fires twice
+ * with the same value is harmless.
+ */
+const savePreference = (write: Promise<void>): void => {
+  void write;
+};
+
+/**
  * Fades that mark an edge of the scrollable content.
  *
  * `pointerEvents: "none"` because a gradient is decoration: it must never eat a
@@ -397,7 +415,9 @@ export const MicrophoneDialog = () => {
                   <Switch
                     checked={keepReady}
                     onChange={(event) =>
-                      void setKeepMicrophoneReady(event.target.checked)
+                      savePreference(
+                        setKeepMicrophoneReady(event.target.checked),
+                      )
                     }
                   />
                 }
@@ -497,8 +517,12 @@ export const MicrophoneDialog = () => {
                       if (keepReady) {
                         return;
                       }
-                      void setMicrophoneLingerMs(
-                        event.target.checked ? DEFAULT_MICROPHONE_LINGER_MS : 0,
+                      savePreference(
+                        setMicrophoneLingerMs(
+                          event.target.checked
+                            ? DEFAULT_MICROPHONE_LINGER_MS
+                            : 0,
+                        ),
                       );
                     }}
                   />
@@ -528,7 +552,7 @@ export const MicrophoneDialog = () => {
                       ),
                     }))}
                     onChange={(next) =>
-                      void setMicrophoneLingerMs(Number(next))
+                      savePreference(setMicrophoneLingerMs(Number(next)))
                     }
                     ariaLabel={intl.formatMessage({
                       defaultMessage:
