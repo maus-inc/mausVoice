@@ -101,6 +101,12 @@ async chatMessageUpdate(message: ChatMessage) : Promise<Result<ChatMessage, stri
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The stage timing of the most recent capture start, oldest stage first.
+ */
+async captureStartupTiming() : Promise<CaptureStartupStage[]> {
+    return await TAURI_INVOKE("capture_startup_timing");
+},
 async checkAccessibilityPermission() : Promise<Result<PermissionStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_accessibility_permission") };
@@ -165,6 +171,13 @@ async clearLocalData() : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Closes a microphone held open by [`warm_microphone`], and returns to opening
+ * the device on each press.
+ */
+async closeMicrophone() : Promise<void> {
+    await TAURI_INVOKE("close_microphone");
 },
 async completeLocalDataClear() : Promise<Result<null, string>> {
     try {
@@ -477,6 +490,33 @@ async listGpus() : Promise<GpuAdapterInfo[]> {
 async listMicrophones() : Promise<InputDeviceDescriptor[]> {
     return await TAURI_INVOKE("list_microphones");
 },
+/**
+ * One readable line describing the capture path: whether a stream is held, the
+ * linger policy, the pre-roll length, and whether the last start reused a
+ * stream or opened a device.
+ */
+async microphoneReadinessReport() : Promise<string> {
+    return await TAURI_INVOKE("microphone_readiness_report");
+},
+/**
+ * Whether a capture stream is held open right now.
+ */
+async microphoneReady() : Promise<boolean> {
+    return await TAURI_INVOKE("microphone_ready");
+},
+/**
+ * What is holding the microphone right now, as one readable line.
+ * 
+ * Answers the question a user asks when the microphone is unavailable: is it
+ * me, or is another application using it? The answer is measured rather than
+ * inferred, and every state that cannot be measured says so rather than
+ * reporting "nothing is using it".
+ * 
+ * Shape: `idle`, `held_by_other[Zoom]`, or `unavailable:<reason>`.
+ */
+async microphoneUsage() : Promise<string> {
+    return await TAURI_INVOKE("microphone_usage");
+},
 async notifyPillStyleInfo(count: number, name: string) : Promise<void> {
     await TAURI_INVOKE("notify_pill_style_info", { count, name });
 },
@@ -547,6 +587,20 @@ async playAudio(clip: AudioClip) : Promise<Result<null, string>> {
 async purgeStaleTranscriptionAudio() : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("purge_stale_transcription_audio") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Resolves the device a press would use, without opening a capture stream.
+ * 
+ * Returns the device label it settled on, which the next start then tries
+ * first. No microphone indicator appears, because nothing is capturing.
+ */
+async prepareMicrophone() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prepare_microphone") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1066,6 +1120,33 @@ async transcriptionUpdate(transcription: Transcription) : Promise<Result<Transcr
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * How long the device stays open after a dictation stops, in milliseconds.
+ * 
+ * Separate from [`warm_microphone`] because it opens nothing. It only sets the
+ * policy the next stop reads, so a user who never asked for a held microphone
+ * can still get a fast second press: the stream from the recording they just
+ * finished is left open for this window and the next press adopts it.
+ * 
+ * `0` closes the device at stop, which is the default and the only value with
+ * no microphone indicator between dictations.
+ */
+async setMicrophoneLinger(lingerMs: number) : Promise<void> {
+    await TAURI_INVOKE("set_microphone_linger", { lingerMs });
+},
+/**
+ * How much audio from before a press to keep, in seconds.
+ * 
+ * The open path takes the pre-roll as an argument, which covers the case where
+ * keep-ready is on and a stream is already held. With keep-ready off there is no
+ * open, so nothing ever set it: a cold press fell back to the recorder's own
+ * 500 ms default and the slider did nothing. This is the same policy-only shape
+ * as [`set_microphone_linger`] -- no device is opened, no state is held, and the
+ * value applies to whichever path opens next.
+ */
+async setMicrophonePreroll(prerollSeconds: number) : Promise<void> {
+    await TAURI_INVOKE("set_microphone_preroll", { prerollSeconds });
+},
 async userGetOne() : Promise<Result<User | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("user_get_one") };
@@ -1125,6 +1206,25 @@ async userSetOne(user: User) : Promise<Result<User, string>> {
 async writeAccessibilityFields(entries: AccessibilityWriteEntry[]) : Promise<Result<AccessibilityWriteResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("write_accessibility_fields", { entries }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens the microphone and holds it, without recording.
+ * 
+ * `prerollSeconds` is how much audio from before the press to keep, so a word
+ * that starts as the user presses is not clipped. Zero keeps the device ready
+ * without retaining audio.
+ * 
+ * `lingerMs` is how long the device stays open after a recording stops.
+ * `Number.MAX_SAFE_INTEGER` means "until the user releases it", which is what
+ * the keep-ready preference sends; anything smaller is a real window.
+ */
+async warmMicrophone(prerollSeconds: number, lingerMs: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("warm_microphone", { prerollSeconds, lingerMs }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1206,6 +1306,10 @@ export type AppTarget = { id: string; name: string; createdAt: string; toneId: s
 export type AppTargetUpsertArgs = { id: string; name: string; toneId?: string | null; iconPath?: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_macos_clip" | "alert_windows_10_clip" | "alert_windows_11_clip"
 /**
+ * One stage of a capture start, as the UI reads it.
+ */
+export type CaptureStartupStage = { stage: string; micros: number }
+/**
  * Update metadata for a channel check. Mirrors the updater plugin's own
  * metadata shape so the frontend reuses the stock install path; `rawJson`
  * travels as text because specta cannot type an open JSON value, and the
@@ -1262,7 +1366,7 @@ export type FieldValueResult = { value: string | null; error: string | null }
 export type FloatingWindowInfo = { id: string; url: string; title: string }
 export type GpuAdapterInfo = { name: string; vendor: number; device: number; deviceType: string; backend: string }
 export type Hotkey = { id: string; actionName: string; keys: string[] }
-export type InputDeviceDescriptor = { label: string; isDefault: boolean; caution: boolean }
+export type InputDeviceDescriptor = { label: string; isDefault: boolean; caution: boolean; bluetooth: boolean }
 /**
  * Canonical string identifier for a JAB element at one level of the tree.
  * JAB has no developer-assigned ID, so we combine `name` + `role` (English)
@@ -1487,7 +1591,25 @@ elevenLabsKeytermsEnabled?: boolean;
 /**
  * Update channel this client is subscribed to: "stable" or "beta".
  */
-updateChannel?: string }
+updateChannel?: string; 
+/**
+ * Hold the capture device open between dictations.
+ * 
+ * These three were added to the TypeScript `UserPreferences` and the UI,
+ * but not to this struct, so `user_preferences_set` silently dropped them:
+ * the preference looked saved until the next launch read back the default.
+ * `serde` ignores unknown fields, so the mismatch was not an error anywhere
+ * -- the values simply never reached the database.
+ */
+keepMicrophoneReady?: boolean; 
+/**
+ * Seconds of audio from before the press that the recorder keeps.
+ */
+microphonePrerollSeconds?: number; 
+/**
+ * How long the device stays open after a dictation stops, in ms.
+ */
+microphoneLingerMs?: number }
 export type UserPreferencesCompareSetExpansionFlagsArgs = { expected: string; flags: string }
 export type UserPreferencesGetArgs = { userId: string }
 export type UserPreferencesSetExpansionFlagsArgs = { flags: string }

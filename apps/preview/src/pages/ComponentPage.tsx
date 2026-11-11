@@ -147,6 +147,10 @@ export const ComponentPage = () => {
                   fontFamily: "monospace",
                   fontSize: 11.5,
                   display: "block",
+                  // A repo path is one long word with no space to break at, so
+                  // without this it overflows the panel and is cut off by the
+                  // page edge. Wrap anywhere rather than clip.
+                  overflowWrap: "anywhere",
                 }}
               >
                 {s}

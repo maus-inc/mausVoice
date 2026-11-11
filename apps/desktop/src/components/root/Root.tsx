@@ -6,6 +6,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { trackPageView } from "../../utils/analytics.utils";
 import { getLogger } from "../../utils/log.utils";
 import { LoadingApp } from "./LoadingApp";
+import { MicrophoneReadinessSideEffects } from "./MicrophoneReadinessSideEffects";
 import { OverlaySyncSideEffects } from "./OverlaySyncSideEffects";
 import { PermissionSideEffects } from "./PermissionSideEffects";
 import { RootConfetti } from "./RootConfetti";
@@ -54,6 +55,9 @@ export default function Root() {
       <RootConfetti />
       <RootSideEffects />
       <OverlaySyncSideEffects />
+      {/* Owns the held capture device, so it renders wherever a recording can be
+          started: the main window and every dictation surface. */}
+      <MicrophoneReadinessSideEffects />
       <RootDialogs />
       {/* resetKeys auto-retries the crashed subtree once the route changes, so
           a transient commit fault can never strand the user on the fallback;

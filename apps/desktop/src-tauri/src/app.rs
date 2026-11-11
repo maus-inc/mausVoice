@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{
     LogicalSize, Manager, PhysicalPosition, PhysicalSize, RunEvent, WebviewWindow, Window,
@@ -74,10 +74,11 @@ fn log_main_window_move(window: &Window, position: &PhysicalPosition<i32>) {
         return;
     };
     let now = Instant::now();
-    if let Some(previous) = *last {
-        if now.duration_since(previous) < MOVE_LOG_THROTTLE {
-            return;
-        }
+    // `is_some_and`, not `if let Some(previous)`: the throttle only compares, it
+    // binds nothing it uses outside the test, and the nested `if let` invites the
+    // reader to look for a use of `previous` that does not exist.
+    if last.is_some_and(|previous| now.duration_since(previous) < MOVE_LOG_THROTTLE) {
+        return;
     }
     *last = Some(now);
     drop(last);
@@ -373,20 +374,87 @@ fn sanitize_restored_main_window(main_window: &WebviewWindow) {
     }
 }
 
+/// The warm capture handle, if the app has one.
+fn warm_capture(app_handle: &tauri::AppHandle) -> Option<Arc<dyn crate::platform::WarmCapture>> {
+    app_handle
+        .try_state::<Arc<dyn crate::platform::WarmCapture>>()
+        .map(|warm| warm.inner().clone())
+}
+
+/// Releases a held microphone before the process tears down.
+///
+/// A held stream keeps the OS microphone indicator lit. Dropping the stream at
+/// process exit is not enough on macOS, where the audio unit only stops in its
+/// own drop and the process can be killed before it runs, so the device is
+/// released explicitly and the indicator goes out with the window rather than a
+/// moment later, or not at all.
+///
+/// Only a stream that is actually held is released. Closing one that is merely
+/// inside a linger window would throw away the pre-roll the linger exists to
+/// keep, and the process is exiting anyway.
+fn release_held_microphone(app_handle: &tauri::AppHandle) {
+    let Some(warm) = warm_capture(app_handle) else {
+        return;
+    };
+    // The structural question, not the usability one. This used to ask
+    // `is_ready`, whose own comment says it is the structural question and is
+    // wrong: `is_ready` is what the dialog shows, and it answers `false` for a
+    // stream that opened and never delivered. That is precisely the stream that
+    // holds the device with the indicator lit and that this call exists to
+    // release, so the one case that needed it was the one it skipped.
+    if warm.has_held_stream() {
+        log::info!("releasing the held microphone before exit");
+        warm.warm_close();
+    }
+}
+
+/// Reopens a held microphone after the device set may have changed.
+///
+/// Plugging in a headset while the microphone is held is the common case: the
+/// old stream is still running on the old device, so without this the next press
+/// records from the device that is no longer the default. This runs when the
+/// window gains focus, which is the moment a user has most likely just come back
+/// from plugging something in, and it costs one device enumeration.
+///
+/// The work happens on its own thread because focus is delivered on the event
+/// loop and enumeration can take tens of milliseconds.
+fn refresh_warm_device(app_handle: &tauri::AppHandle) {
+    let Some(warm) = warm_capture(app_handle) else {
+        return;
+    };
+    if !warm.is_ready() {
+        // Nothing is held, so there is nothing to follow. A cold press always
+        // resolves the device fresh.
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("warm-refresh".to_string())
+        .spawn(move || warm.refresh_device());
+    if let Err(err) = spawned {
+        log::warn!("could not check the held device after focus: {err}");
+    }
+}
+
 /// Handles application lifecycle events.
 ///
-/// On exit the window size/position are persisted and the global keyboard
-/// listener is stopped; on macOS `Reopen` the main window is surfaced again.
+/// On exit the window size/position are persisted, the global keyboard listener
+/// is stopped, and a held microphone is released; on macOS `Reopen` the main
+/// window is surfaced again.
 fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match &event {
         RunEvent::ExitRequested { .. } => {
             save_main_window_state(app_handle);
+            release_held_microphone(app_handle);
             if let Err(err) = crate::platform::keyboard::stop_key_listener() {
                 log::error!("Failed to stop keyboard listener on exit: {err}");
             }
         }
         RunEvent::Exit => {
             save_main_window_state(app_handle);
+            // Belt and braces: `ExitRequested` may never fire on a hard quit,
+            // and a stream still open here would keep the device lit until the
+            // process is gone.
+            release_held_microphone(app_handle);
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
@@ -399,6 +467,11 @@ fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
 }
 
 fn handle_window_event(window: &Window, event: &WindowEvent) {
+    // `matches!` rather than an `if let`: there is no binding to capture, and a
+    // refutable binding that captures nothing reads as if it might.
+    if matches!(event, WindowEvent::Focused(true)) {
+        refresh_warm_device(window.app_handle());
+    }
     match event {
         WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
             api.prevent_close();
@@ -552,9 +625,12 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
         let app_handle = app.handle();
 
-        let recorder = crate::platform::audio::new_recorder();
-
+        // One manager, registered under two capabilities. The press adopts the
+        // held stream inside the recorder's start path, so a second manager
+        // would open a second device and defeat the hold entirely.
+        let (recorder, warm) = crate::platform::audio::new_audio_backends();
         app.manage(recorder);
+        app.manage(warm);
 
         // Pre-warm audio output for instant chime playback
         crate::system::audio_feedback::warm_audio_output();
@@ -785,6 +861,15 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::check_app_location_writable,
             crate::commands::check_for_channel_update,
             crate::commands::download_and_open_mac_installer,
+            crate::commands::set_microphone_linger,
+            crate::commands::set_microphone_preroll,
+            crate::commands::warm_microphone,
+            crate::commands::close_microphone,
+            crate::commands::microphone_ready,
+            crate::commands::prepare_microphone,
+            crate::commands::microphone_readiness_report,
+            crate::commands::capture_startup_timing,
+            crate::commands::microphone_usage,
             crate::commands::get_system_volume,
             crate::commands::set_system_volume,
             crate::commands::composer_register_text,

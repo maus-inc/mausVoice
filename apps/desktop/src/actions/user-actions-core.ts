@@ -189,6 +189,13 @@ export const createDefaultPreferences = (): UserPreferences => ({
   autoLearnFromEditsEnabled: false,
   elevenLabsKeytermsEnabled: false,
   expansionFlags: "{}",
+  // Opt-in: holding the device open keeps the OS microphone indicator lit, so
+  // the default is the policy that shows nothing between dictations.
+  keepMicrophoneReady: false,
+  microphonePrerollSeconds: 0.5,
+  // No linger: a second press inside a few seconds is not worth lighting the
+  // microphone indicator after every recording for.
+  microphoneLingerMs: 0,
 });
 
 // Serializes preference mutations so overlapping tool toggles or numeric edits

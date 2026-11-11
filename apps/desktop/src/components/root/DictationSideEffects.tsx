@@ -153,6 +153,7 @@ import {
 } from "../../utils/pipeline-trace";
 import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
 import { resolvePillWindowSize } from "../../utils/pill-window-size.utils";
+import { captureFaultNotice } from "../../utils/capture-fault-notice.utils";
 import { invokeStopRecording } from "../../utils/recorded-audio.utils";
 import {
   getActiveManualToneIds,
@@ -1737,6 +1738,38 @@ export const DictationSideEffects = () => {
           shouldContinue: false,
           abortMessage: "No audio data received",
         };
+      }
+      // A capture that stopped early is not a quiet dictation: the device was
+      // unplugged, or the host invalidated the stream, and the audio handed to
+      // transcription is short. Saying so is the difference between the user
+      // blaming their microphone and blaming the app. The warning is logged
+      // before transcription because it describes the recording, not its
+      // result, and it must survive a transcription that fails.
+      const faultNotice = captureFaultNotice(audio);
+      if (faultNotice) {
+        getLogger().warning(`stopRecordingRaw: ${faultNotice.logMessage}`);
+        runToast(
+          showToast({
+            message:
+              faultNotice.kind === "capture_faulted"
+                ? intl.formatMessage(
+                    {
+                      defaultMessage:
+                        "The microphone stopped recording after {captured} of {expected} seconds. Check that it is still connected.",
+                    },
+                    faultNotice.values,
+                  )
+                : intl.formatMessage(
+                    {
+                      defaultMessage:
+                        "The recording ended early. Check that the microphone is still connected.",
+                    },
+                    {},
+                  ),
+            toastType: "error",
+            duration: 8_000,
+          }),
+        );
       }
       if (pendingProviderStartup) {
         await pendingProviderStartup.promise;

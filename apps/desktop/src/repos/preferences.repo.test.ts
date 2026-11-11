@@ -288,3 +288,57 @@ describe("hallucination filter default and persistence", () => {
     expect(loaded.hallucinationFilterEnabled).toBe(false);
   });
 });
+
+describe("microphone readiness preferences", () => {
+  const roundTrip = (patch: Record<string, unknown>) =>
+    fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+      ...patch,
+    });
+
+  it("defaults to the policy that shows no indicator between dictations", () => {
+    const defaults = createDefaultPreferences();
+    expect(defaults.keepMicrophoneReady).toBe(false);
+    expect(defaults.microphoneLingerMs).toBe(0);
+  });
+
+  it("carries the readiness fields through a save and load", () => {
+    const loaded = roundTrip({
+      keepMicrophoneReady: true,
+      microphonePrerollSeconds: 1.2,
+      microphoneLingerMs: 5_000,
+    });
+
+    expect(loaded.keepMicrophoneReady).toBe(true);
+    expect(loaded.microphonePrerollSeconds).toBe(1.2);
+    expect(loaded.microphoneLingerMs).toBe(5_000);
+  });
+
+  it("drops a linger a build no longer accepts rather than holding at that value", () => {
+    // A row written by a build with a longer cap, or a hand-edited one. Clamping
+    // is the only option that keeps the promise that the window is bounded; the
+    // alternative is an indicator lit for however long the row says.
+    expect(roundTrip({ microphoneLingerMs: 900_000 }).microphoneLingerMs).toBe(
+      30_000,
+    );
+  });
+
+  it("treats a nonsense linger as no window", () => {
+    // Every one of these would otherwise reach the recorder as a duration.
+    for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY, null]) {
+      expect(roundTrip({ microphoneLingerMs: bad }).microphoneLingerMs).toBe(0);
+    }
+  });
+
+  it("clamps the pre-roll and rejects a negative or missing one", () => {
+    expect(
+      roundTrip({ microphonePrerollSeconds: 9 }).microphonePrerollSeconds,
+    ).toBe(2);
+    expect(
+      roundTrip({ microphonePrerollSeconds: -3 }).microphonePrerollSeconds,
+    ).toBe(0);
+    expect(
+      roundTrip({ microphonePrerollSeconds: null }).microphonePrerollSeconds,
+    ).toBe(0.5);
+  });
+});

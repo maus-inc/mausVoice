@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
+
 const desktopSrc = path.resolve(rootDir, "../desktop/src");
 
 // The preview renders REAL desktop components (`@desktop/*`), and those write
@@ -117,9 +118,22 @@ export default defineConfig({
       // `apps/firebase/**`, `apps/docs/**` -- which a demo dev server has no reason to serve.
       allow: [rootDir, desktopSrc],
     },
+    proxy: {
+      // The probe scripts import from the desktop package, so the module graph is
+      // rewritten to fetch those files through this server.
+      "/@desktop": {
+        target: "http://127.0.0.1:5193",
+        rewrite: (p) => p.replace(/^\/@desktop/, "/@fs" + desktopSrc),
+      },
+    },
   },
   preview: {
     host: "0.0.0.0",
     port: 5194,
+  },
+  optimizeDeps: {
+    // The harness renders desktop components through React.lazy, so a stale
+    // prebundle shows the old dialog after an edit and the screenshots lie.
+    exclude: ["@desktop/components/settings/MicrophoneDialog"],
   },
 });

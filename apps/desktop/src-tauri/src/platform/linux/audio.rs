@@ -1,7 +1,8 @@
 use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
 use crate::errors::RecordingError;
 use crate::platform::audio::{
-    compute_level_bins, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
+    compute_level_bins, label_has_low_quality_keyword, InputDeviceDescriptor,
+    CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
 };
 use crate::platform::{ChunkCallback, LevelCallback, Recorder};
 use std::sync::{Arc, Mutex};
@@ -204,6 +205,101 @@ fn query_source_native_rate(source_name: Option<&str>) -> u32 {
     FALLBACK_SAMPLE_RATE
 }
 
+/// State the level emitter carries between blocks.
+///
+/// Pulled out of the loop so each emitter can be read, and tested, on its own:
+/// the loop was one function doing capture, conversion, accumulation, level
+/// dispatch, chunk dispatch and its own shutdown reasoning, which is more than a
+/// reader can hold at once.
+struct LevelEmitter {
+    callback: Option<LevelCallback>,
+    last_emit: Instant,
+}
+
+impl LevelEmitter {
+    fn new(callback: Option<LevelCallback>) -> Self {
+        Self {
+            callback,
+            last_emit: Instant::now(),
+        }
+    }
+
+    /// Sends a level bin no more often than `LEVEL_DISPATCH_INTERVAL`.
+    fn dispatch(&mut self, samples: &[f32]) {
+        let Some(callback) = self.callback.as_ref() else {
+            return;
+        };
+        let now = Instant::now();
+        if now.duration_since(self.last_emit) < LEVEL_DISPATCH_INTERVAL {
+            return;
+        }
+        self.last_emit = now;
+        callback(compute_level_bins(samples));
+    }
+}
+
+/// State the chunk emitter carries between blocks.
+struct ChunkEmitter {
+    callback: Option<ChunkCallback>,
+    last_emit: Instant,
+    buffer: Vec<f32>,
+    /// Samples already handed to the callback, so each batch reports the
+    /// absolute index of its first sample.
+    emitted: u64,
+}
+
+impl ChunkEmitter {
+    fn new(callback: Option<ChunkCallback>) -> Self {
+        Self {
+            callback,
+            last_emit: Instant::now(),
+            buffer: Vec::new(),
+            emitted: 0,
+        }
+    }
+
+    /// Accumulates a block and sends whatever is buffered at the dispatch
+    /// interval. The flush at the end of the recording goes through
+    /// [`ChunkEmitter::flush`].
+    fn dispatch(&mut self, samples: &[f32]) {
+        if self.callback.is_none() {
+            return;
+        }
+        self.buffer.extend_from_slice(samples);
+        let now = Instant::now();
+        if now.duration_since(self.last_emit) < CHUNK_DISPATCH_INTERVAL {
+            return;
+        }
+        self.last_emit = now;
+        self.emit_buffered();
+    }
+
+    /// Sends anything still buffered. Called once, when the loop ends.
+    fn flush(&mut self) {
+        self.emit_buffered();
+    }
+
+    /// Takes the buffered samples and hands them over with the offset of the
+    /// first one.
+    ///
+    /// The callback is cloned out rather than borrowed from `self`, because
+    /// `emit_buffered` mutates `self` to advance the offset and clear the
+    /// buffer. `ChunkCallback` is a function pointer or an `Arc`, so the clone
+    /// is free.
+    fn emit_buffered(&mut self) {
+        let Some(callback) = self.callback.clone() else {
+            return;
+        };
+        if self.buffer.is_empty() {
+            return;
+        }
+        let offset = self.emitted;
+        let batch = std::mem::take(&mut self.buffer);
+        self.emitted += batch.len() as u64;
+        callback(batch, offset);
+    }
+}
+
 /// The actual blocking recording loop. Runs on a dedicated thread.
 #[allow(unknown_lints)]
 #[allow(clippy::chunks_exact_to_as_chunks)]
@@ -258,15 +354,12 @@ fn record_loop(
 
     let start = Instant::now();
     let mut all_samples: Vec<f32> = Vec::new();
-    let mut last_level_emit = Instant::now();
-    let mut last_chunk_emit = Instant::now();
-    let mut chunk_buffer: Vec<f32> = Vec::new();
-    // Samples already handed to `chunk_callback`, so each dispatch reports the
-    // absolute index of its first sample. The loop is single threaded, so a
-    // plain counter is enough here.
-    let mut emitted_samples: u64 = 0;
+    let mut levels = LevelEmitter::new(level_callback);
+    let mut chunks = ChunkEmitter::new(chunk_callback);
 
     let mut read_buf = vec![0u8; READ_CHUNK_FRAMES * std::mem::size_of::<f32>()];
+    // Set when the read itself failed, cleared when the stop signal explains it.
+    let mut read_fault: Option<String> = None;
 
     loop {
         // Check stop signal
@@ -279,6 +372,23 @@ fn record_loop(
         // Read audio data (blocking)
         if let Err(err) = simple.read(&mut read_buf) {
             log::error!("PulseAudio read error: {err}");
+            // Decide between a shutdown and a fault *here*, not after the loop.
+            //
+            // The stop flag used to be sampled once the loop had exited, which
+            // was several steps later: the chunk flush below, its callback, and
+            // whatever that callback did. A stop pressed during any of that
+            // found the flag set and cleared a fault that had already happened,
+            // so a device that died mid-dictation reported a clean, short
+            // recording. Sampling at the failure narrows the window to the two
+            // instructions after a failed read, where only a genuine
+            // simultaneous stop can be mistaken for a shutdown.
+            //
+            // Either way nothing is reported for a normal stop: a stop requested
+            // before the read is caught by the check at the top of the loop.
+            if stop_signal.lock().map(|flag| *flag).unwrap_or(false) {
+                break;
+            }
+            read_fault = Some(READ_FAULT_TOKEN.to_string());
             break;
         }
 
@@ -293,51 +403,32 @@ fn record_loop(
         // Accumulate for final result
         all_samples.extend_from_slice(&samples);
 
-        // Emit level bins
-        if let Some(ref cb) = level_callback {
-            let now = Instant::now();
-            if now.duration_since(last_level_emit) >= LEVEL_DISPATCH_INTERVAL {
-                last_level_emit = now;
-                let levels = compute_level_bins(&samples);
-                cb(levels);
-            }
-        }
-
-        // Emit audio chunks
-        if let Some(ref cb) = chunk_callback {
-            chunk_buffer.extend_from_slice(&samples);
-            let now = Instant::now();
-            if now.duration_since(last_chunk_emit) >= CHUNK_DISPATCH_INTERVAL {
-                last_chunk_emit = now;
-                if !chunk_buffer.is_empty() {
-                    let offset = emitted_samples;
-                    let batch = std::mem::take(&mut chunk_buffer);
-                    emitted_samples += batch.len() as u64;
-                    cb(batch, offset);
-                }
-            }
-        }
+        levels.dispatch(&samples);
+        chunks.dispatch(&samples);
     }
 
-    // Flush remaining chunk buffer
-    if let Some(ref cb) = chunk_callback {
-        if !chunk_buffer.is_empty() {
-            let batch = std::mem::take(&mut chunk_buffer);
-            cb(batch, emitted_samples);
-        }
-    }
+    chunks.flush();
 
+    // `read_fault` was decided at the failing read, above. Re-sampling the stop
+    // flag here is what used to let a stop pressed after the failure discard it.
+
+    let expected_duration = start.elapsed();
     let duration = if !all_samples.is_empty() {
         Duration::from_secs_f64(all_samples.len() as f64 / f64::from(sample_rate))
     } else {
-        start.elapsed()
+        expected_duration
     };
     let size_bytes = all_samples.len() as u64 * std::mem::size_of::<f32>() as u64;
 
     RecordingResult {
         metrics: RecordingMetrics {
             duration,
+            expected_duration,
             size_bytes,
+            // No host error callback exists on this backend, so the fault is the
+            // read failure classified above. Without it a stream that died mid
+            // dictation produced the same result as one that was stopped.
+            capture_fault: read_fault,
         },
         audio: RecordedAudio {
             samples: all_samples,
@@ -346,11 +437,21 @@ fn record_loop(
     }
 }
 
+/// The token recorded when the PulseAudio read fails without a stop request.
+///
+/// The same token the cpal path carries for a host-declared fatal error, so the
+/// front end's existing classification handles it without a second dialect.
+const READ_FAULT_TOKEN: &str = "fatal";
+
 fn empty_result() -> RecordingResult {
     RecordingResult {
         metrics: RecordingMetrics {
             duration: Duration::ZERO,
+            // Nothing was recorded and nothing was expected: this is the result
+            // of a stop with no recording, not of a capture that died.
+            expected_duration: Duration::ZERO,
             size_bytes: 0,
+            capture_fault: None,
         },
         audio: RecordedAudio {
             samples: Vec::new(),
@@ -522,10 +623,18 @@ pub fn list_pulse_input_devices() -> Vec<InputDeviceDescriptor> {
     let mut devices: Vec<InputDeviceDescriptor> = sources
         .into_iter()
         .filter(|s| !s.is_monitor)
-        .map(|s| InputDeviceDescriptor {
-            label: s.description,
-            is_default: s.is_default,
-            caution: false,
+        .map(|s| {
+            // Both flags were hard-coded to `false` here, so on the one platform
+            // where a Bluetooth headset is the common case, the selector offered
+            // it as an ordinary device and nothing downstream could tell the
+            // difference. The keyword test is the same one the cpal path uses.
+            let bluetooth = label_has_low_quality_keyword(&s.description);
+            InputDeviceDescriptor {
+                label: s.description,
+                is_default: s.is_default,
+                caution: bluetooth,
+                bluetooth,
+            }
         })
         .collect();
 
@@ -539,4 +648,114 @@ pub fn list_pulse_input_devices() -> Vec<InputDeviceDescriptor> {
     });
 
     devices
+}
+
+#[cfg(test)]
+mod emitter_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Collects what a [`ChunkEmitter`] sends, so the offset bookkeeping can be
+    /// asserted without a real capture device.
+    /// One dispatched batch: its length and the offset it reported.
+    type Batches = Arc<Mutex<Vec<(usize, u64)>>>;
+
+    fn collector() -> (ChunkCallback, Batches) {
+        let seen: Arc<Mutex<Vec<(usize, u64)>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let callback: ChunkCallback = Arc::new(move |batch: Vec<f32>, offset: u64| {
+            sink.lock().unwrap().push((batch.len(), offset));
+        });
+        (callback, seen)
+    }
+
+    /// Every batch must report the absolute index of its first sample, and the
+    /// batches must concatenate back to the whole stream. This is the invariant
+    /// the emitters were extracted to keep, and a wrong `emitted` counter is
+    /// silent: it only shows up as a misaligned timeline far downstream.
+    #[test]
+    fn chunk_offsets_are_absolute_and_contiguous() {
+        let (callback, seen) = collector();
+        let mut chunks = ChunkEmitter::new(Some(callback));
+
+        // Drive the buffer past the dispatch interval so at least one real
+        // dispatch happens rather than only the final flush.
+        let block = vec![0.25_f32; 4096];
+        for _ in 0..64 {
+            chunks.dispatch(&block);
+        }
+        chunks.flush();
+
+        let seen = seen.lock().unwrap();
+        assert!(!seen.is_empty(), "expected at least one dispatch");
+        let mut expected_offset = 0;
+        for (len, offset) in seen.iter() {
+            assert_eq!(*offset, expected_offset, "batch offset is not contiguous");
+            assert!(*len > 0, "an empty batch must not be emitted");
+            expected_offset += *len as u64;
+        }
+        assert_eq!(expected_offset, 64 * 4096);
+    }
+
+    /// A chunk callback that never fires must not accumulate: it is opted out
+    /// of, not merely throttled.
+    #[test]
+    fn no_chunk_callback_buffers_nothing() {
+        let mut chunks = ChunkEmitter::new(None);
+        let block = vec![0.25_f32; 4096];
+        for _ in 0..64 {
+            chunks.dispatch(&block);
+        }
+        chunks.flush();
+        assert!(chunks.buffer.is_empty());
+        assert_eq!(chunks.emitted, 0);
+    }
+
+    /// Flushing an already-empty buffer must not send an empty batch.
+    #[test]
+    fn flush_without_data_sends_nothing() {
+        let (callback, seen) = collector();
+        let mut chunks = ChunkEmitter::new(Some(callback));
+        chunks.flush();
+        chunks.flush();
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    /// The level emitter throttles: a burst of blocks inside one dispatch
+    /// interval sends nothing, because the clock starts at construction rather
+    /// than at the first block. That matches the old inline
+    /// `last_level_emit = Instant::now()` before the loop, and it is why a
+    /// freshly opened microphone shows no bars for the first interval.
+    #[test]
+    fn level_dispatch_is_throttled_within_the_interval() {
+        let seen: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+        let sink = Arc::clone(&seen);
+        let callback: LevelCallback = Arc::new(move |_bins: Vec<f32>| {
+            *sink.lock().unwrap() += 1;
+        });
+        let mut levels = LevelEmitter::new(Some(callback));
+        let block = vec![0.25_f32; 512];
+        for _ in 0..32 {
+            levels.dispatch(&block);
+        }
+        assert_eq!(
+            *seen.lock().unwrap(),
+            0,
+            "a burst inside one interval is silent"
+        );
+
+        // Once the interval has passed, the next block does emit, and only once.
+        std::thread::sleep(LEVEL_DISPATCH_INTERVAL);
+        levels.dispatch(&block);
+        levels.dispatch(&block);
+        assert_eq!(*seen.lock().unwrap(), 1);
+    }
+
+    /// A level callback that is absent must not compute bins at all.
+    #[test]
+    fn no_level_callback_is_a_no_op() {
+        let mut levels = LevelEmitter::new(None);
+        levels.dispatch(&vec![0.25_f32; 512]);
+        assert!(levels.callback.is_none());
+    }
 }

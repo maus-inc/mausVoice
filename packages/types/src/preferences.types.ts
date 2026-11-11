@@ -78,6 +78,30 @@ export type UserPreferences = {
   elevenLabsKeytermsEnabled: boolean;
   /** JSON object of expansion feature-name -> boolean flag. */
   expansionFlags: string;
+  /**
+   * Hold the microphone open between dictations.
+   *
+   * Opening a capture device is the delay between a press and the first captured
+   * sample, so a held device is what makes a press feel instant. The cost is the
+   * operating system's microphone-in-use indicator, which stays lit for as long
+   * as the device is held, so this is opt-in.
+   */
+  keepMicrophoneReady: boolean;
+  /**
+   * Seconds of audio from before the press to keep, so a word started early is
+   * not clipped. Bounded to the range the recorder accepts.
+   */
+  microphonePrerollSeconds: number;
+  /**
+   * How long the device stays open after a dictation stops, in milliseconds.
+   *
+   * Zero closes it at stop and is the default: that is the only policy with no
+   * microphone indicator between dictations, so a user who has not chosen a
+   * linger gets none. A non-zero value makes a second press within the window
+   * instant, at the cost of the indicator staying lit for that long after each
+   * recording.
+   */
+  microphoneLingerMs: number;
 
   // deprecated
 };

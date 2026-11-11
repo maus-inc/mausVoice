@@ -154,7 +154,7 @@ describe("MicrophoneDialog save feedback", () => {
     resetState();
   });
 
-  it("announces persisted success in the dialog and shows the global toast", async () => {
+  it("announces persisted success exactly once, through the toast", async () => {
     let resolveSave: (() => void) | undefined;
     const save = new Promise<void>((resolve) => {
       resolveSave = resolve;
@@ -201,14 +201,14 @@ describe("MicrophoneDialog save feedback", () => {
     const successToast = document.body.querySelector(
       '[data-sonner-toast][data-type="success"]',
     );
-    const announcement = dialog?.querySelector<HTMLElement>("[role='status']");
     const toaster = document.body.querySelector("[data-sonner-toaster]");
     expect(dialog).not.toBeNull();
     expect(dialog?.querySelector('[role="alert"]')).toBeNull();
-    expect(announcement?.getAttribute("aria-live")).toBe("polite");
-    expect(announcement?.getAttribute("aria-atomic")).toBe("true");
-    expect(announcement?.textContent).toBe("Preference saved.");
-    expect(announcement?.style.position).toBe("absolute");
+    // The dialog used to carry a visually-hidden `role="status"` saying
+    // "Preference saved." as well, so a screen reader read the same sentence
+    // twice: once from that region, once from sonner's. There is one
+    // announcement, and it is the toast's.
+    expect(dialog?.querySelector("[role='status']")).toBeNull();
     expect(successToast).not.toBeNull();
     expect(successToast!.textContent).toContain("Preference saved.");
     expect(dialog!.contains(successToast)).toBe(false);
@@ -273,7 +273,9 @@ describe("MicrophoneDialog save feedback", () => {
     expect(dialog?.textContent).toContain(
       "Failed to save microphone preference. Please try again.",
     );
-    expect(dialog?.querySelector('[role="status"]')?.textContent).toBe("");
+    // A failed save announces itself through the `role="alert"` the Alert
+    // carries; there is no status region to be empty, and none to duplicate it.
+    expect(dialog?.querySelector("[role='status']")).toBeNull();
     expect(
       Array.from(dialog?.querySelectorAll("button") ?? []).find((button) =>
         button.textContent?.includes("Close"),

@@ -18,6 +18,20 @@ const UNIVERSAL_SAFE = [
   /^(SenseVoice|NVIDIA|Whisper)\b/,
 ];
 
+// The hold-failure snackbars. Each has a fallback chain in the component, so a
+// catalogue that lost one would not fail anything at runtime -- it would render
+// the message id in a red-bordered debug string instead, or silently fall through
+// to the generic wording and tell the user less than the code knows. Both were
+// genuinely lost once: the component chose the text into a variable and called
+// `formatMessage({ defaultMessage })` once, which the extractor cannot see, and
+// the two keys it could not see were then pruned while the call sites still used
+// them.
+const HOLD_FAILURE_MESSAGES = [
+  "another_application_is_using_the_microphone_close_it_then_tr",
+  "microphone_access_is_blocked_allow_it_in_your_system_setting",
+  "could_not_open_the_microphone_in_advance_dictation_still_wor",
+] as const;
+
 // These user-facing controls and feedback messages must not fall back to
 // English in any supported locale.
 const FAILURE_AUDIO_MESSAGES = [
@@ -409,6 +423,25 @@ describe("i18n catalogs", () => {
       expect(locales[locale]?.connecting, `${locale}:connecting`).not.toBe(
         english.connecting,
       );
+    }
+  });
+
+  it("keeps every hold-failure message present and translated", () => {
+    const locales = loadLocales();
+    const english = messagesFor(locales, manifest.defaultLocale);
+
+    for (const key of HOLD_FAILURE_MESSAGES) {
+      // Present in English at all: an absent key is the pruning defect, and it
+      // is invisible to every other assertion here because they start from the
+      // catalogue rather than from the call site.
+      expect(english[key], `en:${key} must exist`).toBeTypeOf("string");
+      for (const locale of (manifest.supportedLocales as string[]).filter(
+        (code) => code !== manifest.defaultLocale,
+      )) {
+        const translation = locales[locale]?.[key];
+        expect(translation, `${locale}:${key} must exist`).toBeTypeOf("string");
+        expect(translation, `${locale}:${key}`).not.toBe(english[key]);
+      }
     }
   });
 

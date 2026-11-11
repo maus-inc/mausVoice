@@ -301,10 +301,103 @@ pub fn encode_recorded_audio(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     bytes
 }
 
+/// Marks a body that ends with a capture trailer.
+///
+/// The trailer cannot be found by inspecting its own contents. The audio before
+/// it is a stream of `f32` and therefore a multiple of four bytes, so twelve
+/// bytes of trailer are indistinguishable from three ordinary samples. A
+/// decoder that guessed at the tail would eat the end of a healthy recording,
+/// and a flags word that merely has an odd low bit does so on roughly half of
+/// them: real speech sets it constantly. This magic is written after the audio
+/// and last in the trailer, and the decoder requires it before it removes
+/// anything, so a false positive needs four consecutive samples to spell a
+/// 32-bit constant and the last sample to have an odd bit pattern.
+pub const CAPTURE_TRAILER_MAGIC: u32 = 0x4341_5054;
+
+/// Set in the trailer's flags word when the host reported the stream gone.
+///
+/// One bit rather than a string: the token is a closed set, the frontend only
+/// needs to know whether it happened, and a string in the trailer would make the
+/// body self-describing at the cost of a length prefix and a decode branch for a
+/// value with two possibilities.
+pub const CAPTURE_FAULT_BIT: u32 = 1 << 0;
+
+/// Packs a finished recording with a trailer carrying what the microphone did.
+///
+/// The audio is framed exactly as [`encode_recorded_audio`] frames it, so a
+/// decoder that knows nothing about the trailer still reads the samples
+/// correctly as long as it derives the sample count from the body length. The
+/// trailer is what lets the user be told the difference between a quiet
+/// dictation and a capture that died:
+///
+/// ```text
+/// [sample_rate: u32 LE][samples: f32 LE...][duration_ms: u32 LE]
+///                                         [expected_ms: u32 LE]
+///                                         [flags: u32 LE]
+///                                         [magic: u32 LE]
+/// ```
+///
+/// A recording without a fault is byte-for-byte what
+/// [`encode_recorded_audio`] produces, so the common path is unchanged and an
+/// older decoder reads it exactly as before.
+pub fn encode_recorded_audio_with_capture(
+    samples: &[f32],
+    sample_rate: u32,
+    duration_ms: u32,
+    expected_ms: u32,
+    capture_fault: Option<&str>,
+) -> Vec<u8> {
+    let mut bytes = encode_recorded_audio(samples, sample_rate);
+    if capture_fault.is_none() {
+        return bytes;
+    }
+    bytes.extend_from_slice(&duration_ms.to_le_bytes());
+    bytes.extend_from_slice(&expected_ms.to_le_bytes());
+    bytes.extend_from_slice(&CAPTURE_FAULT_BIT.to_le_bytes());
+    bytes.extend_from_slice(&CAPTURE_TRAILER_MAGIC.to_le_bytes());
+    bytes
+}
+
+/// Where a capture trailer starts, and the two lengths it carries.
+///
+/// `None` means the body has no trailer, which is every healthy recording. The
+/// magic identifies it; the flag is a consequence of a fault, not a second
+/// discriminator, so requiring both only makes a real trailer easier to miss.
+pub fn decode_capture_trailer(bytes: &[u8]) -> Option<(usize, u32, u32)> {
+    const TRAILER_BYTES: usize = 16;
+    if bytes.len() < 4 + TRAILER_BYTES {
+        return None;
+    }
+    let word = |offset: usize| -> Option<u32> {
+        let slice = bytes.get(offset..offset + 4)?;
+        Some(u32::from_le_bytes(slice.try_into().ok()?))
+    };
+    if word(bytes.len() - 4)? != CAPTURE_TRAILER_MAGIC {
+        return None;
+    }
+    if word(bytes.len() - 8)? & CAPTURE_FAULT_BIT == 0 {
+        // A magic without the flag is not a trailer this build wrote. Leaving
+        // the bytes as audio loses a fault report; stripping them would corrupt
+        // real samples.
+        return None;
+    }
+    Some((
+        bytes.len() - TRAILER_BYTES,
+        word(bytes.len() - 16)?,
+        word(bytes.len() - 12)?,
+    ))
+}
+
 /// Inverse of [`encode_recorded_audio`], for the direction the frontend sends
 /// a recording back (`store_transcription_audio`). One wire format describes a
-/// recording in both directions.
+/// recording in both directions. A capture trailer is not part of that payload
+/// and is stripped if one is present, so a body bounced back by a client that
+/// echoed what it received still decodes to its samples.
 pub fn decode_recorded_audio(bytes: &[u8]) -> Result<(u32, Vec<f32>), String> {
+    let bytes = match decode_capture_trailer(bytes) {
+        Some((audio_len, _, _)) => &bytes[..audio_len],
+        None => bytes,
+    };
     if bytes.len() < 4 {
         return Err("Recorded audio payload is missing its sample-rate header".to_string());
     }
@@ -3481,6 +3574,269 @@ pub async fn start_recording(
     .await
 }
 
+/// The longest pre-roll the recorder accepts, in seconds.
+///
+/// The slider tops out here and the command layer clamps to it, so a stored or
+/// hand-edited value can never ask the ring for more audio than the setting is
+/// documented to keep. The frontend's copy of this cap is asserted against this
+/// line by a contract test, because two caps that drift make the slider lie.
+const MAX_PREROLL_SECONDS: f64 = 2.0;
+
+/// Clamps a requested pre-roll into the accepted window.
+///
+/// A missing, infinite or NaN value lands on zero rather than the default: this
+/// is the last stop before the device, and the caller has already applied its
+/// own default, so anything nonsense reaching here is better read as "keep
+/// nothing" than as "keep half a second the user did not ask for".
+fn preroll_duration(seconds: f64) -> std::time::Duration {
+    let clamped = if seconds.is_finite() {
+        seconds.clamp(0.0, MAX_PREROLL_SECONDS)
+    } else {
+        0.0
+    };
+    std::time::Duration::from_secs_f64(clamped)
+}
+
+/// Converts a hold policy in milliseconds into a duration.
+///
+/// The frontend sends `Number.MAX_SAFE_INTEGER` for "hold until released", and
+/// that has to become the sentinel the backend treats as no timer. Clamping it
+/// to a plausible window instead would make an always-ready microphone close
+/// itself after a fraction of a millisecond.
+fn linger_millis(linger_ms: f64) -> u64 {
+    // NaN is checked on its own: every comparison against it is false, so
+    // letting it through would fall to the final conversion, which saturates to
+    // zero and closes a device the caller asked to hold.
+    if linger_ms.is_nan() || linger_ms <= 0.0 {
+        // A hold of zero or less is still a hold: the caller only reaches this
+        // command when it wants the device open, so the smallest usable window
+        // is used rather than closing it immediately.
+        return 1;
+    }
+    // This covers an infinite request and the `Number.MAX_SAFE_INTEGER`
+    // sentinel in one test. Both mean "until released"; neither is a window.
+    if linger_ms >= 9.0e15 {
+        return u64::MAX;
+    }
+    linger_ms.round().min(u64::MAX as f64) as u64
+}
+
+/// The policy to apply before opening, and whether the open should be held.
+///
+/// Split out from the command because it is the decision that regressed: a zero
+/// sent through `set_linger` closes a stream, so applying it before an open
+/// closed the open the user had just asked for, and the hold was undone before
+/// the stream existed. Returns `None` when nothing should be applied up front.
+/// The check is on the value that arrived, not on the clamped one. The clamp
+/// floors at a millisecond, so a zero would come back as a one-millisecond
+/// window: harmless in effect, but it is not what the caller asked for, and
+/// treating the two as the same is how the zero got forwarded in the first place.
+fn warm_policy_to_apply(linger_ms: f64) -> Option<u64> {
+    if linger_ms.is_nan() || linger_ms <= 0.0 {
+        return None;
+    }
+    Some(linger_millis(linger_ms))
+}
+
+/// Whether an opened stream should be kept until it is released.
+fn warm_policy_holds(linger_ms: f64) -> bool {
+    !linger_ms.is_nan() && linger_ms > 0.0 && linger_millis(linger_ms) == u64::MAX
+}
+
+/// One stage of a capture start, as the UI reads it.
+#[derive(Clone, Debug, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureStartupStage {
+    pub stage: String,
+    pub micros: u64,
+}
+
+/// Opens the microphone and holds it, without recording.
+///
+/// `prerollSeconds` is how much audio from before the press to keep, so a word
+/// that starts as the user presses is not clipped. Zero keeps the device ready
+/// without retaining audio.
+///
+/// `lingerMs` is how long the device stays open after a recording stops.
+/// `Number.MAX_SAFE_INTEGER` means "until the user releases it", which is what
+/// the keep-ready preference sends; anything smaller is a real window.
+#[tauri::command]
+#[specta::specta]
+pub async fn warm_microphone(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+    preroll_seconds: f64,
+    linger_ms: f64,
+) -> Result<(), String> {
+    // The open below is a real device open -- hundreds of milliseconds on a
+    // cold backend, and the thing the user is waiting on. A synchronous
+    // `#[tauri::command]` runs on the async runtime's worker thread, so it
+    // stalls every other command behind it, including the ones that paint the
+    // dialog. `start_recording` already goes through `spawn_blocking` for the
+    // same reason; this is the same work under a different name.
+    let warm = warm.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        warm_microphone_blocking(&warm, preroll_seconds, linger_ms)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// The body of [`warm_microphone`], on a blocking thread.
+fn warm_microphone_blocking(
+    warm: &Arc<dyn crate::platform::WarmCapture>,
+    preroll_seconds: f64,
+    linger_ms: f64,
+) -> Result<(), String> {
+    // Stopping has to leave the stream open, otherwise this open is paid again
+    // on the very next press.
+    //
+    // A zero is not sent here: it would close a stream, and the stop path
+    // reads the policy itself when a recording ends. Only a real window or the
+    // hold sentinel is applied up front.
+    if let Some(policy) = warm_policy_to_apply(linger_ms) {
+        warm.set_linger(policy);
+    }
+    let preroll = preroll_duration(preroll_seconds);
+    warm.set_preroll(preroll);
+
+    // The hold is applied after the open, not before it. Setting it first meant
+    // that switching this option on closed the stream the previous option had
+    // left warm, reopened it, and paid the cold start the option exists to
+    // remove.
+    let result = warm.warm_open(preroll);
+    if result.is_ok() && warm_policy_holds(linger_ms) {
+        warm.promote_to_hold();
+    }
+    result
+}
+
+/// How long the device stays open after a dictation stops, in milliseconds.
+///
+/// Separate from [`warm_microphone`] because it opens nothing. It only sets the
+/// policy the next stop reads, so a user who never asked for a held microphone
+/// can still get a fast second press: the stream from the recording they just
+/// finished is left open for this window and the next press adopts it.
+///
+/// `0` closes the device at stop, which is the default and the only value with
+/// no microphone indicator between dictations.
+#[tauri::command]
+#[specta::specta]
+pub fn set_microphone_linger(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+    linger_ms: f64,
+) {
+    // A zero here is a real instruction: close at stop. Every other value goes
+    // through the same clamp as the open path so the sentinel means the same
+    // thing in both places.
+    if linger_ms <= 0.0 || linger_ms.is_nan() {
+        warm.set_linger(0);
+        return;
+    }
+    warm.set_linger(linger_millis(linger_ms));
+}
+
+/// How much audio from before a press to keep, in seconds.
+///
+/// The open path takes the pre-roll as an argument, which covers the case where
+/// keep-ready is on and a stream is already held. With keep-ready off there is no
+/// open, so nothing ever set it: a cold press fell back to the recorder's own
+/// 500 ms default and the slider did nothing. This is the same policy-only shape
+/// as [`set_microphone_linger`] -- no device is opened, no state is held, and the
+/// value applies to whichever path opens next.
+#[tauri::command]
+#[specta::specta]
+pub fn set_microphone_preroll(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+    preroll_seconds: f64,
+) {
+    // The same clamp as the open path, and the same NaN and infinity handling:
+    // a value the slider cannot produce must not reach the ring sizing.
+    warm.set_preroll(preroll_duration(preroll_seconds));
+}
+
+/// Closes a microphone held open by [`warm_microphone`], and returns to opening
+/// the device on each press.
+#[tauri::command]
+#[specta::specta]
+pub fn close_microphone(warm: State<'_, Arc<dyn crate::platform::WarmCapture>>) {
+    // Not `set_linger(0)`: that also clears the post-recording window, which is
+    // a separate preference. Releasing the device because a recording started
+    // must not turn off a setting the user chose.
+    warm.release_hold();
+}
+
+/// Whether a capture stream is held open right now.
+#[tauri::command]
+#[specta::specta]
+pub fn microphone_ready(warm: State<'_, Arc<dyn crate::platform::WarmCapture>>) -> bool {
+    warm.is_ready()
+}
+
+/// Resolves the device a press would use, without opening a capture stream.
+///
+/// Returns the device label it settled on, which the next start then tries
+/// first. No microphone indicator appears, because nothing is capturing.
+#[tauri::command]
+#[specta::specta]
+pub async fn prepare_microphone(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+) -> Result<String, String> {
+    // Enumerating devices opens the capture host and asks it for its list, which
+    // is a blocking call on every backend. Same reason as `warm_microphone`.
+    let warm = warm.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || warm.prepare())
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+/// One readable line describing the capture path: whether a stream is held, the
+/// linger policy, the pre-roll length, and whether the last start reused a
+/// stream or opened a device.
+#[tauri::command]
+#[specta::specta]
+pub fn microphone_readiness_report(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+) -> String {
+    warm.status_line()
+}
+
+/// What is holding the microphone right now, as one readable line.
+///
+/// Answers the question a user asks when the microphone is unavailable: is it
+/// me, or is another application using it? The answer is measured rather than
+/// inferred, and every state that cannot be measured says so rather than
+/// reporting "nothing is using it".
+///
+/// Shape: `idle`, `held_by_other[Zoom]`, or `unavailable:<reason>`.
+#[tauri::command]
+#[specta::specta]
+pub async fn microphone_usage() -> String {
+    // This shells out to `pactl` on Linux and waits for the process to exit.
+    // That is a blocking wait measured in tens of milliseconds, and it is called
+    // from the diagnostics dialog while the user is looking at it.
+    tauri::async_runtime::spawn_blocking(|| {
+        let usage = crate::platform::mic_usage::current_usage();
+        let line = usage.status_line();
+        log::debug!("microphone usage: {line}");
+        line
+    })
+    .await
+    .unwrap_or_else(|err| format!("unavailable:{err}"))
+}
+
+/// The stage timing of the most recent capture start, oldest stage first.
+#[tauri::command]
+#[specta::specta]
+pub fn capture_startup_timing(
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
+) -> Vec<CaptureStartupStage> {
+    warm.last_startup()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(stage, micros)| CaptureStartupStage { stage, micros })
+        .collect()
+}
+
 /// Raw-body command, so it is registered in `app.rs` but kept out of the
 /// Specta bindings (Specta cannot describe `ipc::Response`). The frontend
 /// decodes it with `decodeStopRecordingPayload`.
@@ -3491,10 +3847,30 @@ pub async fn stop_recording(
     let recorder = Arc::clone(&recorder);
 
     let bytes = tauri::async_runtime::spawn_blocking(move || match recorder.stop() {
-        Ok(result) => Ok(encode_recorded_audio(
-            &result.audio.samples,
-            result.audio.sample_rate,
-        )),
+        Ok(result) => {
+            // The fault is surfaced on the body as well as in the log: a
+            // recording that ends because the device was unplugged is not the
+            // same event as one that ended because the user let go, and only
+            // the body reaches the code that can tell them apart.
+            let metrics = &result.metrics;
+            if metrics.capture_fault.is_some() {
+                log::warn!(
+                    "stop_recording is returning a faulted capture: {:.0} ms captured of {:.0} ms",
+                    metrics.duration.as_secs_f64() * 1000.0,
+                    metrics.expected_duration.as_secs_f64() * 1000.0
+                );
+            }
+            Ok(encode_recorded_audio_with_capture(
+                &result.audio.samples,
+                result.audio.sample_rate,
+                metrics.duration.as_millis().min(u128::from(u32::MAX)) as u32,
+                metrics
+                    .expected_duration
+                    .as_millis()
+                    .min(u128::from(u32::MAX)) as u32,
+                metrics.capture_fault.as_deref(),
+            ))
+        }
         Err(err) => {
             let not_recording = (*err)
                 .downcast_ref::<crate::errors::RecordingError>()
@@ -6606,6 +6982,191 @@ mod tests {
     static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
         once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
 
+    /// The pre-roll the command layer hands the recorder.
+    ///
+    /// Two caps exist, one here and one in the slider, and a contract test
+    /// asserts they match. What this pins is the behaviour at the edges: a
+    /// stored value from before the setting existed, a hand-edited database
+    /// row, and a NaN all have to reach the device as something sane.
+    #[test]
+    fn pre_roll_seconds_are_clamped_to_the_accepted_window() {
+        assert_eq!(
+            super::preroll_duration(0.5),
+            std::time::Duration::from_millis(500)
+        );
+        assert_eq!(
+            super::preroll_duration(2.0),
+            std::time::Duration::from_secs(2)
+        );
+        // Above the cap the slider cannot go, so a larger stored value is
+        // reduced rather than passed through to a ring that would hold more
+        // audio than the setting promises.
+        assert_eq!(
+            super::preroll_duration(30.0),
+            std::time::Duration::from_secs(2)
+        );
+        assert_eq!(super::preroll_duration(-1.0), std::time::Duration::ZERO);
+        assert_eq!(super::preroll_duration(0.0), std::time::Duration::ZERO);
+        assert_eq!(super::preroll_duration(f64::NAN), std::time::Duration::ZERO);
+        assert_eq!(
+            super::preroll_duration(f64::INFINITY),
+            std::time::Duration::ZERO
+        );
+    }
+
+    /// A hold policy that arrives as a number has to become the sentinel the
+    /// backend treats as "no timer".
+    ///
+    /// The frontend sends `Number.MAX_SAFE_INTEGER` for "hold until released".
+    /// Treating that as a window would close an always-ready microphone after a
+    /// fraction of a millisecond, which is the failure mode where the preference
+    /// looks on and the device is shut.
+    /// Every numeric edge of the linger conversion, because each one is a
+    /// different wrong device state.
+    ///
+    /// These are the values a frontend can actually send: a slider, a JSON
+    /// number that came back as NaN from a corrupt row, and the hold sentinel.
+    /// Each is pinned to the outcome, not to the arithmetic, so a rewritten
+    /// conversion still has to satisfy them.
+    #[test]
+    fn linger_millis_maps_every_edge_to_the_documented_policy() {
+        // The window the settings dialog writes when the switch is turned on.
+        assert_eq!(linger_millis(5_000.0), 5_000);
+        // Sub-millisecond and fractional values round rather than truncate:
+        // truncating 0.9 to 0 would close the device the caller asked to hold.
+        assert_eq!(linger_millis(0.9), 1);
+        assert_eq!(linger_millis(1.5), 2);
+        // A hold of zero or less from a caller that reached this command is
+        // still a hold: the smallest usable window, not a closed device.
+        assert_eq!(linger_millis(0.0), 1);
+        assert_eq!(linger_millis(-1.0), 1);
+        assert_eq!(linger_millis(-1.0e12), 1);
+        // NaN has to be checked before the comparison, because every comparison
+        // against NaN is false and the cast would saturate to zero.
+        assert_eq!(linger_millis(f64::NAN), 1);
+        // The finite maximum the settings dialog can send.
+        assert_eq!(linger_millis(30_000.0), 30_000);
+        // Infinity and the sentinel both mean "until released", never a window.
+        assert_eq!(linger_millis(f64::MAX), u64::MAX);
+        assert_eq!(linger_millis(9.0e15), u64::MAX);
+        assert_eq!(linger_millis(f64::INFINITY), u64::MAX);
+    }
+
+    #[test]
+    fn preroll_duration_clamps_to_the_slider_range() {
+        use std::time::Duration;
+        // The slider's own maximum; a value from an older version or a hand
+        // edited row must not allocate a buffer larger than the UI can ask for.
+        assert_eq!(preroll_duration(2.0), Duration::from_secs(2));
+        assert_eq!(preroll_duration(60.0), Duration::from_secs(2));
+        // Zero is a supported choice, not a missing value.
+        assert_eq!(preroll_duration(0.0), Duration::ZERO);
+        assert_eq!(preroll_duration(-1.0), Duration::ZERO);
+        // NaN and infinity both clamp to zero rather than panicking inside
+        // `from_secs_f64`, which panics on a negative or non-finite argument.
+        assert_eq!(preroll_duration(f64::NAN), Duration::ZERO);
+        assert_eq!(preroll_duration(f64::INFINITY), Duration::ZERO);
+        assert_eq!(preroll_duration(f64::NEG_INFINITY), Duration::ZERO);
+    }
+
+    #[test]
+    fn warm_policy_agrees_with_the_conversion_it_wraps() {
+        // `warm_microphone` asks two questions of the same number: what policy
+        // to apply before the open, and whether the open should be held. They
+        // have to agree, or the device is opened under one policy and held under
+        // another.
+        assert_eq!(warm_policy_to_apply(0.0), None);
+        assert_eq!(warm_policy_to_apply(f64::NAN), None);
+        assert_eq!(warm_policy_to_apply(5_000.0), Some(5_000));
+        assert_eq!(warm_policy_to_apply(f64::MAX), Some(u64::MAX));
+
+        assert!(!warm_policy_holds(0.0));
+        assert!(!warm_policy_holds(f64::NAN));
+        // A finite window is not a hold.
+        assert!(!warm_policy_holds(5_000.0));
+        assert!(!warm_policy_holds(30_000.0));
+        // The sentinel and anything past it are.
+        assert!(warm_policy_holds(f64::MAX));
+        assert!(warm_policy_holds(f64::INFINITY));
+    }
+
+    #[test]
+    fn linger_millis_keeps_a_usable_window_and_reads_the_sentinel() {
+        assert_eq!(super::linger_millis(5_000.0), 5_000);
+        assert_eq!(super::linger_millis(1.0), 1);
+        assert_eq!(super::linger_millis(9_007_199_254_740_991.0), u64::MAX);
+        assert_eq!(super::linger_millis(f64::INFINITY), u64::MAX);
+        // Asking for a hold of zero or less is still asking to hold, so the
+        // smallest real window is used instead of closing the device.
+        assert_eq!(super::linger_millis(0.0), 1);
+        assert_eq!(super::linger_millis(-5.0), 1);
+        assert_eq!(super::linger_millis(f64::NAN), 1);
+    }
+
+    /// Turning on the hold must never apply a close first.
+    ///
+    /// This is the regression in isolation: `linger_millis(0.0)` is `1`, which
+    /// the manager reads as "close", so anything that forwards the raw value
+    /// before opening closes the warm stream the user already had and pays the
+    /// cold start again.
+    #[test]
+    fn a_zero_is_never_applied_before_an_open() {
+        assert_eq!(super::warm_policy_to_apply(0.0), None);
+        assert!(!super::warm_policy_holds(0.0));
+    }
+
+    #[test]
+    fn the_hold_sentinel_survives_the_round_trip_from_javascript() {
+        // `Number.MAX_SAFE_INTEGER` is what the frontend actually sends.
+        let max_safe = 9_007_199_254_740_991.0_f64;
+        assert_eq!(super::linger_millis(max_safe), u64::MAX);
+        assert!(super::warm_policy_holds(max_safe));
+        assert_eq!(super::warm_policy_to_apply(max_safe), Some(u64::MAX));
+    }
+
+    #[test]
+    fn a_finite_window_is_applied_before_the_open_and_does_not_hold() {
+        assert_eq!(super::warm_policy_to_apply(5_000.0), Some(5_000));
+        assert!(!super::warm_policy_holds(5_000.0));
+    }
+
+    #[test]
+    fn an_unreadable_window_is_left_to_the_stop_path() {
+        // None of these is a window a user asked for, and none may read as the
+        // hold sentinel: that would leave a device held forever because a value
+        // could not be read.
+        for value in [f64::NAN, -1.0, f64::NEG_INFINITY, -0.0] {
+            assert_eq!(super::warm_policy_to_apply(value), None, "{value}");
+            assert!(!super::warm_policy_holds(value), "{value}");
+        }
+    }
+
+    /// A zero linger is a real instruction, not a missing value.
+    ///
+    /// The settings offer "close at stop" as the default and as something the
+    /// user can return to. Sending zero through the same clamp as the open path
+    /// would turn it into the smallest positive hold and leave the microphone
+    /// lit after every dictation for a user who asked for exactly the opposite.
+    #[test]
+    fn a_zero_linger_stays_zero() {
+        assert_eq!(super::linger_millis(0.0), 1);
+        // The command path short-circuits before the clamp, which is what keeps
+        // "close at stop" expressible.
+        let requested = 0.0_f64;
+        let stored = if requested <= 0.0 || requested.is_nan() {
+            0
+        } else {
+            super::linger_millis(requested)
+        };
+        assert_eq!(stored, 0);
+    }
+
+    /// The pre-roll cap the slider uses is the one this layer clamps to.
+    #[test]
+    fn the_pre_roll_cap_is_two_seconds() {
+        assert_eq!(super::MAX_PREROLL_SECONDS, 2.0);
+    }
+
     /// The wire contract for the raw `stop_recording` body: a `u32` sample
     /// rate then the samples, both little-endian, with no padding between
     /// them.
@@ -6633,6 +7194,136 @@ mod tests {
             vec![0x00, 0x00, 0x00, 0x00],
             "the not-recording body is a bare zero rate"
         );
+    }
+
+    #[test]
+    fn a_healthy_recording_is_byte_for_byte_the_old_framing() {
+        // The trailer is opt-in per recording, not a format change: every
+        // recording that ends the ordinary way must look exactly as it did, or
+        // the frontend pays a decode branch on the common path for nothing.
+        assert_eq!(
+            encode_recorded_audio_with_capture(&[0.5, -1.0], 48_000, 1_234, 1_300, None),
+            encode_recorded_audio(&[0.5, -1.0], 48_000)
+        );
+    }
+
+    #[test]
+    fn a_faulted_recording_carries_its_lengths_and_a_flag() {
+        let bytes = encode_recorded_audio_with_capture(&[0.5], 16_000, 1_400, 6_000, Some("fatal"));
+
+        // Audio first, then the trailer words, so a decoder that reads the body
+        // as audio cannot mistake the trailer for samples.
+        let mut expected = encode_recorded_audio(&[0.5], 16_000);
+        expected.extend_from_slice(&1_400_u32.to_le_bytes());
+        expected.extend_from_slice(&6_000_u32.to_le_bytes());
+        expected.extend_from_slice(&CAPTURE_FAULT_BIT.to_le_bytes());
+        expected.extend_from_slice(&CAPTURE_TRAILER_MAGIC.to_le_bytes());
+        assert_eq!(bytes, expected);
+        assert_eq!(
+            bytes.len(),
+            encode_recorded_audio(&[0.5], 16_000).len() + 16
+        );
+    }
+
+    #[test]
+    fn the_magic_is_the_last_word_so_the_trailer_is_findable() {
+        let bytes =
+            encode_recorded_audio_with_capture(&[0.25, 0.5], 44_100, 900, 4_000, Some("fatal"));
+        let tail = &bytes[bytes.len() - 4..];
+
+        // The decoder locates the trailer from the end of the body and has
+        // nothing else to go on, so the magic has to be the final word.
+        assert_eq!(
+            u32::from_le_bytes([tail[0], tail[1], tail[2], tail[3]]),
+            CAPTURE_TRAILER_MAGIC
+        );
+    }
+
+    /// The exact bytes, so the TypeScript decoder can be checked against them.
+    ///
+    /// `readCaptureTrailer` in `recorded-audio.utils.ts` is a second
+    /// implementation of this layout and the two are only pinned to match by
+    /// tests on each side. This one writes the literal bytes a faulted stop
+    /// produces for a known input, so a change to either side that kept its own
+    /// tests green would still be caught by the other.
+    #[test]
+    fn the_faulted_body_is_exactly_these_bytes() {
+        let bytes = encode_recorded_audio_with_capture(&[0.5], 16_000, 1_400, 6_000, Some("fatal"));
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&[0x80, 0x3E, 0x00, 0x00]); // 16_000 LE
+        expected.extend_from_slice(&0.5_f32.to_le_bytes()); // the sample
+        expected.extend_from_slice(&[0x78, 0x05, 0x00, 0x00]); // 1_400 ms
+        expected.extend_from_slice(&[0x70, 0x17, 0x00, 0x00]); // 6_000 ms
+        expected.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // flags: fatal
+        expected.extend_from_slice(&[0x54, 0x50, 0x41, 0x43]); // "TPAC" LE
+
+        assert_eq!(bytes, expected);
+        assert_eq!(decode_capture_trailer(&bytes), Some((8, 1_400, 6_000)));
+    }
+
+    #[test]
+    fn a_trailer_round_trips_to_the_audio_and_the_two_lengths() {
+        let audio = encode_recorded_audio(&[0.5, -0.5, 0.25], 44_100);
+        let bytes = encode_recorded_audio_with_capture(
+            &[0.5, -0.5, 0.25],
+            44_100,
+            1_400,
+            6_000,
+            Some("fatal"),
+        );
+
+        assert_eq!(
+            decode_capture_trailer(&bytes),
+            Some((audio.len(), 1_400, 6_000))
+        );
+        assert_eq!(
+            decode_recorded_audio(&bytes),
+            Ok((44_100, vec![0.5, -0.5, 0.25]))
+        );
+    }
+
+    #[test]
+    fn audio_that_happens_to_look_like_a_flag_is_not_a_trailer() {
+        // The defect this pins: a decoder that treats an odd last word as a
+        // fault marker eats three real samples and reports a capture fault on
+        // ordinary speech. 0x3f800001 is 1.0000001f, an entirely ordinary
+        // sample.
+        let samples = [0.25_f32, 0.5, 0.75, 1.000_000_1];
+        let bytes = encode_recorded_audio(&samples, 16_000);
+
+        assert_eq!(decode_capture_trailer(&bytes), None);
+        let (rate, decoded) = decode_recorded_audio(&bytes).expect("decodes");
+        assert_eq!(rate, 16_000);
+        assert_eq!(decoded, samples.to_vec());
+    }
+
+    #[test]
+    fn a_trailer_missing_its_flag_is_left_as_audio() {
+        let mut bytes = encode_recorded_audio(&[0.5, 0.25], 16_000);
+        // The magic with no flag: not something this build wrote, so it must
+        // not be trusted enough to delete samples. The trailing magic is itself
+        // four more bytes of what the decoder must read as audio.
+        let mut expected = vec![0.5, 0.25, 0.0, 0.0, 0.0];
+        expected.push(f32::from_bits(CAPTURE_TRAILER_MAGIC));
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&CAPTURE_TRAILER_MAGIC.to_le_bytes());
+
+        assert_eq!(decode_capture_trailer(&bytes), None);
+        assert_eq!(decode_recorded_audio(&bytes), Ok((16_000, expected)));
+    }
+
+    #[test]
+    fn a_body_too_short_for_a_trailer_is_never_trimmed() {
+        // Fewer bytes than the trailer plus the header cannot hold one, so even
+        // a matching tail word must leave the samples alone.
+        let mut bytes = 16_000_u32.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&CAPTURE_TRAILER_MAGIC.to_le_bytes());
+
+        assert_eq!(decode_capture_trailer(&bytes), None);
+        assert!(decode_recorded_audio(&bytes).is_ok());
     }
 
     #[test]
@@ -10412,7 +11103,9 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
                         duration: std::time::Duration::ZERO,
+                        expected_duration: std::time::Duration::ZERO,
                         size_bytes: 0,
+                        capture_fault: None,
                     },
                     audio: crate::domain::RecordedAudio {
                         samples: Vec::new(),

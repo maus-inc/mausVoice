@@ -270,7 +270,14 @@ export const TypographyHelpersDemo = () => {
       >
         <Matrix>
           <State label="clamped + expanded" wide>
-            <Box sx={{ maxWidth: 420 }}>
+            {/* width:100% is load-bearing. The demo tile is a flex column with
+                align-items:flex-start, and TypographyWithMore sets
+                container-type:inline-size, which makes it contribute no
+                intrinsic width. Left to shrink-wrap it collapses to 0px and
+                the absolutely positioned "Show more" toggle lands on top of
+                the text. The real app uses it in a block container, where this
+                does not arise; the demo has to ask for the width it wants. */}
+            <Box sx={{ width: "100%", maxWidth: 420 }}>
               <TypographyWithMore maxLines={2}>
                 Dictation captures your voice and turns it into clean text
                 anywhere you can type. Styles reshape tone per app, and the pill

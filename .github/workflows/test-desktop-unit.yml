@@ -19,7 +19,15 @@ on:
       - "scripts/check-bindings.sh"
       - "scripts/bindings.sh"
       - "scripts/ci/check-bindings-guard.test.mjs"
+      # Reads both command lists, so it must run when either changes.
+      - "scripts/ci/bindings-command-parity.test.mjs"
+      - "apps/desktop/src-tauri/src/app.rs"
+      - "apps/desktop/src-tauri/examples/gen_bindings.rs"
       - "scripts/ci/check-workflow-pins.test.mjs"
+      - "scripts/ci/verify-scripts-load.test.mjs"
+      # The guard reads these, so a change to one of them is exactly the edit
+      # most likely to break it and the one that would not start the job.
+      - "scripts/verify/**"
       - "scripts/ci/windows-tauri-imports.test.mjs"
       # Every suite this workflow runs, and the config `dev-surface-contracts`
       # reads. A guard whose own edit does not match the trigger filter does not
@@ -42,6 +50,10 @@ on:
       - "scripts/ci/validate-release-inputs.test.mjs"
       - "scripts/ci/release-notes.test.mjs"
       - "scripts/ci/verify-sherpa-archives.test.mjs"
+      - "scripts/ci/warm-microphone-edge-cases.test.mjs"
+      # The matrix itself: editing a row is editing the thing this suite
+      # asserts, so it has to start the job that checks it.
+      - "docs/qa/warm-microphone-edge-cases.md"
       - ".github/workflows/**"
 permissions: {}
 
@@ -250,6 +262,12 @@ jobs:
         run: node --test scripts/ci/package-exports.test.mjs
       - name: Test check-bindings tracked-file guard
         run: node --test scripts/ci/check-bindings-guard.test.mjs
+      - name: Test that the bindings generator collects every command
+        # `check-bindings.sh` below compares regenerated output to the committed
+        # file, which catches a drift only after a full Rust build. This test
+        # reads the two `*_commands![...]` lists directly, so a command added to
+        # `app.rs` and not to the generator fails in seconds, by name.
+        run: node --test scripts/ci/bindings-command-parity.test.mjs
       - name: Test workflow action pin guard
         run: node --test scripts/ci/check-workflow-pins.test.mjs
       - name: Test the release script guards
@@ -270,6 +288,22 @@ jobs:
         # stops being skipped without anyone being told. A guard that no job runs
         # is documentation, so it is run here like the others.
         run: node --test scripts/ci/check-workspace-hygiene.test.mjs
+      - name: Test that the verify scripts can be loaded
+        # The scripts under `scripts/verify` are only run by hand, so nothing in
+        # CI executed them and nothing noticed when one could not start. This
+        # guard was written after `shot-mic-dialog.mjs` shipped with a
+        # `const URL` that shadowed the global: `node --check` accepted the file
+        # and the script died on its first `new URL` with a ReferenceError. A
+        # module-scope shadowing bug is invisible to a parser and to every other
+        # gate here, so it gets its own.
+        run: node --test scripts/ci/verify-scripts-load.test.mjs
+      - name: Test the warm-microphone QA matrix
+        # `docs/qa/warm-microphone-edge-cases.md` cites a test for every row, and
+        # this guard is what keeps those citations true: a row whose test was
+        # renamed or deleted otherwise goes on claiming coverage it lost. It
+        # reads the markdown and the source tree, needs no build, and was the
+        # one `scripts/ci` guard no workflow ran.
+        run: node --test scripts/ci/warm-microphone-edge-cases.test.mjs
       - name: Test Windows-only Rust module imports
         # No runner in this repository compiles
         # apps/desktop/src-tauri/src/platform/windows/** on Linux, so an

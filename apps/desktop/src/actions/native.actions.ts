@@ -61,3 +61,32 @@ export async function quitApp(): Promise<void> {
     );
   }
 }
+
+/**
+ * Logs the capture path's current state and its last start.
+ *
+ * Called when a diagnostics export runs, so a report carries whether the
+ * microphone was held, under which policy, and whether the last start reused a
+ * stream or opened a device. Reading it back rather than inferring it from
+ * preferences is the whole point: the preference can say "ready" while the
+ * device failed to open, and that difference is the bug worth reporting.
+ */
+export async function logMicrophoneReadiness(): Promise<void> {
+  try {
+    const repo = getNativeRepo();
+    const report = await repo.microphoneReadinessReport();
+    getLogger().info(`Microphone readiness: ${report}`);
+    const stages = await repo.captureStartupTiming();
+    // `none` rather than silence: a build where no start was ever traced is a
+    // different bug from one where the trace is empty, and the export is the
+    // only place the difference can still be seen after the fact. This also
+    // covers the pre-warm open, which records a trace without a recording.
+    const rendered =
+      stages.length > 0
+        ? stages.map((stage) => `${stage.stage}=${stage.micros}us`).join(" ")
+        : "none";
+    getLogger().info(`Microphone last start: ${rendered}`);
+  } catch (error) {
+    getLogger().warning(`Could not read microphone readiness: ${error}`);
+  }
+}
