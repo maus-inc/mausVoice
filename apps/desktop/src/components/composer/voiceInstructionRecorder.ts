@@ -74,6 +74,8 @@ export class VoiceInstructionRecorder {
   private disposed = false;
   private opGen = 0;
   private stopInFlight = false;
+  private recognitionEnded: Promise<void> | null = null;
+  private settleRecognitionEnd: (() => void) | null = null;
   private unsubscribeClear: (() => void) | null = null;
 
   constructor(private readonly deps: VoiceInstructionRecorderDeps) {
@@ -213,12 +215,18 @@ export class VoiceInstructionRecorder {
       recognition.interimResults = false;
       recognition.maxAlternatives = 1;
       const alive = () => this.recognition === recognition && !this.disposed;
+      let settleEnd: () => void = () => undefined;
+      this.recognitionEnded = new Promise<void>((resolve) => {
+        settleEnd = resolve;
+      });
+      this.settleRecognitionEnd = settleEnd;
       recognition.onresult = (event) => {
         if (!alive()) return;
         const first = event.results[0]?.[0]?.transcript;
         if (first) this.deps.onTranscript(`${first}`.trim());
       };
       recognition.onend = () => {
+        settleEnd();
         // Browser capture has ended, so the slot goes back even when the
         // component has already moved on.
         this.releaseBrowserLease(lease);
@@ -226,6 +234,7 @@ export class VoiceInstructionRecorder {
         this.setIdle();
       };
       recognition.onerror = () => {
+        settleEnd();
         this.releaseBrowserLease(lease);
         if (!alive()) return;
         this.setIdle();
@@ -256,6 +265,10 @@ export class VoiceInstructionRecorder {
       recognition.onerror = null;
       recognition.onend = null;
     }
+    // Callbacks are gone, so `onend` can no longer arrive; release any
+    // `stop()` that is waiting for it instead of leaving it pending forever.
+    this.settleRecognitionEnd?.();
+    this.settleRecognitionEnd = null;
     return recognition;
   }
 
@@ -280,15 +293,7 @@ export class VoiceInstructionRecorder {
 
   private async stop(gen: number): Promise<void> {
     if (this.state === "browser") {
-      const stopped =
-        !this.recognition || this.stopBrowserRecognition(this.recognition);
-      // Await the release so a start that follows this stop sees a free slot
-      // instead of racing a claim native has not released yet.
-      const lease = this.browserLease;
-      if (lease) {
-        this.browserLease = null;
-        await lease.release().catch(() => undefined);
-      }
+      const stopped = await this.stopBrowserCapture();
       if (gen === this.opGen && !this.disposed) {
         // stop() can deliver its final result asynchronously. Keep this
         // recognizer's callbacks until end, dispose, or the next recording.
@@ -301,6 +306,29 @@ export class VoiceInstructionRecorder {
     if (this.state === "provider") {
       await this.stopProviderRecording(gen);
     }
+  }
+
+  /**
+   * Stop the webview recognizer and free the native slot, in that order.
+   *
+   * The lease is captured before the stop request so it stays claimed until
+   * the recognizer reports `onend`: releasing on the request alone would free
+   * the slot while browser capture is still winding down, letting another
+   * recording start beside it. The final release is idempotent with `onend`'s
+   * own call and is awaited so a start that follows this stop sees a free
+   * slot only after native has acknowledged it.
+   */
+  private async stopBrowserCapture(): Promise<boolean> {
+    const lease = this.browserLease;
+    const recognition = this.recognition;
+    const stopped = !recognition || this.stopBrowserRecognition(recognition);
+    const ended = recognition && stopped ? this.recognitionEnded : null;
+    if (ended) await ended.catch(() => undefined);
+    if (lease) {
+      if (this.browserLease === lease) this.browserLease = null;
+      await lease.release().catch(() => undefined);
+    }
+    return stopped;
   }
 
   /**
@@ -331,7 +359,14 @@ export class VoiceInstructionRecorder {
         if (gen !== this.opGen || this.disposed) return null;
         return await this.transcribeProviderResponse(gen, response);
       } catch {
-        if (gen !== this.opGen || this.disposed) return null;
+        if (gen !== this.opGen || this.disposed) {
+          // The stop failed while this operation was invalidated:
+          // releaseCapture skipped its own discard because the stop was in
+          // flight, so drop the restored native handle here or the
+          // microphone stays live behind the invalidated continuation.
+          void discardNativeRecording();
+          return null;
+        }
         this.deps.logger.warning(
           "Voice Edit Mode: provider transcription failed",
         );
