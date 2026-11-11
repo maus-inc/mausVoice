@@ -298,6 +298,65 @@ if (narrow.docScrollW > narrow.viewport + 1)
   );
 writeFileSync(`${OUT}/03-narrow-560.png`, await page.screenshot());
 
+// ---- Scroll affordance -----------------------------------------------------
+//
+// The dialog is taller than a laptop's viewport. At 520 px the content is cut
+// mid-sentence, and without a fade the cut reads as a rendering bug rather than
+// as "there is more below". The fade is only correct when the content really
+// does overflow, so both halves are checked: an overflowing short viewport must
+// show the bottom fade, and a viewport tall enough to fit everything must show
+// neither.
+await page.setViewport(900, 520);
+await sleep(900);
+const shortFades = await page.evaluate(`(() => {
+  const paper = document.querySelector('.MuiDialog-paper');
+  const content = document.querySelector('.MuiDialogContent-root');
+  if (!paper || !content) return null;
+  const fades = [...paper.querySelectorAll('[aria-hidden]')].filter((el) => {
+    const cs = getComputedStyle(el);
+    return (
+      cs.position === 'absolute' &&
+      cs.pointerEvents === 'none' &&
+      cs.backgroundImage.includes('gradient')
+    );
+  });
+  return {
+    count: fades.length,
+    opacities: fades.map((el) => Number(getComputedStyle(el).opacity)),
+    overflows: content.scrollHeight > content.clientHeight + 1,
+  };
+})()`);
+writeFileSync(`${OUT}/scroll-fades.json`, JSON.stringify(shortFades, null, 2));
+if (!shortFades) note("fades", "dialog or content missing at 520 px");
+else {
+  if (!shortFades.overflows)
+    note(
+      "fades",
+      "content did not overflow at 520 px; the case is not exercised",
+    );
+  if (shortFades.count !== 2)
+    note("fades", `expected 2 fade layers, found ${shortFades.count}`);
+  // Bottom only: scrolled to the top, so nothing is hidden above.
+  else if (shortFades.opacities[1] !== 1)
+    note("fades", "bottom fade is not showing over clipped content");
+  else if (shortFades.opacities[0] !== 0)
+    note("fades", "top fade is showing while scrolled to the top");
+}
+
+// A property of the fade, not just its visibility: it has to let clicks through,
+// or it would sit over the switches it is drawn above.
+const fadeBlocksClicks = await page.evaluate(`(() => {
+  const paper = document.querySelector('.MuiDialog-paper');
+  const fade = [...paper.querySelectorAll('[aria-hidden]')].find((el) => {
+    const cs = getComputedStyle(el);
+    return cs.position === 'absolute' && cs.backgroundImage.includes('gradient');
+  });
+  return fade ? getComputedStyle(fade).pointerEvents !== 'none' : null;
+})()`);
+if (fadeBlocksClicks !== false)
+  note("fades", "a fade would intercept pointer events");
+writeFileSync(`${OUT}/05-scroll-fade.png`, await page.screenshot());
+
 // ---- Dark mode -------------------------------------------------------------
 // The theme's default mode is "system", so dark is reached by emulating the
 // media query rather than by setting an attribute the theme never reads. The

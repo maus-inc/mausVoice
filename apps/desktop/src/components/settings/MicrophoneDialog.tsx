@@ -1,5 +1,6 @@
 import {
   Alert,
+  Box,
   Button,
   Dialog,
   DialogActions,
@@ -11,6 +12,7 @@ import {
   Switch,
   Typography,
 } from "@mui/material";
+import type { Theme } from "@mui/material/styles";
 import { Nullable } from "@maus-inc/types";
 import {
   useCallback,
@@ -35,6 +37,7 @@ import {
   MicrophoneSelector,
   type MicrophoneOption,
 } from "../microphone/MicrophoneSelector";
+import { useScrollEdges, type ScrollEdges } from "./use-scroll-edges";
 import { MicrophoneTester } from "../microphone/MicrophoneTester";
 import { ElasticSlider } from "../common/ElasticSlider";
 import { Reveal } from "../common/Reveal";
@@ -80,6 +83,58 @@ const revealFeedback = (
   if (errorRect.bottom > containerRect.bottom) {
     content.scrollTop += errorRect.bottom - containerRect.bottom + 8;
   }
+};
+
+/**
+ * Fades that mark an edge of the scrollable content.
+ *
+ * `pointerEvents: "none"` because a gradient is decoration: it must never eat a
+ * click meant for the control underneath. Under `prefers-reduced-motion` the
+ * transition is dropped rather than the fade itself -- the fade carries no
+ * motion, and removing it would take away the only cue that text is cut off.
+ */
+const ScrollEdgeFades = ({ edges }: { edges: ScrollEdges }) => {
+  // `vars` is the CSS-variable theme and is absent wherever the component is
+  // rendered without a provider -- every jsdom test of this dialog. Falling
+  // back to the resolved palette keeps the gradient a real colour there instead
+  // of throwing on an undefined theme.
+  const gradient = (direction: "to bottom" | "to top") => (theme: Theme) => {
+    const paper = theme.vars?.palette.background.paper;
+    return `linear-gradient(${direction}, ${paper ?? theme.palette.background.paper}, transparent)`;
+  };
+
+  return (
+    <>
+      <Box
+        aria-hidden
+        sx={{
+          position: "absolute",
+          top: 0,
+          left: 1,
+          right: 1,
+          height: 18,
+          pointerEvents: "none",
+          opacity: edges.top ? 1 : 0,
+          transition: "opacity 150ms ease",
+          background: gradient("to bottom"),
+        }}
+      />
+      <Box
+        aria-hidden
+        sx={{
+          position: "absolute",
+          bottom: 0,
+          left: 1,
+          right: 1,
+          height: 18,
+          pointerEvents: "none",
+          opacity: edges.bottom ? 1 : 0,
+          transition: "opacity 150ms ease",
+          background: gradient("to top"),
+        }}
+      />
+    </>
+  );
 };
 
 /**
@@ -188,6 +243,13 @@ export const MicrophoneDialog = () => {
   const microphoneBluetooth = devices.find(
     (device) => device.value === selected,
   )?.bluetooth;
+
+  // The dialog is taller than a short window, and the content is clipped
+  // mid-sentence with nothing to say so. `contentNode` mirrors `contentRef` in
+  // state because the hook needs the element itself, and a ref's `.current` is
+  // not reactive: the first render would measure nothing.
+  const [contentNode, setContentNode] = useState<HTMLDivElement | null>(null);
+  const scrollEdges = useScrollEdges(contentNode, open);
   // Holding the microphone open is only a bargain on the built-in device.
   // Bluetooth is a shared half-duplex channel: while anything captures, macOS
   // drops the headset from A2DP to the hands-free profile, so playback becomes
@@ -277,194 +339,229 @@ export const MicrophoneDialog = () => {
   }, []);
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      fullWidth
+      maxWidth="sm"
+      // The fades are positioned against this box, so it has to be the
+      // containing block for them.
+      sx={{ "& .MuiDialog-paper": { position: "relative" } }}
+    >
       <DialogTitle>
         <FormattedMessage defaultMessage="Microphone settings" />
       </DialogTitle>
-      <DialogContent dividers ref={contentRef}>
-        <Stack spacing={3} sx={{ paddingTop: 0.5 }}>
-          <Stack spacing={1.5}>
-            <SettingSection
-              title={<FormattedMessage defaultMessage="Preferred microphone" />}
-              description={
-                <FormattedMessage defaultMessage="Choose which microphone mausVoice should use when recording. Automatic picks the best available device each time." />
-              }
-              sx={{ pb: 0.5 }}
-            />
-            <MicrophoneSelector
-              value={selected ?? null}
-              onChange={handleSelectionChange}
-              disabled={saving}
-              onDevicesKnown={handleDevicesKnown}
-            />
-            {saveError && (
-              <Alert ref={feedbackRef} severity="error">
-                <FormattedMessage defaultMessage="Failed to save microphone preference. Please try again." />
-              </Alert>
-            )}
-          </Stack>
+      {/*
+        The fades live in this wrapper, not inside `DialogContent`: the content
+        scrolls, so a fade inside it would scroll away from the edge it marks.
+        Sizing to the content's own box also means no hard-coded offsets that
+        would drift the moment the title or the actions bar changes height.
+      */}
+      <Box sx={{ position: "relative", display: "flex", minHeight: 0 }}>
+        <DialogContent
+          dividers
+          ref={(node: HTMLDivElement | null) => {
+            contentRef.current = node;
+            setContentNode(node);
+          }}
+        >
+          <Stack spacing={3} sx={{ paddingTop: 0.5 }}>
+            <Stack spacing={1.5}>
+              <SettingSection
+                title={
+                  <FormattedMessage defaultMessage="Preferred microphone" />
+                }
+                description={
+                  <FormattedMessage defaultMessage="Choose which microphone mausVoice should use when recording. Automatic picks the best available device each time." />
+                }
+                sx={{ pb: 0.5 }}
+              />
+              <MicrophoneSelector
+                value={selected ?? null}
+                onChange={handleSelectionChange}
+                disabled={saving}
+                onDevicesKnown={handleDevicesKnown}
+              />
+              {saveError && (
+                <Alert ref={feedbackRef} severity="error">
+                  <FormattedMessage defaultMessage="Failed to save microphone preference. Please try again." />
+                </Alert>
+              )}
+            </Stack>
 
-          <Divider />
+            <Divider />
 
-          <Stack spacing={1.5}>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={keepReady}
-                  onChange={(event) =>
-                    void setKeepMicrophoneReady(event.target.checked)
-                  }
-                />
-              }
-              label={
-                <FormattedMessage defaultMessage="Keep the microphone ready" />
-              }
-            />
-            <Typography variant="body2" color="text.secondary">
-              <FormattedMessage defaultMessage="Start dictating instantly by opening the microphone ahead of time. Your system shows its microphone-in-use indicator the whole time this is on." />
-            </Typography>
-            <Reveal show={keepReady}>
-              <HeldStateLine state={heldState} />
-            </Reveal>
-            {/* The switch's own copy promises the microphone indicator. On a
+            <Stack spacing={1.5}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={keepReady}
+                    onChange={(event) =>
+                      void setKeepMicrophoneReady(event.target.checked)
+                    }
+                  />
+                }
+                label={
+                  <FormattedMessage defaultMessage="Keep the microphone ready" />
+                }
+              />
+              <Typography variant="body2" color="text.secondary">
+                <FormattedMessage defaultMessage="Start dictating instantly by opening the microphone ahead of time. Your system shows its microphone-in-use indicator the whole time this is on." />
+              </Typography>
+              <Reveal show={keepReady}>
+                <HeldStateLine state={heldState} />
+              </Reveal>
+              {/* The switch's own copy promises the microphone indicator. On a
                 Bluetooth headset the real cost is larger and invisible: the
                 link drops to the hands-free profile, so playback becomes call
                 quality and the headset's battery drains for as long as the hold
                 lasts. Saying so under the switch, not in a toast, because it is
                 a standing property of the setting rather than an event. */}
-            <Reveal show={bluetoothWarning}>
-              <Alert
-                severity="warning"
-                icon={false}
-                sx={{ alignItems: "center", py: 0.5 }}
-              >
-                <Typography variant="body2">
-                  <FormattedMessage defaultMessage="This is a Bluetooth microphone. While it is held, your headset switches to its call profile, so audio you play will sound like a phone call and its battery will drain faster." />
-                </Typography>
-              </Alert>
-            </Reveal>
-            {/* Offered outside the keep-ready branch because it is not a
+              <Reveal show={bluetoothWarning}>
+                <Alert
+                  severity="warning"
+                  icon={false}
+                  sx={{ alignItems: "center", py: 0.5 }}
+                >
+                  <Typography variant="body2">
+                    <FormattedMessage defaultMessage="This is a Bluetooth microphone. While it is held, your headset switches to its call profile, so audio you play will sound like a phone call and its battery will drain faster." />
+                  </Typography>
+                </Alert>
+              </Reveal>
+              {/* Offered outside the keep-ready branch because it is not a
                 keep-ready setting. The pre-roll is what the next press keeps
                 from before it, which matters most when the device is opened at
                 that press: hiding it here left the control unreachable for
                 exactly the case where it does the most work. */}
-            <Stack spacing={0.5}>
-              <Typography variant="body2">
-                <FormattedMessage defaultMessage="Audio kept before the press" />
-              </Typography>
-              <ElasticSlider
-                value={prerollSeconds}
-                min={0}
-                max={MAX_MICROPHONE_PREROLL_SECONDS}
-                step={0.1}
-                valueLabelDisplay="auto"
-                valueLabelFormat={(value) => `${value.toFixed(1)} s`}
-                ariaLabel={intl.formatMessage({
-                  defaultMessage: "Audio kept before the press",
-                })}
-                onCommit={(value) => setMicrophonePrerollSeconds(value)}
-              />
-              <PrerollCaption on={prerollOn} />
-            </Stack>
-          </Stack>
-
-          <Divider />
-
-          <Stack spacing={1.5}>
-            <FormControlLabel
-              control={
-                <Switch
-                  // The effective state, not the stored one. Keep-ready holds the
-                  // device forever, so the linger window is on whatever its own
-                  // preference says; showing the stored value left a disabled
-                  // switch reading "off" directly above a caption that said it was
-                  // already on.
-                  checked={keepReady || lingerOn}
-                  // `aria-disabled`, not `disabled`. A disabled control leaves
-                  // the tab order entirely, and the one thing a keyboard user
-                  // needs here is to reach this switch and hear the caption
-                  // below that says why it is on: keep-ready already holds the
-                  // device, so this setting has nothing left to add. Removing
-                  // it from the tab order made the reason unreachable for
-                  // exactly the users who cannot see the caption underneath.
-                  // The handler below is what makes it inert.
-                  //
-                  // On the inner `input`, not the wrapper: a bare
-                  // `aria-disabled` on the component lands on the `<span>`
-                  // wrapper, which is not the node a screen reader reaches when
-                  // the switch is focused, so the state would be announced for
-                  // nobody. `slotProps.input` is the MUI v7 spelling; the
-                  // deprecated `inputProps` is silently dropped in v9 (it
-                  // renders as a literal `inputprops="[object Object]"`
-                  // attribute on the wrapper), which is how the first attempt
-                  // failed without an error.
-                  // Both slots, and the second is not redundant. `input` is
-                  // the node a screen reader reaches; `switchBase` is the span
-                  // the theme can style and the only one an adjacent-sibling
-                  // rule can dim the track from. A CSS child selector cannot
-                  // reach up from the input to its wrapper, so a style keyed on
-                  // the input alone silently did nothing.
-                  slotProps={{
-                    input: { "aria-disabled": keepReady || undefined },
-                    switchBase: { "aria-disabled": keepReady || undefined },
-                  }}
-                  onChange={(event) => {
-                    if (keepReady) {
-                      return;
-                    }
-                    void setMicrophoneLingerMs(
-                      event.target.checked ? DEFAULT_MICROPHONE_LINGER_MS : 0,
-                    );
-                  }}
+              <Stack spacing={0.5}>
+                <Typography variant="body2">
+                  <FormattedMessage defaultMessage="Audio kept before the press" />
+                </Typography>
+                <ElasticSlider
+                  value={prerollSeconds}
+                  min={0}
+                  max={MAX_MICROPHONE_PREROLL_SECONDS}
+                  step={0.1}
+                  valueLabelDisplay="auto"
+                  valueLabelFormat={(value) => `${value.toFixed(1)} s`}
+                  ariaLabel={intl.formatMessage({
+                    defaultMessage: "Audio kept before the press",
+                  })}
+                  onCommit={(value) => setMicrophonePrerollSeconds(value)}
                 />
-              }
-              label={
-                <FormattedMessage defaultMessage="Stay ready after a dictation" />
-              }
-            />
-            <LingerCaption keepReady={keepReady} />
-            {/* Only while the switch is the one in charge. Showing a duration
+                <PrerollCaption on={prerollOn} />
+              </Stack>
+            </Stack>
+
+            <Divider />
+
+            <Stack spacing={1.5}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    // The effective state, not the stored one. Keep-ready holds the
+                    // device forever, so the linger window is on whatever its own
+                    // preference says; showing the stored value left a disabled
+                    // switch reading "off" directly above a caption that said it was
+                    // already on.
+                    checked={keepReady || lingerOn}
+                    // `aria-disabled`, not `disabled`. A disabled control leaves
+                    // the tab order entirely, and the one thing a keyboard user
+                    // needs here is to reach this switch and hear the caption
+                    // below that says why it is on: keep-ready already holds the
+                    // device, so this setting has nothing left to add. Removing
+                    // it from the tab order made the reason unreachable for
+                    // exactly the users who cannot see the caption underneath.
+                    // The handler below is what makes it inert.
+                    //
+                    // On the inner `input`, not the wrapper: a bare
+                    // `aria-disabled` on the component lands on the `<span>`
+                    // wrapper, which is not the node a screen reader reaches when
+                    // the switch is focused, so the state would be announced for
+                    // nobody. `slotProps.input` is the MUI v7 spelling; the
+                    // deprecated `inputProps` is silently dropped in v9 (it
+                    // renders as a literal `inputprops="[object Object]"`
+                    // attribute on the wrapper), which is how the first attempt
+                    // failed without an error.
+                    // Both slots, and the second is not redundant. `input` is
+                    // the node a screen reader reaches; `switchBase` is the span
+                    // the theme can style and the only one an adjacent-sibling
+                    // rule can dim the track from. A CSS child selector cannot
+                    // reach up from the input to its wrapper, so a style keyed on
+                    // the input alone silently did nothing.
+                    slotProps={{
+                      input: { "aria-disabled": keepReady || undefined },
+                      switchBase: { "aria-disabled": keepReady || undefined },
+                    }}
+                    onChange={(event) => {
+                      if (keepReady) {
+                        return;
+                      }
+                      void setMicrophoneLingerMs(
+                        event.target.checked ? DEFAULT_MICROPHONE_LINGER_MS : 0,
+                      );
+                    }}
+                  />
+                }
+                label={
+                  <FormattedMessage defaultMessage="Stay ready after a dictation" />
+                }
+              />
+              <LingerCaption keepReady={keepReady} />
+              {/* Only while the switch is the one in charge. Showing a duration
                 under a switch that keep-ready has overridden would offer a
                 choice the app is not listening to. */}
-            <Reveal show={!keepReady && lingerOn}>
-              <Stack spacing={0.5}>
-                <Typography variant="caption" color="text.secondary">
-                  <FormattedMessage defaultMessage="How long to stay open after each dictation" />
-                </Typography>
-                <SegmentedControl
-                  value={String(nearestLingerChoice(lingerMs))}
-                  options={lingerChoices().map((choice) => ({
-                    value: String(choice),
-                    label: intl.formatMessage(
-                      {
-                        defaultMessage: "{seconds} s",
-                      },
-                      { seconds: choice / 1000 },
-                    ),
-                  }))}
-                  onChange={(next) => void setMicrophoneLingerMs(Number(next))}
-                  ariaLabel={intl.formatMessage({
-                    defaultMessage:
-                      "How long to stay open after each dictation",
-                  })}
-                />
-              </Stack>
-            </Reveal>
-          </Stack>
+              <Reveal show={!keepReady && lingerOn}>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">
+                    <FormattedMessage defaultMessage="How long to stay open after each dictation" />
+                  </Typography>
+                  <SegmentedControl
+                    value={String(nearestLingerChoice(lingerMs))}
+                    options={lingerChoices().map((choice) => ({
+                      value: String(choice),
+                      label: intl.formatMessage(
+                        {
+                          defaultMessage: "{seconds} s",
+                        },
+                        { seconds: choice / 1000 },
+                      ),
+                    }))}
+                    onChange={(next) =>
+                      void setMicrophoneLingerMs(Number(next))
+                    }
+                    ariaLabel={intl.formatMessage({
+                      defaultMessage:
+                        "How long to stay open after each dictation",
+                    })}
+                  />
+                </Stack>
+              </Reveal>
+            </Stack>
 
-          <Divider />
+            <Divider />
 
-          <Stack spacing={1.5}>
-            <SettingSection
-              title={<FormattedMessage defaultMessage="Test your microphone" />}
-              description={
-                <FormattedMessage defaultMessage="Start a short test to see live audio levels and play back what was recorded." />
-              }
-            />
-            <MicrophoneTester preferredMicrophone={selected ?? null} />
+            <Stack spacing={1.5}>
+              <SettingSection
+                title={
+                  <FormattedMessage defaultMessage="Test your microphone" />
+                }
+                description={
+                  <FormattedMessage defaultMessage="Start a short test to see live audio levels and play back what was recorded." />
+                }
+              />
+              <MicrophoneTester preferredMicrophone={selected ?? null} />
+            </Stack>
           </Stack>
-        </Stack>
-      </DialogContent>
+        </DialogContent>
+        {/*
+          Inside the wrapper and above the content, so each fade hugs its own
+          edge of the scroll area. They are always rendered and faded in by
+          opacity: mounting them on demand would work, but an edge that appears
+          and disappears under the cursor is worse than a 150 ms cross-fade.
+        */}
+        <ScrollEdgeFades edges={scrollEdges} />
+      </Box>
       <DialogActions>
         <Button onClick={handleClose} disabled={saving}>
           <FormattedMessage defaultMessage="Close" />
