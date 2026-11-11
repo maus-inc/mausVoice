@@ -180,7 +180,7 @@ describe("VoiceInstructionRecorder", () => {
 
   it("claims the native slot for browser recognition and releases it on stop", async () => {
     const fake = new FakeRecognition();
-    fake.stop = vi.fn();
+    fake.stop = vi.fn(() => fake.onend?.());
     const deps = baseDeps({
       canUseProvider: () => false,
       createSpeechRecognition: () => fake,
@@ -203,6 +203,56 @@ describe("VoiceInstructionRecorder", () => {
       ownerId: expect.any(String),
       generation: 1,
     });
+  });
+
+  it("keeps the native slot claimed until the recognizer reports end", async () => {
+    const fake = new FakeRecognition();
+    fake.stop = vi.fn();
+    const deps = baseDeps({
+      canUseProvider: () => false,
+      createSpeechRecognition: () => fake,
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    expect(recorder.getState()).toBe("browser");
+
+    const stopping = recorder.toggle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The stop request has been sent but `onend` has not arrived: the lease
+    // must still hold the native slot so no other recording can start.
+    expect(deps.invoke).not.toHaveBeenCalledWith(
+      "release_browser_recording",
+      expect.anything(),
+    );
+    fake.onend?.();
+    await stopping;
+    expect(recorder.getState()).toBe("idle");
+    expect(deps.invoke).toHaveBeenCalledWith("release_browser_recording", {
+      ownerId: expect.any(String),
+      generation: 1,
+    });
+  });
+
+  it("discards the native recorder when its stop fails after dispose", async () => {
+    const deps = baseDeps({
+      invoke: nativeInvoke({
+        stop_recording: () => Promise.reject(new Error("stop failed")),
+      }),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    expect(recorder.getState()).toBe("provider");
+
+    const stopping = recorder.toggle();
+    recorder.dispose();
+    await stopping;
+
+    expect(deps.invoke).toHaveBeenCalledWith(
+      "discard_recording",
+      expect.objectContaining({ ownerId: expect.any(String) }),
+    );
   });
 
   it("refuses browser recognition while a dictation holds the recorder", async () => {
@@ -582,11 +632,15 @@ describe("VoiceInstructionRecorder", () => {
     });
     const recorder = new VoiceInstructionRecorder(deps);
     await recorder.toggle();
-    await recorder.toggle();
-    expect(recorder.getState()).toBe("idle");
+    // The stop now waits for `onend`, so drive the end asynchronously and
+    // deliver the final result while the stop is still pending.
+    const stopping = recorder.toggle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     fake.emitResult("keep my final words");
     expect(deps.onTranscript).toHaveBeenCalledWith("keep my final words");
     fake.onend?.();
+    await stopping;
+    expect(recorder.getState()).toBe("idle");
     fake.emitResult("obsolete words");
     expect(deps.onTranscript).toHaveBeenCalledTimes(1);
   });
@@ -602,7 +656,10 @@ describe("VoiceInstructionRecorder", () => {
     const recorder = new VoiceInstructionRecorder(deps);
     await recorder.toggle();
     const oldEnd = old.onend;
-    await recorder.toggle();
+    const stopping = recorder.toggle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    old.onend?.();
+    await stopping;
     deps.createSpeechRecognition = () => next;
     await recorder.toggle();
     old.emitResult("obsolete words");
