@@ -90,41 +90,40 @@ export class PasteTool extends BaseTool {
       onFailure: () => {
         reviewFailed = true;
       },
-      onOpen: async (reviewedText: string, signal?: AbortSignal) => {
-        if (!conversationId) {
-          throw new Error(
-            "No active conversation is available for this Paste review",
-          );
-        }
-        // Save first: once Chats takes focus the pill cannot safely insert
-        // into the app that had focus when the tool began.
-        if (signal?.aborted) return;
-        await saveLatestReviewDraft(conversationId, reviewedText);
-        if (signal?.aborted) return;
-        openedPendingPaste = true;
-        try {
-          await emit("open-pill-conversation", {
-            conversationId,
-            pendingPasteReview: true,
-          });
-        } catch (error) {
-          // The durable card is still available in Chats even if native
-          // surfacing or navigation could not be requested.
-          getLogger().warning(
-            `Could not open the Paste review in Chats: ${error}`,
-          );
-          runToast(
-            showToast({
-              message: getIntl().formatMessage({
-                defaultMessage:
-                  "Your Paste review was saved. Open Chats to find it and finish the paste.",
-              }),
-              toastType: "info",
-              duration: 8000,
-            }),
-          );
-        }
-      },
+      ...(conversationId
+        ? {
+            onOpen: async (reviewedText: string, signal?: AbortSignal) => {
+              // Save first: once Chats takes focus the pill cannot safely insert
+              // into the app that had focus when the tool began.
+              if (signal?.aborted) return;
+              await saveLatestReviewDraft(conversationId, reviewedText);
+              if (signal?.aborted) return;
+              openedPendingPaste = true;
+              try {
+                await emit("open-pill-conversation", {
+                  conversationId,
+                  pendingPasteReview: true,
+                });
+              } catch (error) {
+                // The durable card is still available in Chats even if native
+                // surfacing or navigation could not be requested.
+                getLogger().warning(
+                  `Could not open the Paste review in Chats: ${error}`,
+                );
+                runToast(
+                  showToast({
+                    message: getIntl().formatMessage({
+                      defaultMessage:
+                        "Your Paste review was saved. Open Chats to find it and finish the paste.",
+                    }),
+                    toastType: "info",
+                    duration: 8000,
+                  }),
+                );
+              }
+            },
+          }
+        : {}),
     };
     const text =
       getAppState().userPrefs?.reviewBeforeInsert === true

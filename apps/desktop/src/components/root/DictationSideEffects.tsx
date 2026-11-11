@@ -2592,7 +2592,7 @@ export const DictationSideEffects = () => {
       };
       const id = conversationId ?? getAppState().pillConversationId;
       if (id) {
-        void loadChatMessages(id).catch(reportOpenFailure);
+        loadChatMessages(id).catch(reportOpenFailure);
         // `navigate` returns a promise; a rejection here would otherwise be
         // unhandled, so it is caught on the promise rather than by a surrounding
         // try/catch that cannot see it.
@@ -2683,7 +2683,7 @@ export const DictationSideEffects = () => {
     pendingPasteReview?: boolean;
   }>("open-pill-conversation", (payload) => {
     if (!isMainWindow) return;
-    void openPillConversation(
+    openPillConversation(
       payload.conversationId,
       payload.pendingPasteReview === true,
     ).catch(reportConversationOpenFailure);
