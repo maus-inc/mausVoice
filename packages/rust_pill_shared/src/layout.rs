@@ -616,6 +616,20 @@ pub fn display_for_point(areas: &[MonitorRect], x: f64, y: f64) -> Option<usize>
     {
         return Some(index);
     }
+    nearest_display(areas, x, y)
+}
+
+/// The index of the display whose origin is nearest `(x, y)`.
+///
+/// The fallback half of [`display_for_point`], for the two cases where containment
+/// is not an answer: a point in the gap between displays of different heights, and
+/// a point outside every display because the arrangement shrank under a pill that
+/// has not moved yet. Restore needs the same search for a saved display that is no
+/// longer connected, so it is one function rather than two that must agree.
+///
+/// Ties break by index, so the answer is stable frame to frame instead of
+/// depending on iteration order.
+pub fn nearest_display(areas: &[MonitorRect], x: f64, y: f64) -> Option<usize> {
     let mut nearest: Option<(usize, f64)> = None;
     for (index, area) in areas.iter().enumerate() {
         let dx = x - area.x;
@@ -719,7 +733,7 @@ pub fn poll_layout(
     }
 }
 
-/// Whether `now` is at least `threshold` after `then`./// Whether `now` is at least `threshold` after `then`.
+/// Whether `now` is at least `threshold` after `then`.
 ///
 /// A clock that ran backwards, or a non-finite sample, is never "long enough".
 /// Refusing a save keeps the stored position the user chose, which is always
@@ -730,9 +744,9 @@ fn elapsed_at_least(now: f64, then: f64, threshold: f64) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    /// One rectangle for the whole crate's tests. `restore` has its own tests over
-    /// the same shape, so this lives here rather than being written twice.
+pub(crate) mod tests {
+    /// One rectangle for the whole crate's tests. `restore`'s tests import it over
+    /// the same shape rather than writing it a second time.
     pub(crate) fn display(x: f64, y: f64, width: f64, height: f64, id: Option<u64>) -> MonitorRect {
         MonitorRect {
             x,

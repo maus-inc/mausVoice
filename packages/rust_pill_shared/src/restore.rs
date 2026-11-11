@@ -399,19 +399,8 @@ fn choose_display(parked: &ParkedWindow, displays: &[MonitorRect]) -> Option<(us
     {
         return Some((index, false));
     }
-    let mut nearest: Option<(usize, f64)> = None;
-    for (index, display) in displays.iter().enumerate() {
-        let dx = display.x - parked.display.x;
-        let dy = display.y - parked.display.y;
-        let distance = (dx * dx + dy * dy).sqrt();
-        if !distance.is_finite() {
-            continue;
-        }
-        if nearest.is_none_or(|(_, known)| distance < known) {
-            nearest = Some((index, distance));
-        }
-    }
-    nearest.map(|(index, _)| (index, false))
+    crate::layout::nearest_display(displays, parked.display.x, parked.display.y)
+        .map(|index| (index, false))
 }
 
 /// The origin that keeps the pill's relative place on a display it did not
@@ -585,15 +574,9 @@ mod tests {
         ParkedWindow::new_named(x, y, 200.0, 60.0, display, Some(id)).expect("valid parked window")
     }
 
-    fn display(x: f64, y: f64, width: f64, height: f64, id: Option<u64>) -> MonitorRect {
-        MonitorRect {
-            x,
-            y,
-            width,
-            height,
-            id,
-        }
-    }
+    // The rectangle constructor is shared with `layout`'s tests rather than
+    // written twice; only the name is local, so this file's tests read as prose.
+    use crate::layout::tests::display;
 
     fn restored(placement: Placement) -> (f64, f64) {
         match placement {

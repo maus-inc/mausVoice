@@ -186,13 +186,8 @@ pub enum InMessage {
     PillPlacement {
         placement: String,
     },
-    /// Forget the parked position without moving the pill.
-    ///
-    /// Clearing local data wipes the stored row and then reloads the window,
-    /// which asks for the position again. The pill still holds the pre-clear
-    /// position in memory and would publish it straight back, undoing the wipe
-    /// the user just confirmed. This tells it to stop treating the position it
-    /// is sitting at as saved, so the next `RequestPosition` answers honestly.
+    /// Forget the parked position without moving the pill, so a `RequestPosition`
+    /// that follows a local-data clear cannot publish the wiped row straight back.
     ForgetPosition,
     /// Ask the pill to re-publish its current geometry.
     ///
