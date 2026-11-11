@@ -240,8 +240,7 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
         restored_position: Cell::new(restored_position),
         x11_release_persisted: Cell::new(false),
         x11_drag_applied: Cell::new((i32::MIN, i32::MIN)),
-        anchor: Cell::new(rust_pill_shared::layout::Anchor::FirstPlacement),
-        follow_pointer_anchor: Cell::new(true),
+        anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
         drag_draw_offset_x: Cell::new(0.0),
         drag_draw_offset_y: Cell::new(0.0),
         cancel_flash: Cell::new(0.0),
@@ -744,16 +743,14 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                     // one even though nothing is stored.
                     state_tick
                         .anchor
-                        .set(rust_pill_shared::layout::pill_anchor(false, false));
-                    state_tick
-                        .follow_pointer_anchor
-                        .set(strategy == ResetStrategy::Cursor);
+                        .set(rust_pill_shared::layout::Anchor::from_reset(
+                            strategy == ResetStrategy::Cursor,
+                        ));
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
                     ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: false,
-                        rect,
-                        monitor,
-                        display_id: None,
+                        report: rust_pill_shared::restore::PositionReport::new(
+                            false, rect, monitor, None,
+                        ),
                     });
                 }
                 InMessage::ForgetPosition => {
@@ -766,16 +763,17 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                     // cancels any placement still owed.
                     state_tick
                         .anchor
-                        .set(rust_pill_shared::layout::pill_anchor(false, true));
-                    state_tick.follow_pointer_anchor.set(false);
+                        .set(rust_pill_shared::layout::Anchor::from_forget());
                 }
                 InMessage::RequestPosition => {
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
                     ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: state_tick.has_saved_position.get(),
-                        rect,
-                        monitor,
-                        display_id: state_tick.saved_display_id.get(),
+                        report: rust_pill_shared::restore::PositionReport::new(
+                            state_tick.has_saved_position.get(),
+                            rect,
+                            monitor,
+                            state_tick.saved_display_id.get(),
+                        ),
                     });
                 }
                 InMessage::Quit => {
@@ -942,9 +940,8 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
             let placed_once = last_geom.get() != (0, 0, 0, 0);
             // A reset with the "cursor" strategy forces one re-home pass onto
             // the pointer's monitor; the strategy is consumed once applied.
-            let reset_to_cursor = !state_monitor.dragging.get()
-                && state_monitor.follow_pointer_anchor.get()
-                && state_monitor.anchor.get().follows_pointer();
+            let reset_to_cursor =
+                !state_monitor.dragging.get() && state_monitor.anchor.get().follows_pointer();
             if placed_once && !state_monitor.dragging.get() && !reset_to_cursor {
                 let stored = last_geom.get();
                 let still_connected = (0..display.n_monitors()).any(|i| {
@@ -980,7 +977,11 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
                     window_ref.set_monitor(&monitor);
                 }
                 if reset_to_cursor {
-                    state_monitor.follow_pointer_anchor.set(false);
+                    // Consumed once applied, so the pill is homed once rather than
+                    // chased by the timer.
+                    state_monitor
+                        .anchor
+                        .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
                 }
             }
             ControlFlow::Continue
@@ -1193,10 +1194,12 @@ fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
             // origin.
             let (rect, monitor) = pill_geometry(window, state);
             ipc::send(&OutMessage::PositionChanged {
-                has_saved_position: true,
-                rect,
-                monitor,
-                display_id: state.saved_display_id.get(),
+                report: rust_pill_shared::restore::PositionReport::new(
+                    true,
+                    rect,
+                    monitor,
+                    state.saved_display_id.get(),
+                ),
             });
         }
     }
@@ -1213,26 +1216,24 @@ fn footprint_bounds_for(
 
 /// Reconcile if the display arrangement changed and no event said so.
 fn poll_display_layout(window: &gtk::Window, state: &PillState) {
-    const POLL_INTERVAL: f64 = 0.5;
     if state.backend.get() != Backend::X11 {
         return;
     }
     let now = drag_clock_now();
-    if now - state.layout_polled_at.get() < POLL_INTERVAL {
-        return;
-    }
-    state.layout_polled_at.set(now);
     let display = window.display();
     let scale = x11::x11_root_scale(window);
     let Some(areas) = monitor_areas(&display, scale) else {
         return;
     };
-    let (signature, reconcile_now) = rust_pill_shared::layout::poll_should_reconcile(
+    let (polled_at, stored, outcome) = rust_pill_shared::layout::poll_layout(
+        state.layout_polled_at.get(),
         state.layout_signature.get(),
+        now,
         rust_pill_shared::layout::layout_signature(&areas),
     );
-    state.layout_signature.set(Some(signature));
-    if reconcile_now {
+    state.layout_polled_at.set(polled_at);
+    state.layout_signature.set(stored);
+    if outcome == rust_pill_shared::layout::PollOutcome::Changed {
         reconcile_display_layout(window, state);
     }
 }
@@ -1330,10 +1331,12 @@ fn persist_drag_position(window: &gtk::Window, state: &PillState) {
     state.has_saved_position.set(true);
     let (rect, monitor) = pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
-        has_saved_position: true,
-        rect,
-        monitor,
-        display_id: state.saved_display_id.get(),
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            rect,
+            monitor,
+            state.saved_display_id.get(),
+        ),
     });
 }
 

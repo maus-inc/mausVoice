@@ -872,17 +872,18 @@ fn perform_tick() {
                     ctx.state.crossing.borrow_mut().reset();
                     ctx.state
                         .anchor
-                        .set(rust_pill_shared::layout::pill_anchor(false, true));
-                    ctx.state
-                        .follow_pointer_anchor
-                        .set(strategy == ResetStrategy::Cursor);
+                        .set(rust_pill_shared::layout::Anchor::from_reset(
+                            strategy == ResetStrategy::Cursor,
+                        ));
                     reposition_window(ctx.window, &ctx.state, dt, now);
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: false,
-                        rect: Some(rect),
-                        monitor: Some(monitor),
-                        display_id: None,
+                        report: rust_pill_shared::restore::PositionReport::new(
+                            false,
+                            Some(rect),
+                            Some(monitor),
+                            None,
+                        ),
                     });
                 }
                 InMessage::ForgetPosition => {
@@ -896,17 +897,17 @@ fn perform_tick() {
                     // wiped.
                     ctx.state
                         .anchor
-                        .set(rust_pill_shared::layout::pill_anchor(false, true));
-                    ctx.state.first_placement_done.set(true);
-                    ctx.state.follow_pointer_anchor.set(false);
+                        .set(rust_pill_shared::layout::Anchor::from_forget());
                 }
                 InMessage::RequestPosition => {
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: ctx.state.has_saved_position.get(),
-                        rect: Some(rect),
-                        monitor: Some(monitor),
-                        display_id: ctx.state.saved_display_id.get(),
+                        report: rust_pill_shared::restore::PositionReport::new(
+                            ctx.state.has_saved_position.get(),
+                            Some(rect),
+                            Some(monitor),
+                            ctx.state.saved_display_id.get(),
+                        ),
                     });
                 }
                 InMessage::Quit => {
@@ -1053,10 +1054,12 @@ fn persist_drag_position(state: &PillState, window: id) {
     state.saved_display_id.set(display_id);
     let (rect, monitor) = unsafe { pill_geometry(window) };
     ipc::send(&OutMessage::PositionChanged {
-        has_saved_position: true,
-        rect: Some(rect),
-        monitor: Some(monitor),
-        display_id,
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            Some(rect),
+            Some(monitor),
+            display_id,
+        ),
     });
 }
 
@@ -1837,17 +1840,24 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         // One question, answered in one place: is this pill due a placement, and
         // does that placement follow the pointer? The shared model owns both
         // halves so the three pills cannot answer differently.
-        let anchor = rust_pill_shared::layout::pill_anchor(
-            state.has_saved_position.get(),
-            !state.anchor.get().places(),
-        );
+        let anchor = if state.has_saved_position.get() {
+            rust_pill_shared::layout::Anchor::Saved
+        } else {
+            state.anchor.get()
+        };
         // A reset is a placement the user asked for, so it is due even though the
         // pill has already been placed once in this process. Only an initial launch
-        // is one-shot; `follow_pointer_anchor` is what makes a reset follow the
-        // pointer, and it is consumed the first time it is acted on.
-        let first_placement =
-            anchor.places() && !state.has_saved_position.get() && !state.first_placement_done.get();
-        let reset_placement = anchor.places() && state.follow_pointer_anchor.get();
+        // is one-shot; the anchor's variant is what makes a reset follow the
+        // pointer, and demoting it is what stops the pill being chased.
+        // A launch placement happens once per process; a reset is due every time it
+        // is asked for. `first_placement_done` is only that one-shot latch.
+        let first_placement = anchor == rust_pill_shared::layout::Anchor::LaunchAtCursor
+            && !state.first_placement_done.get();
+        let reset_placement = matches!(
+            anchor,
+            rust_pill_shared::layout::Anchor::ResetAtCursor
+                | rust_pill_shared::layout::Anchor::ResetAtCurrent
+        );
         let (px, py, pw, ph) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
@@ -1871,19 +1881,20 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let (anchor_x, anchor_y) = if follows_pointer {
             if first_placement {
                 // Mark it done only when it is acted on, so a frame that bails out
-                // earlier does not consume the one-shot placement.
+                // earlier cannot consume the one-shot placement, and demote the
+                // anchor so later ticks stay put instead of chasing the pointer.
                 state.first_placement_done.set(true);
-                state.follow_pointer_anchor.set(false);
+                state
+                    .anchor
+                    .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
             }
             state
                 .drag_motion
                 .borrow()
                 .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
-        } else if reset_placement {
-            // Consumed on the frame it is used. A cleared pill never reaches here:
-            // the guard below returns before placement, so this branch only serves a
-            // reset, which means the pointer.
-            state.follow_pointer_anchor.set(false);
+        } else if reset_placement && anchor.follows_pointer() {
+            // A cleared pill never reaches here: the guard below returns before
+            // placement, so this branch only serves a reset that named the pointer.
             (mouse_loc.x, mouse_loc.y)
         } else if state.has_saved_position.get() {
             footprint_center(state.saved_x.get(), state.saved_y.get())
@@ -2254,21 +2265,19 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
 /// Enumerating screens every frame would be wasteful, so this looks a few times
 /// a second, far faster than a display changes and far slower than a frame.
 unsafe fn poll_display_layout(window: id, state: &PillState, now: f64) {
-    const POLL_INTERVAL: f64 = 0.5;
-    if now - state.layout_polled_at.get() < POLL_INTERVAL {
-        return;
-    }
-    state.layout_polled_at.set(now);
     let Some((areas, _)) = display_areas() else {
         return;
     };
-    let (signature, reconcile_now) = rust_pill_shared::layout::poll_should_reconcile(
+    let (polled_at, stored, outcome) = rust_pill_shared::layout::poll_layout(
+        state.layout_polled_at.get(),
         state.layout_signature.get(),
+        now,
         rust_pill_shared::layout::layout_signature(&areas),
     );
-    state.layout_signature.set(Some(signature));
-    if reconcile_now {
-        reconcile_display_layout(window, state);
+    state.layout_polled_at.set(polled_at);
+    state.layout_signature.set(stored);
+    if outcome == rust_pill_shared::layout::PollOutcome::Changed {
+        unsafe { reconcile_display_layout(window, state) };
     }
 }
 
@@ -2282,10 +2291,12 @@ unsafe fn poll_display_layout(window: id, state: &PillState, now: f64) {
 unsafe fn persist_reconciled_position(state: &PillState, window: id) {
     let (rect, monitor) = pill_geometry(window);
     ipc::send(&OutMessage::PositionChanged {
-        has_saved_position: true,
-        rect: Some(rect),
-        monitor: Some(monitor),
-        display_id: state.saved_display_id.get(),
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            Some(rect),
+            Some(monitor),
+            state.saved_display_id.get(),
+        ),
     });
 }
 
@@ -2539,8 +2550,7 @@ unsafe fn setup(
         layout_signature: Cell::new(None),
         layout_polled_at: Cell::new(0.0),
         first_placement_done: Cell::new(false),
-        anchor: Cell::new(rust_pill_shared::layout::Anchor::FirstPlacement),
-        follow_pointer_anchor: Cell::new(true),
+        anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
         drag_label_t: Cell::new(0.0),

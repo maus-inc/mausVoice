@@ -258,11 +258,8 @@ pub(crate) struct PillState {
     /// chasing the cursor; this flag lets the first placement follow the cursor
     /// and then stays put.
     pub(crate) first_placement_done: Cell<bool>,
-    /// Why this pill has no stored position, so placement can tell a first launch
-    /// from a position that was deliberately cleared.
+    /// Why this pill has no stored position and where a due placement goes.
     pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
-    /// Whether a due placement follows the pointer.
-    pub(crate) follow_pointer_anchor: Cell<bool>,
 
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,

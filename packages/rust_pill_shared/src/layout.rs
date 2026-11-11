@@ -440,7 +440,7 @@ impl SaveGuard {
     }
 }
 
-/// Why an unsaved pill has no stored position.
+/// Why an unsaved pill has no stored position, and where a due placement goes.
 ///
 /// "The pill has no saved position" used to be a complete description, and each
 /// platform rebuilt the meaning from a different pair of flags: Windows from
@@ -449,19 +449,22 @@ impl SaveGuard {
 /// two different ways, and how clearing the stored position started moving the
 /// pill instead of leaving it alone.
 ///
-/// The distinction is the whole point: an unsaved pill must be re-homed when it
-/// has never been placed, and must be left exactly where it is when the stored
-/// position was deliberately dropped. The difference is not in the pill's
-/// current position, which is identical in both cases, so it has to be stated.
+/// The destination is part of the reason rather than a second flag beside it,
+/// because the two are not independent: a cleared pill has nowhere to go and must
+/// never follow the pointer, and a stored one belongs where it was left. Carrying
+/// both in one value makes that illegal pair unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Anchor {
     /// A stored position survived, so the pill belongs there.
     Saved,
-    /// The pill has never been placed in this process and no position survived:
-    /// it is due a first placement.
-    FirstPlacement,
-    /// The stored position was dropped, either by a reset the user asked for or
-    /// by clearing local data. The pill is already where it should be.
+    /// Never placed in this process, so it is due a first placement at the pointer.
+    LaunchAtCursor,
+    /// The user asked for a reset onto the display the pill already lives on.
+    ResetAtCurrent,
+    /// The user asked for a reset onto the display under the pointer.
+    ResetAtCursor,
+    /// The stored position was dropped by clearing local data. The pill is already
+    /// where it should be.
     Cleared,
 }
 
@@ -475,28 +478,43 @@ impl Anchor {
         !matches!(self, Self::Cleared)
     }
 
-    /// Whether the pill follows the pointer when it is placed.
+    /// Whether a due placement follows the pointer.
     ///
-    /// Only a first placement does. A reset names its own destination, and a
-    /// cleared pill has nowhere to go at all.
+    /// A first placement does, and so does a reset that named the cursor. A pill
+    /// with a stored position, and one anchored to its own display, do not.
     pub fn follows_pointer(self) -> bool {
-        matches!(self, Self::FirstPlacement)
+        matches!(self, Self::LaunchAtCursor | Self::ResetAtCursor)
+    }
+
+    /// The anchor a reset leaves behind, given whether it asked for the cursor.
+    pub fn from_reset(follows_pointer: bool) -> Self {
+        if follows_pointer {
+            Self::ResetAtCursor
+        } else {
+            Self::ResetAtCurrent
+        }
+    }
+
+    /// The anchor after clearing local data: nothing is due.
+    pub fn from_forget() -> Self {
+        Self::Cleared
     }
 }
 
-/// What the anchor is, given whether a position is stored and how the pill
-/// reached this state.
+/// What the anchor is, given whether a position is stored and whether a restart
+/// already consumed the launch placement.
 ///
-/// The reach is what the platforms disagree about, so it is an argument rather
-/// than something each one re-derives: a reset or a forget started the pill over,
-/// and nothing else did.
+/// `restarted` is true once the pill has been placed at least once in this
+/// process, so an unsaved pill that has been placed is not due another launch
+/// placement. The platforms know that fact under different names; passing it in is
+/// what stops each of them re-deriving the rule.
 pub fn pill_anchor(saved: bool, restarted: bool) -> Anchor {
     if saved {
         Anchor::Saved
     } else if restarted {
         Anchor::Cleared
     } else {
-        Anchor::FirstPlacement
+        Anchor::LaunchAtCursor
     }
 }
 
@@ -617,23 +635,52 @@ pub fn display_id_of(
         .and_then(|index| areas[index].id)
 }
 
-/// Whether a layout poll at `now` should reconcile.
+/// How often the arrangement is re-read when no message arrived.
 ///
-/// All three pills poll an arrangement signature because the native notification
-/// can be dropped. Each one wrote this same sequence by hand, including the subtle
-/// part: the first poll only records a baseline, because reconciling against
-/// "nothing seen yet" would treat the launch itself as a display change and move a
-/// freshly restored pill off the position it was just restored to.
-///
-/// Returns the new signature to store, and whether the caller should reconcile.
-pub fn poll_should_reconcile(previous: Option<u64>, signature: u64) -> (u64, bool) {
-    if previous == Some(signature) {
-        return (signature, false);
-    }
-    (signature, previous.is_some())
+/// A display changes far slower than a frame and far faster than a user notices,
+/// so half a second is the whole design: cheap enough to run forever, quick enough
+/// that a dropped notification costs a blink rather than a stranded pill.
+pub const LAYOUT_POLL_SECONDS: f64 = 0.5;
+
+/// The result of one poll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PollOutcome {
+    /// Still inside the interval, so nothing was read.
+    TooSoon,
+    /// A signature was read and stored, and it matches the last one.
+    Unchanged,
+    /// The first signature seen. Stored as the baseline, but not acted on.
+    Baseline,
+    /// The arrangement changed. The caller should reconcile.
+    Changed,
 }
 
-/// Whether `now` is at least `threshold` after `then`.
+/// Advance the layout poll by one tick.
+///
+/// All three pills poll because the native notification can be dropped. Each one
+/// wrote this sequence by hand, and the subtle part is the baseline: the first
+/// signature must not be acted on, because reconciling against "nothing seen yet"
+/// treats the launch itself as a display change and moves a freshly restored pill
+/// off the position it was just restored to.
+///
+/// Returns the tick time to store, the signature to store, and what to do.
+pub fn poll_layout(
+    polled_at: f64,
+    signature_before: Option<u64>,
+    now: f64,
+    signature: u64,
+) -> (f64, Option<u64>, PollOutcome) {
+    if !(now - polled_at).is_finite() || now - polled_at < LAYOUT_POLL_SECONDS {
+        return (polled_at, signature_before, PollOutcome::TooSoon);
+    }
+    match signature_before {
+        Some(previous) if previous == signature => (now, Some(signature), PollOutcome::Unchanged),
+        Some(_) => (now, Some(signature), PollOutcome::Changed),
+        None => (now, Some(signature), PollOutcome::Baseline),
+    }
+}
+
+/// Whether `now` is at least `threshold` after `then`./// Whether `now` is at least `threshold` after `then`.
 ///
 /// A clock that ran backwards, or a non-finite sample, is never "long enough".
 /// Refusing a save keeps the stored position the user chose, which is always
@@ -645,14 +692,9 @@ fn elapsed_at_least(now: f64, then: f64, threshold: f64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::restore::{centered_bottom_footprint, footprint_bounds};
-
-    fn rect(x: f64, y: f64, width: f64, height: f64) -> MonitorRect {
-        MonitorRect::without_id(x, y, width, height)
-    }
-
-    fn display(x: f64, y: f64, width: f64, height: f64, id: Option<u64>) -> MonitorRect {
+    /// One rectangle for the whole crate's tests. `restore` has its own tests over
+    /// the same shape, so this lives here rather than being written twice.
+    pub(crate) fn display(x: f64, y: f64, width: f64, height: f64, id: Option<u64>) -> MonitorRect {
         MonitorRect {
             x,
             y,
@@ -660,6 +702,12 @@ mod tests {
             height,
             id,
         }
+    }
+    use super::*;
+    use crate::restore::{centered_bottom_footprint, footprint_bounds};
+
+    fn rect(x: f64, y: f64, width: f64, height: f64) -> MonitorRect {
+        MonitorRect::without_id(x, y, width, height)
     }
 
     fn parked(x: f64, y: f64, display: MonitorRect) -> ParkedWindow {
@@ -1058,7 +1106,7 @@ mod tests {
     #[test]
     fn a_cleared_anchor_neither_places_nor_follows_the_pointer() {
         let first = pill_anchor(false, false);
-        assert_eq!(first, Anchor::FirstPlacement);
+        assert_eq!(first, Anchor::LaunchAtCursor);
         assert!(first.places());
         assert!(first.follows_pointer());
 
@@ -1071,6 +1119,31 @@ mod tests {
         // restore has a position again and belongs at it.
         assert_eq!(pill_anchor(true, true), Anchor::Saved);
         assert_eq!(pill_anchor(true, false), Anchor::Saved);
+        assert!(!Anchor::Saved.follows_pointer());
+    }
+
+    /// A reset is due a placement even though the pill has already been placed
+    /// once in this process. Reading "no saved position" as one state made a reset
+    /// and a launch identical, and the pill the user asked to re-home stayed put.
+    #[test]
+    fn a_reset_is_due_a_placement_but_a_clear_is_not() {
+        let at_cursor = Anchor::from_reset(true);
+        assert_eq!(at_cursor, Anchor::ResetAtCursor);
+        assert!(at_cursor.places());
+        assert!(at_cursor.follows_pointer());
+
+        let at_current = Anchor::from_reset(false);
+        assert_eq!(at_current, Anchor::ResetAtCurrent);
+        assert!(
+            at_current.places(),
+            "a reset to the current display still moves"
+        );
+        assert!(!at_current.follows_pointer());
+
+        let cleared = Anchor::from_forget();
+        assert_eq!(cleared, Anchor::Cleared);
+        assert!(!cleared.places());
+        assert!(!cleared.follows_pointer());
     }
 
     // -- Fractions ---------------------------------------------------------
@@ -1132,5 +1205,50 @@ mod tests {
         assert_eq!(display_for_point(&[], 0.0, 0.0), None);
         // A non-finite point cannot contain anything and has no distance.
         assert_eq!(display_for_point(&areas, f64::NAN, 0.0), None);
+    }
+
+    // -- Layout polling ----------------------------------------------------
+
+    /// The first signature is a baseline, never a change. Acting on it would
+    /// treat the launch itself as a display change and move a pill that had just
+    /// been restored to the position it was restored to.
+    #[test]
+    fn the_first_poll_only_records_a_baseline() {
+        let (at, sig, outcome) = poll_layout(0.0, None, 10.0, 42);
+        assert_eq!(outcome, PollOutcome::Baseline);
+        assert_eq!(at, 10.0);
+        assert_eq!(sig, Some(42));
+    }
+
+    #[test]
+    fn a_repeat_inside_the_interval_reads_nothing() {
+        // Polled at 10.0: 10.2 is too soon, and the stored values stand.
+        let (at, sig, outcome) = poll_layout(10.0, Some(42), 10.2, 99);
+        assert_eq!(outcome, PollOutcome::TooSoon);
+        assert_eq!(at, 10.0, "a too-soon tick must not move the interval");
+        assert_eq!(
+            sig,
+            Some(42),
+            "a too-soon tick must not record a new signature"
+        );
+    }
+
+    #[test]
+    fn an_elapsed_interval_reports_a_change_only_when_the_arrangement_moved() {
+        let (_, _, unchanged) = poll_layout(10.0, Some(42), 10.6, 42);
+        assert_eq!(unchanged, PollOutcome::Unchanged);
+        let (_, _, changed) = poll_layout(10.0, Some(42), 10.6, 43);
+        assert_eq!(changed, PollOutcome::Changed);
+    }
+
+    /// A clock that ran backwards, or a non-finite sample, must not read as
+    /// "enough time has passed": that would reconcile on every frame.
+    #[test]
+    fn a_backwards_or_non_finite_clock_reads_nothing() {
+        for now in [f64::NAN, f64::INFINITY, 5.0] {
+            let (at, _, outcome) = poll_layout(10.0, Some(42), now, 99);
+            assert_eq!(outcome, PollOutcome::TooSoon, "now {now}");
+            assert_eq!(at, 10.0);
+        }
     }
 }

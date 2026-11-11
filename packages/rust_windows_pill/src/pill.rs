@@ -214,8 +214,7 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
         // state starts saved. Without this the first cursor tick re-homes the
         // pill to the default corner, undoing the restore 60 ms after launch.
         has_saved_position: Cell::new(restored.is_some()),
-        anchor: Cell::new(rust_pill_shared::layout::Anchor::FirstPlacement),
-        follow_pointer_anchor: Cell::new(true),
+        anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
         pending_drag_position: Cell::new(false),
         saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
         saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
@@ -626,22 +625,20 @@ fn on_cursor_tick(hwnd: HWND) {
 /// monitors 16 times a second, so this runs a few times a second instead, which
 /// is far faster than a user can notice and far slower than a display changes.
 fn poll_display_layout(hwnd: HWND, state: &PillState) {
-    const POLL_INTERVAL: f64 = 0.5;
     let now = drag_now();
-    if now - state.layout_polled_at.get() < POLL_INTERVAL {
-        return;
-    }
-    state.layout_polled_at.set(now);
     let Some(areas) = enumerate_work_areas_with_identity() else {
         // Same rule as the message path: a failed enumeration is not evidence.
         return;
     };
-    let (signature, reconcile_now) = rust_pill_shared::layout::poll_should_reconcile(
+    let (polled_at, stored, outcome) = rust_pill_shared::layout::poll_layout(
+        state.layout_polled_at.get(),
         state.layout_signature.get(),
+        now,
         rust_pill_shared::layout::layout_signature(&areas),
     );
-    state.layout_signature.set(Some(signature));
-    if reconcile_now {
+    state.layout_polled_at.set(polled_at);
+    state.layout_signature.set(stored);
+    if outcome == rust_pill_shared::layout::PollOutcome::Changed {
         reconcile_display_layout(hwnd, state);
     }
 }
@@ -903,23 +900,23 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.saved_display_id.set(None);
             state.selector_placement.borrow_mut().reset();
             state.crossing.borrow_mut().reset();
-            // How the pill reached this state is what tells placement whether to
-            // follow the pointer. A reset names its destination; a forget does not.
+            // A reset names its destination, so the anchor carries it.
             state
                 .anchor
-                .set(rust_pill_shared::layout::pill_anchor(false, true));
-            state
-                .follow_pointer_anchor
-                .set(strategy == ResetStrategy::Cursor);
+                .set(rust_pill_shared::layout::Anchor::from_reset(
+                    strategy == ResetStrategy::Cursor,
+                ));
             state.dirty.set(true);
             reposition_to_cursor_monitor(hwnd, state);
             check_hover(hwnd, state);
             let (rect, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
-                has_saved_position: false,
-                rect: Some(rect),
-                monitor,
-                display_id: None,
+                report: rust_pill_shared::restore::PositionReport::new(
+                    false,
+                    Some(rect),
+                    monitor,
+                    None,
+                ),
             });
         }
         InMessage::ForgetPosition => {
@@ -935,17 +932,18 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             // pill, so placement must leave the window exactly where it is.
             state
                 .anchor
-                .set(rust_pill_shared::layout::pill_anchor(false, true));
-            state.follow_pointer_anchor.set(false);
+                .set(rust_pill_shared::layout::Anchor::from_forget());
         }
         InMessage::RequestPosition => {
             let hwnd = HWND_CELL.with(|c| c.get());
             let (rect, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
-                has_saved_position: state.has_saved_position.get(),
-                rect: Some(rect),
-                monitor,
-                display_id: state.saved_display_id.get(),
+                report: rust_pill_shared::restore::PositionReport::new(
+                    state.has_saved_position.get(),
+                    Some(rect),
+                    monitor,
+                    state.saved_display_id.get(),
+                ),
             });
         }
         InMessage::PillPlacement { placement } => {
@@ -1827,10 +1825,12 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                 ));
             let (published, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
-                has_saved_position: true,
-                rect: Some(published),
-                monitor,
-                display_id: state.saved_display_id.get(),
+                report: rust_pill_shared::restore::PositionReport::new(
+                    true,
+                    Some(published),
+                    monitor,
+                    state.saved_display_id.get(),
+                ),
             });
         }
     }
@@ -1887,11 +1887,14 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         // One question, answered in one place: is this pill due a placement, and
         // does that placement follow the pointer? The shared model owns both
         // halves so the three pills cannot answer differently.
-        let anchor = rust_pill_shared::layout::pill_anchor(
-            state.has_saved_position.get(),
-            !state.anchor.get().places(),
-        );
-        let reset_to_cursor = anchor.follows_pointer() && state.follow_pointer_anchor.get();
+        // The stored flag outranks the anchor: a position that survived is the
+        // place to be, whatever the pill did earlier in this process.
+        let anchor = if state.has_saved_position.get() {
+            rust_pill_shared::layout::Anchor::Saved
+        } else {
+            state.anchor.get()
+        };
+        let reset_to_cursor = anchor.follows_pointer();
         let monitor = if reset_to_cursor {
             MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
         } else if state.has_saved_position.get() {
@@ -1910,9 +1913,12 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let Some(info) = query_monitor_info(monitor) else {
             return;
         };
-        if reset_to_cursor {
-            // Consume the one-shot re-home only after lookup succeeds.
-            state.follow_pointer_anchor.set(false);
+        if anchor == rust_pill_shared::layout::Anchor::LaunchAtCursor {
+            // Consume the one-shot launch placement only after lookup succeeds, so a
+            // failed monitor lookup does not eat it. A reset is not one-shot.
+            state
+                .anchor
+                .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
         }
         let wa = info.rcWork;
         let wa_w = wa.right - wa.left;
@@ -2553,10 +2559,12 @@ fn persist_drag_position(hwnd: HWND, state: &PillState) {
         .set(monitor_display_id(monitor_handle));
     let (win_rect, monitor) = current_pill_geometry(hwnd);
     ipc::send(&OutMessage::PositionChanged {
-        has_saved_position: true,
-        rect: Some(win_rect),
-        monitor,
-        display_id: state.saved_display_id.get(),
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            Some(win_rect),
+            monitor,
+            state.saved_display_id.get(),
+        ),
     });
 }
 

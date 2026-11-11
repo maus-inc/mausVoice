@@ -172,10 +172,12 @@ pub(crate) fn persist_drop_position(
         .set(display_id_at(window, drop_x as f64, drop_y as f64));
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
-        has_saved_position: true,
-        rect,
-        monitor,
-        display_id: state.saved_display_id.get(),
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            rect,
+            monitor,
+            state.saved_display_id.get(),
+        ),
     });
     Some((drop_x, drop_y))
 }
@@ -199,10 +201,12 @@ pub(crate) fn persist_window_position(window: &gtk::Window, state: &PillState, x
     state.x11_release_persisted.set(true);
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
-        has_saved_position: true,
-        rect,
-        monitor,
-        display_id: state.saved_display_id.get(),
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            rect,
+            monitor,
+            state.saved_display_id.get(),
+        ),
     });
 }
 
@@ -559,8 +563,7 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // A reset with the "cursor" strategy re-homes onto the monitor under
         // the pointer exactly once; the strategy is consumed so later ticks
         // keep the pill where it landed instead of chasing the cursor.
-        let reset_to_cursor =
-            state_tick.follow_pointer_anchor.get() && state_tick.anchor.get().follows_pointer();
+        let reset_to_cursor = state_tick.anchor.get().follows_pointer();
 
         let (anchor_x, anchor_y) = if state_tick.has_saved_position.get() {
             (
@@ -568,7 +571,9 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
                 state_tick.saved_y.get() + center_y,
             )
         } else if reset_to_cursor {
-            state_tick.follow_pointer_anchor.set(false);
+            state_tick
+                .anchor
+                .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
             let (ax, ay) = cursor_pos();
             (ax as f64, ay as f64)
         } else {

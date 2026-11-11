@@ -2198,7 +2198,7 @@ describe("native gesture adapter contracts", () => {
       // two-flag check, which is exactly how Windows and macOS drifted apart.
       assert.match(
         reposition,
-        /rust_pill_shared::layout::pill_anchor\(/,
+        /rust_pill_shared::layout::Anchor::/,
         `${name}: placement does not consult the shared anchor model`,
       );
       assert.match(
@@ -2266,10 +2266,30 @@ describe("native gesture adapter contracts", () => {
       const handler = scope(name, marker);
       assert.match(
         handler,
-        /pill_anchor\(false, (?:true|false)\)/,
+        /Anchor::from_reset\(/,
         `${name}: a reset leaves the anchor stale`,
       );
-      assert.match(handler, /follow_pointer_anchor/);
+    }
+  });
+
+  it("polls the arrangement through one shared policy", () => {
+    // The baseline rule is the part that is easy to get wrong and invisible when
+    // wrong: acting on the first signature treats the launch as a display change
+    // and moves a pill that had just been restored.
+    const shared = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(shared, /pub fn poll_layout\(/);
+    assert.match(shared, /pub enum PollOutcome \{/);
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::poll_layout\(/,
+        `${name}: the layout poll is hand-rolled again`,
+      );
+      assert.match(
+        source[name],
+        /PollOutcome::Changed/,
+        `${name}: the poll does not gate reconciliation on a change`,
+      );
     }
   });
 

@@ -235,19 +235,14 @@ pub(crate) struct PillState {
     /// the pill changes monitors. See rust_pill_shared::deform.
     pub(crate) crossing: RefCell<rust_pill_shared::deform::CrossingDeform>,
     pub(crate) has_saved_position: Cell<bool>,
-    /// Why this pill has no stored position, so placement can tell a first
-    /// launch from a position that was deliberately cleared. It defaults to a
-    /// first placement because that is what a process with no record is.
+    /// Why this pill has no stored position and where a due placement goes.
+    /// Defaults to a launch placement, because that is what a process with no
+    /// record is.
     pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
     /// Whether a drag's final position is still waiting to be stored. Set when
     /// the frame loop wants to save but the input lock is held, so a destroy that
     /// arrives before the lock clears can still store it.
     pub(crate) pending_drag_position: Cell<bool>,
-    /// Whether a due placement follows the pointer. A first launch and a reset
-    /// that names the cursor both do; a plain reset anchors to the display the
-    /// pill already lives on. A reset after a first placement has been consumed
-    /// keeps this false, so the pill is never chased by the timer.
-    pub(crate) follow_pointer_anchor: Cell<bool>,
     pub(crate) saved_x: Cell<i32>,
     pub(crate) saved_y: Cell<i32>,
     /// Stable token of the display the saved position belongs to, or `None` when

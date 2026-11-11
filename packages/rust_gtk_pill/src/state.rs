@@ -336,11 +336,8 @@ pub(crate) struct PillState {
     // Last window origin the frame tick applied during an X11 drag, so steady
     // frames skip the X round trip. Seeded out of range to force the first move.
     pub(crate) x11_drag_applied: Cell<(i32, i32)>,
-    /// Why this pill has no stored position, so placement can tell a first launch
-    /// from a position that was deliberately cleared.
+    /// Why this pill has no stored position and where a due placement goes.
     pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
-    /// Whether a due placement follows the pointer.
-    pub(crate) follow_pointer_anchor: Cell<bool>,
     // PlainWayland draws the pill on a maximized overlay window, so dragging
     // translates the pill's draw position rather than moving the toplevel.
     pub(crate) drag_draw_offset_x: Cell<f64>,

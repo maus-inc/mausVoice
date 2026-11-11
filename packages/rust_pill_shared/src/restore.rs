@@ -504,6 +504,59 @@ pub fn centered_bottom_footprint(
 /// The fraction and the inverse, re-exported so the remap math has one home.
 pub use crate::layout::{place_at_fraction, relative_fraction};
 
+/// The rectangle and the display a published position belongs to.
+///
+/// All three pills restated this inside their own `PositionChanged` variant, and
+/// they had already drifted: one lost `skip_serializing_if` and so serialised
+/// `display_id: null` where the other two omitted the field. One definition means
+/// one wire format.
+///
+/// The platform's own rectangle type is a parameter rather than a declaration, so
+/// each crate keeps serialising its own `Rect` and only the shape of the record is
+/// shared.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct PositionReport<R> {
+    pub has_saved_position: bool,
+    pub rect: Option<R>,
+    pub monitor: Option<R>,
+    /// Flattened so `display_id` stays a sibling of `rect` on the wire rather
+    /// than nesting under a wrapper object.
+    #[serde(flatten)]
+    pub display: DisplayRef,
+}
+
+/// The display a published position belongs to.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct DisplayRef {
+    /// Stable token of the display the position belongs to, when the pill could
+    /// name it. The desktop stores it with the rect so a later launch recognises
+    /// the display itself instead of whichever panel now holds that rectangle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_id: Option<u64>,
+}
+
+impl DisplayRef {
+    pub fn new(display_id: Option<u64>) -> Self {
+        Self { display_id }
+    }
+}
+
+impl<R> PositionReport<R> {
+    pub fn new(
+        has_saved_position: bool,
+        rect: Option<R>,
+        monitor: Option<R>,
+        display_id: Option<u64>,
+    ) -> Self {
+        Self {
+            has_saved_position,
+            rect,
+            monitor,
+            display: DisplayRef::new(display_id),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1134,5 +1187,44 @@ mod tests {
             ),
             Placement::PlatformDefault => panic!("a matching panel was connected"),
         }
+    }
+
+    /// The published position is a flat record on the wire, because the desktop
+    /// reads `display_id` as a sibling of `rect` rather than reaching into a
+    /// wrapper. Flattening is what keeps that true while the shape stays declared
+    /// once, and an absent token has to be omitted rather than sent as null, which
+    /// is the drift one platform had already introduced.
+    #[test]
+    fn the_position_report_keeps_its_wire_shape() {
+        #[derive(Serialize)]
+        struct R {
+            x: f64,
+            y: f64,
+        }
+        let named = PositionReport::new(
+            true,
+            Some(R { x: 1.0, y: 2.0 }),
+            Some(R { x: 3.0, y: 4.0 }),
+            Some(99),
+        );
+        let json = serde_json::to_string(&named).expect("serialised");
+        assert!(json.contains("\"display_id\":99"), "{json}");
+        assert!(!json.contains("\"display\""), "the wrapper leaked: {json}");
+        assert!(json.contains("\"has_saved_position\":true"), "{json}");
+
+        let unnamed = PositionReport::new(false, None::<R>, None::<R>, None);
+        let json = serde_json::to_string(&unnamed).expect("serialised");
+        assert!(
+            !json.contains("display_id"),
+            "an absent token was sent: {json}"
+        );
+        // `rect` and `monitor` are sent as null when absent, and the desktop
+        // filters those to objects, so that is the contract. The token is different:
+        // it is omitted rather than nulled, because sending `display_id: null` was
+        // exactly the drift this type exists to stop.
+        assert!(
+            json.contains("\"rect\":null"),
+            "the null shape the desktop filters changed: {json}"
+        );
     }
 }
