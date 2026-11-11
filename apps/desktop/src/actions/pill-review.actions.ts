@@ -222,18 +222,29 @@ const openNextReview = (): ReviewSession | null => {
   return queuedHead?.session ?? null;
 };
 
-/**
- * Move the queue on and show whatever is left at its head.
- *
- * `answer` finishes the review currently on the pill and is only passed by
- * callers that have already checked it is still the open one. Publishing
- * happens before the answer is handed back, so the caller that resumes sees
- * the queue as it now stands. Every transition clears the unanswered-review
- * timer and arms a fresh one, so a timer that does fire always belongs to the
- * review still on the pill. The timer calls back in here, which is why one
- * function owns both halves of the transition.
- */
-const armReviewTimeout = (current: QueuedReview): void => {
+const clearReviewTimeout = (): void => {
+  if (timeoutId === null) return;
+  clearTimeout(timeoutId);
+  timeoutId = null;
+};
+
+const publishPendingReview = (current: QueuedReview | undefined): void => {
+  const session = current?.session;
+  produceAppState((draft) => {
+    draft.pendingPillReview =
+      session?.presentation === "pill"
+        ? {
+            id: session.id,
+            text: session.draftText ?? session.originalText,
+          }
+        : null;
+  });
+};
+
+let advanceQueue!: (answer?: ReviewAnswer) => void;
+
+const armReviewTimeout = (current: QueuedReview | undefined): void => {
+  if (!current) return;
   // The composer owns its own readiness/decision timeout, and an Open
   // hand-off owns the review until its durable save has settled.
   if (current.openSavePending || current.session.presentation === "composer")
@@ -288,31 +299,28 @@ const armReviewTimeout = (current: QueuedReview): void => {
   }, REVIEW_TIMEOUT_MS);
 };
 
-function advanceQueue(answer?: ReviewAnswer): void {
-  if (timeoutId !== null) {
-    clearTimeout(timeoutId);
-    timeoutId = null;
-  }
+/*
+ * Move the queue on and show whatever is left at its head.
+ *
+ * `answer` finishes the review currently on the pill and is only passed by
+ * callers that have already checked it is still the open one. Publishing
+ * happens before the answer is handed back, so the caller that resumes sees
+ * the queue as it now stands. Every transition clears the unanswered-review
+ * timer and arms a fresh one, so a timer that does fire always belongs to the
+ * review still on the pill.
+ */
+advanceQueue = (answer?: ReviewAnswer): void => {
+  clearReviewTimeout();
 
   const answered = answer ? queue.shift() : undefined;
   if (answered && answer) recordReviewAnswer(answered, answer);
   openNextReview();
   const current = head();
-  produceAppState((draft) => {
-    draft.pendingPillReview =
-      current?.session.presentation === "pill"
-        ? {
-            id: current.session.id,
-            text: current.session.draftText ?? current.session.originalText,
-          }
-        : null;
-  });
-  answered?.resolve(answer ? answer.text : null);
+  publishPendingReview(current);
+  answered?.resolve(answer?.text ?? null);
   stopUnusedListener();
-  if (!current) return;
-
   armReviewTimeout(current);
-}
+};
 
 /**
  * The queued review that `id` refers to, or null when it is no longer the one

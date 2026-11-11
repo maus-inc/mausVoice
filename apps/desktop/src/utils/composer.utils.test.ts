@@ -209,6 +209,21 @@ const stubComposerDefaults = () => {
   mocks.listen.mockResolvedValue(vi.fn());
 };
 
+const useFakeWindowTimers = (): (() => void) => {
+  vi.useFakeTimers();
+  const globalRef = globalThis as { window?: unknown };
+  const previousWindow = globalRef.window;
+  globalRef.window = {
+    setTimeout: (...args: Parameters<typeof setTimeout>) => setTimeout(...args),
+    clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
+      clearTimeout(...args),
+  };
+  return () => {
+    globalRef.window = previousWindow;
+    vi.useRealTimers();
+  };
+};
+
 describe("reviewTextInComposer", () => {
   beforeEach(() => {
     resetComposerMocks();
@@ -374,17 +389,8 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
   it("destroys a blank composer window and toasts recovery when composer-ready never arrives", async () => {
     // Production guards the blank-page failure class with a 15s
     // `composer-ready` timer armed only after the floating window exists.
-    // Node has no `window`, so shim it onto globalThis with arrow wrappers
-    // that resolve at call time — vi.useFakeTimers then controls both.
-    vi.useFakeTimers();
-    const globalRef = globalThis as { window?: unknown };
-    const previousWindow = globalRef.window;
-    globalRef.window = {
-      setTimeout: (...args: Parameters<typeof setTimeout>) =>
-        setTimeout(...args),
-      clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
-        clearTimeout(...args),
-    };
+    // A window timer shim lets fake timers cover the readiness timeout too.
+    const restoreTimers = useFakeWindowTimers();
 
     try {
       installPerEventListener();
@@ -437,8 +443,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
       );
       expect(destroyCall?.[1]).toEqual({ id: "floating-blank" });
     } finally {
-      globalRef.window = previousWindow;
-      vi.useRealTimers();
+      restoreTimers();
     }
   }, 20_000);
 
@@ -451,16 +456,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
   ] as const)(
     "reports an unanswered %s composer review as expired",
     async (source, message) => {
-      vi.useFakeTimers();
-      const globalRef = globalThis as { window?: unknown };
-      const previousWindow = globalRef.window;
-      globalRef.window = {
-        setTimeout: (...args: Parameters<typeof setTimeout>) =>
-          setTimeout(...args),
-        clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
-          clearTimeout(...args),
-      };
-
+      const restoreTimers = useFakeWindowTimers();
       try {
         const listeners = installPerEventListener();
         mocks.invoke.mockImplementation((cmd: string) => {
@@ -513,24 +509,14 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
           );
         }
       } finally {
-        globalRef.window = previousWindow;
-        vi.useRealTimers();
+        restoreTimers();
       }
     },
     20_000,
   );
 
   it("settles and shows recovery when window creation hangs beyond setup deadline", async () => {
-    vi.useFakeTimers();
-    const globalRef = globalThis as { window?: unknown };
-    const previousWindow = globalRef.window;
-    globalRef.window = {
-      setTimeout: (...args: Parameters<typeof setTimeout>) =>
-        setTimeout(...args),
-      clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
-        clearTimeout(...args),
-    };
-
+    const restoreTimers = useFakeWindowTimers();
     try {
       installPerEventListener();
       // floating_window_create never resolves (stalled native IPC call)
@@ -558,8 +544,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
         }),
       );
     } finally {
-      globalRef.window = previousWindow;
-      vi.useRealTimers();
+      restoreTimers();
     }
   }, 20_000);
 });

@@ -85,6 +85,20 @@ const startPillReview = (
   ...args: Parameters<typeof reviewTranscriptOnPill>
 ): Promise<string | null> => reviewTranscriptOnPill(...args);
 
+const beginAssistantToolOpen = async (
+  onOpen: (text: string) => Promise<void>,
+): Promise<{ id: string; pending: Promise<string | null> }> => {
+  const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
+    onOpen,
+  });
+  await flush(() => getAppState().pendingPillReview !== null);
+  const id = currentReviewId();
+  decide?.({
+    payload: { reviewId: id, action: "open", text: "pill draft" },
+  });
+  return { id, pending };
+};
+
 const cancelPillReview = async (
   pending: Promise<string | null>,
 ): Promise<void> => {
@@ -687,15 +701,7 @@ describe("reviewTranscriptOnPill", () => {
 
   it("hands agent Paste Open to its durable Chats callback", async () => {
     const onOpen = vi.fn(() => Promise.resolve());
-    const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
-      onOpen,
-    });
-    await flush(() => getAppState().pendingPillReview !== null);
-
-    const id = currentReviewId();
-    decide?.({
-      payload: { reviewId: id, action: "open", text: "pill draft" },
-    });
+    const { id, pending } = await beginAssistantToolOpen(onOpen);
     await expect(pending).resolves.toBeNull();
 
     expect(onOpen).toHaveBeenCalledWith("pill draft");
@@ -708,15 +714,7 @@ describe("reviewTranscriptOnPill", () => {
 
   it("keeps agent Paste review open when its Open hand-off cannot be saved", async () => {
     const onOpen = vi.fn(() => Promise.reject(new Error("disk full")));
-    const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
-      onOpen,
-    });
-    await flush(() => getAppState().pendingPillReview !== null);
-
-    const id = currentReviewId();
-    decide?.({
-      payload: { reviewId: id, action: "open", text: "pill draft" },
-    });
+    const { id, pending } = await beginAssistantToolOpen(onOpen);
     await flush(() => mocks.logger.error.mock.calls.length > 0);
 
     expect(getAppState().pendingPillReview?.id).toBe(id);
