@@ -40,6 +40,7 @@ thread_local! {
     static HWND_CELL: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static TYPING_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static EDIT_CONTAINER: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
+    static EDIT_LABEL_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_SURFACE_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
     // Cached reduced-motion probe (see reduced_motion()); re-read at most
@@ -758,7 +759,15 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             let review_id = review.as_ref().map(|r| r.id.clone());
             let review_text = review.as_ref().map(|r| r.text.clone());
             *state.assistant_review.borrow_mut() = review.map(|review| *review);
-            set_edit_placeholder(type_message_label.as_deref());
+            let review = state.assistant_review.borrow();
+            let label = match review.as_ref() {
+                Some(review) => review
+                    .review_label
+                    .as_deref()
+                    .unwrap_or("REVIEW TRANSCRIPT"),
+                None => type_message_label.as_deref().unwrap_or("Type a message…"),
+            };
+            set_edit_accessible_label(label);
 
             // The entry is the review surface: a new transcript loads into it
             // for editing, and answering the review empties it again. An
@@ -2198,13 +2207,14 @@ const ES_WANTRETURN: u32 = 0x1000;
 const EN_CHANGE_NOTIFICATION: u16 = 0x0300;
 const EM_SETMARGINS: u32 = 0x00D3;
 const EM_GETSEL: u32 = 0x00B0;
-const EM_SETCUEBANNER: u32 = 0x1501;
 const EM_SETSEL: u32 = 0x00B1;
+const EDIT_LABEL_HEIGHT: i32 = 16;
 const EM_REPLACESEL: u32 = 0x00C2;
 const EC_LEFTMARGIN: u32 = 1;
 const EC_RIGHTMARGIN: u32 = 2;
 const EDIT_COLOR_KEY: u32 = 0x00010001; // RGB(1,0,1) - unique color for transparency
 const EDIT_TEXT_COLOR: u32 = 0x00E8E8E8; // RGB(232, 232, 232)
+const EDIT_LABEL_COLOR: u32 = 0x00909090; // muted caption against the panel
 const EDIT_SURFACE: u32 = 0x00101010; // near-black inset matching the panel
 
 fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
@@ -2240,6 +2250,22 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         )
         .unwrap();
 
+        let label = CreateWindowExW(
+            WS_EX_TRANSPARENT,
+            w!("STATIC"),
+            w!("Type a message…"),
+            WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | SS_LEFT | SS_CENTERIMAGE),
+            8,
+            0,
+            384,
+            EDIT_LABEL_HEIGHT,
+            Some(container),
+            None,
+            Some(hinstance.into()),
+            None,
+        )
+        .unwrap();
+
         let edit = CreateWindowExW(
             WS_EX_LEFT,
             w!("EDIT"),
@@ -2254,9 +2280,9 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
                     | WS_VSCROLL.0,
             ),
             0,
-            0,
+            EDIT_LABEL_HEIGHT,
             400,
-            PANEL_INPUT_HEIGHT as i32,
+            PANEL_INPUT_HEIGHT as i32 - EDIT_LABEL_HEIGHT,
             Some(container),
             None,
             Some(hinstance.into()),
@@ -2273,6 +2299,14 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         lf.lfHeight = -18;
         lf.lfWeight = 500; // Medium
         let font = CreateFontIndirectW(&lf);
+        lf.lfHeight = -14;
+        let label_font = CreateFontIndirectW(&lf);
+        SendMessageW(
+            label,
+            WM_SETFONT,
+            Some(WPARAM(label_font.0 as usize)),
+            Some(LPARAM(1)),
+        );
         SendMessageW(
             edit,
             WM_SETFONT,
@@ -2290,6 +2324,7 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         );
 
         EDIT_CONTAINER.with(|c| c.set(container));
+        EDIT_LABEL_HWND.with(|l| l.set(label));
         EDIT_HWND.with(|e| e.set(edit));
     }
 }
@@ -2306,6 +2341,13 @@ unsafe extern "system" fn edit_container_proc(
             SetTextColor(hdc, COLORREF(EDIT_TEXT_COLOR));
             SetBkMode(hdc, OPAQUE);
             SetBkColor(hdc, COLORREF(EDIT_SURFACE));
+            let brush = EDIT_SURFACE_BRUSH.with(Cell::get);
+            LRESULT(brush.0 as isize)
+        }
+        WM_CTLCOLORSTATIC => {
+            let hdc = HDC(wparam.0 as *mut std::ffi::c_void);
+            SetTextColor(hdc, COLORREF(EDIT_LABEL_COLOR));
+            SetBkMode(hdc, TRANSPARENT);
             let brush = EDIT_SURFACE_BRUSH.with(Cell::get);
             LRESULT(brush.0 as isize)
         }
@@ -2451,6 +2493,7 @@ fn ctrl_backspace(edit: HWND) {
 fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     let is_typing = state.is_typing();
     let container = EDIT_CONTAINER.with(|c| c.get());
+    let label = EDIT_LABEL_HWND.with(Cell::get);
     let edit = EDIT_HWND.with(|e| e.get());
 
     if !is_typing {
@@ -2523,13 +2566,22 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
         let _ = SetWindowPos(
-            edit,
+            label,
             None,
             0,
             0,
             input_w as i32,
-            h as i32,
+            EDIT_LABEL_HEIGHT,
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE,
+        );
+        let _ = SetWindowPos(
+            edit,
+            None,
+            0,
+            EDIT_LABEL_HEIGHT,
+            input_w as i32,
+            (h as i32 - EDIT_LABEL_HEIGHT).max(1),
+            SWP_NOZORDER | SWP_NOACTIVATE,
         );
     }
 
@@ -2562,21 +2614,11 @@ fn set_edit_text(text: &str) {
     }
 }
 
-fn set_edit_placeholder(text: Option<&str>) {
-    let edit = EDIT_HWND.with(|e| e.get());
-    let wide = text.map(|text| {
-        text.encode_utf16()
-            .chain(std::iter::once(0))
-            .collect::<Vec<_>>()
-    });
-    let text_ptr = wide.as_ref().map_or(std::ptr::null(), |text| text.as_ptr());
+fn set_edit_accessible_label(text: &str) {
+    let label = EDIT_LABEL_HWND.with(Cell::get);
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
-        SendMessageW(
-            edit,
-            EM_SETCUEBANNER,
-            Some(WPARAM(1)),
-            Some(LPARAM(text_ptr as isize)),
-        );
+        let _ = SetWindowTextW(label, PCWSTR(wide.as_ptr()));
     }
 }
 

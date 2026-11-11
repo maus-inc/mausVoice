@@ -6,6 +6,7 @@ import { runToast, showToast } from "../actions/toast.actions";
 import { createId } from "./id.utils";
 import { requestPillPosition } from "./native-pill.utils";
 import { getLogger } from "./log.utils";
+import { showDictationReviewExpiredToast } from "./review-recovery.utils";
 
 export type ComposerResult = {
   requestId: string;
@@ -457,17 +458,7 @@ class ComposerReview {
 
     if (expired) {
       notifyReviewExpiry(this.options);
-      runToast(
-        showToast({
-          message: getIntl().formatMessage({
-            defaultMessage:
-              "Review expired — the transcript is kept in your history.",
-          }),
-          toastType: "info",
-          duration: 8000,
-          action: "open_transcriptions",
-        }),
-      );
+      showDictationReviewExpiredToast();
       return;
     }
 

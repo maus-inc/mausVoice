@@ -552,6 +552,9 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_review_submit = state.clone();
     review_editor.connect_key_press_event(move |view, event| {
+        if view.im_context_filter_keypress(event) {
+            return glib::Propagation::Stop;
+        }
         let ctrl = event.state().contains(gdk::ModifierType::CONTROL_MASK);
         if ctrl
             && matches!(

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getIntl } from "../i18n/intl";
 import { produceAppState } from "../store";
 import { reviewTextInComposer } from "../utils/composer.utils";
+import { showDictationReviewExpiredToast } from "../utils/review-recovery.utils";
 import { isNativePillAvailable } from "../utils/native-pill.utils";
 import { createId } from "../utils/id.utils";
 import { getLogger } from "../utils/log.utils";
@@ -300,17 +301,7 @@ const armReviewTimeout = (current: QueuedReview | undefined): void => {
         }),
       );
     } else {
-      runToast(
-        showToast({
-          message: getIntl().formatMessage({
-            defaultMessage:
-              "Review expired — the transcript is kept in your history.",
-          }),
-          toastType: "info",
-          duration: 8000,
-          action: "open_transcriptions",
-        }),
-      );
+      showDictationReviewExpiredToast();
     }
     queueAdvancer.advance({ text: null });
   }, REVIEW_TIMEOUT_MS);
@@ -455,10 +446,7 @@ const openAssistantPasteInChats = async (
   // Opening Chats changes focus away from the destination application. The
   // caller must durably save the edited text before this review can settle.
   current.openSavePending = true;
-  if (timeoutId !== null) {
-    clearTimeout(timeoutId);
-    timeoutId = null;
-  }
+  clearReviewTimeout();
   try {
     await current.onOpen(text);
   } catch {
