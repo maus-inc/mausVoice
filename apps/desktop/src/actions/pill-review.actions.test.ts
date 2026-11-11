@@ -781,6 +781,27 @@ describe("reviewTranscriptOnPill", () => {
     expect(session?.draftText).toBe("composed take");
   });
 
+  it("does not open a composer for assistant-tool Open without a conversation", async () => {
+    const pending = reviewTranscriptOnPill("agent text", "assistant-tool");
+    await flush(() => getAppState().pendingPillReview !== null);
+    const id = currentReviewId();
+
+    decide?.({ payload: { reviewId: id, action: "open" } });
+    await flush(() => mocks.showToast.mock.calls.length > 0);
+
+    expect(getAppState().pendingPillReview).toEqual({ id, text: "agent text" });
+    expect(mocks.reviewTextInComposer).not.toHaveBeenCalled();
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("without an active conversation"),
+        toastType: "error",
+      }),
+    );
+
+    decide?.({ payload: { reviewId: id, action: "insert" } });
+    await expect(pending).resolves.toBe("agent text");
+  });
+
   it("hands agent Paste Open to its durable Chats callback", async () => {
     const onOpen = vi.fn(() => Promise.resolve());
     const { id, pending } = await beginAssistantToolOpen(onOpen);

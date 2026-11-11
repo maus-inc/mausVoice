@@ -319,7 +319,7 @@ class ComposerReview {
       }).catch(() => {
         // The composer may already have consumed the request.
       });
-      await this.destroyWindow();
+      this.destroyWindow();
     }
   }
 
@@ -328,7 +328,7 @@ class ComposerReview {
       getLogger().error(
         "reviewTextInComposer: setup timeout (window creation or listener stalled)",
       );
-      void this.destroyWindow();
+      this.destroyWindow();
       this.showRecovery();
       this.finish(null);
     }, COMPOSER_READY_TIMEOUT_MS);
@@ -433,7 +433,7 @@ class ComposerReview {
           "reviewTextInComposer: composer-ready timeout (webview likely blank)",
         );
         // Do not queue destruction behind an unresponsive text-discard IPC.
-        void this.destroyWindow();
+        this.destroyWindow();
         this.showRecovery();
         this.finish(null);
       }, COMPOSER_READY_TIMEOUT_MS);

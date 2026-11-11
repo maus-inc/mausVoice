@@ -94,6 +94,30 @@ const updatePendingPasteReview = (
     } satisfies PendingPasteReviewMetadata,
   });
 
+/** Persist a newer pill draft on an existing, still-pending Paste review card. */
+export const updatePendingPasteReviewDraft = (
+  message: ChatMessage,
+  text: string,
+): Promise<ChatMessage> => {
+  const pending = getPendingPasteReview(message.metadata);
+  if (pending?.status !== "pending") {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
+  }
+  if (!text.trim()) {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "Cannot save an empty Paste review",
+      }),
+    );
+  }
+
+  return updatePendingPasteReview(message, pending, text, "pending");
+};
+
 /**
  * Copy the saved text for a manual paste. The latest edit is persisted before
  * touching the clipboard, so a clipboard failure leaves a retryable, durable

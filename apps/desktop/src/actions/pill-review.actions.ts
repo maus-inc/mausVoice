@@ -513,6 +513,23 @@ const applyDecision = async (
   updateReviewDraft(current, editedText);
 
   try {
+    if (
+      action === "open" &&
+      session.source === "assistant-tool" &&
+      !current.onOpen
+    ) {
+      runToast(
+        showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Cannot open this Paste review in Chats without an active conversation. Choose Insert or Copy instead.",
+          }),
+          toastType: "error",
+          duration: 8000,
+        }),
+      );
+      return;
+    }
     if (action === "copy") {
       if (!(await copyReviewToClipboard(text))) {
         if (head() === current) advanceQueue();

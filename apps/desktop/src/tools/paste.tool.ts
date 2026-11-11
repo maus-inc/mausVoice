@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import type { PasteOutcome } from "@maus-inc/desktop-native-apis";
-import type { ToolInfo } from "@maus-inc/types";
+import type { ChatMessage, ToolInfo } from "@maus-inc/types";
 import { BaseTool, type ToolExecutionContext } from "./base.tool";
 import {
   getToolAlwaysAllow,
@@ -12,7 +12,10 @@ import { getLogger } from "../utils/log.utils";
 import { getIntl } from "../i18n/intl";
 import { runToast, showToast } from "../actions/toast.actions";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
-import { createPendingPasteReview } from "../actions/pending-paste-review.actions";
+import {
+  createPendingPasteReview,
+  updatePendingPasteReviewDraft,
+} from "../actions/pending-paste-review.actions";
 
 /**
  * Record the paste for a manual hand-off, without ever failing the caller.
@@ -48,20 +51,33 @@ export class PasteTool extends BaseTool {
     let copiedReviewedText = false;
     let reviewExpired = false;
     let reviewFailed = false;
-    let pendingReviewSave: Promise<void> | null = null;
-    const saveReviewOnce = (
+    let pendingReviewMessage: ChatMessage | null = null;
+    let savedReviewText: string | null = null;
+    let pendingReviewSave: Promise<void> = Promise.resolve();
+    const saveLatestReviewDraft = (
       conversationId: string,
       text: string,
     ): Promise<void> => {
-      if (pendingReviewSave) return pendingReviewSave;
-      const save = createPendingPasteReview(conversationId, text).then(
-        () => undefined,
-      );
-      pendingReviewSave = save.catch((error: unknown) => {
-        pendingReviewSave = null;
-        throw error;
-      });
-      return pendingReviewSave;
+      const save = pendingReviewSave
+        .catch(() => undefined)
+        .then(async () => {
+          if (pendingReviewMessage) {
+            if (savedReviewText !== text) {
+              pendingReviewMessage = await updatePendingPasteReviewDraft(
+                pendingReviewMessage,
+                text,
+              );
+            }
+          } else {
+            pendingReviewMessage = await createPendingPasteReview(
+              conversationId,
+              text,
+            );
+          }
+          savedReviewText = text;
+        });
+      pendingReviewSave = save;
+      return save;
     };
     const conversationId = context?.conversationId;
     const reviewOptions = {
@@ -74,37 +90,41 @@ export class PasteTool extends BaseTool {
       onFailure: () => {
         reviewFailed = true;
       },
-      ...(conversationId
-        ? {
-            onOpen: async (reviewedText: string, signal?: AbortSignal) => {
-              // Save first: once Chats takes focus the pill cannot safely insert
-              // into the app that had focus when the tool began.
-              if (signal?.aborted) return;
-              await saveReviewOnce(conversationId, reviewedText);
-              if (signal?.aborted) return;
-              openedPendingPaste = true;
-              try {
-                await emit("open-pill-conversation", { conversationId });
-              } catch (error) {
-                // The durable card is still available in Chats even if native
-                // surfacing or navigation could not be requested.
-                getLogger().warning(
-                  `Could not open the Paste review in Chats: ${error}`,
-                );
-                runToast(
-                  showToast({
-                    message: getIntl().formatMessage({
-                      defaultMessage:
-                        "Your Paste review was saved. Open Chats to find it and finish the paste.",
-                    }),
-                    toastType: "info",
-                    duration: 8000,
-                  }),
-                );
-              }
-            },
-          }
-        : {}),
+      onOpen: async (reviewedText: string, signal?: AbortSignal) => {
+        if (!conversationId) {
+          throw new Error(
+            "No active conversation is available for this Paste review",
+          );
+        }
+        // Save first: once Chats takes focus the pill cannot safely insert
+        // into the app that had focus when the tool began.
+        if (signal?.aborted) return;
+        await saveLatestReviewDraft(conversationId, reviewedText);
+        if (signal?.aborted) return;
+        openedPendingPaste = true;
+        try {
+          await emit("open-pill-conversation", {
+            conversationId,
+            pendingPasteReview: true,
+          });
+        } catch (error) {
+          // The durable card is still available in Chats even if native
+          // surfacing or navigation could not be requested.
+          getLogger().warning(
+            `Could not open the Paste review in Chats: ${error}`,
+          );
+          runToast(
+            showToast({
+              message: getIntl().formatMessage({
+                defaultMessage:
+                  "Your Paste review was saved. Open Chats to find it and finish the paste.",
+              }),
+              toastType: "info",
+              duration: 8000,
+            }),
+          );
+        }
+      },
     };
     const text =
       getAppState().userPrefs?.reviewBeforeInsert === true

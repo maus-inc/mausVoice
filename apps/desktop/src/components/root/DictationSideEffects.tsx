@@ -2570,25 +2570,45 @@ export const DictationSideEffects = () => {
   };
 
   const openPillConversation = useCallback(
-    async (conversationId?: string) => {
+    async (conversationId?: string, isPendingPasteReview = false) => {
+      let recoveryToastShown = false;
+      const reportPasteRecovery = () => {
+        if (!isPendingPasteReview || recoveryToastShown) return;
+        recoveryToastShown = true;
+        runToast(
+          showToast({
+            message: intl.formatMessage({
+              defaultMessage:
+                "Your Paste review was saved. If Chats did not open, find the review in Chats to finish the paste.",
+            }),
+            toastType: "info",
+            duration: 8000,
+          }),
+        );
+      };
+      const reportOpenFailure = (error: unknown) => {
+        reportConversationOpenFailure(error);
+        reportPasteRecovery();
+      };
       const id = conversationId ?? getAppState().pillConversationId;
       if (id) {
-        void loadChatMessages(id).catch(reportConversationOpenFailure);
+        void loadChatMessages(id).catch(reportOpenFailure);
         // `navigate` returns a promise; a rejection here would otherwise be
         // unhandled, so it is caught on the promise rather than by a surrounding
         // try/catch that cannot see it.
         await getBrowserRouter()
           .navigate(`/dashboard/chats?id=${encodeURIComponent(id)}`)
-          .catch((error: unknown) => {
-            getLogger().warning(
-              `Failed to navigate to the conversation: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          });
+          .catch(reportOpenFailure);
       }
-      await surfaceMainWindow();
-      await abortRecording();
+      try {
+        await surfaceMainWindow();
+        await abortRecording();
+      } catch (error) {
+        reportPasteRecovery();
+        throw error;
+      }
     },
-    [abortRecording],
+    [abortRecording, intl],
   );
 
   useTauriListen<void>("assistant-mode-close", async () => {
@@ -2658,15 +2678,16 @@ export const DictationSideEffects = () => {
     },
   );
 
-  useTauriListen<{ conversationId: string }>(
-    "open-pill-conversation",
-    (payload) => {
-      if (!isMainWindow) return;
-      void openPillConversation(payload.conversationId).catch(
-        reportConversationOpenFailure,
-      );
-    },
-  );
+  useTauriListen<{
+    conversationId: string;
+    pendingPasteReview?: boolean;
+  }>("open-pill-conversation", (payload) => {
+    if (!isMainWindow) return;
+    void openPillConversation(
+      payload.conversationId,
+      payload.pendingPasteReview === true,
+    ).catch(reportConversationOpenFailure);
+  });
 
   useHotkeyFire({
     actionName: OPEN_CHAT_HOTKEY,

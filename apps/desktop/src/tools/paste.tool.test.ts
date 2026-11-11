@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const reviewTranscriptBeforeInsertMock = vi.hoisted(() => vi.fn());
 const createPendingPasteReviewMock = vi.hoisted(() => vi.fn());
+const updatePendingPasteReviewDraftMock = vi.hoisted(() => vi.fn());
 const invokeMock = vi.hoisted(() => vi.fn());
 const emitMock = vi.hoisted(() => vi.fn());
 const loggerErrorMock = vi.hoisted(() => vi.fn());
@@ -17,6 +18,7 @@ vi.mock("../actions/pill-review.actions", () => ({
 }));
 vi.mock("../actions/pending-paste-review.actions", () => ({
   createPendingPasteReview: createPendingPasteReviewMock,
+  updatePendingPasteReviewDraft: updatePendingPasteReviewDraftMock,
 }));
 vi.mock("../store", () => ({ getAppState: () => state }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
@@ -56,7 +58,10 @@ describe("PasteTool review", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.userPrefs = { reviewBeforeInsert: true };
-    createPendingPasteReviewMock.mockResolvedValue(undefined);
+    createPendingPasteReviewMock.mockResolvedValue({ id: "pending-review" });
+    updatePendingPasteReviewDraftMock.mockImplementation((message: unknown) =>
+      Promise.resolve(message),
+    );
     // What the Rust `paste` command returns when the text reached the target.
     invokeMock.mockResolvedValue("pasted");
   });
@@ -242,6 +247,7 @@ describe("PasteTool review", () => {
     );
     expect(emitMock).toHaveBeenCalledWith("open-pill-conversation", {
       conversationId: "conv-1",
+      pendingPasteReview: true,
     });
     expect(invokeMock).not.toHaveBeenCalled();
   });
@@ -278,8 +284,8 @@ describe("PasteTool review", () => {
     let finishSave: (() => void) | undefined;
     createPendingPasteReviewMock.mockImplementationOnce(
       () =>
-        new Promise<void>((resolve) => {
-          finishSave = resolve;
+        new Promise<{ id: string }>((resolve) => {
+          finishSave = () => resolve({ id: "pending-review" });
         }),
     );
     reviewTranscriptBeforeInsertMock.mockImplementationOnce(
@@ -292,7 +298,13 @@ describe("PasteTool review", () => {
       ) => {
         const controller = new AbortController();
         const saving = options?.onOpen?.("edited in pill", controller.signal);
-        await Promise.resolve();
+        for (
+          let attempt = 0;
+          attempt < 10 && createPendingPasteReviewMock.mock.calls.length === 0;
+          attempt += 1
+        ) {
+          await Promise.resolve();
+        }
         controller.abort();
         finishSave?.();
         await saving;
@@ -316,8 +328,8 @@ describe("PasteTool review", () => {
     let finishSave: (() => void) | undefined;
     createPendingPasteReviewMock.mockImplementationOnce(
       () =>
-        new Promise<void>((resolve) => {
-          finishSave = resolve;
+        new Promise<{ id: string }>((resolve) => {
+          finishSave = () => resolve({ id: "pending-review" });
         }),
     );
     reviewTranscriptBeforeInsertMock.mockImplementationOnce(
@@ -333,7 +345,13 @@ describe("PasteTool review", () => {
           "edited in pill",
           firstController.signal,
         );
-        await Promise.resolve();
+        for (
+          let attempt = 0;
+          attempt < 10 && createPendingPasteReviewMock.mock.calls.length === 0;
+          attempt += 1
+        ) {
+          await Promise.resolve();
+        }
         firstController.abort();
         finishSave?.();
         await firstAttempt;
@@ -352,6 +370,58 @@ describe("PasteTool review", () => {
     expect(createPendingPasteReviewMock).toHaveBeenCalledOnce();
     expect(emitMock).toHaveBeenCalledOnce();
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("persists edited text on an Open retry without duplicating the card", async () => {
+    const savedCard = { id: "pending-review" };
+    let finishSave: (() => void) | undefined;
+    createPendingPasteReviewMock.mockImplementationOnce(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          finishSave = () => resolve(savedCard);
+        }),
+    );
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      async (
+        _text: string,
+        _source: string,
+        options?: {
+          onOpen?: (text: string, signal?: AbortSignal) => Promise<void>;
+        },
+      ) => {
+        const timedOutAttempt = new AbortController();
+        const firstAttempt = options?.onOpen?.(
+          "first draft",
+          timedOutAttempt.signal,
+        );
+        for (
+          let attempt = 0;
+          attempt < 10 && createPendingPasteReviewMock.mock.calls.length === 0;
+          attempt += 1
+        ) {
+          await Promise.resolve();
+        }
+        timedOutAttempt.abort();
+        finishSave?.();
+        await firstAttempt;
+        await options?.onOpen?.("latest draft", new AbortController().signal);
+        return null;
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ awaitingManualPaste: true });
+
+    expect(createPendingPasteReviewMock).toHaveBeenCalledOnce();
+    expect(updatePendingPasteReviewDraftMock).toHaveBeenCalledWith(
+      savedCard,
+      "latest draft",
+    );
+    expect(emitMock).toHaveBeenCalledOnce();
   });
 
   it("returns a successful clipboard result when the user chooses Copy", async () => {
