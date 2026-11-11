@@ -275,4 +275,40 @@ export async function newPage(port) {
   };
 }
 
+/**
+ * Waits until `expression` evaluates to something truthy, or gives up.
+ *
+ * Returns `{ ok, waitedMs }` rather than throwing, because the callers differ in
+ * what a timeout means: a screenshot script records it as a problem and carries
+ * on to produce its report, while a strict check throws. Polling replaces a
+ * fixed `sleep` that guessed how long the page needed; when the guess was short
+ * the failure looked like a defect in the page.
+ *
+ * `evaluate` is injected rather than taking a `page`, so this is testable without
+ * a browser.
+ */
+export async function waitForTruthy({
+  evaluate,
+  expression,
+  timeoutMs = 30_000,
+  intervalMs = 100,
+  now = Date.now,
+}) {
+  const startedAt = now();
+  const deadline = startedAt + timeoutMs;
+  for (;;) {
+    // A page that is navigating can throw here, synchronously or as a rejected
+    // promise; either way that is "not ready yet".
+    let ready = false;
+    try {
+      ready = await evaluate(expression);
+    } catch {
+      ready = false;
+    }
+    if (ready) return { ok: true, waitedMs: now() - startedAt };
+    if (now() >= deadline) return { ok: false, waitedMs: now() - startedAt };
+    await sleep(intervalMs);
+  }
+}
+
 export { sleep };

@@ -16,10 +16,10 @@ estimate dressed as a measurement.
 
 | Gate | Command | Result |
 | --- | --- | --- |
-| Rust unit tests | `cargo test --locked --lib` in `apps/desktop/src-tauri` | **590 passed, 0 failed, 1 ignored** (`1261cc5e`) |
+| Rust unit tests | `cargo test --locked --lib` in `apps/desktop/src-tauri` | **590 passed, 0 failed, 1 ignored** (`18f3cb92`) |
 | Rust lints | `cargo clippy --locked --all-targets -- -D warnings` | 0 warnings, 0 errors |
 | Rust formatting | `cargo fmt --check` | clean |
-| Frontend tests (unit) | `vitest run src` in `apps/desktop` | **4153 passed, 0 failed** across 362 files (`1261cc5e`) |
+| Frontend tests (unit) | `vitest run src` in `apps/desktop` | **4144 passed, 0 failed** across 357 files (`18f3cb92`) |
 | Frontend tests (evals and integration) | `vitest run test` in `apps/desktop` | **not run without `GROQ_API_KEY`**; these suites call a live provider and fail on the missing key, so they are not part of the green figure above |
 | Frontend types | `turbo run check-types` | 9/9 tasks successful |
 | Preview types (TS 5.9) | `tsc --noEmit -p apps/preview/tsconfig.json` | clean |
@@ -70,6 +70,16 @@ coverage of them.
 | **The UI inside the real Tauri WebView** | The browser verification drives the real components against a fake `window.__TAURI_INTERNALS__`; the IPC transport itself is not exercised. | Run `tauri dev` with a device attached and repeat the dialog checks. |
 | **Any performance claim under load** | Not attempted, and no number here should be read as one. | A profiling run on target hardware. |
 
-The 54 failing frontend tests and the single ignored Rust test are both
-pre-existing and environmental, not results of this work; the ignored test is
-documented as needing hardware.
+The figures above describe `18f3cb92`. They are what `vitest run src` and
+`cargo test --locked --lib` report, not numbers carried over from an earlier
+commit; the test count moves with every test added or removed, so it is stated
+against a commit rather than on its own.
+
+The suites under `apps/desktop/test` are excluded from the green figure above
+because they need `GROQ_API_KEY`: they call a live provider and fail without a
+key. The earlier revision of this page described that exclusion as "54 failing
+frontend tests", which reads as a defect in the code and is not one. There are
+also `GROQ_API_KEY`-gated suites in `test/evals/post-processing-eval.test.ts`,
+`test/integration/post-processing-stability.test.ts` and
+`test/integration/transcription.test.ts`. The single ignored Rust test is
+documented in the source as needing hardware.

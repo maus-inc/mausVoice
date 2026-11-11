@@ -2,7 +2,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launch, newPage, sleep } from "./cdp.mjs";
+import { launch, newPage, sleep, waitForTruthy } from "./cdp.mjs";
 
 // Repository-relative, resolved from this file rather than from the shell's
 // working directory or a sandbox path: a committed file may not carry an
@@ -36,11 +36,33 @@ page.on("Runtime.exceptionThrown", (p) =>
 
 await page.send("Network.enable");
 await page.setViewport(1100, 1000);
-await page.goto(HARNESS_URL);
-await sleep(7000);
-
+// Declared before the readiness wait, so a dialog that never appears is
+// recorded as a problem in the report rather than thrown before the report
+// exists.
 const problems = [];
 const note = (label, detail) => problems.push(`${label}: ${detail}`);
+
+await page.goto(HARNESS_URL);
+
+// Wait for the dialog rather than sleeping a fixed seven seconds.
+//
+// A fixed delay is a bet that the page is ready in time, and when it loses the
+// script reports `no [role=dialog] found` -- a failure that says the dialog is
+// broken when the truth is that it had not mounted yet. On a loaded machine the
+// bet loses; on an idle one it costs seven seconds of doing nothing. Polling
+// for the thing the next line needs is both faster and honest about failing.
+const DIALOG_TIMEOUT_MS = 30_000;
+const readiness = await waitForTruthy({
+  evaluate: (expression) => page.evaluate(expression),
+  expression: "Boolean(document.querySelector('[role=dialog]'))",
+  timeoutMs: DIALOG_TIMEOUT_MS,
+});
+if (!readiness.ok) {
+  // Recorded in the same list the probes use, so the script still produces a
+  // report and a screenshot instead of throwing before it has written anything,
+  // and the failure lands in the artifact a reader actually looks at.
+  note("dialog readiness", `no [role=dialog] within ${DIALOG_TIMEOUT_MS} ms`);
+}
 
 // ---- Structural probe -------------------------------------------------------
 const probe = `(() => {
