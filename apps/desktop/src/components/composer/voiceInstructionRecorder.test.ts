@@ -170,12 +170,17 @@ describe("VoiceInstructionRecorder", () => {
     await recorder.toggle();
     // The failed stop leaves native holding the recorder, so starting the
     // browser recognizer here would open a second capture beside it. The
-    // recorder stays idle and reports why instead.
+    // recorder stays idle and reports why instead — and the restored
+    // native handle is discarded so the microphone does not stay live.
     expect(recorder.getState()).toBe("idle");
     expect(deps.onListeningChange).toHaveBeenLastCalledWith(false);
     expect(deps.onResetLevels).toHaveBeenCalled();
     expect(deps.onError).toHaveBeenCalledWith("recording unavailable");
     expect(createSpeechRecognition).not.toHaveBeenCalled();
+    expect(deps.invoke).toHaveBeenCalledWith(
+      "discard_recording",
+      expect.objectContaining({ ownerId: expect.any(String) }),
+    );
   });
 
   it("claims the native slot for browser recognition and releases it on stop", async () => {
