@@ -63,9 +63,34 @@ const codeOnly = [
   .map((file) => stripComments(readFileSync(file, "utf8")))
   .join("\n");
 
-// A cited test is a backticked snake_case token. Prose in backticks that is not
-// a test — a constant, a field name — is filtered out by requiring it to look
-// like a test name rather than by maintaining an allow-list, which would rot.
+/**
+ * Backticked prose that is deliberately not a citation.
+ *
+ * Every other backticked token in the matrix has to name a test that exists.
+ * That is the point: the previous guard *filtered* tokens it judged not to look
+ * like test names, so a citation to a test that did not exist was discarded
+ * rather than reported, and the row still passed on the strength of the names
+ * beside it. Filtering by shape cannot be made safe, because the shapes overlap:
+ * a sentence-style test name may contain a capital (`... the Rust classifier`),
+ * and a token that is merely prose looks identical to a short test name.
+ *
+ * So the shapes below are only a fast path. A token that matches neither shape
+ * is no longer dropped; it is checked against the source like everything else,
+ * and accepted only because it appears there, never because it was filtered away.
+ */
+const isProseNotCitation = (token) =>
+  // Numeric values and limits: `0`, `1.5`, `NaN`, `Infinity`,
+  // `Number.MAX_SAFE_INTEGER`.
+  /^[-+]?\d[\d_.]*$/.test(token) ||
+  /^(NaN|Infinity|Number\.[A-Z_]+)$/.test(token) ||
+  // A label:value token, a call, or an angle-bracket placeholder.
+  /[:<>()]/.test(token) ||
+  // A bare word with no space: a field, a status, a backend name. Checked
+  // after the two shapes below have had their chance, because a snake_case
+  // test name is also "a word with no space".
+  /^[A-Za-z][A-Za-z0-9_]*$/.test(token);
+
+// A cited test is a backticked snake_case token.
 const isTestName = (token) =>
   /^[a-z][a-z0-9_]{6,}$/.test(token) &&
   // Real test names read as sentences; config constants are upper case and
@@ -76,10 +101,15 @@ const isTestName = (token) =>
 //
 // The old test for this was a looser three-word regex, which accepted
 // `pactl list source-outputs` -- a shell command in backticks -- as a citation.
-// A command is not a test, so it is excluded by shape and, below, by having to
-// appear as a quoted test name in the source.
+// A command is not a test, so it is excluded by having to appear as a quoted
+// test name in the source, below.
+//
+// Capitals are allowed. Forbidding them used to look like a way to exclude
+// commands, but it excluded real tests too: `knows the same in-use markers as
+// the Rust classifier` is the name of a test in
+// `microphone-readiness.utils.test.ts`, and this guard silently ignored it.
 const looksLikeSentenceName = (token) =>
-  /^[a-z][a-z0-9 ,.'()\-]*$/.test(token) &&
+  /^[A-Za-z][A-Za-z0-9 ,.'()\-]*$/.test(token) &&
   token.includes(" ") &&
   !/[=/|:]/.test(token);
 
@@ -95,10 +125,19 @@ test("every test cited by the edge-case matrix exists", () => {
     .split("\n")
     .filter((line) => /^\| \d+ \|/.test(line))
     .join("\n");
+  // No token is discarded here. Anything that is not explicitly prose is
+  // validated below, so a mistyped or deleted citation fails instead of being
+  // filtered out of the check.
   const cited = [...new Set(matrix.match(/`([^`]+)`/g) ?? [])]
     .map((match) => match.slice(1, -1))
-    // Sentence-style names belong to `it("...")` tests and are matched verbatim.
-    .filter((token) => isTestName(token) || looksLikeSentenceName(token));
+    // A token matching either citation shape is always validated, whatever
+    // `isProseNotCitation` would say about it.
+    .filter(
+      (token) =>
+        isTestName(token) ||
+        looksLikeSentenceName(token) ||
+        !isProseNotCitation(token),
+    );
 
   assert.ok(
     cited.length >= 40,
