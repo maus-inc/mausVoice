@@ -55,6 +55,15 @@ export const MicrophoneReadinessSideEffects = () => {
   const lingerMs = useAppStore(
     (state) => state.userPrefs?.microphoneLingerMs ?? 0,
   );
+  // The device a press will ask for, read here so the hold opens the same one.
+  // Read from the ref below rather than closed over, because `hold` is created
+  // once and must not carry a stale copy: changing the microphone re-runs the
+  // effect, which opens again through the same callback.
+  const preferredMicrophone = useAppStore(
+    (state) => state.onboarding.preferredMicrophone ?? null,
+  );
+  const preferredMicrophoneRef = useRef(preferredMicrophone);
+  preferredMicrophoneRef.current = preferredMicrophone;
   const isRecording = useAppStore(
     (state) => state.activeRecordingMode !== null,
   );
@@ -133,10 +142,15 @@ export const MicrophoneReadinessSideEffects = () => {
   // the answer costs nothing.
   const appliedRef = useRef<"open" | "closed" | null>(null);
 
-  // The pre-roll the held stream was actually opened with. Changing the slider
-  // resizes the ring rather than reopening the device, because reopening would
-  // drop the very pre-roll the user is adjusting.
-  const openedPrerollRef = useRef<number | null>(null);
+  // What the held stream was actually opened with: its pre-roll and the device
+  // it is bound to. Changing the slider resizes the ring rather than reopening
+  // the device, because reopening would drop the very pre-roll the user is
+  // adjusting. Changing the *device* is different -- a stream cannot follow one
+  // -- so that comparison is what forces the reopen.
+  const openedPrerollRef = useRef<{
+    preroll: number;
+    device: string | null;
+  } | null>(null);
 
   // Whether the last attempt failed, so a retry that succeeds can clear the
   // message and a repeat failure does not announce itself on every focus.
@@ -263,7 +277,11 @@ export const MicrophoneReadinessSideEffects = () => {
       const request = ++requestRef.current;
       logOnRejection(
         commands
-          .warmMicrophone(seconds, MICROPHONE_READY_FOREVER_MS)
+          .warmMicrophone(
+            seconds,
+            MICROPHONE_READY_FOREVER_MS,
+            preferredMicrophoneRef.current,
+          )
           .then((result) => {
             if (requestRef.current !== request) {
               // The answer arrived for a request this window has already
@@ -272,6 +290,29 @@ export const MicrophoneReadinessSideEffects = () => {
               // found nothing, because the stream did not exist yet, and this open
               // then created one that nothing would close. Closing it here is what
               // makes a late answer harmless rather than a leaked microphone.
+              //
+              // Not unconditional, though. This answer is stale, so it says
+              // nothing about what the shared device is doing now: a newer
+              // request may have opened a stream of its own in the meantime, and
+              // closing that one leaves keep-ready on with nothing held --
+              // the state this component exists to prevent. `heldRef` is this
+              // window's record of having opened something since the release, so
+              // it is what makes the close safe to issue.
+              if (heldRef.current) {
+                // Something opened after the release that invalidated this
+                // request: `heldRef` is set by the two places that open and
+                // cleared by that release, so it answers exactly this question.
+                // That newer stream is the one a press would use, and closing it
+                // would undo a hold that is still wanted -- the preference is on,
+                // the dialog says ready, and nothing is held. The device is
+                // re-read either way, so the dialog reports what is actually
+                // there rather than what this stale answer would have implied.
+                getLogger().info(
+                  "a microphone open finished after this window stopped asking for it, but a newer hold owns the device; leaving it open",
+                );
+                publishHeld();
+                return;
+              }
               getLogger().info(
                 "a microphone open finished after this window stopped asking for it; closing it",
               );
@@ -386,6 +427,15 @@ export const MicrophoneReadinessSideEffects = () => {
     // the device alone, because a second stream is never opened while one is held
     // -- that is what `start_recording` adopting it means.
     if (isRecording) {
+      // The press has adopted the stream, and from here the stop path decides
+      // what becomes of it: it may linger for the post-recording window, it may
+      // close at stop, or a fatal recording may retire it. None of those is this
+      // component's decision, and all of them make what the ring records here
+      // untrue. Dropping the record is what lets the effect below reopen once the
+      // recording ends; keeping it made the ring claim a stream the stop path had
+      // already closed, and `keep ready` then stayed on with no device behind it.
+      openedPrerollRef.current = null;
+      heldRef.current = false;
       return;
     }
 
@@ -430,15 +480,29 @@ export const MicrophoneReadinessSideEffects = () => {
     // is on the ring rather than on the open/closed state above: that state only
     // changes when the decision changes, and a slider move does not change it.
     if (openedPrerollRef.current !== null) {
-      if (openedPrerollRef.current === prerollSeconds) {
+      // A different microphone is a required reopen: the held stream is bound to
+      // the device it was built on and cannot follow the preference, so this
+      // press would otherwise be served by the device the user moved away from.
+      const deviceChanged =
+        openedPrerollRef.current.device !== preferredMicrophone;
+      if (
+        openedPrerollRef.current.preroll === prerollSeconds &&
+        !deviceChanged
+      ) {
         return;
       }
-      openedPrerollRef.current = prerollSeconds;
+      openedPrerollRef.current = {
+        preroll: prerollSeconds,
+        device: preferredMicrophone,
+      };
       hold(prerollSeconds);
       return;
     }
 
-    openedPrerollRef.current = prerollSeconds;
+    openedPrerollRef.current = {
+      preroll: prerollSeconds,
+      device: preferredMicrophone,
+    };
     hold(prerollSeconds);
   }, [
     enabled,
@@ -446,6 +510,9 @@ export const MicrophoneReadinessSideEffects = () => {
     isRecording,
     permissionGranted,
     prerollSeconds,
+    // Re-runs on a microphone change so the hold moves to the device the next
+    // press will use, rather than staying on the one the user just left.
+    preferredMicrophone,
     ownsDevice,
     hold,
     release,
@@ -591,11 +658,28 @@ export const MicrophoneReadinessSideEffects = () => {
   // Each predicate takes the state it reads rather than closing over a copy, so
   // the set is readable in one place and a caller cannot accidentally read a
   // stale snapshot between two of them.
+  /**
+   * Whether a stream this window wanted is known not to be open.
+   *
+   * The stored report alone is not enough. `microphoneHeld` only changes when
+   * something re-reads it, and a stream that died on its own -- the stop path
+   * retiring it, a device unplugged mid-hold -- leaves the last report saying
+   * "held". The ring then goes on claiming an open that no longer exists, and
+   * the hold effect returns early because the pre-roll it asked for is the one
+   * it already asked for. Nothing reopens it until the preference or the pre-roll
+   * changes.
+   *
+   * `holdFailedRef` is the other half of the answer: set when an open reported
+   * failure, cleared when one succeeded. A failed hold has no state change to
+   * retry on, and this is what lets the focus retry above see it.
+   */
   const holdsNothingYet = useCallback(() => {
     const state = getAppState();
     // `!== true` rather than `!`: `microphoneHeld` is `null` before the first
     // read comes back, and null is not "not held", it is "not known yet".
-    return state.settings.microphoneHeld !== true;
+    return (
+      state.settings.microphoneHeld !== true || holdFailedRef.current === true
+    );
   }, []);
 
   const isIdle = useCallback(
@@ -644,11 +728,17 @@ export const MicrophoneReadinessSideEffects = () => {
       // Re-read rather than trust `ownsRetry`: `shouldHoldNow` is a separate
       // function, so TypeScript cannot carry its narrowing across the call, and
       // the store can be read again without changing the decision it just made.
+      // Rebuilt from the store rather than kept, because the ring's old value is
+      // what a previous attempt wrote and this retry exists precisely because
+      // that attempt did not leave a stream behind.
       const state = getAppState();
-      openedPrerollRef.current =
-        state.userPrefs?.microphonePrerollSeconds ?? 0.5;
+      const preroll = state.userPrefs?.microphonePrerollSeconds ?? 0.5;
+      openedPrerollRef.current = {
+        preroll,
+        device: state.onboarding.preferredMicrophone ?? null,
+      };
       appliedRef.current = "open";
-      hold(openedPrerollRef.current);
+      hold(preroll);
     };
     window.addEventListener("focus", retryOnFocus);
     return () => window.removeEventListener("focus", retryOnFocus);

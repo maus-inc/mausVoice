@@ -2590,6 +2590,12 @@ mod cpal_impl {
             self.prepare_device().map_err(|err| err.to_string())
         }
 
+        fn set_preferred_device(&self, preferred: Option<String>) {
+            // The same setter the press path uses, so a hold and the press that
+            // adopts it cannot disagree about which device is preferred.
+            self.set_preferred_input_device(preferred);
+        }
+
         fn refresh_device(&self) {
             self.refresh_warm_device();
         }
@@ -5118,6 +5124,26 @@ mod cpal_impl {
             manager.set_preferred_input_device(Some("  Shure MV7  ".to_string()));
 
             assert!(manager.last_successful_device.lock().unwrap().is_some());
+        }
+
+        #[test]
+        fn the_warm_path_reads_the_device_the_press_will_ask_for() {
+            // A hold opens a device with no press behind it, so this is the only
+            // thing that tells it which one. Left unset, it opened the automatic
+            // device and the first press replaced that stream, paying exactly the
+            // cold open the hold exists to remove.
+            let manager = RecordingManager::new();
+            let warm: &dyn crate::platform::WarmCapture = &manager;
+
+            warm.set_preferred_device(Some("  Shure MV7  ".to_string()));
+
+            // Through the same setter the press path uses, so the two cannot
+            // disagree about which device is preferred. Asserted where the press
+            // path reads it: `open_warm` trims and drops an empty value.
+            assert_eq!(
+                manager.preferred_input_name.lock().unwrap().as_deref(),
+                Some("Shure MV7")
+            );
         }
 
         #[test]

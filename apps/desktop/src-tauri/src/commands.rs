@@ -3666,6 +3666,7 @@ pub async fn warm_microphone(
     warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
     preroll_seconds: f64,
     linger_ms: f64,
+    preferred_microphone: Option<String>,
 ) -> Result<(), String> {
     // The open below is a real device open -- hundreds of milliseconds on a
     // cold backend, and the thing the user is waiting on. A synchronous
@@ -3675,7 +3676,7 @@ pub async fn warm_microphone(
     // same reason; this is the same work under a different name.
     let warm = warm.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        warm_microphone_blocking(&warm, preroll_seconds, linger_ms)
+        warm_microphone_blocking(&warm, preroll_seconds, linger_ms, preferred_microphone)
     })
     .await
     .map_err(|err| err.to_string())?
@@ -3686,6 +3687,7 @@ fn warm_microphone_blocking(
     warm: &Arc<dyn crate::platform::WarmCapture>,
     preroll_seconds: f64,
     linger_ms: f64,
+    preferred_microphone: Option<String>,
 ) -> Result<(), String> {
     // Stopping has to leave the stream open, otherwise this open is paid again
     // on the very next press.
@@ -3698,6 +3700,14 @@ fn warm_microphone_blocking(
     }
     let preroll = preroll_duration(preroll_seconds);
     warm.set_preroll(preroll);
+
+    // Before the open, because the open is what picks the device. A hold runs
+    // with no press behind it, so this is the only chance to say which device
+    // the user chose; `start_recording` passes the same value and the press
+    // adopts this stream when the device matches. Omitted, the hold opened the
+    // automatic device and the first press replaced it, paying the cold open the
+    // hold exists to remove.
+    warm.set_preferred_device(preferred_microphone);
 
     // The hold is applied after the open, not before it. Setting it first meant
     // that switching this option on closed the stream the previous option had

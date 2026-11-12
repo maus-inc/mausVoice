@@ -432,10 +432,14 @@ describe("MicrophoneDialog readiness settings", () => {
       });
     });
 
+    // The selection itself, not the page. The old assertion fell back to the whole
+    // body's text when no tab matched, and the body contains "15 s" either way, so
+    // it passed for a control that selected nothing.
     const selected = document.body.querySelector(
-      ".MuiTab-wrapper, [role=tab][aria-selected=true]",
+      "[role=tab][aria-selected=true]",
     );
-    expect(selected?.textContent ?? text()).toContain("15 s");
+    expect(selected, "no segmented option is selected").not.toBeNull();
+    expect(selected?.textContent).toContain("15 s");
   });
 
   it("does not show the duration choices while keeping ready owns the device", async () => {

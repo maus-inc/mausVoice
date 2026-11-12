@@ -1222,9 +1222,9 @@ async writeAccessibilityFields(entries: AccessibilityWriteEntry[]) : Promise<Res
  * `Number.MAX_SAFE_INTEGER` means "until the user releases it", which is what
  * the keep-ready preference sends; anything smaller is a real window.
  */
-async warmMicrophone(prerollSeconds: number, lingerMs: number) : Promise<Result<null, string>> {
+async warmMicrophone(prerollSeconds: number, lingerMs: number, preferredMicrophone: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("warm_microphone", { prerollSeconds, lingerMs }) };
+    return { status: "ok", data: await TAURI_INVOKE("warm_microphone", { prerollSeconds, lingerMs, preferredMicrophone }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

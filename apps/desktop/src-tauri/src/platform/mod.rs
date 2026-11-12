@@ -222,6 +222,15 @@ pub trait WarmCapture: Send + Sync {
     /// Resolves the device a press would use, without opening it.
     fn prepare(&self) -> Result<String, String>;
 
+    /// Tells the warm path which device the user prefers, before it opens one.
+    ///
+    /// A hold opens a device without a press, so it cannot inherit the
+    /// preference the way a press does: `start_recording` passes it in and the
+    /// stream it opens is the preferred device. Without this, a hold opened the
+    /// automatic device and the first press then replaced it, paying exactly the
+    /// cold open the hold exists to avoid.
+    fn set_preferred_device(&self, preferred: Option<String>);
+
     /// Reopens the held stream if a better device appeared.
     ///
     /// A stream is bound to the device it was built on, so it cannot follow a

@@ -24,7 +24,11 @@ const mocks = vi.hoisted(() => {
     // the thing being imitated and must not be dropped. An `async` body with
     // nothing to await says "this is asynchronous work" when there is none.
     warmMicrophone: vi.fn<
-      (preroll: number, linger: number) => Promise<unknown>
+      (
+        preroll: number,
+        linger: number,
+        preferred: string | null,
+      ) => Promise<unknown>
     >(() => Promise.resolve({ status: "ok", data: null })),
     closeMicrophone: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     microphoneReady: vi.fn(() => Promise.resolve(false)),
@@ -119,6 +123,9 @@ const setState = (overrides: Record<string, unknown>) => {
       microphoneLingerMs: 0,
     },
     activeRecordingMode: null,
+    // Always present in the real store; `preferredMicrophone` is the device a
+    // press asks for, so it is also the one a hold has to open.
+    onboarding: { preferredMicrophone: null },
     permissions: { microphone: { state: "authorized" } },
     settings: { microphoneHeld: null },
     ...overrides,
@@ -171,6 +178,37 @@ describe("MicrophoneReadinessSideEffects", () => {
     // A finite window here would make an always-ready microphone close itself
     // while the preference still says it is on.
     expect(linger).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("opens the saved microphone rather than the automatic device", async () => {
+    // The first press must adopt the held stream. It only does that when the
+    // stream was opened on the device the press asks for, so a hold that opened
+    // the automatic device made that press pay the cold open the preference
+    // exists to remove.
+    setState({
+      onboarding: { preferredMicrophone: "Shure MV7" },
+    });
+    await render();
+
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+    expect(mocks.warmMicrophone.mock.calls[0][2]).toBe("Shure MV7");
+  });
+
+  it("reopens on a microphone change instead of holding the old device", async () => {
+    // A stream is bound to the device it was built on and cannot follow the
+    // preference, so keeping the hold would serve the next press from the device
+    // the user just moved away from.
+    setState({ onboarding: { preferredMicrophone: "Shure MV7" } });
+    await render();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+
+    setState({ onboarding: { preferredMicrophone: "MacBook Pro Microphone" } });
+    await render();
+
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
+    expect(mocks.warmMicrophone.mock.calls[1][2]).toBe(
+      "MacBook Pro Microphone",
+    );
   });
 
   it("opens with the configured pre-roll", async () => {
@@ -557,6 +595,73 @@ describe("MicrophoneReadinessSideEffects", () => {
 
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
     expect(mocks.showSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("leaves a newer hold alone when an older open answers late", async () => {
+    // A stale answer says nothing about what the shared device is doing now. If
+    // a newer request opened a stream in the meantime, closing it on the stale
+    // answer leaves keep-ready on with nothing held.
+    let finishStaleOpen: (value: unknown) => void = () => undefined;
+    mocks.warmMicrophone.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishStaleOpen = resolve;
+        }),
+    );
+    await render();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+
+    // Supersede the in-flight open, then open again: this is the newer hold.
+    setState({});
+    await rerender();
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 1.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await rerender();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
+    const closesBefore = mocks.closeMicrophone.mock.calls.length;
+
+    await act(async () => {
+      finishStaleOpen({ status: "ok", data: null });
+      await Promise.resolve();
+    });
+
+    // The newer hold is the one a press will use, so the stale answer must not
+    // close it. The release that superseded the first open already ran; that is
+    // the only close allowed here.
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(closesBefore);
+  });
+
+  it("reopens after a recording that retired the held stream", async () => {
+    // A press adopts the held stream, and the stop path then decides its fate: a
+    // fatal recording closes it rather than keeping it. The ring still recorded
+    // the pre-roll this window asked for, so the hold effect returned early on
+    // the identical value and keep-ready stayed on with no device behind it.
+    setState({});
+    await render();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+
+    // The press takes the stream.
+    setState({ activeRecordingMode: "dictation" });
+    await rerender();
+
+    // The recording ends and its stream is gone rather than kept.
+    setState({
+      activeRecordingMode: null,
+      settings: { microphoneHeld: false },
+    });
+    await rerender();
+
+    // The hold has to be re-established, at the same pre-roll as before: that
+    // identical value is what made the early return fire.
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
+    expect(mocks.warmMicrophone.mock.calls[1][0]).toBe(
+      mocks.warmMicrophone.mock.calls[0][0],
+    );
   });
 
   it("closes an open that finishes after the preference is turned off", async () => {
