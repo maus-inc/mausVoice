@@ -44,6 +44,7 @@ const COMPOSER_TIMEOUT_MS = 5 * 60 * 1000;
  * safety net for an unresponsive webview.
  */
 const COMPOSER_READY_TIMEOUT_MS = 15_000;
+const COMPOSER_CLOSE_TIMEOUT_MS = 5_000;
 
 // Gap (logical px) kept between the native pill and the composer window so the
 // composer never overlaps the pill.
@@ -262,11 +263,15 @@ const notifyAssistantToolRecovery = (
   );
 };
 
-const destroyComposerWindow = async (id: string): Promise<void> => {
-  if (!id) return;
-  await invoke("floating_window_destroy", { id }).catch(() => {
+const destroyComposerWindow = async (id: string): Promise<boolean> => {
+  if (!id) return true;
+  try {
+    await invoke("floating_window_destroy", { id });
+    return true;
+  } catch {
     // Closing the window manually can win this race.
-  });
+    return false;
+  }
 };
 
 const releaseComposerListener = (dispose: () => void): void => {
@@ -334,8 +339,8 @@ class ComposerReview {
     }, COMPOSER_READY_TIMEOUT_MS);
   }
 
-  private finish(value: string | null): void {
-    if (this.settled) return;
+  private markSettled(): boolean {
+    if (this.settled) return false;
     this.settled = true;
     clearTimeout(this.setupTimer);
     clearTimeout(this.readyTimer);
@@ -343,7 +348,40 @@ class ComposerReview {
     this.setupTimer = undefined;
     this.readyTimer = undefined;
     this.decisionTimer = undefined;
+    return true;
+  }
+
+  private finish(value: string | null): void {
+    if (!this.markSettled()) return;
     this.resolveResult(value);
+  }
+
+  private async finishAccepted(value: string): Promise<void> {
+    if (!this.markSettled()) return;
+
+    const id = this.windowId;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    const closed = await Promise.race([
+      destroyComposerWindow(id),
+      new Promise<boolean>((resolve) => {
+        closeTimer = setTimeout(
+          () => resolve(false),
+          COMPOSER_CLOSE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    clearTimeout(closeTimer);
+
+    if (closed) {
+      this.windowId = "";
+      this.resolveResult(value);
+      return;
+    }
+
+    // Never hand accepted text back for insertion while the composer might
+    // still own focus. The usual `finally` path retries teardown detached.
+    this.showRecovery();
+    this.resolveResult(null);
   }
 
   /** A native registration may complete after the result. Dispose it immediately. */
@@ -399,7 +437,15 @@ class ComposerReview {
     if (
       !(await this.listen<ComposerResult>("composer-result", (payload) => {
         if (payload.requestId !== this.requestId) return;
-        this.finish(payload.accepted ? payload.text : null);
+        if (payload.accepted) {
+          this.finishAccepted(payload.text).catch((error: unknown) => {
+            getLogger().error("Could not close the accepted composer", error);
+            this.showRecovery();
+            this.resolveResult(null);
+          });
+        } else {
+          this.finish(null);
+        }
       }))
     )
       return;

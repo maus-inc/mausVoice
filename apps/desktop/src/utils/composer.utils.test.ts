@@ -334,6 +334,50 @@ describe("reviewTextInComposer cleanup", () => {
     stubComposerDefaults();
   });
 
+  it("waits for native window destruction before returning accepted text", async () => {
+    const listeners = installPerEventListener();
+    let finishDestroy: (() => void) | undefined;
+    let createdId = "";
+    mocks.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "floating_window_create") {
+        createdId = "floating-1";
+        return Promise.resolve({ id: createdId });
+      }
+      if (cmd === "floating_window_destroy") {
+        return new Promise<void>((resolve) => {
+          finishDestroy = resolve;
+        });
+      }
+      return Promise.resolve();
+    });
+
+    const resultPromise = reviewTextInComposer("draft");
+    for (let i = 0; i < 20 && !createdId; i += 1) {
+      await Promise.resolve();
+    }
+    const firstRequestId = mocks.invoke.mock.calls.find(
+      (c: unknown[]) => c[0] === "composer_register_text",
+    )?.[1]?.requestId as string;
+    const resultListener = listeners.get("composer-result")?.[0];
+    resultListener?.({
+      payload: { requestId: firstRequestId, accepted: true, text: "edited" },
+    });
+
+    let resolved = false;
+    const observedResult = resultPromise.then((result) => {
+      resolved = true;
+      return result;
+    });
+    for (let i = 0; i < 10 && !finishDestroy; i += 1) {
+      await Promise.resolve();
+    }
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    finishDestroy?.();
+    await expect(observedResult).resolves.toBe("edited");
+  });
+
   it("destroys the window and discards its text when the user accepts", async () => {
     const listeners = installPerEventListener();
     let createdId = "";

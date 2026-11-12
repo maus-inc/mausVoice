@@ -258,6 +258,34 @@ describe("PasteTool review", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("saves a later Insert edit without pasting after an Open hand-off", async () => {
+    const savedCard = { id: "pending-review" };
+    createPendingPasteReviewMock.mockResolvedValue(savedCard);
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      async (
+        _text: string,
+        _source: string,
+        options?: { onOpen?: (text: string) => Promise<void> },
+      ) => {
+        await options?.onOpen?.("saved before open");
+        return "edited after Open timed out";
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ awaitingManualPaste: true });
+
+    expect(updatePendingPasteReviewDraftMock).toHaveBeenCalledWith(
+      savedCard,
+      "edited after Open timed out",
+    );
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it("shows Chats recovery guidance when navigation fails after saving", async () => {
     emitMock.mockRejectedValueOnce(new Error("window unavailable"));
     reviewTranscriptBeforeInsertMock.mockImplementationOnce(
@@ -379,8 +407,14 @@ describe("PasteTool review", () => {
   });
 
   it("lets Open retry proceed when an earlier save promise is stalled", async () => {
+    let finishStalledCreate: ((message: { id: string }) => void) | undefined;
     createPendingPasteReviewMock
-      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ id: string }>((resolve) => {
+            finishStalledCreate = resolve;
+          }),
+      )
       .mockRejectedValueOnce(
         new Error("UNIQUE constraint failed: chat_messages.id"),
       );
@@ -431,6 +465,8 @@ describe("PasteTool review", () => {
       "latest draft",
     );
     expect(emitMock).toHaveBeenCalledOnce();
+    finishStalledCreate?.({ id: "pending-review" });
+    await Promise.resolve();
   });
 
   it("reapplies the latest draft when a stalled update completes after a retry", async () => {

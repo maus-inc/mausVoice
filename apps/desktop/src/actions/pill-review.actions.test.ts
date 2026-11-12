@@ -334,9 +334,15 @@ describe("reviewTranscriptOnPill", () => {
   it("recovers when a clipboard hand-off stalls and remains retryable", async () => {
     vi.useFakeTimers();
     let first: Promise<string | null> | null = null;
+    let releaseStalledCopy: (() => void) | undefined;
     try {
       mocks.invoke
-        .mockImplementationOnce(() => new Promise<void>(() => {}))
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseStalledCopy = resolve;
+            }),
+        )
         .mockImplementationOnce(() => Promise.resolve());
       first = startPillReview("copy me");
       await flush(() => getAppState().pendingPillReview !== null);
@@ -358,6 +364,7 @@ describe("reviewTranscriptOnPill", () => {
       expect(getAppState().pendingPillReview?.text).toBe("queued review");
       await cancelPillReview(second);
     } finally {
+      releaseStalledCopy?.();
       cancelAllPillReviews();
       vi.useRealTimers();
     }

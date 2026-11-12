@@ -1451,7 +1451,7 @@ fn draw_transcript(
         if !messages.is_empty() || !permissions.is_empty() {
             y += 12.0;
         }
-        y = draw_review_text(gfx, state, area_x, y, area_w, alpha);
+        y = draw_review_text(gfx, state, y, area_w);
     }
 
     let total_height = y + scroll - area_y + bottom_pad;
@@ -1654,14 +1654,9 @@ fn draw_permission_card(
 /// when the review arrives, so what is shown here is exactly what will be
 /// inserted, edits included. It scrolls with the rest of the panel, so there is
 /// no cap on its length.
-fn draw_review_text(gfx: &Gfx, state: &PillState, x: f64, y: f64, w: f64, alpha: f64) -> f64 {
-    let review = state.assistant_review.borrow();
-    let label = review
-        .as_ref()
-        .and_then(|review| review.review_label.as_deref())
-        .unwrap_or("REVIEW TRANSCRIPT");
-    gfx.draw_text_top_left(label, x, y, 11.0, true, false, [1.0, 1.0, 1.0, 0.5 * alpha]);
-
+fn draw_review_text(gfx: &Gfx, state: &PillState, y: f64, w: f64) -> f64 {
+    // The review heading is displayed in the fixed native editor overlay, so
+    // this scrolling canvas only paints the transcript body.
     let mut text_y = y + REVIEW_TITLE_HEIGHT;
     let text = state.entry_text.borrow();
     let (preview, _) = rust_pill_shared::bound_review_preview_text(&text);

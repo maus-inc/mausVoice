@@ -1852,6 +1852,20 @@ fn draw_review_heading(cr: &cairo::Context, label: &str, x: f64, baseline_y: f64
     pangocairo::functions::show_layout(cr, &layout);
 }
 
+fn review_hint_layout(cr: &cairo::Context, hint: &str, max_width: f64) -> pango::Layout {
+    let layout = pangocairo::functions::create_layout(cr);
+    let mut font = pango::FontDescription::new();
+    font.set_family("Satoshi");
+    font.set_weight(pango::Weight::Normal);
+    font.set_absolute_size(11.0 * pango::SCALE as f64);
+    layout.set_font_description(Some(&font));
+    layout.set_text(hint);
+    layout.set_single_paragraph_mode(true);
+    layout.set_width((max_width.max(0.0) * pango::SCALE as f64).round() as i32);
+    layout.set_ellipsize(pango::EllipsizeMode::End);
+    layout
+}
+
 #[cfg(test)]
 mod review_heading_layout_tests {
     use super::*;
@@ -1882,6 +1896,23 @@ mod review_heading_layout_tests {
 
         // Actual glyph coverage depends on installed system fonts; lean CI images may not
         // include any CJK fallback font. Pango can use system fallback fonts when available.
+    }
+
+    #[test]
+    fn cjk_review_hint_uses_fallback_and_respects_its_width_budget() {
+        let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 100, 32).unwrap();
+        {
+            let cr = cairo::Context::new(&surface).unwrap();
+            let layout = review_hint_layout(&cr, "按 Enter 插入 · Shift+Enter 换行", 72.0);
+            let (width, height) = layout.pixel_size();
+            assert!(width <= 72, "hint should fit its button-row budget");
+            assert!(height > 0, "hint should retain a visible line");
+            cr.move_to(0.0, 20.0);
+            pangocairo::functions::show_layout(&cr, &layout);
+        }
+
+        surface.flush();
+        assert!(surface.data().unwrap().iter().any(|pixel| *pixel != 0));
     }
 }
 
@@ -1995,19 +2026,9 @@ fn draw_review_actions(
         ),
     ];
 
-    // The hint and the buttons share this line, so the hint has to know how much
-    // room the button row leaves before it can be drawn. Measuring the buttons
-    // first is what makes that possible; previously the hint was drawn first
-    // and the French and German translations -- both far longer than the English
-    // default -- ran under the leftmost button by 35.7px and 32.6px.
-    // Measure at the size the labels are actually drawn at, which is 11px Normal
-    // (see the set_font_size further down, just before `show_text`). Nothing in
-    // this function set a font before this point, so `text_extents` was measuring
-    // against whatever the previous call left behind -- 14px from
-    // `draw_review_text`, against 11px at the draw site, so about a quarter wider
-    // per label. Because `row_width` is the sum of those widths, the hint
-    // was budgeted less room than it actually had and elided further than the
-    // overlap this measuring exists to prevent.
+    // The hint and buttons share this line, so reserve space for button captions
+    // before creating the width-constrained Pango hint layout. Button widths are
+    // measured at their 11px Satoshi rendering size to prevent overlap.
     cr.select_font_face(
         "Satoshi",
         cairo::FontSlant::Normal,
@@ -2028,19 +2049,14 @@ fn draw_review_actions(
     let hint_budget =
         rust_pill_shared::text_fit::hint_budget(buttons_left, hint_x, PERM_BUTTON_GAP);
 
-    let hint = rust_pill_shared::text_fit::elide_to_width(hint, hint_budget, "…", |s| {
-        cr.text_extents(s).map(|ext| ext.width()).unwrap_or(0.0)
-    });
-    if !hint.is_empty() {
+    let hint_layout = review_hint_layout(cr, hint, hint_budget);
+    let (hint_width, _) = hint_layout.pixel_size();
+    if hint_width > 0 {
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
-        cr.select_font_face(
-            "Satoshi",
-            cairo::FontSlant::Normal,
-            cairo::FontWeight::Normal,
-        );
-        cr.set_font_size(11.0);
-        cr.move_to(hint_x, y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0);
-        let _ = cr.show_text(&hint);
+        let baseline = hint_layout.baseline() as f64 / pango::SCALE as f64;
+        let baseline_y = y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0;
+        cr.move_to(hint_x, baseline_y - baseline);
+        pangocairo::functions::show_layout(cr, &hint_layout);
     }
 
     let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;

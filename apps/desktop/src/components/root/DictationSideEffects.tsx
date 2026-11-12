@@ -424,12 +424,8 @@ export const handleEmptyTranscriptionResult = async (
  * success into a retry that creates a duplicate transcription.
  */
 export const surfacePersistedReviewInHistory = async (): Promise<void> => {
-  try {
-    await surfaceMainWindow();
-  } catch (error) {
-    getLogger().warning(
-      `Could not surface the saved transcript: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  if (!(await surfaceMainWindow())) {
+    getLogger().warning("Could not surface the saved transcript");
   }
   try {
     await getBrowserRouter().navigate("/dashboard/transcriptions");
@@ -2559,10 +2555,8 @@ export const DictationSideEffects = () => {
   // `getChatMessageRepo().listChatMessages(...)` (`chat.actions.ts:288`) with no
   // try/catch of its own, straight through to the Tauri IPC.
   //
-  // `surfaceMainWindow()` was named here as a second source and cannot be one --
-  // `window.utils.ts:22-35` attaches `.catch()` to the invoke BEFORE awaiting the
-  // memoized promise, so `await surfaceWindowPromise` there cannot throw. Naming it
-  // would have sent the next reader looking for a rejection that is not reachable.
+  // `surfaceMainWindow()` reports native failure with a boolean because its
+  // shared helper logs and resolves instead of rejecting.
   const reportConversationOpenFailure = (error: unknown): void => {
     getLogger().warning(
       `Failed to open the conversation: ${error instanceof Error ? error.message : String(error)}`,
@@ -2601,7 +2595,7 @@ export const DictationSideEffects = () => {
           .catch(reportOpenFailure);
       }
       try {
-        await surfaceMainWindow();
+        if (!(await surfaceMainWindow())) reportPasteRecovery();
         await abortRecording();
       } catch (error) {
         reportPasteRecovery();

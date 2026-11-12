@@ -174,6 +174,12 @@ export class PasteTool extends BaseTool {
           )
         : requestedText;
     if (openedPendingPaste) {
+      // Open may have timed out at the window-event boundary while the review
+      // remained available for another decision. Preserve a later Insert edit
+      // on the durable card, but never paste after Chats may have taken focus.
+      if (text?.trim() && conversationId) {
+        await saveLatestReviewDraft(conversationId, text);
+      }
       return { awaitingManualPaste: true };
     }
     if (copiedReviewedText) {
