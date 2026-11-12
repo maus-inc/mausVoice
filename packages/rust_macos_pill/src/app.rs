@@ -2043,76 +2043,117 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         };
         bounds.collapse_inverted(edge_work_mask, (win_frame.origin.x, win_frame.origin.y));
 
-        // Drag motion runs through the shared controller: direct 1:1 tracking
-        // while held, a velocity-aware settle after release. Both apply every
-        // frame with no deadband, so the window never trails the cursor; the
-        // parked branches below keep their 1 px deadband against jitter.
         if dragging || settling {
-            let output = state.drag_motion.borrow_mut().advance(&DragFrame {
-                pointer_x: mouse_loc.x,
-                pointer_y: mouse_loc.y,
-                now,
-                dt,
-                bounds,
-                edge_work: Some(rust_pill_shared::edge::EdgeWork {
-                    width: visible.size.width,
-                    height: visible.size.height,
+            drive_drag_frame(
+                window,
+                state,
+                DragTick {
+                    pointer: (mouse_loc.x, mouse_loc.y),
+                    now,
+                    dt,
+                    bounds,
+                    visible,
                     edges: edge_work_mask,
-                }),
-                held: dragging,
-                reduced_motion: reduced_motion(),
-            });
-            set_window_origin(window, NSPoint::new(output.x, output.y));
-            if settling && output.settled {
-                persist_drag_position(state, window);
-            }
+                    dragging,
+                    settling,
+                },
+            );
             return;
         }
 
-        if !anchor.places() {
-            // No stored position and nothing asked for a placement: the flag was
-            // cleared deliberately, by `ForgetPosition` after a local-data clear.
-            // That command's contract is that the pill stays where it is, so
-            // falling through to the default anchor would move a visible pill as a
-            // side effect of wiping the database.
-            return;
-        }
+        park_window(window, state, anchor, visible, bounds, win_h);
 
-        let (target_x, target_y) = if state.has_saved_position.get() {
-            // Use persisted position from last drag, clamped into the visible
-            // frame of the screen that position belongs to.
-            let mut tx = state.saved_x.get();
-            let mut ty = state.saved_y.get();
-            tx = tx.max(bounds.min_x).min(bounds.max_x);
-            ty = ty.max(bounds.min_y).min(bounds.max_y);
-            (tx, ty)
-        } else {
-            // Default: centre at bottom of the pill's own screen.
-            let tx = visible.origin.x + (visible.size.width - win_w) / 2.0;
-            let ty = default_content_origin_y(visible.origin.y, win_h);
-            (tx, ty)
-        };
-
-        let current_origin = window_frame(window).origin;
-        if (current_origin.x - target_x).abs() > 1.0 || (current_origin.y - target_y).abs() > 1.0 {
-            let origin = NSPoint::new(target_x, target_y);
-            set_window_origin(window, origin);
-        }
-        // The clamp above is what the window is held at, so it is what the stored
-        // record has to say. Leaving the pre-clamp origin behind publishes a spot
-        // the pill is not on, and the next tick would put it back there.
-        if (target_x - state.saved_x.get()).abs() > f64::EPSILON
-            || (target_y - state.saved_y.get()).abs() > f64::EPSILON
-        {
-            state.saved_x.set(target_x);
-            state.saved_y.set(target_y);
-        }
         // A drop the display change held back is written as soon as both holds
         // have passed: the controller reports `settled` once, so nothing else
         // would come back for it.
         if state.drag_save_due.get().is_some() {
             persist_drag_position(state, window);
         }
+    }
+}
+
+/// One frame of a held or settling drag.
+struct DragTick {
+    pointer: (f64, f64),
+    now: f64,
+    dt: f64,
+    bounds: rust_pill_shared::drag::DragBounds,
+    visible: NSRect,
+    edges: rust_pill_shared::edge::EdgeMask,
+    dragging: bool,
+    settling: bool,
+}
+
+/// Advance the shared drag controller and move the window to where it lands.
+///
+/// Drag motion is direct 1:1 tracking while held and a velocity-aware settle after
+/// release. Both apply every frame with no deadband, so the window never trails the
+/// cursor; the parked path keeps its 1 px deadband against jitter.
+fn drive_drag_frame(window: id, state: &PillState, tick: DragTick) {
+    let output = state.drag_motion.borrow_mut().advance(&DragFrame {
+        pointer_x: tick.pointer.0,
+        pointer_y: tick.pointer.1,
+        now: tick.now,
+        dt: tick.dt,
+        bounds: tick.bounds,
+        edge_work: Some(rust_pill_shared::edge::EdgeWork {
+            width: tick.visible.size.width,
+            height: tick.visible.size.height,
+            edges: tick.edges,
+        }),
+        held: tick.dragging,
+        reduced_motion: reduced_motion(),
+    });
+    unsafe { set_window_origin(window, NSPoint::new(output.x, output.y)) };
+    if tick.settling && output.settled {
+        persist_drag_position(state, window);
+    }
+}
+
+/// Hold the window at the parked origin for this frame.
+///
+/// The saved origin comes from the last drag and is clamped into the visible
+/// frame of the screen that position belongs to; with nothing saved, the pill
+/// centres at the bottom of its own screen. Both are the *idle* placement, which
+/// is the one case that has no cursor to follow.
+fn park_window(
+    window: id,
+    state: &PillState,
+    anchor: rust_pill_shared::layout::Anchor,
+    visible: NSRect,
+    bounds: rust_pill_shared::drag::DragBounds,
+    win_h: f64,
+) {
+    if !anchor.places() {
+        // No stored position and nothing asked for a placement: the flag was
+        // cleared deliberately, by `ForgetPosition` after a local-data clear.
+        // That command's contract is that the pill stays where it is, so falling
+        // through to the default anchor would move a visible pill as a side
+        // effect of wiping the database.
+        return;
+    }
+    let (target_x, target_y) = if state.has_saved_position.get() {
+        let tx = state.saved_x.get().max(bounds.min_x).min(bounds.max_x);
+        let ty = state.saved_y.get().max(bounds.min_y).min(bounds.max_y);
+        (tx, ty)
+    } else {
+        let win_w = unsafe { window_frame(window) }.size.width;
+        let tx = visible.origin.x + (visible.size.width - win_w) / 2.0;
+        (tx, default_content_origin_y(visible.origin.y, win_h))
+    };
+
+    let current_origin = unsafe { window_frame(window).origin };
+    if (current_origin.x - target_x).abs() > 1.0 || (current_origin.y - target_y).abs() > 1.0 {
+        unsafe { set_window_origin(window, NSPoint::new(target_x, target_y)) };
+    }
+    // The clamp is what the window is held at, so it is what the stored record
+    // has to say. Leaving the pre-clamp origin behind publishes a spot the pill
+    // is not on, and the next tick would put it back there.
+    if (target_x - state.saved_x.get()).abs() > f64::EPSILON
+        || (target_y - state.saved_y.get()).abs() > f64::EPSILON
+    {
+        state.saved_x.set(target_x);
+        state.saved_y.set(target_y);
     }
 }
 

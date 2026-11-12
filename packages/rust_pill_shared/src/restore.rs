@@ -914,18 +914,18 @@ mod tests {
     /// the pill 42 px high on macOS and Windows, and 48 px high on GTK.
     #[test]
     fn the_resting_footprint_clears_the_selector_slot() {
-        for tooltip in [32.0_f64] {
-            let slot = crate::placement::below_slot_extra(tooltip);
-            assert!(slot > 0.0, "the slot is what the reserve exists for");
-            // macOS and Windows: 362 typing rows plus the slot, 4/6 px inset.
-            let window_h = 362.0 + slot;
-            for inset in [4.0_f64, 6.0] {
-                let (offset, size) =
-                    centered_bottom_footprint((600.0, window_h), (48.0, 6.0), inset + slot);
-                // The pill's bottom edge sits `inset` above the window's bottom,
-                // which is the same place the draw path puts it.
-                assert_eq!(offset.1 + size.1, 362.0 - inset);
-            }
+        // 32 is the tooltip row height every pill build uses; the platforms pass
+        // their own constant, and this test pins the arithmetic rather than it.
+        let slot = crate::placement::below_slot_extra(32.0);
+        assert!(slot > 0.0, "the slot is what the reserve exists for");
+        // macOS and Windows: 362 typing rows plus the slot, 4/6 px inset.
+        let window_h = 362.0 + slot;
+        for inset in [4.0_f64, 6.0] {
+            let (offset, size) =
+                centered_bottom_footprint((600.0, window_h), (48.0, 6.0), inset + slot);
+            // The pill's bottom edge sits `inset` above the window's bottom,
+            // which is the same place the draw path puts it.
+            assert_eq!(offset.1 + size.1, 362.0 - inset);
         }
     }
 

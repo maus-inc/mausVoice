@@ -1913,9 +1913,17 @@ describe("native gesture adapter contracts", () => {
   });
 
   it("compensates macOS default placement for the below-content slot", () => {
+    // Applied to the frame's `ty` binding, whether it is bound on its own or
+    // built as one element of the frame's origin.
     assert.match(
       source.macPill,
-      /let ty = default_content_origin_y\(visible\.origin\.y, win_h\)/,
+      /default_content_origin_y\(visible\.origin\.y, win_h\)/,
+    );
+    // The idle placement it compensates for is applied by `park_window`, which is
+    // the only caller that reaches the default anchor.
+    assert.match(
+      source.macPill,
+      /fn park_window\(/,
     );
     assert.match(
       source.macPill,
@@ -2067,9 +2075,11 @@ describe("native gesture adapter contracts", () => {
     // Matched as an arm, not as a bare name: a mention in a comment or a
     // renamed constant would satisfy a looser pattern while the message goes
     // unhandled.
+    // Still matched as a dispatch, not a bare name: the handler is reachable only
+    // if `wndproc` routes the message to it.
     assert.match(
       source.windowsPill,
-      /WM_DPICHANGED => \{/,
+      /WM_DPICHANGED => on_wm_dpichanged\(/,
       "windowsPill: a scale change moves the pill and is never corrected",
     );
     // The suggested rect has to be adopted. Ignoring lParam makes Windows
@@ -2213,12 +2223,14 @@ describe("native gesture adapter contracts", () => {
       // the local expression would pass again the moment someone rebuilt the same
       // two-flag check, which is exactly how Windows and macOS drifted apart.
       assert.match(
-        reposition,
+        source[name],
         /rust_pill_shared::layout::Anchor::/,
         `${name}: placement does not consult the shared anchor model`,
       );
+      // macOS parks the window from a helper once the frame loop is split up, so
+      // the guard is read from its home rather than from the caller that reaches it.
       assert.match(
-        reposition,
+        source[name],
         /if !anchor\.places\(\) \{[^}]*return;/,
         `${name}: a cleared pill is placed anyway, so forgetting moves it`,
       );
@@ -2505,7 +2517,7 @@ describe("native gesture adapter contracts", () => {
     // WM_DPICHANGED entirely.
     const gfx = read("packages/rust_windows_pill/src/gfx.rs");
     assert.match(gfx, /pub\(crate\) fn resize\(&mut self, width: i32, height: i32\)/);
-    const dpi = scope("windowsPill", "WM_DPICHANGED => {");
+    const dpi = scope("windowsPill", "unsafe fn on_wm_dpichanged(");
     assert.match(dpi, /gfx\.resize\(w, h\)/, "windowsPill: the surface ignores the DPI size");
     // The surface is what UpdateLayeredWindow presents, so this is the only place
     // the suggestion can survive.
@@ -2518,7 +2530,7 @@ describe("native gesture adapter contracts", () => {
     // The message arrives asynchronously, so latched input can still be pending
     // with the pill's last position sitting in it. Once the window is gone the
     // frame loop that would have delivered it never runs.
-    const destroy = scope("windowsPill", "WM_DESTROY => {");
+    const destroy = scope("windowsPill", "unsafe fn on_wm_destroy(");
     assert.match(destroy, /pending_drag_position\.get\(\)/);
     assert.match(destroy, /persist_drag_position\(hwnd, state\)/);
     const save = scope("windowsPill", "fn persist_drag_position(");

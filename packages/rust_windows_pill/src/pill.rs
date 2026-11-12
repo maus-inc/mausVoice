@@ -292,241 +292,283 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     }
 }
 
+/// Window procedure: dispatch only.
+///
+/// Each message has its own handler below. They used to be match arms in this
+/// function, which made one 236-line body out of thirteen unrelated decisions;
+/// a change to mouse capture and a change to DPI handling sat in the same
+/// scope and had to be read together to be changed separately.
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
-        WM_TIMER => {
-            let timer_id = wparam.0;
-            if timer_id == TIMER_CURSOR {
-                on_cursor_tick(hwnd);
-            }
-            LRESULT(0)
-        }
-        WM_DISPLAYCHANGE | WM_SETTINGCHANGE => {
-            // Windows sends these per step of a layout change: one per display
-            // removal, move, resolution change and work-area change. Acting on
-            // each is what keeps the pill from being stranded after the first
-            // one, and the save guard inside reconciliation is what keeps the
-            // burst from being stored as a user choice.
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    reconcile_display_layout(hwnd, state);
-                }
-            });
-            LRESULT(0)
-        }
-        WM_DPICHANGED => {
-            // Per-Monitor V2 hands us a suggested rect for the new scale. Without
-            // adopting it Windows rescales the window itself, which moves the
-            // pill off the place it was parked at and can clip it. The pill's
-            // own clamp then runs on the new scale, so the footprint ends up the
-            // same size in points on screen.
-            let suggested = unsafe { &*(lparam.0 as *const RECT) };
-            let (x, y) = (suggested.left, suggested.top);
-            let (w, h) = (
-                suggested.right - suggested.left,
-                suggested.bottom - suggested.top,
-            );
-            // SAFETY: repositioning our own window to the rect the message hands
-            // us, which is the only correct response to a DPI change.
-            unsafe {
-                let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
-            }
-            // The surface has to take the new size too. Every frame presents exactly
-            // the surface's own dimensions, so leaving it at the old size resizes the
-            // window back on the very next frame and undoes this suggestion.
-            GFX.with(|gfx| {
-                if let Some(ref mut gfx) = *gfx.borrow_mut() {
-                    let _ = gfx.resize(w, h);
-                }
-            });
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    reconcile_display_layout(hwnd, state);
-                }
-            });
-            LRESULT(0)
-        }
-        WM_MOUSEMOVE => {
-            let raw_x = (lparam.0 & 0xFFFF) as i16 as f64;
-            let raw_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    let (ox, oy) = state.content_offset();
-                    let x = raw_x - ox;
-                    let y = raw_y - oy;
-                    state.mouse_x.set(x);
-                    state.mouse_y.set(y);
-                    let regions = state.click_regions.borrow();
-                    let hit = regions.iter().rev().find(|r| r.contains(x, y));
-                    let cursor_id = match hit {
-                        Some(r) if matches!(r.action, ClickAction::InputField) => IDC_IBEAM,
-                        Some(_) => IDC_HAND,
-                        None => IDC_ARROW,
-                    };
-                    unsafe {
-                        SetCursor(LoadCursorW(None, cursor_id).ok());
-                    }
-                }
-            });
-            LRESULT(0)
-        }
-        WM_SETCURSOR => {
-            let hit_test = (lparam.0 & 0xFFFF) as i16;
-            if hit_test == 1 {
-                // HTCLIENT
-                LRESULT(1)
-            } else {
-                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-            }
-        }
-        WM_LBUTTONDOWN => {
-            let x = (lparam.0 & 0xFFFF) as i16 as f64;
-            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    if state.is_typing() {
-                        focus_edit_control();
-                    }
-                    // A fresh press owns its release, including selector clicks.
-                    state.drag_cancelled.set(false);
-                    // Start long-press tracking if clicking on the pill body
-                    if input::is_on_pill_at(state, x, y) {
-                        if state.drag_motion.borrow_mut().interrupt_settle() {
-                            persist_drag_position(hwnd, state);
-                        }
-                        state.pointer_down.set(true);
-                        state.long_press_active.set(true);
-                        state.long_press_elapsed.set(0.0);
-                        state.long_press_start_x.set(x);
-                        state.long_press_start_y.set(y);
-                    }
-                }
-            });
-            LRESULT(0)
-        }
-        WM_LBUTTONUP => {
-            let x = (lparam.0 & 0xFFFF) as i16 as f64;
-            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    // End any drag: persists the drop position and releases the
-                    // pointer capture. Returns whether a drag was in progress so
-                    // we can suppress the click that would otherwise follow.
-                    let was_dragging = end_drag(hwnd, state, true);
-                    // Cancel any in-progress long press
-                    state.long_press_active.set(false);
-                    state.long_press_elapsed.set(0.0);
-                    // The button is up, so hover stops being pinned.
-                    state.pointer_down.set(false);
-                    // Only fire click if the user wasn't dragging
-                    if !was_dragging && !state.drag_cancelled.get() {
-                        input::handle_click(state, x, y);
-                    }
-                    // Hover was pinned for the duration of the gesture; settle
-                    // it now that the pointer is free rather than waiting for
-                    // the next cursor tick.
-                    check_hover(hwnd, state);
-                }
-            });
-            LRESULT(0)
-        }
-        WM_CAPTURECHANGED => {
-            // Another window took the capture (task switch, lock screen, ...).
-            // Treat it as the end of the gesture and keep the pill where it is,
-            // otherwise `dragging` would stay latched on.
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    state.long_press_active.set(false);
-                    state.long_press_elapsed.set(0.0);
-                    // The gesture is over, so hover stops being pinned.
-                    state.pointer_down.set(false);
-                    // The capture is already gone, so only persist the position.
-                    let _ = end_drag(hwnd, state, true);
-                    // Settle hover now rather than staying pinned-expanded for
-                    // up to a full cursor tick. check_hover only reads state
-                    // and Cells, so it is safe under this immutable borrow.
-                    check_hover(hwnd, state);
-                }
-            });
-            LRESULT(0)
-        }
-        WM_MOUSEWHEEL => {
-            let delta = ((wparam.0 >> 16) & 0xFFFF) as i16 as f64;
-            let scroll = -delta / 120.0 * 30.0;
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    input::handle_scroll(state, scroll);
-                }
-            });
-            LRESULT(0)
-        }
-        WM_CHAR => {
-            let ch = char::from_u32(wparam.0 as u32);
-            if let Some(ch) = ch {
-                STATE.with(|s| {
-                    if let Some(ref state) = *s.borrow() {
-                        if ch == '\r' || ch == '\n' {
-                            // Enter submits: an insert decision while a
-                            // transcript is under review, a message to the
-                            // assistant otherwise.
-                            if input::submit_entry(state) {
-                                set_edit_text("");
-                            }
-                        } else if ch == '\u{8}' {
-                            // Backspace
-                            let mut t = state.entry_text.borrow_mut();
-                            t.pop();
-                        } else if !ch.is_control() {
-                            state.entry_text.borrow_mut().push(ch);
-                        }
-                    }
-                });
-            }
-            LRESULT(0)
-        }
-        WM_KEYDOWN => {
-            if wparam.0 == VK_ESCAPE.0 as usize {
-                STATE.with(|s| {
-                    if let Some(ref state) = *s.borrow() {
-                        // Escape while a transcript is under review is a
-                        // cancel decision: the desktop is waiting for an answer.
-                        match state.pending_review_id() {
-                            Some(review_id) => {
-                                let _ = input::send_review_decision(&review_id, "cancel", None);
-                            }
-                            None => {
-                                if state.is_typing() {
-                                    ipc::send(&OutMessage::AssistantClose);
-                                }
-                            }
-                        }
-                    }
-                });
-            }
-            LRESULT(0)
-        }
-        WM_DESTROY => {
-            // The message arrives asynchronously, so latched input can still be
-            // pending here with the pill's final position sitting in it. A
-            // destroy is deliberately not gated on the input lock, because the
-            // window may be going away while that latch is held; once this returns
-            // the pill is gone and the frame loop that would have delivered the
-            // position never runs. Draining it now is the only chance the last
-            // position has of being stored.
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    if state.pending_drag_position.get() {
-                        persist_drag_position(hwnd, state);
-                    }
-                }
-            });
-            unsafe {
-                PostQuitMessage(0);
-            }
-            LRESULT(0)
-        }
+        WM_TIMER => on_wm_timer(hwnd, wparam),
+        WM_DISPLAYCHANGE | WM_SETTINGCHANGE => on_wm_displaychange(hwnd),
+        WM_DPICHANGED => on_wm_dpichanged(hwnd, lparam),
+        WM_MOUSEMOVE => on_wm_mousemove(lparam),
+        WM_SETCURSOR => on_wm_setcursor(lparam),
+        WM_LBUTTONDOWN => on_wm_lbuttondown(hwnd, lparam),
+        WM_LBUTTONUP => on_wm_lbuttonup(hwnd, lparam),
+        WM_CAPTURECHANGED => on_wm_capturechanged(hwnd),
+        WM_MOUSEWHEEL => on_wm_mousewheel(wparam),
+        WM_CHAR => on_wm_char(wparam),
+        WM_KEYDOWN => on_wm_keydown(wparam),
+        WM_DESTROY => on_wm_destroy(hwnd),
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
+}
+
+/// Handles `WM_TIMER`.
+unsafe fn on_wm_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
+    let timer_id = wparam.0;
+    if timer_id == TIMER_CURSOR {
+        on_cursor_tick(hwnd);
+    }
+    LRESULT(0)
+}
+
+/// Handles `WM_DISPLAYCHANGE | WM_SETTINGCHANGE`.
+unsafe fn on_wm_displaychange(hwnd: HWND) -> LRESULT {
+    // Windows sends these per step of a layout change: one per display
+    // removal, move, resolution change and work-area change. Acting on
+    // each is what keeps the pill from being stranded after the first
+    // one, and the save guard inside reconciliation is what keeps the
+    // burst from being stored as a user choice.
+    STATE.with(|s| {
+        if let Some(ref state) = *s.borrow() {
+            reconcile_display_layout(hwnd, state);
+        }
+    });
+    LRESULT(0)
+}
+
+/// Handles `WM_DPICHANGED`.
+unsafe fn on_wm_dpichanged(hwnd: HWND, lparam: LPARAM) -> LRESULT {
+    // Per-Monitor V2 hands us a suggested rect for the new scale. Without
+    // adopting it Windows rescales the window itself, which moves the
+    // pill off the place it was parked at and can clip it. The pill's
+    // own clamp then runs on the new scale, so the footprint ends up the
+    // same size in points on screen.
+    let suggested = unsafe { &*(lparam.0 as *const RECT) };
+    let (x, y) = (suggested.left, suggested.top);
+    let (w, h) = (
+        suggested.right - suggested.left,
+        suggested.bottom - suggested.top,
+    );
+    // SAFETY: repositioning our own window to the rect the message hands
+    // us, which is the only correct response to a DPI change.
+    unsafe {
+        let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    // The surface has to take the new size too. Every frame presents exactly
+    // the surface's own dimensions, so leaving it at the old size resizes the
+    // window back on the very next frame and undoes this suggestion.
+    GFX.with(|gfx| {
+        if let Some(ref mut gfx) = *gfx.borrow_mut() {
+            let _ = gfx.resize(w, h);
+        }
+    });
+    STATE.with(|s| {
+        if let Some(ref state) = *s.borrow() {
+            reconcile_display_layout(hwnd, state);
+        }
+    });
+    LRESULT(0)
+}
+
+/// Handles `WM_MOUSEMOVE`.
+unsafe fn on_wm_mousemove(lparam: LPARAM) -> LRESULT {
+    let raw_x = (lparam.0 & 0xFFFF) as i16 as f64;
+    let raw_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
+    STATE.with(|s| {
+        if let Some(ref state) = *s.borrow() {
+            let (ox, oy) = state.content_offset();
+            let x = raw_x - ox;
+            let y = raw_y - oy;
+            state.mouse_x.set(x);
+            state.mouse_y.set(y);
+            let regions = state.click_regions.borrow();
+            let hit = regions.iter().rev().find(|r| r.contains(x, y));
+            let cursor_id = match hit {
+                Some(r) if matches!(r.action, ClickAction::InputField) => IDC_IBEAM,
+                Some(_) => IDC_HAND,
+                None => IDC_ARROW,
+            };
+            unsafe {
+                SetCursor(LoadCursorW(None, cursor_id).ok());
+            }
+        }
+    });
+    LRESULT(0)
+}
+
+/// Handles `WM_SETCURSOR`.
+unsafe fn on_wm_setcursor(lparam: LPARAM) -> LRESULT {
+    let hit_test = (lparam.0 & 0xFFFF) as i16;
+    if hit_test == 1 {
+        // HTCLIENT
+        LRESULT(1)
+    } else {
+        LRESULT(0)
+    }
+}
+
+/// Handles `WM_LBUTTONDOWN`.
+unsafe fn on_wm_lbuttondown(hwnd: HWND, lparam: LPARAM) -> LRESULT {
+    let x = (lparam.0 & 0xFFFF) as i16 as f64;
+    let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
+    STATE.with(|s| {
+        if let Some(ref state) = *s.borrow() {
+            if state.is_typing() {
+                focus_edit_control();
+            }
+            // A fresh press owns its release, including selector clicks.
+            state.drag_cancelled.set(false);
+            // Start long-press tracking if clicking on the pill body
+            if input::is_on_pill_at(state, x, y) {
+                if state.drag_motion.borrow_mut().interrupt_settle() {
+                    persist_drag_position(hwnd, state);
+                }
+                state.pointer_down.set(true);
+                state.long_press_active.set(true);
+                state.long_press_elapsed.set(0.0);
+                state.long_press_start_x.set(x);
+                state.long_press_start_y.set(y);
+            }
+        }
+    });
+    LRESULT(0)
+}
+
+/// Handles `WM_LBUTTONUP`.
+unsafe fn on_wm_lbuttonup(hwnd: HWND, lparam: LPARAM) -> LRESULT {
+    let x = (lparam.0 & 0xFFFF) as i16 as f64;
+    let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
+    STATE.with(|s| {
+        if let Some(ref state) = *s.borrow() {
+            // End any drag: persists the drop position and releases the
+            // pointer capture. Returns whether a drag was in progress so
+            // we can suppress the click that would otherwise follow.
+            let was_dragging = end_drag(hwnd, state, true);
+            // Cancel any in-progress long press
+            state.long_press_active.set(false);
+            state.long_press_elapsed.set(0.0);
+            // The button is up, so hover stops being pinned.
+            state.pointer_down.set(false);
+            // Only fire click if the user wasn't dragging
+            if !was_dragging && !state.drag_cancelled.get() {
+                input::handle_click(state, x, y);
+            }
+            // Hover was pinned for the duration of the gesture; settle
+            // it now that the pointer is free rather than waiting for
+            // the next cursor tick.
+            check_hover(hwnd, state);
+        }
+    });
+    LRESULT(0)
+}
+
+/// Handles `WM_CAPTURECHANGED`.
+unsafe fn on_wm_capturechanged(hwnd: HWND) -> LRESULT {
+    // Another window took the capture (task switch, lock screen, ...).
+    // Treat it as the end of the gesture and keep the pill where it is,
+    // otherwise `dragging` would stay latched on.
+    STATE.with(|s| {
+        if let Some(ref state) = *s.borrow() {
+            state.long_press_active.set(false);
+            state.long_press_elapsed.set(0.0);
+            // The gesture is over, so hover stops being pinned.
+            state.pointer_down.set(false);
+            // The capture is already gone, so only persist the position.
+            let _ = end_drag(hwnd, state, true);
+            // Settle hover now rather than staying pinned-expanded for
+            // up to a full cursor tick. check_hover only reads state
+            // and Cells, so it is safe under this immutable borrow.
+            check_hover(hwnd, state);
+        }
+    });
+    LRESULT(0)
+}
+
+/// Handles `WM_MOUSEWHEEL`.
+unsafe fn on_wm_mousewheel(wparam: WPARAM) -> LRESULT {
+    let delta = ((wparam.0 >> 16) & 0xFFFF) as i16 as f64;
+    let scroll = -delta / 120.0 * 30.0;
+    STATE.with(|s| {
+        if let Some(ref state) = *s.borrow() {
+            input::handle_scroll(state, scroll);
+        }
+    });
+    LRESULT(0)
+}
+
+/// Handles `WM_CHAR`.
+unsafe fn on_wm_char(wparam: WPARAM) -> LRESULT {
+    let ch = char::from_u32(wparam.0 as u32);
+    if let Some(ch) = ch {
+        STATE.with(|s| {
+            if let Some(ref state) = *s.borrow() {
+                if ch == '\r' || ch == '\n' {
+                    // Enter submits: an insert decision while a
+                    // transcript is under review, a message to the
+                    // assistant otherwise.
+                    if input::submit_entry(state) {
+                        set_edit_text("");
+                    }
+                } else if ch == '\u{8}' {
+                    // Backspace
+                    let mut t = state.entry_text.borrow_mut();
+                    t.pop();
+                } else if !ch.is_control() {
+                    state.entry_text.borrow_mut().push(ch);
+                }
+            }
+        });
+    }
+    LRESULT(0)
+}
+
+/// Handles `WM_KEYDOWN`.
+unsafe fn on_wm_keydown(wparam: WPARAM) -> LRESULT {
+    if wparam.0 == VK_ESCAPE.0 as usize {
+        STATE.with(|s| {
+            if let Some(ref state) = *s.borrow() {
+                // Escape while a transcript is under review is a
+                // cancel decision: the desktop is waiting for an answer.
+                match state.pending_review_id() {
+                    Some(review_id) => {
+                        let _ = input::send_review_decision(&review_id, "cancel", None);
+                    }
+                    None => {
+                        if state.is_typing() {
+                            ipc::send(&OutMessage::AssistantClose);
+                        }
+                    }
+                }
+            }
+        });
+    }
+    LRESULT(0)
+}
+
+/// Handles `WM_DESTROY`.
+unsafe fn on_wm_destroy(hwnd: HWND) -> LRESULT {
+    // The message arrives asynchronously, so latched input can still be
+    // pending here with the pill's final position sitting in it. A
+    // destroy is deliberately not gated on the input lock, because the
+    // window may be going away while that latch is held; once this returns
+    // the pill is gone and the frame loop that would have delivered the
+    // position never runs. Draining it now is the only chance the last
+    // position has of being stored.
+    STATE.with(|s| {
+        if let Some(ref state) = *s.borrow() {
+            if state.pending_drag_position.get() {
+                persist_drag_position(hwnd, state);
+            }
+        }
+    });
+    unsafe {
+        PostQuitMessage(0);
+    }
+    LRESULT(0)
 }
 
 fn on_anim_tick(hwnd: HWND) {
