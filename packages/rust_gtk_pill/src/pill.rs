@@ -820,18 +820,15 @@ pub fn run(receiver: Receiver<InMessage>) {
                                 );
                             }
                         }
-                    } else if review_id.is_some() {
-                        if review_id != previous_review_id
-                            && backend_tick == Backend::LayerShell
-                        {
-                            // A new review can arrive while the editor widget is
-                            // still visible from the prior review. Restore the
-                            // keyboard mode explicitly; visibility-transition
-                            // focus setup below will not run in that case.
-                            win_tick.set_keyboard_mode(
-                                gtk_layer_shell::KeyboardMode::OnDemand,
-                            );
-                        }
+                    } else if review_id.is_some()
+                        && review_id != previous_review_id
+                        && backend_tick == Backend::LayerShell
+                    {
+                        // A new review can arrive while the editor widget is
+                        // still visible from the prior review. Restore the
+                        // keyboard mode explicitly; visibility-transition
+                        // focus setup below will not run in that case.
+                        win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
                     }
                     let review_accessible_name = review
                         .as_ref()
