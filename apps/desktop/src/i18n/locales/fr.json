@@ -502,6 +502,7 @@
   "how_long_the_assistant_waits_for_approval_before_denying_a_t": "Combien de temps l'assistant attend une approbation avant de refuser un appel d'outil.",
   "how_long_to_stay_open_after_each_dictation": "Combien de temps rester ouvert après chaque dictée",
   "how_mausvoice_listens_and_what_it_does_with_the_words_it_hea": "Comment mausVoice écoute et ce qu'il fait des mots qu'il entend.",
+  "how_much_speech_to_keep_from_just_before_you_press_so_a_word": "How much speech to keep from just before you press, so a word you start early is not cut off. This needs the microphone to already be open: turn on keep-ready or a post-dictation window for it to apply.",
   "how_text_is_inserted_into_applications": "Comment le texte est inséré dans les applications",
   "how_the_pill_the_menu_bar_icon_and_celebrations_look_and_beh": "L'apparence et le comportement de la pilule, de l'icône de la barre de menus et des célébrations.",
   "how_you_appear_in_mausvoice_and_the_name_it_writes_with_on_y": "Votre apparence dans mausVoice et le nom qu'il utilise pour écrire à votre place.",
