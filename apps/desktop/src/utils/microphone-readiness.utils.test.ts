@@ -451,7 +451,10 @@ describe("nearestLingerChoice", () => {
       choice: 15_000,
       stored: 30_000,
     });
-    expect(nearestLingerChoice(3_400)).toEqual({ choice: 3_000, stored: 3_400 });
+    expect(nearestLingerChoice(3_400)).toEqual({
+      choice: 3_000,
+      stored: 3_400,
+    });
   });
 
   it("reports nothing stored for an exact match", () => {
