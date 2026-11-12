@@ -95,6 +95,15 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5193,
+    // Refuse to start rather than move to the next free port.
+    //
+    // The proxy below targets this server's own port, and the verify scripts and
+    // harness URLs name it explicitly. A silent move to 5194 left the proxy
+    // pointing at whatever was on 5193 instead -- another process, or this same
+    // config's `preview` block -- so every `@desktop/*` import failed with a
+    // confusing error rather than "that port is taken". Failing loudly here is
+    // what keeps the failure legible.
+    strictPort: true,
     // `host: "0.0.0.0"` already exposes this dev server to the network, and
     // `allowedHosts: true` additionally switches OFF Vite's Host-header check. The pair is a
     // DNS-rebinding hole: any web page the developer visits could resolve its own hostname to
