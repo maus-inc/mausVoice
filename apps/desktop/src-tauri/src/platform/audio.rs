@@ -149,7 +149,7 @@ mod cpal_impl {
     use cpal::{Device, HostId, SampleFormat, Stream, StreamConfig};
     use std::cmp;
     use std::collections::{HashMap, VecDeque};
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
     use std::time::{Duration, Instant};
 
@@ -380,6 +380,8 @@ mod cpal_impl {
         /// every iteration, so an unthrottled `log::error!` per error is tens of
         /// thousands of lines a second for a stream that is already lost.
         faults_reported: AtomicU64,
+        /// How many times the fault token has been read, for the test above.
+        fault_reads: AtomicUsize,
         /// When the first fatal fault was recorded, in microseconds since
         /// `born`; zero until one arrives.
         ///
@@ -418,6 +420,7 @@ mod cpal_impl {
                 stopped: AtomicBool::new(false),
                 faulted: Mutex::new(None),
                 faults_reported: AtomicU64::new(0),
+                fault_reads: AtomicUsize::new(0),
                 fault_at_us: AtomicU64::new(0),
                 origin: Mutex::new(Instant::now()),
                 born: Instant::now(),
@@ -635,7 +638,19 @@ mod cpal_impl {
         /// rather than as a quiet one, which is why the token is returned rather
         /// than a bare boolean.
         fn fault_token(&self) -> Option<&'static str> {
+            self.fault_reads.fetch_add(1, Ordering::AcqRel);
             self.faulted.lock().ok().and_then(|guard| *guard)
+        }
+
+        /// How many times the fault token has been read.
+        ///
+        /// Only used by the test that proves a whole recording does not pay the
+        /// bounded late-fault wait. A clock assertion cannot say that on a loaded
+        /// runner -- 5 ms is scheduling noise -- so the question is asked as
+        /// "was the token read at all", which is the thing the wait is gated on.
+        #[cfg(test)]
+        fn fault_reads(&self) -> usize {
+            self.fault_reads.load(Ordering::Acquire)
         }
 
         /// Whether any block has ever arrived on this stream.
@@ -3692,14 +3707,14 @@ mod cpal_impl {
             disambiguated_label, drain_late_fault, elapsed_gap_is_suspicious,
             is_preferred_input_device_name, order_hosts, preroll_capacity, reported_capture_fault,
             try_hosts, warm_ring, CachedDeviceInfo, ChunkEmitter, Preroll, RecordingError,
-            RecordingManager, SinkMode, StreamSink, LATE_FAULT_POLL, STALE_WARM_SILENCE,
-            WARM_FOREVER_MS, WARM_READY_GRACE,
+            RecordingManager, SinkMode, StreamSink, STALE_WARM_SILENCE, WARM_FOREVER_MS,
+            WARM_READY_GRACE,
         };
         use crate::platform::audio_stage::{AudioStartupStage, AudioStartupTrace};
         use std::collections::HashSet;
         use std::sync::atomic::Ordering;
         use std::sync::{Arc, Mutex};
-        use std::time::{Duration, Instant};
+        use std::time::Duration;
 
         /// Delivers a block that is measurably not the very first instant.
         ///
@@ -4295,14 +4310,21 @@ mod cpal_impl {
             let sink = StreamSink::new(SinkMode::Discard);
             let whole = Duration::from_millis(6_000);
 
-            let began = Instant::now();
+            // Deliberately not a wall-clock assertion. The first version of this
+            // test measured `elapsed()` against the poll interval, which passes
+            // on an idle machine and flakes on a loaded runner: 5 ms is within
+            // scheduling noise, and a test that fails for that reason gets
+            // disabled rather than fixed. The question worth asking is whether
+            // the wait is *entered* at all, and that is answered by the sink
+            // staying untouched -- the drain below only ever sleeps after a read,
+            // so a read count of zero proves no read and no sleep happened.
             let drained = drain_late_fault(&sink, None, whole, whole);
-            let waited = began.elapsed();
 
             assert_eq!(drained, None);
-            assert!(
-                waited < LATE_FAULT_POLL,
-                "a whole recording waited {waited:?}, which is the stop blocking for nothing"
+            assert_eq!(
+                sink.fault_reads(),
+                0,
+                "a whole recording read the fault token, which means it paid the bounded wait for a fault that could not be reported"
             );
         }
 
