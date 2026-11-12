@@ -1170,7 +1170,7 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
         return;
     };
     let buffer = view.buffer().expect("review editor buffer");
-    let state_clipboard = state.clone();
+    let state_clipboard = Rc::clone(state);
     gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
         if !clipboard_result_is_current(&review_id, state_clipboard.pending_review_id().as_deref())
         {
