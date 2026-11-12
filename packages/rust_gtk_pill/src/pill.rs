@@ -192,6 +192,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         assistant_permissions: RefCell::new(Vec::new()),
         assistant_review: RefCell::new(None),
         focus_released_after_review: Cell::new(false),
+        focus_release_remap_pending: Cell::new(false),
         panel_open_t: Cell::new(0.0),
         panel_open_velocity: Cell::new(0.0),
         kb_button_t: Cell::new(0.0),
@@ -812,11 +813,23 @@ pub fn run(receiver: Receiver<InMessage>) {
                             }
                             Backend::X11 | Backend::PlainWayland => {
                                 win_tick.set_accept_focus(false);
+                                state_tick.focus_release_remap_pending.set(true);
                                 let win = win_tick.clone();
+                                let state = state_tick.clone();
                                 win_tick.hide();
                                 glib::timeout_add_local_once(
                                     Duration::from_millis(50),
-                                    move || win.show(),
+                                    move || {
+                                        state.focus_release_remap_pending.set(false);
+                                        let should_show = rust_pill_shared::should_show_pill(
+                                            state.visibility.get().into(),
+                                            state.phase.get() != Phase::Idle,
+                                            state.owns_panel(),
+                                        );
+                                        if should_show {
+                                            win.show();
+                                        }
+                                    },
                                 );
                             }
                         }
@@ -1033,7 +1046,9 @@ pub fn run(receiver: Receiver<InMessage>) {
             state_tick.owns_panel(),
         );
         if should_show {
-            win_tick.show();
+            if !state_tick.focus_release_remap_pending.get() {
+                win_tick.show();
+            }
         } else {
             win_tick.hide();
         }
