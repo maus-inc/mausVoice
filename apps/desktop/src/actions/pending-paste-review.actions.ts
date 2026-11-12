@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n/intl";
 import { createId } from "../utils/id.utils";
 import { nowIso } from "../utils/date.utils";
-import { getChatMessageRepo } from "../repos";
+import { LocalChatMessageRepo } from "../repos/chat-message.repo";
 import { createChatMessage, updateChatMessage } from "./chat.actions";
 
 export const PENDING_PASTE_REVIEW_TYPE = "pending-paste-review";
@@ -119,7 +119,9 @@ export const updatePendingPasteReviewDraftById = async (
   text: string,
   draftRevision: number,
 ): Promise<ChatMessage> => {
-  const messages = await getChatMessageRepo().listChatMessages(conversationId);
+  const messages = await new LocalChatMessageRepo().listChatMessages(
+    conversationId,
+  );
   const existing = messages.find((message) => message.id === id);
   if (existing?.conversationId !== conversationId) {
     throw new Error(

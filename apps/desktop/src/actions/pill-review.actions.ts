@@ -512,6 +512,8 @@ const openAssistantPasteInChats = async (
   return true;
 };
 
+// This small state-machine coordinator intentionally keeps the decision order visible.
+// fallow-ignore-next-line complexity
 const applyDecision = async (
   id: string,
   action: PillReviewAction,

@@ -12,8 +12,10 @@ vi.mock("./chat.actions", () => ({
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
-vi.mock("../repos", () => ({
-  getChatMessageRepo: () => ({ listChatMessages: listChatMessagesMock }),
+vi.mock("../repos/chat-message.repo", () => ({
+  LocalChatMessageRepo: class {
+    listChatMessages = listChatMessagesMock;
+  },
 }));
 
 const { intlFormatMessage } = vi.hoisted(() => ({

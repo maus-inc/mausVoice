@@ -188,6 +188,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         assistant_streaming: RefCell::new(None),
         assistant_permissions: RefCell::new(Vec::new()),
         assistant_review: RefCell::new(None),
+        focus_released_after_review: Cell::new(false),
         panel_open_t: Cell::new(0.0),
         panel_open_velocity: Cell::new(0.0),
         kb_button_t: Cell::new(0.0),
@@ -385,6 +386,11 @@ pub fn run(receiver: Receiver<InMessage>) {
         state_press.drag_cancelled.set(false);
         let (x, y) = event.position();
         let is_typing = state_press.is_typing();
+        if backend_press == Backend::LayerShell
+            && state_press.focus_released_after_review.replace(false)
+        {
+            win_press.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+        }
         if is_typing {
             if backend_press == Backend::X11 {
                 x11::force_keyboard_focus(&win_press);
@@ -781,6 +787,14 @@ pub fn run(receiver: Receiver<InMessage>) {
                         .map(|r| r.id.clone());
                     let review_id = review.as_ref().map(|r| r.id.clone());
                     let review_text = review.as_ref().map(|r| r.text.clone());
+                    if previous_review_id.is_some() && review_id.is_none() {
+                        if backend_tick == Backend::LayerShell {
+                            state_tick.focus_released_after_review.set(true);
+                            win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
+                        }
+                    } else if review_id.is_some() {
+                        state_tick.focus_released_after_review.set(false);
+                    }
                     let review_accessible_name = review
                         .as_ref()
                         .and_then(|r| r.review_label.clone())
@@ -937,10 +951,12 @@ pub fn run(receiver: Receiver<InMessage>) {
             target.show();
             match backend_tick {
                 Backend::LayerShell => {
-                    win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
-                    glib::idle_add_local_once(move || {
-                        target.grab_focus();
-                    });
+                    if !state_tick.focus_released_after_review.get() {
+                        win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+                        glib::idle_add_local_once(move || {
+                            target.grab_focus();
+                        });
+                    }
                 }
                 Backend::X11 => {
                     win_tick.set_accept_focus(true);

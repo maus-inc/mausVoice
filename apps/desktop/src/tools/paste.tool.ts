@@ -40,6 +40,224 @@ const savePendingPasteReview = async (
   }
 };
 
+type PasteReviewState = {
+  openedPendingPaste: boolean;
+  copiedReviewedText: boolean;
+  reviewExpired: boolean;
+  reviewFailed: boolean;
+  pendingReviewMessage: ChatMessage | null;
+  latestSaveText: string | null;
+  latestSaveGeneration: number;
+  reviewResolved: boolean;
+  activeOpenSaves: number;
+};
+
+const createPasteReviewState = (): PasteReviewState => ({
+  openedPendingPaste: false,
+  copiedReviewedText: false,
+  reviewExpired: false,
+  reviewFailed: false,
+  pendingReviewMessage: null,
+  latestSaveText: null,
+  latestSaveGeneration: 0,
+  reviewResolved: false,
+  activeOpenSaves: 0,
+});
+
+const cancelUnusedPendingReview = async (
+  state: PasteReviewState,
+): Promise<void> => {
+  if (
+    !state.reviewResolved ||
+    state.activeOpenSaves > 0 ||
+    state.openedPendingPaste ||
+    !state.pendingReviewMessage
+  ) {
+    return;
+  }
+  const unusedMessage = state.pendingReviewMessage;
+  try {
+    await cancelPendingPasteReview(unusedMessage, "");
+    state.pendingReviewMessage = null;
+  } catch (error) {
+    getLogger().warning(
+      `Could not close an unused Paste review after the user chose another action: ${error}`,
+    );
+    runToast(
+      showToast({
+        message: getIntl().formatMessage({
+          defaultMessage:
+            "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
+        }),
+        toastType: "error",
+        duration: 8000,
+      }),
+    );
+  }
+};
+
+const saveLatestReviewDraft = async (
+  state: PasteReviewState,
+  conversationId: string,
+  pendingReviewId: string | null,
+  text: string,
+): Promise<void> => {
+  // Do not queue behind an earlier request: a timed-out native hand-off
+  // can leave its write promise unresolved. Reuse one id so a retry can
+  // recover an already-committed create rather than making a second card.
+  const generation = ++state.latestSaveGeneration;
+  state.latestSaveText = text;
+  if (state.pendingReviewMessage) {
+    const saved = await updatePendingPasteReviewDraft(
+      state.pendingReviewMessage,
+      text,
+      generation,
+    );
+    if (generation !== state.latestSaveGeneration) {
+      let corrected = saved;
+      let correctedText = text;
+      while (
+        generation !== state.latestSaveGeneration &&
+        state.latestSaveText &&
+        correctedText !== state.latestSaveText
+      ) {
+        correctedText = state.latestSaveText;
+        // Each corrected write must observe the prior CAS result before
+        // choosing the next revision, so these retries are intentionally serial.
+        corrected = await updatePendingPasteReviewDraft(
+          corrected,
+          correctedText,
+          state.latestSaveGeneration,
+        );
+      }
+      return;
+    }
+    state.pendingReviewMessage = saved;
+    return;
+  }
+
+  try {
+    const saved = await createPendingPasteReview(
+      conversationId,
+      text,
+      pendingReviewId ?? undefined,
+    );
+    if (
+      !state.pendingReviewMessage ||
+      generation === state.latestSaveGeneration
+    ) {
+      state.pendingReviewMessage = saved;
+    }
+  } catch (error) {
+    const saveError = String(error).toLowerCase();
+    const isDuplicateMessageId =
+      saveError.includes("unique constraint failed") &&
+      saveError.includes("chat_messages.id");
+    if (
+      !isDuplicateMessageId ||
+      generation !== state.latestSaveGeneration ||
+      !pendingReviewId
+    ) {
+      throw error;
+    }
+    state.pendingReviewMessage = await updatePendingPasteReviewDraftById(
+      conversationId,
+      pendingReviewId,
+      text,
+      generation,
+    );
+  }
+};
+
+const openPendingPasteInChats = async (
+  state: PasteReviewState,
+  conversationId: string,
+  pendingReviewId: string | null,
+  reviewedText: string,
+  signal?: AbortSignal,
+): Promise<void> => {
+  if (signal?.aborted) return;
+  state.activeOpenSaves += 1;
+  try {
+    await saveLatestReviewDraft(
+      state,
+      conversationId,
+      pendingReviewId,
+      reviewedText,
+    );
+    if (signal?.aborted) return;
+    state.openedPendingPaste = true;
+    try {
+      await emit("open-pill-conversation", {
+        conversationId,
+        pendingPasteReview: true,
+      });
+    } catch (error) {
+      // The durable card is still available in Chats even if native surfacing
+      // or navigation could not be requested.
+      getLogger().warning(`Could not open the Paste review in Chats: ${error}`);
+      runToast(
+        showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Your Paste review was saved. Open Chats to find it and finish the paste.",
+          }),
+          toastType: "info",
+          duration: 8000,
+        }),
+      );
+    }
+  } finally {
+    state.activeOpenSaves -= 1;
+    await cancelUnusedPendingReview(state);
+  }
+};
+
+const completePasteReview = async (
+  state: PasteReviewState,
+  text: string | null,
+  conversationId?: string,
+): Promise<Record<string, unknown>> => {
+  if (state.openedPendingPaste) {
+    // Open may have timed out at the window-event boundary while the review
+    // remained available for another decision. Preserve a later Insert edit
+    // on the durable card, but never paste after Chats may have taken focus.
+    if (text?.trim() && conversationId) {
+      await saveLatestReviewDraft(state, conversationId, null, text);
+    }
+    return { awaitingManualPaste: true };
+  }
+  if (state.copiedReviewedText) return { copiedToClipboard: true };
+  if (state.reviewExpired) {
+    throw new Error(
+      "Paste transcript review expired before a decision was made.",
+    );
+  }
+  if (state.reviewFailed) {
+    throw new Error("Paste transcript review could not be completed.");
+  }
+  if (!text?.trim()) return { canceled: true };
+
+  let outcome: PasteOutcome;
+  try {
+    outcome = await invoke<PasteOutcome>("paste", { text, keybind: null });
+  } catch (error) {
+    // The insert never reached the target, so this is exactly the case the
+    // saved review exists for: the text is only recoverable by hand. The save
+    // is best-effort, and the insert's own failure is what the caller has to
+    // see, so a failed write is logged rather than reported.
+    await savePendingPasteReview(conversationId ?? "", text);
+    throw error;
+  }
+  if (outcome === "copied_to_clipboard") {
+    // The focused target could not take the text, so nothing landed and the
+    // clipboard fallback has to be turned into a deliberate hand-off.
+    await savePendingPasteReview(conversationId ?? "", text);
+    return { copiedToClipboard: true };
+  }
+  return {};
+};
+
 export class PasteTool extends BaseTool {
   constructor(info: ToolInfo) {
     super(info);
@@ -50,161 +268,29 @@ export class PasteTool extends BaseTool {
     context?: ToolExecutionContext,
   ): Promise<Record<string, unknown>> {
     const requestedText = typeof params.text === "string" ? params.text : "";
-    let openedPendingPaste = false;
-    let copiedReviewedText = false;
-    let reviewExpired = false;
-    let reviewFailed = false;
-    let pendingReviewMessage: ChatMessage | null = null;
-    let latestSaveText: string | null = null;
-    let latestSaveGeneration = 0;
-    let reviewResolved = false;
-    let activeOpenSaves = 0;
-    const cancelUnusedPendingReview = async (): Promise<void> => {
-      if (
-        !reviewResolved ||
-        activeOpenSaves > 0 ||
-        openedPendingPaste ||
-        !pendingReviewMessage
-      ) {
-        return;
-      }
-      const unusedMessage = pendingReviewMessage;
-      try {
-        await cancelPendingPasteReview(unusedMessage, "");
-        pendingReviewMessage = null;
-      } catch (error) {
-        getLogger().warning(
-          `Could not close an unused Paste review after the user chose another action: ${error}`,
-        );
-        runToast(
-          showToast({
-            message: getIntl().formatMessage({
-              defaultMessage:
-                "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
-            }),
-            toastType: "error",
-            duration: 8000,
-          }),
-        );
-      }
-    };
+    const state = createPasteReviewState();
     const conversationId = context?.conversationId;
     const pendingReviewId = conversationId ? createId() : null;
-    const saveLatestReviewDraft = async (
-      conversationId: string,
-      text: string,
-    ): Promise<void> => {
-      // Do not queue behind an earlier request: a timed-out native hand-off
-      // can leave its write promise unresolved. Reuse one id so a retry can
-      // recover an already-committed create rather than making a second card.
-      const generation = ++latestSaveGeneration;
-      latestSaveText = text;
-      if (pendingReviewMessage) {
-        const saved = await updatePendingPasteReviewDraft(
-          pendingReviewMessage,
-          text,
-          generation,
-        );
-        if (generation !== latestSaveGeneration) {
-          let corrected = saved;
-          let correctedText = text;
-          while (
-            generation !== latestSaveGeneration &&
-            latestSaveText &&
-            correctedText !== latestSaveText
-          ) {
-            correctedText = latestSaveText;
-            // Each corrected write must observe the prior CAS result before
-            // choosing the next revision, so these retries are intentionally serial.
-            corrected = await updatePendingPasteReviewDraft(
-              corrected,
-              correctedText,
-              latestSaveGeneration,
-            );
-          }
-          return;
-        }
-        pendingReviewMessage = saved;
-        return;
-      }
-
-      try {
-        const saved = await createPendingPasteReview(
-          conversationId,
-          text,
-          pendingReviewId ?? undefined,
-        );
-        if (!pendingReviewMessage || generation === latestSaveGeneration) {
-          pendingReviewMessage = saved;
-        }
-      } catch (error) {
-        const saveError = String(error).toLowerCase();
-        const isDuplicateMessageId =
-          saveError.includes("unique constraint failed") &&
-          saveError.includes("chat_messages.id");
-        if (
-          !isDuplicateMessageId ||
-          generation !== latestSaveGeneration ||
-          !pendingReviewId
-        ) {
-          throw error;
-        }
-        pendingReviewMessage = await updatePendingPasteReviewDraftById(
-          conversationId,
-          pendingReviewId,
-          text,
-          generation,
-        );
-      }
-    };
     const reviewOptions = {
       onCopy: () => {
-        copiedReviewedText = true;
+        state.copiedReviewedText = true;
       },
       onExpire: () => {
-        reviewExpired = true;
+        state.reviewExpired = true;
       },
       onFailure: () => {
-        reviewFailed = true;
+        state.reviewFailed = true;
       },
       ...(conversationId
         ? {
-            onOpen: async (reviewedText: string, signal?: AbortSignal) => {
-              // Save first: once Chats takes focus the pill cannot safely insert
-              // into the app that had focus when the tool began.
-              if (signal?.aborted) return;
-              activeOpenSaves += 1;
-              try {
-                await saveLatestReviewDraft(conversationId, reviewedText);
-                if (signal?.aborted) return;
-                openedPendingPaste = true;
-                try {
-                  await emit("open-pill-conversation", {
-                    conversationId,
-                    pendingPasteReview: true,
-                  });
-                } catch (error) {
-                  // The durable card is still available in Chats even if native
-                  // surfacing or navigation could not be requested.
-                  getLogger().warning(
-                    `Could not open the Paste review in Chats: ${error}`,
-                  );
-                  runToast(
-                    showToast({
-                      message: getIntl().formatMessage({
-                        defaultMessage:
-                          "Your Paste review was saved. Open Chats to find it and finish the paste.",
-                      }),
-                      toastType: "info",
-                      duration: 8000,
-                    }),
-                  );
-                }
-              } finally {
-                activeOpenSaves -= 1;
-                await cancelUnusedPendingReview();
-              }
-            },
+            onOpen: (reviewedText: string, signal?: AbortSignal) =>
+              openPendingPasteInChats(
+                state,
+                conversationId,
+                pendingReviewId,
+                reviewedText,
+                signal,
+              ),
           }
         : {}),
     };
@@ -219,52 +305,10 @@ export class PasteTool extends BaseTool {
             )
           : requestedText;
     } finally {
-      reviewResolved = true;
-      await cancelUnusedPendingReview();
+      state.reviewResolved = true;
+      await cancelUnusedPendingReview(state);
     }
-    if (openedPendingPaste) {
-      // Open may have timed out at the window-event boundary while the review
-      // remained available for another decision. Preserve a later Insert edit
-      // on the durable card, but never paste after Chats may have taken focus.
-      if (text?.trim() && conversationId) {
-        await saveLatestReviewDraft(conversationId, text);
-      }
-      return { awaitingManualPaste: true };
-    }
-    if (copiedReviewedText) {
-      return { copiedToClipboard: true };
-    }
-    if (reviewExpired) {
-      throw new Error(
-        "Paste transcript review expired before a decision was made.",
-      );
-    }
-    if (reviewFailed) {
-      throw new Error("Paste transcript review could not be completed.");
-    }
-    if (!text?.trim()) {
-      return { canceled: true };
-    }
-    let outcome: PasteOutcome;
-    try {
-      outcome = await invoke<PasteOutcome>("paste", { text, keybind: null });
-    } catch (error) {
-      // The insert never reached the target, so this is exactly the case the
-      // saved review exists for: the text is only recoverable by hand. The
-      // save is best-effort, and the insert's own failure is what the caller
-      // has to see, so a failed write is logged rather than reported.
-      await savePendingPasteReview(context?.conversationId ?? "", text);
-      throw error;
-    }
-    if (outcome === "copied_to_clipboard") {
-      // The focused target could not take the text, so nothing landed and the
-      // clipboard fallback has to be turned into a deliberate hand-off. Tell
-      // the agent too: an empty result would look indistinguishable from a
-      // successful paste even though the user still needs to paste manually.
-      await savePendingPasteReview(context?.conversationId ?? "", text);
-      return { copiedToClipboard: true };
-    }
-    return {};
+    return completePasteReview(state, text, conversationId);
   }
 
   getAlwaysAllow(_params: Record<string, unknown>, scope = "global"): boolean {

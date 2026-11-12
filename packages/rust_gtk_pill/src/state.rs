@@ -173,6 +173,8 @@ pub(crate) struct PillState {
     pub(crate) assistant_streaming: RefCell<Option<PillStreaming>>,
     pub(crate) assistant_permissions: RefCell<Vec<PillPermission>>,
     pub(crate) assistant_review: RefCell<Option<PillReview>>,
+    /// Keep LayerShell from reacquiring focus after a review returns it to the app.
+    pub(crate) focus_released_after_review: Cell<bool>,
 
     // Assistant UI animation
     pub(crate) panel_open_t: Cell<f64>,
