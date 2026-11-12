@@ -538,14 +538,17 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // asked for: when the saved display is disconnected the position is
         // remapped onto a connected one, and keeping the missing display's name
         // would store this rectangle under a display that is not there.
-        state.saved_display_id.set(display_id.or_else(|| {
-            state
-                .restored_position
-                .get()
-                .and_then(|window| window.display_id)
-        }));
+        //
+        // `display_id` is the identity of the display chosen *now*. When it is
+        // `None` the destination could not be named, and the record's token is the
+        // display that went away -- the one this restore just failed to find.
+        // Falling back to it would pair the new geometry with the dead display's
+        // name, which is exactly the pairing this restore exists to correct, so a
+        // nameless destination stays nameless and matching is done on geometry.
+        state.saved_display_id.set(display_id);
     }
     let was_dragging = Rc::new(Cell::new(false));
+    let drop_recorded = Rc::new(Cell::new(false));
     let win_tick = window.clone();
     let state_tick = state.clone();
     glib::timeout_add_local(Duration::from_millis(100), move || {
@@ -558,6 +561,13 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             return ControlFlow::Continue;
         }
 
+        // A drop the save guard refused is retried on the frame clock, and until
+        // that retry writes it the window is still standing where the user dropped
+        // it. Parking it here would move it back to `saved_x`/`saved_y` -- the
+        // position from before the drop -- so the retry would store that instead of
+        // the drop. The retry itself runs below; only the parking is skipped.
+        let save_owed = state_tick.drag_save_due.get().is_some();
+
         // Net for a drag that ended without arming a settle, such as when
         // no monitor could be resolved before release. Normal releases
         // persist the settled position and mark it consumed, so this skips.
@@ -566,6 +576,25 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // on every pass meant a release deferred by the save guard consumed it
         // anyway, so the net saw nothing left to save and the position was lost.
         if was_dragging.get() && !state_tick.x11_release_persisted.get() {
+            // Record the drop once, on the first pass that sees it.
+            //
+            // This net exists for a release that armed no settle, and that case can
+            // also skip `drag_ended` -- the normal release path records it, this one
+            // never ran. If a layout change landed during the drag, `allows_save`
+            // then answers `false` forever through its "a drag that never ended has
+            // no settled frame" arm, so the net would retry every 100 ms and never
+            // save, and the next launch would restore the position from before the
+            // drag. Recording it here is the same drop, learned one path later.
+            //
+            // Only once: `drag_ended` starts the drag hold, so re-recording every
+            // pass would push the hold's start forward and nothing would ever save.
+            if !drop_recorded.get() {
+                state_tick
+                    .save_guard
+                    .borrow_mut()
+                    .drag_ended(crate::pill::drag_clock_now());
+                drop_recorded.set(true);
+            }
             // A refusal from the save guard is temporary, so the net has to stay
             // armed for it: clearing the marker here is what used to lose the
             // drop, because nothing else would come back for it.
@@ -576,13 +605,16 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             if let Some(pos) = persist_drop_position(&win_tick, &state_tick) {
                 state_tick.x11_drag_applied.set(pos);
                 was_dragging.set(false);
+                drop_recorded.set(false);
             } else if allowed {
                 // The guard allowed it, so no monitor could be resolved: that is
                 // not something a retry can fix.
                 was_dragging.set(false);
+                drop_recorded.set(false);
             }
         } else {
             was_dragging.set(false);
+            drop_recorded.set(false);
         }
 
         // Pick the anchor that decides which monitor owns the pill: the saved
@@ -634,6 +666,10 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             (prev.0 as f64 + center_x, prev.1 as f64 + center_y)
         };
 
+        if save_owed {
+            // The frame tick owns the window until the owed save lands.
+            return ControlFlow::Continue;
+        }
         if let Some((new_x, new_y)) = pill_pos_on_monitor(
             anchor_x,
             anchor_y,

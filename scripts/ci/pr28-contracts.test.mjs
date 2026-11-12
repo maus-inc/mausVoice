@@ -700,6 +700,92 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
   });
 
+  it("spends a cursor-reset once it has been carried out", () => {
+    // `ResetAtCursor` is the only anchor that both places and follows the
+    // pointer. If it survives the placement that satisfied it, every later frame
+    // reads "follow the pointer" and the pill hops to whatever display the
+    // cursor crosses onto -- the chasing a reset exists to stop.
+    const layout = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(layout, /pub fn after_placement\(self\) -> Self/);
+    assert.match(
+      layout,
+      /Self::ResetAtCursor\s*=>\s*Self::ResetAtCurrent/,
+      "the shared rule no longer spends the cursor-reset",
+    );
+    // Both pointer-capable pills must call it on the reset path. GTK's release
+    // path reaches the same place through the X11 timer, which demotes on apply.
+    assert.match(
+      source.macApp,
+      /if reset_placement \{\s*state\.anchor\.set\(state\.anchor\.get\(\)\.after_placement\(\)\);/,
+      "macOS: a cursor-reset is never spent, so the pill keeps chasing the pointer",
+    );
+    assert.match(
+      source.windowsPill,
+      /anchor\.follows_pointer\(\)\s*\{[\s\S]{0,600}?anchor\.after_placement\(\)/,
+      "windowsPill: a cursor-reset is never spent",
+    );
+    assert.match(
+      source.gtkPill,
+      /anchor\.set\(rust_pill_shared::layout::Anchor::ResetAtCurrent\)/,
+      "gtkPill: the applied reset is not demoted",
+    );
+  });
+
+  it("writes the drop the user made, not whatever the retry frame finds", () => {
+    // A refused save leaves `saved_x`/`saved_y` describing the position from
+    // before the drop. If the retry reads the live window instead of remembering
+    // the release, an idle placement in between means the stored position is one
+    // the user never chose.
+    assert.match(
+      source.windowsPill,
+      /drop_origin: Cell::new\(None\)/,
+      "windowsPill: nothing remembers where the drop landed",
+    );
+    assert.match(
+      source.windowsPill,
+      /state\.drop_origin\.set\(Some\(\(x, y\)\)\)/,
+      "windowsPill: the settle never records the drop origin",
+    );
+    const write = scope("windowsPill", "fn write_drag_position(");
+    assert.match(
+      write,
+      /state\.drop_origin\.take\(\)/,
+      "windowsPill: the retry writes the live rect instead of the drop",
+    );
+    assert.match(
+      write,
+      /state\.saved_x\.set\(origin\.0\)/,
+      "windowsPill: the recorded drop does not reach the saved position",
+    );
+  });
+
+  it("starts each drag with no save owed from the last one", () => {
+    // A drop the save guard refused leaves `drag_save_due` armed for the frame
+    // loop to retry. That retry belongs to the gesture the user already finished.
+    // If it survives into the next drag it fires mid-move and stores the window
+    // wherever it happens to be, which is a position nobody chose -- so each
+    // backend disarms it at the moment drag begins. The one place they can all
+    // agree on is the long-press arm, which is the only way into a drag.
+    for (const name of ["gtkPill", "macPill", "windowsPill"]) {
+      const pill = source[name];
+      // Anchor on the arm branch and the pulse that confirms it: both are inside
+      // `elapsed >= LONG_PRESS_DURATION`, so the slice is exactly the transition
+      // into drag. Nothing earlier in the file can satisfy the search.
+      const from = pill.indexOf("elapsed >= LONG_PRESS_DURATION");
+      const to = pill.indexOf(
+        "arm_pulse.set(rust_pill_shared::pulse_armed())",
+        from,
+      );
+      assert.ok(from >= 0 && to > from, `${name}: the arm branch is not recognisable`);
+      const arm = pill.slice(from, to);
+      assert.match(
+        arm,
+        /drag_save_due\.set\(None\)/,
+        `${name}: an owed save from the previous drag survives into this one`,
+      );
+    }
+  });
+
   it("confirms the arm with a pulse that survives the ring's own alpha", () => {
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
       assert.match(pill, /arm_pulse\.set\(rust_pill_shared::pulse_armed\(\)\)/);
@@ -2599,6 +2685,31 @@ describe("native gesture adapter contracts", () => {
       save,
       /state\.pending_drag_position\.set\(false\)/,
       "windowsPill: a consumed pending save is not cleared, so destroy stores it twice",
+    );
+    // Clearing the latch is not the same as having saved. While a save is owed
+    // the retry lives on the frame loop, and there is no frame loop after
+    // `WM_DESTROY`: a write that defers here is a position lost. The latch must
+    // only be cleared on the path that actually writes, so `write_drag_position`
+    // has to be reachable without an early return in between -- and the writer
+    // itself must be the thing that leaves the drop.
+    const write = scope("windowsPill", "fn write_drag_position(");
+    assert.match(
+      save,
+      /write_drag_position\(hwnd, state, now\)/,
+      "windowsPill: the pending save never reaches the writer",
+    );
+    assert.match(
+      write,
+      /state\.drag_save_due\.set\(None\)/,
+      "windowsPill: a written drop leaves a retry owed, so destroy would store it twice",
+    );
+    // The destroy path must not be able to leave work on the frame loop, which
+    // no longer runs. `write_drag_position` defers while the guard refuses, so the
+    // only safe order is: destroy asks, the guard allows, the writer writes.
+    assert.doesNotMatch(
+      destroy,
+      /drag_save_due\.set\(/,
+      "windowsPill: destroy parks a retry that will never run",
     );
   });
 

@@ -16,6 +16,8 @@
 //! cannot read its stored position starts in the default corner, which is
 //! exactly what every launch did before the position was stored.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tauri::Manager;
 
 use rust_pill_shared::edge::MonitorRect;
@@ -98,6 +100,14 @@ pub fn store_published_position(
     };
     let pool = database.pool();
     let saved_at = chrono::Utc::now().timestamp();
+    // A publish that was already in flight when the record was erased describes a
+    // position the user has since cleared. The gate below only refuses writes while
+    // a clear is running, and this one arrives after it, so it has to be dropped on
+    // its own terms.
+    if take_erased_publish() {
+        log::debug!("Dropped a pill position published before the record was erased");
+        return;
+    }
     // The clear runs its own command, so this write is the one that could land
     // after the wipe and put a position the user just erased back on screen at
     // the next launch. Take the same gate every other native write takes.
@@ -123,6 +133,45 @@ pub fn store_published_position(
     }
 }
 
+/// Set right after a clear or a reset, so a `PositionChanged` that was already
+/// queued before it cannot put the row back.
+///
+/// The write gate covers a clear *in progress*, which is not the whole window.
+/// The pill publishes `has_saved_position: true` from the frame that ran before
+/// the clear; the desktop handles it some milliseconds later, after the clear has
+/// finished and reopened the gate. Nothing about that message is stale as far as
+/// the gate is concerned, so it passes the generation check and re-inserts the row
+/// the user just erased -- and the next launch restores it.
+///
+/// The pill is told to forget, and its own state does clear, but the message it
+/// already sent is still in the queue: the instruction cannot retract a value that
+/// is in flight. This latch is the retraction.
+///
+/// One-shot, not sticky. The pill writes its events to stdout and the desktop
+/// reads them in order, so at most one publish can be sitting in the queue when
+/// an erase lands -- a drop publishes once, on the frame it settles. A flag left
+/// set would instead wedge every later save, turning a cleared pill into one that
+/// never remembers its position again.
+static POSITION_ERASED: AtomicBool = AtomicBool::new(false);
+
+fn mark_position_erased() {
+    POSITION_ERASED.store(true, Ordering::Release);
+}
+
+/// Whether this publish was sent before the record was erased, consuming the
+/// discard if so.
+///
+/// `swap` rather than `load`: the caller drops exactly this one message.
+///
+/// The trade is deliberate. If no publish was actually in flight, this swallows
+/// the next genuine one -- a drag dropped immediately after a reset would not be
+/// stored, and the pill would reopen where it was last saved. That is recoverable
+/// in a way the alternative is not: letting the stale publish through recreates
+/// the row the user just cleared, which the clear's whole contract forbids.
+fn take_erased_publish() -> bool {
+    POSITION_ERASED.swap(false, Ordering::AcqRel)
+}
+
 /// Forget the stored position, which is what "Reset Pill Position" means.
 ///
 /// Runs on the same path that tells the pill to re-home, so a reset that the
@@ -132,6 +181,9 @@ pub fn store_published_position(
 /// survives moves the window and then restores the old spot next launch, so the
 /// caller has to be able to tell the difference.
 pub fn clear_saved_position(app: &tauri::AppHandle) -> bool {
+    // Set before the delete, not after: a publish queued behind this call has to
+    // find the latch already closed when it runs.
+    mark_position_erased();
     let Some(database) = app.try_state::<OptionKeyDatabase>() else {
         return false;
     };

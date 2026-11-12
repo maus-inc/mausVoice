@@ -1123,7 +1123,12 @@ fn start_display_poll(window: &gtk::Window, state: &Rc<PillState>, quit_flag: &R
     let window_ref = window.clone();
     let quit_monitor = quit_flag.clone();
     let state_monitor = state.clone();
-    let last_geom: Rc<Cell<(i32, i32, i32, i32)>> = Rc::new(Cell::new((0, 0, 0, 0)));
+    // Which output the pill was homed on, and the geometry it had at the time.
+    // The identity is what answers "is it still there"; the geometry only exists
+    // so a resize can re-home within the same output instead of being mistaken
+    // for its disappearance.
+    type Homed = (gdk::Monitor, (i32, i32, i32, i32));
+    let homed: Rc<RefCell<Option<Homed>>> = Rc::new(RefCell::new(None));
     glib::timeout_add_local(Duration::from_millis(100), move || {
         if quit_monitor.get() {
             return ControlFlow::Break;
@@ -1133,30 +1138,51 @@ fn start_display_poll(window: &gtk::Window, state: &Rc<PillState>, quit_flag: &R
             None => return ControlFlow::Continue,
         };
         // Only re-home the overlay to the pointer's monitor for the FIRST
-        // placement (last_geom is still the sentinel) or while the user is
-        // actively dragging across screens. Chasing the pointer the rest
-        // of the time is what made the pinned pill hop displays whenever
-        // the cursor crossed an edge.
-        // The one exception: when the monitor the pill was homed on gets
-        // DISCONNECTED, the stored geometry stops matching any connected
-        // monitor and the layer-shell surface dies with the dead output —
-        // fall through so the pill is re-homed onto a live monitor.
-        let placed_once = last_geom.get() != (0, 0, 0, 0);
+        // placement or while the user is actively dragging across screens.
+        // Chasing the pointer the rest of the time is what made the pinned pill
+        // hop displays whenever the cursor crossed an edge.
+        //
+        // "Still connected" is asked of the monitor itself, not of its geometry.
+        // Geometry was the older test, and it reads a resize or a rearrange as a
+        // disconnection: the stored rectangle stops matching every connected
+        // monitor, so a pill parked on the screen the user just resized was
+        // yanked onto the pointer's screen. An output keeps its identity across
+        // both, so that is what gets remembered.
+        let placed_once = homed.borrow().is_some();
+        let still_connected = {
+            let homed = homed.borrow();
+            match *homed {
+                Some((ref monitor, _)) => {
+                    (0..display.n_monitors()).any(|i| display.monitor(i).as_ref() == Some(monitor))
+                }
+                None => false,
+            }
+        };
         // A reset with the "cursor" strategy forces one re-home pass onto
         // the pointer's monitor; the strategy is consumed once applied.
         let reset_to_cursor =
             !state_monitor.dragging.get() && state_monitor.anchor.get().follows_pointer();
-        if placed_once && !state_monitor.dragging.get() && !reset_to_cursor {
-            let stored = last_geom.get();
-            let still_connected = (0..display.n_monitors()).any(|i| {
-                display.monitor(i).is_some_and(|monitor| {
-                    let g = monitor.geometry();
-                    (g.x(), g.y(), g.width(), g.height()) == stored
-                })
-            });
-            if still_connected {
-                return ControlFlow::Continue;
+        if placed_once && !state_monitor.dragging.get() && !reset_to_cursor && still_connected {
+            // Still on the same output, so the pointer has no say here. A resize
+            // or a rearrange does change the geometry, though, and the surface
+            // has to be told: re-homing within this monitor is not chasing the
+            // cursor, it is keeping up with the screen the pill already lives on.
+            let resized = {
+                let homed = homed.borrow();
+                match *homed {
+                    Some((ref monitor, geom)) => {
+                        let g = monitor.geometry();
+                        ((g.x(), g.y(), g.width(), g.height()) != geom)
+                            .then(|| (monitor.clone(), (g.x(), g.y(), g.width(), g.height())))
+                    }
+                    None => None,
+                }
+            };
+            if let Some((monitor, geom)) = resized {
+                homed.borrow_mut().replace((monitor.clone(), geom));
+                window_ref.set_monitor(&monitor);
             }
+            return ControlFlow::Continue;
         }
         let seat = match display.default_seat() {
             Some(s) => s,
@@ -1176,8 +1202,12 @@ fn start_display_poll(window: &gtk::Window, state: &Rc<PillState>, quit_flag: &R
         if let Some(monitor) = monitor {
             let g = monitor.geometry();
             let new_geom = (g.x(), g.y(), g.width(), g.height());
-            if new_geom != last_geom.get() {
-                last_geom.set(new_geom);
+            let unchanged = homed
+                .borrow()
+                .as_ref()
+                .is_some_and(|(stored, geom)| *stored == monitor && *geom == new_geom);
+            if !unchanged {
+                homed.borrow_mut().replace((monitor.clone(), new_geom));
                 window_ref.set_monitor(&monitor);
             }
             if reset_to_cursor {
@@ -1391,7 +1421,10 @@ fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
     // and a reset or a forget deliberately leaves them holding the previous
     // position: reconciling against them would re-save a position the user just
     // cleared, on a display the window may no longer be on at all. The applied
-    // origin is what the window was last moved to, so it is the honest answer.
+    // origin is what the window was last moved to, so it is the honest answer --
+    // including after `ForgetPosition`, which drops the record without moving the
+    // window, and which must not be undone by the idle timer below re-deriving a
+    // default corner from a latch that reads as "never placed".
     let (origin_x, origin_y) = state.x11_drag_applied.get();
     let (origin_x, origin_y) = (origin_x as f64, origin_y as f64);
     if is_unapplied(origin_x, origin_y) {
@@ -1436,6 +1469,18 @@ fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
         }
         rust_pill_shared::layout::Relocation::Move { x, y } => {
             x11::move_toplevel(window, x.round() as i32, y.round() as i32);
+            // Record the origin this move applied, before anything can return.
+            //
+            // The latch is what the rest of the file reads as "where the window
+            // is": `x11_pill_center` builds the seam and crossing points from it,
+            // the selector headroom reads its Y, and `publish_saved_geometry`
+            // derives the monitor from it. `move_toplevel` only calls `XMoveWindow`
+            // and cannot update it, so without this the pill keeps being described
+            // at its pre-relocation origin and the record published below can name a
+            // display the window has already left.
+            state
+                .x11_drag_applied
+                .set((x.round() as i32, y.round() as i32));
             // A forget or a reset leaves the pill deliberately unsaved: the move
             // still has to happen, but it must not write the row back.
             if !state.has_saved_position.get() {
@@ -2247,6 +2292,12 @@ fn tick_long_press(state: &PillState, dt: f64) {
         state.long_press_elapsed.set(0.0);
         state.dragging.set(true);
         state.x11_release_persisted.set(false);
+        // A save still owed from the previous gesture belongs to a drop the user
+        // has already made. Left armed, the frame loop's retry would fire during
+        // this drag and store the window while it is moving -- a position nobody
+        // chose. The owed drop was for a gesture that is over, and this one will
+        // produce its own.
+        state.drag_save_due.set(None);
         // Every drag starts by clearing the "a layout change interrupted this"
         // latch. Without this the latch set during one interrupted drag outlived
         // it and refused every later save, so a pill that once had a display pulled

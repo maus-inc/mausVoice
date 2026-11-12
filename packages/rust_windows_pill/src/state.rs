@@ -243,6 +243,13 @@ pub(crate) struct PillState {
     /// the frame loop wants to save but the input lock is held, so a destroy that
     /// arrives before the lock clears can still store it.
     pub(crate) pending_drag_position: Cell<bool>,
+    /// The window origin the settle left behind while a guarded save is owed.
+    ///
+    /// `saved_x`/`saved_y` still describe the position from *before* the drop, so
+    /// they cannot be asked where the pill was released. Keeping the released
+    /// origin here lets the retry write the drop the user made rather than
+    /// whatever it finds on the frame it finally runs.
+    pub(crate) drop_origin: Cell<Option<(i32, i32)>>,
     /// When a drop that the display-change hold refused may be written, or `None`
     /// when no save is owed. The drop is reported once, so a refused save has to
     /// be retried from here or the position is lost.

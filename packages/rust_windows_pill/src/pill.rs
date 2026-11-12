@@ -458,6 +458,19 @@ unsafe fn on_wm_destroy(hwnd: HWND) -> LRESULT {
             if state.pending_drag_position.get() {
                 persist_drag_position(hwnd, state);
             }
+            // A drop the guard refused is still owed, and there is no frame loop
+            // after this message to retry it. Clearing the pending latch above is
+            // not the same as having saved: the writer defers while the guard
+            // refuses, which is exactly the case that would be lost here.
+            //
+            // The layout hold is measured from a clock the process is about to
+            // stop consulting, so the honest choice is to write the drop now
+            // rather than park a retry that will never run. This is the same
+            // reasoning as the pending-position drain above: once this returns,
+            // nothing else comes back for it.
+            if state.drag_save_due.get().is_some() {
+                write_drag_position_unchecked(hwnd, state);
+            }
         }
     });
     unsafe {
@@ -1753,7 +1766,14 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
         &areas,
         (win_w as f64, win_h as f64),
         |_work, _window| (offset, size),
-        |work, window| window_clamp_bounds_for_size(work, window.0, window.1),
+        // Clamp against the footprint the renderer is actually drawing, not one
+        // re-derived from the window size. `live_pill_footprint` is what the
+        // visibility test above uses, and the two have to agree: after a DPI
+        // change widens the window, a footprint centred in the new width drifts
+        // away from the one drawn on the unchanged canvas, and reconciliation
+        // would then clamp the pill to a rectangle it is not occupying -- which can
+        // leave the visible pill past the work-area edge.
+        |work, _window| rust_pill_shared::restore::footprint_bounds(work, offset, size),
     );
 
     match relocation {
@@ -1769,6 +1789,22 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             {
                 state.saved_x.set(cur_x);
                 state.saved_y.set(cur_y);
+                // The origin moved, so the display it names may have with it: a
+                // DPI change can hand the window to the neighbouring display.
+                // Keeping the old token would pair the adopted geometry with the
+                // display the pill just left, and the next launch would restore it
+                // against the wrong panel. Resolved from the pill's own footprint
+                // centre, the same way the `Move` branch below names its display.
+                state
+                    .saved_display_id
+                    .set(rust_pill_shared::layout::display_id_of(
+                        &areas,
+                        (cur_x as f64, cur_y as f64),
+                        (
+                            cur_x as f64 + offset.0 + size.0 / 2.0,
+                            cur_y as f64 + offset.1 + size.1 / 2.0,
+                        ),
+                    ));
             }
         }
         rust_pill_shared::layout::Relocation::Stranded => {
@@ -1840,6 +1876,14 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
     if state.dragging.get() || state.drag_motion.borrow().is_settling() {
         return;
     }
+    // A drop the save guard refused is retried by the frame loop, and until that
+    // retry writes it the window is still standing where the user dropped it.
+    // Parking it here would move it back to `saved_x`/`saved_y` -- the position
+    // from *before* the drop -- and the retry would then store that instead of the
+    // drop, so the refused save would quietly succeed at saving the wrong place.
+    if state.drag_save_due.get().is_some() {
+        return;
+    }
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
@@ -1898,6 +1942,16 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             state
                 .anchor
                 .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
+        } else if anchor.follows_pointer() {
+            // A cursor-reset is spent by being carried out: this lookup succeeded,
+            // so the pill is now homed on the monitor the request named. Left as
+            // `ResetAtCursor`, every later tick reads `follows_pointer` again and
+            // the pill follows the cursor across displays for the rest of the
+            // process -- the chasing a reset exists to end.
+            //
+            // The rule lives in the shared model so the three pills cannot spend
+            // different amounts of it.
+            state.anchor.set(anchor.after_placement());
         }
         let wa = info.rcWork;
         let wa_w = wa.right - wa.left;
@@ -2051,6 +2105,7 @@ fn initial_state(restored: Option<(i32, i32)>, restored_display_id: Option<u64>)
         has_saved_position: Cell::new(restored.is_some()),
         anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
         pending_drag_position: Cell::new(false),
+        drop_origin: Cell::new(None),
         drag_save_due: Cell::new(None),
         saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
         saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
@@ -2343,6 +2398,10 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
     let y = output.y.round() as i32;
     move_window(hwnd, x, y, current.left, current.top);
     if settling && output.settled {
+        // Final frame of the gesture: this origin is the drop. Recorded before the
+        // save so a refusal keeps the place the user released at, not the one the
+        // window happens to drift to before the retry runs.
+        state.drop_origin.set(Some((x, y)));
         persist_drag_position(hwnd, state);
     } else if settling || dragging {
         // The frame loop owns the window, but its position is not final yet. Mark
@@ -2511,6 +2570,11 @@ fn tick_long_press(state: &PillState, dt: f64) {
         state.dragging.set(true);
         *state.last_monitor_topology.borrow_mut() = None;
         state.drag_cancelled.set(false);
+        // A save still owed from the previous gesture belongs to a drop the user
+        // has already made. Left armed, the frame loop's retry would fire during
+        // this drag and store the window while it is moving -- a position nobody
+        // chose. This gesture will produce its own drop.
+        state.drag_save_due.set(None);
         // A display change while this drag is held makes the drop suspect, so the
         // guard has to know a drag is in flight before the change arrives.
         state.save_guard.borrow_mut().drag_started();
@@ -2684,7 +2748,49 @@ fn write_drag_position(hwnd: HWND, state: &PillState, now: f64) {
         state.drag_save_due.set(due);
         return;
     }
-    // Leave the pill where it was dropped instead of snapping back.
+    // Leave the pill where it was dropped instead of snapping back. The recorded
+    // drop wins over the live rect: between the drop and this retry the window can
+    // be moved by things that are not the user -- settling, a restore of the old
+    // position -- and the saved point must be the one they released at.
+    //
+    // `drop_origin` is consumed here so a later gesture cannot inherit a stale one.
+    let origin = state.drop_origin.take().unwrap_or_else(|| {
+        let mut rect = RECT::default();
+        unsafe {
+            let _ = GetWindowRect(hwnd, &mut rect);
+        }
+        (rect.left, rect.top)
+    });
+    state.saved_x.set(origin.0);
+    state.saved_y.set(origin.1);
+    state.has_saved_position.set(true);
+    // The pending drop has been recorded, so no retry is owed.
+    state.drag_save_due.set(None);
+    // Name the display in the same breath as the rect, so the stored record can
+    // recognise this panel after it is unplugged and replugged.
+    let monitor_handle = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    state
+        .saved_display_id
+        .set(monitor_display_id(monitor_handle));
+    let (win_rect, monitor) = current_pill_geometry(hwnd);
+    ipc::send(&OutMessage::PositionChanged {
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            Some(win_rect),
+            monitor,
+            state.saved_display_id.get(),
+        ),
+    });
+}
+
+/// Write the drop without asking the save guard, for a process that is ending.
+///
+/// Every other save consults the guard, because a layout change can make the
+/// frame the window happens to be on something the user did not choose. At
+/// `WM_DESTROY` there is no later frame to prefer and no retry to park: refusing
+/// here does not avoid a bad record, it only guarantees a missing one. The pill's
+/// last position is worth more than the exactness of the frame it was read on.
+fn write_drag_position_unchecked(hwnd: HWND, state: &PillState) {
     let mut rect = RECT::default();
     unsafe {
         let _ = GetWindowRect(hwnd, &mut rect);
@@ -2692,10 +2798,7 @@ fn write_drag_position(hwnd: HWND, state: &PillState, now: f64) {
     state.saved_x.set(rect.left);
     state.saved_y.set(rect.top);
     state.has_saved_position.set(true);
-    // The pending drop has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
-    // Name the display in the same breath as the rect, so the stored record can
-    // recognise this panel after it is unplugged and replugged.
     let monitor_handle = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
     state
         .saved_display_id

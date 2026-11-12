@@ -867,6 +867,12 @@ fn perform_tick() {
                     ctx.state.long_press_elapsed.set(0.0);
                     ctx.state.drag_cancelled.set(true);
                     ctx.state.has_saved_position.set(false);
+                    ctx.state.saved_display_id.set(None);
+                    // A save still owed from the cancelled gesture would publish the
+                    // pre-reset origin once the guard expires, recreating the row the
+                    // reset just dropped -- the same hazard the other two pills clear
+                    // here.
+                    ctx.state.drag_save_due.set(None);
                     ctx.state.drag_motion.borrow_mut().reset();
                     ctx.state.selector_placement.borrow_mut().reset();
                     ctx.state.crossing.borrow_mut().reset();
@@ -887,10 +893,21 @@ fn perform_tick() {
                     });
                 }
                 InMessage::ForgetPosition => {
+                    // A drag still held, or a settle that has not finished, would
+                    // reach `persist_drag_position` on a later frame and publish a
+                    // saved position again -- recreating the row the clear just
+                    // deleted. Cancel the gesture first, the same as the other two
+                    // pills; a drag started after the clear still saves normally.
+                    ctx.state.dragging.set(false);
+                    ctx.state.pointer_down.set(false);
+                    ctx.state.long_press_active.set(false);
+                    ctx.state.drag_cancelled.set(true);
+                    ctx.state.drag_motion.borrow_mut().reset();
                     // Stop treating where the pill is sitting as the saved position.
                     // Local data was just cleared, and the next `RequestPosition`
                     // republishes this flag, so leaving it set would write the row back.
                     ctx.state.has_saved_position.set(false);
+                    ctx.state.saved_display_id.set(None);
                     // A clear drops the record without moving the window, and it also
                     // cancels any placement still owed: a pill the user has been
                     // looking at must not follow the pointer because a database was
@@ -1783,6 +1800,11 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         // Enter drag mode directly (skip balloon pop for snappy interaction).
         state.dragging.set(true);
         state.drag_cancelled.set(false);
+        // A save still owed from the previous gesture belongs to a drop the user
+        // has already made. Left armed, the frame loop's retry would fire during
+        // this drag and store the window while it is moving -- a position nobody
+        // chose. This gesture will produce its own drop.
+        state.drag_save_due.set(None);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
         state.arm_pulse.set(rust_pill_shared::pulse_armed());
 
@@ -2029,6 +2051,14 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             state
                 .anchor
                 .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
+        }
+        // A cursor-reset is spent by carrying it out, on the same rule as the
+        // launch placement above but without touching its one-shot latch: left as
+        // `ResetAtCursor`, every later tick reads "follow the pointer" again and
+        // the pill hops to whichever display the cursor crosses onto. The reset
+        // asked to be re-homed once, not to be chased.
+        if reset_placement {
+            state.anchor.set(state.anchor.get().after_placement());
         }
         let context = AnchorContext {
             dragging,
@@ -2382,6 +2412,14 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
                 if frame.origin.x != state.saved_x.get() || frame.origin.y != state.saved_y.get() {
                     state.saved_x.set(frame.origin.x);
                     state.saved_y.set(frame.origin.y);
+                    // The origin moved, so the display it names may have changed
+                    // with it: the system can place a window on the neighbour when
+                    // a DPI change resizes it. Keeping the old token would publish
+                    // the new geometry under the display the pill just left, and the
+                    // next launch would restore it against the wrong panel.
+                    // `current_id` already resolved the window's screen above, with
+                    // the remembered token as its own fallback.
+                    state.saved_display_id.set(current_id);
                 }
             }
         }
@@ -2620,7 +2658,16 @@ unsafe fn setup(
                     NSSize::new(window_w, window_h),
                 ))
             }
-            rust_pill_shared::restore::Placement::PlatformDefault => None,
+            rust_pill_shared::restore::Placement::PlatformDefault => {
+                // The platform chooses the placement, so the record's display is
+                // not where this pill is. Leaving `restored_display_id` unset here
+                // used to fall through to the *record's* token below, which named
+                // the display that just went away -- the very case that produced
+                // this default. Without a position there is nothing to name, and
+                // matching on geometry is what a nameless record does.
+                restored_display_id = None;
+                None
+            }
         }
     });
 
@@ -2708,9 +2755,15 @@ unsafe fn setup(
         has_saved_position: Cell::new(restored.is_some()),
         saved_x: Cell::new(restored.map_or(0.0, |window| window.origin.x)),
         saved_y: Cell::new(restored.map_or(0.0, |window| window.origin.y)),
-        saved_display_id: Cell::new(
-            restored_display_id.or_else(|| saved_position.and_then(|window| window.display_id)),
-        ),
+        // Only a restored record may name a display. Once `Placement::Restore`
+        // has run, `restored_display_id` is the display the pill actually landed
+        // on; with no placement, the record's own token names a display this
+        // process never went to, so it is dropped rather than carried.
+        saved_display_id: Cell::new(if restored.is_some() {
+            restored_display_id.or_else(|| saved_position.and_then(|window| window.display_id))
+        } else {
+            None
+        }),
         drag_save_due: Cell::new(None),
         save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
         layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),

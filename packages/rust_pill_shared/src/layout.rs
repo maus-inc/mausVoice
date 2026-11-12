@@ -546,6 +546,21 @@ impl Anchor {
     pub fn from_forget() -> Self {
         Self::Cleared
     }
+
+    /// The anchor once a cursor-reset has been carried out.
+    ///
+    /// A reset that follows the pointer is a request to re-home onto the monitor
+    /// under the cursor, not a standing instruction to keep following it. Left as
+    /// `ResetAtCursor`, every later placement reads "follow the pointer" again and
+    /// the pill hops to whichever display the cursor is on -- the exact chasing a
+    /// reset is supposed to end. The request is spent by carrying it out, so what
+    /// remains is the pill's own display.
+    pub fn after_placement(self) -> Self {
+        match self {
+            Self::ResetAtCursor => Self::ResetAtCurrent,
+            other => other,
+        }
+    }
 }
 
 /// What the anchor is, given whether a position is stored and whether a restart
@@ -1390,6 +1405,44 @@ pub(crate) mod tests {
         assert_eq!(cleared, Anchor::Cleared);
         assert!(!cleared.places());
         assert!(!cleared.follows_pointer());
+    }
+
+    /// Carrying out a cursor-reset has to end it. An anchor left as
+    /// `ResetAtCursor` reads "follow the pointer" on every later placement, so a
+    /// pill re-homed once keeps re-homing as the cursor crosses displays.
+    #[test]
+    fn a_cursor_reset_is_spent_by_being_carried_out() {
+        let requested = Anchor::from_reset(true);
+        assert!(requested.follows_pointer());
+
+        let after = requested.after_placement();
+        assert_eq!(after, Anchor::ResetAtCurrent);
+        assert!(
+            !after.follows_pointer(),
+            "the reset follows the pointer again"
+        );
+        assert!(after.places(), "spending the request is not a clear");
+
+        // Spending is idempotent: a second frame must not move it on again.
+        assert_eq!(after.after_placement(), after);
+
+        // Every other anchor is left alone. A clear in particular must stay
+        // cleared, or the placement the clear cancelled comes back.
+        for anchor in [
+            Anchor::Saved,
+            Anchor::LaunchAtCursor,
+            Anchor::ResetAtCurrent,
+            Anchor::Cleared,
+        ] {
+            let before = (anchor.places(), anchor.follows_pointer());
+            let spent = anchor.after_placement();
+            assert_eq!(
+                (spent.places(), spent.follows_pointer()),
+                before,
+                "after_placement changed what {anchor:?} means"
+            );
+        }
+        assert_eq!(Anchor::Cleared.after_placement(), Anchor::Cleared);
     }
 
     // -- Fractions ---------------------------------------------------------

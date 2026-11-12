@@ -11,6 +11,19 @@
 # from the repository itself.
 set -eu
 
+# `set -e` does not fire inside an AND-OR list, and the documented invocation is
+# `. ./setup-toolchain.sh && <cargo command>` -- so the whole script runs as the
+# left side of `&&` and a failed step would not stop it. Every step that matters
+# therefore reports its own failure, and the script says whether it is ready
+# rather than letting the caller assume it.
+#
+# `return` only works when this file is sourced, and `exit` only when it is
+# executed; the pair below does both. It has to be used at top level, not from
+# inside a function, or `return` would leave the function instead of the script.
+_fail() {
+  echo "setup-toolchain: $1" >&2
+}
+
 SV=/tmp/vend
 PREFIX=/tmp/rust-tools
 # Private so the sandbox never writes into the developer's own Cargo state.
@@ -23,29 +36,50 @@ if [ ! -x "$PREFIX/bin/cargo" ]; then
   mkdir -p "$SV"
   ( cd "$REPO" \
     && git fetch --depth=1 origin vendor/sandbox-toolchain >/dev/null 2>&1 \
-    && git archive FETCH_HEAD rust system | tar -x -C "$SV" )
+    && git archive FETCH_HEAD rust system | tar -x -C "$SV" ) || {
+    _fail "could not fetch the vendored payload from vendor/sandbox-toolchain"
+    return 1 2>/dev/null || exit 1
+  }
 
   echo "== installing rust 1.88.0 ==" >&2
   mkdir -p "$PREFIX"
   for t in "$SV"/rust/toolchain/*-1.88.0-*.tar.xz; do
     d=$(mktemp -d)
-    tar xJf "$t" -C "$d"
-    "$d"/*/install.sh --prefix="$PREFIX" --disable-ldconfig >/dev/null
+    tar xJf "$t" -C "$d" || {
+      _fail "could not unpack $t"
+      return 1 2>/dev/null || exit 1
+    }
+    "$d"/*/install.sh --prefix="$PREFIX" --disable-ldconfig >/dev/null || {
+      _fail "could not install the 1.88.0 toolchain from $t"
+      return 1 2>/dev/null || exit 1
+    }
     rm -rf "$d"
   done
 
   echo "== cross-target standard libraries ==" >&2
   for t in x86_64-pc-windows-msvc aarch64-apple-darwin; do
     d=$(mktemp -d)
-    tar xJf "$SV/rust/targets/$t/rust-std-1.88.0.tar.xz" -C "$d"
-    cp -r "$d"/rust-std-1.88.0-"$t"/rust-std-"$t"/lib/rustlib/"$t" "$PREFIX"/lib/rustlib/
+    tar xJf "$SV/rust/targets/$t/rust-std-1.88.0.tar.xz" -C "$d" || {
+      _fail "could not unpack the $t standard library"
+      return 1 2>/dev/null || exit 1
+    }
+    cp -r "$d"/rust-std-1.88.0-"$t"/rust-std-"$t"/lib/rustlib/"$t" "$PREFIX"/lib/rustlib/ || {
+      _fail "could not install the $t standard library"
+      return 1 2>/dev/null || exit 1
+    }
     rm -rf "$d"
   done
 
   echo "== unpacking the cargo vendor tree ==" >&2
-  cat "$SV"/rust/cargo-vendor.tar.xz.part-* > /tmp/cargo-vendor.tar.xz
+  cat "$SV"/rust/cargo-vendor.tar.xz.part-* > /tmp/cargo-vendor.tar.xz || {
+    _fail "could not assemble the cargo vendor archive"
+    return 1 2>/dev/null || exit 1
+  }
   mkdir -p /tmp/cargo-vendor
-  tar xJf /tmp/cargo-vendor.tar.xz -C /tmp/cargo-vendor
+  tar xJf /tmp/cargo-vendor.tar.xz -C /tmp/cargo-vendor || {
+    _fail "could not unpack the cargo vendor tree"
+    return 1 2>/dev/null || exit 1
+  }
   rm -f /tmp/cargo-vendor.tar.xz
 fi
 
@@ -69,9 +103,15 @@ fi
 
 if [ ! -d /tmp/sysroot/usr/include/gtk-3.0 ]; then
   echo "== joining the debian sysroot ==" >&2
-  cat "$SV"/system/debian12-dev-sysroot.tar.xz.part-* > /tmp/sysroot.tar.xz
+  cat "$SV"/system/debian12-dev-sysroot.tar.xz.part-* > /tmp/sysroot.tar.xz || {
+    _fail "could not assemble the sysroot archive"
+    return 1 2>/dev/null || exit 1
+  }
   mkdir -p /tmp/sysroot
-  tar xJf /tmp/sysroot.tar.xz -C /tmp/sysroot
+  tar xJf /tmp/sysroot.tar.xz -C /tmp/sysroot || {
+    _fail "could not unpack the debian sysroot"
+    return 1 2>/dev/null || exit 1
+  }
   rm -f /tmp/sysroot.tar.xz
 fi
 
@@ -83,5 +123,13 @@ export PKG_CONFIG="$SV/system/tools/bin/pkg-config"
 export PKG_CONFIG_SYSROOT_DIR=/tmp/sysroot
 export PKG_CONFIG_PATH=/tmp/sysroot/usr/lib/x86_64-linux-gnu/pkgconfig:/tmp/sysroot/usr/share/pkgconfig
 export LIBCLANG_PATH=/tmp/sysroot/usr/lib/llvm-14/lib
+
+# Readiness is `cargo` actually answering, not the last command having run.
+# Checked separately so a toolchain that unpacked but cannot execute is reported
+# instead of announced as ready.
+if ! cargo --version >/dev/null 2>&1; then
+  _fail "cargo is not runnable after setup; PATH is $PATH"
+  return 1 2>/dev/null || exit 1
+fi
 
 echo "toolchain ready: $(cargo --version)" >&2
