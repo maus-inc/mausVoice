@@ -502,7 +502,7 @@
   "how_long_the_assistant_waits_for_approval_before_denying_a_t": "助手在拒绝工具调用前等待批准的时长。",
   "how_long_to_stay_open_after_each_dictation": "每次听写结束后保持打开的时间",
   "how_mausvoice_listens_and_what_it_does_with_the_words_it_hea": "mausVoice 如何聆听以及如何处理听到的内容。",
-  "how_much_speech_to_keep_from_just_before_you_press_so_a_word": "How much speech to keep from just before you press, so a word you start early is not cut off. This needs the microphone to already be open: turn on keep-ready or a post-dictation window for it to apply.",
+  "how_much_speech_to_keep_from_just_before_you_press_so_a_word": "按下前保留多少语音，以免提前开口说出的词被截断。这需要麦克风已经打开：请开启“保持就绪”或听写后保留窗口，此项才会生效。",
   "how_text_is_inserted_into_applications": "文本如何插入到应用程序中",
   "how_the_pill_the_menu_bar_icon_and_celebrations_look_and_beh": "悬浮条、菜单栏图标和庆祝效果的外观与行为。",
   "how_you_appear_in_mausvoice_and_the_name_it_writes_with_on_y": "你在 mausVoice 中的显示方式，以及它代你书写时使用的名称。",

@@ -502,7 +502,7 @@
   "how_long_the_assistant_waits_for_approval_before_denying_a_t": "어시스턴트가 도구 호출을 거부하기 전까지 승인을 기다리는 시간입니다.",
   "how_long_to_stay_open_after_each_dictation": "받아쓰기마다 열린 상태로 유지할 시간",
   "how_mausvoice_listens_and_what_it_does_with_the_words_it_hea": "mausVoice가 듣는 방식과 들은 단어를 처리하는 방식을 설명합니다.",
-  "how_much_speech_to_keep_from_just_before_you_press_so_a_word": "How much speech to keep from just before you press, so a word you start early is not cut off. This needs the microphone to already be open: turn on keep-ready or a post-dictation window for it to apply.",
+  "how_much_speech_to_keep_from_just_before_you_press_so_a_word": "누르기 직전의 음성을 얼마나 보관할지 정합니다. 일찍 시작한 단어가 잘리지 않습니다. 마이크가 이미 열려 있어야 하므로, 적용하려면 ‘준비 상태 유지’ 또는 받아쓰기 후 유지 시간을 켜세요.",
   "how_text_is_inserted_into_applications": "애플리케이션에 텍스트가 삽입되는 방식",
   "how_the_pill_the_menu_bar_icon_and_celebrations_look_and_beh": "팰, 메뉴 막대 아이콘, 축하 효과의 모양과 동작입니다.",
   "how_you_appear_in_mausvoice_and_the_name_it_writes_with_on_y": "mausVoice에서 표시되는 방식과 mausVoice가 대신 작성할 때 사용하는 이름입니다.",

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { waitForTruthy } from "../verify/cdp.mjs";
+import { waitForTruthy } from "../verify/wait-for-truthy.mjs";
 
 // A clock the test moves by hand, so these run instantly and without sleeping.
 const manualClock = (start = 0) => {

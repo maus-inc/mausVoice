@@ -57,14 +57,11 @@ export const MicrophoneReadinessSideEffects = () => {
     (state) => state.userPrefs?.microphoneLingerMs ?? 0,
   );
   // The device a press will ask for, read here so the hold opens the same one.
-  // Read from the ref below rather than closed over, because `hold` is created
-  // once and must not carry a stale copy: changing the microphone re-runs the
-  // effect, which opens again through the same callback.
+  // Passed down to `hold` by each caller rather than stashed in a ref: a ref
+  // write during render is the one thing React may replay or throw away.
   const preferredMicrophone = useAppStore(
     (state) => state.onboarding.preferredMicrophone ?? null,
   );
-  const preferredMicrophoneRef = useRef(preferredMicrophone);
-  preferredMicrophoneRef.current = preferredMicrophone;
   const isRecording = useAppStore(
     (state) => state.activeRecordingMode !== null,
   );
@@ -282,18 +279,23 @@ export const MicrophoneReadinessSideEffects = () => {
     holdFailedRef.current = null;
   }, []);
 
-  /** Opens or resizes the hold, depending on whether one is already applied. */
+  /**
+   * Opens or resizes the hold, depending on whether one is already applied.
+   *
+   * The device is an argument rather than something read from a ref here. Each
+   * caller records that same value in `openedPrerollRef`, and the two have to be
+   * one snapshot: a ref written during render can be replayed or discarded by
+   * React, so the value `hold` opened with could differ from the one the caller
+   * recorded -- and then the next focus would compare against a device the
+   * stream was never opened on.
+   */
   const hold = useCallback(
-    (seconds: number) => {
+    (seconds: number, device: string | null) => {
       heldRef.current = true;
       const request = ++requestRef.current;
       logOnRejection(
         commands
-          .warmMicrophone(
-            seconds,
-            MICROPHONE_READY_FOREVER_MS,
-            preferredMicrophoneRef.current,
-          )
+          .warmMicrophone(seconds, MICROPHONE_READY_FOREVER_MS, device)
           .then((result) => {
             if (requestRef.current !== request) {
               // The answer arrived for a request this window has already
@@ -481,11 +483,13 @@ export const MicrophoneReadinessSideEffects = () => {
     // rather than on `appliedRef`: that only changes when the decision changes,
     // and a slider move does not change it.
     appliedRef.current = "open";
+    // One snapshot for both: the value recorded here is the value handed to
+    // `hold`, so a later comparison cannot disagree with what was opened.
     openedPrerollRef.current = {
       preroll: prerollSeconds,
       device: preferredMicrophone,
     };
-    hold(prerollSeconds);
+    hold(prerollSeconds, preferredMicrophone);
   }, [
     enabled,
     prefsLoaded,
@@ -739,12 +743,10 @@ export const MicrophoneReadinessSideEffects = () => {
       // that attempt did not leave a stream behind.
       const state = getAppState();
       const preroll = state.userPrefs?.microphonePrerollSeconds ?? 0.5;
-      openedPrerollRef.current = {
-        preroll,
-        device: state.onboarding.preferredMicrophone ?? null,
-      };
+      const device = state.onboarding.preferredMicrophone ?? null;
+      openedPrerollRef.current = { preroll, device };
       appliedRef.current = "open";
-      hold(preroll);
+      hold(preroll, device);
     };
     const onFocus = () => {
       // The listener itself cannot be async: `addEventListener` ignores the

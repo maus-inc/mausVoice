@@ -51,6 +51,8 @@ on:
       - "scripts/ci/release-notes.test.mjs"
       - "scripts/ci/verify-sherpa-archives.test.mjs"
       - "scripts/ci/warm-microphone-edge-cases.test.mjs"
+      - "scripts/ci/verify-wait-for-truthy.test.mjs"
+      - "scripts/verify/wait-for-truthy.mjs"
       # The matrix itself: editing a row is editing the thing this suite
       # asserts, so it has to start the job that checks it.
       - "docs/qa/warm-microphone-edge-cases.md"
@@ -304,6 +306,14 @@ jobs:
         # reads the markdown and the source tree, needs no build, and was the
         # one `scripts/ci` guard no workflow ran.
         run: node --test scripts/ci/warm-microphone-edge-cases.test.mjs
+      - name: Test the wait-for-truthy polling helper
+        # `waitForTruthy` decides whether a page was ready or the script gave
+        # up, and every verify script's pass/fail rests on that answer being
+        # right; its deadline branch is what a timeout report depends on. It had
+        # a test and no workflow ran it, which is the state the hygiene guard
+        # exists to catch -- it only surfaced when the helper moved out of
+        # `cdp.mjs` and the guard re-read the tree.
+        run: node --test scripts/ci/verify-wait-for-truthy.test.mjs
       - name: Test Windows-only Rust module imports
         # No runner in this repository compiles
         # apps/desktop/src-tauri/src/platform/windows/** on Linux, so an

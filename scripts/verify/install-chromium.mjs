@@ -60,7 +60,13 @@ const unpackTar = (archive, into) => {
 // launch. Rather than teach the guard what a complete tree contains -- a list
 // that goes stale whenever the package changes -- the tree is either whole or
 // absent.
-const STAGING = `${OUT}.partial`;
+// Per-process, not shared. Two verifier scripts starting cold at the same time
+// both land here, and a shared staging path means each sees the other's
+// half-extracted tree: the first to notice reports it as foreign and throws, so
+// simultaneous cold runs failed for a reason that had nothing to do with either
+// of them. The rename onto `OUT` is still atomic, so the loser of that race
+// either finds a complete tree already there or replaces it wholesale.
+const STAGING = `${OUT}.partial-${process.pid}`;
 
 // Written into STAGING just before the rename, so a directory that carries it is
 // one this script produced. Its absence is what lets the guard below refuse to
@@ -84,7 +90,7 @@ if (existsSync(path.join(OUT, "chromium"))) {
     }
     rmSync(OUT, { recursive: true, force: true });
   }
-  // `STAGING` is `OUT.partial`, and `OUT` is caller-supplied, so this is a
+  // `STAGING` is `OUT.partial-<pid>`, and `OUT` is caller-supplied, so this is a
   // recursive delete of a path the caller chose one suffix away from. A `--dir`
   // of `/tmp/work` makes this `/tmp/work.partial`, which may well be somebody
   // else's directory. The same rule the guard above applies to `OUT` applies
