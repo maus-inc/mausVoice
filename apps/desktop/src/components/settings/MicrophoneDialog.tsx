@@ -152,10 +152,17 @@ export const MicrophoneDialog = () => {
     (next: MicrophoneOption[]) => setDevices(next),
     [],
   );
-  // `undefined` when the selected device is not in the list -- unplugged, or on
-  // a host that is not enumerating -- which is what lets the label fallback run.
+  // `undefined` when the device is not in the list -- unplugged, or on a host
+  // that is not enumerating -- which is what lets the label fallback run.
+  //
+  // Resolved for the *saved* preference, not the draft. The hold and the next
+  // press both read `onboarding.preferredMicrophone`, which only changes when
+  // the dialog saves, so a warning derived from the draft can disagree with the
+  // device that is actually held in both directions: pick the built-in
+  // microphone without saving and it clears while the headset stays held; pick
+  // a headset without saving and it warns about a device nothing has opened.
   const microphoneBluetooth = devices.find(
-    (device) => device.value === selected,
+    (device) => device.value === savedPreference,
   )?.bluetooth;
 
   // The dialog is taller than a short window, and the content is clipped
@@ -172,15 +179,17 @@ export const MicrophoneDialog = () => {
   // hold lasts. The switch's own copy promises the indicator and nothing else,
   // which is true and not the whole cost.
   //
-  // The selection, not the saved preference: a headset picked but not yet saved
-  // is still the device the next press opens, so the warning has to follow the
-  // control rather than the row in the database. The flag comes from the
+  // The saved preference, because that is the device this warning is about: the
+  // cost is paid by a hold, and a hold opens what is saved. A draft selection
+  // has opened nothing yet, so warning about it would be describing a future
+  // the user has not committed to -- and it would clear while a headset was
+  // still held if they picked something else. The flag comes from the
   // selector's device list because the backend is the one that decided it; the
-  // label is the fallback for a stored device that is not in the list right now.
+  // label is the fallback for a saved device that is not in the list right now.
   const bluetoothWarning =
     keepReady &&
     isSelectedDeviceBluetooth({
-      label: selected,
+      label: savedPreference,
       bluetoothFlag: microphoneBluetooth,
     });
 

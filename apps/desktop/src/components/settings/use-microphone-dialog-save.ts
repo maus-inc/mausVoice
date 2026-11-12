@@ -46,6 +46,10 @@ export const useMicrophoneDialogSave = ({
   // click dispatched before React re-renders, and that second click would start
   // a second write.
   const saveInFlight = useRef(false);
+  // Whether the dialog was open on the previous effect run, which is how the
+  // effect tells "just opened, reset" from "already open, a preference changed
+  // elsewhere".
+  const wasOpen = useRef(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
 
@@ -57,17 +61,34 @@ export const useMicrophoneDialogSave = ({
     revealFeedback(contentRef.current, feedbackRef.current);
   }, [saveError]);
 
-  // Reset the draft when the dialog opens. `savedPreference` is in the
-  // dependencies because a preference changed in another window while this one
-  // was closed still has to be what the dialog shows.
+  // Reset the draft when the dialog opens, and follow the saved value while the
+  // draft is clean. `savedPreference` is in the dependencies because a
+  // preference changed in another window while this one was closed still has to
+  // be what the dialog shows.
+  //
+  // A dirty draft is *not* overwritten. The preference refreshes in the
+  // background, so saving on one window or an onboarding write can update the
+  // saved value while this dialog is open with an unsaved choice in it --
+  // replacing that choice silently discards what the user just picked and
+  // disables Save, with nothing on screen to say why.
   useEffect(() => {
     if (!open) {
+      // Forgotten while closed, so reopening always starts from the saved value
+      // even if the last visit left something unsaved behind.
+      wasOpen.current = false;
+      return;
+    }
+    const justOpened = !wasOpen.current;
+    wasOpen.current = true;
+    if (!justOpened && hasChanges) {
+      // Mid-session refresh with a draft on screen: not this effect's to
+      // overwrite.
       return;
     }
     setSelected(savedPreference);
     setHasChanges(false);
     setSaveError(false);
-  }, [open, savedPreference]);
+  }, [open, savedPreference, hasChanges]);
 
   const selectDevice = useCallback(
     (next: Nullable<string>) => {

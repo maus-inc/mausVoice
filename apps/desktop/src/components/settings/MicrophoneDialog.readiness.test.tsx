@@ -4,6 +4,8 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { readRepoSource } from "../../../test/helpers/rust-source.utils";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 
 const { getUserPreferences, setUserPreferences, loggerMock } = vi.hoisted(
@@ -232,6 +234,31 @@ describe("MicrophoneDialog readiness settings", () => {
     // The warning is useless if it fires on every device: a user who sees it
     // on their built-in microphone learns to ignore it.
     expect(text()).not.toContain("This is a Bluetooth microphone");
+  });
+
+  it("takes the Bluetooth warning from the saved microphone, not the draft", async () => {
+    // The warning is about a hold, and a hold opens the *saved* preference; a
+    // draft selection has opened nothing. The selector is mocked here, so this
+    // asserts the source of the decision rather than a click: the label handed
+    // to `isSelectedDeviceBluetooth` has to be the saved value. Deriving it from
+    // the draft let the warning clear while the headset stayed held.
+    produceAppState((draft) => {
+      draft.userPrefs = prefs({
+        keepMicrophoneReady: true,
+        preferredMicrophone: "Jabra Evolve2 65 Hands-Free",
+      });
+    });
+    await renderDialog();
+
+    expect(text()).toContain("This is a Bluetooth microphone");
+
+    const source = readRepoSource(
+      "apps/desktop/src/components/settings/MicrophoneDialog.tsx",
+    );
+    const call = source.split("isSelectedDeviceBluetooth({")[1]?.split("})")[0];
+    expect(call, "the Bluetooth decision point is missing").toBeDefined();
+    expect(call).toContain("label: savedPreference");
+    expect(call).not.toContain("label: selected");
   });
 
   it("does not warn about Bluetooth while the device is not being held", async () => {
