@@ -17,7 +17,9 @@ on:
       - "scripts/ci/fallow.test.mjs"
       - ".fallowrc.json"
       - ".github/workflows/lint-desktop.yml"
-permissions: {}
+permissions:
+  contents: read
+  pull-requests: read
 
 # trigger-manual: false
 
@@ -92,11 +94,32 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build dependencies
         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
+      - name: Resolve Fallow baseline
+        if: matrix.os == 'ubuntu-22.04'
+        id: fallow-baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          pr_base="$(gh pr list --repo "$GITHUB_REPOSITORY" \
+            --head "$GITHUB_REF_NAME" \
+            --state open --json baseRefName --jq '.[0].baseRefName // empty')"
+          if [ -n "$pr_base" ]; then
+            echo "branch=$pr_base" >> "$GITHUB_OUTPUT"
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; then
+            echo "branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "sha=$PUSH_BEFORE" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          fi
       - name: Test Fallow integration
         if: matrix.os == 'ubuntu-22.04'
         env:
-          BASE_SHA: ${{ github.event.before }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ steps.fallow-baseline.outputs.sha }}
+          DEFAULT_BRANCH: ${{ steps.fallow-baseline.outputs.branch }}
         run: node --test scripts/ci/fallow.test.mjs
       - name: Lint TypeScript
         if: matrix.os == 'ubuntu-22.04'

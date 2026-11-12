@@ -833,15 +833,19 @@ pub fn run(receiver: Receiver<InMessage>) {
                                 );
                             }
                         }
-                    } else if review_id.is_some()
-                        && review_id != previous_review_id
-                        && backend_tick == Backend::LayerShell
-                    {
+                    } else if review_id.is_some() && review_id != previous_review_id {
                         // A new review can arrive while the editor widget is
-                        // still visible from the prior review. Restore the
-                        // keyboard mode explicitly; visibility-transition
+                        // still visible from the prior review. Restore its
+                        // keyboard acceptance explicitly; visibility-transition
                         // focus setup below will not run in that case.
-                        win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+                        match backend_tick {
+                            Backend::LayerShell => {
+                                win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+                            }
+                            Backend::X11 | Backend::PlainWayland => {
+                                win_tick.set_accept_focus(true);
+                            }
+                        }
                     }
                     let review_accessible_name = review
                         .as_ref()

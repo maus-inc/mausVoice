@@ -462,12 +462,49 @@ describe("PasteTool review", () => {
       ),
     ).resolves.toEqual({ awaitingManualPaste: true });
 
-    expect(showToastMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: expect.stringContaining("Open Chats"),
-        toastType: "info",
-      }),
+    await vi.waitFor(() =>
+      expect(showToastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("Open Chats"),
+          toastType: "info",
+        }),
+      ),
     );
+  });
+
+  it("settles Open after saving even when Chats navigation stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      emitMock.mockImplementationOnce(() => new Promise<void>(() => {}));
+      reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+        async (
+          _text: string,
+          _source: string,
+          options?: { onOpen?: (text: string) => Promise<void> },
+        ) => {
+          await options?.onOpen?.("saved before navigation");
+          return null;
+        },
+      );
+
+      await expect(
+        new PasteTool(toolInfo).execute(
+          { text: "agent version" },
+          { conversationId: "conv-1" },
+        ),
+      ).resolves.toEqual({ awaitingManualPaste: true });
+      expect(createPendingPasteReviewMock).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(showToastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("Open Chats"),
+          toastType: "info",
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not navigate if the Open save finishes after its timeout", async () => {

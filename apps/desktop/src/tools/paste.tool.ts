@@ -40,6 +40,41 @@ const savePendingPasteReview = async (
   }
 };
 
+const requestOpenChatsNavigation = (conversationId: string): void => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error("Opening Chats for the Paste review timed out")),
+      PASTE_CHAT_NAVIGATION_TIMEOUT_MS,
+    );
+  });
+  void Promise.race([
+    emit("open-pill-conversation", {
+      conversationId,
+      pendingPasteReview: true,
+    }),
+    timedOut,
+  ])
+    .catch((error: unknown) => {
+      getLogger().warning(
+        `Could not open the saved Paste review in Chats: ${error}`,
+      );
+      runToast(
+        showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Your Paste review was saved. Open Chats to find it and finish the paste.",
+          }),
+          toastType: "info",
+          duration: 8000,
+        }),
+      );
+    })
+    .finally(() => {
+      if (timeout !== undefined) clearTimeout(timeout);
+    });
+};
+
 type PasteReviewState = {
   openedPendingPaste: boolean;
   copiedReviewedText: boolean;
@@ -65,6 +100,7 @@ const createPasteReviewState = (): PasteReviewState => ({
 });
 
 const PASTE_REVIEW_CLEANUP_TIMEOUT_MS = 5_000;
+const PASTE_CHAT_NAVIGATION_TIMEOUT_MS = 5_000;
 
 const cancelUnusedPendingReview = (state: PasteReviewState): void => {
   if (
@@ -219,26 +255,9 @@ const openPendingPasteInChats = async (
     );
     if (signal?.aborted) return;
     state.openedPendingPaste = true;
-    try {
-      await emit("open-pill-conversation", {
-        conversationId,
-        pendingPasteReview: true,
-      });
-    } catch (error) {
-      // The durable card is still available in Chats even if native surfacing
-      // or navigation could not be requested.
-      getLogger().warning(`Could not open the Paste review in Chats: ${error}`);
-      runToast(
-        showToast({
-          message: getIntl().formatMessage({
-            defaultMessage:
-              "Your Paste review was saved. Open Chats to find it and finish the paste.",
-          }),
-          toastType: "info",
-          duration: 8000,
-        }),
-      );
-    }
+    // Durable persistence completes the review. Navigation is best-effort and
+    // must not leave Open retryable after the card is already committed.
+    requestOpenChatsNavigation(conversationId);
   } finally {
     state.activeOpenSaves -= 1;
     cancelUnusedPendingReview(state);
