@@ -704,6 +704,33 @@ export const MicrophoneReadinessSideEffects = () => {
       if (held === null || !ownsRetry(held)) {
         return;
       }
+      // The preference is re-read before opening, not trusted from the store.
+      //
+      // Another window can turn keep-ready off while this one still holds the
+      // old value: the broadcast that tells it is a separate round trip, and a
+      // focus landing in that gap would reopen a microphone the user just
+      // switched off. Nothing downstream would close it again, because this
+      // window's own preference is about to become false and the release path
+      // only fires on a *change*. Opening is the one step worth a round trip:
+      // closing the wrong microphone is cheap to correct, opening one the user
+      // turned off is not.
+      try {
+        await refreshCurrentUser();
+      } catch (error) {
+        // A failed re-read must not open on the stale value: the whole point of
+        // the round trip is that this window's copy might be out of date, so an
+        // answer of "could not tell" declines rather than guessing.
+        getLogger().warning(
+          `Could not re-read the preference before reopening the microphone: ${error}`,
+        );
+        return;
+      }
+      // The decision is re-made on what the re-read just wrote. The store has
+      // the preference from after the round trip now, so this is the second time
+      // `shouldHoldNow` is asked -- and the one that matters.
+      if (!ownsRetry(held)) {
+        return;
+      }
       // Re-read rather than trust `ownsRetry`: `shouldHoldNow` is a separate
       // function, so TypeScript cannot carry its narrowing across the call, and
       // the store can be read again without changing the decision it just made.

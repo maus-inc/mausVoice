@@ -422,7 +422,13 @@ fn refresh_warm_device(app_handle: &tauri::AppHandle) {
     let Some(warm) = warm_capture(app_handle) else {
         return;
     };
-    if !warm.is_ready() {
+    // `has_held_stream`, not `is_ready`: the second question is "can a press use
+    // this", and a stream that stopped delivering answers no. That is exactly the
+    // stream a device change should replace, and gating on readiness meant the
+    // refresh was skipped for the one case it exists to fix. `refresh_device`
+    // already returns on its own when the slot is empty, so this asks the
+    // structural question the slot actually answers.
+    if !warm.has_held_stream() {
         // Nothing is held, so there is nothing to follow. A cold press always
         // resolves the device fresh.
         return;

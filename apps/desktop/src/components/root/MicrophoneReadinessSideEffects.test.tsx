@@ -690,6 +690,72 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
   });
 
+  it("does not reopen a microphone another window has just turned off", async () => {
+    // This window's copy of the preference is stale: the broadcast that tells it
+    // is a separate round trip. A focus landing in that gap reopened a
+    // microphone the user had just switched off, and nothing closed it again --
+    // this window's own preference was about to become false, and the release
+    // path only fires on a change.
+    mocks.microphoneReady.mockResolvedValue(true);
+    setState({ settings: { microphoneHeld: true } });
+    await render();
+    mocks.warmMicrophone.mockClear();
+
+    // The stream is gone, so a retry is otherwise warranted.
+    mocks.microphoneReady.mockResolvedValue(false);
+    // Two re-reads race on focus. The pre-existing listener fires one that is
+    // deliberately not awaited, so its write can still be in flight when the
+    // retry decides -- modelled here as the first call writing nothing. Only the
+    // retry's own awaited call lands the new preference, which is the whole
+    // point of the fix: without it there is no second call and the stale value
+    // stands.
+    let calls = 0;
+    mocks.refreshCurrentUser.mockImplementation(() => {
+      calls += 1;
+      if (calls > 1) {
+        setState({
+          userPrefs: {
+            keepMicrophoneReady: false,
+            microphonePrerollSeconds: 0.5,
+            microphoneLingerMs: 0,
+          },
+        });
+      }
+      return Promise.resolve();
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.refreshCurrentUser).toHaveBeenCalled();
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
+  });
+
+  it("declines to reopen when the preference cannot be re-read", async () => {
+    // "Could not tell" must not open on the stale value: the round trip exists
+    // because this window's copy might be out of date.
+    mocks.microphoneReady.mockResolvedValue(true);
+    setState({ settings: { microphoneHeld: true } });
+    await render();
+    mocks.warmMicrophone.mockClear();
+    mocks.microphoneReady.mockResolvedValue(false);
+    mocks.refreshCurrentUser.mockImplementation(() =>
+      Promise.reject(new Error("offline")),
+    );
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
+  });
+
   it("closes an open that finishes after the preference is turned off", async () => {
     // The defect: `warmMicrophone` opens a real device and takes seconds. Turning
     // the preference off while it is in flight ran `closeMicrophone` first, which

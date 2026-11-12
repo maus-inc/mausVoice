@@ -330,6 +330,12 @@ fn record_loop(
         .as_ref()
         .map(|c| c.as_c_str().to_str().unwrap_or_default());
 
+    // Taken before the open, so a refusal can report how long the attempt was
+    // alive. Opening a PulseAudio stream is the step that hangs when the server
+    // is wedged, and "asked for two seconds, got nothing" is the difference
+    // between a dead device and a stop before any audio existed.
+    let start_of_open = Instant::now();
+
     let simple = match psimple::Simple::new(
         None,        // server (default)
         "mausVoice", // app name
@@ -343,7 +349,14 @@ fn record_loop(
         Ok(s) => s,
         Err(err) => {
             log::error!("failed to open PulseAudio recording stream: {err}");
-            return empty_result();
+            // Not a zeroed, fault-free result. That shape means "a stop with
+            // nothing to record", which is exactly what a failed capture must
+            // not look like: with no fault token the front end treated the dead
+            // stream as a clean stop, so the user got an empty transcript with
+            // nothing explaining it. The token and the expected duration
+            // together say "this was open for some time and produced nothing",
+            // which is the report `reported_capture_fault` exists to carry.
+            return failed_open_result(Instant::now() - start_of_open);
         }
     };
 
@@ -443,15 +456,23 @@ fn record_loop(
 /// front end's existing classification handles it without a second dialect.
 const READ_FAULT_TOKEN: &str = "fatal";
 
-fn empty_result() -> RecordingResult {
+/// The result of a capture that never opened.
+///
+/// The opposite of the zeroed, fault-free shape of a stop that had nothing to
+/// record. This one describes a stream that was asked for and refused, so it
+/// carries the fault token and the time the attempt was open -- otherwise the
+/// front end cannot tell it from a clean stop and reports a silently empty
+/// dictation.
+fn failed_open_result(elapsed: Duration) -> RecordingResult {
     RecordingResult {
         metrics: RecordingMetrics {
             duration: Duration::ZERO,
-            // Nothing was recorded and nothing was expected: this is the result
-            // of a stop with no recording, not of a capture that died.
-            expected_duration: Duration::ZERO,
+            // The attempt was open for this long and captured nothing. A
+            // non-zero expected duration is what makes the loss visible; the
+            // fault token is what names the cause.
+            expected_duration: elapsed,
             size_bytes: 0,
-            capture_fault: None,
+            capture_fault: Some(READ_FAULT_TOKEN.to_string()),
         },
         audio: RecordedAudio {
             samples: Vec::new(),
@@ -667,6 +688,55 @@ mod emitter_tests {
             sink.lock().unwrap().push((batch.len(), offset));
         });
         (callback, seen)
+    }
+
+    /// A stream that never opened must not look like a clean stop.
+    ///
+    /// A zeroed, fault-free result is "a stop with nothing to record", where
+    /// zeroed metrics are the truth. A refused open is the opposite: the
+    /// microphone was asked for and never produced a sample, and returning that
+    /// shape made the front end treat it as a clean stop -- no trailer, no
+    /// notice, an empty transcript with nothing behind it.
+    #[test]
+    fn a_refused_open_reports_a_fault_instead_of_looking_like_a_clean_stop() {
+        let refused = failed_open_result(Duration::from_millis(1_500));
+
+        assert_eq!(
+            refused.metrics.capture_fault.as_deref(),
+            Some(READ_FAULT_TOKEN),
+            "a refused open has to carry the token, or the front end cannot report it"
+        );
+        assert!(
+            refused.metrics.expected_duration > refused.metrics.duration,
+            "a refused open captured nothing, so any expected time at all is a loss"
+        );
+        assert_eq!(refused.metrics.duration, Duration::ZERO);
+        assert!(refused.audio.samples.is_empty());
+
+        // The call site is what actually decides, so the test reads it rather
+        // than trusting the helper exists. A helper nobody calls is the failure
+        // mode this guards: the first version of this test drove
+        // `failed_open_result` directly and passed with the call site still
+        // returning that shape.
+        let source = include_str!("audio.rs");
+        // Bounded to the branch itself. An unbounded slice ran to the end of the
+        // file, which includes *this test* -- and this test's own assertion text
+        // contains the very string being looked for, so it passed with the call
+        // site reverted. That is the same vacuity this whole class of test has
+        // to avoid.
+        let open_failure = source
+            .split("failed to open PulseAudio recording stream")
+            .nth(1)
+            .expect("the open-failure branch is what this test is about");
+        let open_failure = open_failure
+            .split("log::info!")
+            .next()
+            .expect("the success path follows the failure branch");
+        assert!(
+            open_failure.contains("failed_open_result("),
+            "the refused-open branch must return failed_open_result, or a dead \
+             stream is reported as a clean stop"
+        );
     }
 
     /// Every batch must report the absolute index of its first sample, and the
