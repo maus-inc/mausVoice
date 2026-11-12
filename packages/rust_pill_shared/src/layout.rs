@@ -684,13 +684,38 @@ pub fn describe_parked(
     named_id: Option<u64>,
 ) -> Option<ParkedWindow> {
     let display = named_id
-        .and_then(|id| areas.iter().copied().find(|area| area.id == Some(id)))
+        .and_then(|id| {
+            // A token need not be unique: two panels of the same make and model
+            // share one on X11, where no serial number is exposed, and mirrors of
+            // one panel share one everywhere. Of the panels carrying the saved
+            // token, take the one the pill's footprint is actually on, so a pill
+            // parked on the second of them does not record the first one's
+            // geometry. With no footprint match the first is all there is.
+            let mut named = areas.iter().filter(|area| area.id == Some(id));
+            let first = named.next().copied()?;
+            let matching = areas
+                .iter()
+                .filter(|area| area.id == Some(id))
+                .copied()
+                .find(|area| {
+                    footprint_centre.0 >= area.x
+                        && footprint_centre.0 < area.right()
+                        && footprint_centre.1 >= area.y
+                        && footprint_centre.1 < area.bottom()
+                });
+            Some(matching.unwrap_or(first))
+        })
         .or_else(|| {
             display_for_point(areas, footprint_centre.0, footprint_centre.1)
                 .map(|index| areas[index])
         })
         .unwrap_or_else(|| MonitorRect::without_id(origin.0, origin.1, window.0, window.1));
-    ParkedWindow::new_named(origin.0, origin.1, window.0, window.1, display, named_id)
+    // The record names the display it was actually described against. When the
+    // saved token is not connected, `display` came from geometry and carries a
+    // different panel's identity -- recording the saved token beside it would
+    // store a rectangle and a name that disagree, and the next launch would look
+    // for a display that is not the one the geometry describes.
+    ParkedWindow::new_named(origin.0, origin.1, window.0, window.1, display, display.id)
 }
 
 /// The display a reconciled origin now belongs to.

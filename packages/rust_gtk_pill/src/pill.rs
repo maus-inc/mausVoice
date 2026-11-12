@@ -271,6 +271,16 @@ fn drain_messages(
                 });
             }
             InMessage::ForgetPosition => {
+                // A drag still held, or a settle that has not finished, would reach
+                // a save path on a later frame and publish a saved position again --
+                // recreating the row the clear just deleted. Cancel the gesture
+                // first; a drag started after the clear still saves normally.
+                state_tick.dragging.set(false);
+                state_tick.pointer_down.set(false);
+                state_tick.long_press_active.set(false);
+                state_tick.drag_cancelled.set(true);
+                state_tick.x11_release_persisted.set(true);
+                state_tick.drag_motion.borrow_mut().reset();
                 // Stop treating where the pill is sitting as the saved position.
                 // Local data was just cleared, and the next `RequestPosition`
                 // republishes this flag, so leaving it set would write the row back.

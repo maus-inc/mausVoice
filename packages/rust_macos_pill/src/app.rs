@@ -2321,7 +2321,20 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
     );
 
     match relocation {
-        rust_pill_shared::layout::Relocation::Keep => {}
+        rust_pill_shared::layout::Relocation::Keep => {
+            // AppKit may have moved a still-visible window itself. Keeping the old
+            // stored origin would have the next idle tick snap it back there,
+            // undoing a placement the user can see. This is the system's move, not
+            // a drag, so it is adopted without going through the save guard -- and
+            // only when there is a position to keep.
+            if state.anchor.get().records_relocation() {
+                let frame = window_frame(window);
+                if frame.origin.x != state.saved_x.get() || frame.origin.y != state.saved_y.get() {
+                    state.saved_x.set(frame.origin.x);
+                    state.saved_y.set(frame.origin.y);
+                }
+            }
+        }
         rust_pill_shared::layout::Relocation::Stranded => {
             // Nowhere to move it to. Leaving it keeps the stored position.
         }

@@ -397,6 +397,20 @@ fn choose_display(parked: &ParkedWindow, displays: &[MonitorRect]) -> Option<(us
         {
             return Some((index, true));
         }
+        // Several candidates and none matches the saved rect: the panel was
+        // resized or rearranged. Fall back to the candidate that contains the saved
+        // origin, so a pill parked on the right-hand panel of two identically named
+        // ones does not come back on the left. Only if none contains it does list
+        // order decide, because then nothing distinguishes them.
+        if let Some(&index) = candidates.iter().find(|&&index| {
+            contains_point(
+                displays[index],
+                parked.x + parked.width / 2.0,
+                parked.y + parked.height / 2.0,
+            )
+        }) {
+            return Some((index, false));
+        }
         if let Some(&index) = candidates.first() {
             return Some((index, false));
         }
@@ -415,6 +429,15 @@ fn choose_display(parked: &ParkedWindow, displays: &[MonitorRect]) -> Option<(us
     }
     crate::layout::nearest_display(displays, parked.display.x, parked.display.y)
         .map(|index| (index, false))
+}
+
+/// Whether a rectangle covers a point.
+///
+/// Written here rather than reaching for `layout::display_for_point`: that one
+/// answers "nearest" when nothing contains the point, and this caller has to tell
+/// "the saved spot is on this panel" apart from "it is nowhere near it".
+fn contains_point(rect: MonitorRect, x: f64, y: f64) -> bool {
+    x >= rect.x && x < rect.right() && y >= rect.y && y < rect.bottom()
 }
 
 /// The origin that keeps the pill's relative place on a display it did not
@@ -1115,6 +1138,34 @@ mod tests {
                 "the placement has to name the display it chose"
             ),
             Placement::PlatformDefault => panic!("the surviving display should have taken it"),
+        }
+    }
+
+    /// Two panels sharing one token are told apart by where the pill was.
+    ///
+    /// X11 exposes no serial number, so two panels of the same make and model
+    /// report the same token. If the panel the pill was on has been resized, none
+    /// of the candidates matches its saved rect, and taking the first would move
+    /// the pill to the other panel -- which is connected, correct-looking, and the
+    /// wrong screen.
+    #[test]
+    fn a_shared_token_prefers_the_panel_the_pill_was_actually_on() {
+        // Both panels share token 5; the saved rect no longer matches either.
+        let left = display(0.0, 0.0, 1920.0, 1040.0, Some(5));
+        let right = display(1920.0, 0.0, 1920.0, 1040.0, Some(5));
+        let saved_rect = rect(1920.0, 0.0, 2560.0, 1440.0);
+        let placement = restore(
+            named_parked(2400.0, 300.0, saved_rect, 5),
+            &[left, right],
+            (200.0, 60.0),
+            bounds,
+        );
+        match placement {
+            Placement::Restore { x, .. } => assert!(
+                x >= 1920.0,
+                "restored onto the left panel (x = {x}) although the pill was parked on the right"
+            ),
+            Placement::PlatformDefault => panic!("one of the two panels should have taken it"),
         }
     }
 

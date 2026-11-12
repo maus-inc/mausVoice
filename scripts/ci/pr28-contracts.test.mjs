@@ -2946,14 +2946,14 @@ describe("macOS saved-position scope", () => {
     // Anything else means a second code path writes the saved origin.
     const seeds = source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
     assert.equal(seeds, 1, "the restored origin must be seeded exactly once");
-    // Exactly four writers of the saved origin, each with its own reason: the
-    // drop, the drop a guard refused (recorded while the window is still on it,
-    // so the retry cannot read a repositioned frame instead), the reconciliation
-    // that runs when a display change moves the pill itself, and the idle clamp
-    // that holds the window at a moved origin. Anything else is another code path
-    // deciding where the pill was parked.
-    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 4);
-    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 4);
+    // Five writers of the saved origin, each with its own reason: the drop, the
+    // drop a guard refused (recorded while the window is still on it, so the retry
+    // cannot read a repositioned frame instead), the idle clamp that holds the
+    // window at a moved origin, the reconciliation that adopts a move AppKit
+    // already made, and the reconciliation that moves the pill itself. Anything
+    // else is another code path deciding where the pill was parked.
+    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 5);
+    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 5);
     // The clamp writer is the one that cannot be dropped without the record
     // disagreeing with the window it describes: the tick clamps `saved_x` into
     // the visible frame and then holds the window there, so a stored origin the

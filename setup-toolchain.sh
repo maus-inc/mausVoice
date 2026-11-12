@@ -13,6 +13,9 @@ set -eu
 
 SV=/tmp/vend
 PREFIX=/tmp/rust-tools
+# Private so the sandbox never writes into the developer's own Cargo state.
+CARGO_HOME=/tmp/cargo-home
+export CARGO_HOME
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 if [ ! -x "$PREFIX/bin/cargo" ]; then
@@ -44,8 +47,24 @@ if [ ! -x "$PREFIX/bin/cargo" ]; then
   mkdir -p /tmp/cargo-vendor
   tar xJf /tmp/cargo-vendor.tar.xz -C /tmp/cargo-vendor
   rm -f /tmp/cargo-vendor.tar.xz
-  mkdir -p "$HOME/.cargo"
-  cp "$SV/rust/cargo-config.toml" "$HOME/.cargo/config.toml"
+fi
+
+# Cargo's config lives in a sandbox-private CARGO_HOME, not $HOME/.cargo.
+# Writing $HOME/.cargo/config.toml would replace a developer's own file -- and the
+# replacement points at /tmp/cargo-vendor, which does not outlive the sandbox, so
+# every later Cargo command would fail against a config that had destroyed the
+# working one. A separate home keeps the sandbox self-contained.
+#
+# Seeded outside the install guard: the toolchain may already be unpacked while
+# this home is not, and a Cargo run without the vendor config goes to the network.
+if [ ! -f "$CARGO_HOME/config.toml" ]; then
+  mkdir -p "$CARGO_HOME"
+  if [ -f "$SV/rust/cargo-config.toml" ]; then
+    cp "$SV/rust/cargo-config.toml" "$CARGO_HOME/config.toml"
+  else
+    echo "cargo config missing at $SV/rust/cargo-config.toml" >&2
+    exit 1
+  fi
 fi
 
 if [ ! -d /tmp/sysroot/usr/include/gtk-3.0 ]; then
