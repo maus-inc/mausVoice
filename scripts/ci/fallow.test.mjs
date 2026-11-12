@@ -153,7 +153,11 @@ test("architecture detects a cyclic fixture", (t) => {
   );
 });
 
-const cycleSignature = ({ files }) => files.join(" -> ");
+const cycleSignature = ({ files }) =>
+  files
+    .map((_, index) => [...files.slice(index), ...files.slice(0, index)])
+    .map((cycle) => cycle.join(" -> "))
+    .sort()[0];
 
 const architectureCycles = (cwd) => {
   const result = spawnSync(
@@ -171,19 +175,49 @@ const architectureCycles = (cwd) => {
   );
 };
 
-test("the module graph gains no new circular dependencies", (t) => {
-  // Compare against this PR's merge base, not a hard-coded snapshot of the
-  // current default branch. Long-lived PRs may predate cycles already fixed
-  // on their target branch; those inherited paths are not introduced here.
-  const baseRef = process.env.GITHUB_BASE_REF
-    ? `origin/${process.env.GITHUB_BASE_REF}`
-    : "origin/arena/0.1.6-consolidation";
-  const baseSha =
-    process.env.BASE_SHA ??
-    execFileSync("git", ["merge-base", "HEAD", baseRef], {
+const resolveBaseSha = () => {
+  if (process.env.BASE_SHA) return process.env.BASE_SHA;
+
+  const baseBranch =
+    process.env.GITHUB_BASE_REF || process.env.DEFAULT_BRANCH || "main";
+  const baseRef = `refs/remotes/origin/${baseBranch}`;
+  const readBaseSha = () =>
+    spawnSync("git", ["rev-parse", "--verify", baseRef], {
       cwd: root,
       encoding: "utf8",
-    }).trim();
+    });
+  let result = readBaseSha();
+  if (result.status !== 0) {
+    const shallow = execFileSync(
+      "git",
+      ["rev-parse", "--is-shallow-repository"],
+      { cwd: root, encoding: "utf8" },
+    ).trim();
+    if (shallow === "true") {
+      execFileSync("git", ["fetch", "--unshallow", "--no-tags", "origin"], {
+        cwd: root,
+        stdio: "pipe",
+      });
+    }
+    execFileSync(
+      "git",
+      ["fetch", "--no-tags", "origin", `refs/heads/${baseBranch}:${baseRef}`],
+      { cwd: root, stdio: "pipe" },
+    );
+    result = readBaseSha();
+  }
+  assert.equal(
+    result.status,
+    0,
+    `could not resolve target branch ${baseRef}; set BASE_SHA explicitly`,
+  );
+  return result.stdout.trim();
+};
+
+test("the module graph gains no new circular dependencies", (t) => {
+  // Compare against the target branch tip, not a hard-coded cycle snapshot.
+  // Long-lived PRs can predate fixes already present on their target branch.
+  const baseSha = resolveBaseSha();
   const dir = mkdtempSync(resolve(tmpdir(), "mausvoice-fallow-base-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const archive = execFileSync("git", ["archive", baseSha], {
@@ -198,7 +232,29 @@ test("the module graph gains no new circular dependencies", (t) => {
 
   const inherited = new Set(architectureCycles(dir));
   const observed = architectureCycles(root);
-  const newCycles = observed.filter((cycle) => !inherited.has(cycle));
+  const changedFiles = new Set([
+    ...execFileSync("git", ["diff", "--name-only", baseSha], {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean),
+    ...execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean),
+  ]);
+  // Fallow reports concrete cycle paths, not just strongly connected
+  // components. An unchanged inherited cycle can gain another equivalent
+  // path as unrelated imports move; only paths touching files changed by this
+  // branch can be introduced by this branch.
+  const newCycles = observed.filter(
+    (cycle) =>
+      cycle.split(" -> ").some((file) => changedFiles.has(file)) &&
+      !inherited.has(cycle),
+  );
   assert.deepEqual(
     newCycles,
     [],

@@ -64,9 +64,9 @@ const createPasteReviewState = (): PasteReviewState => ({
   activeOpenSaves: 0,
 });
 
-const cancelUnusedPendingReview = async (
-  state: PasteReviewState,
-): Promise<void> => {
+const PASTE_REVIEW_CLEANUP_TIMEOUT_MS = 5_000;
+
+const cancelUnusedPendingReview = (state: PasteReviewState): void => {
   if (
     !state.reviewResolved ||
     state.activeOpenSaves > 0 ||
@@ -76,85 +76,90 @@ const cancelUnusedPendingReview = async (
     return;
   }
   const unusedMessage = state.pendingReviewMessage;
-  try {
-    await cancelPendingPasteReview(unusedMessage, "");
-    state.pendingReviewMessage = null;
-  } catch (error) {
-    getLogger().warning(
-      `Could not close an unused Paste review after the user chose another action: ${error}`,
+  // Clear synchronously so a concurrent completion cannot launch duplicate
+  // cleanup; this is best-effort bookkeeping and must not delay Insert/Copy.
+  state.pendingReviewMessage = null;
+  const cleanup = cancelPendingPasteReview(unusedMessage, "");
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error("Paste review cleanup timed out")),
+      PASTE_REVIEW_CLEANUP_TIMEOUT_MS,
     );
-    runToast(
-      showToast({
-        message: getIntl().formatMessage({
-          defaultMessage:
-            "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
+  });
+  void Promise.race([cleanup, timedOut])
+    .catch((error: unknown) => {
+      getLogger().warning(
+        `Could not close an unused Paste review after the user chose another action: ${error}`,
+      );
+      runToast(
+        showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
+          }),
+          toastType: "error",
+          duration: 8000,
         }),
-        toastType: "error",
-        duration: 8000,
-      }),
-    );
-  }
+      );
+    })
+    .finally(() => {
+      if (timeout !== undefined) clearTimeout(timeout);
+    });
 };
 
-const saveLatestReviewDraft = async (
+const updateLatestExistingReviewDraft = async (
   state: PasteReviewState,
-  conversationId: string,
-  pendingReviewId: string | null,
+  message: ChatMessage,
   text: string,
+  generation: number,
 ): Promise<void> => {
-  // Do not queue behind an earlier request: a timed-out native hand-off
-  // can leave its write promise unresolved. Reuse one id so a retry can
-  // recover an already-committed create rather than making a second card.
-  const generation = ++state.latestSaveGeneration;
-  state.latestSaveText = text;
-  if (state.pendingReviewMessage) {
-    const saved = await updatePendingPasteReviewDraft(
-      state.pendingReviewMessage,
-      text,
-      generation,
-    );
-    if (generation !== state.latestSaveGeneration) {
-      let corrected = saved;
-      let correctedText = text;
-      while (
-        generation !== state.latestSaveGeneration &&
-        state.latestSaveText &&
-        correctedText !== state.latestSaveText
-      ) {
-        correctedText = state.latestSaveText;
-        // Each corrected write must observe the prior CAS result before
-        // choosing the next revision, so these retries are intentionally serial.
-        corrected = await updatePendingPasteReviewDraft(
-          corrected,
-          correctedText,
-          state.latestSaveGeneration,
-        );
-      }
-      return;
-    }
+  const saved = await updatePendingPasteReviewDraft(message, text, generation);
+  if (generation === state.latestSaveGeneration) {
     state.pendingReviewMessage = saved;
     return;
   }
 
+  let corrected = saved;
+  let correctedText = text;
+  while (
+    generation !== state.latestSaveGeneration &&
+    state.latestSaveText &&
+    correctedText !== state.latestSaveText
+  ) {
+    correctedText = state.latestSaveText;
+    // Corrected writes must observe the prior CAS result before the next revision.
+    corrected = await updatePendingPasteReviewDraft(
+      corrected,
+      correctedText,
+      state.latestSaveGeneration,
+    );
+  }
+  state.pendingReviewMessage = corrected;
+};
+
+const createOrRecoverReviewDraft = async (
+  state: PasteReviewState,
+  conversationId: string,
+  pendingReviewId: string | null,
+  text: string,
+  generation: number,
+): Promise<void> => {
   try {
     const saved = await createPendingPasteReview(
       conversationId,
       text,
       pendingReviewId ?? undefined,
     );
-    if (
-      !state.pendingReviewMessage ||
-      generation === state.latestSaveGeneration
-    ) {
+    if (generation === state.latestSaveGeneration) {
       state.pendingReviewMessage = saved;
     }
   } catch (error) {
-    const saveError = String(error).toLowerCase();
-    const isDuplicateMessageId =
-      saveError.includes("unique constraint failed") &&
-      saveError.includes("chat_messages.id");
+    const duplicateId =
+      String(error).toLowerCase().includes("unique constraint failed") &&
+      String(error).toLowerCase().includes("chat_messages.id");
     if (
-      !isDuplicateMessageId ||
+      !duplicateId ||
       generation !== state.latestSaveGeneration ||
       !pendingReviewId
     ) {
@@ -167,6 +172,33 @@ const saveLatestReviewDraft = async (
       generation,
     );
   }
+};
+
+const saveLatestReviewDraft = async (
+  state: PasteReviewState,
+  conversationId: string,
+  pendingReviewId: string | null,
+  text: string,
+): Promise<void> => {
+  // Reuse one id so a retry can recover a committed create after a timed-out write.
+  const generation = ++state.latestSaveGeneration;
+  state.latestSaveText = text;
+  if (state.pendingReviewMessage) {
+    await updateLatestExistingReviewDraft(
+      state,
+      state.pendingReviewMessage,
+      text,
+      generation,
+    );
+    return;
+  }
+  await createOrRecoverReviewDraft(
+    state,
+    conversationId,
+    pendingReviewId,
+    text,
+    generation,
+  );
 };
 
 const openPendingPasteInChats = async (
@@ -209,8 +241,39 @@ const openPendingPasteInChats = async (
     }
   } finally {
     state.activeOpenSaves -= 1;
-    await cancelUnusedPendingReview(state);
+    cancelUnusedPendingReview(state);
   }
+};
+
+const completeOpenedPendingPaste = async (
+  state: PasteReviewState,
+  text: string | null,
+  conversationId?: string,
+): Promise<Record<string, unknown>> => {
+  // Open may time out while the review remains available for another decision.
+  if (text?.trim() && conversationId) {
+    await saveLatestReviewDraft(state, conversationId, null, text);
+  }
+  return { awaitingManualPaste: true };
+};
+
+const pasteReviewedText = async (
+  conversationId: string | undefined,
+  text: string,
+): Promise<Record<string, unknown>> => {
+  let outcome: PasteOutcome;
+  try {
+    outcome = await invoke<PasteOutcome>("paste", { text, keybind: null });
+  } catch (error) {
+    // A failed insert leaves the reviewed text recoverable via a saved card.
+    await savePendingPasteReview(conversationId ?? "", text);
+    throw error;
+  }
+  if (outcome === "copied_to_clipboard") {
+    await savePendingPasteReview(conversationId ?? "", text);
+    return { copiedToClipboard: true };
+  }
+  return {};
 };
 
 const completePasteReview = async (
@@ -219,13 +282,7 @@ const completePasteReview = async (
   conversationId?: string,
 ): Promise<Record<string, unknown>> => {
   if (state.openedPendingPaste) {
-    // Open may have timed out at the window-event boundary while the review
-    // remained available for another decision. Preserve a later Insert edit
-    // on the durable card, but never paste after Chats may have taken focus.
-    if (text?.trim() && conversationId) {
-      await saveLatestReviewDraft(state, conversationId, null, text);
-    }
-    return { awaitingManualPaste: true };
+    return completeOpenedPendingPaste(state, text, conversationId);
   }
   if (state.copiedReviewedText) return { copiedToClipboard: true };
   if (state.reviewExpired) {
@@ -237,25 +294,7 @@ const completePasteReview = async (
     throw new Error("Paste transcript review could not be completed.");
   }
   if (!text?.trim()) return { canceled: true };
-
-  let outcome: PasteOutcome;
-  try {
-    outcome = await invoke<PasteOutcome>("paste", { text, keybind: null });
-  } catch (error) {
-    // The insert never reached the target, so this is exactly the case the
-    // saved review exists for: the text is only recoverable by hand. The save
-    // is best-effort, and the insert's own failure is what the caller has to
-    // see, so a failed write is logged rather than reported.
-    await savePendingPasteReview(conversationId ?? "", text);
-    throw error;
-  }
-  if (outcome === "copied_to_clipboard") {
-    // The focused target could not take the text, so nothing landed and the
-    // clipboard fallback has to be turned into a deliberate hand-off.
-    await savePendingPasteReview(conversationId ?? "", text);
-    return { copiedToClipboard: true };
-  }
-  return {};
+  return pasteReviewedText(conversationId, text);
 };
 
 export class PasteTool extends BaseTool {
@@ -306,7 +345,7 @@ export class PasteTool extends BaseTool {
           : requestedText;
     } finally {
       state.reviewResolved = true;
-      await cancelUnusedPendingReview(state);
+      cancelUnusedPendingReview(state);
     }
     return completePasteReview(state, text, conversationId);
   }

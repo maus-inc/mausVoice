@@ -2636,13 +2636,24 @@ fn get_edit_text() -> String {
         }
         let mut buf = vec![0u16; (len + 1) as usize];
         GetWindowTextW(edit, &mut buf);
-        String::from_utf16_lossy(&buf[..len as usize])
+        normalize_edit_text(&String::from_utf16_lossy(&buf[..len as usize]))
     }
+}
+
+fn normalize_edit_text(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn to_edit_control_text(text: &str) -> String {
+    normalize_edit_text(text).replace('\n', "\r\n")
 }
 
 fn set_edit_text(text: &str) {
     let edit = EDIT_HWND.with(|e| e.get());
-    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = to_edit_control_text(text)
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     unsafe {
         let _ = SetWindowTextW(edit, PCWSTR(wide.as_ptr()));
     }
@@ -2672,6 +2683,22 @@ pub(crate) fn focus_edit_control() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_edit_control_line_endings_round_trip_as_lf() {
+        assert_eq!(
+            to_edit_control_text("first\nsecond\n"),
+            "first\r\nsecond\r\n"
+        );
+        assert_eq!(
+            to_edit_control_text("first\r\nsecond"),
+            "first\r\nsecond"
+        );
+        assert_eq!(
+            normalize_edit_text("first\r\nsecond\r\n"),
+            "first\nsecond\n"
+        );
+    }
 
     #[test]
     fn composer_prompt_hides_while_typing_and_review_heading_stays_fixed() {

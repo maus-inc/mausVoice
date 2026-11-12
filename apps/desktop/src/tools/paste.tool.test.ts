@@ -356,6 +356,44 @@ describe("PasteTool review", () => {
     expect(cancelPendingPasteReviewMock).toHaveBeenCalledWith(savedCard, "");
   });
 
+  it("does not wait for unused-card cleanup before completing Copy", async () => {
+    const savedCard = { id: "pending-review" };
+    let finishCleanup: (() => void) | undefined;
+    cancelPendingPasteReviewMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCleanup = resolve;
+        }),
+    );
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      async (
+        _text: string,
+        _source: string,
+        options?: {
+          onCopy?: () => void;
+          onOpen?: (text: string, signal?: AbortSignal) => Promise<void>;
+        },
+      ) => {
+        const controller = new AbortController();
+        const opening = options?.onOpen?.("review draft", controller.signal);
+        controller.abort();
+        await opening;
+        options?.onCopy?.();
+        return null;
+      },
+    );
+    createPendingPasteReviewMock.mockResolvedValueOnce(savedCard);
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ copiedToClipboard: true });
+    expect(cancelPendingPasteReviewMock).toHaveBeenCalledWith(savedCard, "");
+    finishCleanup?.();
+  });
+
   it("warns when an unused pending review cannot be closed", async () => {
     const savedCard = { id: "pending-review" };
     let finishSave: ((message: typeof savedCard) => void) | undefined;
@@ -394,12 +432,14 @@ describe("PasteTool review", () => {
     finishSave?.(savedCard);
     await lateOpenSave;
     expect(cancelPendingPasteReviewMock).toHaveBeenCalledWith(savedCard, "");
-    expect(showToastMock).toHaveBeenCalledWith({
-      message:
-        "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
-      toastType: "error",
-      duration: 8000,
-    });
+    await vi.waitFor(() =>
+      expect(showToastMock).toHaveBeenCalledWith({
+        message:
+          "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
+        toastType: "error",
+        duration: 8000,
+      }),
+    );
   });
 
   it("shows Chats recovery guidance when navigation fails after saving", async () => {

@@ -6,9 +6,11 @@ const updateChatMessageMock = vi.hoisted(() => vi.fn());
 const invokeMock = vi.hoisted(() => vi.fn());
 const listChatMessagesMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./chat.actions", () => ({
-  createChatMessage: createChatMessageMock,
-  updateChatMessage: updateChatMessageMock,
+vi.mock("./chat-message.actions", () => ({
+  createChatMessageWithRepo: (_repo: unknown, message: ChatMessage) =>
+    createChatMessageMock(message),
+  updateChatMessageWithRepo: (_repo: unknown, message: ChatMessage) =>
+    updateChatMessageMock(message),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));

@@ -1916,17 +1916,15 @@ mod review_heading_layout_tests {
     }
 }
 
-/// The transcript under review, drawn in the panel body like an assistant
-/// message. The text comes from the entry, which is loaded with the transcript
-/// when the review arrives, so what is shown here is exactly what will be
-/// inserted, edits included. It scrolls with the rest of the panel, so there is
-/// no cap on its length.
+/// Reserve space for the native multiline editor and draw its heading. The
+/// editor owns the transcript text while reviewing; drawing a Cairo copy here
+/// would show stale or doubled text underneath it.
 fn draw_review_text(
     cr: &cairo::Context,
     state: &PillState,
     x: f64,
     y: f64,
-    w: f64,
+    _w: f64,
     alpha: f64,
 ) -> f64 {
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
@@ -1937,27 +1935,9 @@ fn draw_review_text(
         .unwrap_or("REVIEW TRANSCRIPT");
     draw_review_heading(cr, label, x, y + 12.0);
 
-    let mut text_y = y + REVIEW_TITLE_HEIGHT;
-
-    cr.select_font_face(
-        "Satoshi",
-        cairo::FontSlant::Normal,
-        cairo::FontWeight::Normal,
-    );
-    cr.set_font_size(14.0);
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.92 * alpha);
-    let text = state.entry_text.borrow();
-    let (preview, _) = rust_pill_shared::bound_review_preview_text(&text);
-    for line in wrap_text(cr, preview.as_str(), w)
-        .into_iter()
-        .take(rust_pill_shared::MAX_REVIEW_PREVIEW_LINES)
-    {
-        cr.move_to(x, text_y + REVIEW_LINE_HEIGHT * 0.75);
-        let _ = cr.show_text(&line);
-        text_y += REVIEW_LINE_HEIGHT;
-    }
-
-    text_y
+    // Keep layout height aligned with the transparent native editor overlay,
+    // but leave all transcript glyphs to GTK's editable TextView.
+    y + REVIEW_TITLE_HEIGHT + PANEL_REVIEW_EDITOR_HEIGHT
 }
 
 /// The decisions the user can take on the transcript. Drawn as a fixed row

@@ -4,7 +4,10 @@ import { getIntl } from "../i18n/intl";
 import { createId } from "../utils/id.utils";
 import { nowIso } from "../utils/date.utils";
 import { LocalChatMessageRepo } from "../repos/chat-message.repo";
-import { createChatMessage, updateChatMessage } from "./chat.actions";
+import {
+  createChatMessageWithRepo,
+  updateChatMessageWithRepo,
+} from "./chat-message.actions";
 
 export const PENDING_PASTE_REVIEW_TYPE = "pending-paste-review";
 
@@ -51,6 +54,20 @@ export const getPendingPasteReview = (
   };
 };
 
+const requirePendingPasteReview = (
+  message: ChatMessage,
+): PendingPasteReviewMetadata => {
+  const pending = getPendingPasteReview(message.metadata);
+  if (pending?.status !== "pending") {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
+  }
+  return pending;
+};
+
 /**
  * Store an edited agent Paste request before the native review card closes.
  *
@@ -74,7 +91,7 @@ export const createPendingPasteReview = async (
     );
   }
 
-  return createChatMessage({
+  return createChatMessageWithRepo(new LocalChatMessageRepo(), {
     id,
     conversationId,
     role: "system",
@@ -98,7 +115,7 @@ const updatePendingPasteReview = (
   status: PendingPasteReviewStatus,
   draftRevision = pending.draftRevision + 1,
 ): Promise<ChatMessage> =>
-  updateChatMessage({
+  updateChatMessageWithRepo(new LocalChatMessageRepo(), {
     ...message,
     metadata: {
       ...pending,
@@ -139,14 +156,7 @@ export async function updatePendingPasteReviewDraft(
   text: string,
   requestedRevision?: number,
 ): Promise<ChatMessage> {
-  const pending = getPendingPasteReview(message.metadata);
-  if (pending?.status !== "pending") {
-    throw new Error(
-      getIntl().formatMessage({
-        defaultMessage: "This Paste review is no longer pending",
-      }),
-    );
-  }
+  const pending = requirePendingPasteReview(message);
   if (!text.trim()) {
     throw new Error(
       getIntl().formatMessage({
@@ -193,14 +203,7 @@ export const copyPendingPasteReview = async (
   message: ChatMessage,
   text: string,
 ): Promise<void> => {
-  const pending = getPendingPasteReview(message.metadata);
-  if (pending?.status !== "pending") {
-    throw new Error(
-      getIntl().formatMessage({
-        defaultMessage: "This Paste review is no longer pending",
-      }),
-    );
-  }
+  const pending = requirePendingPasteReview(message);
   if (!text.trim()) {
     throw new Error(
       getIntl().formatMessage({
@@ -232,14 +235,7 @@ export const cancelPendingPasteReview = async (
   message: ChatMessage,
   text: string,
 ): Promise<void> => {
-  const pending = getPendingPasteReview(message.metadata);
-  if (pending?.status !== "pending") {
-    throw new Error(
-      getIntl().formatMessage({
-        defaultMessage: "This Paste review is no longer pending",
-      }),
-    );
-  }
+  const pending = requirePendingPasteReview(message);
 
   // Cancel dismisses the action, not its durable record. Treat an empty editor
   // as no replacement so a deletion immediately before Cancel cannot erase the

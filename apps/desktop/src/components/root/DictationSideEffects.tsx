@@ -5,7 +5,7 @@ import { AppTarget } from "@maus-inc/types";
 import { delayed } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useIntl } from "react-intl";
+import { type IntlShape, useIntl } from "react-intl";
 import {
   loadManualStyleForCurrentApp,
   saveManualStyleForApp,
@@ -173,6 +173,53 @@ import {
 import { hasDictationBacklog } from "../../utils/output-routing.utils";
 import { surfaceMainWindow } from "../../utils/window.utils";
 import { resetHotkeyFilter } from "../../utils/hotkey-filter.utils";
+
+const reportConversationOpenFailure = (error: unknown): void => {
+  getLogger().warning(
+    `Failed to open the conversation: ${error instanceof Error ? error.message : String(error)}`,
+  );
+};
+
+const openPillConversationImpl = async (
+  conversationId: string | undefined,
+  isPendingPasteReview: boolean,
+  intl: IntlShape,
+  abortRecording: () => Promise<void>,
+): Promise<void> => {
+  let recoveryToastShown = false;
+  const reportPasteRecovery = () => {
+    if (!isPendingPasteReview || recoveryToastShown) return;
+    recoveryToastShown = true;
+    runToast(
+      showToast({
+        message: intl.formatMessage({
+          defaultMessage:
+            "Your Paste review was saved. If Chats did not open, find the review in Chats to finish the paste.",
+        }),
+        toastType: "info",
+        duration: 8000,
+      }),
+    );
+  };
+  const reportOpenFailure = (error: unknown) => {
+    reportConversationOpenFailure(error);
+    reportPasteRecovery();
+  };
+  const id = conversationId ?? getAppState().pillConversationId;
+  if (id) {
+    loadChatMessages(id).catch(reportOpenFailure);
+    await getBrowserRouter()
+      .navigate(`/dashboard/chats?id=${encodeURIComponent(id)}`)
+      .catch(reportOpenFailure);
+  }
+  try {
+    if (!(await surfaceMainWindow())) reportPasteRecovery();
+    await abortRecording();
+  } catch (error) {
+    reportPasteRecovery();
+    throw error;
+  }
+};
 
 type StartRecordingResponse = {
   sampleRate: number;
@@ -2550,58 +2597,14 @@ export const DictationSideEffects = () => {
   // map, strategy) and repushes on any change, so a per-component effect keyed
   // to just recording/styling state can't leave the listener stale.
 
-  // `loadChatMessages` below is discarded, so a rejection from it would be
-  // unhandled rather than reported, and it can reject: it awaits
-  // `getChatMessageRepo().listChatMessages(...)` (`chat.actions.ts:288`) with no
-  // try/catch of its own, straight through to the Tauri IPC.
-  //
-  // `surfaceMainWindow()` reports native failure with a boolean because its
-  // shared helper logs and resolves instead of rejecting.
-  const reportConversationOpenFailure = (error: unknown): void => {
-    getLogger().warning(
-      `Failed to open the conversation: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  };
-
   const openPillConversation = useCallback(
-    async (conversationId?: string, isPendingPasteReview = false) => {
-      let recoveryToastShown = false;
-      const reportPasteRecovery = () => {
-        if (!isPendingPasteReview || recoveryToastShown) return;
-        recoveryToastShown = true;
-        runToast(
-          showToast({
-            message: intl.formatMessage({
-              defaultMessage:
-                "Your Paste review was saved. If Chats did not open, find the review in Chats to finish the paste.",
-            }),
-            toastType: "info",
-            duration: 8000,
-          }),
-        );
-      };
-      const reportOpenFailure = (error: unknown) => {
-        reportConversationOpenFailure(error);
-        reportPasteRecovery();
-      };
-      const id = conversationId ?? getAppState().pillConversationId;
-      if (id) {
-        loadChatMessages(id).catch(reportOpenFailure);
-        // `navigate` returns a promise; a rejection here would otherwise be
-        // unhandled, so it is caught on the promise rather than by a surrounding
-        // try/catch that cannot see it.
-        await getBrowserRouter()
-          .navigate(`/dashboard/chats?id=${encodeURIComponent(id)}`)
-          .catch(reportOpenFailure);
-      }
-      try {
-        if (!(await surfaceMainWindow())) reportPasteRecovery();
-        await abortRecording();
-      } catch (error) {
-        reportPasteRecovery();
-        throw error;
-      }
-    },
+    (conversationId?: string, isPendingPasteReview = false) =>
+      openPillConversationImpl(
+        conversationId,
+        isPendingPasteReview,
+        intl,
+        abortRecording,
+      ),
     [abortRecording, intl],
   );
 

@@ -321,6 +321,25 @@ const armReviewTimeout = (current: QueuedReview | undefined): void => {
   }, REVIEW_TIMEOUT_MS);
 };
 
+const syncReviewTimeout = (
+  current: QueuedReview | undefined,
+  previousHeadId: string | undefined,
+): void => {
+  if (current?.session.id !== previousHeadId) {
+    clearReviewTimeout();
+    armReviewTimeout(current);
+    return;
+  }
+  if (
+    current &&
+    (current.openSavePending || current.session.presentation === "composer")
+  ) {
+    clearReviewTimeout();
+    return;
+  }
+  if (timeoutId === null) armReviewTimeout(current);
+};
+
 /*
  * Move the queue on and show whatever is left at its head.
  *
@@ -340,17 +359,7 @@ const advanceQueue = (answer?: ReviewAnswer): void => {
   answered?.resolve(answer?.text ?? null);
   stopUnusedListener();
 
-  if (current?.session.id !== previousHeadId) {
-    clearReviewTimeout();
-    armReviewTimeout(current);
-  } else if (
-    current &&
-    (current.openSavePending || current.session.presentation === "composer")
-  ) {
-    clearReviewTimeout();
-  } else if (timeoutId === null) {
-    armReviewTimeout(current);
-  }
+  syncReviewTimeout(current, previousHeadId);
 };
 queueAdvancer.advance = advanceQueue;
 
@@ -512,7 +521,32 @@ const openAssistantPasteInChats = async (
   return true;
 };
 
-// This small state-machine coordinator intentionally keeps the decision order visible.
+const rejectOpenWithoutConversation = (
+  current: QueuedReview,
+  action: PillReviewAction,
+): boolean => {
+  if (
+    action !== "open" ||
+    current.session.source !== "assistant-tool" ||
+    current.onOpen
+  ) {
+    return false;
+  }
+  runToast(
+    showToast({
+      message: getIntl().formatMessage({
+        defaultMessage:
+          "Cannot open this Paste review in Chats without an active conversation. Choose Insert or Copy instead.",
+      }),
+      toastType: "error",
+      duration: 8000,
+    }),
+  );
+  return true;
+};
+
+// Keep the decision sequence in one place; moving its async branches changes
+// how failures leave the current review retryable.
 // fallow-ignore-next-line complexity
 const applyDecision = async (
   id: string,
@@ -528,23 +562,7 @@ const applyDecision = async (
   updateReviewDraft(current, editedText);
 
   try {
-    if (
-      action === "open" &&
-      session.source === "assistant-tool" &&
-      !current.onOpen
-    ) {
-      runToast(
-        showToast({
-          message: getIntl().formatMessage({
-            defaultMessage:
-              "Cannot open this Paste review in Chats without an active conversation. Choose Insert or Copy instead.",
-          }),
-          toastType: "error",
-          duration: 8000,
-        }),
-      );
-      return;
-    }
+    if (rejectOpenWithoutConversation(current, action)) return;
     if (action === "copy") {
       if (!(await copyReviewToClipboard(text))) {
         if (head() === current) advanceQueue();
