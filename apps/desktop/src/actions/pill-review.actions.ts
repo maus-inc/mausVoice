@@ -327,13 +327,11 @@ const armReviewTimeout = (current: QueuedReview | undefined): void => {
  * `answer` finishes the review currently on the pill and is only passed by
  * callers that have already checked it is still the open one. Publishing
  * happens before the answer is handed back, so the caller that resumes sees
- * the queue as it now stands. Every transition clears the unanswered-review
- * timer and arms a fresh one, so a timer that does fire always belongs to the
- * review still on the pill.
+ * the queue as it now stands. The unanswered-review timer follows head changes;
+ * appending behind the same head does not extend its deadline.
  */
 const advanceQueue = (answer?: ReviewAnswer): void => {
-  clearReviewTimeout();
-
+  const previousHeadId = head()?.session.id;
   const answered = answer ? queue.shift() : undefined;
   if (answered && answer) recordReviewAnswer(answered, answer);
   openNextReview();
@@ -341,7 +339,18 @@ const advanceQueue = (answer?: ReviewAnswer): void => {
   publishPendingReview(current);
   answered?.resolve(answer?.text ?? null);
   stopUnusedListener();
-  armReviewTimeout(current);
+
+  if (current?.session.id !== previousHeadId) {
+    clearReviewTimeout();
+    armReviewTimeout(current);
+  } else if (
+    current &&
+    (current.openSavePending || current.session.presentation === "composer")
+  ) {
+    clearReviewTimeout();
+  } else if (timeoutId === null) {
+    armReviewTimeout(current);
+  }
 };
 queueAdvancer.advance = advanceQueue;
 

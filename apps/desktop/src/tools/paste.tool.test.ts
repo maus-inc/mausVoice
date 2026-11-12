@@ -2,6 +2,7 @@ import type { ToolInfo } from "@maus-inc/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const reviewTranscriptBeforeInsertMock = vi.hoisted(() => vi.fn());
+const cancelPendingPasteReviewMock = vi.hoisted(() => vi.fn());
 const createPendingPasteReviewMock = vi.hoisted(() => vi.fn());
 const updatePendingPasteReviewDraftMock = vi.hoisted(() => vi.fn());
 const updatePendingPasteReviewDraftByIdMock = vi.hoisted(() => vi.fn());
@@ -18,6 +19,7 @@ vi.mock("../actions/pill-review.actions", () => ({
   reviewTranscriptBeforeInsert: reviewTranscriptBeforeInsertMock,
 }));
 vi.mock("../actions/pending-paste-review.actions", () => ({
+  cancelPendingPasteReview: cancelPendingPasteReviewMock,
   createPendingPasteReview: createPendingPasteReviewMock,
   updatePendingPasteReviewDraft: updatePendingPasteReviewDraftMock,
   updatePendingPasteReviewDraftById: updatePendingPasteReviewDraftByIdMock,
@@ -61,6 +63,7 @@ describe("PasteTool review", () => {
     vi.clearAllMocks();
     state.userPrefs = { reviewBeforeInsert: true };
     createPendingPasteReviewMock.mockResolvedValue({ id: "pending-review" });
+    cancelPendingPasteReviewMock.mockResolvedValue(undefined);
     updatePendingPasteReviewDraftMock.mockImplementation((message: unknown) =>
       Promise.resolve(message),
     );
@@ -285,6 +288,47 @@ describe("PasteTool review", () => {
       2,
     );
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels a late Open save when the user chose Insert after timeout", async () => {
+    const savedCard = { id: "pending-review" };
+    let finishSave: ((message: typeof savedCard) => void) | undefined;
+    let lateOpenSave: Promise<void> | undefined;
+    createPendingPasteReviewMock.mockImplementationOnce(
+      () =>
+        new Promise<typeof savedCard>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      async (
+        _text: string,
+        _source: string,
+        options?: {
+          onOpen?: (text: string, signal?: AbortSignal) => Promise<void>;
+        },
+      ) => {
+        const controller = new AbortController();
+        lateOpenSave = options?.onOpen?.("review draft", controller.signal);
+        controller.abort();
+        return "insert after timeout";
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({});
+    expect(invokeMock).toHaveBeenCalledWith("paste", {
+      text: "insert after timeout",
+      keybind: null,
+    });
+
+    finishSave?.(savedCard);
+    await lateOpenSave;
+    expect(cancelPendingPasteReviewMock).toHaveBeenCalledWith(savedCard, "");
   });
 
   it("shows Chats recovery guidance when navigation fails after saving", async () => {

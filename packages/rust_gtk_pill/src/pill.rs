@@ -1165,7 +1165,7 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-fn request_review_clipboard_text(view: &gtk::TextView, state: &PillState) {
+fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
     let Some(review_id) = state.pending_review_id() else {
         return;
     };
@@ -1177,7 +1177,12 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &PillState) {
             return;
         }
         if let Some(text) = text {
-            buffer.insert_at_cursor(text);
+            buffer.begin_user_action();
+            if let Some((mut start, mut end)) = buffer.selection_bounds() {
+                buffer.delete(&mut start, &mut end);
+            }
+            buffer.insert_at_cursor(text.as_str());
+            buffer.end_user_action();
         }
     });
 }

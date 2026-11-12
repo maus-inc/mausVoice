@@ -1022,6 +1022,28 @@ describe("reviewTranscriptOnPill", () => {
     );
   });
 
+  it("does not extend the open review timeout when more reviews queue", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = startPillReview("first review");
+      await flush(() => getAppState().pendingPillReview !== null);
+      const firstId = currentReviewId();
+      await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
+
+      const second = startPillReview("second review");
+      await flush(() => getQueuedSessions().length === 2);
+      await vi.advanceTimersByTimeAsync(60_001);
+
+      await expect(first).resolves.toBeNull();
+      expect(getReviewSession(firstId)?.status).toBe("expired");
+      expect(getAppState().pendingPillReview?.text).toBe("second review");
+      await cancelPillReview(second);
+    } finally {
+      cancelAllPillReviews();
+      vi.useRealTimers();
+    }
+  });
+
   it("expires unanswered reviews and offers the history route", async () => {
     vi.useFakeTimers();
     try {
