@@ -7,6 +7,7 @@ import {
   MAX_MICROPHONE_PREROLL_SECONDS,
   MICROPHONE_READY_FOREVER_MS,
   classifyMicrophoneFailure,
+  decideHoldAction,
   describeHeldState,
   isLikelyBluetoothDevice,
   isSelectedDeviceBluetooth,
@@ -69,6 +70,93 @@ describe("microphone pre-roll limits", () => {
     // absent would silently turn the pre-roll back on.
     expect(normalizeMicrophonePrerollSeconds(0)).toBe(0);
     expect(normalizeMicrophonePrerollSeconds(-1)).toBe(0);
+  });
+});
+
+describe("what the hold effect decides", () => {
+  /** A base case that says "open", so each test changes exactly one thing. */
+  const base = {
+    isRecording: false,
+    prefsLoaded: true,
+    ownsDevice: true,
+    shouldHold: true,
+    applied: null,
+    held: null,
+    prerollSeconds: 0.5,
+    preferredMicrophone: null,
+  } as const;
+
+  it("opens when the preference is on and nothing is held", () => {
+    expect(decideHoldAction({ ...base })).toBe("open");
+  });
+
+  it("hands the stream off while a recording runs, deciding nothing", () => {
+    // Not "release": a press adopts the held stream, and closing it here zeroed
+    // the linger policy the stop path reads, so every dictation reopened.
+    expect(decideHoldAction({ ...base, isRecording: true })).toBe("hand-off");
+    // Even with the preference off and a stream held, the press owns it.
+    expect(
+      decideHoldAction({
+        ...base,
+        isRecording: true,
+        shouldHold: false,
+        applied: "open",
+        held: { preroll: 0.5, device: null },
+      }),
+    ).toBe("hand-off");
+  });
+
+  it("decides nothing while the preferences are still loading", () => {
+    // `null` is "not loaded yet", not "off". Treating it as "off" released a
+    // device another window had opened.
+    expect(decideHoldAction({ ...base, prefsLoaded: false })).toBe(
+      "no-opinion",
+    );
+  });
+
+  it("decides nothing from a window that does not own the device", () => {
+    expect(decideHoldAction({ ...base, ownsDevice: false })).toBe("no-opinion");
+  });
+
+  it("releases once, and does not release again", () => {
+    expect(decideHoldAction({ ...base, shouldHold: false })).toBe("release");
+    // A second release would close a stream a newer hold had opened in between.
+    expect(
+      decideHoldAction({ ...base, shouldHold: false, applied: "closed" }),
+    ).toBe("keep");
+  });
+
+  it("keeps a stream that already matches the next press", () => {
+    expect(
+      decideHoldAction({
+        ...base,
+        held: { preroll: 0.5, device: "Shure MV7" },
+        preferredMicrophone: "Shure MV7",
+      }),
+    ).toBe("keep");
+  });
+
+  it("reopens when the pre-roll changes", () => {
+    expect(
+      decideHoldAction({
+        ...base,
+        held: { preroll: 0.5, device: null },
+        prerollSeconds: 1.5,
+      }),
+    ).toBe("open");
+  });
+
+  it("reopens when only the device changes", () => {
+    // A stream is bound to the device it was built on and cannot follow the
+    // preference, so keeping it would serve the next press from the microphone
+    // the user just moved away from.
+    expect(
+      decideHoldAction({
+        ...base,
+        held: { preroll: 0.5, device: "Shure MV7" },
+        preferredMicrophone: "MacBook Pro Microphone",
+      }),
+    ).toBe("open");
   });
 });
 

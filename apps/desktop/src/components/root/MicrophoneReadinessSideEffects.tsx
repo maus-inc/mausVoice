@@ -16,6 +16,7 @@ import {
 import {
   MICROPHONE_READY_FOREVER_MS,
   classifyMicrophoneFailure,
+  decideHoldAction,
   shouldHoldMicrophoneReady,
   shouldPrepareMicrophone,
 } from "../../utils/microphone-readiness.utils";
@@ -416,89 +417,59 @@ export const MicrophoneReadinessSideEffects = () => {
   useEffect(() => {
     // A running recording adopts the held stream -- that is the entire point of
     // holding one -- and the stop path decides what becomes of it afterwards.
-    // So a recording is the one situation where this component must do nothing
-    // at all, which is different from the situations below where it must let go.
     //
-    // Releasing here looked equivalent and is not. `closeMicrophone` also zeroes
-    // the linger policy the stop path reads, so the stream the press had just
-    // adopted was closed at stop and reopened seconds later: every dictation paid
-    // the device open that keep-ready exists to avoid, and the microphone
-    // indicator blinked for the whole cycle. The press loses nothing by leaving
-    // the device alone, because a second stream is never opened while one is held
-    // -- that is what `start_recording` adopting it means.
-    if (isRecording) {
-      // The press has adopted the stream, and from here the stop path decides
-      // what becomes of it: it may linger for the post-recording window, it may
-      // close at stop, or a fatal recording may retire it. None of those is this
+    // Releasing on a press looked equivalent and is not. `closeMicrophone` also
+    // zeroes the linger policy the stop path reads, so the stream the press had
+    // just adopted was closed at stop and reopened seconds later: every
+    // dictation paid the device open that keep-ready exists to avoid, and the
+    // microphone indicator blinked for the whole cycle. The press loses nothing
+    // by leaving the device alone, because a second stream is never opened while
+    // one is held -- that is what `start_recording` adopting it means.
+    const decision = decideHoldAction({
+      isRecording,
+      prefsLoaded,
+      ownsDevice,
+      shouldHold: shouldHoldMicrophoneReady({
+        enabled,
+        isRecording,
+        isLocalDataClearing: isLocalDataClearRequested(),
+        permissionGranted,
+      }),
+      applied: appliedRef.current,
+      held: openedPrerollRef.current,
+      prerollSeconds,
+      preferredMicrophone,
+    });
+
+    if (decision === "hand-off") {
+      // The press has the stream, and from here the stop path decides what
+      // becomes of it: it may linger for the post-recording window, it may close
+      // at stop, or a fatal recording may retire it. None of those is this
       // component's decision, and all of them make what the ring records here
-      // untrue. Dropping the record is what lets the effect below reopen once the
+      // untrue. Dropping the record is what lets this effect reopen once the
       // recording ends; keeping it made the ring claim a stream the stop path had
       // already closed, and `keep ready` then stayed on with no device behind it.
       openedPrerollRef.current = null;
       heldRef.current = false;
       return;
     }
-
-    // Also returns before deciding anything while the preferences are still
-    // loading. Without this the first effect run released a device on the
-    // strength of a value that had not arrived.
-    if (!prefsLoaded) {
+    if (decision === "no-opinion" || decision === "keep") {
       return;
     }
-
-    // Not "do not hold" but "do not decide": a window that does not own the
-    // device must neither open nor close one. Folding this into `shouldHold`
-    // below would route it to the release branch, which is the opposite of what
-    // a floating window should do with the main window's stream.
-    if (!ownsDevice) {
-      return;
-    }
-
-    const shouldHold = shouldHoldMicrophoneReady({
-      enabled,
-      isRecording,
-      isLocalDataClearing: isLocalDataClearRequested(),
-      permissionGranted,
-    });
-
-    if (!shouldHold) {
-      // Anything other than "hold" releases: the preference went off, a
-      // recording started, a clear began, or permission was revoked. The last
-      // one matters on its own: a revoked permission must not leave a stream the
-      // OS no longer authorises running, and the indicator would be a lie.
-      if (appliedRef.current === "closed") {
-        return;
-      }
+    if (decision === "release") {
+      // Anything other than "hold" releases: the preference went off, a clear
+      // began, or permission was revoked. The last one matters on its own: a
+      // revoked permission must not leave a stream the OS no longer authorises
+      // running, and the indicator would be a lie.
       appliedRef.current = "closed";
       release();
       return;
     }
-
+    // Open, or reopen on a changed pre-roll or device. The resize path has to be
+    // reachable, which is why the "already held" test is inside `decideHoldAction`
+    // rather than on `appliedRef`: that only changes when the decision changes,
+    // and a slider move does not change it.
     appliedRef.current = "open";
-
-    // The resize path has to be reachable, which is why the "already held" test
-    // is on the ring rather than on the open/closed state above: that state only
-    // changes when the decision changes, and a slider move does not change it.
-    if (openedPrerollRef.current !== null) {
-      // A different microphone is a required reopen: the held stream is bound to
-      // the device it was built on and cannot follow the preference, so this
-      // press would otherwise be served by the device the user moved away from.
-      const deviceChanged =
-        openedPrerollRef.current.device !== preferredMicrophone;
-      if (
-        openedPrerollRef.current.preroll === prerollSeconds &&
-        !deviceChanged
-      ) {
-        return;
-      }
-      openedPrerollRef.current = {
-        preroll: prerollSeconds,
-        device: preferredMicrophone,
-      };
-      hold(prerollSeconds);
-      return;
-    }
-
     openedPrerollRef.current = {
       preroll: prerollSeconds,
       device: preferredMicrophone,

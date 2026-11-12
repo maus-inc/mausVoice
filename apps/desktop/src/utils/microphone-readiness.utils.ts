@@ -148,6 +148,77 @@ export const shouldHoldMicrophoneReady = ({
   enabled && !isRecording && !isLocalDataClearing && permissionGranted;
 
 /**
+ * What the hold effect should do about the stream it has open.
+ *
+ * Four answers rather than two booleans, because "leave it alone" has two
+ * different reasons and the caller must not collapse them: a stream that is
+ * already right for the next press needs nothing, while a window that does not
+ * own the device must neither open nor close one. Folding the second into
+ * "do not hold" sends it down the release branch, which is the opposite of what
+ * a floating window should do with the main window's stream.
+ *
+ * `held` is what this window last asked for: its pre-roll and the device the
+ * stream is bound to. A different device is a required reopen even when the
+ * pre-roll matches, because a capture stream cannot follow the preference -- it
+ * would serve the next press from the device the user just moved away from.
+ */
+export type HoldDecision =
+  /** The press has the stream; the stop path decides its fate from here. */
+  | "hand-off"
+  /** A decision cannot be made yet: preferences still loading, or not our device. */
+  | "no-opinion"
+  /** The preference says do not hold. */
+  | "release"
+  /** A stream is open and already matches what the next press wants. */
+  | "keep"
+  /** Nothing is held, or what is held is wrong. */
+  | "open";
+
+export const decideHoldAction = ({
+  isRecording,
+  prefsLoaded,
+  ownsDevice,
+  shouldHold,
+  applied,
+  held,
+  prerollSeconds,
+  preferredMicrophone,
+}: {
+  isRecording: boolean;
+  prefsLoaded: boolean;
+  ownsDevice: boolean;
+  shouldHold: boolean;
+  /** What the last effect run decided: `null` before it decided anything. */
+  applied: "open" | "closed" | null;
+  held: { preroll: number; device: string | null } | null;
+  prerollSeconds: number;
+  preferredMicrophone: string | null;
+}): HoldDecision => {
+  // A running recording has adopted the held stream. Releasing here would zero
+  // the linger policy the stop path reads, so every dictation would pay the
+  // device open keep-ready exists to avoid.
+  if (isRecording) {
+    return "hand-off";
+  }
+  // Every window mounts with the preferences still null, and treating that as
+  // "off" released a device another window had opened.
+  if (!prefsLoaded || !ownsDevice) {
+    return "no-opinion";
+  }
+  if (!shouldHold) {
+    // Already released: re-releasing would close a stream that a newer hold had
+    // opened in between.
+    return applied === "closed" ? "keep" : "release";
+  }
+  if (held === null) {
+    return "open";
+  }
+  return held.preroll === prerollSeconds && held.device === preferredMicrophone
+    ? "keep"
+    : "open";
+};
+
+/**
  * Whether the app should resolve the next press's device now.
  *
  * This is the cheap half of readiness: it does the device enumeration and
