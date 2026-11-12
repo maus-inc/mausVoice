@@ -1,12 +1,10 @@
-import {
+import type {
   PostProcessMetadata,
   TranscribeAudioMetadata,
 } from "../actions/transcribe.actions";
+import type { StopRecordingResponse } from "./recording.types";
 
-export type StopRecordingResponse = {
-  samples: number[] | Float32Array;
-  sampleRate?: number;
-};
+export type { StopRecordingResponse } from "./recording.types";
 
 export type TranscriptionSessionResult = {
   rawTranscript: string | null;

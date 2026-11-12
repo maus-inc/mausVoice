@@ -18,7 +18,7 @@ import { getAppState, produceAppState } from "../store";
 import { classifyPostProcessErrorCategory } from "./post-process-error-category";
 import { PostProcessingRunMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
-import { StopRecordingResponse } from "../types/transcription-session.types";
+import type { StopRecordingResponse } from "../types/recording.types";
 import { resolveProcessedTranscription } from "../utils/ai.utils";
 import { createId } from "../utils/id.utils";
 import {
