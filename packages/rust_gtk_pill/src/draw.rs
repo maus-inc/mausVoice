@@ -1610,9 +1610,9 @@ fn draw_transcript(
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
     let permissions = state.assistant_permissions.borrow();
-    let review = state.assistant_review.borrow();
+    let has_review = state.assistant_review.borrow().is_some();
 
-    if messages.is_empty() && permissions.is_empty() && review.is_none() {
+    if messages.is_empty() && permissions.is_empty() && !has_review {
         // Both halves of the scroll state go with the content. Nothing sets
         // them on this path below, so a panel that has just been emptied keeps
         // the height of the transcript it used to hold: the wheel can then
@@ -1638,6 +1638,11 @@ fn draw_transcript(
 
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
+    if has_review {
+        // The native editor is fixed above the scrolling transcript. Keep its
+        // heading fixed too, and start conversation content below the editor.
+        y = draw_review_text(cr, state, area_x, area_y + top_pad, area_w, alpha) - scroll;
+    }
 
     cr.select_font_face(
         "Satoshi",
@@ -1721,13 +1726,6 @@ fn draw_transcript(
     for perm in permissions.iter() {
         y += 12.0;
         y = draw_permission_card(cr, state, perm, area_x, y, area_w, alpha);
-    }
-
-    if review.is_some() {
-        if !messages.is_empty() || !permissions.is_empty() {
-            y += 12.0;
-        }
-        y = draw_review_text(cr, state, area_x, y, area_w, alpha);
     }
 
     let total_height = y + scroll - area_y + bottom_pad;

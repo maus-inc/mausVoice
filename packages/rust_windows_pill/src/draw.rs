@@ -1342,9 +1342,9 @@ fn draw_transcript(
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
     let permissions = state.assistant_permissions.borrow();
-    let review = state.assistant_review.borrow();
+    let has_review = state.assistant_review.borrow().is_some();
 
-    if messages.is_empty() && permissions.is_empty() && review.is_none() {
+    if messages.is_empty() && permissions.is_empty() && !has_review {
         // Both halves of the scroll state go with the content. Nothing sets
         // them on this path below, so a panel that has just been emptied keeps
         // the height of the transcript it used to hold: the wheel can then
@@ -1369,6 +1369,11 @@ fn draw_transcript(
 
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
+    if has_review {
+        // The native editor is fixed above the scrolling transcript. Keep its
+        // heading fixed too, and start conversation content below the editor.
+        y = draw_review_text(gfx, state, area_x, area_y + top_pad, area_w, alpha) - scroll;
+    }
 
     let line_height = 20.0;
 
@@ -1445,13 +1450,6 @@ fn draw_transcript(
     for perm in permissions.iter() {
         y += 12.0;
         y = draw_permission_card(gfx, state, perm, area_x, y, area_w, alpha);
-    }
-
-    if review.is_some() {
-        if !messages.is_empty() || !permissions.is_empty() {
-            y += 12.0;
-        }
-        y = draw_review_text(gfx, state, area_x, y, area_w, alpha);
     }
 
     let total_height = y + scroll - area_y + bottom_pad;
@@ -1649,34 +1647,16 @@ fn draw_permission_card(
     y + card_h
 }
 
-/// The transcript under review, drawn in the panel body like an assistant
-/// message. The text comes from the entry, which is loaded with the transcript
-/// when the review arrives, so what is shown here is exactly what will be
-/// inserted, edits included. It scrolls with the rest of the panel, so there is
-/// no cap on its length.
-fn draw_review_text(gfx: &Gfx, state: &PillState, x: f64, y: f64, w: f64, alpha: f64) -> f64 {
-    // The review heading is displayed in the fixed native editor overlay, so
-    // this scrolling canvas only paints the transcript body.
-    let mut text_y = y + REVIEW_TITLE_HEIGHT;
-    let text = state.entry_text.borrow();
-    let (preview, _) = rust_pill_shared::bound_review_preview_text(&text);
-    for line in wrap_text(gfx, preview.as_str(), w)
-        .into_iter()
-        .take(rust_pill_shared::MAX_REVIEW_PREVIEW_LINES)
-    {
-        gfx.draw_text_top_left(
-            &line,
-            x,
-            text_y,
-            14.0,
-            false,
-            false,
-            [1.0, 1.0, 1.0, 0.92 * alpha],
-        );
-        text_y += REVIEW_LINE_HEIGHT;
-    }
-
-    text_y
+/// Reserve the fixed native editor's region in the scrolling transcript.
+fn draw_review_text(
+    _gfx: &Gfx,
+    _state: &PillState,
+    _x: f64,
+    y: f64,
+    _w: f64,
+    _alpha: f64,
+) -> f64 {
+    y + REVIEW_TITLE_HEIGHT + PANEL_REVIEW_EDITOR_HEIGHT
 }
 
 /// The decisions the user can take on the transcript. Drawn as a fixed row

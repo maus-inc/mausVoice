@@ -176,7 +176,29 @@ const architectureCycles = (cwd) => {
 };
 
 const resolveBaseSha = () => {
-  if (process.env.BASE_SHA) return process.env.BASE_SHA;
+  const requestedBaseSha = process.env.BASE_SHA;
+  if (requestedBaseSha && !/^0+$/.test(requestedBaseSha)) {
+    const readSha = () =>
+      spawnSync("git", ["rev-parse", "--verify", requestedBaseSha], {
+        cwd: root,
+        encoding: "utf8",
+      });
+    let result = readSha();
+    if (result.status !== 0) {
+      execFileSync(
+        "git",
+        ["fetch", "--depth=1", "--no-tags", "origin", requestedBaseSha],
+        { cwd: root, stdio: "pipe", timeout: 60_000 },
+      );
+      result = readSha();
+    }
+    assert.equal(
+      result.status,
+      0,
+      `could not resolve pushed base ${requestedBaseSha}`,
+    );
+    return result.stdout.trim();
+  }
 
   const baseBranch =
     process.env.GITHUB_BASE_REF || process.env.DEFAULT_BRANCH || "main";
@@ -188,21 +210,18 @@ const resolveBaseSha = () => {
     });
   let result = readBaseSha();
   if (result.status !== 0) {
-    const shallow = execFileSync(
-      "git",
-      ["rev-parse", "--is-shallow-repository"],
-      { cwd: root, encoding: "utf8" },
-    ).trim();
-    if (shallow === "true") {
-      execFileSync("git", ["fetch", "--unshallow", "--no-tags", "origin"], {
-        cwd: root,
-        stdio: "pipe",
-      });
-    }
+    // The test only needs the target tip for `git archive`; never expand a
+    // shallow checkout into the repository's complete history.
     execFileSync(
       "git",
-      ["fetch", "--no-tags", "origin", `refs/heads/${baseBranch}:${baseRef}`],
-      { cwd: root, stdio: "pipe" },
+      [
+        "fetch",
+        "--depth=1",
+        "--no-tags",
+        "origin",
+        `refs/heads/${baseBranch}:${baseRef}`,
+      ],
+      { cwd: root, stdio: "pipe", timeout: 60_000 },
     );
     result = readBaseSha();
   }

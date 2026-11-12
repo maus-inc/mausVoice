@@ -411,6 +411,13 @@ impl PillState {
     }
 }
 
+pub(crate) fn should_grab_focus_on_focus_in(
+    is_typing: bool,
+    focus_released_after_review: bool,
+) -> bool {
+    is_typing && !focus_released_after_review
+}
+
 pub(crate) fn next_focus_released_after_review(
     previous_review_active: bool,
     review_active: bool,
@@ -451,6 +458,9 @@ mod tests {
 
     #[test]
     fn review_to_composer_releases_focus_for_every_backend() {
+        assert!(should_grab_focus_on_focus_in(true, false));
+        assert!(!should_grab_focus_on_focus_in(true, true));
+        assert!(!should_grab_focus_on_focus_in(false, false));
         assert!(next_focus_released_after_review(true, false, false));
         assert!(!next_focus_released_after_review(false, true, true));
         assert!(next_focus_released_after_review(false, false, true));

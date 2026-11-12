@@ -86,7 +86,7 @@ const startPillReview = (
 ): Promise<string | null> => reviewTranscriptOnPill(...args);
 
 const beginAssistantToolOpen = async (
-  onOpen: (text: string) => Promise<void>,
+  onOpen: (text: string, signal?: AbortSignal) => Promise<void>,
 ): Promise<{ id: string; pending: Promise<string | null> }> => {
   const pending = reviewTranscriptOnPill("rough take", "assistant-tool", {
     onOpen,
@@ -842,6 +842,33 @@ describe("reviewTranscriptOnPill", () => {
     expect(session?.draftText).toBe("pill draft");
   });
 
+  it("aborts an Open hand-off when its review is dismissed during save", async () => {
+    let finishSave: (() => void) | undefined;
+    let openSignal: AbortSignal | undefined;
+    const opened = vi.fn();
+    const onOpen = vi.fn((_text: string, signal?: AbortSignal) => {
+      if (!signal) throw new Error("expected the Open cancellation signal");
+      openSignal = signal;
+      return new Promise<void>((resolve) => {
+        finishSave = () => {
+          if (!signal.aborted) opened();
+          resolve();
+        };
+      });
+    });
+    const { id, pending } = await beginAssistantToolOpen(onOpen);
+    await flush(() => onOpen.mock.calls.length > 0);
+
+    cancelAllPillReviews();
+    await expect(pending).resolves.toBeNull();
+    expect(openSignal?.aborted).toBe(true);
+    finishSave?.();
+    await flush(() => false);
+
+    expect(opened).not.toHaveBeenCalled();
+    expect(getReviewSession(id)?.status).toBe("cancelled");
+  });
+
   it("keeps agent Paste review open when its Open hand-off cannot be saved", async () => {
     const onOpen = vi.fn(() => Promise.reject(new Error("disk full")));
     const { id, pending } = await beginAssistantToolOpen(onOpen);
@@ -1094,6 +1121,26 @@ describe("reviewTranscriptOnPill", () => {
       );
       expect(expiryToast).not.toHaveProperty("action");
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the unanswered-review timer when teardown empties the queue", async () => {
+    vi.useFakeTimers();
+    try {
+      const onExpire = vi.fn();
+      const pending = reviewTranscriptOnPill("first", "assistant-tool", {
+        onExpire,
+      });
+      await flush(() => getAppState().pendingPillReview !== null);
+
+      cancelAllPillReviews();
+      await expect(pending).resolves.toBeNull();
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      expect(onExpire).not.toHaveBeenCalled();
+    } finally {
+      cancelAllPillReviews();
       vi.useRealTimers();
     }
   });

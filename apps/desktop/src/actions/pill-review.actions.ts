@@ -82,6 +82,8 @@ type QueuedReview = {
   busy: boolean;
   /** An Open decision is waiting for its durable manual-paste save. */
   openSavePending: boolean;
+  /** Cancels the durable save/navigation if the review is dismissed meanwhile. */
+  openSaveController?: AbortController;
 };
 
 type ReviewAnswer = {
@@ -276,7 +278,10 @@ const queueAdvancer: { advance: (answer?: ReviewAnswer) => void } = {
 };
 
 const armReviewTimeout = (current: QueuedReview | undefined): void => {
-  if (!current) return;
+  if (!current) {
+    clearReviewTimeout();
+    return;
+  }
   // The composer owns its own readiness/decision timeout, and an Open
   // hand-off owns the review until its durable save has settled.
   if (current.openSavePending || current.session.presentation === "composer")
@@ -325,7 +330,11 @@ const syncReviewTimeout = (
   current: QueuedReview | undefined,
   previousHeadId: string | undefined,
 ): void => {
-  if (current?.session.id !== previousHeadId) {
+  if (!current) {
+    clearReviewTimeout();
+    return;
+  }
+  if (current.session.id !== previousHeadId) {
     clearReviewTimeout();
     armReviewTimeout(current);
     return;
@@ -491,18 +500,23 @@ const openAssistantPasteInChats = async (
   current.openSavePending = true;
   clearReviewTimeout();
   const abortController = new AbortController();
+  current.openSaveController = abortController;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let saveTimedOut = false;
   try {
     await Promise.race([
       current.onOpen(text, abortController.signal),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
+          saveTimedOut = true;
           abortController.abort();
           reject(new Error("The Paste review save timed out"));
         }, OPEN_SAVE_TIMEOUT_MS);
       }),
     ]);
   } catch {
+    if (head() !== current || (abortController.signal.aborted && !saveTimedOut))
+      return true;
     runToast(
       showToast({
         message: getIntl().formatMessage({
@@ -516,7 +530,11 @@ const openAssistantPasteInChats = async (
     throw new Error("Could not save the pending Paste review");
   } finally {
     if (timeoutId !== null) clearTimeout(timeoutId);
+    if (current.openSaveController === abortController) {
+      current.openSaveController = undefined;
+    }
   }
+  if (abortController.signal.aborted || head() !== current) return true;
   settle(id, null, "open");
   return true;
 };
@@ -767,6 +785,7 @@ export const cancelAllPillReviews = (): void => {
   while (queue.length > 0) {
     const pending = queue.shift();
     if (pending) {
+      pending.openSaveController?.abort();
       markSessionCancelled(pending.session.id);
       pending.resolve(null);
     }

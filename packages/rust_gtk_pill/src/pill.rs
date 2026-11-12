@@ -12,8 +12,8 @@ pub(crate) use rust_pill_shared::clock::monotonic_now as drag_clock_now;
 use crate::constants::*;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::state::{
-    next_focus_released_after_review, FlameTongue, PillState, Rocket, RocketPhase, Spark,
-    WindowMode,
+    next_focus_released_after_review, should_grab_focus_on_focus_in, FlameTongue, PillState,
+    Rocket, RocketPhase, Spark, WindowMode,
 };
 use crate::{draw, input, x11};
 
@@ -481,7 +481,10 @@ pub fn run(receiver: Receiver<InMessage>) {
     let entry_focus_in = entry.clone();
     let review_focus_in = review_editor.clone();
     window.connect_focus_in_event(move |_, _| {
-        if state_focus_in.is_typing() {
+        if should_grab_focus_on_focus_in(
+            state_focus_in.is_typing(),
+            state_focus_in.focus_released_after_review.get(),
+        ) {
             if state_focus_in.assistant_review.borrow().is_some() {
                 review_focus_in.grab_focus();
             } else {
