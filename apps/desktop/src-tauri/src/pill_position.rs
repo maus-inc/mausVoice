@@ -29,7 +29,11 @@ use crate::state::OptionKeyDatabase;
 /// The pills are separate binaries that speak a line protocol on stdin, and
 /// that protocol is only read after the window exists. An argument is the one
 /// channel available before the first frame.
-pub const SAVED_POSITION_ARG: &str = "--saved-position=";
+///
+/// Re-exported rather than redefined: the writer here and the parser in each
+/// pill have to agree on the literal, and two copies of it would only be
+/// noticed when a saved position silently stopped restoring.
+pub use rust_pill_shared::restore::SAVED_POSITION_ARG;
 
 /// Read the stored record, if any, ready to hand to a pill process.
 ///
@@ -266,7 +270,7 @@ mod tests {
         assert!(ParkedWindow::decode(&good).is_some());
         assert_eq!(
             format!("{SAVED_POSITION_ARG}{good}"),
-            format!("--saved-position={good}")
+            format!("{}{good}", rust_pill_shared::restore::SAVED_POSITION_ARG)
         );
         assert!(ParkedWindow::decode("not a record").is_none());
     }

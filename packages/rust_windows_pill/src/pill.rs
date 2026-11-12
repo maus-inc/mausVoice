@@ -125,118 +125,7 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     let gfx = Gfx::new(WINDOW_W_TYPING, win_h).expect("Failed to create D2D context");
     eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
 
-    let state = PillState {
-        phase: Cell::new(Phase::Idle),
-        visibility: Cell::new(Visibility::WhileActive),
-        expand_t: Cell::new(0.0),
-        expand_velocity: Cell::new(0.0),
-        hovered: Cell::new(false),
-        wave_phase: Cell::new(0.0),
-        current_level: Cell::new(0.0),
-        target_level: Cell::new(0.0),
-        loading_offset: Cell::new(0.0),
-        pending_levels: RefCell::new(Vec::new()),
-        style_count: Cell::new(0),
-        style_name: RefCell::new(String::new()),
-        tooltip_t: Cell::new(0.0),
-        tooltip_velocity: Cell::new(0.0),
-        tooltip_width: Cell::new(0.0),
-        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
-        window_mode: Cell::new(WindowMode::Dictation),
-        draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
-        draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
-        draw_w_velocity: Cell::new(0.0),
-        draw_h_velocity: Cell::new(0.0),
-        assistant_active: Cell::new(false),
-        assistant_review: RefCell::new(None),
-        assistant_input_mode: RefCell::new("voice".to_string()),
-        assistant_compact: Cell::new(true),
-        assistant_conversation_id: RefCell::new(None),
-        assistant_user_prompt: RefCell::new(None),
-        assistant_messages: RefCell::new(Vec::new()),
-        assistant_streaming: RefCell::new(None),
-        assistant_permissions: RefCell::new(Vec::new()),
-        panel_open_t: Cell::new(0.0),
-        panel_open_velocity: Cell::new(0.0),
-        kb_button_t: Cell::new(0.0),
-        kb_button_velocity: Cell::new(0.0),
-        shimmer_phase: Cell::new(0.0),
-        scroll_offset: Cell::new(0.0),
-        content_height: Cell::new(0.0),
-        viewport_height: Cell::new(0.0),
-        should_stick: Cell::new(true),
-        click_regions: RefCell::new(Vec::new()),
-        mouse_x: Cell::new(-1000.0),
-        mouse_y: Cell::new(-1000.0),
-        entry_text: RefCell::new(String::new()),
-        pause_t: Cell::new(0.0),
-        pause_velocity: Cell::new(0.0),
-        cancel_t: Cell::new(0.0),
-        cancel_velocity: Cell::new(0.0),
-        flash_message: RefCell::new(String::new()),
-        flash_visible: Cell::new(false),
-        flash_t: Cell::new(0.0),
-        flash_velocity: Cell::new(0.0),
-        flash_timer: Cell::new(0.0),
-        flash_is_error: Cell::new(false),
-        flash_action: RefCell::new(None),
-        flash_action_label: RefCell::new(None),
-        flash_reject_action: RefCell::new(None),
-        flash_reject_action_label: RefCell::new(None),
-        fireworks_active: Cell::new(false),
-        fireworks_elapsed: Cell::new(0.0),
-        fireworks_next_launch: Cell::new(0),
-        fireworks_rockets: RefCell::new(Vec::new()),
-        flame_active: Cell::new(false),
-        flame_elapsed: Cell::new(0.0),
-        flame_tongues: RefCell::new(Vec::new()),
-        flash_blue_active: Cell::new(false),
-        flash_blue_elapsed: Cell::new(0.0),
-        transcript_text: RefCell::new(String::new()),
-        transcript_time_since_update: Cell::new(0.0),
-        transcript_opacity: Cell::new(0.0),
-        transcript_has_message: Cell::new(false),
-        stage_text: RefCell::new(None),
-        long_press_active: Cell::new(false),
-        long_press_elapsed: Cell::new(0.0),
-        long_press_start_x: Cell::new(0.0),
-        long_press_start_y: Cell::new(0.0),
-        dragging: Cell::new(false),
-        drag_cancelled: Cell::new(false),
-        drag_cursor_x: Cell::new(0.0),
-        drag_cursor_y: Cell::new(0.0),
-        drag_motion: RefCell::new(DragController::new()),
-        last_monitor_topology: RefCell::new(None),
-        hover_intent: RefCell::new(HoverIntent::new()),
-        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
-        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
-        // A restored window is already parked where the user left it, so the
-        // state starts saved. Without this the first cursor tick re-homes the
-        // pill to the default corner, undoing the restore 60 ms after launch.
-        has_saved_position: Cell::new(restored.is_some()),
-        anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
-        pending_drag_position: Cell::new(false),
-        drag_save_due: Cell::new(None),
-        saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
-        saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
-        saved_display_id: Cell::new(restored_display_id),
-        drag_started_at: Cell::new(None),
-        save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
-        layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),
-        inflate_t: Cell::new(0.0),
-        inflate_velocity: Cell::new(0.0),
-        drag_label_t: Cell::new(0.0),
-        drag_label_velocity: Cell::new(0.0),
-        ring_alpha: Cell::new(0.0),
-        ring_release_progress: Cell::new(0.0),
-        press_elapsed: Cell::new(0.0),
-        release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
-        arm_t: Cell::new(0.0),
-        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
-        pointer_down: Cell::new(false),
-        ring_points: RefCell::new(Vec::new()),
-        dirty: Cell::new(true),
-    };
+    let state = initial_state(restored, restored_display_id);
 
     STATE.with(|s| *s.borrow_mut() = Some(state));
     GFX.with(|g| *g.borrow_mut() = Some(gfx));
@@ -2025,6 +1914,129 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
 /// a restore can clamp against the rect it is about to create. `pill_position` is
 /// the drawing origin of the pill inside the window, so the pill body plus its
 /// content offset is the footprint that has to stay on screen.
+/// The state a freshly created pill starts with.
+///
+/// A restored window is already parked where the user left it, so the state
+/// starts saved. Without that the first cursor tick re-homes the pill to the
+/// default corner, undoing the restore 60 ms after launch.
+///
+/// This is also the state the clamp tests mean by "at rest": an initial
+/// `PillState` is the one whose bounds the first cursor tick must not move.
+fn initial_state(restored: Option<(i32, i32)>, restored_display_id: Option<u64>) -> PillState {
+    PillState {
+        phase: Cell::new(Phase::Idle),
+        visibility: Cell::new(Visibility::WhileActive),
+        expand_t: Cell::new(0.0),
+        expand_velocity: Cell::new(0.0),
+        hovered: Cell::new(false),
+        wave_phase: Cell::new(0.0),
+        current_level: Cell::new(0.0),
+        target_level: Cell::new(0.0),
+        loading_offset: Cell::new(0.0),
+        pending_levels: RefCell::new(Vec::new()),
+        style_count: Cell::new(0),
+        style_name: RefCell::new(String::new()),
+        tooltip_t: Cell::new(0.0),
+        tooltip_velocity: Cell::new(0.0),
+        tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
+        window_mode: Cell::new(WindowMode::Dictation),
+        draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
+        draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
+        draw_w_velocity: Cell::new(0.0),
+        draw_h_velocity: Cell::new(0.0),
+        assistant_active: Cell::new(false),
+        assistant_review: RefCell::new(None),
+        assistant_input_mode: RefCell::new("voice".to_string()),
+        assistant_compact: Cell::new(true),
+        assistant_conversation_id: RefCell::new(None),
+        assistant_user_prompt: RefCell::new(None),
+        assistant_messages: RefCell::new(Vec::new()),
+        assistant_streaming: RefCell::new(None),
+        assistant_permissions: RefCell::new(Vec::new()),
+        panel_open_t: Cell::new(0.0),
+        panel_open_velocity: Cell::new(0.0),
+        kb_button_t: Cell::new(0.0),
+        kb_button_velocity: Cell::new(0.0),
+        shimmer_phase: Cell::new(0.0),
+        scroll_offset: Cell::new(0.0),
+        content_height: Cell::new(0.0),
+        viewport_height: Cell::new(0.0),
+        should_stick: Cell::new(true),
+        click_regions: RefCell::new(Vec::new()),
+        mouse_x: Cell::new(-1000.0),
+        mouse_y: Cell::new(-1000.0),
+        entry_text: RefCell::new(String::new()),
+        pause_t: Cell::new(0.0),
+        pause_velocity: Cell::new(0.0),
+        cancel_t: Cell::new(0.0),
+        cancel_velocity: Cell::new(0.0),
+        flash_message: RefCell::new(String::new()),
+        flash_visible: Cell::new(false),
+        flash_t: Cell::new(0.0),
+        flash_velocity: Cell::new(0.0),
+        flash_timer: Cell::new(0.0),
+        flash_is_error: Cell::new(false),
+        flash_action: RefCell::new(None),
+        flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
+        fireworks_active: Cell::new(false),
+        fireworks_elapsed: Cell::new(0.0),
+        fireworks_next_launch: Cell::new(0),
+        fireworks_rockets: RefCell::new(Vec::new()),
+        flame_active: Cell::new(false),
+        flame_elapsed: Cell::new(0.0),
+        flame_tongues: RefCell::new(Vec::new()),
+        flash_blue_active: Cell::new(false),
+        flash_blue_elapsed: Cell::new(0.0),
+        transcript_text: RefCell::new(String::new()),
+        transcript_time_since_update: Cell::new(0.0),
+        transcript_opacity: Cell::new(0.0),
+        transcript_has_message: Cell::new(false),
+        stage_text: RefCell::new(None),
+        long_press_active: Cell::new(false),
+        long_press_elapsed: Cell::new(0.0),
+        long_press_start_x: Cell::new(0.0),
+        long_press_start_y: Cell::new(0.0),
+        dragging: Cell::new(false),
+        drag_cancelled: Cell::new(false),
+        drag_cursor_x: Cell::new(0.0),
+        drag_cursor_y: Cell::new(0.0),
+        drag_motion: RefCell::new(DragController::new()),
+        last_monitor_topology: RefCell::new(None),
+        hover_intent: RefCell::new(HoverIntent::new()),
+        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
+        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
+        // A restored window is already parked where the user left it, so the
+        // state starts saved. Without this the first cursor tick re-homes the
+        // pill to the default corner, undoing the restore 60 ms after launch.
+        has_saved_position: Cell::new(restored.is_some()),
+        anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
+        pending_drag_position: Cell::new(false),
+        drag_save_due: Cell::new(None),
+        saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
+        saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
+        saved_display_id: Cell::new(restored_display_id),
+        drag_started_at: Cell::new(None),
+        save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
+        layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),
+        inflate_t: Cell::new(0.0),
+        inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
+        ring_alpha: Cell::new(0.0),
+        ring_release_progress: Cell::new(0.0),
+        press_elapsed: Cell::new(0.0),
+        release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
+        arm_t: Cell::new(0.0),
+        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
+        pointer_down: Cell::new(false),
+        ring_points: RefCell::new(Vec::new()),
+        dirty: Cell::new(true),
+    }
+}
+
 fn window_clamp_bounds_for_size(work: MonitorRect, window_w: f64, window_h: f64) -> DragBounds {
     // At creation `expand_t` and `inflate_t` are zero, so the pill sits at its
     // resting arrangement: centred, COLLAPSED_BOTTOM_INSET above the window's
@@ -3052,6 +3064,46 @@ pub(crate) fn focus_edit_control() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two clamps have to agree for a freshly created pill.
+    ///
+    /// `window_clamp_bounds_for_size` is used before any frame has run, from the
+    /// restore path; `window_clamp_bounds` is what every later cursor tick uses.
+    /// If they disagree at rest, the first tick nudges a pill that was just
+    /// restored to where the user left it -- a saved position that survives a
+    /// restart but not the following 60 ms.
+    #[test]
+    fn both_clamps_agree_for_a_pill_at_rest() {
+        let state = initial_state(None, None);
+        let work = MonitorRect::without_id(0.0, 0.0, 1920.0, 1080.0);
+        let win_w = WINDOW_W_TYPING;
+        let win_h =
+            WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
+
+        let at_rest = window_clamp_bounds_for_size(work, win_w as f64, win_h as f64);
+        let wa = RECT {
+            left: work.x as i32,
+            top: work.y as i32,
+            right: work.right() as i32,
+            bottom: work.bottom() as i32,
+        };
+        let after_a_frame = window_clamp_bounds(&state, wa, win_w, win_h);
+
+        // Compared per edge so a failure names which one drifted.
+        assert_eq!(at_rest.min_x, after_a_frame.min_x, "left edge");
+        assert_eq!(at_rest.min_y, after_a_frame.min_y, "top edge");
+        assert_eq!(at_rest.max_x, after_a_frame.max_x, "right edge");
+        assert_eq!(at_rest.max_y, after_a_frame.max_y, "bottom edge");
+
+        // A pill at rest is its collapsed footprint, not the window: the clamp
+        // follows the visible pill, so the two must not have converged on
+        // "some value" that happens to be equal because both ignore the inset.
+        assert!(
+            after_a_frame.max_y < work.bottom(),
+            "the clamp ignores the collapsed bottom inset, so a restored pill \
+             is allowed to sit off the resting spot"
+        );
+    }
 
     #[test]
     fn clearing_crossing_deformation_requests_the_final_repaint() {

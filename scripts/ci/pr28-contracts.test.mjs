@@ -2577,10 +2577,21 @@ describe("native gesture adapter contracts", () => {
     // the pill from `has_saved_position`/`saved_x`/`saved_y`. Left unsaved, the
     // first tick 60 ms later re-homes the pill to the default corner and the
     // restore looks like it was ignored.
+    // The seeding lives in the state factory now; `run` is still required to
+    // hand it the restored origin, so a caller that stops passing it fails here
+    // rather than silently starting unsaved.
     const run = scope("windowsPill", "pub fn run(");
-    assert.match(run, /has_saved_position: Cell::new\(restored\.is_some\(\)\)/);
-    assert.match(run, /saved_x: Cell::new\(restored\.map_or\(0, \|origin\| origin\.0\)\)/);
-    assert.match(run, /saved_y: Cell::new\(restored\.map_or\(0, \|origin\| origin\.1\)\)/);
+    assert.match(run, /initial_state\(restored, restored_display_id\)/);
+    const seeded = scope("windowsPill", "fn initial_state(");
+    assert.match(seeded, /has_saved_position: Cell::new\(restored\.is_some\(\)\)/);
+    assert.match(
+      seeded,
+      /saved_x: Cell::new\(restored\.map_or\(0, \|origin\| origin\.0\)\)/,
+    );
+    assert.match(
+      seeded,
+      /saved_y: Cell::new\(restored\.map_or\(0, \|origin\| origin\.1\)\)/,
+    );
   });
 
   it("anchors macOS selector geometry to the live pill instead of the area strip", () => {
