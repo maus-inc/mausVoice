@@ -71,6 +71,7 @@ export class PasteTool extends BaseTool {
         const saved = await updatePendingPasteReviewDraft(
           pendingReviewMessage,
           text,
+          generation,
         );
         if (generation !== latestSaveGeneration) {
           let corrected = saved;
@@ -84,6 +85,7 @@ export class PasteTool extends BaseTool {
             corrected = await updatePendingPasteReviewDraft(
               corrected,
               correctedText,
+              latestSaveGeneration,
             );
           }
           return;
@@ -117,6 +119,7 @@ export class PasteTool extends BaseTool {
           conversationId,
           pendingReviewId,
           text,
+          generation,
         );
       }
     };

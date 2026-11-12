@@ -550,36 +550,31 @@ pub fn run(receiver: Receiver<InMessage>) {
         *state_review_changed.entry_text.borrow_mut() = review_buffer_text(buffer);
     });
 
+    let state_review_paste = state.clone();
+    review_editor.connect_paste_clipboard(move |view| {
+        // The GTK action signal also covers context-menu Paste. Stop its default
+        // handler so it cannot negotiate image or rich-text clipboard targets.
+        view.stop_signal_emission_by_name("paste-clipboard");
+        request_review_clipboard_text(view, &state_review_paste);
+    });
+
     let state_review_submit = state.clone();
     review_editor.connect_key_press_event(move |view, event| {
         if view.im_context_filter_keypress(event) {
             return glib::Propagation::Stop;
         }
-        let ctrl = event.state().contains(gdk::ModifierType::CONTROL_MASK);
-        if ctrl
+        let modifiers = event.state();
+        let ctrl_v = modifiers.contains(gdk::ModifierType::CONTROL_MASK)
             && matches!(
                 event.keyval(),
                 gdk::keys::constants::v | gdk::keys::constants::V
-            )
-        {
-            // Keep this editor plain-text only: image clipboard targets must
-            // not turn a transcript review into an image-paste surface.
-            let buffer = view.buffer().expect("review editor buffer");
-            let Some(review_id) = state_review_submit.pending_review_id() else {
-                return glib::Propagation::Stop;
-            };
-            let state_clipboard = state_review_submit.clone();
-            gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
-                if !clipboard_result_is_current(
-                    &review_id,
-                    state_clipboard.pending_review_id().as_deref(),
-                ) {
-                    return;
-                }
-                if let Some(text) = text {
-                    buffer.insert_at_cursor(text);
-                }
-            });
+            );
+        let shift_insert = modifiers.contains(gdk::ModifierType::SHIFT_MASK)
+            && event.keyval() == gdk::keys::constants::Insert;
+        if ctrl_v || shift_insert {
+            // GTK's default key bindings bypass the action signal on some
+            // backends, so route both keyboard paste shortcuts through text.
+            request_review_clipboard_text(view, &state_review_submit);
             return glib::Propagation::Stop;
         }
 
@@ -1168,6 +1163,23 @@ thread_local! {
     /// Multiline native editor shown only while a transcript awaits review.
     static REVIEW_EDITOR: std::cell::RefCell<Option<gtk::TextView>> =
         const { std::cell::RefCell::new(None) };
+}
+
+fn request_review_clipboard_text(view: &gtk::TextView, state: &PillState) {
+    let Some(review_id) = state.pending_review_id() else {
+        return;
+    };
+    let buffer = view.buffer().expect("review editor buffer");
+    let state_clipboard = state.clone();
+    gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
+        if !clipboard_result_is_current(&review_id, state_clipboard.pending_review_id().as_deref())
+        {
+            return;
+        }
+        if let Some(text) = text {
+            buffer.insert_at_cursor(text);
+        }
+    });
 }
 
 fn clipboard_result_is_current(expected_review_id: &str, current_review_id: Option<&str>) -> bool {

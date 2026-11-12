@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n/intl";
 import { createId } from "../utils/id.utils";
 import { nowIso } from "../utils/date.utils";
+import { getChatMessageRepo } from "../repos";
 import { createChatMessage, updateChatMessage } from "./chat.actions";
 
 export const PENDING_PASTE_REVIEW_TYPE = "pending-paste-review";
@@ -15,6 +16,7 @@ export type PendingPasteReviewMetadata = {
   toolCallState: "awaiting-manual-paste";
   text: string;
   status: PendingPasteReviewStatus;
+  draftRevision: number;
 };
 
 export const getPendingPasteReview = (
@@ -27,7 +29,10 @@ export const getPendingPasteReview = (
     typeof metadata.text !== "string" ||
     (metadata.status !== "pending" &&
       metadata.status !== "copied" &&
-      metadata.status !== "canceled")
+      metadata.status !== "canceled") ||
+    (metadata.draftRevision !== undefined &&
+      (!Number.isSafeInteger(metadata.draftRevision) ||
+        Number(metadata.draftRevision) < 0))
   ) {
     return null;
   }
@@ -38,6 +43,7 @@ export const getPendingPasteReview = (
     toolCallState: "awaiting-manual-paste",
     text: metadata.text,
     status: metadata.status,
+    draftRevision: Number(metadata.draftRevision ?? 0),
   };
 };
 
@@ -76,6 +82,7 @@ export const createPendingPasteReview = async (
       toolCallState: "awaiting-manual-paste",
       text,
       status: "pending",
+      draftRevision: 0,
     } satisfies PendingPasteReviewMetadata,
   });
 };
@@ -85,6 +92,7 @@ const updatePendingPasteReview = (
   pending: PendingPasteReviewMetadata,
   text: string,
   status: PendingPasteReviewStatus,
+  draftRevision = pending.draftRevision + 1,
 ): Promise<ChatMessage> =>
   updateChatMessage({
     ...message,
@@ -92,40 +100,38 @@ const updatePendingPasteReview = (
       ...pending,
       text,
       status,
+      draftRevision,
     } satisfies PendingPasteReviewMetadata,
   });
 
 /**
- * Recover a save retry whose earlier create committed but never returned to
- * the caller. The duplicate id proves that this pending card already exists.
+ * Recover a retry whose earlier create committed but never returned. The
+ * conversation-scoped lookup avoids applying a synthetic update to a missing
+ * or differently owned card; the native write rechecks ownership atomically.
  */
-export const updatePendingPasteReviewDraftById = (
+export const updatePendingPasteReviewDraftById = async (
   conversationId: string,
   id: string,
   text: string,
-): Promise<ChatMessage> =>
-  updatePendingPasteReviewDraft(
-    {
-      id,
-      conversationId,
-      role: "system",
-      content: "",
-      createdAt: nowIso(),
-      metadata: {
-        type: PENDING_PASTE_REVIEW_TYPE,
-        toolName: "paste",
-        toolCallState: "awaiting-manual-paste",
-        text,
-        status: "pending",
-      } satisfies PendingPasteReviewMetadata,
-    },
-    text,
-  );
+  draftRevision: number,
+): Promise<ChatMessage> => {
+  const messages = await getChatMessageRepo().listChatMessages(conversationId);
+  const existing = messages.find((message) => message.id === id);
+  if (!existing || existing.conversationId !== conversationId) {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
+  }
+  return updatePendingPasteReviewDraft(existing, text, draftRevision);
+};
 
 /** Persist a newer pill draft on an existing, still-pending Paste review card. */
-export const updatePendingPasteReviewDraft = (
+export const updatePendingPasteReviewDraft = async (
   message: ChatMessage,
   text: string,
+  requestedRevision?: number,
 ): Promise<ChatMessage> => {
   const pending = getPendingPasteReview(message.metadata);
   if (pending?.status !== "pending") {
@@ -143,7 +149,33 @@ export const updatePendingPasteReviewDraft = (
     );
   }
 
-  return updatePendingPasteReview(message, pending, text, "pending");
+  const draftRevision = requestedRevision ?? pending.draftRevision + 1;
+  if (!Number.isSafeInteger(draftRevision) || draftRevision < 1) {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
+  }
+  const saved = await updatePendingPasteReview(
+    message,
+    pending,
+    text,
+    "pending",
+    draftRevision,
+  );
+  const savedPending = getPendingPasteReview(saved.metadata);
+  if (
+    savedPending?.status !== "pending" ||
+    savedPending.draftRevision < draftRevision
+  ) {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
+  }
+  return saved;
 };
 
 /**
@@ -177,8 +209,16 @@ export const copyPendingPasteReview = async (
     text,
     "pending",
   );
+  const savedPending = getPendingPasteReview(saved.metadata);
+  if (savedPending?.status !== "pending" || savedPending.text !== text) {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
+  }
   await invoke("copy_to_clipboard", { text });
-  await updatePendingPasteReview(saved, pending, text, "copied");
+  await updatePendingPasteReview(saved, savedPending, text, "copied");
 };
 
 /** Mark a saved Paste review as intentionally dismissed, preserving its text. */
@@ -198,6 +238,31 @@ export const cancelPendingPasteReview = async (
   // Cancel dismisses the action, not its durable record. Treat an empty editor
   // as no replacement so a deletion immediately before Cancel cannot erase the
   // text that Open preserved from the pill.
-  const preservedText = text.trim() ? text : pending.text;
-  await updatePendingPasteReview(message, pending, preservedText, "canceled");
+  let saved = await updatePendingPasteReview(
+    message,
+    pending,
+    text.trim() ? text : pending.text,
+    "canceled",
+  );
+  let savedPending = getPendingPasteReview(saved.metadata);
+  for (
+    let attempt = 0;
+    savedPending?.status === "pending" && attempt < 3;
+    attempt += 1
+  ) {
+    saved = await updatePendingPasteReview(
+      saved,
+      savedPending,
+      savedPending.text,
+      "canceled",
+    );
+    savedPending = getPendingPasteReview(saved.metadata);
+  }
+  if (savedPending?.status !== "canceled") {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
+  }
 };

@@ -282,6 +282,7 @@ describe("PasteTool review", () => {
     expect(updatePendingPasteReviewDraftMock).toHaveBeenCalledWith(
       savedCard,
       "edited after Open timed out",
+      2,
     );
     expect(invokeMock).not.toHaveBeenCalled();
   });
@@ -463,6 +464,7 @@ describe("PasteTool review", () => {
       "conv-1",
       createPendingPasteReviewMock.mock.calls[0][2],
       "latest draft",
+      2,
     );
     expect(emitMock).toHaveBeenCalledOnce();
     finishStalledCreate?.({ id: "pending-review" });
@@ -516,6 +518,7 @@ describe("PasteTool review", () => {
       3,
       expect.objectContaining({ id: "pending-review" }),
       "latest draft",
+      3,
     );
   });
 
@@ -567,6 +570,7 @@ describe("PasteTool review", () => {
     expect(updatePendingPasteReviewDraftMock).toHaveBeenCalledWith(
       savedCard,
       "latest draft",
+      2,
     );
     expect(emitMock).toHaveBeenCalledOnce();
   });
