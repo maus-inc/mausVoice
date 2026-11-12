@@ -82,6 +82,8 @@ export class PasteTool extends BaseTool {
             correctedText !== latestSaveText
           ) {
             correctedText = latestSaveText;
+            // Each corrected write must observe the prior CAS result before
+            // choosing the next revision, so these retries are intentionally serial.
             corrected = await updatePendingPasteReviewDraft(
               corrected,
               correctedText,

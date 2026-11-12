@@ -117,7 +117,7 @@ export const updatePendingPasteReviewDraftById = async (
 ): Promise<ChatMessage> => {
   const messages = await getChatMessageRepo().listChatMessages(conversationId);
   const existing = messages.find((message) => message.id === id);
-  if (!existing || existing.conversationId !== conversationId) {
+  if (existing?.conversationId !== conversationId) {
     throw new Error(
       getIntl().formatMessage({
         defaultMessage: "This Paste review is no longer pending",
@@ -245,6 +245,8 @@ export const cancelPendingPasteReview = async (
     "canceled",
   );
   let savedPending = getPendingPasteReview(saved.metadata);
+  // Each retry uses the revision returned by the previous write; these writes
+  // must stay sequential so a fresh CAS can observe and preserve the newest text.
   for (
     let attempt = 0;
     savedPending?.status === "pending" && attempt < 3;
