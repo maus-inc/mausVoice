@@ -19,6 +19,12 @@ export type PendingPasteReviewMetadata = {
   draftRevision: number;
 };
 
+const isValidDraftRevision = (revision: unknown): boolean =>
+  revision === undefined ||
+  (typeof revision === "number" &&
+    Number.isSafeInteger(revision) &&
+    revision >= 0);
+
 export const getPendingPasteReview = (
   metadata: Record<string, unknown> | null,
 ): PendingPasteReviewMetadata | null => {
@@ -30,9 +36,7 @@ export const getPendingPasteReview = (
     (metadata.status !== "pending" &&
       metadata.status !== "copied" &&
       metadata.status !== "canceled") ||
-    (metadata.draftRevision !== undefined &&
-      (!Number.isSafeInteger(metadata.draftRevision) ||
-        Number(metadata.draftRevision) < 0))
+    !isValidDraftRevision(metadata.draftRevision)
   ) {
     return null;
   }
@@ -128,11 +132,11 @@ export const updatePendingPasteReviewDraftById = async (
 };
 
 /** Persist a newer pill draft on an existing, still-pending Paste review card. */
-export const updatePendingPasteReviewDraft = async (
+export async function updatePendingPasteReviewDraft(
   message: ChatMessage,
   text: string,
   requestedRevision?: number,
-): Promise<ChatMessage> => {
+): Promise<ChatMessage> {
   const pending = getPendingPasteReview(message.metadata);
   if (pending?.status !== "pending") {
     throw new Error(
@@ -176,7 +180,7 @@ export const updatePendingPasteReviewDraft = async (
     );
   }
   return saved;
-};
+}
 
 /**
  * Copy the saved text for a manual paste. The latest edit is persisted before

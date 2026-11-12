@@ -185,7 +185,7 @@ mod tests {
     }
 
     async fn revision_pool() -> SqlitePool {
-        let pool = SqlitePoolOptions::new()
+        let pool = SqlitePoolOptions::default()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
