@@ -539,228 +539,35 @@ fn frame_tick(
     ControlFlow::Continue
 }
 
-pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow>) {
-    let backend = if gtk_layer_shell::is_supported() {
-        Backend::LayerShell
-    } else {
-        let display = gdk::Display::default().expect("display");
-        if display.type_().name() == "GdkX11Display" {
-            Backend::X11
-        } else {
-            Backend::PlainWayland
-        }
-    };
+/// The things a signal handler needs to reach. Passed as one value because the
+/// alternative is seven positional arguments of which four are clones of the same
+/// three widgets.
+struct Wiring<'a> {
+    window: &'a gtk::Window,
+    entry: &'a gtk::Entry,
+    drawing_area: &'a gtk::DrawingArea,
+    state: &'a Rc<PillState>,
+    receiver: &'a Rc<RefCell<Receiver<InMessage>>>,
+    backend: Backend,
+    quit_flag: &'a Rc<Cell<bool>>,
+}
 
-    // X11 keeps room for the below selector slot under the pill, so a side
-    // flip animates inside space that is already there. LayerShell is bottom
-    // anchored (a taller surface would lift the pill) and PlainWayland is
-    // fullscreen, so both keep the typing size. X11 content and parking math
-    // exclude these reserved rows, preserving the visible pill and entry origin.
-    let window_h = if backend == Backend::X11 {
-        WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32
-    } else {
-        WINDOW_H_TYPING
-    };
-
-    let window = gtk::Window::new(gtk::WindowType::Toplevel);
-    if backend != Backend::PlainWayland {
-        window.set_default_size(WINDOW_W_TYPING, window_h);
-    }
-    window.set_decorated(false);
-    window.set_app_paintable(true);
-
-    {
-        let screen: gdk::Screen = gtk::prelude::WidgetExt::screen(&window).expect("screen");
-        if let Some(visual) = screen.rgba_visual() {
-            window.set_visual(Some(&visual));
-        }
-    }
-
-    match backend {
-        Backend::LayerShell => {
-            window.init_layer_shell();
-            window.set_layer(gtk_layer_shell::Layer::Overlay);
-            window.set_anchor(gtk_layer_shell::Edge::Bottom, true);
-            window.set_layer_shell_margin(gtk_layer_shell::Edge::Bottom, MARGIN_BOTTOM);
-            window.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
-            window.set_exclusive_zone(0);
-            window.set_namespace("mausvoice-pill");
-        }
-        Backend::X11 => {}
-        Backend::PlainWayland => {
-            window.set_type_hint(gdk::WindowTypeHint::Dock);
-            window.set_keep_above(true);
-            window.set_accept_focus(false);
-            window.maximize();
-        }
-    }
-
-    let css = gtk::CssProvider::new();
-    let _ = css.load_from_data(
-        b"window { background: transparent; }
-          entry { background: transparent; border: none; color: rgba(255,255,255,0.92); }
-          entry:focus { box-shadow: none; outline: none; }",
-    );
-    if let Some(screen) = gdk::Screen::default() {
-        gtk::StyleContext::add_provider_for_screen(
-            &screen,
-            &css,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
-
-    let overlay_widget = gtk::Overlay::new();
-    let drawing_area = gtk::DrawingArea::new();
-    if backend != Backend::PlainWayland {
-        drawing_area.set_size_request(WINDOW_W_TYPING, window_h);
-    }
-    overlay_widget.add(&drawing_area);
-
-    let entry = gtk::Entry::new();
-    // Kept so a send can empty the widget from anywhere, the way the Windows pill reaches
-    // its Edit control. `connect_activate` closes over its own clone; the Send-button click
-    // is handled in `input.rs`, which has no widget.
-    ENTRY.with(|slot| *slot.borrow_mut() = Some(entry.clone()));
-    entry.set_placeholder_text(Some("Type a message..."));
-    entry.set_has_frame(false);
-    entry.set_halign(gtk::Align::Fill);
-    entry.set_valign(gtk::Align::End);
-    entry.set_visible(false);
-    entry.set_no_show_all(true);
-    overlay_widget.add_overlay(&entry);
-
-    window.add(&overlay_widget);
-
-    let state = Rc::new(PillState {
-        phase: Cell::new(Phase::Idle),
-        visibility: Cell::new(Visibility::WhileActive),
-        expand_t: Cell::new(0.0),
-        expand_velocity: Cell::new(0.0),
-        hovered: Cell::new(false),
-        wave_phase: Cell::new(0.0),
-        current_level: Cell::new(0.0),
-        target_level: Cell::new(0.0),
-        loading_offset: Cell::new(0.0),
-        pending_levels: RefCell::new(Vec::new()),
-        style_count: Cell::new(0),
-        style_name: RefCell::new(String::new()),
-        tooltip_t: Cell::new(0.0),
-        tooltip_velocity: Cell::new(0.0),
-        tooltip_width: Cell::new(0.0),
-        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
-        window_mode: Cell::new(WindowMode::Dictation),
-        draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
-        draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
-        draw_w_velocity: Cell::new(0.0),
-        draw_h_velocity: Cell::new(0.0),
-        assistant_active: Cell::new(false),
-        assistant_input_mode: RefCell::new("voice".to_string()),
-        assistant_compact: Cell::new(true),
-        assistant_conversation_id: RefCell::new(None),
-        assistant_user_prompt: RefCell::new(None),
-        assistant_messages: RefCell::new(Vec::new()),
-        assistant_streaming: RefCell::new(None),
-        assistant_permissions: RefCell::new(Vec::new()),
-        assistant_review: RefCell::new(None),
-        panel_open_t: Cell::new(0.0),
-        panel_open_velocity: Cell::new(0.0),
-        kb_button_t: Cell::new(0.0),
-        kb_button_velocity: Cell::new(0.0),
-        shimmer_phase: Cell::new(0.0),
-        scroll_offset: Cell::new(0.0),
-        content_height: Cell::new(0.0),
-        viewport_height: Cell::new(0.0),
-        should_stick: Cell::new(true),
-        click_regions: RefCell::new(Vec::new()),
-        entry_text: RefCell::new(String::new()),
-        pause_t: Cell::new(0.0),
-        pause_velocity: Cell::new(0.0),
-        cancel_t: Cell::new(0.0),
-        cancel_velocity: Cell::new(0.0),
-        flash_message: RefCell::new(String::new()),
-        flash_visible: Cell::new(false),
-        flash_t: Cell::new(0.0),
-        flash_velocity: Cell::new(0.0),
-        flash_timer: Cell::new(0.0),
-        flash_is_error: Cell::new(false),
-        flash_action: RefCell::new(None),
-        flash_action_label: RefCell::new(None),
-        flash_reject_action: RefCell::new(None),
-        flash_reject_action_label: RefCell::new(None),
-        fireworks_active: Cell::new(false),
-        fireworks_elapsed: Cell::new(0.0),
-        fireworks_next_launch: Cell::new(0),
-        fireworks_rockets: RefCell::new(Vec::new()),
-        flame_active: Cell::new(false),
-        flame_elapsed: Cell::new(0.0),
-        flame_tongues: RefCell::new(Vec::new()),
-        flash_blue_active: Cell::new(false),
-        flash_blue_elapsed: Cell::new(0.0),
-        transcript_text: RefCell::new(String::new()),
-        transcript_time_since_update: Cell::new(0.0),
-        transcript_opacity: Cell::new(0.0),
-        transcript_has_message: Cell::new(false),
-        stage_text: RefCell::new(None),
-        long_press_active: Cell::new(false),
-        long_press_elapsed: Cell::new(0.0),
-        long_press_start_x: Cell::new(0.0),
-        long_press_start_y: Cell::new(0.0),
-        dragging: Cell::new(false),
-        drag_cancelled: Cell::new(false),
-        inflate_t: Cell::new(0.0),
-        inflate_velocity: Cell::new(0.0),
-        drag_label_t: Cell::new(0.0),
-        drag_label_velocity: Cell::new(0.0),
-        ring_alpha: Cell::new(0.0),
-        ring_release_progress: Cell::new(0.0),
-        press_elapsed: Cell::new(0.0),
-        release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
-        arm_t: Cell::new(0.0),
-        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
-        pointer_down: Cell::new(false),
-        ring_points: RefCell::new(Vec::new()),
-        drag_cursor_x: Cell::new(0.0),
-        drag_cursor_y: Cell::new(0.0),
-        drag_press_offset: Cell::new((0.0, 0.0)),
-        drag_motion: RefCell::new(rust_pill_shared::drag::DragController::new()),
-        drag_last_x: Cell::new(0.0),
-        drag_last_y: Cell::new(0.0),
-        hover_intent: RefCell::new(rust_pill_shared::hover::HoverIntent::new()),
-        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
-        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
-        hover_probed: Cell::new(false),
-        hover_probe_x: Cell::new(0.0),
-        hover_probe_y: Cell::new(0.0),
-        has_saved_position: Cell::new(false),
-        saved_display_id: Cell::new(None),
-        save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
-        layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),
-        saved_x: Cell::new(0.0),
-        saved_y: Cell::new(0.0),
-        restored_position: Cell::new(restored_position),
-        x11_release_persisted: Cell::new(false),
-        drag_save_due: Cell::new(None),
-        x11_drag_applied: Cell::new((UNAPPLIED_ORIGIN, UNAPPLIED_ORIGIN)),
-        anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
-        drag_draw_offset_x: Cell::new(0.0),
-        drag_draw_offset_y: Cell::new(0.0),
-        cancel_flash: Cell::new(0.0),
-        alloc_width: Cell::new(0.0),
-        alloc_height: Cell::new(0.0),
-        backend: Cell::new(backend),
-    });
-
-    if backend == Backend::X11 {
-        let state_realize = state.clone();
-        window.connect_realize(move |window| x11::setup_x11_window(window, state_realize.clone()));
-    }
-
-    let state_alloc = state.clone();
-    window.connect_size_allocate(move |_, alloc| {
-        state_alloc.alloc_width.set(alloc.width() as f64);
-        state_alloc.alloc_height.set(alloc.height() as f64);
-    });
-
+/// Everything that reacts to an event on the pill window.
+///
+/// `run` used to hold this inline: 292 lines registering sixteen GTK signals
+/// between the window construction and the first frame, which is why Sonar scored
+/// it 102 against a limit of 30. The closures are unchanged; only the borrows
+/// they capture moved.
+fn wire_events(wiring: Wiring) {
+    let Wiring {
+        window,
+        entry,
+        drawing_area,
+        state,
+        receiver,
+        backend,
+        quit_flag,
+    } = wiring;
     window.add_events(
         gdk::EventMask::ENTER_NOTIFY_MASK
             | gdk::EventMask::LEAVE_NOTIFY_MASK
@@ -1033,17 +840,18 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
         }
     });
 
-    let receiver = Rc::new(RefCell::new(receiver));
+    // `frame_tick` takes borrowed handles, so these are the owned ones the
+    // timeout keeps alive. `receiver` and `quit_flag` are already owned by `run`.
     let state_tick = state.clone();
     let da = drawing_area.clone();
     let win_tick = window.clone();
     let entry_tick = entry.clone();
-    let quit_flag = Rc::new(Cell::new(false));
+    let receiver_tick = receiver.clone();
     let quit_tick = quit_flag.clone();
     let backend_tick = backend;
     glib::timeout_add_local(Duration::from_millis(16), move || {
         frame_tick(
-            &receiver,
+            &receiver_tick,
             &state_tick,
             &win_tick,
             &entry_tick,
@@ -1051,6 +859,269 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
             &quit_tick,
             backend_tick,
         )
+    });
+}
+
+/// The pill's initial state.
+///
+/// This was a 120-line literal inside `run`. A literal is not testable -- there
+/// is no way to construct the at-rest state without also building a window and a
+/// GDK display -- and it buried `run`'s own logic under field initialisation.
+fn initial_state(backend: Backend, restored_position: Option<ParkedWindow>) -> Rc<PillState> {
+    Rc::new(PillState {
+        phase: Cell::new(Phase::Idle),
+        visibility: Cell::new(Visibility::WhileActive),
+        expand_t: Cell::new(0.0),
+        expand_velocity: Cell::new(0.0),
+        hovered: Cell::new(false),
+        wave_phase: Cell::new(0.0),
+        current_level: Cell::new(0.0),
+        target_level: Cell::new(0.0),
+        loading_offset: Cell::new(0.0),
+        pending_levels: RefCell::new(Vec::new()),
+        style_count: Cell::new(0),
+        style_name: RefCell::new(String::new()),
+        tooltip_t: Cell::new(0.0),
+        tooltip_velocity: Cell::new(0.0),
+        tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
+        window_mode: Cell::new(WindowMode::Dictation),
+        draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
+        draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
+        draw_w_velocity: Cell::new(0.0),
+        draw_h_velocity: Cell::new(0.0),
+        assistant_active: Cell::new(false),
+        assistant_input_mode: RefCell::new("voice".to_string()),
+        assistant_compact: Cell::new(true),
+        assistant_conversation_id: RefCell::new(None),
+        assistant_user_prompt: RefCell::new(None),
+        assistant_messages: RefCell::new(Vec::new()),
+        assistant_streaming: RefCell::new(None),
+        assistant_permissions: RefCell::new(Vec::new()),
+        assistant_review: RefCell::new(None),
+        panel_open_t: Cell::new(0.0),
+        panel_open_velocity: Cell::new(0.0),
+        kb_button_t: Cell::new(0.0),
+        kb_button_velocity: Cell::new(0.0),
+        shimmer_phase: Cell::new(0.0),
+        scroll_offset: Cell::new(0.0),
+        content_height: Cell::new(0.0),
+        viewport_height: Cell::new(0.0),
+        should_stick: Cell::new(true),
+        click_regions: RefCell::new(Vec::new()),
+        entry_text: RefCell::new(String::new()),
+        pause_t: Cell::new(0.0),
+        pause_velocity: Cell::new(0.0),
+        cancel_t: Cell::new(0.0),
+        cancel_velocity: Cell::new(0.0),
+        flash_message: RefCell::new(String::new()),
+        flash_visible: Cell::new(false),
+        flash_t: Cell::new(0.0),
+        flash_velocity: Cell::new(0.0),
+        flash_timer: Cell::new(0.0),
+        flash_is_error: Cell::new(false),
+        flash_action: RefCell::new(None),
+        flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
+        fireworks_active: Cell::new(false),
+        fireworks_elapsed: Cell::new(0.0),
+        fireworks_next_launch: Cell::new(0),
+        fireworks_rockets: RefCell::new(Vec::new()),
+        flame_active: Cell::new(false),
+        flame_elapsed: Cell::new(0.0),
+        flame_tongues: RefCell::new(Vec::new()),
+        flash_blue_active: Cell::new(false),
+        flash_blue_elapsed: Cell::new(0.0),
+        transcript_text: RefCell::new(String::new()),
+        transcript_time_since_update: Cell::new(0.0),
+        transcript_opacity: Cell::new(0.0),
+        transcript_has_message: Cell::new(false),
+        stage_text: RefCell::new(None),
+        long_press_active: Cell::new(false),
+        long_press_elapsed: Cell::new(0.0),
+        long_press_start_x: Cell::new(0.0),
+        long_press_start_y: Cell::new(0.0),
+        dragging: Cell::new(false),
+        drag_cancelled: Cell::new(false),
+        inflate_t: Cell::new(0.0),
+        inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
+        ring_alpha: Cell::new(0.0),
+        ring_release_progress: Cell::new(0.0),
+        press_elapsed: Cell::new(0.0),
+        release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
+        arm_t: Cell::new(0.0),
+        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
+        pointer_down: Cell::new(false),
+        ring_points: RefCell::new(Vec::new()),
+        drag_cursor_x: Cell::new(0.0),
+        drag_cursor_y: Cell::new(0.0),
+        drag_press_offset: Cell::new((0.0, 0.0)),
+        drag_motion: RefCell::new(rust_pill_shared::drag::DragController::new()),
+        drag_last_x: Cell::new(0.0),
+        drag_last_y: Cell::new(0.0),
+        hover_intent: RefCell::new(rust_pill_shared::hover::HoverIntent::new()),
+        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
+        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
+        hover_probed: Cell::new(false),
+        hover_probe_x: Cell::new(0.0),
+        hover_probe_y: Cell::new(0.0),
+        has_saved_position: Cell::new(false),
+        saved_display_id: Cell::new(None),
+        save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
+        layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),
+        saved_x: Cell::new(0.0),
+        saved_y: Cell::new(0.0),
+        restored_position: Cell::new(restored_position),
+        x11_release_persisted: Cell::new(false),
+        drag_save_due: Cell::new(None),
+        x11_drag_applied: Cell::new((UNAPPLIED_ORIGIN, UNAPPLIED_ORIGIN)),
+        anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
+        drag_draw_offset_x: Cell::new(0.0),
+        drag_draw_offset_y: Cell::new(0.0),
+        cancel_flash: Cell::new(0.0),
+        alloc_width: Cell::new(0.0),
+        alloc_height: Cell::new(0.0),
+        backend: Cell::new(backend),
+    })
+}
+
+/// Which windowing protocol the pill has to speak.
+fn detect_backend() -> Backend {
+    if gtk_layer_shell::is_supported() {
+        return Backend::LayerShell;
+    }
+    let display = gdk::Display::default().expect("display");
+    if display.type_().name() == "GdkX11Display" {
+        Backend::X11
+    } else {
+        Backend::PlainWayland
+    }
+}
+
+/// X11 keeps room for the below selector slot under the pill, so a side flip
+/// animates inside space that is already there. LayerShell is bottom anchored (a
+/// taller surface would lift the pill) and PlainWayland is fullscreen, so both
+/// keep the typing size. X11 content and parking math exclude these reserved
+/// rows, preserving the visible pill and entry origin.
+fn pill_window_height(backend: Backend) -> i32 {
+    if backend == Backend::X11 {
+        WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32
+    } else {
+        WINDOW_H_TYPING
+    }
+}
+
+/// The toplevel, with the backend's own window hints already applied.
+///
+/// `run` used to open with sixty lines of window class, transparent visual,
+/// per-backend hints and the stylesheet before it registered a single signal.
+fn build_pill_window(
+    backend: Backend,
+    window_h: i32,
+) -> (gtk::Window, gtk::Overlay, gtk::DrawingArea) {
+    let window = gtk::Window::new(gtk::WindowType::Toplevel);
+    if backend != Backend::PlainWayland {
+        window.set_default_size(WINDOW_W_TYPING, window_h);
+    }
+    window.set_decorated(false);
+    window.set_app_paintable(true);
+
+    let screen: gdk::Screen = gtk::prelude::WidgetExt::screen(&window).expect("screen");
+    if let Some(visual) = screen.rgba_visual() {
+        window.set_visual(Some(&visual));
+    }
+
+    match backend {
+        Backend::LayerShell => {
+            window.init_layer_shell();
+            window.set_layer(gtk_layer_shell::Layer::Overlay);
+            window.set_anchor(gtk_layer_shell::Edge::Bottom, true);
+            window.set_layer_shell_margin(gtk_layer_shell::Edge::Bottom, MARGIN_BOTTOM);
+            window.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
+            window.set_exclusive_zone(0);
+            window.set_namespace("mausvoice-pill");
+        }
+        Backend::X11 => {}
+        Backend::PlainWayland => {
+            window.set_type_hint(gdk::WindowTypeHint::Dock);
+            window.set_keep_above(true);
+            window.set_accept_focus(false);
+            window.maximize();
+        }
+    }
+
+    let css = gtk::CssProvider::new();
+    let _ = css.load_from_data(
+        b"window { background: transparent; }
+          entry { background: transparent; border: none; color: rgba(255,255,255,0.92); }
+          entry:focus { box-shadow: none; outline: none; }",
+    );
+    if let Some(screen) = gdk::Screen::default() {
+        gtk::StyleContext::add_provider_for_screen(
+            &screen,
+            &css,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+
+    let overlay_widget = gtk::Overlay::new();
+    let drawing_area = gtk::DrawingArea::new();
+    if backend != Backend::PlainWayland {
+        drawing_area.set_size_request(WINDOW_W_TYPING, window_h);
+    }
+    overlay_widget.add(&drawing_area);
+    (window, overlay_widget, drawing_area)
+}
+
+pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow>) {
+    let backend = detect_backend();
+
+    let window_h = pill_window_height(backend);
+    let (window, overlay_widget, drawing_area) = build_pill_window(backend, window_h);
+
+    let entry = gtk::Entry::new();
+    // Kept so a send can empty the widget from anywhere, the way the Windows pill reaches
+    // its Edit control. `connect_activate` closes over its own clone; the Send-button click
+    // is handled in `input.rs`, which has no widget.
+    ENTRY.with(|slot| *slot.borrow_mut() = Some(entry.clone()));
+    entry.set_placeholder_text(Some("Type a message..."));
+    entry.set_has_frame(false);
+    entry.set_halign(gtk::Align::Fill);
+    entry.set_valign(gtk::Align::End);
+    entry.set_visible(false);
+    entry.set_no_show_all(true);
+    overlay_widget.add_overlay(&entry);
+
+    window.add(&overlay_widget);
+
+    let state = initial_state(backend, restored_position);
+    // The flag is shared by the message handler, the frame loop and the display
+    // poll; whichever sees `Quit` first sets it and the others stop.
+    let quit_flag = Rc::new(Cell::new(false));
+    let receiver = Rc::new(RefCell::new(receiver));
+
+    if backend == Backend::X11 {
+        let state_realize = state.clone();
+        window.connect_realize(move |window| x11::setup_x11_window(window, state_realize.clone()));
+    }
+
+    let state_alloc = state.clone();
+    window.connect_size_allocate(move |_, alloc| {
+        state_alloc.alloc_width.set(alloc.width() as f64);
+        state_alloc.alloc_height.set(alloc.height() as f64);
+    });
+
+    wire_events(Wiring {
+        window: &window,
+        entry: &entry,
+        drawing_area: &drawing_area,
+        state: &state,
+        receiver: &receiver,
+        backend,
+        quit_flag: &quit_flag,
     });
 
     window.show_all();
