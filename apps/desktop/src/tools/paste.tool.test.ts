@@ -356,6 +356,52 @@ describe("PasteTool review", () => {
     expect(cancelPendingPasteReviewMock).toHaveBeenCalledWith(savedCard, "");
   });
 
+  it("warns when an unused pending review cannot be closed", async () => {
+    const savedCard = { id: "pending-review" };
+    let finishSave: ((message: typeof savedCard) => void) | undefined;
+    let lateOpenSave: Promise<void> | undefined;
+    createPendingPasteReviewMock.mockImplementationOnce(
+      () =>
+        new Promise<typeof savedCard>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    cancelPendingPasteReviewMock.mockRejectedValueOnce(
+      new Error("database unavailable"),
+    );
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      (
+        _text: string,
+        _source: string,
+        options?: {
+          onOpen?: (text: string, signal?: AbortSignal) => Promise<void>;
+        },
+      ) => {
+        const controller = new AbortController();
+        lateOpenSave = options?.onOpen?.("review draft", controller.signal);
+        controller.abort();
+        return "insert after timeout";
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({});
+
+    finishSave?.(savedCard);
+    await lateOpenSave;
+    expect(cancelPendingPasteReviewMock).toHaveBeenCalledWith(savedCard, "");
+    expect(showToastMock).toHaveBeenCalledWith({
+      message:
+        "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
+      toastType: "error",
+      duration: 8000,
+    });
+  });
+
   it("shows Chats recovery guidance when navigation fails after saving", async () => {
     emitMock.mockRejectedValueOnce(new Error("window unavailable"));
     reviewTranscriptBeforeInsertMock.mockImplementationOnce(

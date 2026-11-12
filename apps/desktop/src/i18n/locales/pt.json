@@ -72,6 +72,7 @@
   "always_run_as_administrator": "Executar sempre como administrador",
   "an_email_has_been_sent_to_you_with_a_link_to_reset_your_pass": "Um e-mail foi enviado para você com um link para redefinir sua senha.",
   "an_error_occurred_while_attempting_to_delete_your_account_pl": "Ocorreu um erro ao tentar eliminar a sua conta. Tente novamente mais tarde.",
+  "an_unused_paste_review_could_not_be_closed_check_chats_and_d": "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
   "api": "API",
   "api_key": "Chave API",
   "api_key_optional": "Chave API (opcional)",

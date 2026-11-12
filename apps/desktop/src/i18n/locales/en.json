@@ -72,6 +72,7 @@
   "always_run_as_administrator": "Always run as administrator",
   "an_email_has_been_sent_to_you_with_a_link_to_reset_your_pass": "An email has been sent to you with a link to reset your password.",
   "an_error_occurred_while_attempting_to_delete_your_account_pl": "An error occurred while attempting to delete your account. Please try again later.",
+  "an_unused_paste_review_could_not_be_closed_check_chats_and_d": "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
   "api": "API",
   "api_key": "API key",
   "api_key_optional": "API key (optional)",

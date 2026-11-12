@@ -72,6 +72,7 @@
   "always_run_as_administrator": "항상 관리자 권한으로 실행",
   "an_email_has_been_sent_to_you_with_a_link_to_reset_your_pass": "비밀번호 재설정 링크가 포함된 이메일이 발송되었습니다.",
   "an_error_occurred_while_attempting_to_delete_your_account_pl": "계정을 삭제하는 중 오류가 발생했습니다. 나중에 다시 시도해 주세요.",
+  "an_unused_paste_review_could_not_be_closed_check_chats_and_d": "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
   "api": "API",
   "api_key": "API 키",
   "api_key_optional": "API 키 (선택 사항)",

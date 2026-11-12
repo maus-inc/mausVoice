@@ -72,6 +72,7 @@
   "always_run_as_administrator": "永遠以管理員身分執行",
   "an_email_has_been_sent_to_you_with_a_link_to_reset_your_pass": "已向您發送包含重設密碼連結的電子郵件。",
   "an_error_occurred_while_attempting_to_delete_your_account_pl": "嘗試刪除您的帳號時發生錯誤，請稍後再試。",
+  "an_unused_paste_review_could_not_be_closed_check_chats_and_d": "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
   "api": "API",
   "api_key": "API 金鑰",
   "api_key_optional": "API 金鑰（選填）",

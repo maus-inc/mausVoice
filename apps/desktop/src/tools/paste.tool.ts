@@ -69,12 +69,22 @@ export class PasteTool extends BaseTool {
         return;
       }
       const unusedMessage = pendingReviewMessage;
-      pendingReviewMessage = null;
       try {
         await cancelPendingPasteReview(unusedMessage, "");
+        pendingReviewMessage = null;
       } catch (error) {
         getLogger().warning(
           `Could not close an unused Paste review after the user chose another action: ${error}`,
+        );
+        runToast(
+          showToast({
+            message: getIntl().formatMessage({
+              defaultMessage:
+                "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
+            }),
+            toastType: "error",
+            duration: 8000,
+          }),
         );
       }
     };
