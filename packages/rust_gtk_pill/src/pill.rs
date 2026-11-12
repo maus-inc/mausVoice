@@ -1181,7 +1181,7 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
             if let Some((mut start, mut end)) = buffer.selection_bounds() {
                 buffer.delete(&mut start, &mut end);
             }
-            buffer.insert_at_cursor(text.as_str());
+            buffer.insert_at_cursor(text);
             buffer.end_user_action();
         }
     });
