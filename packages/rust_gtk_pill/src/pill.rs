@@ -1212,15 +1212,7 @@ fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
             // save guard: this position is the only place the pill can be, and
             // storing it is what stops the next launch restoring a stranded
             // origin.
-            let (rect, monitor) = pill_geometry(window, state);
-            ipc::send(&OutMessage::PositionChanged {
-                report: rust_pill_shared::restore::PositionReport::new(
-                    true,
-                    rect,
-                    monitor,
-                    state.saved_display_id.get(),
-                ),
-            });
+            publish_saved_geometry(window, state);
         }
     }
 }
@@ -1347,12 +1339,12 @@ fn is_unapplied(x: f64, y: f64) -> bool {
     x == UNAPPLIED_ORIGIN as f64 && y == UNAPPLIED_ORIGIN as f64
 }
 
-fn persist_drag_position(window: &gtk::Window, state: &PillState) {
-    if state.backend.get() == Backend::X11 {
-        let (x, y) = state.x11_drag_applied.get();
-        x11::persist_window_position(window, state, x as f64, y as f64);
-        return;
-    }
+/// Publish this window as the saved position.
+///
+/// Two callers reach it and they must not drift: the drop, and the reconcile that
+/// moves a stranded pill. X11 has its own applier because the applied origin is
+/// authoritative there, so this is the Wayland half of the same decision.
+fn publish_saved_geometry(window: &gtk::Window, state: &PillState) {
     state.has_saved_position.set(true);
     let (rect, monitor) = pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
@@ -1363,6 +1355,15 @@ fn persist_drag_position(window: &gtk::Window, state: &PillState) {
             state.saved_display_id.get(),
         ),
     });
+}
+
+fn persist_drag_position(window: &gtk::Window, state: &PillState) {
+    if state.backend.get() == Backend::X11 {
+        let (x, y) = state.x11_drag_applied.get();
+        x11::persist_window_position(window, state, x as f64, y as f64);
+        return;
+    }
+    publish_saved_geometry(window, state);
 }
 
 fn begin_wayland_drag(

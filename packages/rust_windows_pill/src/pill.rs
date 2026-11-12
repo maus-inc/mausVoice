@@ -1958,17 +1958,10 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         // in parity, so choose the nearest pixel after clamping.
         let (x, y) = (x.round() as i32, y.round() as i32);
 
-        if current.left != x || current.top != y {
-            let _ = SetWindowPos(
-                hwnd,
-                None,
-                x,
-                y,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-        }
+        // A move to where the window already is is skipped inside `move_window`,
+        // so this is the same call the drag path makes rather than a second copy
+        // of its flags.
+        move_window(hwnd, x, y, current.left, current.top);
     }
 }
 
