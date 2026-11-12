@@ -390,8 +390,13 @@ pub fn run(receiver: Receiver<InMessage>) {
         let (x, y) = event.position();
         let is_typing = state_press.is_typing();
         let focus_was_released = state_press.focus_released_after_review.replace(false);
-        if backend_press == Backend::LayerShell && focus_was_released {
-            win_press.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+        if focus_was_released {
+            match backend_press {
+                Backend::LayerShell => {
+                    win_press.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+                }
+                Backend::X11 | Backend::PlainWayland => win_press.set_accept_focus(true),
+            }
         }
         if is_typing {
             if backend_press == Backend::X11 {
@@ -800,8 +805,21 @@ pub fn run(receiver: Receiver<InMessage>) {
                             state_tick.focus_released_after_review.get(),
                         ),
                     );
-                    if review_ended && backend_tick == Backend::LayerShell {
-                        win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
+                    if review_ended {
+                        match backend_tick {
+                            Backend::LayerShell => {
+                                win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
+                            }
+                            Backend::X11 | Backend::PlainWayland => {
+                                win_tick.set_accept_focus(false);
+                                let win = win_tick.clone();
+                                win_tick.hide();
+                                glib::timeout_add_local_once(
+                                    Duration::from_millis(50),
+                                    move || win.show(),
+                                );
+                            }
+                        }
                     } else if review_id.is_some() {
                         if review_id != previous_review_id
                             && backend_tick == Backend::LayerShell
