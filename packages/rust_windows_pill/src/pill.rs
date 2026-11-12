@@ -2690,10 +2690,7 @@ mod tests {
             to_edit_control_text("first\nsecond\n"),
             "first\r\nsecond\r\n"
         );
-        assert_eq!(
-            to_edit_control_text("first\r\nsecond"),
-            "first\r\nsecond"
-        );
+        assert_eq!(to_edit_control_text("first\r\nsecond"), "first\r\nsecond");
         assert_eq!(
             normalize_edit_text("first\r\nsecond\r\n"),
             "first\nsecond\n"
