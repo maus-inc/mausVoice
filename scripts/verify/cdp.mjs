@@ -13,13 +13,26 @@ import net from "node:net";
 
 // Both the browser and its libraries live under /tmp, which this environment
 // wipes between turns. Rather than fail with a confusing spawn error, extract
-// them on demand the first time a driver runs. install-chromium.mjs is
-// idempotent, so a warm directory costs one directory check.
+// them on demand the first time a browser is actually launched.
+// install-chromium.mjs is idempotent, so a warm directory costs one check.
 const CHR_DIR = process.env.CHROMIUM_DIR || "/tmp/chr";
 const CHROME = process.env.CHROMIUM_PATH || join(CHR_DIR, "chromium");
 const LIB = join(CHR_DIR, "lib");
 
-if (!existsSync(CHROME)) {
+/**
+ * Ensures a browser exists, extracting one if not.
+ *
+ * Called from `launch`, never from module scope: importing this file used to run
+ * an install, unpack a ~150 MB archive and write to the filesystem. That is a
+ * surprising side effect for an `import` -- a test that only wanted the port
+ * helpers would still hit the network and the disk, and a sandbox with no npm
+ * reachability would fail at import time with an error pointing at this file
+ * rather than at whatever asked for a browser.
+ */
+function ensureChromium() {
+  if (existsSync(CHROME)) {
+    return;
+  }
   const installer = join(import.meta.dirname, "install-chromium.mjs");
   console.error(`No Chromium at ${CHROME}; extracting one …`);
   execFileSync(process.execPath, [installer, "--dir", CHR_DIR], {
@@ -68,6 +81,7 @@ export async function launch({ port, width = 1280, height = 900 } = {}) {
   // symptom is a misleading "never opened its debugging port" rather than an
   // address-in-use error. Ask the OS instead.
   port = port ?? (await freePort());
+  ensureChromium();
   if (!existsSync(CHROME)) {
     throw new Error(`no chromium at ${CHROME}`);
   }

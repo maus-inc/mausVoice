@@ -244,6 +244,7 @@
   "ctrl_v": "Ctrl+V",
   "current_key_ends_with_suffix": "当前密钥以 {suffix} 结尾。",
   "current_monitor": "当前显示器",
+  "currently_set_to_duration_which_is_not_one_of_these_the_clos": "当前设置为 {duration}，不在这些选项之中，因此已选中与之最接近的一项。选择其中一项将替换该值。",
   "currently_unavailable": "当前不可用",
   "cursor_monitor": "光标所在的显示器",
   "customize_your_keyboard_shortcuts_keyboard_shortcuts_can_be": "自定义您的键盘快捷键。键盘快捷键可在任何应用程序中触发。",

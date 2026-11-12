@@ -244,6 +244,7 @@
   "ctrl_v": "Ctrl+V",
   "current_key_ends_with_suffix": "目前金鑰以 {suffix} 結尾。",
   "current_monitor": "目前的螢幕",
+  "currently_set_to_duration_which_is_not_one_of_these_the_clos": "目前設定為 {duration}，不在這些選項之中，因此已選取最接近的一項。選擇其中一項將取代該值。",
   "currently_unavailable": "目前不可用",
   "cursor_monitor": "游標所在的螢幕",
   "customize_your_keyboard_shortcuts_keyboard_shortcuts_can_be": "自訂您的鍵盤快捷鍵。鍵盤快捷鍵可在任何應用程式中觸發。",

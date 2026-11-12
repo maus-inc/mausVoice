@@ -244,6 +244,7 @@
   "ctrl_v": "Ctrl+V",
   "current_key_ends_with_suffix": "Current key ends with {suffix}.",
   "current_monitor": "Current monitor",
+  "currently_set_to_duration_which_is_not_one_of_these_the_clos": "Currently set to {duration}, which is not one of these; the closest is selected. Choosing one replaces it.",
   "currently_unavailable": "Currently unavailable",
   "cursor_monitor": "Cursor monitor",
   "customize_your_keyboard_shortcuts_keyboard_shortcuts_can_be": "Customize your keyboard shortcuts. Keyboard shortcuts can be triggered from within any app.",

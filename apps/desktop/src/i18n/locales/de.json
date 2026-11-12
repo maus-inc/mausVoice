@@ -244,6 +244,7 @@
   "ctrl_v": "Strg+V",
   "current_key_ends_with_suffix": "Der aktuelle Schlüssel endet auf {suffix}.",
   "current_monitor": "Aktueller Monitor",
+  "currently_set_to_duration_which_is_not_one_of_these_the_clos": "Derzeit auf {duration} gesetzt – das ist keine dieser Optionen, daher ist die nächstliegende ausgewählt. Eine Auswahl ersetzt den Wert.",
   "currently_unavailable": "Derzeit nicht verfügbar",
   "cursor_monitor": "Monitor des Mauszeigers",
   "customize_your_keyboard_shortcuts_keyboard_shortcuts_can_be": "Passen Sie Ihre Tastaturkürzel an. Tastaturkürzel können aus jeder App heraus ausgelöst werden.",

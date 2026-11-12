@@ -5,6 +5,7 @@ import {
   DEFAULT_MICROPHONE_PREROLL_SECONDS,
   MAX_MICROPHONE_LINGER_MS,
   MAX_MICROPHONE_PREROLL_SECONDS,
+  MICROPHONE_LINGER_CHOICES_MS,
   MICROPHONE_READY_FOREVER_MS,
   classifyMicrophoneFailure,
   decideHoldAction,
@@ -438,22 +439,46 @@ describe("nearestLingerChoice", () => {
     [29_999, 15_000],
     [1, 3_000],
   ])("%i ms selects %i ms", (stored, expected) => {
-    expect(nearestLingerChoice(stored)).toBe(expected);
+    expect(nearestLingerChoice(stored).choice).toBe(expected);
+  });
+
+  it("reports a stored window the control cannot show", () => {
+    // The finding this closes: a stored 30 s window rendered as "15 s" selected
+    // while the microphone stayed open for 30 s. The nearest option is still the
+    // starting point, but the true value has to be reportable, or the control
+    // simply states something false.
+    expect(nearestLingerChoice(30_000)).toEqual({
+      choice: 15_000,
+      stored: 30_000,
+    });
+    expect(nearestLingerChoice(3_400)).toEqual({ choice: 3_000, stored: 3_400 });
+  });
+
+  it("reports nothing stored for an exact match", () => {
+    // An exact match is not an approximation, so a note about it would be noise
+    // on every profile that happens to hold one of the offered windows.
+    for (const choice of MICROPHONE_LINGER_CHOICES_MS) {
+      expect(nearestLingerChoice(choice)).toEqual({ choice, stored: null });
+    }
   });
 
   it("falls back to the default for a non-finite value", () => {
     // A NaN survives JSON round-trips as null and arrives here as NaN from a
     // hand-edited row; `Math.abs(NaN - x)` is NaN, every comparison is false,
     // and the reduce would return its seed rather than an option.
-    expect(nearestLingerChoice(Number.NaN)).toBe(DEFAULT_MICROPHONE_LINGER_MS);
-    expect(nearestLingerChoice(Number.POSITIVE_INFINITY)).toBe(
-      DEFAULT_MICROPHONE_LINGER_MS,
-    );
+    expect(nearestLingerChoice(Number.NaN)).toEqual({
+      choice: DEFAULT_MICROPHONE_LINGER_MS,
+      stored: null,
+    });
+    expect(nearestLingerChoice(Number.POSITIVE_INFINITY)).toEqual({
+      choice: DEFAULT_MICROPHONE_LINGER_MS,
+      stored: null,
+    });
   });
 
   it("always returns one of the offered windows", () => {
     for (const stored of [0, 1, 2_999, 3_001, 12_345, 30_000, -5]) {
-      expect(lingerChoices()).toContain(nearestLingerChoice(stored));
+      expect(lingerChoices()).toContain(nearestLingerChoice(stored).choice);
     }
   });
 });

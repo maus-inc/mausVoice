@@ -244,6 +244,7 @@
   "ctrl_v": "Ctrl+V",
   "current_key_ends_with_suffix": "A chave atual termina em {suffix}.",
   "current_monitor": "Monitor atual",
+  "currently_set_to_duration_which_is_not_one_of_these_the_clos": "Definido atualmente para {duration}, que não é uma destas opções, por isso a mais próxima está selecionada. Escolher uma substitui-a.",
   "currently_unavailable": "Atualmente indisponível",
   "cursor_monitor": "Monitor do cursor",
   "customize_your_keyboard_shortcuts_keyboard_shortcuts_can_be": "Personalize seus atalhos de teclado. Os atalhos de teclado podem ser acionados de dentro de qualquer aplicativo.",

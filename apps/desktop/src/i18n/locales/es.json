@@ -244,6 +244,7 @@
   "ctrl_v": "Ctrl+V",
   "current_key_ends_with_suffix": "La clave actual termina en {suffix}.",
   "current_monitor": "Monitor actual",
+  "currently_set_to_duration_which_is_not_one_of_these_the_clos": "Ahora está en {duration}, que no es una de estas opciones, así que se ha seleccionado la más cercana. Si eliges una, la sustituye.",
   "currently_unavailable": "Actualmente no disponible",
   "cursor_monitor": "Monitor del cursor",
   "customize_your_keyboard_shortcuts_keyboard_shortcuts_can_be": "Personaliza tus atajos de teclado. Los atajos de teclado se pueden activar desde cualquier aplicación.",

@@ -244,6 +244,7 @@
   "ctrl_v": "Ctrl+V",
   "current_key_ends_with_suffix": "La clé actuelle se termine par {suffix}.",
   "current_monitor": "Écran actuel",
+  "currently_set_to_duration_which_is_not_one_of_these_the_clos": "Réglé actuellement sur {duration}, qui ne fait pas partie de ces options ; la plus proche est sélectionnée. En choisir une la remplacera.",
   "currently_unavailable": "Actuellement indisponible",
   "cursor_monitor": "Écran du curseur",
   "customize_your_keyboard_shortcuts_keyboard_shortcuts_can_be": "Personnalisez vos raccourcis clavier. Les raccourcis clavier peuvent être déclenchés depuis n'importe quelle application.",

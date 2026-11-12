@@ -57,22 +57,44 @@ export const MICROPHONE_LINGER_CHOICES_MS = [3_000, 5_000, 15_000] as const;
 export const lingerChoices = (): readonly number[] =>
   MICROPHONE_LINGER_CHOICES_MS;
 
+/** The value the segmented control shows for a stored window. */
+export type LingerChoice = {
+  /** One of the offered windows, or the default when the value is unusable. */
+  readonly choice: number;
+  /**
+   * The stored window, when it is a real duration the control cannot show
+   * exactly. The caller has to say so; see `nearestLingerChoice` for why.
+   */
+  readonly stored: number | null;
+};
+
 /**
- * The nearest offered window to an arbitrary stored value.
+ * The nearest offered window to an arbitrary stored value, and whether that is
+ * an approximation.
  *
  * A profile can hold a value from an older build or a hand-edited database, and
  * the segmented control can only display one of its own options. Rather than
  * showing no selection, the closest offered window is selected -- but the value
  * is *not* written back on read, because opening a settings dialog must not
  * change a preference. The write happens when the user picks one.
+ *
+ * `stored` is why this returns an object rather than a number. A nearest-match
+ * alone made the control *misreport* the live value: a stored 30 s window showed
+ * 15 s selected while the microphone stayed open for 30 s, and the user had no
+ * way to see the difference or, short of changing a preference they had not
+ * asked to change, to find out. The control renders `stored` alongside the
+ * choice so the approximation is visible.
  */
-export const nearestLingerChoice = (value: number): number => {
+export const nearestLingerChoice = (value: number): LingerChoice => {
   if (!Number.isFinite(value)) {
-    return DEFAULT_MICROPHONE_LINGER_MS;
+    return { choice: DEFAULT_MICROPHONE_LINGER_MS, stored: null };
   }
-  return MICROPHONE_LINGER_CHOICES_MS.reduce((best, choice) =>
-    Math.abs(choice - value) < Math.abs(best - value) ? choice : best,
+  const choice = MICROPHONE_LINGER_CHOICES_MS.reduce((best, candidate) =>
+    Math.abs(candidate - value) < Math.abs(best - value) ? candidate : best,
   );
+  // Only an exact match needs no disclosure. `0`, a negative, or an unusable
+  // sentinel is just as approximate as 30 s and is reported the same way.
+  return { choice, stored: choice === value ? null : value };
 };
 
 /**

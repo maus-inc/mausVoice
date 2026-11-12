@@ -4,6 +4,7 @@ import { FormattedMessage } from "react-intl";
 import { Reveal } from "../common/Reveal";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { LingerCaption } from "./linger-caption";
+import { LingerStoredNote } from "./linger-stored-note";
 import {
   lingerChoices,
   nearestLingerChoice,
@@ -36,65 +37,75 @@ export const LingerSection = ({
   readonly secondsFormat: (choice: number) => string;
   readonly onLingerChange: (checked: boolean) => void;
   readonly onDurationChange: (milliseconds: number) => void;
-}) => (
-  <Stack spacing={1.5}>
-    <FormControlLabel
-      control={
-        <Switch
-          // The effective state, not the stored one: see the module comment.
-          checked={keepReady || lingerOn}
-          // `aria-disabled`, not `disabled`. A disabled control leaves the tab
-          // order entirely, and the one thing a keyboard user needs here is to
-          // reach this switch and hear the caption below that says why it is on.
-          // The handler below is what makes it inert.
-          //
-          // On the inner `input`, not the wrapper: a bare `aria-disabled` on the
-          // component lands on the `<span>` wrapper, which is not the node a
-          // screen reader reaches when the switch is focused, so the state would
-          // be announced for nobody. `slotProps.input` is the MUI v7 spelling;
-          // the deprecated `inputProps` is silently dropped in v9 (it renders a
-          // literal `inputprops="[object Object]"` attribute on the wrapper),
-          // which is how the first attempt failed without an error.
-          //
-          // Both slots, and the second is not redundant. `input` is the node a
-          // screen reader reaches; `switchBase` is the span the theme can style
-          // and the only one an adjacent-sibling rule can dim the track from. A
-          // CSS child selector cannot reach up from the input to its wrapper, so
-          // a style keyed on the input alone silently did nothing.
-          slotProps={{
-            input: { "aria-disabled": keepReady || undefined },
-            switchBase: { "aria-disabled": keepReady || undefined },
-          }}
-          onChange={(event) => {
-            // The switch is inert while keep-ready owns the device. Guarding in
-            // the handler rather than relying on `aria-disabled` is the other
-            // half of the pair: `aria-disabled` describes, this enforces.
-            if (keepReady) {
-              return;
-            }
-            onLingerChange(event.target.checked);
-          }}
-        />
-      }
-      label={<FormattedMessage defaultMessage="Stay ready after a dictation" />}
-    />
-    <LingerCaption keepReady={keepReady} />
-    {/* Only while the switch is the one in charge. */}
-    <Reveal show={!keepReady && lingerOn}>
-      <Stack spacing={0.5}>
-        <Typography variant="caption" color="text.secondary">
-          <FormattedMessage defaultMessage="How long to stay open after each dictation" />
-        </Typography>
-        <SegmentedControl
-          value={String(nearestLingerChoice(lingerMs))}
-          options={lingerChoices().map((choice) => ({
-            value: String(choice),
-            label: secondsFormat(choice),
-          }))}
-          onChange={(next) => onDurationChange(Number(next))}
-          ariaLabel={lingerLabel}
-        />
-      </Stack>
-    </Reveal>
-  </Stack>
-);
+}) => {
+  const { choice: nearest, stored: storedMs } = nearestLingerChoice(lingerMs);
+  return (
+    <Stack spacing={1.5}>
+      <FormControlLabel
+        control={
+          <Switch
+            // The effective state, not the stored one: see the module comment.
+            checked={keepReady || lingerOn}
+            // `aria-disabled`, not `disabled`. A disabled control leaves the tab
+            // order entirely, and the one thing a keyboard user needs here is to
+            // reach this switch and hear the caption below that says why it is on.
+            // The handler below is what makes it inert.
+            //
+            // On the inner `input`, not the wrapper: a bare `aria-disabled` on the
+            // component lands on the `<span>` wrapper, which is not the node a
+            // screen reader reaches when the switch is focused, so the state would
+            // be announced for nobody. `slotProps.input` is the MUI v7 spelling;
+            // the deprecated `inputProps` is silently dropped in v9 (it renders a
+            // literal `inputprops="[object Object]"` attribute on the wrapper),
+            // which is how the first attempt failed without an error.
+            //
+            // Both slots, and the second is not redundant. `input` is the node a
+            // screen reader reaches; `switchBase` is the span the theme can style
+            // and the only one an adjacent-sibling rule can dim the track from. A
+            // CSS child selector cannot reach up from the input to its wrapper, so
+            // a style keyed on the input alone silently did nothing.
+            slotProps={{
+              input: { "aria-disabled": keepReady || undefined },
+              switchBase: { "aria-disabled": keepReady || undefined },
+            }}
+            onChange={(event) => {
+              // The switch is inert while keep-ready owns the device. Guarding in
+              // the handler rather than relying on `aria-disabled` is the other
+              // half of the pair: `aria-disabled` describes, this enforces.
+              if (keepReady) {
+                return;
+              }
+              onLingerChange(event.target.checked);
+            }}
+          />
+        }
+        label={
+          <FormattedMessage defaultMessage="Stay ready after a dictation" />
+        }
+      />
+      <LingerCaption keepReady={keepReady} />
+      {/* Only while the switch is the one in charge. */}
+      <Reveal show={!keepReady && lingerOn}>
+        <Stack spacing={0.5}>
+          <Typography variant="caption" color="text.secondary">
+            <FormattedMessage defaultMessage="How long to stay open after each dictation" />
+          </Typography>
+          <SegmentedControl
+            value={String(nearest)}
+            options={lingerChoices().map((choice) => ({
+              value: String(choice),
+              label: secondsFormat(choice),
+            }))}
+            onChange={(next) => onDurationChange(Number(next))}
+            ariaLabel={lingerLabel}
+          />
+          {/* Only for a stored window the control cannot show. The segmented
+            control can only display one of its own options, so without this a
+            30 s window reads as "15 s" while the microphone stays open twice
+            that long. */}
+          <LingerStoredNote stored={storedMs} format={secondsFormat} />
+        </Stack>
+      </Reveal>
+    </Stack>
+  );
+};

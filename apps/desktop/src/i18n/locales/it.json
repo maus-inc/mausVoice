@@ -244,6 +244,7 @@
   "ctrl_v": "Ctrl+V",
   "current_key_ends_with_suffix": "La chiave attuale termina con {suffix}.",
   "current_monitor": "Monitor attuale",
+  "currently_set_to_duration_which_is_not_one_of_these_the_clos": "Attualmente impostato su {duration}, che non è tra queste opzioni, quindi è selezionata la più vicina. Sceglierne una lo sostituirà.",
   "currently_unavailable": "Attualmente non disponibile",
   "cursor_monitor": "Monitor del cursore",
   "customize_your_keyboard_shortcuts_keyboard_shortcuts_can_be": "Personalizza le tue scorciatoie da tastiera. Le scorciatoie possono essere attivate da qualsiasi app.",
