@@ -356,7 +356,7 @@ fn record_loop(
             // nothing explaining it. The token and the expected duration
             // together say "this was open for some time and produced nothing",
             // which is the report `reported_capture_fault` exists to carry.
-            return failed_open_result(Instant::now() - start_of_open);
+            return failed_open_result(start_of_open.elapsed());
         }
     };
 

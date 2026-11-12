@@ -368,6 +368,18 @@ export const MicrophoneReadinessSideEffects = () => {
             clearHoldFailure();
           })
           .catch((error: unknown) => {
+            // A rejection from a superseded request says nothing about the
+            // current one. The success path already checks this; without the
+            // same check here, changing microphones mid-open let the older
+            // promise fail and report a failure for a hold the newer request had
+            // already opened -- and cleared the ring the newer request owns, so
+            // the next effect run reopened a working stream.
+            if (requestRef.current !== request) {
+              getLogger().verbose(
+                `A superseded microphone open failed after this window stopped asking for it: ${error}`,
+              );
+              return;
+            }
             reportHoldFailure(error);
             openedPrerollRef.current = null;
             appliedRef.current = null;
@@ -695,6 +707,34 @@ export const MicrophoneReadinessSideEffects = () => {
       isMainLocalDataWindow() && shouldHoldNow(held);
 
     /**
+     * Re-reads the saved preference, returning whether it could be done.
+     *
+     * The preference is re-read before opening, not trusted from the store.
+     * Another window can turn keep-ready off while this one still holds the old
+     * value: the broadcast that tells it is a separate round trip, and a focus
+     * landing in that gap would reopen a microphone the user just switched off.
+     * Nothing downstream would close it again, because this window's own
+     * preference is about to become false and the release path only fires on a
+     * *change*. Opening is the one step worth a round trip: closing the wrong
+     * microphone is cheap to correct, opening one the user turned off is not.
+     *
+     * A failed re-read returns false rather than falling through: the whole
+     * point of the round trip is that this window's copy might be out of date,
+     * so "could not tell" must not resolve to "go ahead".
+     */
+    const rereadPreference = async (): Promise<boolean> => {
+      try {
+        await refreshCurrentUser();
+        return true;
+      } catch (error) {
+        getLogger().warning(
+          `Could not re-read the preference before reopening the microphone: ${error}`,
+        );
+        return false;
+      }
+    };
+
+    /**
      * Re-establishes the hold, on the answer the backend just gave.
      *
      * `publishHeld` is fire-and-forget, so reading `microphoneHeld` right after
@@ -708,31 +748,10 @@ export const MicrophoneReadinessSideEffects = () => {
       if (held === null || !ownsRetry(held)) {
         return;
       }
-      // The preference is re-read before opening, not trusted from the store.
-      //
-      // Another window can turn keep-ready off while this one still holds the
-      // old value: the broadcast that tells it is a separate round trip, and a
-      // focus landing in that gap would reopen a microphone the user just
-      // switched off. Nothing downstream would close it again, because this
-      // window's own preference is about to become false and the release path
-      // only fires on a *change*. Opening is the one step worth a round trip:
-      // closing the wrong microphone is cheap to correct, opening one the user
-      // turned off is not.
-      try {
-        await refreshCurrentUser();
-      } catch (error) {
-        // A failed re-read must not open on the stale value: the whole point of
-        // the round trip is that this window's copy might be out of date, so an
-        // answer of "could not tell" declines rather than guessing.
-        getLogger().warning(
-          `Could not re-read the preference before reopening the microphone: ${error}`,
-        );
-        return;
-      }
-      // The decision is re-made on what the re-read just wrote. The store has
-      // the preference from after the round trip now, so this is the second time
-      // `shouldHoldNow` is asked -- and the one that matters.
-      if (!ownsRetry(held)) {
+      // Asked twice on purpose: once on what the backend reported, and again on
+      // what the re-read wrote. The second is the one that matters, because the
+      // first ran against a preference this window may have had reason to doubt.
+      if (!(await rereadPreference()) || !ownsRetry(held)) {
         return;
       }
       // Re-read rather than trust `ownsRetry`: `shouldHoldNow` is a separate

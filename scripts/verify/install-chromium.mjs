@@ -177,6 +177,14 @@ if (existsSync(path.join(OUT, "chromium"))) {
   const libDir = path.join(STAGING, "lib");
   mkdirSync(libDir, { recursive: true });
 
+  // Claimed before anything is extracted, not after. `unpackTar` and the
+  // decompressions below can fail part-way, and a failure leaves `STAGING` with
+  // files in it; the guard at the top of this file refuses to delete a non-empty
+  // staging directory that carries no marker, so the *next* run would refuse the
+  // wrecks of its own last attempt and demand manual cleanup. Claiming first
+  // means a failed run leaves something the next run is allowed to remove.
+  writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n`);
+
   log("Extracting the browser …");
   const browserBytes = decompress(
     path.join(binDir, "chromium.br"),
@@ -207,6 +215,8 @@ if (existsSync(path.join(OUT, "chromium"))) {
   log(`  ${readdirSync(libDir).length} shared libraries`);
 
   // Whole or absent: the rename is the only thing that makes this a success.
+  // The marker is already there -- it was written above, before the extraction --
+  // so this only refreshes the version it records.
   writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n`);
   renameSync(STAGING, OUT);
 }

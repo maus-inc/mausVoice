@@ -756,6 +756,45 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.warmMicrophone).not.toHaveBeenCalled();
   });
 
+  it("ignores a rejection from an open that a newer request superseded", async () => {
+    // The success path already ignores a superseded answer; the rejection path
+    // did not. Changing microphones mid-open let the older promise fail and
+    // report a failure for the hold the newer request had already opened, and
+    // clear the ring the newer request owns -- so the next effect run reopened a
+    // working stream.
+    let failStaleOpen: (error: Error) => void = () => undefined;
+    mocks.warmMicrophone.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          failStaleOpen = reject;
+        }),
+    );
+    await render();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+
+    // Supersede it with a newer request that succeeds.
+    setState({});
+    await rerender();
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 1.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await rerender();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      failStaleOpen(new Error("device busy"));
+      await Promise.resolve();
+    });
+
+    // The warning is the observable: a superseded failure is logged verbosely and
+    // reported through no snackbar, while a current one reports a hold failure.
+    expect(mocks.showSnackbar).not.toHaveBeenCalled();
+  });
+
   it("closes an open that finishes after the preference is turned off", async () => {
     // The defect: `warmMicrophone` opens a real device and takes seconds. Turning
     // the preference off while it is in flight ran `closeMicrophone` first, which
