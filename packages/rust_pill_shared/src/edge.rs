@@ -85,14 +85,29 @@ impl EdgeMask {
 /// It is deliberately *not* part of equality or of the edge math: two rects with
 /// the same geometry describe the same drag region whatever their tokens are,
 /// and code that compared them with `==` before this field existed should keep
-/// comparing geometry. Use [`MonitorRect::same_geometry`] for that directly.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// comparing geometry. `==` does that; [`MonitorRect::same_geometry`] names it
+/// when the intent is worth spelling out.
+#[derive(Debug, Clone, Copy)]
 pub struct MonitorRect {
     pub x: f64,
     pub y: f64,
     pub width: f64,
     pub height: f64,
     pub id: Option<u64>,
+}
+
+/// Geometry only, as the type documents.
+///
+/// This has to be written out rather than derived: a derived `PartialEq` would
+/// compare `id` too, which silently breaks every `contains` / `==` check that
+/// holds a geometry-only rectangle (built by `without_id`) against a snapshot of
+/// named ones. On Windows that made a pill's own monitor look absent from its own
+/// topology, so the neighbouring monitors were dropped and seam crossing stopped
+/// working.
+impl PartialEq for MonitorRect {
+    fn eq(&self, other: &Self) -> bool {
+        self.same_geometry(*other)
+    }
 }
 
 impl MonitorRect {
@@ -541,6 +556,36 @@ mod tests {
 
     const MIN: f64 = 0.0;
     const MAX: f64 = 1920.0;
+
+    /// Equality is geometry, so a geometry-only rectangle matches a named one.
+    ///
+    /// The Windows seam code holds a `without_id` rectangle for the pill's own
+    /// monitor and looks it up in a snapshot where every monitor carries a token.
+    /// If `==` compared the token, nothing would ever match, the pill's monitor
+    /// would look absent from its own topology, and the neighbours that make
+    /// crossing a seam possible would be thrown away.
+    #[test]
+    fn equality_ignores_the_display_token() {
+        let geometry_only = MonitorRect::without_id(0.0, 0.0, 1920.0, 1080.0);
+        let named = MonitorRect {
+            id: Some(7),
+            ..geometry_only
+        };
+        assert_eq!(
+            geometry_only, named,
+            "the same rectangle is the same display"
+        );
+        assert!(geometry_only.same_geometry(named));
+
+        let moved = MonitorRect {
+            id: Some(7),
+            ..MonitorRect::without_id(1.0, 0.0, 1920.0, 1080.0)
+        };
+        assert_ne!(
+            geometry_only, moved,
+            "different geometry is a different display"
+        );
+    }
     const DIM: f64 = 1920.0;
     const BAND: f64 = DIM * EDGE_BAND_FRACTION;
 

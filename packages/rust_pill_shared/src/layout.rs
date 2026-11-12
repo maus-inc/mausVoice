@@ -321,7 +321,7 @@ where
     B: FnMut(MonitorRect, (f64, f64)) -> DragBounds,
 {
     match crate::restore::restore(parked, areas, window_size, bounds_for) {
-        Placement::Restore { x, y } => match finite(x, y) {
+        Placement::Restore { x, y, .. } => match finite(x, y) {
             Some((x, y)) => Relocation::Move { x, y },
             None => Relocation::Stranded,
         },
@@ -381,8 +381,16 @@ impl SaveGuard {
 
     /// Record that a drag start is being tracked, so a layout change during it
     /// can be recognised as interrupting it.
+    ///
+    /// Any drop recorded by a previous gesture is cleared here. A finished drag
+    /// leaves `last_drag_end` behind so a save refused mid-flight still has a
+    /// deadline; if a *new* drag starts, that deadline belongs to a gesture the
+    /// user has already finished. Left in place it makes `allows_save` true for
+    /// the unfinished drag, and the drop that was waiting is written from the
+    /// wrong place.
     pub fn drag_started(&mut self) {
         self.drag_spans_layout_change = false;
+        self.last_drag_end = None;
     }
 
     /// Record that a layout change landed while a drag was held.
@@ -537,6 +545,17 @@ impl Anchor {
     /// The anchor after clearing local data: nothing is due.
     pub fn from_forget() -> Self {
         Self::Cleared
+    }
+
+    /// Whether a relocation the *system* caused should be recorded as a save.
+    ///
+    /// Only when the pill has a position to keep. After a forget or a reset there
+    /// is no stored position and the pill is deliberately unsaved; a display change
+    /// that then relocates it must still move the window (it has to stay visible)
+    /// but must not invent a saved position, or the row the clear just deleted is
+    /// written back by the layout.
+    pub fn records_relocation(self) -> bool {
+        self.places()
     }
 }
 
@@ -1190,6 +1209,30 @@ pub(crate) mod tests {
         let due = guard.save_due_at(10.3).expect("the save is still owed");
         assert!((due - (10.0 + LAYOUT_SETTLE_SECONDS)).abs() < 1e-9);
         assert!(guard.allows_save(due), "the deadline is when it is allowed");
+    }
+
+    /// A new drag does not inherit the deadline of the gesture before it.
+    ///
+    /// End a drag at 0, start another at 10, and change the layout under it at
+    /// 11. Without clearing the old drop time, `allows_save(13)` sees a drop
+    /// "0.5 s ago" that belongs to a drag the user already finished, and writes
+    /// the unfinished drag's position. The only drop that can satisfy the hold
+    /// is this drag's own.
+    #[test]
+    fn a_new_drag_does_not_inherit_the_previous_drop_deadline() {
+        let mut guard = SaveGuard::new();
+        guard.drag_started();
+        guard.drag_ended(0.0);
+        guard.drag_started();
+        guard.layout_changed_during_drag(11.0);
+        assert!(
+            !guard.allows_save(13.0),
+            "an unfinished drag cannot be saved using the last gesture's drop time"
+        );
+        // Its own drop still enables the save, on the usual hold.
+        guard.drag_ended(13.0);
+        assert!(!guard.allows_save(13.1));
+        assert!(guard.allows_save(13.0 + DRAG_HOLD_SECONDS));
     }
 
     /// A drop that lands after the settle has passed waits only for its own

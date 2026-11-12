@@ -91,14 +91,20 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
         WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
     // `None` means the window was created at the default corner, so the state
     // must not claim a saved position it does not have.
-    let restored = saved_position.and_then(|parked| restore_position(parked, win_h));
+    let restored: Option<((i32, i32), Option<u64>)> =
+        saved_position.and_then(|parked| restore_position(parked, win_h));
     // A record that has been restored is a record whose display was named, so the
     // identity survives into this process's state and is republished with the
     // next save. Losing it here would silently downgrade every later save to
     // geometry-only matching.
-    let restored_display_id = saved_position.and_then(|parked| parked.display_id);
+    //
+    // It names the display the position was actually placed on, which is not the
+    // saved one when that display is gone: reporting the saved token beside the
+    // surviving display's geometry would store a rectangle and a name that
+    // describe two different panels.
+    let restored_display_id = restored.and_then(|(_, display_id)| display_id);
     let (wx, wy) = match restored {
-        Some(origin) => origin,
+        Some((origin, _)) => origin,
         None => default_position(win_h),
     };
     let hwnd = unsafe {
@@ -125,7 +131,7 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     let gfx = Gfx::new(WINDOW_W_TYPING, win_h).expect("Failed to create D2D context");
     eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
 
-    let state = initial_state(restored, restored_display_id);
+    let state = initial_state(restored.map(|(origin, _)| origin), restored_display_id);
 
     STATE.with(|s| *s.borrow_mut() = Some(state));
     GFX.with(|g| *g.borrow_mut() = Some(gfx));
@@ -502,7 +508,7 @@ fn on_anim_tick(hwnd: HWND) {
             // holds have passed. The frame loop is the retry: the drop is
             // reported once, so nothing else would come back for it.
             if state.drag_save_due.get().is_some() {
-                persist_drag_position(hwnd, state);
+                write_drag_position(hwnd, state, drag_now());
             }
             // Hover intent is sampled every animation frame (~16.7 ms at
             // 60 Hz) so the 50 ms ARM_DWELL is measured at display rate.
@@ -831,6 +837,11 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             cancel_drag_gesture(hwnd, state);
             state.has_saved_position.set(false);
             state.saved_display_id.set(None);
+            // The reset deletes the stored row, so any save still owed from the
+            // previous gesture would recreate it on the next tick -- with the
+            // position the reset just replaced.
+            state.pending_drag_position.set(false);
+            state.drag_save_due.set(None);
             state.selector_placement.borrow_mut().reset();
             state.crossing.borrow_mut().reset();
             // A reset names its destination, so the anchor carries it.
@@ -853,6 +864,12 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             });
         }
         InMessage::ForgetPosition => {
+            // A drag that is still held, or a settle that has not finished, would
+            // reach `persist_drag_position` on a later frame and publish a saved
+            // position again -- recreating the row the clear just deleted. Cancel
+            // the gesture first; a drag started after the clear still saves.
+            let hwnd = HWND_CELL.with(|c| c.get());
+            cancel_drag_gesture(hwnd, state);
             // Stop treating where the pill is sitting as the saved position.
             // Local data was just cleared, and the next `RequestPosition`
             // republishes this flag, so leaving it set would write the row back.
@@ -1631,7 +1648,7 @@ fn default_position(win_h: i32) -> (i32, i32) {
 ///
 /// `None` means the stored display is gone and nothing in the current layout
 /// relates to it, so the caller keeps the default placement instead of guessing.
-fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<(i32, i32)> {
+fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<((i32, i32), Option<u64>)> {
     // Identity-aware, because the record names a display: matching it against
     // rectangles that carry no token reduces every restore to geometry, so a pill
     // saved on a display that was resized or rearranged comes back on whichever
@@ -1644,8 +1661,8 @@ fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<(i32, i32)> {
         |work, (window_w, window_h)| window_clamp_bounds_for_size(work, window_w, window_h),
     );
     match placement {
-        rust_pill_shared::restore::Placement::Restore { x, y } => {
-            Some((x.round() as i32, y.round() as i32))
+        rust_pill_shared::restore::Placement::Restore { x, y, display_id } => {
+            Some(((x.round() as i32, y.round() as i32), display_id))
         }
         rust_pill_shared::restore::Placement::PlatformDefault => None,
     }
@@ -1710,11 +1727,12 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
         return;
     }
 
-    let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
-        (win_w as f64, win_h as f64),
-        (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
-        COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
-    );
+    // Derived from where the pill is actually drawn, not from the window size.
+    // `WM_DPICHANGED` resizes the window and the bitmap but leaves the drawing
+    // canvas at its old dimensions, so centring inside the resized window would
+    // describe a footprint the renderer is not using: reconciliation would then
+    // call a half-offscreen pill visible, or move a visible one by the difference.
+    let (offset, size) = live_pill_footprint(state);
     // The pill's own centre inside the window, so the display is resolved from the
     // thing the user sees rather than the transparent canvas corner.
     let footprint_centre = (
@@ -1740,7 +1758,20 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
     );
 
     match relocation {
-        rust_pill_shared::layout::Relocation::Keep => {}
+        rust_pill_shared::layout::Relocation::Keep => {
+            // The system may have moved a still-visible window itself -- Windows
+            // relocates one on a DPI or display change. Keeping the old stored
+            // origin would have the next cursor tick put the pill back there,
+            // undoing a placement the user could see. This is the system's move,
+            // not a drag, so it is adopted without going through the save guard.
+            let (cur_x, cur_y) = current_pill_origin(hwnd);
+            if state.anchor.get().records_relocation()
+                && (cur_x != state.saved_x.get() || cur_y != state.saved_y.get())
+            {
+                state.saved_x.set(cur_x);
+                state.saved_y.set(cur_y);
+            }
+        }
         rust_pill_shared::layout::Relocation::Stranded => {
             // Leave the window where it is and keep the stored position. There is
             // no display to move it to, and moving it to the origin would strand
@@ -1749,6 +1780,11 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
         rust_pill_shared::layout::Relocation::Move { x, y } => {
             let (x, y) = (x.round() as i32, y.round() as i32);
             move_window(hwnd, x, y, rect.left, rect.top);
+            // A forget or a reset leaves the pill deliberately unsaved: the move
+            // still has to happen, but it must not write the row back.
+            if !state.anchor.get().records_relocation() {
+                return;
+            }
             // The move was the pill's, so the persisted position follows it.
             state.saved_x.set(x);
             state.saved_y.set(y);
@@ -2518,6 +2554,34 @@ fn tick_long_press(state: &PillState, dt: f64) {
 /// Reads the pill window's screen rect and the work area of the monitor it
 /// lives on, so the desktop can anchor the composer next to the real pill
 /// instead of relying on OS-centred placement.
+/// Where the pill is drawn inside its window, as (offset, size).
+///
+/// This is the same placement the renderer uses -- the drawing canvas, the
+/// content offset and the animated pill position -- so every consumer that has to
+/// reason about the *visible* pill (reconciliation, the clamps) is talking about
+/// the same rectangle the user sees.
+fn live_pill_footprint(state: &PillState) -> ((f64, f64), (f64, f64)) {
+    let (px, py, pw, ph) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let (cox, coy) = state.content_offset();
+    ((cox + px, coy + py), (pw, ph))
+}
+
+/// The window's current top-left origin.
+///
+/// The saved position is a window origin, so this is what a system-driven move
+/// has to be compared against -- comparing the pill's *drawn* centre would treat
+/// every resting frame as a move.
+fn current_pill_origin(hwnd: HWND) -> (i32, i32) {
+    let mut wr = RECT::default();
+    // SAFETY: a null or stale HWND leaves `wr` at its default; the caller only
+    // compares the result against the saved origin.
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut wr);
+    }
+    (wr.left, wr.top)
+}
+
 fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
     unsafe {
         let mut wr = RECT::default();
@@ -2593,7 +2657,18 @@ fn persist_drag_position(hwnd: HWND, state: &PillState) {
     // Consumed here so a later destroy cannot store it a second time.
     state.pending_drag_position.set(false);
     let now = drag_now();
+    // The drop is recorded once per gesture. Retries must not come through this
+    // function: `drag_ended` is what starts the drag hold, so a retry calling it
+    // would push the hold's start forward every frame and nothing would save.
     state.save_guard.borrow_mut().drag_ended(now);
+    write_drag_position(hwnd, state, now);
+}
+
+/// Write a drop the guard has allowed, without re-recording when it landed.
+///
+/// The retry path: it only asks whether the holds have passed, against the drop
+/// time recorded by the actual release.
+fn write_drag_position(hwnd: HWND, state: &PillState, now: f64) {
     // Read before the save is attempted: a successful save clears it.
     let due = state.save_guard.borrow().save_due_at(now);
     if !state.save_guard.borrow().allows_save(now) {

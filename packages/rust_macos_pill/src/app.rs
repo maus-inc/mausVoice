@@ -1030,7 +1030,19 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
 /// is the published top-down rect, so save and restore use one space.
 fn persist_drag_position(state: &PillState, window: id) {
     let now = drag_now();
+    // The drop is recorded exactly here, once per gesture. Retries must not come
+    // through this function: `drag_ended` is what starts the drag hold, so a retry
+    // that called it would push the hold's start forward on every frame and the
+    // hold would never expire.
     state.save_guard.borrow_mut().drag_ended(now);
+    write_drag_position(state, window, now);
+}
+
+/// Write a drop the guard has allowed, without re-recording when it landed.
+///
+/// This is the retry path. It only asks whether the holds have passed; the drop
+/// time it is measured against was set once, by the release.
+fn write_drag_position(state: &PillState, window: id, now: f64) {
     // Read before the save is attempted: a successful save clears it.
     let due = state.save_guard.borrow().save_due_at(now);
     if !state.save_guard.borrow().allows_save(now) {
@@ -1041,6 +1053,14 @@ fn persist_drag_position(state: &PillState, window: id) {
         //
         // The drop is still the user's, and the controller reports `settled` only
         // once, so the deadline is what keeps it from being lost.
+        //
+        // The origin is recorded now, while it is still the drop. Waiting for the
+        // retry would read whatever the window had been moved to by then, and the
+        // drop this deadline exists to protect would be replaced by the idle
+        // placement it was parked at.
+        let frame = unsafe { window_frame(window) };
+        state.saved_x.set(frame.origin.x);
+        state.saved_y.set(frame.origin.y);
         state.drag_save_due.set(due);
         return;
     }
@@ -2061,14 +2081,19 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             return;
         }
 
-        park_window(window, state, anchor, visible, bounds, win_h);
-
         // A drop the display change held back is written as soon as both holds
         // have passed: the controller reports `settled` once, so nothing else
         // would come back for it.
+        //
+        // Checked before the idle placement, not after: while a save is owed the
+        // window is still standing where the user dropped it, and parking it first
+        // would move it off that spot before the retry could read it.
         if state.drag_save_due.get().is_some() {
-            persist_drag_position(state, window);
+            write_drag_position(state, window, drag_now());
+            return;
         }
+
+        park_window(window, state, anchor, visible, bounds, win_h);
     }
 }
 
@@ -2305,6 +2330,11 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             // use.
             let origin = NSPoint::new(x, primary_top - (y + window_h));
             set_window_origin(window, origin);
+            // A forget or a reset leaves the pill deliberately unsaved: the move
+            // still has to happen, but it must not write the row back.
+            if !state.anchor.get().records_relocation() {
+                return;
+            }
             state.saved_x.set(origin.x);
             state.saved_y.set(origin.y);
             state.has_saved_position.set(true);
@@ -2456,6 +2486,10 @@ unsafe fn setup(
     // The record is stored in the top-down space the pill publishes, so this
     // works in that space and converts the answer back to Cocoa's bottom-left
     // origin once, at the end.
+    // The destination token travels with the frame: when the saved display is
+    // gone the frame is remapped onto one that remains, and the state must name
+    // the display it actually landed on.
+    let mut restored_display_id: Option<u64> = None;
     let restored = saved_position.and_then(|parked| {
         let screen_list = screens();
         let count: usize = unsafe { msg_send![screen_list, count] };
@@ -2514,10 +2548,13 @@ unsafe fn setup(
             },
         );
         match placement {
-            rust_pill_shared::restore::Placement::Restore { x, y } => Some(NSRect::new(
-                NSPoint::new(x, primary_top - (y + window_h)),
-                NSSize::new(window_w, window_h),
-            )),
+            rust_pill_shared::restore::Placement::Restore { x, y, display_id } => {
+                restored_display_id = display_id;
+                Some(NSRect::new(
+                    NSPoint::new(x, primary_top - (y + window_h)),
+                    NSSize::new(window_w, window_h),
+                ))
+            }
             rust_pill_shared::restore::Placement::PlatformDefault => None,
         }
     });
@@ -2606,7 +2643,9 @@ unsafe fn setup(
         has_saved_position: Cell::new(restored.is_some()),
         saved_x: Cell::new(restored.map_or(0.0, |window| window.origin.x)),
         saved_y: Cell::new(restored.map_or(0.0, |window| window.origin.y)),
-        saved_display_id: Cell::new(saved_position.and_then(|window| window.display_id)),
+        saved_display_id: Cell::new(
+            restored_display_id.or_else(|| saved_position.and_then(|window| window.display_id)),
+        ),
         drag_save_due: Cell::new(None),
         save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
         layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),

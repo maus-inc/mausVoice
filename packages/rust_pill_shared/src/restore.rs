@@ -271,7 +271,17 @@ pub fn saved_position_from_process_args() -> Option<ParkedWindow> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Placement {
     /// Put the window origin here. Already clamped into the chosen display.
-    Restore { x: f64, y: f64 },
+    ///
+    /// `display_id` names the display the origin was chosen on, so the caller can
+    /// publish the token of the display it actually landed on rather than the one
+    /// the record asked for. Those differ whenever the saved display is gone and
+    /// the position was remapped onto a connected one -- publishing the requested
+    /// token there stores a rectangle and a name that describe two displays.
+    Restore {
+        x: f64,
+        y: f64,
+        display_id: Option<u64>,
+    },
     /// Leave the platform's own placement alone. The saved display is not
     /// connected and nothing in the current layout correlates with it, so the
     /// platform default is the only answer that cannot strand the pill.
@@ -350,7 +360,11 @@ where
     if !x.is_finite() || !y.is_finite() {
         return Placement::PlatformDefault;
     }
-    Placement::Restore { x, y }
+    Placement::Restore {
+        x,
+        y,
+        display_id: areas[index].id,
+    }
 }
 
 /// Pick the display that owns the saved spot, and whether it is the exact
@@ -586,7 +600,7 @@ mod tests {
 
     fn restored(placement: Placement) -> (f64, f64) {
         match placement {
-            Placement::Restore { x, y } => (x, y),
+            Placement::Restore { x, y, .. } => (x, y),
             Placement::PlatformDefault => panic!("expected a restore, got the platform default"),
         }
     }
@@ -598,7 +612,11 @@ mod tests {
         let only = rect(0.0, 0.0, 1920.0, 1040.0);
         assert_eq!(
             restore(parked(500.0, 300.0, only), &[only], (200.0, 60.0), bounds),
-            Placement::Restore { x: 500.0, y: 300.0 }
+            Placement::Restore {
+                x: 500.0,
+                y: 300.0,
+                display_id: None,
+            }
         );
     }
 
@@ -850,7 +868,11 @@ mod tests {
         assert_eq!(decoded, saved);
         assert_eq!(
             restore(decoded, &[only], (200.0, 60.0), bounds),
-            Placement::Restore { x: 500.0, y: 300.0 }
+            Placement::Restore {
+                x: 500.0,
+                y: 300.0,
+                display_id: None,
+            }
         );
     }
 
@@ -1071,6 +1093,31 @@ mod tests {
         assert!(y < 900.0, "restored outside the display it came back on");
     }
 
+    /// A restore that had to move onto another display names that display.
+    ///
+    /// The saved panel is gone and its spot was remapped onto the one that
+    /// remains. Reporting the saved token would have the pill publish the
+    /// surviving display's geometry under the missing display's name, and the next
+    /// launch would look for a display that no longer exists.
+    #[test]
+    fn a_remapped_restore_names_the_display_it_landed_on() {
+        let gone = display(3840.0, 0.0, 1920.0, 1040.0, Some(11));
+        let survivor = display(0.0, 0.0, 1920.0, 1040.0, Some(12));
+        match restore(
+            named_parked(4000.0, 300.0, gone, 11),
+            &[survivor],
+            (200.0, 60.0),
+            bounds,
+        ) {
+            Placement::Restore { display_id, .. } => assert_eq!(
+                display_id,
+                Some(12),
+                "the placement has to name the display it chose"
+            ),
+            Placement::PlatformDefault => panic!("the surviving display should have taken it"),
+        }
+    }
+
     /// A display matched only by token keeps the pill's relative place, because
     /// its rect changed and the stored origin may now be off it.
     #[test]
@@ -1091,6 +1138,10 @@ mod tests {
     /// When the saved display is gone for good, geometry still decides, so a
     /// connector that changes its name without the panel moving does not lose the
     /// position.
+    ///
+    /// The placement names the display it landed on, not the one the record asked
+    /// for: the record's token is gone, and publishing it with the new geometry
+    /// would store a rectangle and a name that describe two different panels.
     #[test]
     fn a_vanished_token_falls_back_to_geometry() {
         let work = rect(0.0, 0.0, 1920.0, 1040.0);
@@ -1103,7 +1154,11 @@ mod tests {
                 (200.0, 60.0),
                 bounds,
             ),
-            Placement::Restore { x: 500.0, y: 300.0 }
+            Placement::Restore {
+                x: 500.0,
+                y: 300.0,
+                display_id: Some(99),
+            }
         );
     }
 

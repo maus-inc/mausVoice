@@ -1877,7 +1877,12 @@ describe("native gesture adapter contracts", () => {
     // The realized origin is the restored one when there is a stored position,
     // else the pointer anchor. Both are published through the same applied cell
     // so idle placement and the frame tick read one value.
-    assert.match(source.gtkX11, /let target = restored\.unwrap_or\(init_pos\)/);
+    // The restore now also carries the display it landed on, so the origin is
+    // taken out of the pair rather than used bare.
+    assert.match(
+      source.gtkX11,
+      /let target = restored\.map_or\(init_pos, \|\(origin, _\)\| origin\)/,
+    );
     assert.match(source.gtkX11, /state\.x11_drag_applied\.set\(target\)/);
     assert.match(
       source.gtkX11,
@@ -1982,9 +1987,11 @@ describe("native gesture adapter contracts", () => {
   it("uses the created Windows height for initial placement", () => {
     // A stored position is tried first, else the default corner for the height
     // the window was created with.
+    // The restore also returns the display it landed on, so the binding is typed
+    // as a pair; the height it was clamped against is still the created one.
     assert.match(
       source.windowsPill,
-      /let restored = saved_position\.and_then\(\|parked\| restore_position\(parked, win_h\)\)/,
+      /saved_position\.and_then\(\|parked\| restore_position\(parked, win_h\)\)/,
     );
     const body = scope("windowsPill", "fn default_position(");
     assert.match(body, /default_pill_y\(wa\.top, wa_h, win_h\)/);
@@ -2127,17 +2134,28 @@ describe("native gesture adapter contracts", () => {
     // the user chose with the one the system improvised.
     // Scoped to the save path itself. An unscoped match passes on a mention
     // anywhere in the file, which is exactly what a dropped check looks like.
+    // The guard check moved into the save-only writer that every drop path ends
+    // in: the entry point records when the drop happened, the writer decides
+    // whether it may be stored. Scoped to the writer so a mention elsewhere
+    // still fails.
     const saves = [
-      ["windowsPill", "fn persist_drag_position(", /allows_save\(now\)/],
-      ["macPill", "fn persist_drag_position(", /allows_save\(now\)/],
-      ["gtkX11", "pub\(crate\) fn persist_window_position(", /allows_save\(now\)/],
+      ["windowsPill", "fn write_drag_position(", /allows_save\(now\)/],
+      ["macPill", "fn write_drag_position(", /allows_save\(now\)/],
+      ["gtkX11", "pub\(crate\) fn write_window_position(", /allows_save\(now\)/],
     ];
     for (const [name, marker, pattern] of saves) {
       const save = scope(name, marker);
       assert.match(save, /save_guard\.borrow\(\)\.allows_save\(/, `${name}: the save path never asks the guard`);
       assert.match(save, pattern, `${name}: the guard's verdict is not what decides the save`);
       // The refusal has to be a return, not a logged warning that falls through.
-      assert.match(save, /if !state\.save_guard\.borrow\(\)\.allows_save\(now\) \{[^}]*return;/, `${name}: the refusal does not stop the save`);
+      // `[^}]` is not enough now that the refusal records the drop origin before
+      // it returns: the point is still that the branch ends in a `return`, so the
+      // store below it is unreachable when the guard refuses.
+      assert.match(
+        save,
+        /if !state\.save_guard\.borrow\(\)\.allows_save\(now\) \{[\s\S]*?return;/,
+        `${name}: the refusal does not stop the save`,
+      );
     }
     // A failed or partial enumeration must not read as an unplugged display.
     for (const name of ["windowsPill", "macPill", "gtkPill"]) {
@@ -2321,10 +2339,11 @@ describe("native gesture adapter contracts", () => {
     // the user moved it, on every platform, silently.
     const shared = read("packages/rust_pill_shared/src/layout.rs");
     assert.match(shared, /pub fn save_due_at\(&self, now: f64\) -> Option<f64>/);
+    // The deadline is parked by the writer the entry point hands the drop to.
     for (const [name, persist] of [
-      ["windowsPill", "fn persist_drag_position(hwnd: HWND, state: &PillState)"],
-      ["macApp", "fn persist_drag_position(state: &PillState, window: id)"],
-      ["gtkX11", "pub(crate) fn persist_window_position"],
+      ["windowsPill", "fn write_drag_position(hwnd: HWND, state: &PillState, now: f64)"],
+      ["macApp", "fn write_drag_position(state: &PillState, window: id, now: f64)"],
+      ["gtkX11", "pub(crate) fn write_window_position("],
     ]) {
       const body = scope(name, persist);
       assert.match(
@@ -2581,7 +2600,12 @@ describe("native gesture adapter contracts", () => {
     // hand it the restored origin, so a caller that stops passing it fails here
     // rather than silently starting unsaved.
     const run = scope("windowsPill", "pub fn run(");
-    assert.match(run, /initial_state\(restored, restored_display_id\)/);
+    // `restored` also carries the display the placement chose, so the factory is
+    // handed the origin out of that pair plus the token alongside it.
+    assert.match(
+      run,
+      /initial_state\(restored\.map\(\|\(origin, _\)\| origin\), restored_display_id\)/,
+    );
     const seeded = scope("windowsPill", "fn initial_state(");
     assert.match(seeded, /has_saved_position: Cell::new\(restored\.is_some\(\)\)/);
     assert.match(
@@ -2922,12 +2946,14 @@ describe("macOS saved-position scope", () => {
     // Anything else means a second code path writes the saved origin.
     const seeds = source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
     assert.equal(seeds, 1, "the restored origin must be seeded exactly once");
-    // Exactly three writers of the saved origin, each with its own reason: the
-    // drop, the reconciliation that runs when a display change moves the pill
-    // itself, and the idle clamp that holds the window at a moved origin. Anything
-    // else is another code path deciding where the pill was parked.
-    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 3);
-    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 3);
+    // Exactly four writers of the saved origin, each with its own reason: the
+    // drop, the drop a guard refused (recorded while the window is still on it,
+    // so the retry cannot read a repositioned frame instead), the reconciliation
+    // that runs when a display change moves the pill itself, and the idle clamp
+    // that holds the window at a moved origin. Anything else is another code path
+    // deciding where the pill was parked.
+    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 4);
+    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 4);
     // The clamp writer is the one that cannot be dropped without the record
     // disagreeing with the window it describes: the tick clamps `saved_x` into
     // the visible frame and then holds the window there, so a stored origin the

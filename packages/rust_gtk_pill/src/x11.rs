@@ -101,7 +101,15 @@ fn root_pointer(window: &gtk::Window) -> (c_int, c_int) {
 ///
 /// Named rather than derived from the pointer, so the record names the display
 /// the pill was dropped on even if the pointer has since moved off it.
-fn display_id_at(window: &gtk::Window, x: f64, y: f64) -> Option<u64> {
+fn display_id_at(window: &gtk::Window, state: &PillState, x: f64, y: f64) -> Option<u64> {
+    // Prefer the monitor the visible pill is on. The transparent toplevel can
+    // start on one monitor while the pill is drawn on the next one, and pairing
+    // that neighbour's work area (which `pill_geometry` reports) with this
+    // monitor's token makes the record describe two different displays. The
+    // reconciliation path already resolves the pill this way, so both agree.
+    if let Some(id) = crate::pill::pill_monitor_id(window, state) {
+        return Some(id);
+    }
     let display = window.display();
     let scale = x11_root_scale(window);
     let areas: Vec<_> = (0..display.n_monitors())
@@ -169,7 +177,7 @@ pub(crate) fn persist_drop_position(
     state.has_saved_position.set(true);
     state
         .saved_display_id
-        .set(display_id_at(window, drop_x as f64, drop_y as f64));
+        .set(display_id_at(window, state, drop_x as f64, drop_y as f64));
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
@@ -187,7 +195,24 @@ pub(crate) fn persist_drop_position(
 /// so the slow timer cannot overwrite it with a later cursor poll.
 pub(crate) fn persist_window_position(window: &gtk::Window, state: &PillState, x: f64, y: f64) {
     let now = crate::pill::drag_clock_now();
+    // The release is recorded here, once per gesture. Retries must not come
+    // through this function: it is what starts the drag hold, so a retry calling
+    // it would move the hold's start forward every frame and nothing would save.
     state.save_guard.borrow_mut().drag_ended(now);
+    write_window_position(window, state, x, y, now);
+}
+
+/// Write a release the guard has allowed, without re-recording when it landed.
+///
+/// This is the retry path: it only asks whether the holds have passed, against
+/// the release time recorded by the actual drop.
+pub(crate) fn write_window_position(
+    window: &gtk::Window,
+    state: &PillState,
+    x: f64,
+    y: f64,
+    now: f64,
+) {
     // Read before the save is attempted: a successful save clears it.
     let due = state.save_guard.borrow().save_due_at(now);
     if !state.save_guard.borrow().allows_save(now) {
@@ -205,7 +230,9 @@ pub(crate) fn persist_window_position(window: &gtk::Window, state: &PillState, x
     state.has_saved_position.set(true);
     // The pending release has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
-    state.saved_display_id.set(display_id_at(window, x, y));
+    state
+        .saved_display_id
+        .set(display_id_at(window, state, x, y));
     state.x11_release_persisted.set(true);
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
@@ -356,7 +383,7 @@ fn restored_position(
     display: &gdk::Display,
     window: &gtk::Window,
     state: &PillState,
-) -> Option<(c_int, c_int)> {
+) -> Option<((c_int, c_int), Option<u64>)> {
     let parked = state.restored_position.get()?;
     let scale = x11_root_scale(window);
     let work_areas: Vec<_> = (0..display.n_monitors())
@@ -390,8 +417,8 @@ fn restored_position(
         },
     );
     match placement {
-        rust_pill_shared::restore::Placement::Restore { x, y } => {
-            Some((x.round() as c_int, y.round() as c_int))
+        rust_pill_shared::restore::Placement::Restore { x, y, display_id } => {
+            Some(((x.round() as c_int, y.round() as c_int), display_id))
         }
         rust_pill_shared::restore::Placement::PlatformDefault => None,
     }
@@ -492,26 +519,31 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         })
     })
     .unwrap_or((0, 0));
-    let target = restored.unwrap_or(init_pos);
+    let target = restored.map_or(init_pos, |(origin, _)| origin);
     unsafe {
         XMoveWindow(xdisplay, xwindow, target.0, target.1);
         XFlush(xdisplay);
     }
 
     state.x11_drag_applied.set(target);
-    if let Some((x, y)) = restored {
+    if let Some(((x, y), display_id)) = restored {
         state.saved_x.set(x as f64);
         state.saved_y.set(y as f64);
         state.has_saved_position.set(true);
-        // Carry the record's display identity into this process's state, so the
-        // next save republishes it. Dropping it here would silently downgrade
-        // every later save to geometry-only matching.
-        state.saved_display_id.set(
+        // Carry the display identity into this process's state, so the next save
+        // republishes it. Dropping it here would silently downgrade every later
+        // save to geometry-only matching.
+        //
+        // The token is the one the placement landed on, not the one the record
+        // asked for: when the saved display is disconnected the position is
+        // remapped onto a connected one, and keeping the missing display's name
+        // would store this rectangle under a display that is not there.
+        state.saved_display_id.set(display_id.or_else(|| {
             state
                 .restored_position
                 .get()
-                .and_then(|window| window.display_id),
-        );
+                .and_then(|window| window.display_id)
+        }));
     }
     let was_dragging = Rc::new(Cell::new(false));
     let win_tick = window.clone();
@@ -534,11 +566,24 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // on every pass meant a release deferred by the save guard consumed it
         // anyway, so the net saw nothing left to save and the position was lost.
         if was_dragging.get() && !state_tick.x11_release_persisted.get() {
+            // A refusal from the save guard is temporary, so the net has to stay
+            // armed for it: clearing the marker here is what used to lose the
+            // drop, because nothing else would come back for it.
+            let allowed = state_tick
+                .save_guard
+                .borrow()
+                .allows_save(crate::pill::drag_clock_now());
             if let Some(pos) = persist_drop_position(&win_tick, &state_tick) {
                 state_tick.x11_drag_applied.set(pos);
+                was_dragging.set(false);
+            } else if allowed {
+                // The guard allowed it, so no monitor could be resolved: that is
+                // not something a retry can fix.
+                was_dragging.set(false);
             }
+        } else {
+            was_dragging.set(false);
         }
-        was_dragging.set(false);
 
         // Pick the anchor that decides which monitor owns the pill: the saved
         // drop point when parked, else wherever the pill already is. (Drags

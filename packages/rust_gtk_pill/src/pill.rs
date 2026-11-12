@@ -253,6 +253,9 @@ fn drain_messages(
                 state_tick.crossing.borrow_mut().reset();
                 state_tick.has_saved_position.set(false);
                 state_tick.saved_display_id.set(None);
+                // A save still owed from the previous gesture would publish the
+                // pre-reset origin and recreate the row the reset just deleted.
+                state_tick.drag_save_due.set(None);
                 // A reset is a placement the user asked for, so the pill is due
                 // one even though nothing is stored.
                 state_tick
@@ -837,7 +840,7 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
         // have passed. The frame loop is the retry: the release is reported once,
         // so nothing else would come back for it.
         if state_tick.drag_save_due.get().is_some() {
-            persist_drag_position(&win_tick, &state_tick);
+            retry_drag_save(&win_tick, &state_tick);
         }
         tick_hover_frame(&state_tick);
         tick_selector_placement(&win_tick, &state_tick, dt_tick);
@@ -1208,6 +1211,11 @@ fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
         }
         rust_pill_shared::layout::Relocation::Move { x, y } => {
             x11::move_toplevel(window, x.round() as i32, y.round() as i32);
+            // A forget or a reset leaves the pill deliberately unsaved: the move
+            // still has to happen, but it must not write the row back.
+            if !state.anchor.get().records_relocation() {
+                return;
+            }
             state.saved_x.set(x.round());
             state.saved_y.set(y.round());
             state.has_saved_position.set(true);
@@ -1379,6 +1387,22 @@ fn persist_drag_position(window: &gtk::Window, state: &PillState) {
         x11::persist_window_position(window, state, x as f64, y as f64);
         return;
     }
+    publish_saved_geometry(window, state);
+}
+
+/// Retry a save the guard refused, without re-recording the drop.
+///
+/// `persist_drag_position` records the drop, and that record is what starts the
+/// drag hold. Calling it every frame would restart the hold every frame, so the
+/// drop it is meant to protect would never be written.
+fn retry_drag_save(window: &gtk::Window, state: &PillState) {
+    if state.backend.get() == Backend::X11 {
+        let (x, y) = state.x11_drag_applied.get();
+        x11::write_window_position(window, state, x as f64, y as f64, drag_clock_now());
+        return;
+    }
+    // Wayland and LayerShell placements are applied by the compositor, so the
+    // guard never holds a save back there and nothing can be owed.
     publish_saved_geometry(window, state);
 }
 
@@ -1559,6 +1583,16 @@ pub(crate) fn x11_pill_center(state: &PillState, scale: f64) -> Option<X11PillCe
 }
 
 /// Resolve the monitor and rendered pill center from the applied X11 origin.
+/// The stable token of the monitor the visible pill is on, if it can be named.
+///
+/// This is the same resolution [`x11_pill_monitor`] uses for reconciliation, so a
+/// published position and the work area published beside it cannot disagree about
+/// which display they describe.
+pub(crate) fn pill_monitor_id(window: &gtk::Window, state: &PillState) -> Option<u64> {
+    let (monitor, ..) = x11_pill_monitor(window, state)?;
+    x11::monitor_display_id(&monitor)
+}
+
 fn x11_pill_monitor(window: &gtk::Window, state: &PillState) -> Option<(gdk::Monitor, f64, f64)> {
     if state.backend.get() != Backend::X11 {
         return None;
