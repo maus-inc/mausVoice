@@ -2,6 +2,33 @@ import type { AppState } from "../state/app.state";
 import type { Hotkey } from "@maus-inc/types";
 
 /**
+ * Registers `saved` into the store and removes every hotkey whose id is in
+ * `removedIds`.
+ *
+ * Both hotkey group replacements do the same two steps -- drop the rows the
+ * database no longer holds, then publish the rows it does -- so they share this
+ * instead of each writing the loop. `hotkeyIds` stays in step with
+ * `hotkeyById`, and an id that is already listed is not listed twice.
+ */
+export const applyReplacedHotkeys = (
+  draft: AppState,
+  removedIds: Iterable<string>,
+  saved: Hotkey[],
+): void => {
+  const removed = new Set(removedIds);
+  for (const id of removed) delete draft.hotkeyById[id];
+  draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
+    (id) => !removed.has(id),
+  );
+  for (const hotkey of saved) {
+    draft.hotkeyById[hotkey.id] = hotkey;
+    if (!draft.settings.hotkeyIds.includes(hotkey.id)) {
+      draft.settings.hotkeyIds.push(hotkey.id);
+    }
+  }
+};
+
+/**
  * Replaces every style hotkey (those whose `actionName` starts with `prefix`)
  * with `saved` in a single, deterministic store mutation. This is the pure core
  * of the style-hotkey "save" flow (previously an inline `produceAppState`
@@ -24,16 +51,5 @@ export const applyReplacedStyleHotkeys = (
       .filter((hotkey) => hotkey.actionName.startsWith(prefix))
       .map((hotkey) => hotkey.id),
   );
-  for (const id of oldStyleIds) {
-    delete draft.hotkeyById[id];
-  }
-  draft.settings.hotkeyIds = draft.settings.hotkeyIds.filter(
-    (id) => !oldStyleIds.has(id),
-  );
-  for (const hotkey of saved) {
-    draft.hotkeyById[hotkey.id] = hotkey;
-    if (!draft.settings.hotkeyIds.includes(hotkey.id)) {
-      draft.settings.hotkeyIds.push(hotkey.id);
-    }
-  }
+  applyReplacedHotkeys(draft, oldStyleIds, saved);
 };

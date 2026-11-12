@@ -11,6 +11,7 @@ pub mod deform;
 pub mod drag;
 pub mod edge;
 pub mod hover;
+pub mod ipc;
 pub mod layout;
 pub mod placement;
 pub mod restore;
@@ -106,6 +107,45 @@ pub enum PillVisibility {
     Hidden,
     WhileActive,
     Persistent,
+}
+
+/// Unconfirmed microphone shutdown and its scoped cancel affordance must be
+/// visible even when the user's ordinary pill visibility preference is hidden.
+pub fn is_recording_stop_safety_notice(
+    visible: bool,
+    microphone_safety: bool,
+    action: Option<&str>,
+) -> bool {
+    visible
+        && (microphone_safety
+            || action
+                .and_then(|value| value.strip_prefix("cancel_recording_stop#"))
+                .is_some_and(|owner| !owner.is_empty()))
+}
+
+/// Keep urgent notices within the pill window's horizontal reserve. Ordinary
+/// banners retain their existing layout; callers opt in only for safety notices.
+pub fn safety_notice_fit_scale(width: f64, available_width: f64) -> f64 {
+    if width.is_finite() && width > 0.0 && available_width.is_finite() {
+        (available_width.max(0.0) / width).min(1.0)
+    } else {
+        1.0
+    }
+}
+
+/// Keep an urgent banner above the native text-entry control in typing mode.
+pub fn safety_notice_top(
+    default_top: f64,
+    typing: bool,
+    input_top: f64,
+    gap: f64,
+    height: f64,
+) -> f64 {
+    if typing {
+        default_top.min(input_top - gap - height)
+    } else {
+        default_top
+    }
 }
 
 /// Shared pill visibility policy, used by every platform pill.
@@ -1064,6 +1104,17 @@ pub fn style_tooltip_target(
     } else {
         0.0
     }
+}
+
+/// A scoped dismissal must not clear a toast that replaced its action token.
+pub fn toast_dismiss_matches(
+    expected_action: Option<&str>,
+    current_action: Option<&str>,
+    expected_safety_owner: Option<&str>,
+    current_safety_owner: Option<&str>,
+) -> bool {
+    expected_action.is_none_or(|expected| current_action == Some(expected))
+        && expected_safety_owner.is_none_or(|expected| current_safety_owner == Some(expected))
 }
 
 /// Reset every piece of flash-banner state back to "no toast showing".
@@ -2349,6 +2400,84 @@ mod tests {
     fn flash_banner_stays_hidden_when_not_visible() {
         assert_eq!(flash_banner_target(false, false, false), 0.0);
         assert_eq!(flash_banner_target(false, true, true), 0.0);
+    }
+
+    #[test]
+    fn scoped_dismissal_only_clears_the_matching_action_or_safety_owner() {
+        assert!(toast_dismiss_matches(None, None, None, None));
+        assert!(toast_dismiss_matches(None, Some("other"), None, None));
+        assert!(toast_dismiss_matches(
+            Some("cancel#one"),
+            Some("cancel#one"),
+            None,
+            None
+        ));
+        assert!(!toast_dismiss_matches(
+            Some("cancel#one"),
+            Some("cancel#two"),
+            None,
+            None
+        ));
+        assert!(!toast_dismiss_matches(Some("cancel#one"), None, None, None));
+        assert!(toast_dismiss_matches(
+            None,
+            None,
+            Some("owner-a"),
+            Some("owner-a")
+        ));
+        assert!(!toast_dismiss_matches(
+            None,
+            None,
+            Some("owner-a"),
+            Some("owner-b")
+        ));
+        assert!(!toast_dismiss_matches(
+            None,
+            Some("other"),
+            Some("owner-a"),
+            None
+        ));
+    }
+
+    #[test]
+    fn only_a_live_scoped_stop_cancel_prompt_overrides_hidden_visibility() {
+        for (visible, action, expected) in [
+            (true, Some("cancel_recording_stop#owner"), true),
+            (false, Some("cancel_recording_stop#owner"), false),
+            (true, Some("cancel_recording_stop#"), false),
+            (true, Some("cancel_recording_stop"), false),
+            (true, Some("confirm_cancel_transcription"), false),
+            (true, None, false),
+        ] {
+            let owns_attention = is_recording_stop_safety_notice(visible, false, action);
+            assert_eq!(owns_attention, expected);
+            assert_eq!(
+                should_show_pill(PillVisibility::Hidden, true, owns_attention),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn safety_notice_does_not_overlap_native_typing_entry() {
+        assert_eq!(safety_notice_top(300.0, true, 304.0, 6.0, 32.0), 266.0);
+        assert_eq!(safety_notice_top(200.0, true, 304.0, 6.0, 32.0), 200.0);
+        assert_eq!(safety_notice_top(300.0, false, 304.0, 6.0, 32.0), 300.0);
+    }
+
+    #[test]
+    fn safety_notice_fits_available_width_without_enlarging_short_messages() {
+        assert_eq!(safety_notice_fit_scale(200.0, 584.0), 1.0);
+        assert_eq!(safety_notice_fit_scale(800.0, 400.0), 0.5);
+        assert_eq!(safety_notice_fit_scale(800.0, -1.0), 0.0);
+        assert_eq!(safety_notice_fit_scale(0.0, 400.0), 1.0);
+    }
+
+    #[test]
+    fn microphone_safety_notice_overrides_hidden_visibility_only_while_visible() {
+        assert!(is_recording_stop_safety_notice(true, true, None));
+        assert!(!is_recording_stop_safety_notice(false, true, None));
+        assert!(!is_recording_stop_safety_notice(true, false, None));
     }
 
     #[test]

@@ -2974,7 +2974,14 @@ describe("PR28 live audio chunk contract", () => {
       .split("}")[0];
     assert.match(payload, /pub offset: u64/);
 
-    assert.match(source.commands, /AudioChunkPayload \{ samples, offset \}/);
+    // The payload also carries the owner and generation that route a chunk to
+    // the right recording, so the literal is read field by field rather than
+    // pinned to the exact text it had before those fields existed.
+    const chunkLiteral = source.commands
+      .split("let payload = AudioChunkPayload {")[1]
+      .split("};")[0];
+    assert.match(chunkLiteral, /samples,/);
+    assert.match(chunkLiteral, /offset,/);
     assert.match(source.commands, /move \|samples: Vec<f32>, offset: u64\|/);
   });
 

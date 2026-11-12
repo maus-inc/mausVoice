@@ -55,6 +55,7 @@ cpal = "0.15"
 tauri-plugin-os = "2.3.1"
 # Local fork that restores macOS event taps disabled by the OS.
 rdev = { path = "../../../patches/rdev" }
+rust_pill_shared = { path = "../../../packages/rust_pill_shared" }
 strum = "0.24"
 rodio = "0.17"
 wgpu = "0.20"
@@ -86,10 +87,6 @@ tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 cap-std = "=4.0.3"
 cap-fs-ext = { version = "=4.0.3", default-features = false }
 
-# Shared pill geometry, so the desktop writes the same parked-position record
-# the three pill binaries read back.
-rust_pill_shared = { path = "../../../packages/rust_pill_shared" }
-
 [dev-dependencies]
 # `tauri::test` -- and so `tauri::test::mock_app` -- is `#[cfg(any(test, feature = "test"))]`
 # at tauri-2.10.3/src/lib.rs:1100, so it is not reachable from a crate that merely depends on
@@ -120,7 +117,7 @@ arboard = "3"
 enigo = "0.1"
 gtk = "0.18"
 libpulse-binding = "2"
-libpulse-simple-binding = "2"
+libc = "0.2"
 x11 = { version = "2", features = ["xlib"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -160,3 +157,7 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 [patch.crates-io]
 block = { path = "../../../patches/block-0.1.6" }
+# Native audio teardown patches. See each crate's PATCH.md.
+cpal = { path = "../../../patches/cpal-0.15.3" }
+alsa = { path = "../../../patches/alsa-0.9.1" }
+coreaudio-rs = { path = "../../../patches/coreaudio-rs-0.11.3" }

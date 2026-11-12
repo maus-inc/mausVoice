@@ -56,6 +56,7 @@ pub(crate) mod test_env {
     /// which says nothing about this one's precondition, so the state is recovered rather
     /// than propagated as a second, misleading failure.
     pub(crate) fn lock() -> MutexGuard<'static, ()> {
-        ENV.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        ENV.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }

@@ -223,6 +223,7 @@
   "could_not_save_the_api_key": "无法保存 API 密钥。",
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "无法保存编辑后的转录内容。内容会保留在胶囊窗口中，方便你重试。",
   "could_not_save_your_profile_please_try_again": "无法保存你的个人资料。请重试。",
+  "could_not_start_recording_please_try_again": "无法开始录制。请重试。",
   "count_count_plural_one_transcription_other_transcriptions": "{count} 个转录",
   "count_incognito_dictation_in_streaks_and_word_counts_without": "将无痕听写计入连胜和字数，但不保存文本本身。",
   "count_plural_0_no_settings_found_one_setting_found_other_set": "{count, plural, =0 {未找到设置。} other {找到 # 项设置。}}",
@@ -505,6 +506,8 @@
   "include_incognito_in_stats": "在统计中包含无痕模式的数据",
   "include_v1_path": "包含 /v1 路径",
   "incognito_mode": "无痕模式",
+  "incomplete_transcription_recording_audio_not_saved_some_text": "转录不完整：录音未保存。部分文本可能已被插入。",
+  "incomplete_transcription_recording_saved_for_retry_some_text": "转录不完整：录音已保存，可供重试。部分文本可能已被插入。",
   "input_output": "输入：…… 输出：……",
   "input_permissions": "输入权限",
   "input_permissions_configured": "输入权限已配置。",
@@ -779,6 +782,7 @@
   "recommended_with_gpu_acceleration": "推荐搭配 GPU 加速使用",
   "record": "录音",
   "recording_failed": "录制失败",
+  "recording_failed_partway_transcribing_what_was_captured": "录制中途失败。正在转写已录到的部分。",
   "recording_keys": "正在记录按键...",
   "recording_stopped_duration_limit_reached": "录音已停止：已达到时长限制",
   "recording_stopped_provider_duration_limit_reached": "录音已停止：已达到服务商时长限制",
@@ -1022,7 +1026,7 @@
   "this_will_prompt_for_administrator_privileges_uac_so_the_pil": "这将提示请求管理员权限（UAC），以便悬浮条能在全局捕获并输入文字。是否继续？",
   "this_will_request_accessibility_and_microphone_access_so_the": "这将请求辅助功能和麦克风访问权限，以便悬浮条能在全局捕获并输入文字。是否继续？",
   "thought_process": "思考过程",
-  "tip": "Tip:",
+  "tip": "提示：",
   "tip_choose_a_stronger_model_for_better_results_smaller_or_we": "提示：选择更强大的模型可获得更好的结果。较小或较弱的模型可能会产生较低质量的输出。",
   "tip_run_agent_mode_multiple_times_to_keep_refining_it_rememb": "提示：多次运行代理模式可以不断润色！它会记住文本框中的内容。",
   "title": "标题",
@@ -1195,5 +1199,6 @@
   "your_profile_name_and_photo": "你的个人资料名称和照片",
   "your_profile_your_sign_in_and_your_account": "你的个人资料、登录信息和账户。",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "录音会在你停顿时分段发送到 {provider}，其余部分在停止后发送。已发送的音频无法收回。",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "你保存的录音和记录已删除，但 mausVoice 无法访问此计算机的存储空间，因此部分偏好设置可能仍然保留。请检查应用是否有权保存数据，然后重试。"
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "你保存的录音和记录已删除，但 mausVoice 无法访问此计算机的存储空间，因此部分偏好设置可能仍然保留。请检查应用是否有权保存数据，然后重试。",
+  "your_style_shortcuts_changed_in_another_window_review_them_a": "样式快捷键已在另一个窗口中更改。请检查后再次保存。"
 }

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { registerAppNavigation } from "./utils/app-navigation";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom";
 import { ComposerPage } from "./components/composer/ComposerPage.tsx";
 import { PageLayout } from "./components/common/PageLayout.tsx";
@@ -185,6 +186,10 @@ export const createAppRouter = (root: ReactNode = <Root />) =>
 // imports this route factory and must not create an unused history listener.
 let desktopRouter: ReturnType<typeof createAppRouter> | undefined;
 export const getBrowserRouter = () => (desktopRouter ??= createAppRouter());
+
+// Register the lazy entry point as soon as this module loads, including before
+// Router mounts, without making action modules import this entire route graph.
+registerAppNavigation((path) => getBrowserRouter().navigate(path));
 
 export default function Router() {
   return <RouterProvider router={getBrowserRouter()} />;

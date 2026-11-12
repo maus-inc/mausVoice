@@ -17,6 +17,7 @@ import type {
   HistoryOwner,
   StrategyValidationError,
 } from "../types/strategy.types";
+import { getEffectiveHandsFreeDelayMs } from "../utils/hands-free-delay.utils";
 import { isHistoryPersistQueueFull } from "../utils/history-persist.utils";
 import { getLogger } from "../utils/log.utils";
 import { sendPillStageText } from "../utils/overlay.utils";
@@ -507,16 +508,18 @@ export class DictationStrategy extends BaseStrategy {
         const deliveryTarget = args.currentApp
           ? (deliveryState.appTargetById[args.currentApp.id] ?? null)
           : null;
-        const insertionMethod = resolveInsertionMethod(
-          deliveryTarget,
-          getMyUserPreferences(deliveryState),
-        );
-        // Simulated typing can take the length of the transcript. Keep its
-        // History write on the stop path so Incognito is checked after delivery
-        // settles; otherwise a mode change during typing races an already-started
-        // write and saves the row the user just asked us not to retain.
+        const prefs = getMyUserPreferences(deliveryState);
+        const insertionMethod = resolveInsertionMethod(deliveryTarget, prefs);
+        // Simulated typing can take the length of the transcript, and a
+        // hands-free delay holds delivery open for seconds. Keep those History
+        // writes on the stop path, which re-reads Incognito after delivery
+        // settles; otherwise a mode change during the wait races an
+        // already-started write and saves the row the user just asked us not
+        // to retain.
         const canPersistBeforeDelivery =
-          insertionMethod !== "type" && this.activeSimulatedTypingCount === 0;
+          insertionMethod !== "type" &&
+          getEffectiveHandsFreeDelayMs(prefs) <= 0 &&
+          this.activeSimulatedTypingCount === 0;
         const concurrentPersistence =
           args.persistTranscriptNow !== undefined &&
           getMyUserPreferences(deliveryState)?.reviewBeforeInsert !== true &&

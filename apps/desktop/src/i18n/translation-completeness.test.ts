@@ -21,6 +21,8 @@ const UNIVERSAL_SAFE = [
 // These user-facing controls and feedback messages must not fall back to
 // English in any supported locale.
 const FAILURE_AUDIO_MESSAGES = [
+  "incomplete_transcription_recording_audio_not_saved_some_text",
+  "incomplete_transcription_recording_saved_for_retry_some_text",
   "keeps_the_audio_of_a_failed_transcription_so_you_can_replay",
   "preserve_audio_on_failure",
   "transcription_failed_the_recording_audio_was_not_saved",
@@ -219,6 +221,20 @@ describe("i18n catalogs", () => {
       }
     },
   );
+
+  it("uses the translated tip prefix in onboarding announcements", () => {
+    const locales = loadLocales();
+    for (const locale of manifest.supportedLocales as string[]) {
+      const messages = locales[locale];
+      expect(messages.tip, locale).toBeTruthy();
+      expect(
+        messages.tip_choose_a_stronger_model_for_better_results_smaller_or_we.startsWith(
+          messages.tip,
+        ),
+        locale,
+      ).toBe(true);
+    }
+  });
 
   it("localizes the dashboard navigation landmark and page list", () => {
     const locales = loadLocales();
