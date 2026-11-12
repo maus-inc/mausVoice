@@ -1849,6 +1849,120 @@ fn tick_ring(state: &PillState, dt: f64) {
 
 // ── Window positioning ────────────────────────────────────────────
 
+/// The per-frame facts an anchor decision reads, gathered once.
+///
+/// `reposition_window` used to inline the anchor choice as a four-armed
+/// `if`-chain, which Sonar read as 34 cognitive complexity against a limit of 30.
+/// The chain was not the problem — the placement rules are genuinely conditional —
+/// so the arms move here, named, rather than being flattened into a lookup.
+struct AnchorContext {
+    dragging: bool,
+    follows_pointer: bool,
+    reset_placement: bool,
+    anchor: rust_pill_shared::layout::Anchor,
+    mouse: (f64, f64),
+    win_origin: (f64, f64),
+}
+
+/// Where this frame's placement is anchored, in Cocoa global points.
+///
+/// Order matters and is the same order the documentation in `reposition_window`
+/// gives: a held or settling drag owns the window, then a reset the user asked
+/// for, then the saved position, then where the window already sits.
+fn choose_anchor(
+    state: &PillState,
+    context: &AnchorContext,
+    footprint_center: impl Fn(f64, f64) -> (f64, f64),
+) -> (f64, f64) {
+    if context.follows_pointer {
+        return state
+            .drag_motion
+            .borrow()
+            .monitor_anchor(context.mouse, context.dragging);
+    }
+    // A cleared pill never reaches here: the caller returns before placement, so
+    // this branch only serves a reset that named the pointer.
+    if context.reset_placement && context.anchor.follows_pointer() {
+        return context.mouse;
+    }
+    if state.has_saved_position.get() {
+        return footprint_center(state.saved_x.get(), state.saved_y.get());
+    }
+    footprint_center(context.win_origin.0, context.win_origin.1)
+}
+
+/// Resolve one screen into the visible frame, drag region and edge mask.
+///
+/// Both the matched-screen path and the disappeared-display fallback call this,
+/// so the fallback cannot answer a different question from the fast path — which
+/// is what it did while the two blocks were written out separately.
+fn resolve_placement(
+    state: &PillState,
+    screen: id,
+    frame: NSRect,
+    monitor_frames: &[rust_pill_shared::edge::MonitorRect],
+    seam_point: (f64, f64),
+    dragging: bool,
+) -> (
+    NSRect,
+    rust_pill_shared::edge::MonitorRect,
+    rust_pill_shared::edge::EdgeMask,
+) {
+    unsafe {
+        let visible = screen_visible_frame(screen);
+        let full = ns_rect_to_monitor_rect(frame);
+        let work_area = ns_rect_to_monitor_rect(visible);
+        let region = if dragging {
+            state.drag_motion.borrow_mut().resolve_drag_region(
+                full,
+                work_area,
+                monitor_frames,
+                seam_point,
+            )
+        } else {
+            rust_pill_shared::edge::drag_region(full, work_area, monitor_frames, seam_point)
+        };
+        (visible, region.bounds, region.edge_mask)
+    }
+}
+
+/// The drag bounds for this frame.
+///
+/// In dictation mode the OS window is a fixed transparent canvas, so the clamp
+/// has to apply to the visible pill footprint rather than to the canvas.
+fn clamp_bounds(
+    state: &PillState,
+    clamp_frame: rust_pill_shared::edge::MonitorRect,
+    footprint: (f64, f64, f64, f64),
+    win: (f64, f64),
+) -> DragBounds {
+    let (fx, fy, pw, ph) = footprint;
+    let (win_w, win_h) = win;
+    let (min_x, min_y, max_x, max_y) = if state.effective_window_mode() == WindowMode::Dictation
+        && !state.assistant_active.get()
+    {
+        (
+            clamp_frame.x - fx,
+            clamp_frame.y - win_h + fy + ph,
+            clamp_frame.right() - fx - pw,
+            clamp_frame.bottom() - win_h + fy,
+        )
+    } else {
+        (
+            clamp_frame.x,
+            clamp_frame.y,
+            clamp_frame.right() - win_w,
+            clamp_frame.bottom() - win_h,
+        )
+    };
+    DragBounds {
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+    }
+}
+
 fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
     unsafe {
         let mouse_loc = mouse_location();
@@ -1907,29 +2021,24 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         // user just asked to re-home stays exactly where it was, and a first
         // placement must be, or it chases the pointer forever.
         let follows_pointer = dragging || settling || first_placement;
-        let (anchor_x, anchor_y) = if follows_pointer {
-            if first_placement {
-                // Mark it done only when it is acted on, so a frame that bails out
-                // earlier cannot consume the one-shot placement, and demote the
-                // anchor so later ticks stay put instead of chasing the pointer.
-                state.first_placement_done.set(true);
-                state
-                    .anchor
-                    .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
-            }
+        // A first placement is consumed here rather than earlier, so a frame that
+        // bails out before `choose_anchor` cannot spend the one-shot. Demoting the
+        // anchor is what stops later ticks chasing the pointer.
+        if follows_pointer && first_placement {
+            state.first_placement_done.set(true);
             state
-                .drag_motion
-                .borrow()
-                .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
-        } else if reset_placement && anchor.follows_pointer() {
-            // A cleared pill never reaches here: the guard below returns before
-            // placement, so this branch only serves a reset that named the pointer.
-            (mouse_loc.x, mouse_loc.y)
-        } else if state.has_saved_position.get() {
-            footprint_center(state.saved_x.get(), state.saved_y.get())
-        } else {
-            footprint_center(win_frame.origin.x, win_frame.origin.y)
+                .anchor
+                .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
+        }
+        let context = AnchorContext {
+            dragging,
+            follows_pointer,
+            reset_placement,
+            anchor,
+            mouse: (mouse_loc.x, mouse_loc.y),
+            win_origin: (win_frame.origin.x, win_frame.origin.y),
         };
+        let (anchor_x, anchor_y) = choose_anchor(state, &context, footprint_center);
 
         // Resolve monitor bounds in Cocoa's global point space. A connected
         // neighbor opens only its shared edge; the visible frame remains the
@@ -1941,11 +2050,8 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 ns_rect_to_monitor_rect(frame)
             })
             .collect();
-        let mut chosen: Option<(
-            NSRect,
-            rust_pill_shared::edge::MonitorRect,
-            rust_pill_shared::edge::EdgeMask,
-        )> = None;
+        let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
+        let mut chosen = None;
         for i in 0..count {
             let screen: id = msg_send![screens, objectAtIndex:i];
             let frame: NSRect = msg_send![screen, frame];
@@ -1954,60 +2060,26 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 && anchor_y >= frame.origin.y
                 && anchor_y < frame.origin.y + frame.size.height
             {
-                let visible = screen_visible_frame(screen);
-                let full = ns_rect_to_monitor_rect(frame);
-                let work_area = ns_rect_to_monitor_rect(visible);
-                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
-                let region = if dragging {
-                    state.drag_motion.borrow_mut().resolve_drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                } else {
-                    rust_pill_shared::edge::drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                };
-                chosen = Some((visible, region.bounds, region.edge_mask));
+                chosen = Some((screen, frame));
                 break;
             }
         }
 
         // If a display disappears mid-drag, retain the primary screen's safe
-        // visible frame rather than freezing at stale coordinates.
-        let (visible, drag_region, edge_mask) = match chosen {
-            Some(resolved) => resolved,
-            None if count > 0 => {
+        // visible frame rather than freezing at stale coordinates. The same
+        // resolution serves both, so the fallback cannot drift from it.
+        let target = chosen.or_else(|| {
+            (count > 0).then(|| {
                 let primary: id = msg_send![screens, objectAtIndex:0usize];
                 let frame: NSRect = msg_send![primary, frame];
-                let visible = screen_visible_frame(primary);
-                let full = ns_rect_to_monitor_rect(frame);
-                let work_area = ns_rect_to_monitor_rect(visible);
-                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
-                let region = if dragging {
-                    state.drag_motion.borrow_mut().resolve_drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                } else {
-                    rust_pill_shared::edge::drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                };
-                (visible, region.bounds, region.edge_mask)
-            }
-            None => return,
+                (primary, frame)
+            })
+        });
+        let Some((screen, frame)) = target else {
+            return;
         };
+        let (visible, drag_region, edge_mask) =
+            resolve_placement(state, screen, frame, &monitor_frames, seam_point, dragging);
 
         // Keep the work-area clamp on exposed sides, but use the full display
         // edge on shared seams so the grab point can cross without resistance.
@@ -2025,29 +2097,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         // The OS window is a fixed transparent canvas; clamp the visible pill
         // footprint in dictation mode so transparent canvas margins do not
         // box the pill away from the actual screen edge.
-        let (min_x, min_y, max_x, max_y) = if state.effective_window_mode() == WindowMode::Dictation
-            && !state.assistant_active.get()
-        {
-            (
-                clamp_frame.x - fx,
-                clamp_frame.y - win_h + fy + ph,
-                clamp_frame.right() - fx - pw,
-                clamp_frame.bottom() - win_h + fy,
-            )
-        } else {
-            (
-                clamp_frame.x,
-                clamp_frame.y,
-                clamp_frame.right() - win_w,
-                clamp_frame.bottom() - win_h,
-            )
-        };
-        let mut bounds = DragBounds {
-            min_x,
-            min_y,
-            max_x,
-            max_y,
-        };
+        let mut bounds = clamp_bounds(state, clamp_frame, (fx, fy, pw, ph), (win_w, win_h));
         if dragging {
             bounds.apply_shared_seam_bounds(
                 drag_region,

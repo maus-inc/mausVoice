@@ -868,8 +868,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             // reach `persist_drag_position` on a later frame and publish a saved
             // position again -- recreating the row the clear just deleted. Cancel
             // the gesture first; a drag started after the clear still saves.
-            let hwnd = HWND_CELL.with(|c| c.get());
-            cancel_drag_gesture(hwnd, state);
+            cancel_drag_gesture(HWND_CELL.with(Cell::get), state);
             // Stop treating where the pill is sitting as the saved position.
             // Local data was just cleared, and the next `RequestPosition`
             // republishes this flag, so leaving it set would write the row back.

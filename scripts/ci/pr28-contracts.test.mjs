@@ -808,17 +808,29 @@ describe("PR28 native placement contracts", () => {
 
   it("has monitor-disconnect recovery on every native platform", () => {
     assert.match(source.gtkPill, /still_connected/);
-    // macOS resolves the containing screen into `chosen`, carrying that
-    // screen's visible frame. A display unplugged mid-drag leaves no screen
-    // containing the anchor, so the match arm falls back to the primary
-    // screen's visible frame instead of freezing at stale coordinates.
-    assert.match(source.macPill, /match chosen \{/);
-    assert.match(source.macPill, /None if count > 0 =>/);
-    assert.match(
-      source.macPill,
-      /let visible = screen_visible_frame\(primary\)/,
-    );
+    // macOS resolves the containing screen into `chosen`. A display unplugged
+    // mid-drag leaves no screen containing the anchor, so the fallback takes the
+    // primary screen instead of freezing at stale coordinates.
+    //
+    // The fallback used to repeat the visible-frame and region resolution inside
+    // its own match arm, so the two paths could answer differently. Both now call
+    // `resolve_placement`, which is what makes the recovery provably the same
+    // placement as the fast path; the guard asks for that, and for the primary
+    // screen being the thing fallen back to.
+    assert.match(source.macPill, /let mut chosen = None;/);
+    assert.match(source.macPill, /count > 0\)\.then\(/);
     assert.match(source.macPill, /primary/);
+    assert.match(
+      scope("macPill", "fn resolve_placement("),
+      /screen_visible_frame\(screen\)/,
+    );
+    // Two call sites: the matched screen and the fallback. One of them is inside
+    // `reposition_window`, which is where the pair used to be written out.
+    assert.equal(
+      (source.macPill.match(/resolve_placement\(/g) || []).length,
+      2,
+      "macPill: the fallback and the fast path must share one resolution",
+    );
     assert.match(source.windowsPill, /MONITOR_DEFAULTTONEAREST/);
   });
 
