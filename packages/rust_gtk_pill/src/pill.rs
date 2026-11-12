@@ -385,6 +385,160 @@ fn on_quit(quit: &Rc<Cell<bool>>) {
 
 /// Runs the GTK pill: picks the display backend, creates the frameless
 /// window, and drives the message/event loop until a quit message arrives.
+/// One frame of the 16 ms loop, as a free function.
+///
+/// This was the body of a closure registered inside `run`, which is why `run`
+/// carried a cyclomatic complexity of 69: the loop's seventeen decisions were
+/// counted against the function that merely started it. The handles it used to
+/// capture are parameters now, so the frame reads on its own.
+///
+/// `ControlFlow::Break` ends the loop, which is how a `Quit` message stops it.
+fn frame_tick(
+    receiver: &Rc<RefCell<Receiver<InMessage>>>,
+    state_tick: &Rc<PillState>,
+    win_tick: &gtk::Window,
+    entry_tick: &gtk::Entry,
+    da: &gtk::DrawingArea,
+    quit_tick: &Rc<Cell<bool>>,
+    backend_tick: Backend,
+) -> ControlFlow {
+    drain_messages(receiver, state_tick, win_tick, entry_tick, quit_tick);
+
+    if quit_tick.get() {
+        return ControlFlow::Break;
+    }
+
+    release_pointer_if_button_up(win_tick, state_tick);
+    // X11 does not move a window when RandR reconfigures the outputs, so a
+    // display disappearing leaves the pill parked over empty root space with
+    // nothing painted under it. Watching the arrangement here is what brings
+    // it back, and the poll backs up the event because a change can land while
+    // the toplevel is unmapped.
+    if backend_tick == Backend::X11 {
+        poll_display_layout(win_tick, state_tick);
+    }
+    // One measured step for the whole frame: the transition springs and
+    // the drag controller share it, so a long frame slows everything
+    // together instead of each measuring a different slice.
+    let dt_tick = frame_dt();
+    tick(state_tick, dt_tick);
+    tick_drag_frame(
+        win_tick,
+        state_tick,
+        backend_tick,
+        drag_clock_now(),
+        dt_tick,
+    );
+    // A drop the display change held back is written as soon as both holds
+    // have passed. The frame loop is the retry: the release is reported once,
+    // so nothing else would come back for it.
+    if state_tick.drag_save_due.get().is_some() {
+        retry_drag_save(win_tick, state_tick);
+    }
+    tick_hover_frame(state_tick);
+    tick_selector_placement(win_tick, state_tick, dt_tick);
+    tick_crossing_frame(win_tick, state_tick, dt_tick);
+
+    // Show/hide entry for typing mode
+    let is_typing = state_tick.is_typing();
+    if is_typing {
+        // Recomputed every frame rather than once on show. The window is
+        // resized by one message and the state that opens the entry by
+        // another, so a size that lands second would otherwise leave the
+        // entry sitting at the old geometry.
+        let (ox, oy) = state_tick.content_offset();
+        let dw = state_tick.draw_width.get();
+        let dh = state_tick.draw_height.get();
+        let panel_w = PANEL_EXPANDED_WIDTH;
+        let panel_x = (dw - panel_w) / 2.0;
+        let margin_start = (ox + panel_x + PANEL_CONTENT_SIDE_INSET) as i32;
+        let aw = state_tick.alloc_width.get();
+        let right_margin = if aw > 0.0 {
+            aw - ox - dw
+        } else {
+            WINDOW_W_TYPING as f64 - ox - dw
+        };
+        let margin_end =
+            (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
+        let ah = state_tick.alloc_height.get();
+        let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
+        let margin_bottom = (bottom_margin + PANEL_BOTTOM_MARGIN) as i32;
+        entry_tick.set_margin_start(margin_start);
+        entry_tick.set_margin_end(margin_end);
+        entry_tick.set_margin_bottom(margin_bottom);
+        entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
+    }
+    if is_typing && !gtk::prelude::WidgetExt::is_visible(entry_tick) {
+        entry_tick.set_visible(true);
+        entry_tick.show();
+        match backend_tick {
+            Backend::LayerShell => {
+                win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+                glib::idle_add_local_once({
+                    let e = entry_tick.clone();
+                    move || {
+                        e.grab_focus();
+                    }
+                });
+            }
+            Backend::X11 => {
+                win_tick.set_accept_focus(true);
+                glib::timeout_add_local(Duration::from_millis(100), {
+                    let e = entry_tick.clone();
+                    let w = win_tick.clone();
+                    move || {
+                        x11::force_keyboard_focus(&w);
+                        e.grab_focus();
+                        ControlFlow::Break
+                    }
+                });
+            }
+            Backend::PlainWayland => {
+                win_tick.set_accept_focus(true);
+                glib::idle_add_local_once({
+                    let e = entry_tick.clone();
+                    move || {
+                        e.grab_focus();
+                    }
+                });
+            }
+        }
+    } else if !is_typing && gtk::prelude::WidgetExt::is_visible(entry_tick) {
+        entry_tick.select_region(0, 0);
+        entry_tick.set_visible(false);
+        entry_tick.hide();
+        match backend_tick {
+            Backend::LayerShell => {
+                win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
+            }
+            _ => {
+                win_tick.set_accept_focus(false);
+            }
+        }
+    }
+
+    // One visibility policy for every backend. LayerShell and PlainWayland
+    // previously keyed off `phase == Recording` alone, which ignored the
+    // user's preference: a pill set to Hidden still appeared while
+    // recording, and Persistent never showed when idle.
+    let should_show = rust_pill_shared::should_show_pill(
+        state_tick.visibility.get().into(),
+        state_tick.phase.get() != Phase::Idle,
+        state_tick.owns_panel(),
+    );
+    if should_show {
+        win_tick.show();
+    } else {
+        win_tick.hide();
+    }
+
+    if let Some(gdk_win) = win_tick.window() {
+        input::update_input_region(&gdk_win, state_tick);
+    }
+    da.queue_draw();
+    ControlFlow::Continue
+}
+
 pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow>) {
     let backend = if gtk_layer_shell::is_supported() {
         Backend::LayerShell
@@ -888,141 +1042,15 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
     let quit_tick = quit_flag.clone();
     let backend_tick = backend;
     glib::timeout_add_local(Duration::from_millis(16), move || {
-        drain_messages(&receiver, &state_tick, &win_tick, &entry_tick, &quit_tick);
-
-        if quit_tick.get() {
-            return ControlFlow::Break;
-        }
-
-        release_pointer_if_button_up(&win_tick, &state_tick);
-        // X11 does not move a window when RandR reconfigures the outputs, so a
-        // display disappearing leaves the pill parked over empty root space with
-        // nothing painted under it. Watching the arrangement here is what brings
-        // it back, and the poll backs up the event because a change can land while
-        // the toplevel is unmapped.
-        if backend_tick == Backend::X11 {
-            poll_display_layout(&win_tick, &state_tick);
-        }
-        // One measured step for the whole frame: the transition springs and
-        // the drag controller share it, so a long frame slows everything
-        // together instead of each measuring a different slice.
-        let dt_tick = frame_dt();
-        tick(&state_tick, dt_tick);
-        tick_drag_frame(
-            &win_tick,
+        frame_tick(
+            &receiver,
             &state_tick,
+            &win_tick,
+            &entry_tick,
+            &da,
+            &quit_tick,
             backend_tick,
-            drag_clock_now(),
-            dt_tick,
-        );
-        // A drop the display change held back is written as soon as both holds
-        // have passed. The frame loop is the retry: the release is reported once,
-        // so nothing else would come back for it.
-        if state_tick.drag_save_due.get().is_some() {
-            retry_drag_save(&win_tick, &state_tick);
-        }
-        tick_hover_frame(&state_tick);
-        tick_selector_placement(&win_tick, &state_tick, dt_tick);
-        tick_crossing_frame(&win_tick, &state_tick, dt_tick);
-
-        // Show/hide entry for typing mode
-        let is_typing = state_tick.is_typing();
-        if is_typing {
-            // Recomputed every frame rather than once on show. The window is
-            // resized by one message and the state that opens the entry by
-            // another, so a size that lands second would otherwise leave the
-            // entry sitting at the old geometry.
-            let (ox, oy) = state_tick.content_offset();
-            let dw = state_tick.draw_width.get();
-            let dh = state_tick.draw_height.get();
-            let panel_w = PANEL_EXPANDED_WIDTH;
-            let panel_x = (dw - panel_w) / 2.0;
-            let margin_start = (ox + panel_x + PANEL_CONTENT_SIDE_INSET) as i32;
-            let aw = state_tick.alloc_width.get();
-            let right_margin = if aw > 0.0 {
-                aw - ox - dw
-            } else {
-                WINDOW_W_TYPING as f64 - ox - dw
-            };
-            let margin_end =
-                (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
-            let ah = state_tick.alloc_height.get();
-            let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
-            let margin_bottom = (bottom_margin + PANEL_BOTTOM_MARGIN) as i32;
-            entry_tick.set_margin_start(margin_start);
-            entry_tick.set_margin_end(margin_end);
-            entry_tick.set_margin_bottom(margin_bottom);
-            entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
-        }
-        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
-            entry_tick.set_visible(true);
-            entry_tick.show();
-            match backend_tick {
-                Backend::LayerShell => {
-                    win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
-                    glib::idle_add_local_once({
-                        let e = entry_tick.clone();
-                        move || {
-                            e.grab_focus();
-                        }
-                    });
-                }
-                Backend::X11 => {
-                    win_tick.set_accept_focus(true);
-                    glib::timeout_add_local(Duration::from_millis(100), {
-                        let e = entry_tick.clone();
-                        let w = win_tick.clone();
-                        move || {
-                            x11::force_keyboard_focus(&w);
-                            e.grab_focus();
-                            ControlFlow::Break
-                        }
-                    });
-                }
-                Backend::PlainWayland => {
-                    win_tick.set_accept_focus(true);
-                    glib::idle_add_local_once({
-                        let e = entry_tick.clone();
-                        move || {
-                            e.grab_focus();
-                        }
-                    });
-                }
-            }
-        } else if !is_typing && gtk::prelude::WidgetExt::is_visible(&entry_tick) {
-            entry_tick.select_region(0, 0);
-            entry_tick.set_visible(false);
-            entry_tick.hide();
-            match backend_tick {
-                Backend::LayerShell => {
-                    win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
-                }
-                _ => {
-                    win_tick.set_accept_focus(false);
-                }
-            }
-        }
-
-        // One visibility policy for every backend. LayerShell and PlainWayland
-        // previously keyed off `phase == Recording` alone, which ignored the
-        // user's preference: a pill set to Hidden still appeared while
-        // recording, and Persistent never showed when idle.
-        let should_show = rust_pill_shared::should_show_pill(
-            state_tick.visibility.get().into(),
-            state_tick.phase.get() != Phase::Idle,
-            state_tick.owns_panel(),
-        );
-        if should_show {
-            win_tick.show();
-        } else {
-            win_tick.hide();
-        }
-
-        if let Some(gdk_win) = win_tick.window() {
-            input::update_input_region(&gdk_win, &state_tick);
-        }
-        da.queue_draw();
-        ControlFlow::Continue
+        )
     });
 
     window.show_all();

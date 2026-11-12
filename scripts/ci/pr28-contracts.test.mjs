@@ -2385,10 +2385,13 @@ describe("native gesture adapter contracts", () => {
       );
     }
     // And something has to come back for it, otherwise the deadline is a comment.
+    // GTK's retry lives in the frame body, which used to be a closure inside
+    // `run` and is now the free `frame_tick`; naming `fn run` would read the
+    // launcher and pass on a comment rather than on the retry.
     for (const [name, marker] of [
       ["windowsPill", "fn on_anim_tick"],
       ["macApp", "fn reposition_window"],
-      ["gtkPill", "fn run"],
+      ["gtkPill", "fn frame_tick"],
     ]) {
       assert.match(
         scope(name, marker),
