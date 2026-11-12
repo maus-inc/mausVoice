@@ -190,6 +190,6 @@ export const getBrowserRouter = () => (desktopRouter ??= createAppRouter());
 // Make the lazy router available to actions without importing this route graph.
 registerAppNavigation((path) => getBrowserRouter().navigate(path));
 
-export default function Router() {
-  return <RouterProvider router={getBrowserRouter()} />;
-}
+const Router = () => <RouterProvider router={getBrowserRouter()} />;
+
+export default Router;
