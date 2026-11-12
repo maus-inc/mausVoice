@@ -797,7 +797,11 @@ const writeOrMissStopPathHistory = async (
   onHistoryMissed(ctx);
 };
 
-const scheduleStopPathHistory = async ({
+// Not `async`: it awaits nothing and returns `writeOrMissStopPathHistory`'s
+// promise directly. An `async` keyword here produced a promise that resolves to
+// another promise one step later for no reason, and it is what made this
+// function report as a promise while containing no suspension point.
+const scheduleStopPathHistory = ({
   input,
   strategy,
   historyOwner,
