@@ -552,6 +552,110 @@ struct Wiring<'a> {
     quit_flag: &'a Rc<Cell<bool>>,
 }
 
+/// The signals that are about text and keys rather than the pointer.
+///
+/// Split from `wire_events` so neither function holds all thirteen: the pointer
+/// half (enter, motion, leave, press, release, scroll) and this one touch disjoint
+/// state, and the only thing they shared was being registered in one place.
+fn wire_entry_and_keys(wiring: Wiring) {
+    let Wiring {
+        window,
+        entry,
+        drawing_area,
+        state,
+        ..
+    } = wiring;
+    let state_focus_in = state.clone();
+    let entry_focus_in = entry.clone();
+    window.connect_focus_in_event(move |_, _| {
+        let is_typing = state_focus_in.is_typing();
+        if is_typing {
+            entry_focus_in.grab_focus();
+        }
+        glib::Propagation::Proceed
+    });
+
+    let state_focus_out = state.clone();
+    let entry_focus_out = entry.clone();
+    window.connect_focus_out_event(move |_, _| {
+        let is_typing = state_focus_out.is_typing();
+        if is_typing {
+            entry_focus_out.select_region(0, 0);
+        }
+        glib::Propagation::Proceed
+    });
+
+    let state_draw = state.clone();
+    let win_draw = window.clone();
+    let last_draw_error = Cell::new(None::<Instant>);
+    drawing_area.connect_draw(move |_area, cr| {
+        // draw_tooltip() computes tooltip_width during this pass. The tick
+        // rebuilds the Wayland input region *before* drawing, so on the frame
+        // the tooltip first appears the region was built with a width of 0.0
+        // and build_input_region() left the tooltip out. Rebuild the region
+        // here when the width changes, so the tooltip is never painted outside
+        // its own input shape.
+        //
+        // The toast buttons need the same treatment for the same reason, and
+        // for one more: draw_flash_message() scales the banner about its centre
+        // from half size up to full, so it re-registers both buttons at new
+        // coordinates every frame of the animation. A shape left to the next
+        // tick is a whole frame of the animation behind the painted button.
+        let width_before = state_draw.tooltip_width.get();
+        let flash_before = input::flash_click_signature(&state_draw);
+        draw::draw_all(cr, &state_draw);
+        if let Err(error) = cr.status() {
+            let now = Instant::now();
+            if last_draw_error
+                .get()
+                .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(2))
+            {
+                eprintln!("pill drawing failed: {error}");
+                last_draw_error.set(Some(now));
+            }
+        }
+        let shape_is_stale = state_draw.tooltip_width.get() != width_before
+            || input::flash_click_signature(&state_draw) != flash_before;
+        if let Some(gdk_win) = win_draw.window().filter(|_| shape_is_stale) {
+            input::update_input_region(&gdk_win, &state_draw);
+        }
+        glib::Propagation::Proceed
+    });
+
+    let state_entry = state.clone();
+    entry.connect_activate(move |e| {
+        // Enter submits: an insert decision while a transcript is under
+        // review, a message to the assistant otherwise.
+        *state_entry.entry_text.borrow_mut() = e.text().to_string();
+        if input::submit_entry(&state_entry) {
+            e.set_text("");
+        }
+    });
+
+    let state_entry_changed = state.clone();
+    entry.connect_changed(move |e| {
+        *state_entry_changed.entry_text.borrow_mut() = e.text().to_string();
+    });
+
+    let state_escape = state.clone();
+    window.connect_key_press_event(move |_, event| {
+        // Escape while a transcript is under review is a cancel decision, the
+        // same as on the Windows pill: the desktop is waiting for an answer.
+        // The window sees the key before the focused entry does, so this works
+        // whether or not the entry holds the keyboard.
+        if event.keyval() != gdk::keys::constants::Escape {
+            return glib::Propagation::Proceed;
+        }
+        match state_escape.pending_review_id() {
+            Some(review_id) => {
+                input::send_review_decision(&review_id, "cancel", None);
+                glib::Propagation::Stop
+            }
+            None => glib::Propagation::Proceed,
+        }
+    });
+}
+
 /// Everything that reacts to an event on the pill window.
 ///
 /// `run` used to hold this inline: 292 lines registering sixteen GTK signals
@@ -566,7 +670,7 @@ fn wire_events(wiring: Wiring) {
         state,
         receiver,
         backend,
-        quit_flag,
+        ..
     } = wiring;
     window.add_events(
         gdk::EventMask::ENTER_NOTIFY_MASK
@@ -750,96 +854,6 @@ fn wire_events(wiring: Wiring) {
         glib::Propagation::Proceed
     });
 
-    let state_focus_in = state.clone();
-    let entry_focus_in = entry.clone();
-    window.connect_focus_in_event(move |_, _| {
-        let is_typing = state_focus_in.is_typing();
-        if is_typing {
-            entry_focus_in.grab_focus();
-        }
-        glib::Propagation::Proceed
-    });
-
-    let state_focus_out = state.clone();
-    let entry_focus_out = entry.clone();
-    window.connect_focus_out_event(move |_, _| {
-        let is_typing = state_focus_out.is_typing();
-        if is_typing {
-            entry_focus_out.select_region(0, 0);
-        }
-        glib::Propagation::Proceed
-    });
-
-    let state_draw = state.clone();
-    let win_draw = window.clone();
-    let last_draw_error = Cell::new(None::<Instant>);
-    drawing_area.connect_draw(move |_area, cr| {
-        // draw_tooltip() computes tooltip_width during this pass. The tick
-        // rebuilds the Wayland input region *before* drawing, so on the frame
-        // the tooltip first appears the region was built with a width of 0.0
-        // and build_input_region() left the tooltip out. Rebuild the region
-        // here when the width changes, so the tooltip is never painted outside
-        // its own input shape.
-        //
-        // The toast buttons need the same treatment for the same reason, and
-        // for one more: draw_flash_message() scales the banner about its centre
-        // from half size up to full, so it re-registers both buttons at new
-        // coordinates every frame of the animation. A shape left to the next
-        // tick is a whole frame of the animation behind the painted button.
-        let width_before = state_draw.tooltip_width.get();
-        let flash_before = input::flash_click_signature(&state_draw);
-        draw::draw_all(cr, &state_draw);
-        if let Err(error) = cr.status() {
-            let now = Instant::now();
-            if last_draw_error
-                .get()
-                .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(2))
-            {
-                eprintln!("pill drawing failed: {error}");
-                last_draw_error.set(Some(now));
-            }
-        }
-        let shape_is_stale = state_draw.tooltip_width.get() != width_before
-            || input::flash_click_signature(&state_draw) != flash_before;
-        if let Some(gdk_win) = win_draw.window().filter(|_| shape_is_stale) {
-            input::update_input_region(&gdk_win, &state_draw);
-        }
-        glib::Propagation::Proceed
-    });
-
-    let state_entry = state.clone();
-    entry.connect_activate(move |e| {
-        // Enter submits: an insert decision while a transcript is under
-        // review, a message to the assistant otherwise.
-        *state_entry.entry_text.borrow_mut() = e.text().to_string();
-        if input::submit_entry(&state_entry) {
-            e.set_text("");
-        }
-    });
-
-    let state_entry_changed = state.clone();
-    entry.connect_changed(move |e| {
-        *state_entry_changed.entry_text.borrow_mut() = e.text().to_string();
-    });
-
-    let state_escape = state.clone();
-    window.connect_key_press_event(move |_, event| {
-        // Escape while a transcript is under review is a cancel decision, the
-        // same as on the Windows pill: the desktop is waiting for an answer.
-        // The window sees the key before the focused entry does, so this works
-        // whether or not the entry holds the keyboard.
-        if event.keyval() != gdk::keys::constants::Escape {
-            return glib::Propagation::Proceed;
-        }
-        match state_escape.pending_review_id() {
-            Some(review_id) => {
-                input::send_review_decision(&review_id, "cancel", None);
-                glib::Propagation::Stop
-            }
-            None => glib::Propagation::Proceed,
-        }
-    });
-
     // `frame_tick` takes borrowed handles, so these are the owned ones the
     // timeout keeps alive. `receiver` and `quit_flag` are already owned by `run`.
     let state_tick = state.clone();
@@ -847,7 +861,7 @@ fn wire_events(wiring: Wiring) {
     let win_tick = window.clone();
     let entry_tick = entry.clone();
     let receiver_tick = receiver.clone();
-    let quit_tick = quit_flag.clone();
+    let quit_tick = wiring.quit_flag.clone();
     let backend_tick = backend;
     glib::timeout_add_local(Duration::from_millis(16), move || {
         frame_tick(
@@ -860,6 +874,8 @@ fn wire_events(wiring: Wiring) {
             backend_tick,
         )
     });
+
+    wire_entry_and_keys(wiring);
 }
 
 /// The pill's initial state.
@@ -880,7 +896,7 @@ fn initial_state(backend: Backend, restored_position: Option<ParkedWindow>) -> R
         loading_offset: Cell::new(0.0),
         pending_levels: RefCell::new(Vec::new()),
         style_count: Cell::new(0),
-        style_name: RefCell::new(String::new()),
+        style_name: RefCell::default(),
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
@@ -909,12 +925,12 @@ fn initial_state(backend: Backend, restored_position: Option<ParkedWindow>) -> R
         viewport_height: Cell::new(0.0),
         should_stick: Cell::new(true),
         click_regions: RefCell::new(Vec::new()),
-        entry_text: RefCell::new(String::new()),
+        entry_text: RefCell::default(),
         pause_t: Cell::new(0.0),
         pause_velocity: Cell::new(0.0),
         cancel_t: Cell::new(0.0),
         cancel_velocity: Cell::new(0.0),
-        flash_message: RefCell::new(String::new()),
+        flash_message: RefCell::default(),
         flash_visible: Cell::new(false),
         flash_t: Cell::new(0.0),
         flash_velocity: Cell::new(0.0),
@@ -933,7 +949,7 @@ fn initial_state(backend: Backend, restored_position: Option<ParkedWindow>) -> R
         flame_tongues: RefCell::new(Vec::new()),
         flash_blue_active: Cell::new(false),
         flash_blue_elapsed: Cell::new(0.0),
-        transcript_text: RefCell::new(String::new()),
+        transcript_text: RefCell::default(),
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
@@ -1076,6 +1092,85 @@ fn build_pill_window(
     (window, overlay_widget, drawing_area)
 }
 
+/// Keep the overlay homed on a live monitor.
+///
+/// LayerShell positions the surface, so a disconnected output leaves the pill on
+/// nothing. This is the only place that answers "which monitor", and it has to be
+/// a poll: the arrangements are not all events, and a change can land while the
+/// toplevel is unmapped.
+fn start_display_poll(window: &gtk::Window, state: &Rc<PillState>, quit_flag: &Rc<Cell<bool>>) {
+    let window_ref = window.clone();
+    let quit_monitor = quit_flag.clone();
+    let state_monitor = state.clone();
+    let last_geom: Rc<Cell<(i32, i32, i32, i32)>> = Rc::new(Cell::new((0, 0, 0, 0)));
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        if quit_monitor.get() {
+            return ControlFlow::Break;
+        }
+        let display = match gdk::Display::default() {
+            Some(d) => d,
+            None => return ControlFlow::Continue,
+        };
+        // Only re-home the overlay to the pointer's monitor for the FIRST
+        // placement (last_geom is still the sentinel) or while the user is
+        // actively dragging across screens. Chasing the pointer the rest
+        // of the time is what made the pinned pill hop displays whenever
+        // the cursor crossed an edge.
+        // The one exception: when the monitor the pill was homed on gets
+        // DISCONNECTED, the stored geometry stops matching any connected
+        // monitor and the layer-shell surface dies with the dead output —
+        // fall through so the pill is re-homed onto a live monitor.
+        let placed_once = last_geom.get() != (0, 0, 0, 0);
+        // A reset with the "cursor" strategy forces one re-home pass onto
+        // the pointer's monitor; the strategy is consumed once applied.
+        let reset_to_cursor =
+            !state_monitor.dragging.get() && state_monitor.anchor.get().follows_pointer();
+        if placed_once && !state_monitor.dragging.get() && !reset_to_cursor {
+            let stored = last_geom.get();
+            let still_connected = (0..display.n_monitors()).any(|i| {
+                display.monitor(i).is_some_and(|monitor| {
+                    let g = monitor.geometry();
+                    (g.x(), g.y(), g.width(), g.height()) == stored
+                })
+            });
+            if still_connected {
+                return ControlFlow::Continue;
+            }
+        }
+        let seat = match display.default_seat() {
+            Some(s) => s,
+            None => return ControlFlow::Continue,
+        };
+        let pointer = match seat.pointer() {
+            Some(p) => p,
+            None => return ControlFlow::Continue,
+        };
+        let (_, x, y) = pointer.position();
+        // If the pointer itself sits on dead/missing output hardware, fall
+        // back to the primary monitor so the pill always has a home.
+        let monitor = display
+            .monitor_at_point(x, y)
+            .or_else(|| display.primary_monitor())
+            .or_else(|| display.monitor(0));
+        if let Some(monitor) = monitor {
+            let g = monitor.geometry();
+            let new_geom = (g.x(), g.y(), g.width(), g.height());
+            if new_geom != last_geom.get() {
+                last_geom.set(new_geom);
+                window_ref.set_monitor(&monitor);
+            }
+            if reset_to_cursor {
+                // Consumed once applied, so the pill is homed once rather than
+                // chased by the timer.
+                state_monitor
+                    .anchor
+                    .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
+            }
+        }
+        ControlFlow::Continue
+    });
+}
+
 pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow>) {
     let backend = detect_backend();
 
@@ -1129,76 +1224,7 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
     ipc::send(&OutMessage::Ready);
 
     if backend == Backend::LayerShell {
-        let window_ref = window.clone();
-        let quit_monitor = quit_flag.clone();
-        let state_monitor = state.clone();
-        let last_geom: Rc<Cell<(i32, i32, i32, i32)>> = Rc::new(Cell::new((0, 0, 0, 0)));
-        glib::timeout_add_local(Duration::from_millis(100), move || {
-            if quit_monitor.get() {
-                return ControlFlow::Break;
-            }
-            let display = match gdk::Display::default() {
-                Some(d) => d,
-                None => return ControlFlow::Continue,
-            };
-            // Only re-home the overlay to the pointer's monitor for the FIRST
-            // placement (last_geom is still the sentinel) or while the user is
-            // actively dragging across screens. Chasing the pointer the rest
-            // of the time is what made the pinned pill hop displays whenever
-            // the cursor crossed an edge.
-            // The one exception: when the monitor the pill was homed on gets
-            // DISCONNECTED, the stored geometry stops matching any connected
-            // monitor and the layer-shell surface dies with the dead output —
-            // fall through so the pill is re-homed onto a live monitor.
-            let placed_once = last_geom.get() != (0, 0, 0, 0);
-            // A reset with the "cursor" strategy forces one re-home pass onto
-            // the pointer's monitor; the strategy is consumed once applied.
-            let reset_to_cursor =
-                !state_monitor.dragging.get() && state_monitor.anchor.get().follows_pointer();
-            if placed_once && !state_monitor.dragging.get() && !reset_to_cursor {
-                let stored = last_geom.get();
-                let still_connected = (0..display.n_monitors()).any(|i| {
-                    display.monitor(i).is_some_and(|monitor| {
-                        let g = monitor.geometry();
-                        (g.x(), g.y(), g.width(), g.height()) == stored
-                    })
-                });
-                if still_connected {
-                    return ControlFlow::Continue;
-                }
-            }
-            let seat = match display.default_seat() {
-                Some(s) => s,
-                None => return ControlFlow::Continue,
-            };
-            let pointer = match seat.pointer() {
-                Some(p) => p,
-                None => return ControlFlow::Continue,
-            };
-            let (_, x, y) = pointer.position();
-            // If the pointer itself sits on dead/missing output hardware, fall
-            // back to the primary monitor so the pill always has a home.
-            let monitor = display
-                .monitor_at_point(x, y)
-                .or_else(|| display.primary_monitor())
-                .or_else(|| display.monitor(0));
-            if let Some(monitor) = monitor {
-                let g = monitor.geometry();
-                let new_geom = (g.x(), g.y(), g.width(), g.height());
-                if new_geom != last_geom.get() {
-                    last_geom.set(new_geom);
-                    window_ref.set_monitor(&monitor);
-                }
-                if reset_to_cursor {
-                    // Consumed once applied, so the pill is homed once rather than
-                    // chased by the timer.
-                    state_monitor
-                        .anchor
-                        .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
-                }
-            }
-            ControlFlow::Continue
-        });
+        start_display_poll(&window, &state, &quit_flag);
     }
 
     let main_loop = glib::MainLoop::new(None, false);
