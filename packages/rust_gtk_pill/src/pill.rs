@@ -656,6 +656,49 @@ fn wire_entry_and_keys(wiring: Wiring) {
     });
 }
 
+/// Clear a pin whose release event never arrived.
+///
+/// A button-release is not guaranteed -- a grab can be broken by another client --
+/// but the motion event carries the live button mask, so a stale pin shows up
+/// here. The frame tick runs the same check against the pointer device, which
+/// covers a missed release with no subsequent motion.
+fn clear_pin_if_released(state: &Rc<PillState>, window: &gtk::Window, mask: gdk::ModifierType) {
+    if state.pointer_down.get() && !mask.contains(gdk::ModifierType::BUTTON1_MASK) {
+        clear_pointer_pin(state, window);
+    }
+}
+
+/// A long press becomes a drag once the pointer travels far enough; past that
+/// threshold the gesture is cancelled and the cancel flash marks it.
+fn cancel_long_press_if_moved(state: &Rc<PillState>, mx: f64, my: f64) {
+    if !state.long_press_active.get() {
+        return;
+    }
+    let dx = mx - state.long_press_start_x.get();
+    let dy = my - state.long_press_start_y.get();
+    if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
+        state.long_press_active.set(false);
+        state.long_press_elapsed.set(0.0);
+        state.drag_cancelled.set(true);
+        state.cancel_flash.set(CANCEL_FLASH_DURATION);
+    }
+}
+
+/// While dragging on Wayland, record the newest pointer sample; the frame tick
+/// applies it through the shared controller (newest wins, so a burst of motion
+/// events coalesces into one move per frame). X11 samples the root pointer on
+/// the frame clock instead.
+fn record_drag_sample_if_dragging(state: &Rc<PillState>, mx: f64, my: f64) {
+    if state.dragging.get() && state.backend.get() != Backend::X11 {
+        state.drag_last_x.set(mx);
+        state.drag_last_y.set(my);
+        state
+            .drag_motion
+            .borrow_mut()
+            .push_sample(mx, my, drag_clock_now());
+    }
+}
+
 /// Everything that reacts to an event on the pill window.
 ///
 /// `run` used to hold this inline: 292 lines registering sixteen GTK signals
@@ -710,11 +753,7 @@ fn wire_events(wiring: Wiring) {
         // mask, so clear a stale pin before reading it. The frame tick runs the
         // same check against the pointer device, which covers a missed release
         // with no subsequent motion.
-        if state_motion.pointer_down.get()
-            && !event.state().contains(gdk::ModifierType::BUTTON1_MASK)
-        {
-            clear_pointer_pin(&state_motion, &win_motion);
-        }
+        clear_pin_if_released(&state_motion, &win_motion, event.state());
 
         // Record the probe; the frame tick runs it through the hover-intent
         // controller (dwell to arm, grace to exit, pin while held), so bursts
@@ -725,31 +764,13 @@ fn wire_events(wiring: Wiring) {
         state_motion.hover_probe_x.set(mx);
         state_motion.hover_probe_y.set(my);
 
-        if state_motion.long_press_active.get() {
-            let start_x = state_motion.long_press_start_x.get();
-            let start_y = state_motion.long_press_start_y.get();
-            let dx = mx - start_x;
-            let dy = my - start_y;
-            if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
-                state_motion.long_press_active.set(false);
-                state_motion.long_press_elapsed.set(0.0);
-                state_motion.drag_cancelled.set(true);
-                state_motion.cancel_flash.set(CANCEL_FLASH_DURATION);
-            }
-        }
+        cancel_long_press_if_moved(&state_motion, mx, my);
 
         // While dragging on Wayland, record the newest pointer sample; the frame
         // tick applies it through the shared controller (newest wins, so a
         // burst of motion events coalesces into one move per frame). X11
         // samples the root pointer on the frame clock instead.
-        if state_motion.dragging.get() && state_motion.backend.get() != Backend::X11 {
-            state_motion.drag_last_x.set(mx);
-            state_motion.drag_last_y.set(my);
-            state_motion
-                .drag_motion
-                .borrow_mut()
-                .push_sample(mx, my, drag_clock_now());
-        }
+        record_drag_sample_if_dragging(&state_motion, mx, my);
 
         glib::Propagation::Proceed
     });
