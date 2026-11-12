@@ -104,40 +104,51 @@ export const MicrophoneReadinessSideEffects = () => {
    * to the type, so a future caller cannot accidentally depend on the timing of
    * a read that is deliberately fire-and-forget.
    */
-  const publishHeld = useCallback((): void => {
-    const read = async () => {
-      try {
-        const held = await commands.microphoneReady();
-        if (getAppState().settings.microphoneHeld === held) {
-          return;
-        }
-        produceAppState((draft) => {
-          draft.settings.microphoneHeld = held;
-        });
-        // Only the main window broadcasts: several windows each emitting would
-        // multiply the traffic, and every listener would then re-read N times.
-        if (isMainLocalDataWindow()) {
-          logOnRejection(
-            emit(MICROPHONE_READINESS_EVENT, { held }).catch(
-              (error: unknown) => {
-                getLogger().verbose(
-                  `Could not broadcast the microphone state: ${error}`,
-                );
-              },
-            ),
-            "microphone readiness broadcast",
-          );
-        }
-      } catch (error) {
-        getLogger().warning(`Could not read the microphone state: ${error}`);
+  /**
+   * Reads the device state, stores it, and returns what the backend said.
+   *
+   * The return value exists for the callers that have to *decide* on the answer
+   * rather than just publish it. `microphoneHeld` is state, so it is only
+   * up to date once the store has re-rendered, and a caller that reads it
+   * straight after a floating read sees the value from before.
+   */
+  const readHeld = useCallback(async (): Promise<boolean | null> => {
+    try {
+      const held = await commands.microphoneReady();
+      if (getAppState().settings.microphoneHeld === held) {
+        return held;
       }
-    };
+      produceAppState((draft) => {
+        draft.settings.microphoneHeld = held;
+      });
+      // Only the main window broadcasts: several windows each emitting would
+      // multiply the traffic, and every listener would then re-read N times.
+      if (isMainLocalDataWindow()) {
+        logOnRejection(
+          emit(MICROPHONE_READINESS_EVENT, { held }).catch((error: unknown) => {
+            getLogger().verbose(
+              `Could not broadcast the microphone state: ${error}`,
+            );
+          }),
+          "microphone readiness broadcast",
+        );
+      }
+      return held;
+    } catch (error) {
+      getLogger().warning(`Could not read the microphone state: ${error}`);
+      // `null` is "could not tell", which the retry treats as "do not decide"
+      // rather than as "nothing is held".
+      return null;
+    }
+  }, []);
+
+  const publishHeld = useCallback((): void => {
     // Deliberately not awaited: see the doc comment. `logOnRejection` is the
     // repository's wrapper for a promise nobody awaits, and it is a second net
-    // rather than the primary one -- `read` catches everything it awaits, so
+    // rather than the primary one -- `readHeld` catches everything it awaits, so
     // this only fires if the logger itself throws inside that catch.
-    logOnRejection(read(), "microphone state read");
-  }, []);
+    logOnRejection(readHeld(), "microphone state read");
+  }, [readHeld]);
 
   // What this component last told the backend, so a render that does not change
   // the answer costs nothing.
@@ -629,30 +640,6 @@ export const MicrophoneReadinessSideEffects = () => {
   // Each predicate takes the state it reads rather than closing over a copy, so
   // the set is readable in one place and a caller cannot accidentally read a
   // stale snapshot between two of them.
-  /**
-   * Whether a stream this window wanted is known not to be open.
-   *
-   * The stored report alone is not enough. `microphoneHeld` only changes when
-   * something re-reads it, and a stream that died on its own -- the stop path
-   * retiring it, a device unplugged mid-hold -- leaves the last report saying
-   * "held". The ring then goes on claiming an open that no longer exists, and
-   * the hold effect returns early because the pre-roll it asked for is the one
-   * it already asked for. Nothing reopens it until the preference or the pre-roll
-   * changes.
-   *
-   * `holdFailedRef` is the other half of the answer: set when an open reported
-   * failure, cleared when one succeeded. A failed hold has no state change to
-   * retry on, and this is what lets the focus retry above see it.
-   */
-  const holdsNothingYet = useCallback(() => {
-    const state = getAppState();
-    // `!== true` rather than `!`: `microphoneHeld` is `null` before the first
-    // read comes back, and null is not "not held", it is "not known yet".
-    return (
-      state.settings.microphoneHeld !== true || holdFailedRef.current === true
-    );
-  }, []);
-
   const isIdle = useCallback(
     () => getAppState().activeRecordingMode === null,
     [],
@@ -665,15 +652,26 @@ export const MicrophoneReadinessSideEffects = () => {
 
   const dataIsIntact = useCallback(() => !isLocalDataClearRequested(), []);
 
-  const shouldHoldNow = useCallback(() => {
-    return (
-      getAppState().userPrefs?.keepMicrophoneReady === true &&
-      holdsNothingYet() &&
-      isIdle() &&
-      mayUseMicrophone() &&
-      dataIsIntact()
-    );
-  }, [holdsNothingYet, isIdle, mayUseMicrophone, dataIsIntact]);
+  /**
+   * Whether there is a hold to re-establish, given how held the device is.
+   *
+   * `held` is passed in rather than read from the store because the one caller
+   * that acts on this answer has just awaited the read: taking the answer from
+   * the store would read the value from before that read, which is the defect
+   * this argument exists to remove.
+   */
+  const shouldHoldNow = useCallback(
+    (held: boolean) => {
+      return (
+        getAppState().userPrefs?.keepMicrophoneReady === true &&
+        !held &&
+        isIdle() &&
+        mayUseMicrophone() &&
+        dataIsIntact()
+      );
+    },
+    [isIdle, mayUseMicrophone, dataIsIntact],
+  );
 
   // A hold that failed has no state change to retry on: the preference did not
   // change, the device did. Coming back to the window is the moment a user has
@@ -689,11 +687,21 @@ export const MicrophoneReadinessSideEffects = () => {
      * Named because the focus handler otherwise read as a run of early returns
      * whose reasons lived in comments rather than in the conditions.
      */
-    const ownsRetry = () => isMainLocalDataWindow() && shouldHoldNow();
+    const ownsRetry = (held: boolean) =>
+      isMainLocalDataWindow() && shouldHoldNow(held);
 
-    const retryOnFocus = () => {
-      publishHeld();
-      if (!ownsRetry()) {
+    /**
+     * Re-establishes the hold, on the answer the backend just gave.
+     *
+     * `publishHeld` is fire-and-forget, so reading `microphoneHeld` right after
+     * it sees the value from *before* that read. That stale value is the whole
+     * question for this retry: a stream that died still reports `true`, so
+     * `shouldHoldNow` said "a hold is open, nothing to do" and the retry that
+     * exists to reopen a dead stream never ran.
+     */
+    const retryOnFocus = async () => {
+      const held = await readHeld();
+      if (held === null || !ownsRetry(held)) {
         return;
       }
       // Re-read rather than trust `ownsRetry`: `shouldHoldNow` is a separate
@@ -711,9 +719,14 @@ export const MicrophoneReadinessSideEffects = () => {
       appliedRef.current = "open";
       hold(preroll);
     };
-    window.addEventListener("focus", retryOnFocus);
-    return () => window.removeEventListener("focus", retryOnFocus);
-  }, [hold, publishHeld, shouldHoldNow]);
+    const onFocus = () => {
+      // The listener itself cannot be async: `addEventListener` ignores the
+      // returned promise, so a rejection inside it would be unhandled.
+      logOnRejection(retryOnFocus(), "microphone retry on focus");
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [hold, readHeld, shouldHoldNow]);
 
   // The cheap half of readiness: with no stream held, resolve which device the
   // next press would open, so the press skips the enumeration and scoring. It

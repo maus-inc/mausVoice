@@ -664,6 +664,32 @@ describe("MicrophoneReadinessSideEffects", () => {
     );
   });
 
+  it("retries on focus using the answer it just read, not the stored one", async () => {
+    // `publishHeld` is fire-and-forget, so `microphoneHeld` still holds the value
+    // from *before* the read. A stream that died still reports `true` there, so a
+    // retry that consulted the store concluded "a hold is open, nothing to do"
+    // and the dead stream was never reopened.
+    // The store and the backend agree at mount: something is held.
+    mocks.microphoneReady.mockResolvedValue(true);
+    setState({ settings: { microphoneHeld: true } });
+    await render();
+    // The mount opened a hold; that is not what this test is about.
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+    mocks.warmMicrophone.mockClear();
+
+    // The stream is gone now, but the store still says held — that is the stale
+    // value a retry must not decide on.
+    mocks.microphoneReady.mockResolvedValue(false);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+  });
+
   it("closes an open that finishes after the preference is turned off", async () => {
     // The defect: `warmMicrophone` opens a real device and takes seconds. Turning
     // the preference off while it is in flight ran `closeMicrophone` first, which
