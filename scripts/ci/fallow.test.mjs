@@ -183,19 +183,11 @@ const resolveBaseSha = () => {
         cwd: root,
         encoding: "utf8",
       });
-    let result = readSha();
-    if (result.status !== 0) {
-      execFileSync(
-        "git",
-        ["fetch", "--depth=1", "--no-tags", "origin", requestedBaseSha],
-        { cwd: root, stdio: "pipe", timeout: 60_000 },
-      );
-      result = readSha();
-    }
+    const result = readSha();
     assert.equal(
       result.status,
       0,
-      `could not resolve pushed base ${requestedBaseSha}`,
+      `could not resolve pushed base ${requestedBaseSha}; the checkout must include it`,
     );
     return result.stdout.trim();
   }
