@@ -72,7 +72,7 @@
   "always_run_as_administrator": "Ejecutar siempre como administrador",
   "an_email_has_been_sent_to_you_with_a_link_to_reset_your_pass": "Se te ha enviado un correo electrónico con un enlace para restablecer tu contraseña.",
   "an_error_occurred_while_attempting_to_delete_your_account_pl": "Se produjo un error al intentar eliminar tu cuenta. Inténtalo de nuevo más tarde.",
-  "an_unused_paste_review_could_not_be_closed_check_chats_and_d": "An unused Paste review could not be closed. Check Chats and dismiss the leftover card.",
+  "an_unused_paste_review_could_not_be_closed_check_chats_and_d": "No se pudo cerrar una revisión de pegado sin usar. Revisa Chats y cierra la tarjeta restante.",
   "api": "API",
   "api_key": "Clave API",
   "api_key_optional": "Clave API (opcional)",
