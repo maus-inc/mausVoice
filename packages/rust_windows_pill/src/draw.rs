@@ -1648,14 +1648,7 @@ fn draw_permission_card(
 }
 
 /// Reserve the fixed native editor's region in the scrolling transcript.
-fn draw_review_text(
-    _gfx: &Gfx,
-    _state: &PillState,
-    _x: f64,
-    y: f64,
-    _w: f64,
-    _alpha: f64,
-) -> f64 {
+fn draw_review_text(_gfx: &Gfx, _state: &PillState, _x: f64, y: f64, _w: f64, _alpha: f64) -> f64 {
     y + REVIEW_TITLE_HEIGHT + PANEL_REVIEW_EDITOR_HEIGHT
 }
 

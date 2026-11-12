@@ -799,13 +799,13 @@ pub fn run(receiver: Receiver<InMessage>) {
                     let review_id = review.as_ref().map(|r| r.id.clone());
                     let review_text = review.as_ref().map(|r| r.text.clone());
                     let review_ended = previous_review_id.is_some() && review_id.is_none();
-                    state_tick.focus_released_after_review.set(
-                        next_focus_released_after_review(
+                    state_tick
+                        .focus_released_after_review
+                        .set(next_focus_released_after_review(
                             previous_review_id.is_some(),
                             review_id.is_some(),
                             state_tick.focus_released_after_review.get(),
-                        ),
-                    );
+                        ));
                     if review_ended {
                         match backend_tick {
                             Backend::LayerShell => {
