@@ -1223,7 +1223,7 @@ fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
             x11::move_toplevel(window, x.round() as i32, y.round() as i32);
             // A forget or a reset leaves the pill deliberately unsaved: the move
             // still has to happen, but it must not write the row back.
-            if !state.anchor.get().records_relocation() {
+            if !state.has_saved_position.get() {
                 return;
             }
             state.saved_x.set(x.round());

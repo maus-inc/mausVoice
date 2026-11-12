@@ -546,17 +546,6 @@ impl Anchor {
     pub fn from_forget() -> Self {
         Self::Cleared
     }
-
-    /// Whether a relocation the *system* caused should be recorded as a save.
-    ///
-    /// Only when the pill has a position to keep. After a forget or a reset there
-    /// is no stored position and the pill is deliberately unsaved; a display change
-    /// that then relocates it must still move the window (it has to stay visible)
-    /// but must not invent a saved position, or the row the clear just deleted is
-    /// written back by the layout.
-    pub fn records_relocation(self) -> bool {
-        self.places()
-    }
 }
 
 /// What the anchor is, given whether a position is stored and whether a restart

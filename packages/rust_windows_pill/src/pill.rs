@@ -1765,7 +1765,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             // undoing a placement the user could see. This is the system's move,
             // not a drag, so it is adopted without going through the save guard.
             let (cur_x, cur_y) = current_pill_origin(hwnd);
-            if state.anchor.get().records_relocation()
+            if state.has_saved_position.get()
                 && (cur_x != state.saved_x.get() || cur_y != state.saved_y.get())
             {
                 state.saved_x.set(cur_x);
@@ -1782,7 +1782,9 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             move_window(hwnd, x, y, rect.left, rect.top);
             // A forget or a reset leaves the pill deliberately unsaved: the move
             // still has to happen, but it must not write the row back.
-            if !state.anchor.get().records_relocation() {
+            // A stored position has to exist to be kept: a relocation is not a
+            // save, and after a reset or a clear there is nothing to record.
+            if !state.has_saved_position.get() {
                 return;
             }
             // The move was the pill's, so the persisted position follows it.
