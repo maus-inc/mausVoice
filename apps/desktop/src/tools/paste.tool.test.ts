@@ -63,7 +63,7 @@ describe("PasteTool review", () => {
     vi.clearAllMocks();
     state.userPrefs = { reviewBeforeInsert: true };
     createPendingPasteReviewMock.mockResolvedValue({ id: "pending-review" });
-    cancelPendingPasteReviewMock.mockResolvedValue(undefined);
+    cancelPendingPasteReviewMock.mockResolvedValue();
     updatePendingPasteReviewDraftMock.mockImplementation((message: unknown) =>
       Promise.resolve(message),
     );

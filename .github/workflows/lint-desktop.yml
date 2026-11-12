@@ -107,7 +107,8 @@ jobs:
         run: cargo clippy --locked --manifest-path packages/rust_macos_pill/Cargo.toml --all-targets -- -D warnings
       - name: Lint native pill (Linux)
         if: matrix.os == 'ubuntu-22.04'
-        run: cargo clippy --locked --manifest-path packages/rust_gtk_pill/Cargo.toml --all-targets -- -D warnings
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" gtk-native-pill cargo clippy --locked --manifest-path packages/rust_gtk_pill/Cargo.toml --all-targets -- -D warnings
       - name: Test native pill
         if: matrix.os == 'windows-latest'
         run: cargo test --locked --manifest-path packages/rust_windows_pill/Cargo.toml
