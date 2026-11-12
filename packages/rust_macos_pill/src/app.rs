@@ -2158,8 +2158,8 @@ fn park_window(
         return;
     }
     let (target_x, target_y) = if state.has_saved_position.get() {
-        let tx = state.saved_x.get().max(bounds.min_x).min(bounds.max_x);
-        let ty = state.saved_y.get().max(bounds.min_y).min(bounds.max_y);
+        let tx = state.saved_x.get().clamp(bounds.min_x, bounds.max_x);
+        let ty = state.saved_y.get().clamp(bounds.min_y, bounds.max_y);
         (tx, ty)
     } else {
         let win_w = unsafe { window_frame(window) }.size.width;

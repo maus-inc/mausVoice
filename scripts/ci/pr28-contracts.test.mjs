@@ -73,6 +73,43 @@ const scopeOf = (relativePath, marker) => {
   return collapse(lines.slice(start, end + 1).join("\n"));
 };
 
+// The body of one message handler, whichever shape it has.
+//
+// A message used to be a match arm inline in the drain loop, so guards split the
+// file on the arm's pattern and read up to the next variant. Now each message is
+// its own function, and splitting on the arm would read an empty string -- every
+// assertion inside it then fails, or worse, a `doesNotMatch` passes for the wrong
+// reason. This finds the handler for a variant by its `fn on_*` name, then by the
+// arm that dispatches to it.
+const handlerBody = (path, variant) => {
+  // Reads the file itself: `source` is collapsed, and on collapsed text a comment
+  // that names a variant looks the same as the arm that matches it.
+  const text = readRaw(path);
+  const snake = variant.replace(/(?<!^)([A-Z])/g, "_$1").toLowerCase();
+  const fnAt = text.indexOf(`fn on_${snake}(`);
+  if (fnAt !== -1) {
+    const start = text.lastIndexOf("\n", fnAt) + 1;
+    let depth = 0;
+    for (let i = text.indexOf("{", fnAt); i < text.length; i += 1) {
+      if (text[i] === "{") depth += 1;
+      else if (text[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return collapse(text.slice(start, i + 1));
+      }
+    }
+  }
+  // Otherwise an inline arm, found by its own line rather than by substring.
+  const arm = new RegExp(`^ *InMessage::${variant}\\b`);
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => arm.test(line));
+  if (start === -1) return "";
+  const indent = /^ */.exec(lines[start])[0].length;
+  const next = new RegExp(`^ {0,${indent}}InMessage::[A-Z]`);
+  let end = start + 1;
+  while (end < lines.length && !next.test(lines[end])) end += 1;
+  return collapse(lines.slice(start, end).join("\n"));
+};
+
 const PATHS = [
   ["commands", "apps/desktop/src-tauri/src/commands.rs"],
   ["tray", "apps/desktop/src-tauri/src/system/tray.rs"],
@@ -1743,9 +1780,7 @@ describe("native gesture adapter contracts", () => {
   ]) {
     it(`cancels ${platform} pointer state rather than rearming a reset drag`, () => {
       const pill = source[`${platform}Pill`];
-      const reset = pill
-        .split("InMessage::ResetPosition { strategy } => {")[1]
-        .split("InMessage::RequestPosition")[0];
+      const reset = handlerBody(pathOf.get(`${platform}Pill`), "ResetPosition");
       for (const field of ["dragging", "pointer_down", "long_press_active"]) {
         assert.ok(reset.includes(`${state}.${field}.set(false)`));
       }
@@ -2304,12 +2339,8 @@ describe("native gesture adapter contracts", () => {
       );
     }
     // Every reset and every forget sets the anchor, so neither can leave it stale.
-    for (const [name, marker] of [
-      ["windowsPill", "InMessage::ResetPosition"],
-      ["macApp", "InMessage::ResetPosition"],
-      ["gtkPill", "InMessage::ResetPosition"],
-    ]) {
-      const handler = scope(name, marker);
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      const handler = handlerBody(pathOf.get(name), "ResetPosition");
       assert.match(
         handler,
         /Anchor::from_reset\(/,
@@ -2319,12 +2350,8 @@ describe("native gesture adapter contracts", () => {
     // Forgetting is the other half. A cleared pill that keeps its old anchor
     // still follows the pointer on the next launch, which is exactly the
     // placement the clear was meant to cancel.
-    for (const [name, marker] of [
-      ["windowsPill", "InMessage::ForgetPosition"],
-      ["macApp", "InMessage::ForgetPosition"],
-      ["gtkPill", "InMessage::ForgetPosition"],
-    ]) {
-      const handler = scope(name, marker);
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      const handler = handlerBody(pathOf.get(name), "ForgetPosition");
       assert.match(
         handler,
         /Anchor::from_forget\(\)/,
@@ -3151,9 +3178,7 @@ describe("native pill loading animation behind stage text", () => {
       ["macos", source.macApp],
       ["windows", source.windowsPill],
     ]) {
-      const phaseArm = text
-        .split("InMessage::Phase { phase, seq } => {")[1]
-        .split("InMessage::Levels")[0];
+      const phaseArm = handlerBody(pathOf.get(label === "macos" ? "macPill" : label === "gtk" ? "gtkPill" : "windowsPill"), "Phase");
       assert.match(
         phaseArm,
         /if rust_pill_shared::should_clear_stage_text_on_phase\(\s*prev == Phase::Loading,\s*phase == Phase::Idle,\s*phase == Phase::Loading,\s*\) \{\s*\*[\w.]*stage_text\.borrow_mut\(\) = None;\s*\}/,
@@ -3175,9 +3200,7 @@ describe("native pill loading animation behind stage text", () => {
         `${label}: tick must advance loading_offset via rust_pill_shared::advance_loading_offset with dt and reduced_motion()`,
       );
 
-      const stageTextArm = text
-        .split("InMessage::StageText { text } => {")[1]
-        .split("}")[0];
+      const stageTextArm = handlerBody(pathOf.get(label === "macos" ? "macPill" : label === "gtk" ? "gtkPill" : "windowsPill"), "StageText");
       assert.match(
         stageTextArm,
         /let stage = rust_pill_shared::active_stage_text\(text\.as_deref\(\)\);\s*\*[\w.]*stage_text\.borrow_mut\(\) = stage\.map\(str::to_owned\);/,

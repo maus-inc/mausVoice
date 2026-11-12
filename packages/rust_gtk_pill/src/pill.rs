@@ -48,270 +48,339 @@ thread_local! {
 /// Draining here, rather than from a separate glib source, keeps message order and
 /// frame order the same: a phase that arrives mid-frame is applied on that frame,
 /// never after the tick that follows it.
+/// Apply every message waiting on the channel before the frame steps.
+///
+/// Draining here, rather than from a separate glib source, keeps message order and
+/// frame order the same: a phase that arrives mid-frame is applied on that frame,
+/// never after the tick that follows it.
+///
+/// Dispatch only: each message has its own handler below. They used to be match
+/// arms in a single body, which made seventeen unrelated decisions into one
+/// function, so a change to, say, toast timing had to be read next to display
+/// reconciliation.
 fn drain_messages(
     receiver: &RefCell<Receiver<InMessage>>,
-    state_tick: &PillState,
+    state_tick: &Rc<PillState>,
     win_tick: &gtk::Window,
     entry_tick: &gtk::Entry,
-    quit: &Cell<bool>,
+    quit: &Rc<Cell<bool>>,
 ) {
     let rx = receiver.borrow();
     while let Ok(msg) = rx.try_recv() {
         match msg {
-            InMessage::Phase { phase, seq } => {
-                let stale = LAST_PHASE_SEQ.with(|last| {
-                    let stale = seq < last.get();
-                    if !stale {
-                        last.set(seq);
-                    }
-                    stale
-                });
-                if stale {
-                    continue;
-                }
-                let prev = state_tick.phase.get();
-                state_tick.phase.set(phase);
-                state_tick
-                    .style_tooltip_gate
-                    .set_take_running(phase == Phase::Recording);
-                // A new take sweeps any banner parked above the pill (for
-                // example the retranscribing toast) so it cannot sit on the
-                // style selector for the whole take. A resume from Paused
-                // keeps toasts raised during the take, such as the cancel
-                // confirm.
-                if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                    clear_flash(state_tick);
-                }
-                if rust_pill_shared::should_clear_stage_text_on_phase(
-                    prev == Phase::Loading,
-                    phase == Phase::Idle,
-                    phase == Phase::Loading,
-                ) {
-                    *state_tick.stage_text.borrow_mut() = None;
-                }
-                if phase == Phase::Loading && prev != Phase::Loading {
-                    let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                    state_tick.loading_offset.set(offset);
-                }
-                if phase == Phase::Idle && prev != Phase::Idle {
-                    state_tick.pending_levels.borrow_mut().clear();
-                    state_tick.target_level.set(0.0);
-                    state_tick.current_level.set(0.0);
-                    state_tick.wave_phase.set(0.0);
-                    state_tick.loading_offset.set(0.0);
-                }
-            }
-            InMessage::Levels { levels } => {
-                *state_tick.pending_levels.borrow_mut() = levels;
-            }
-            InMessage::StyleInfo { count, name } => {
-                state_tick.style_count.set(count);
-                *state_tick.style_name.borrow_mut() = name;
-            }
-            InMessage::Toast {
-                message,
-                toast_type,
-                duration,
-                action,
-                action_label,
-                reject_action,
-                reject_action_label,
-            } => {
-                *state_tick.flash_message.borrow_mut() = message;
-                state_tick
-                    .flash_is_error
-                    .set(toast_type.as_deref() == Some("error"));
-                state_tick.flash_visible.set(true);
-                state_tick
-                    .flash_timer
-                    .set(duration.unwrap_or(FLASH_DURATION));
-                *state_tick.flash_action.borrow_mut() = action;
-                *state_tick.flash_action_label.borrow_mut() = action_label;
-                *state_tick.flash_reject_action.borrow_mut() = reject_action;
-                *state_tick.flash_reject_action_label.borrow_mut() = reject_action_label;
-            }
-            InMessage::DismissToast => {
-                clear_flash(state_tick);
-            }
-            InMessage::Fireworks { message } => {
-                *state_tick.flash_message.borrow_mut() = message;
-                state_tick.flash_is_error.set(false);
-                *state_tick.flash_action.borrow_mut() = None;
-                *state_tick.flash_action_label.borrow_mut() = None;
-                *state_tick.flash_reject_action.borrow_mut() = None;
-                *state_tick.flash_reject_action_label.borrow_mut() = None;
-                state_tick.flash_visible.set(true);
-                state_tick.flash_timer.set(FIREWORKS_TOTAL_DURATION);
-
-                state_tick.fireworks_active.set(true);
-                state_tick.fireworks_elapsed.set(0.0);
-                state_tick.fireworks_next_launch.set(0);
-                state_tick.fireworks_rockets.borrow_mut().clear();
-            }
-            InMessage::Flame { message } => {
-                *state_tick.flash_message.borrow_mut() = message;
-                state_tick.flash_is_error.set(false);
-                *state_tick.flash_action.borrow_mut() = None;
-                *state_tick.flash_action_label.borrow_mut() = None;
-                *state_tick.flash_reject_action.borrow_mut() = None;
-                *state_tick.flash_reject_action_label.borrow_mut() = None;
-                state_tick.flash_visible.set(true);
-                state_tick.flash_timer.set(FLAME_TOTAL_DURATION);
-
-                state_tick.flame_active.set(true);
-                state_tick.flame_elapsed.set(0.0);
-                state_tick.flame_tongues.borrow_mut().clear();
-            }
-            InMessage::FlashBlue => {
-                state_tick.flash_blue_active.set(true);
-                state_tick.flash_blue_elapsed.set(0.0);
-            }
-            InMessage::BroadcastTranscript { text } => {
-                *state_tick.transcript_text.borrow_mut() = text;
-                state_tick.transcript_time_since_update.set(0.0);
-                state_tick.transcript_has_message.set(true);
-            }
-            InMessage::StageText { text } => {
-                let stage = rust_pill_shared::active_stage_text(text.as_deref());
-                *state_tick.stage_text.borrow_mut() = stage.map(str::to_owned);
-            }
-            InMessage::Visibility { visibility } => {
-                state_tick.visibility.set(visibility);
-            }
-            InMessage::WindowSize { ref size } => {
-                let mode = WindowMode::from_str(size);
-                state_tick.window_mode.set(mode);
-            }
-            InMessage::AssistantState {
-                active,
-                input_mode,
-                compact,
-                conversation_id,
-                user_prompt,
-                messages,
-                streaming,
-                permissions,
-                review,
-            } => {
-                let was_active = state_tick.assistant_active.get();
-                state_tick.assistant_active.set(active);
-                *state_tick.assistant_input_mode.borrow_mut() = input_mode;
-                state_tick.assistant_compact.set(compact);
-                *state_tick.assistant_conversation_id.borrow_mut() = conversation_id;
-                *state_tick.assistant_user_prompt.borrow_mut() = user_prompt;
-                *state_tick.assistant_messages.borrow_mut() = messages;
-                *state_tick.assistant_streaming.borrow_mut() = streaming;
-                *state_tick.assistant_permissions.borrow_mut() = permissions;
-                let previous_review_id = state_tick
-                    .assistant_review
-                    .borrow()
-                    .as_ref()
-                    .map(|r| r.id.clone());
-                let review_id = review.as_ref().map(|r| r.id.clone());
-                let review_text = review.as_ref().map(|r| r.text.clone());
-                *state_tick.assistant_review.borrow_mut() = review.map(|review| *review);
-
-                // The entry is the review surface: a new transcript loads
-                // into it for editing, and answering the review empties it
-                // again. An unchanged id leaves the user's edits alone.
-                if review_id != previous_review_id {
-                    let text = review_text.unwrap_or_default();
-                    *state_tick.entry_text.borrow_mut() = text.clone();
-                    entry_tick.set_text(&text);
-                } else if crate::input::entry_should_be_cleared(
-                    &state_tick.entry_text.borrow(),
-                    &entry_tick.text(),
-                ) {
-                    // The mirror was emptied somewhere that had no widget -- the
-                    // Send-button click, or `submit_entry` -- and the id did not change,
-                    // so the reload above did not run. Without this the widget keeps
-                    // showing text that has already been sent. Windows reconciles the
-                    // same way in its window procedure; this is that line.
-                    entry_tick.set_text("");
-                }
-
-                if (active && !was_active)
-                    || (review_id.is_some() && review_id != previous_review_id)
-                {
-                    state_tick.should_stick.set(true);
-                    state_tick.scroll_offset.set(0.0);
-                }
-            }
+            InMessage::Phase { phase, seq } => on_phase(phase, seq, state_tick),
+            InMessage::Levels { levels } => on_levels(levels, state_tick),
+            InMessage::StyleInfo { count, name } => on_style_info(count, name, state_tick),
+            InMessage::Toast { .. } => on_toast(msg, state_tick),
+            InMessage::DismissToast => on_dismiss_toast(state_tick),
+            InMessage::Fireworks { message } => on_fireworks(message, state_tick),
+            InMessage::Flame { message } => on_flame(message, state_tick),
+            InMessage::FlashBlue => on_flash_blue(state_tick),
+            InMessage::BroadcastTranscript { text } => on_broadcast_transcript(text, state_tick),
+            InMessage::StageText { text } => on_stage_text(text, state_tick),
+            InMessage::Visibility { visibility } => on_visibility(visibility, state_tick),
+            InMessage::WindowSize { ref size } => on_window_size(size, state_tick),
+            InMessage::AssistantState { .. } => on_assistant_state(msg, state_tick, entry_tick),
             InMessage::ResetPosition { strategy } => {
-                state_tick.dragging.set(false);
-                state_tick.pointer_down.set(false);
-                state_tick.long_press_active.set(false);
-                state_tick.long_press_elapsed.set(0.0);
-                state_tick.drag_cancelled.set(true);
-                // The X11 idle timer must not save the cancelled gesture
-                // through its missed-release fallback after this reset.
-                state_tick.x11_release_persisted.set(true);
-                state_tick.drag_draw_offset_x.set(0.0);
-                state_tick.drag_draw_offset_y.set(0.0);
-                state_tick.drag_motion.borrow_mut().reset();
-                state_tick.selector_placement.borrow_mut().reset();
-                state_tick.crossing.borrow_mut().reset();
-                state_tick.has_saved_position.set(false);
-                state_tick.saved_display_id.set(None);
-                // A save still owed from the previous gesture would publish the
-                // pre-reset origin and recreate the row the reset just deleted.
-                state_tick.drag_save_due.set(None);
-                // A reset is a placement the user asked for, so the pill is due
-                // one even though nothing is stored.
-                state_tick
-                    .anchor
-                    .set(rust_pill_shared::layout::Anchor::from_reset(
-                        strategy == ResetStrategy::Cursor,
-                    ));
-                let (rect, monitor) = pill_geometry(win_tick, state_tick);
-                ipc::send(&OutMessage::PositionChanged {
-                    report: rust_pill_shared::restore::PositionReport::new(
-                        false, rect, monitor, None,
-                    ),
-                });
+                on_reset_position(strategy, state_tick, win_tick)
             }
-            InMessage::ForgetPosition => {
-                // A drag still held, or a settle that has not finished, would reach
-                // a save path on a later frame and publish a saved position again --
-                // recreating the row the clear just deleted. Cancel the gesture
-                // first; a drag started after the clear still saves normally.
-                state_tick.dragging.set(false);
-                state_tick.pointer_down.set(false);
-                state_tick.long_press_active.set(false);
-                state_tick.drag_cancelled.set(true);
-                state_tick.x11_release_persisted.set(true);
-                state_tick.drag_motion.borrow_mut().reset();
-                // Stop treating where the pill is sitting as the saved position.
-                // Local data was just cleared, and the next `RequestPosition`
-                // republishes this flag, so leaving it set would write the row back.
-                state_tick.has_saved_position.set(false);
-                state_tick.saved_display_id.set(None);
-                // A retry parked against the pre-clear position is the same
-                // hazard one frame later: it would publish the flag back as
-                // true and recreate the row the clear just removed.
-                state_tick.drag_save_due.set(None);
-                // A clear drops the record without moving the window, and it
-                // cancels any placement still owed.
-                state_tick
-                    .anchor
-                    .set(rust_pill_shared::layout::Anchor::from_forget());
-            }
-            InMessage::RequestPosition => {
-                let (rect, monitor) = pill_geometry(win_tick, state_tick);
-                ipc::send(&OutMessage::PositionChanged {
-                    report: rust_pill_shared::restore::PositionReport::new(
-                        state_tick.has_saved_position.get(),
-                        rect,
-                        monitor,
-                        state_tick.saved_display_id.get(),
-                    ),
-                });
-            }
-            InMessage::Quit => {
-                quit.set(true);
-            }
+            InMessage::ForgetPosition => on_forget_position(state_tick),
+            InMessage::RequestPosition => on_request_position(state_tick, win_tick),
+            InMessage::Quit => on_quit(quit),
         }
     }
+}
+
+/// Applies `InMessage::Phase`.
+fn on_phase(phase: Phase, seq: u64, state_tick: &Rc<PillState>) {
+    let stale = LAST_PHASE_SEQ.with(|last| {
+        let stale = seq < last.get();
+        if !stale {
+            last.set(seq);
+        }
+        stale
+    });
+    if stale {
+        // A stale phase is skipped, exactly as `continue` did when this was a
+        // match arm inside the drain loop.
+        return;
+    }
+    let prev = state_tick.phase.get();
+    state_tick.phase.set(phase);
+    state_tick
+        .style_tooltip_gate
+        .set_take_running(phase == Phase::Recording);
+    // A new take sweeps any banner parked above the pill (for
+    // example the retranscribing toast) so it cannot sit on the
+    // style selector for the whole take. A resume from Paused
+    // keeps toasts raised during the take, such as the cancel
+    // confirm.
+    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+        clear_flash(state_tick);
+    }
+    if rust_pill_shared::should_clear_stage_text_on_phase(
+        prev == Phase::Loading,
+        phase == Phase::Idle,
+        phase == Phase::Loading,
+    ) {
+        *state_tick.stage_text.borrow_mut() = None;
+    }
+    if phase == Phase::Loading && prev != Phase::Loading {
+        let offset = if reduced_motion() { 0.5 } else { 0.0 };
+        state_tick.loading_offset.set(offset);
+    }
+    if phase == Phase::Idle && prev != Phase::Idle {
+        state_tick.pending_levels.borrow_mut().clear();
+        state_tick.target_level.set(0.0);
+        state_tick.current_level.set(0.0);
+        state_tick.wave_phase.set(0.0);
+        state_tick.loading_offset.set(0.0);
+    }
+}
+
+/// Applies `InMessage::Levels`.
+fn on_levels(levels: Vec<f32>, state_tick: &Rc<PillState>) {
+    *state_tick.pending_levels.borrow_mut() = levels;
+}
+
+/// Applies `InMessage::StyleInfo`.
+fn on_style_info(count: u32, name: String, state_tick: &Rc<PillState>) {
+    state_tick.style_count.set(count);
+    *state_tick.style_name.borrow_mut() = name;
+}
+
+/// Applies `InMessage::Toast`.
+fn on_toast(msg: InMessage, state_tick: &Rc<PillState>) {
+    let InMessage::Toast {
+        message,
+        toast_type,
+        duration,
+        action,
+        action_label,
+        reject_action,
+        reject_action_label,
+    } = msg
+    else {
+        return;
+    };
+    *state_tick.flash_message.borrow_mut() = message;
+    state_tick
+        .flash_is_error
+        .set(toast_type.as_deref() == Some("error"));
+    state_tick.flash_visible.set(true);
+    state_tick
+        .flash_timer
+        .set(duration.unwrap_or(FLASH_DURATION));
+    *state_tick.flash_action.borrow_mut() = action;
+    *state_tick.flash_action_label.borrow_mut() = action_label;
+    *state_tick.flash_reject_action.borrow_mut() = reject_action;
+    *state_tick.flash_reject_action_label.borrow_mut() = reject_action_label;
+}
+
+/// Applies `InMessage::DismissToast`.
+fn on_dismiss_toast(state_tick: &Rc<PillState>) {
+    clear_flash(state_tick);
+}
+
+/// Applies `InMessage::Fireworks`.
+fn on_fireworks(message: String, state_tick: &Rc<PillState>) {
+    *state_tick.flash_message.borrow_mut() = message;
+    state_tick.flash_is_error.set(false);
+    *state_tick.flash_action.borrow_mut() = None;
+    *state_tick.flash_action_label.borrow_mut() = None;
+    *state_tick.flash_reject_action.borrow_mut() = None;
+    *state_tick.flash_reject_action_label.borrow_mut() = None;
+    state_tick.flash_visible.set(true);
+    state_tick.flash_timer.set(FIREWORKS_TOTAL_DURATION);
+
+    state_tick.fireworks_active.set(true);
+    state_tick.fireworks_elapsed.set(0.0);
+    state_tick.fireworks_next_launch.set(0);
+    state_tick.fireworks_rockets.borrow_mut().clear();
+}
+
+/// Applies `InMessage::Flame`.
+fn on_flame(message: String, state_tick: &Rc<PillState>) {
+    *state_tick.flash_message.borrow_mut() = message;
+    state_tick.flash_is_error.set(false);
+    *state_tick.flash_action.borrow_mut() = None;
+    *state_tick.flash_action_label.borrow_mut() = None;
+    *state_tick.flash_reject_action.borrow_mut() = None;
+    *state_tick.flash_reject_action_label.borrow_mut() = None;
+    state_tick.flash_visible.set(true);
+    state_tick.flash_timer.set(FLAME_TOTAL_DURATION);
+
+    state_tick.flame_active.set(true);
+    state_tick.flame_elapsed.set(0.0);
+    state_tick.flame_tongues.borrow_mut().clear();
+}
+
+/// Applies `InMessage::FlashBlue`.
+fn on_flash_blue(state_tick: &Rc<PillState>) {
+    state_tick.flash_blue_active.set(true);
+    state_tick.flash_blue_elapsed.set(0.0);
+}
+
+/// Applies `InMessage::BroadcastTranscript`.
+fn on_broadcast_transcript(text: String, state_tick: &Rc<PillState>) {
+    *state_tick.transcript_text.borrow_mut() = text;
+    state_tick.transcript_time_since_update.set(0.0);
+    state_tick.transcript_has_message.set(true);
+}
+
+/// Applies `InMessage::StageText`.
+fn on_stage_text(text: Option<String>, state_tick: &Rc<PillState>) {
+    let stage = rust_pill_shared::active_stage_text(text.as_deref());
+    *state_tick.stage_text.borrow_mut() = stage.map(str::to_owned);
+}
+
+/// Applies `InMessage::Visibility`.
+fn on_visibility(visibility: Visibility, state_tick: &Rc<PillState>) {
+    state_tick.visibility.set(visibility);
+}
+
+/// Applies `InMessage::WindowSize`.
+fn on_window_size(size: &str, state_tick: &Rc<PillState>) {
+    let mode = WindowMode::from_str(size);
+    state_tick.window_mode.set(mode);
+}
+
+/// Applies `InMessage::AssistantState`.
+fn on_assistant_state(msg: InMessage, state_tick: &Rc<PillState>, entry_tick: &gtk::Entry) {
+    let InMessage::AssistantState {
+        active,
+        input_mode,
+        compact,
+        conversation_id,
+        user_prompt,
+        messages,
+        streaming,
+        permissions,
+        review,
+    } = msg
+    else {
+        return;
+    };
+    let was_active = state_tick.assistant_active.get();
+    state_tick.assistant_active.set(active);
+    *state_tick.assistant_input_mode.borrow_mut() = input_mode;
+    state_tick.assistant_compact.set(compact);
+    *state_tick.assistant_conversation_id.borrow_mut() = conversation_id;
+    *state_tick.assistant_user_prompt.borrow_mut() = user_prompt;
+    *state_tick.assistant_messages.borrow_mut() = messages;
+    *state_tick.assistant_streaming.borrow_mut() = streaming;
+    *state_tick.assistant_permissions.borrow_mut() = permissions;
+    let previous_review_id = state_tick
+        .assistant_review
+        .borrow()
+        .as_ref()
+        .map(|r| r.id.clone());
+    let review_id = review.as_ref().map(|r| r.id.clone());
+    let review_text = review.as_ref().map(|r| r.text.clone());
+    *state_tick.assistant_review.borrow_mut() = review.map(|review| *review);
+
+    // The entry is the review surface: a new transcript loads
+    // into it for editing, and answering the review empties it
+    // again. An unchanged id leaves the user's edits alone.
+    if review_id != previous_review_id {
+        let text = review_text.unwrap_or_default();
+        state_tick.entry_text.borrow_mut().clone_from(&text);
+        entry_tick.set_text(&text);
+    } else if crate::input::entry_should_be_cleared(
+        &state_tick.entry_text.borrow(),
+        &entry_tick.text(),
+    ) {
+        // The mirror was emptied somewhere that had no widget -- the
+        // Send-button click, or `submit_entry` -- and the id did not change,
+        // so the reload above did not run. Without this the widget keeps
+        // showing text that has already been sent. Windows reconciles the
+        // same way in its window procedure; this is that line.
+        entry_tick.set_text("");
+    }
+
+    if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+        state_tick.should_stick.set(true);
+        state_tick.scroll_offset.set(0.0);
+    }
+}
+
+/// Applies `InMessage::ResetPosition`.
+fn on_reset_position(strategy: ResetStrategy, state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
+    state_tick.dragging.set(false);
+    state_tick.pointer_down.set(false);
+    state_tick.long_press_active.set(false);
+    state_tick.long_press_elapsed.set(0.0);
+    state_tick.drag_cancelled.set(true);
+    // The X11 idle timer must not save the cancelled gesture
+    // through its missed-release fallback after this reset.
+    state_tick.x11_release_persisted.set(true);
+    state_tick.drag_draw_offset_x.set(0.0);
+    state_tick.drag_draw_offset_y.set(0.0);
+    state_tick.drag_motion.borrow_mut().reset();
+    state_tick.selector_placement.borrow_mut().reset();
+    state_tick.crossing.borrow_mut().reset();
+    state_tick.has_saved_position.set(false);
+    state_tick.saved_display_id.set(None);
+    // A save still owed from the previous gesture would publish the
+    // pre-reset origin and recreate the row the reset just deleted.
+    state_tick.drag_save_due.set(None);
+    // A reset is a placement the user asked for, so the pill is due
+    // one even though nothing is stored.
+    state_tick
+        .anchor
+        .set(rust_pill_shared::layout::Anchor::from_reset(
+            strategy == ResetStrategy::Cursor,
+        ));
+    let (rect, monitor) = pill_geometry(win_tick, state_tick);
+    ipc::send(&OutMessage::PositionChanged {
+        report: rust_pill_shared::restore::PositionReport::new(false, rect, monitor, None),
+    });
+}
+
+/// Applies `InMessage::ForgetPosition`.
+fn on_forget_position(state_tick: &Rc<PillState>) {
+    // A drag still held, or a settle that has not finished, would reach
+    // a save path on a later frame and publish a saved position again --
+    // recreating the row the clear just deleted. Cancel the gesture
+    // first; a drag started after the clear still saves normally.
+    state_tick.dragging.set(false);
+    state_tick.pointer_down.set(false);
+    state_tick.long_press_active.set(false);
+    state_tick.drag_cancelled.set(true);
+    state_tick.x11_release_persisted.set(true);
+    state_tick.drag_motion.borrow_mut().reset();
+    // Stop treating where the pill is sitting as the saved position.
+    // Local data was just cleared, and the next `RequestPosition`
+    // republishes this flag, so leaving it set would write the row back.
+    state_tick.has_saved_position.set(false);
+    state_tick.saved_display_id.set(None);
+    // A retry parked against the pre-clear position is the same
+    // hazard one frame later: it would publish the flag back as
+    // true and recreate the row the clear just removed.
+    state_tick.drag_save_due.set(None);
+    // A clear drops the record without moving the window, and it
+    // cancels any placement still owed.
+    state_tick
+        .anchor
+        .set(rust_pill_shared::layout::Anchor::from_forget());
+}
+
+/// Applies `InMessage::RequestPosition`.
+fn on_request_position(state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
+    let (rect, monitor) = pill_geometry(win_tick, state_tick);
+    ipc::send(&OutMessage::PositionChanged {
+        report: rust_pill_shared::restore::PositionReport::new(
+            state_tick.has_saved_position.get(),
+            rect,
+            monitor,
+            state_tick.saved_display_id.get(),
+        ),
+    });
+}
+
+/// Applies `InMessage::Quit`.
+fn on_quit(quit: &Rc<Cell<bool>>) {
+    quit.set(true);
 }
 
 /// Runs the GTK pill: picks the display backend, creates the frameless
