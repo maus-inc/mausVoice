@@ -225,10 +225,12 @@ export class PasteTool extends BaseTool {
       return { copiedToClipboard: true };
     }
     if (reviewExpired) {
-      return { reviewExpired: true };
+      throw new Error(
+        "Paste transcript review expired before a decision was made.",
+      );
     }
     if (reviewFailed) {
-      return { reviewFailed: true };
+      throw new Error("Paste transcript review could not be completed.");
     }
     if (!text?.trim()) {
       return { canceled: true };

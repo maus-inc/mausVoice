@@ -63,7 +63,7 @@ describe("PasteTool review", () => {
     vi.clearAllMocks();
     state.userPrefs = { reviewBeforeInsert: true };
     createPendingPasteReviewMock.mockResolvedValue({ id: "pending-review" });
-    cancelPendingPasteReviewMock.mockResolvedValue();
+    cancelPendingPasteReviewMock.mockResolvedValue(undefined);
     updatePendingPasteReviewDraftMock.mockImplementation((message: unknown) =>
       Promise.resolve(message),
     );
@@ -186,7 +186,32 @@ describe("PasteTool review", () => {
         { text: "agent version" },
         { conversationId: "conv-1" },
       ),
-    ).resolves.toEqual({ reviewExpired: true });
+    ).rejects.toThrow(
+      "Paste transcript review expired before a decision was made.",
+    );
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed review as an unsuccessful tool outcome", async () => {
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      (
+        _text: string,
+        _source: string,
+        options?: { onFailure?: () => void },
+      ) => {
+        options?.onFailure?.();
+        return Promise.resolve(null);
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).rejects.toThrow("Paste transcript review could not be completed.");
 
     expect(invokeMock).not.toHaveBeenCalled();
     expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
