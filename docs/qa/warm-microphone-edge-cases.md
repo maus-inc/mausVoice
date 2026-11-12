@@ -155,10 +155,19 @@ assumption that everything is known.
    classification is tested against cpal's own wording, read from the vendored
    0.15.3 source, and the sink's fault state is driven directly. What is not
    tested is the whole chain on hardware: no test here has unplugged a
-   microphone during a recording and read the resulting metrics. It is also
-   untested whether the host's error callback arrives before the stop in every
-   backend. If it arrives after, the fault lands on the *next* recording's
-   stream rather than this one's metrics. What would settle it: unplug a USB
+   microphone during a recording and read the resulting metrics.
+
+   A fault the host reports *after* the stop has already read the token used
+   to belong to the next recording rather than this one. The stop now waits for
+   it, bounded to `LATE_FAULT_WAIT` (50 ms) and only when the recording came up
+   short, which is the only case where it changes what the user is told. Two
+   tests cover it without a device: `a_fault_reported_after_the_stop_is_still_
+   reported_for_that_recording` reports a fault from a second thread inside the
+   window and asserts it reaches this recording, and
+   `a_whole_recording_does_not_wait_for_a_fault_that_could_not_matter` pins the
+   common path to under one poll interval so keep-ready does not pay for it
+   after every dictation. What remains untested is the timing itself: whether a
+   real backend reports inside 50 ms. What would settle it: unplug a USB
    microphone mid-dictation and read the warn line that begins with "capture
    reported" and the returned `duration` / `expected_duration`.
 5. **Two rows are held by a narrower test than the row describes.** Row 28's

@@ -380,6 +380,15 @@ mod cpal_impl {
         /// every iteration, so an unthrottled `log::error!` per error is tens of
         /// thousands of lines a second for a stream that is already lost.
         faults_reported: AtomicU64,
+        /// When the first fatal fault was recorded, in microseconds since
+        /// `born`; zero until one arrives.
+        ///
+        /// The host reports errors on a thread of its own, and on Windows that
+        /// callback can run after the stop has already read the token. Without a
+        /// timestamp the stop path cannot tell a fault that belongs to this
+        /// recording from one that predates it, so it cannot tell how long to
+        /// wait for a late one.
+        fault_at_us: AtomicU64,
         origin: Mutex<Instant>,
         /// When this sink was built, on a clock nothing resets.
         ///
@@ -409,6 +418,7 @@ mod cpal_impl {
                 stopped: AtomicBool::new(false),
                 faulted: Mutex::new(None),
                 faults_reported: AtomicU64::new(0),
+                fault_at_us: AtomicU64::new(0),
                 origin: Mutex::new(Instant::now()),
                 born: Instant::now(),
                 paused_total_us: AtomicU64::new(0),
@@ -601,6 +611,13 @@ mod cpal_impl {
             }
             if let Ok(mut guard) = self.faulted.lock() {
                 if guard.is_none() {
+                    // Stamped with the token, under the same lock and on the
+                    // clock the sink was born on, so the stop path cannot see one
+                    // without the other. The first token wins, so the stamp is
+                    // the moment *this* recording lost its device, not the moment
+                    // the host last complained.
+                    self.fault_at_us
+                        .store(self.now_us().max(1), Ordering::Release);
                     *guard = Some(fault.as_str());
                     log::error!(
                         "capture stream is gone ({}) after {seen} error(s); it will not be reused",
@@ -802,6 +819,54 @@ mod cpal_impl {
         expected: Duration,
     ) -> Option<String> {
         reported.filter(|_| expected.saturating_sub(captured) >= FAULT_GAP_TOLERANCE)
+    }
+
+    /// How long the stop path will wait for a fault the host reports late.
+    ///
+    /// The host's error callback runs on a thread it chooses, and on Windows it
+    /// can run after the stop has already read the token: the recording is
+    /// shortened, the token is read as `None`, and the user gets a short
+    /// transcript with no notice -- the exact silent death the fault path
+    /// exists to report.
+    ///
+    /// There is no lock to take that would order the two, and waiting
+    /// indefinitely means blocking a stop on an audio thread the host may have
+    /// already wedged. So the wait is bounded and short. It is only paid when the
+    /// recording came up short, which is the only case where a late fault could
+    /// change what the user is told: a whole recording is never reported as
+    /// shortened whatever arrives afterwards.
+    const LATE_FAULT_WAIT: Duration = Duration::from_millis(50);
+
+    /// How often the bounded wait re-reads the token.
+    const LATE_FAULT_POLL: Duration = Duration::from_millis(5);
+
+    /// Reads the token again for up to [`LATE_FAULT_WAIT`], if the recording
+    /// came up short.
+    ///
+    /// Returns the token that was already known when it does not wait, so the
+    /// caller can use the result unconditionally. Polling rather than a channel
+    /// because the callback must stay bounded and lock-free in the fatal case:
+    /// adding a sender to it means adding a send to the audio thread for every
+    /// error, including the storms `FAULT_LOG_LIMIT` exists to survive.
+    fn drain_late_fault(
+        sink: &StreamSink,
+        known: Option<String>,
+        captured: Duration,
+        expected: Duration,
+    ) -> Option<String> {
+        if known.is_some() || expected.saturating_sub(captured) < FAULT_GAP_TOLERANCE {
+            return known;
+        }
+        let deadline = Instant::now() + LATE_FAULT_WAIT;
+        loop {
+            if let Some(token) = sink.fault_token() {
+                return Some(token.to_string());
+            }
+            if Instant::now() >= deadline {
+                return known;
+            }
+            std::thread::sleep(LATE_FAULT_POLL);
+        }
     }
 
     /// How long the recording itself captured audio.
@@ -2445,7 +2510,18 @@ mod cpal_impl {
             };
             let size_bytes = samples.len() as u64 * std::mem::size_of::<f32>() as u64;
 
-            let capture_fault = reported_capture_fault(capture_fault, duration, expected_duration);
+            // The token was read before the sink stopped and again after it, but
+            // the host's error callback runs on a thread it chooses and on
+            // Windows can still land after the last read. When the recording came
+            // up short, that late fault is the difference between telling the
+            // user their microphone stopped and handing them a short transcript
+            // with no explanation, so the wait is paid here -- once, bounded, and
+            // only in the case where it can change what they are told.
+            let drained = match recording.sink.as_ref() {
+                Some(sink) => drain_late_fault(sink, capture_fault, duration, expected_duration),
+                None => capture_fault,
+            };
+            let capture_fault = reported_capture_fault(drained, duration, expected_duration);
 
             // A capture that stopped early is logged with both figures. The
             // numbers are the whole value here: "the recording is 1.4 s long and
@@ -3613,16 +3689,17 @@ mod cpal_impl {
     mod tests {
         use super::{
             cached_device_rejection, captured_duration, cold_start_seed, device_matches_preferred,
-            disambiguated_label, elapsed_gap_is_suspicious, is_preferred_input_device_name,
-            order_hosts, preroll_capacity, reported_capture_fault, try_hosts, warm_ring,
-            CachedDeviceInfo, ChunkEmitter, Preroll, RecordingError, RecordingManager, SinkMode,
-            StreamSink, STALE_WARM_SILENCE, WARM_FOREVER_MS, WARM_READY_GRACE,
+            disambiguated_label, drain_late_fault, elapsed_gap_is_suspicious,
+            is_preferred_input_device_name, order_hosts, preroll_capacity, reported_capture_fault,
+            try_hosts, warm_ring, CachedDeviceInfo, ChunkEmitter, Preroll, RecordingError,
+            RecordingManager, SinkMode, StreamSink, LATE_FAULT_POLL, STALE_WARM_SILENCE,
+            WARM_FOREVER_MS, WARM_READY_GRACE,
         };
         use crate::platform::audio_stage::{AudioStartupStage, AudioStartupTrace};
         use std::collections::HashSet;
         use std::sync::atomic::Ordering;
         use std::sync::{Arc, Mutex};
-        use std::time::Duration;
+        use std::time::{Duration, Instant};
 
         /// Delivers a block that is measurably not the very first instant.
         ///
@@ -4180,6 +4257,53 @@ mod cpal_impl {
             // The token is what the stop path writes into the metrics, so it has
             // to be the classifier's own word rather than a copy of the message.
             assert_eq!(sink.fault_token(), Some("fatal"));
+        }
+
+        #[test]
+        fn a_fault_reported_after_the_stop_is_still_reported_for_that_recording() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            let whole = Duration::from_millis(6_000);
+            let short = Duration::from_millis(1_400);
+
+            // The host reports the device gone on its own thread, after the stop
+            // has already read the token. Nothing has been recorded yet, so the
+            // drain is what finds it.
+            assert_eq!(sink.fault_token(), None);
+
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    std::thread::sleep(Duration::from_millis(10));
+                    sink.record_fault(
+                        "The requested device is no longer available. For example, it has been unplugged.",
+                    );
+                });
+                let drained = drain_late_fault(&sink, None, short, whole);
+                assert_eq!(
+                    drained.as_deref(),
+                    Some("fatal"),
+                    "a fault arriving inside the bounded wait must reach this recording"
+                );
+            });
+        }
+
+        #[test]
+        fn a_whole_recording_does_not_wait_for_a_fault_that_could_not_matter() {
+            // The wait is only paid where it can change what the user is told. A
+            // recording that captured everything is never reported as shortened,
+            // so blocking the stop for it would be pure latency on the common
+            // path -- and keep-ready means that path runs after every dictation.
+            let sink = StreamSink::new(SinkMode::Discard);
+            let whole = Duration::from_millis(6_000);
+
+            let began = Instant::now();
+            let drained = drain_late_fault(&sink, None, whole, whole);
+            let waited = began.elapsed();
+
+            assert_eq!(drained, None);
+            assert!(
+                waited < LATE_FAULT_POLL,
+                "a whole recording waited {waited:?}, which is the stop blocking for nothing"
+            );
         }
 
         #[test]
