@@ -71,6 +71,12 @@ export async function quitApp(): Promise<void> {
  * preferences is the whole point: the preference can say "ready" while the
  * device failed to open, and that difference is the bug worth reporting.
  */
+// skipcq: JS-0067 -- this is an ES-module export, which is module scope, not the
+// global scope the rule is written for. The analyser only knows that because
+// `.deepsource.toml` sets `module_system = "es-modules"`, and DeepSource reads
+// that config from the default branch, where it does not exist yet -- which is
+// also why the nine new `scripts/**/*.mjs` files come back as parse errors. Both
+// are the same missing config, not nine syntax errors and one global.
 export async function logMicrophoneReadiness(): Promise<void> {
   try {
     const repo = getNativeRepo();
