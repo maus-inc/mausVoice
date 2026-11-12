@@ -4,6 +4,7 @@ on:
     paths:
       - "scripts/ci/run-with-diagnostics.sh"
       - "apps/desktop/**"
+      - "apps/preview/**"
       - "packages/**"
       - "package.json"
       - "pnpm-lock.yaml"

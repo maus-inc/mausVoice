@@ -11,7 +11,10 @@ pub(crate) use rust_pill_shared::clock::monotonic_now as drag_clock_now;
 
 use crate::constants::*;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
-use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
+use crate::state::{
+    next_focus_released_after_review, FlameTongue, PillState, Rocket, RocketPhase, Spark,
+    WindowMode,
+};
 use crate::{draw, input, x11};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -386,9 +389,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         state_press.drag_cancelled.set(false);
         let (x, y) = event.position();
         let is_typing = state_press.is_typing();
-        if backend_press == Backend::LayerShell
-            && state_press.focus_released_after_review.replace(false)
-        {
+        let focus_was_released = state_press.focus_released_after_review.replace(false);
+        if backend_press == Backend::LayerShell && focus_was_released {
             win_press.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
         }
         if is_typing {
@@ -787,13 +789,17 @@ pub fn run(receiver: Receiver<InMessage>) {
                         .map(|r| r.id.clone());
                     let review_id = review.as_ref().map(|r| r.id.clone());
                     let review_text = review.as_ref().map(|r| r.text.clone());
-                    if previous_review_id.is_some() && review_id.is_none() {
-                        if backend_tick == Backend::LayerShell {
-                            state_tick.focus_released_after_review.set(true);
-                            win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
-                        }
+                    let review_ended = previous_review_id.is_some() && review_id.is_none();
+                    state_tick.focus_released_after_review.set(
+                        next_focus_released_after_review(
+                            previous_review_id.is_some(),
+                            review_id.is_some(),
+                            state_tick.focus_released_after_review.get(),
+                        ),
+                    );
+                    if review_ended && backend_tick == Backend::LayerShell {
+                        win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
                     } else if review_id.is_some() {
-                        state_tick.focus_released_after_review.set(false);
                         if review_id != previous_review_id
                             && backend_tick == Backend::LayerShell
                         {
@@ -960,31 +966,31 @@ pub fn run(receiver: Receiver<InMessage>) {
                 entry_tick.clone().upcast()
             };
             target.show();
-            match backend_tick {
-                Backend::LayerShell => {
-                    if !state_tick.focus_released_after_review.get() {
+            if !state_tick.focus_released_after_review.get() {
+                match backend_tick {
+                    Backend::LayerShell => {
                         win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
                         glib::idle_add_local_once(move || {
                             target.grab_focus();
                         });
                     }
-                }
-                Backend::X11 => {
-                    win_tick.set_accept_focus(true);
-                    glib::timeout_add_local(Duration::from_millis(100), {
-                        let w = win_tick.clone();
-                        move || {
-                            x11::force_keyboard_focus(&w);
+                    Backend::X11 => {
+                        win_tick.set_accept_focus(true);
+                        glib::timeout_add_local(Duration::from_millis(100), {
+                            let w = win_tick.clone();
+                            move || {
+                                x11::force_keyboard_focus(&w);
+                                target.grab_focus();
+                                ControlFlow::Break
+                            }
+                        });
+                    }
+                    Backend::PlainWayland => {
+                        win_tick.set_accept_focus(true);
+                        glib::idle_add_local_once(move || {
                             target.grab_focus();
-                            ControlFlow::Break
-                        }
-                    });
-                }
-                Backend::PlainWayland => {
-                    win_tick.set_accept_focus(true);
-                    glib::idle_add_local_once(move || {
-                        target.grab_focus();
-                    });
+                        });
+                    }
                 }
             }
         } else if !is_typing {

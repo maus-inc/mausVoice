@@ -225,13 +225,6 @@ test("the module graph gains no new circular dependencies", (t) => {
     maxBuffer: 128 * 1024 * 1024,
   });
   execFileSync("tar", ["-xf", "-", "-C", dir], { input: archive });
-  writeFileSync(
-    resolve(dir, ".fallowrc.json"),
-    readFileSync(resolve(root, ".fallowrc.json")),
-  );
-
-  const inherited = new Set(architectureCycles(dir));
-  const observed = architectureCycles(root);
   const changedFiles = new Set([
     ...execFileSync("git", ["diff", "--name-only", baseSha], {
       cwd: root,
@@ -246,13 +239,16 @@ test("the module graph gains no new circular dependencies", (t) => {
       .split("\n")
       .filter(Boolean),
   ]);
-  // Fallow reports concrete cycle paths, not just strongly connected
-  // components. An unchanged inherited cycle can gain another equivalent
-  // path as unrelated imports move; only paths touching files changed by this
-  // branch can be introduced by this branch.
+  const architectureConfigChanged = changedFiles.has(".fallowrc.json");
+  const inherited = new Set(architectureCycles(dir));
+  const observed = architectureCycles(root);
+  // Keep each side's own Fallow config. If this branch changes graph
+  // configuration, compare every cycle; otherwise only cycles touching changed
+  // modules can be introduced by source edits.
   const newCycles = observed.filter(
     (cycle) =>
-      cycle.split(" -> ").some((file) => changedFiles.has(file)) &&
+      (architectureConfigChanged ||
+        cycle.split(" -> ").some((file) => changedFiles.has(file))) &&
       !inherited.has(cycle),
   );
   assert.deepEqual(

@@ -411,6 +411,20 @@ impl PillState {
     }
 }
 
+pub(crate) fn next_focus_released_after_review(
+    previous_review_active: bool,
+    review_active: bool,
+    was_released: bool,
+) -> bool {
+    if previous_review_active && !review_active {
+        true
+    } else if review_active {
+        false
+    } else {
+        was_released
+    }
+}
+
 /// The X11 selector tail is transparent reserve, not part of the panel canvas.
 /// Parking, drawing, native entry margins and input geometry share this height.
 pub(crate) fn content_canvas_height(allocation_height: f64, below_slot: f64) -> f64 {
@@ -434,6 +448,14 @@ fn content_origin(aw: f64, ah: f64, dw: f64, dh: f64, below_slot: f64) -> (f64, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_to_composer_releases_focus_for_every_backend() {
+        assert!(next_focus_released_after_review(true, false, false));
+        assert!(!next_focus_released_after_review(false, true, true));
+        assert!(next_focus_released_after_review(false, false, true));
+        assert!(!next_focus_released_after_review(false, false, false));
+    }
 
     #[test]
     fn x11_selector_reserve_does_not_move_parked_content_or_the_entry() {
