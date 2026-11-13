@@ -1,12 +1,18 @@
 # What was measured, and what was not
 
 Every number in this file was produced by a command run in the Arena agent
-sandbox on branch `arena/05c08045-mausvoice`, at the commit named in each row.
-The commit matters: a count without one is a number that silently goes stale,
-which is how this table came to report 581 Rust tests while the branch head ran
-590. Commands that were
-not run are not in the measured column; they are in the unmeasured column with
-what would produce them.
+sandbox on branch `arena/05c08045-mausvoice`. The table has two kinds of row, and
+this used to claim all of them carried a commit when only some did:
+
+- **counts** (tests, tasks, routes) carry the commit they were measured at, because
+  a count without one silently goes stale, which is how this table came to report
+  581 Rust tests while the branch head ran 590;
+- **pass/fail and geometry rows** do not, because they are not counts that drift:
+  `cargo fmt --check` prints clean or it does not, and a measured 955 px is a
+  reading from one run, not something that goes stale as the branch moves.
+
+Commands that were not run are not in the measured column; they are in the
+unmeasured column with what would produce them.
 
 This file exists because the two are easy to blur. A green test suite says a
 contract holds; it does not say how fast anything is. Nothing below is an
@@ -16,15 +22,15 @@ estimate dressed as a measurement.
 
 | Gate | Command | Result |
 | --- | --- | --- |
-| Rust unit tests | `cargo test --locked --lib` in `apps/desktop/src-tauri` | **590 passed, 0 failed, 1 ignored** (`18f3cb92`) |
+| Rust unit tests | `cargo test --locked --lib` in `apps/desktop/src-tauri` | **596 passed, 0 failed, 1 ignored** (`9c5534e3`) |
 | Rust lints | `cargo clippy --locked --all-targets -- -D warnings` | 0 warnings, 0 errors |
 | Rust formatting | `cargo fmt --check` | clean |
-| Frontend tests (unit) | `vitest run src` in `apps/desktop` | **4144 passed, 0 failed** across 357 files (`18f3cb92`) |
+| Frontend tests (unit) | `vitest run src` in `apps/desktop` | **4173 passed, 0 failed** across 360 files (`9c5534e3`) |
 | Frontend tests (evals and integration) | `vitest run test` in `apps/desktop` | **not run without `GROQ_API_KEY`**; these suites call a live provider and fail on the missing key, so they are not part of the green figure above |
-| Frontend types | `turbo run check-types` | 9/9 tasks successful |
+| Frontend types | `turbo run check-types` | 7/7 tasks successful (`9c5534e3`) |
 | Preview types (TS 5.9) | `tsc --noEmit -p apps/preview/tsconfig.json` | clean |
 | Preview production build | `pnpm --filter @maus-inc/preview build` | built in 16.4 s |
-| QA document | `pnpm test:qa-docs` | 3/3 |
+| QA document | `pnpm test:qa-docs` | **7 passed, 0 failed** (`9c5534e3`) |
 | Bindings | `scripts/bindings.sh` | regenerated, zero unexplained diff |
 
 ## Browser verification

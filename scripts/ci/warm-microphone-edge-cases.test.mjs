@@ -18,6 +18,10 @@ import { fileURLToPath } from "node:url";
 // before a single row was checked.
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DOC = join(ROOT, "docs/qa/warm-microphone-edge-cases.md");
+const MEASUREMENTS = new URL(
+  "../../docs/qa/warm-microphone-measurements.md",
+  import.meta.url,
+);
 
 const walk = (dir, extensions) => {
   const out = [];
@@ -231,20 +235,25 @@ test("every row states how it is checked", () => {
   }
 });
 
-test("the document carries no em dashes", () => {
+test("the QA documents carry no em dashes", () => {
   // `.coderabbit.yaml` sets a path instruction for `**/*.{md,mdx}`: "No em
-  // dashes". The verdict cells used one as a separator, so the rule was broken
-  // by the document that states the policy. The separator is now a colon, and
-  // this keeps it that way: a reviewer should not have to notice a style rule
-  // the repository already wrote down.
-  const doc = readFileSync(DOC, "utf8");
-  const offenders = doc
-    .split("\n")
-    .map((line, index) => ({ line, number: index + 1 }))
-    .filter(({ line }) => line.includes("\u2014"));
-  assert.deepEqual(
-    offenders.map(({ number }) => number),
-    [],
-    "em dashes at lines: " + offenders.map(({ number }) => number).join(", "),
-  );
+  // dashes". The verdict cells used one as a separator, so the rule was broken by
+  // the document that states the policy. The separator is now a colon, and this
+  // keeps it that way: a reviewer should not have to notice a style rule the
+  // repository already wrote down.
+  //
+  // Both QA documents, not just the matrix. This test used to read `DOC` alone,
+  // and the sibling measurements document had an em dash the whole time — a guard
+  // that covers one of two files reads like a guard over both.
+  const offenders = [];
+  for (const file of [DOC, MEASUREMENTS]) {
+    readFileSync(file, "utf8")
+      .split("\n")
+      .forEach((line, index) => {
+        if (line.includes("\u2014")) {
+          offenders.push(`${file.split("/").pop()}:${index + 1}`);
+        }
+      });
+  }
+  assert.deepEqual(offenders, [], "em dashes at " + offenders.join(", "));
 });
