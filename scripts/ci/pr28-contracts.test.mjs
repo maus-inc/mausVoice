@@ -535,7 +535,9 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     // deferred or refused the save, so the missed-release net then had nothing left
     // to act on and the drop was lost. The flag is only cleared by a save that
     // actually happened.
-    assert.match(source.gtkX11, /!state_tick\.x11_release_persisted\.get\(\)/);
+    // The net now lives in `settle_unrecorded_drop`, so the predicate is written
+    // against the borrowed state it is handed.
+    assert.match(source.gtkX11, /!was_dragging\.get\(\) \|\| state\.x11_release_persisted\.get\(\)/);
     assert.doesNotMatch(source.gtkX11, /x11_release_persisted\.replace\(false\)/);
   });
 
@@ -800,17 +802,15 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // it: a second unsettled drop would otherwise be treated as already recorded,
     // and `allows_save` answers false for a drag that never ended -- forever.
     const x11 = read("packages/rust_gtk_pill/src/x11.rs");
-    // The block that runs while a drag is held or settling: from its guard up to
-    // the first statement after it.
-    const guard = x11.indexOf(
-      "if dragging || state_tick.drag_motion.borrow().is_settling()",
-    );
-    const next = x11.indexOf("let save_owed", guard);
-    assert.ok(guard > 0 && next > guard, "the settle guard is not recognisable");
-    const arm = x11.slice(guard, next);
+    // The rule lives in `note_drag_holds`, which the timer calls while a drag is
+    // held or settling. It asserts the pairing rather than the placement: the flag
+    // is only correct next to the check that a drag is starting.
+    const at = x11.indexOf("fn note_drag_holds(");
+    assert.ok(at > 0, "the drag-hold rule is not recognisable");
+    const rule = x11.slice(at, x11.indexOf("\n}", at));
     assert.match(
-      arm,
-      /drop_recorded\.set\(false\)/,
+      rule,
+      /if dragging \{\s*drop_recorded\.set\(false\);/,
       "a new drag keeps the previous gesture's recorded drop",
     );
   });

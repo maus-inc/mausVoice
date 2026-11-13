@@ -137,6 +137,71 @@ pub(crate) fn move_toplevel(window: &gtk::Window, x: c_int, y: c_int) {
 }
 
 /// Persists the X11 drop position derived from the live pointer.
+/// Account for a frame that is inside a drag or its settle.
+///
+/// A drag that is starting has already called `SaveGuard::drag_started`, which
+/// clears the previous gesture's drag end. The record this timer keeps has to
+/// follow it, or the next unsettled drop would be treated as already recorded and
+/// the guard would refuse every save from then on: `allows_save` answers `false`
+/// for a drag that never ended, forever.
+fn note_drag_holds(was_dragging: &Cell<bool>, drop_recorded: &Cell<bool>, dragging: bool) {
+    was_dragging.set(dragging);
+    if dragging {
+        drop_recorded.set(false);
+    }
+}
+
+/// The net for a drag that ended without arming a settle.
+///
+/// A release that armed no settle -- because no monitor could be resolved before
+/// it -- is also a release that can skip `drag_ended`. If a layout change landed
+/// during that drag, `allows_save` then answers `false` forever through its "a
+/// drag that never ended has no settled frame" arm, so this would retry every
+/// 100 ms and never save, and the next launch would restore the position from
+/// before the drag. Recording it here is the same drop, learned one path later.
+///
+/// Named rather than inlined because the timer closure that owns it also decides
+/// where to park an idle pill, and the two questions share nothing but a caller.
+fn settle_unrecorded_drop(
+    window: &gtk::Window,
+    state: &Rc<PillState>,
+    was_dragging: &Cell<bool>,
+    drop_recorded: &Cell<bool>,
+) {
+    if !was_dragging.get() || state.x11_release_persisted.get() {
+        was_dragging.set(false);
+        drop_recorded.set(false);
+        return;
+    }
+    // Record the drop once, on the first pass that sees it. Only once, because
+    // `drag_ended` starts the drag hold: re-recording every pass would push the
+    // hold's start forward and nothing would ever save.
+    if !drop_recorded.get() {
+        state
+            .save_guard
+            .borrow_mut()
+            .drag_ended(crate::pill::drag_clock_now());
+        drop_recorded.set(true);
+    }
+    // A refusal from the save guard is temporary, so the net has to stay armed
+    // for it: clearing the marker here is what used to lose the drop, because
+    // nothing else would come back for it.
+    let allowed = state
+        .save_guard
+        .borrow()
+        .allows_save(crate::pill::drag_clock_now());
+    if let Some(pos) = persist_drop_position(window, state) {
+        state.x11_drag_applied.set(pos);
+        was_dragging.set(false);
+        drop_recorded.set(false);
+    } else if allowed {
+        // The guard allowed it, so no monitor could be resolved: that is not
+        // something a retry can fix.
+        was_dragging.set(false);
+        drop_recorded.set(false);
+    }
+}
+
 ///
 /// Only the slow timer calls this now, as a net for drags that ended without
 /// a settle (for example, when no connected monitor could be resolved to arm
@@ -568,15 +633,7 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // The frame tick owns the window while a drag is held or settling;
         // this slow timer only parks idle pills and heals hot-plug states.
         if dragging || state_tick.drag_motion.borrow().is_settling() {
-            was_dragging.set(dragging);
-            // A drag that is starting has already called `SaveGuard::drag_started`,
-            // which clears the previous gesture's drag end. The record this timer
-            // keeps has to follow it, or the next unsettled drop would be treated as
-            // already recorded and the guard would refuse every save from then on:
-            // `allows_save` answers `false` for a drag that never ended, forever.
-            if dragging {
-                drop_recorded.set(false);
-            }
+            note_drag_holds(&was_dragging, &drop_recorded, dragging);
             return ControlFlow::Continue;
         }
 
@@ -594,47 +651,7 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // The flag is only cleared by a release that actually persisted. Clearing it
         // on every pass meant a release deferred by the save guard consumed it
         // anyway, so the net saw nothing left to save and the position was lost.
-        if was_dragging.get() && !state_tick.x11_release_persisted.get() {
-            // Record the drop once, on the first pass that sees it.
-            //
-            // This net exists for a release that armed no settle, and that case can
-            // also skip `drag_ended` -- the normal release path records it, this one
-            // never ran. If a layout change landed during the drag, `allows_save`
-            // then answers `false` forever through its "a drag that never ended has
-            // no settled frame" arm, so the net would retry every 100 ms and never
-            // save, and the next launch would restore the position from before the
-            // drag. Recording it here is the same drop, learned one path later.
-            //
-            // Only once: `drag_ended` starts the drag hold, so re-recording every
-            // pass would push the hold's start forward and nothing would ever save.
-            if !drop_recorded.get() {
-                state_tick
-                    .save_guard
-                    .borrow_mut()
-                    .drag_ended(crate::pill::drag_clock_now());
-                drop_recorded.set(true);
-            }
-            // A refusal from the save guard is temporary, so the net has to stay
-            // armed for it: clearing the marker here is what used to lose the
-            // drop, because nothing else would come back for it.
-            let allowed = state_tick
-                .save_guard
-                .borrow()
-                .allows_save(crate::pill::drag_clock_now());
-            if let Some(pos) = persist_drop_position(&win_tick, &state_tick) {
-                state_tick.x11_drag_applied.set(pos);
-                was_dragging.set(false);
-                drop_recorded.set(false);
-            } else if allowed {
-                // The guard allowed it, so no monitor could be resolved: that is
-                // not something a retry can fix.
-                was_dragging.set(false);
-                drop_recorded.set(false);
-            }
-        } else {
-            was_dragging.set(false);
-            drop_recorded.set(false);
-        }
+        settle_unrecorded_drop(&win_tick, &state_tick, &was_dragging, &drop_recorded);
 
         // Pick the anchor that decides which monitor owns the pill: the saved
         // drop point when parked, else wherever the pill already is. (Drags
