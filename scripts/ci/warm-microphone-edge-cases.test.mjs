@@ -68,54 +68,34 @@ const codeOnly = [
   .join("\n");
 
 /**
- * Backticked prose that is deliberately not a citation.
+ * The citation rules, in one place.
  *
- * Every other backticked token in the matrix has to name a test that exists.
- * That is the point: the previous guard *filtered* tokens it judged not to look
- * like test names, so a citation to a test that did not exist was discarded
- * rather than reported, and the row still passed on the strength of the names
- * beside it. Filtering by shape cannot be made safe, because the shapes overlap:
- * a sentence-style test name may contain a capital (`... the Rust classifier`),
- * and a token that is merely prose looks identical to a short test name.
+ * Two guards used to live here and both were wrong in the same direction — they
+ * classified a token by its *shape* and dropped the ones that looked like prose.
+ * That is how a short name such as `gone` could be written into a `Verified:` cell
+ * and assert nothing, and how `pactl list source-outputs` could be reported as a
+ * missing test. Shape cannot decide this: a sentence-style test name contains
+ * capitals and spaces, and prose can look exactly like a short test name.
  *
- * So the shapes below are only a fast path. A token that matches neither shape
- * is no longer dropped; it is checked against the source like everything else,
- * and accepted only because it appears there, never because it was filtered away.
+ * So nothing is classified or dropped now. Citations come from the verdict cell
+ * only, and every one of them has to be a declaration in the source.
  */
-const isProseNotCitation = (token) =>
-  // Numeric values and limits: `0`, `1.5`, `NaN`, `Infinity`,
-  // `Number.MAX_SAFE_INTEGER`.
-  /^[-+]?\d[\d_.]*$/.test(token) ||
-  /^(NaN|Infinity|Number\.[A-Z_]+)$/.test(token) ||
-  // A label:value token, a call, or an angle-bracket placeholder.
-  /[:<>()]/.test(token) ||
-  // A bare word with no space: a field, a status, a backend name. Checked
-  // after the two shapes below have had their chance, because a snake_case
-  // test name is also "a word with no space".
-  /^[A-Za-z][A-Za-z0-9_]*$/.test(token);
 
-// A cited test is a backticked snake_case token.
-const isTestName = (token) =>
-  /^[a-z][a-z0-9_]{6,}$/.test(token) &&
-  // Real test names read as sentences; config constants are upper case and
-  // would not reach here, while short identifiers are excluded by length.
-  token.includes("_");
+// A name declared as a Rust test: `fn <name>(`.
+const isRustTestDeclaration = (name, source) =>
+  new RegExp(`fn\\s+${escapeRe(name)}\\s*\\(`).test(source);
 
-// A sentence-style name as `it("...")` writes it.
+// A name declared as a JS/TS test: a quoted name after `it(`, `test(` or
+// `describe(`.
 //
-// The old test for this was a looser three-word regex, which accepted
-// `pactl list source-outputs` -- a shell command in backticks -- as a citation.
-// A command is not a test, so it is excluded by having to appear as a quoted
-// test name in the source, below.
-//
-// Capitals are allowed. Forbidding them used to look like a way to exclude
-// commands, but it excluded real tests too: `knows the same in-use markers as
-// the Rust classifier` is the name of a test in
-// `microphone-readiness.utils.test.ts`, and this guard silently ignored it.
-const looksLikeSentenceName = (token) =>
-  /^[A-Za-z][A-Za-z0-9 ,.'()\-]*$/.test(token) &&
-  token.includes(" ") &&
-  !/[=/|:]/.test(token);
+// Built by concatenation rather than one template literal: the backtick and the
+// quote classes in one template are easy to escape wrongly, and a mangled pattern
+// here throws at run time rather than failing a test.
+const isScriptTestDeclaration = (name, source) => {
+  const opener = ["it", "test", "describe"].join("|");
+  const pattern = `(?:^|[^\\w])(?:${opener})\\(\\s*["'\u0060]${escapeRe(name)}["'\u0060]`;
+  return new RegExp(pattern, "m").test(source);
+};
 
 const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -163,20 +143,9 @@ test("every test cited by the edge-case matrix exists", () => {
   // `pactl list source-outputs` is a shell command in the document's prose, and
   // it passed because the same phrase appeared in a string elsewhere. Requiring
   // the declaration is what makes this a check on tests rather than on text.
-  const isDeclaredTest = (name) => {
-    // Rust declares a test as `fn <name>(`, optionally inside `mod tests`. Nothing
-    // else in the source takes that shape, so it is a declaration and not a
-    // mention -- which the old `codeOnly.includes(name)` arm could not tell apart.
-    if (new RegExp(`fn\\s+${escapeRe(name)}\\s*\\(`).test(codeOnly)) {
-      return true;
-    }
-    const opener = ["it", "test", "describe"].join("|");
-    // Built by concatenation rather than one template literal: the backtick and
-    // the quote classes in one template are easy to escape wrongly, and a mangled
-    // pattern here throws at run time rather than failing a test.
-    const pattern = `(?:^|[^\\w])(?:${opener})\\(\\s*["'\u0060]${escapeRe(name)}["'\u0060]`;
-    return new RegExp(pattern, "m").test(codeOnly);
-  };
+  const isDeclaredTest = (name) =>
+    isRustTestDeclaration(name, codeOnly) ||
+    isScriptTestDeclaration(name, codeOnly);
 
   // Every cited name has to be a *declaration*, in both naming styles.
   //
