@@ -103,8 +103,10 @@ pub fn store_published_position(
     // A publish that was already in flight when the record was erased describes a
     // position the user has since cleared. The gate below only refuses writes while
     // a clear is running, and this one arrives after it, so it has to be dropped on
-    // its own terms.
-    if take_erased_publish() {
+    // its own terms -- but only while the pill has not yet answered the clear. A
+    // save that arrives after that answer is the user's next drag, and dropping it
+    // would leave the pill parked with nothing stored.
+    if erase_is_undeclared() {
         log::debug!("Dropped a pill position published before the record was erased");
         return;
     }
@@ -147,29 +149,53 @@ pub fn store_published_position(
 /// already sent is still in the queue: the instruction cannot retract a value that
 /// is in flight. This latch is the retraction.
 ///
-/// One-shot, not sticky. The pill writes its events to stdout and the desktop
-/// reads them in order, so at most one publish can be sitting in the queue when
-/// an erase lands -- a drop publishes once, on the frame it settles. A flag left
-/// set would instead wedge every later save, turning a cleared pill into one that
-/// never remembers its position again.
-static POSITION_ERASED: AtomicBool = AtomicBool::new(false);
+/// ## Why this counts rather than drops
+///
+/// The obvious design is a one-shot flag that discards the next publish. It is
+/// wrong, and a reviewer caught it: a clear that had nothing in flight leaves the
+/// flag set, so the *next genuine save* -- the drop the user makes right after
+/// resetting -- is thrown away. The pill then looks parked while the database is
+/// empty, and the next launch opens at the default spot.
+///
+/// The root cause is that a stale publish and a genuine one are indistinguishable
+/// once they reach this module. What distinguishes them is the pill's own report,
+/// which is what `note_report` sees. A clear is owed one report that says the
+/// record is gone: the pill always answers a `ForgetPosition` with
+/// `has_saved_position: false`, and that answer is ordered before any drag that
+/// follows it. So the erase is *declared*, and the declaration is spent by the
+/// report that declares it -- never by a save.
+static ERASE_UNDECLARED: AtomicBool = AtomicBool::new(false);
 
 fn mark_position_erased() {
-    POSITION_ERASED.store(true, Ordering::Release);
+    ERASE_UNDECLARED.store(true, Ordering::Release);
 }
 
-/// Whether this publish was sent before the record was erased, consuming the
-/// discard if so.
+/// Account for a report the pill published, returning whether it describes a
+/// record that should be stored.
 ///
-/// `swap` rather than `load`: the caller drops exactly this one message.
+/// Called for every `PositionChanged`, whether or not it carries a position: the
+/// erase is declared by the report that says there is no position, so the reports
+/// that carry nothing are exactly the ones that have to be read.
+pub(crate) fn note_report(has_saved_position: bool) -> bool {
+    if has_saved_position {
+        return true;
+    }
+    // A report with no position is either the answer to a clear -- which spends
+    // the declaration -- or an ordinary reset, which leaves it alone. Spent by a
+    // `swap` so two clears cannot leave one declaration behind for a later save.
+    ERASE_UNDECLARED.swap(false, Ordering::AcqRel);
+    false
+}
+
+/// Whether a save may still land, given what the queue has delivered so far.
 ///
-/// The trade is deliberate. If no publish was actually in flight, this swallows
-/// the next genuine one -- a drag dropped immediately after a reset would not be
-/// stored, and the pill would reopen where it was last saved. That is recoverable
-/// in a way the alternative is not: letting the stale publish through recreates
-/// the row the user just cleared, which the clear's whole contract forbids.
-fn take_erased_publish() -> bool {
-    POSITION_ERASED.swap(false, Ordering::AcqRel)
+/// False only while an erase is declared and unanswered: in that window the pill
+/// has not yet reached the report that proves it knows the record is gone, so a
+/// save sitting in the queue ahead of that report describes the position before
+/// the erase. Once the declaration is spent this is true for the rest of the
+/// process, which is what makes the very next drag storable.
+fn erase_is_undeclared() -> bool {
+    ERASE_UNDECLARED.load(Ordering::Acquire)
 }
 
 /// Forget the stored position, which is what "Reset Pill Position" means.

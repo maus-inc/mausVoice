@@ -154,6 +154,17 @@ pub(crate) fn persist_drop_position(
     // which is exactly what the guard exists to prevent.
     let now = crate::pill::drag_clock_now();
     if !state.save_guard.borrow().allows_save(now) {
+        // Arm the deadline, exactly as `write_window_position` does in its refusal.
+        // Without it `drag_save_due` stays `None`, `save_owed` stays false, and the
+        // slow timer's idle parking moves the window back to the position from
+        // before the drop on every pass -- so the retry the caller keeps for would
+        // save the place the pill had already been dragged away from.
+        //
+        // `save_due_at` is asked before `drag_save_due` is set, because a save that
+        // is not owed answers `None` and clearing the deadline is the correct
+        // outcome for it.
+        let due = state.save_guard.borrow().save_due_at(now);
+        state.drag_save_due.set(due);
         return None;
     }
     let (root_x, root_y) = root_pointer(window);

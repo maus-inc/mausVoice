@@ -859,11 +859,17 @@ fn dispatch_pill_event(app: &tauri::AppHandle, event: PillEvent) {
             monitor,
             display_id,
         } => {
+            // Every report is accounted for before it is acted on, including the
+            // ones that carry nothing: a clear is declared by the pill's answer that
+            // the record is gone, and that answer is a `has_saved_position: false`
+            // report. Reading only the saves would never see it, and the erase would
+            // stay undeclared for the rest of the process.
+            let storable = crate::pill_position::note_report(has_saved_position);
             // Only a geometry the pill considers saved describes where the user
             // left it. A reset publishes `has_saved_position: false` with the
             // default corner it just moved to, and storing that would undo the
             // reset on the next launch.
-            if has_saved_position {
+            if storable && has_saved_position {
                 if let (Some(rect), Some(monitor)) = (rect.as_ref(), monitor.as_ref()) {
                     crate::pill_position::store_published_position(app, rect, monitor, display_id);
                 }

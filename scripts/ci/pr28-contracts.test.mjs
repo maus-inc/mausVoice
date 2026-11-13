@@ -700,6 +700,99 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
   });
 
+  it("never lets an erase discard the first genuine save", () => {
+    // A one-shot "drop the next publish" flag cannot tell a stale publish from the
+    // user's next drag: a clear with nothing in flight leaves the flag set, and the
+    // drop made right after it is thrown away -- the pill looks parked while the
+    // database is empty. The erase is declared instead, and spent by the report that
+    // declares it (the pill's `has_saved_position: false` answer), never by a save.
+    const pos = read("apps/desktop/src-tauri/src/pill_position.rs");
+    assert.match(pos, /fn note_report\(has_saved_position: bool\) -> bool/);
+    assert.match(
+      pos,
+      /if has_saved_position \{\s*return true;/,
+      "a save must never be discarded by the erase accounting",
+    );
+    assert.match(
+      pos,
+      /ERASE_UNDECLARED\.swap\(false/,
+      "the declaration is not spent by the answer that spends it",
+    );
+    // The gate on the write is the declaration being unanswered, not a one-shot
+    // take, so the very next drag stores.
+    assert.match(pos, /if erase_is_undeclared\(\)/);
+    assert.doesNotMatch(pos, /take_erased_publish/);
+    // And every report is accounted for, not only the saves: reading only the
+    // saves would never see the answer that spends the declaration.
+    for (const file of [
+      "apps/desktop/src-tauri/src/pill_process.rs",
+      "apps/desktop/src-tauri/src/platform/macos/overlay.rs",
+    ]) {
+      assert.match(
+        read(file),
+        /pill_position::note_report\(has_saved_position\)/,
+        `${file}: reports that carry no position are not accounted for`,
+      );
+    }
+  });
+
+  it("spends a cursor reset only after a placement lands", () => {
+    // `screens()` can be empty -- a lid closing, every display asleep -- and the
+    // tick returns without placing anything. Spending the reset before that return
+    // turns a reset that never happened into one that can never happen.
+    const app = source.macApp;
+    const spend = app.indexOf(".after_placement()");
+    const bail = app.indexOf("let Some((screen, frame)) = target else {");
+    assert.ok(spend > 0 && bail > 0, "the reset spend or the bail is not recognisable");
+    assert.ok(
+      spend > bail,
+      "macOS: the cursor reset is spent before the placement can fail",
+    );
+  });
+
+  it("reports the drop on macOS too, not the window the retry found", () => {
+    const write = scope("macApp", "fn write_drag_position(");
+    assert.match(
+      write,
+      /state\.drop_origin\.set\(Some/,
+      "macOS: the refused drop is not recorded",
+    );
+    assert.match(
+      write,
+      /state\.drop_origin\.take\(\)/,
+      "macOS: the retry never reads the recorded drop",
+    );
+    assert.match(
+      write,
+      /let reported = Rect \{[\s\S]{0,120}?x: origin\.0,/,
+      "macOS: the report carries the live frame instead of the drop",
+    );
+    assert.match(write, /Some\(reported\)/);
+  });
+
+  it("leaves an unnamed restore destination unnamed on macOS", () => {
+    // The record's token names the display that went away -- that is why the
+    // restore ran. Falling back to it pairs the destination's geometry with the
+    // dead display's name, which is exactly what the restore is correcting.
+    const app = source.macApp;
+    assert.match(app, /saved_display_id: Cell::new\(restored\.and\(restored_display_id\)\)/);
+  });
+
+  it("arms the save deadline when the X11 fallback is refused", () => {
+    // A refusal that leaves `drag_save_due` unset leaves `save_owed` false, and the
+    // slow timer parks the window back at the pre-drop position on every pass -- so
+    // the retry it is kept for saves a place the pill was already moved away from.
+    const reduce = read("packages/rust_gtk_pill/src/x11.rs");
+    const at = reduce.indexOf("pub(crate) fn persist_drop_position(");
+    assert.ok(at > 0, "the fallback is not recognisable");
+    const refusal = reduce.slice(at, reduce.indexOf("let (root_x, root_y)", at));
+    assert.match(
+      refusal,
+      /state\.drag_save_due\.set\(due\)/,
+      "the refused fallback does not arm the deadline, so idle parking undoes the drop",
+    );
+  });
+
   it("resets its fallback record when a new drag starts", () => {
     // The X11 fallback saves a drag that ended without settling, and it records
     // the drag end once because `drag_ended` starts the hold. `drag_started`
@@ -761,6 +854,34 @@ describe("PR28 ring-alpha render-loop policy", () => {
       /Some\(reported\)/,
       "windowsPill: the reported rectangle is not the one built from the drop",
     );
+    // The work area travels with the rectangle: restore clamps the origin into
+    // it, so a live *monitor* answered from wherever the window drifted to would
+    // make the desktop store an origin and a work area from different displays,
+    // and the next launch would remap one against the other.
+    assert.match(
+      write,
+      /let monitor = monitor_work_area_at\(/,
+      "windowsPill: the work area is resolved from the live window, not the drop",
+    );
+    // And nothing in the report may come from the live window except the size,
+    // which does not move: an origin, a work area or a display resolved there can
+    // all disagree with the drop after reconciliation has moved the pill.
+    const afterSave = write.slice(
+      write.indexOf(".set(true)"),
+      write.indexOf("ipc::send"),
+    );
+    assert.ok(afterSave.length > 0, "the save path is not recognisable");
+    const geometryUses = afterSave.match(/current_pill_geometry\(hwnd\)/g) ?? [];
+    assert.equal(
+      geometryUses.length,
+      1,
+      "the report reads the live window more than once; only the size may come from it",
+    );
+    assert.match(
+      afterSave,
+      /let \(live_rect, _\) = current_pill_geometry\(hwnd\)/,
+      "the live window is read for something other than the rectangle size",
+    );
   });
 
   it("installs every piece of the toolchain, not just cargo", () => {
@@ -770,27 +891,36 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // and announce a toolchain that cannot build the workspace.
     const script = read("setup-toolchain.sh");
     assert.match(script, /toolchain_installed\(\)/);
-    for (const piece of [
-      "lib/rustlib/x86_64-pc-windows-msvc",
-      "lib/rustlib/aarch64-apple-darwin",
-      "/tmp/cargo-vendor",
-      "config.toml",
-      "gtk-3.0",
+    // Existence is not completion. An interrupted `tar` leaves a tree that looks
+    // whole by name, so each unpacked tree is published only after it succeeded and
+    // the retry asks for the marker, not the directory.
+    for (const marker of [
+      ".install-complete",
+      "/tmp/cargo-vendor/.unpack-complete",
+      "/tmp/sysroot/.unpack-complete",
     ]) {
       assert.ok(
-        script.includes(piece),
-        `the retry check does not look for ${piece}, so a half-installed toolchain passes`,
+        script.includes(marker),
+        `the retry check does not look for ${marker}, so a half-unpacked tree passes`,
       );
     }
-    // The config copy is a step that can fail, so it has to report.
-    const copyLine = script
-      .split("\n")
-      .find((line) => line.includes('cp "$SV/rust/cargo-config.toml"'));
-    assert.ok(copyLine, "the cargo config copy is gone");
+    // Staged then published, for the trees and the config alike: a partial result
+    // must never be reachable under the name the check accepts.
     assert.match(
       script,
-      /cp "\$SV\/rust\/cargo-config\.toml"[^\n]*\|\|\s*\{/,
-      "an unchecked config copy reports readiness without the vendor config",
+      /mv \/tmp\/sysroot\.staging \/tmp\/sysroot/,
+      "the sysroot is extracted in place, so an interrupted untar looks complete",
+    );
+    assert.match(
+      script,
+      /mv "\$CARGO_HOME\/config\.toml\.tmp" "\$CARGO_HOME\/config\.toml"/,
+      "the cargo config is copied in place, so a truncated copy is kept",
+    );
+    // And the config is compared against the payload, not merely present.
+    assert.match(
+      script,
+      /cmp -s "\$SV\/rust\/cargo-config\.toml" "\$CARGO_HOME\/config\.toml"/,
+      "a truncated config.toml satisfies an existence check forever",
     );
   });
 
@@ -3193,14 +3323,16 @@ describe("macOS saved-position scope", () => {
     // Anything else means a second code path writes the saved origin.
     const seeds = source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
     assert.equal(seeds, 1, "the restored origin must be seeded exactly once");
-    // Five writers of the saved origin, each with its own reason: the drop, the
-    // drop a guard refused (recorded while the window is still on it, so the retry
-    // cannot read a repositioned frame instead), the idle clamp that holds the
-    // window at a moved origin, the reconciliation that adopts a move AppKit
-    // already made, and the reconciliation that moves the pill itself. Anything
-    // else is another code path deciding where the pill was parked.
-    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 5);
-    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 5);
+    // Four writers of the saved origin, each with its own reason: the drop, the
+    // idle clamp that holds the window at a moved origin, the reconciliation that
+    // adopts a move AppKit already made, and the reconciliation that moves the pill
+    // itself. Anything else is another code path deciding where the pill was parked.
+    //
+    // A refused drop is no longer one of them: it records the origin in
+    // `drop_origin` and the write reads it back, so the retry cannot save a
+    // repositioned frame, and the one writer that records it is the one above.
+    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 4);
+    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 4);
     // The clamp writer is the one that cannot be dropped without the record
     // disagreeing with the window it describes: the tick clamps `saved_x` into
     // the visible frame and then holds the window there, so a stored origin the
@@ -3213,8 +3345,13 @@ describe("macOS saved-position scope", () => {
     const capture = source.macApp
       .split("fn persist_drag_position(")[1]
       .split("fn reduced_motion(")[0];
-    assert.match(capture, /saved_x\.set\(frame\.origin\.x\)/);
-    assert.match(capture, /saved_y\.set\(frame\.origin\.y\)/);
+    // The capture writes the origin it recorded when the drop happened, not the
+    // frame it finds when the write runs: between the two, reconciliation can move
+    // the window, and a retry that read the live frame would store that move as the
+    // user's choice.
+    assert.match(capture, /state\.drop_origin\.take\(\)/);
+    assert.match(capture, /saved_x\.set\(origin\.0\)/);
+    assert.match(capture, /saved_y\.set\(origin\.1\)/);
     assert.match(capture, /OutMessage::PositionChanged/);
     const desktopCache = read("apps/desktop/src/utils/composer.utils.ts")
       .split("export const setPillGeometry =")[1]

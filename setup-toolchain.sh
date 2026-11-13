@@ -37,13 +37,17 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # second run that saw `$PREFIX/bin/cargo` and skipped the whole block would then
 # announce a toolchain that cannot build the workspace. Each piece below is
 # checked where it is used, so a retry fills in whatever the last run did not.
+# A directory existing is not the same as its extraction having finished: an
+# interrupted `tar` leaves a partly-written tree that looks complete by name, and
+# the next run would skip the step and report readiness over it. Each unpacked
+# tree therefore gets a marker written only after `tar` succeeded, and the marker
+# -- not the directory -- is what the retry check asks for.
 toolchain_installed() {
   [ -x "$PREFIX/bin/cargo" ] &&
-    [ -d "$PREFIX/lib/rustlib/x86_64-pc-windows-msvc" ] &&
-    [ -d "$PREFIX/lib/rustlib/aarch64-apple-darwin" ] &&
-    [ -d /tmp/cargo-vendor ] &&
+    [ -f "$PREFIX/.install-complete" ] &&
+    [ -f /tmp/cargo-vendor/.unpack-complete ] &&
     [ -f "$CARGO_HOME/config.toml" ] &&
-    [ -d /tmp/sysroot/usr/include/gtk-3.0 ]
+    [ -f /tmp/sysroot/.unpack-complete ]
 }
 
 if ! toolchain_installed; then
@@ -85,17 +89,24 @@ if ! toolchain_installed; then
     rm -rf "$d"
   done
 
+  # The binaries, the cross-target libraries and the marker that says both landed
+  # are written by the loop above and the loop before it, so the marker after them
+  # is what makes a partial install visible to the retry check.
+  : > "$PREFIX/.install-complete"
+
   echo "== unpacking the cargo vendor tree ==" >&2
   cat "$SV"/rust/cargo-vendor.tar.xz.part-* > /tmp/cargo-vendor.tar.xz || {
     _fail "could not assemble the cargo vendor archive"
     return 1 2>/dev/null || exit 1
   }
+  rm -rf /tmp/cargo-vendor
   mkdir -p /tmp/cargo-vendor
   tar xJf /tmp/cargo-vendor.tar.xz -C /tmp/cargo-vendor || {
     _fail "could not unpack the cargo vendor tree"
     return 1 2>/dev/null || exit 1
   }
   rm -f /tmp/cargo-vendor.tar.xz
+  : > /tmp/cargo-vendor/.unpack-complete
 fi
 
 # Cargo's config lives in a sandbox-private CARGO_HOME, not $HOME/.cargo.
@@ -106,7 +117,16 @@ fi
 #
 # Seeded outside the install guard: the toolchain may already be unpacked while
 # this home is not, and a Cargo run without the vendor config goes to the network.
-if [ ! -f "$CARGO_HOME/config.toml" ]; then
+# Compared against the payload rather than merely checked for existence: a file
+# that is present but not the payload is exactly what a copy interrupted by a full
+# disk leaves behind, and skipping on "it exists" would carry that forward forever.
+config_is_current() {
+  [ -f "$CARGO_HOME/config.toml" ] &&
+    [ -f "$SV/rust/cargo-config.toml" ] &&
+    cmp -s "$SV/rust/cargo-config.toml" "$CARGO_HOME/config.toml"
+}
+
+if ! config_is_current; then
   mkdir -p "$CARGO_HOME" || {
     _fail "could not create $CARGO_HOME"
     return 1 2>/dev/null || exit 1
@@ -114,7 +134,14 @@ if [ ! -f "$CARGO_HOME/config.toml" ]; then
   if [ -f "$SV/rust/cargo-config.toml" ]; then
     # Checked because an unguarded failure here reports readiness without the
     # vendor config, and every later Cargo command then goes to the network.
-    cp "$SV/rust/cargo-config.toml" "$CARGO_HOME/config.toml" || {
+    # Staged and renamed: a copy that fails halfway leaves a truncated file that
+    # the existence check above would accept on the next run, and Cargo would then
+    # read a config that parses to nothing.
+    cp "$SV/rust/cargo-config.toml" "$CARGO_HOME/config.toml.tmp" || {
+      _fail "could not stage the cargo config in $CARGO_HOME"
+      return 1 2>/dev/null || exit 1
+    }
+    mv "$CARGO_HOME/config.toml.tmp" "$CARGO_HOME/config.toml" || {
       _fail "could not install the cargo config into $CARGO_HOME"
       return 1 2>/dev/null || exit 1
     }
@@ -124,18 +151,28 @@ if [ ! -f "$CARGO_HOME/config.toml" ]; then
   fi
 fi
 
-if [ ! -d /tmp/sysroot/usr/include/gtk-3.0 ]; then
+if [ ! -f /tmp/sysroot/.unpack-complete ]; then
   echo "== joining the debian sysroot ==" >&2
   cat "$SV"/system/debian12-dev-sysroot.tar.xz.part-* > /tmp/sysroot.tar.xz || {
     _fail "could not assemble the sysroot archive"
     return 1 2>/dev/null || exit 1
   }
-  mkdir -p /tmp/sysroot
-  tar xJf /tmp/sysroot.tar.xz -C /tmp/sysroot || {
+  # Staged, then published: an interrupted extraction must not leave a tree that
+  # satisfies the check above, or the next run skips the step and reports a
+  # sysroot that is missing whatever the interrupted `tar` had not reached yet.
+  rm -rf /tmp/sysroot.staging
+  mkdir -p /tmp/sysroot.staging
+  tar xJf /tmp/sysroot.tar.xz -C /tmp/sysroot.staging || {
     _fail "could not unpack the debian sysroot"
     return 1 2>/dev/null || exit 1
   }
   rm -f /tmp/sysroot.tar.xz
+  rm -rf /tmp/sysroot
+  mv /tmp/sysroot.staging /tmp/sysroot || {
+    _fail "could not publish the debian sysroot"
+    return 1 2>/dev/null || exit 1
+  }
+  : > /tmp/sysroot/.unpack-complete
 fi
 
 export PATH="$PREFIX/bin:$SV/system/tools/bin:$PATH"

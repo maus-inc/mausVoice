@@ -2684,6 +2684,36 @@ fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
     }
 }
 
+/// The work area of the display a point lands on, in the same space as
+/// `current_pill_geometry`'s monitor.
+///
+/// `monitor_geometry_at` answers with the full monitor rect, which is the right
+/// space for drawing and the wrong one for a saved record: restore clamps into
+/// work areas, so a record written with a full monitor rect stops matching its
+/// display on the next launch. `MONITOR_DEFAULTTONEAREST` rather than `NULL`
+/// because this is asked about a place the pill genuinely is, and a point on a
+/// shared edge rounds to one side or the other.
+fn monitor_work_area_at(x: f64, y: f64) -> Option<Rect> {
+    if !x.is_finite() || !y.is_finite() {
+        return None;
+    }
+    unsafe {
+        let monitor = MonitorFromPoint(
+            POINT {
+                x: x.round() as i32,
+                y: y.round() as i32,
+            },
+            MONITOR_DEFAULTTONEAREST,
+        );
+        query_monitor_info(monitor).map(|info| Rect {
+            x: info.rcWork.left as f64,
+            y: info.rcWork.top as f64,
+            width: (info.rcWork.right - info.rcWork.left) as f64,
+            height: (info.rcWork.bottom - info.rcWork.top) as f64,
+        })
+    }
+}
+
 /// Cancel without saving the old drop. Clear gesture flags before releasing
 /// capture: ReleaseCapture can synchronously re-enter WM_CAPTURECHANGED.
 fn cancel_drag_gesture(hwnd: HWND, state: &PillState) {
@@ -2803,16 +2833,29 @@ fn write_drag_position(hwnd: HWND, state: &PillState, now: f64) {
             monitor_display_id(monitor_handle)
         });
     state.saved_display_id.set(display_id);
-    // The report carries the drop, not the live window: the desktop stores this
-    // rectangle, and reconciling the layout can have moved the window during the
-    // retry delay. Sending the live rect here would store a different place from
-    // the one `saved_x`/`saved_y` just recorded, in the same write.
-    let (live_rect, monitor) = current_pill_geometry(hwnd);
+    // The whole report is resolved from the drop, not from the live window.
+    // Restoration pairs the rectangle with the work area it is clamped into, so a
+    // rectangle from one display and a work area from another is worse than either
+    // alone: the desktop stores all three, and the next launch remaps the origin
+    // against a work area it never belonged to. Reconciling the layout can move the
+    // window during the retry delay, which is exactly when the two would disagree,
+    // so the origin, its size, its work area and its display are all answered from
+    // the one point that the user actually chose.
+    let (offset, size) = live_pill_footprint(state);
+    // Only the size comes from the live window: the pill's canvas does not change
+    // when the layout moves it, and the size has to match the rectangle the
+    // renderer will actually draw on the next launch.
+    let (live_rect, _) = current_pill_geometry(hwnd);
     let reported = Rect {
         x: origin.0 as f64,
         y: origin.1 as f64,
-        ..live_rect
+        width: live_rect.width,
+        height: live_rect.height,
     };
+    let monitor = monitor_work_area_at(
+        origin.0 as f64 + offset.0 + size.0 / 2.0,
+        origin.1 as f64 + offset.1 + size.1 / 2.0,
+    );
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
             true,

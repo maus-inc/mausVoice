@@ -246,6 +246,12 @@ pub(crate) struct PillState {
     /// when no save is owed. The drag controller reports `settled` exactly once,
     /// so a refused save has to be retried from here or the drop is lost.
     pub(crate) drag_save_due: Cell<Option<f64>>,
+    /// The window origin the gesture ended at, kept while a guarded save is owed.
+    ///
+    /// The retry runs after a delay, and the pill's own reconciliation can move the
+    /// window in between. `saved_x`/`saved_y` still describe the position from
+    /// before the drop, so they cannot answer where it landed; this can.
+    pub(crate) drop_origin: Cell<Option<(f64, f64)>>,
     /// Holds position saves until the display layout has been steady, so a frame
     /// macOS forced during a display change is never stored as the user's
     /// position. See rust_pill_shared::layout::SaveGuard.

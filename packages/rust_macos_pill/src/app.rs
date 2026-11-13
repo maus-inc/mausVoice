@@ -1075,20 +1075,35 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
         // retry would read whatever the window had been moved to by then, and the
         // drop this deadline exists to protect would be replaced by the idle
         // placement it was parked at.
+        // Recorded here so the retry cannot read a different one: between the
+        // refusal and the retry the window can be moved by something that is not
+        // the user, and the drop this deadline exists to protect would be replaced
+        // by wherever it ended up.
         let frame = unsafe { window_frame(window) };
-        state.saved_x.set(frame.origin.x);
-        state.saved_y.set(frame.origin.y);
+        state
+            .drop_origin
+            .set(Some((frame.origin.x, frame.origin.y)));
         state.drag_save_due.set(due);
         return;
     }
-    let frame = unsafe { window_frame(window) };
-    state.saved_x.set(frame.origin.x);
-    state.saved_y.set(frame.origin.y);
+    // The recorded drop wins over the live frame, for the same reason: a retry
+    // runs after a delay, and the pill's own reconciliation can have moved the
+    // window in between. Consumed so a later gesture cannot inherit a stale one.
+    let origin = match state.drop_origin.take() {
+        Some(origin) => origin,
+        None => {
+            let frame = unsafe { window_frame(window) };
+            (frame.origin.x, frame.origin.y)
+        }
+    };
+    state.saved_x.set(origin.0);
+    state.saved_y.set(origin.1);
     state.has_saved_position.set(true);
     // The pending drop has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
-    // Name the display in the same breath as the origin, so the record can
-    // recognise this panel after it is unplugged and replugged.
+    // Name the display from the drop point, not from the window: the window is not
+    // necessarily there any more, and the record is what the next launch restores.
+    // A nameless result stays nameless and matches by geometry.
     let display_id = unsafe {
         let screen: id = msg_send![window, screen];
         if screen.is_null() {
@@ -1098,11 +1113,19 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
         }
     };
     state.saved_display_id.set(display_id);
-    let (rect, monitor) = unsafe { pill_geometry(window) };
+    // The report carries the drop too. `pill_geometry` reads the live window, so
+    // using it here would store a rectangle from a different place than
+    // `saved_x`/`saved_y` in the same call -- and the desktop keeps the rectangle.
+    let (live_rect, monitor) = unsafe { pill_geometry(window) };
+    let reported = Rect {
+        x: origin.0,
+        y: origin.1,
+        ..live_rect
+    };
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
             true,
-            Some(rect),
+            Some(reported),
             Some(monitor),
             display_id,
         ),
@@ -2052,14 +2075,6 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 .anchor
                 .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
         }
-        // A cursor-reset is spent by carrying it out, on the same rule as the
-        // launch placement above but without touching its one-shot latch: left as
-        // `ResetAtCursor`, every later tick reads "follow the pointer" again and
-        // the pill hops to whichever display the cursor crosses onto. The reset
-        // asked to be re-homed once, not to be chased.
-        if reset_placement {
-            state.anchor.set(state.anchor.get().after_placement());
-        }
         let context = AnchorContext {
             dragging,
             follows_pointer,
@@ -2108,6 +2123,19 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let Some((screen, frame)) = target else {
             return;
         };
+        // A cursor-reset is spent by being carried out, on the same rule as the
+        // launch placement above but without touching its one-shot latch: left as
+        // `ResetAtCursor`, every later tick reads "follow the pointer" again and
+        // the pill hops to whichever display the cursor crosses onto.
+        //
+        // Spent here, after a target exists and not before. `screens()` can return
+        // nothing -- a lid closing, every display asleep -- and this returns without
+        // placing anything above. Spending it there would turn a reset that never
+        // happened into one that can never happen: when the displays come back the
+        // pill would stay on the old one, having quietly spent the request.
+        if reset_placement {
+            state.anchor.set(state.anchor.get().after_placement());
+        }
         let (visible, drag_region, edge_mask) =
             resolve_placement(state, screen, frame, &monitor_frames, seam_point, dragging);
 
@@ -2769,16 +2797,19 @@ unsafe fn setup(
         has_saved_position: Cell::new(restored.is_some()),
         saved_x: Cell::new(restored.map_or(0.0, |window| window.origin.x)),
         saved_y: Cell::new(restored.map_or(0.0, |window| window.origin.y)),
-        // Only a restored record may name a display. Once `Placement::Restore`
-        // has run, `restored_display_id` is the display the pill actually landed
-        // on; with no placement, the record's own token names a display this
-        // process never went to, so it is dropped rather than carried.
-        saved_display_id: Cell::new(if restored.is_some() {
-            restored_display_id.or_else(|| saved_position.and_then(|window| window.display_id))
-        } else {
-            None
-        }),
+        // Only a restored record may name a display, and only the display that
+        // restore actually chose. `restored_display_id` is that answer -- `None`
+        // when the destination could not be named, because the record's display is
+        // the one that went away. Falling back to the record's token here would
+        // pair the destination's geometry with the dead display's name, which is
+        // the pairing this restore exists to correct; the X11 path was fixed the
+        // same way. A nameless destination matches by geometry instead.
+        //
+        // With no placement at all there is nothing to name either: the record's
+        // token describes a display this process never went to.
+        saved_display_id: Cell::new(restored.and(restored_display_id)),
         drag_save_due: Cell::new(None),
+        drop_origin: Cell::new(None),
         save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
         layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),
         first_placement_done: Cell::new(false),

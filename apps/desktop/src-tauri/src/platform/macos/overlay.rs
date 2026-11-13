@@ -343,10 +343,16 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let monitor_json = monitor.map(|m| {
                         serde_json::json!({ "x": m.x, "y": m.y, "width": m.width, "height": m.height })
                     });
+                    // Every report is accounted for before it is acted on, including
+                    // the ones that carry nothing: a clear is declared by the pill's
+                    // answer that the record is gone, and that answer is a
+                    // `has_saved_position: false` report. Reading only the saves
+                    // would never see it, and the erase would stay undeclared.
+                    let storable = crate::pill_position::note_report(has_saved_position);
                     // Only a geometry the pill considers saved describes where
                     // the user left it. A reset publishes the default corner it
                     // just moved to, and storing that would undo the reset.
-                    if has_saved_position {
+                    if storable && has_saved_position {
                         if let (Some(rect), Some(monitor)) =
                             (rect_json.as_ref(), monitor_json.as_ref())
                         {
