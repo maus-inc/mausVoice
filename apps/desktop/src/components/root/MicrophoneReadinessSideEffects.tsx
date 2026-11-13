@@ -717,8 +717,11 @@ export const MicrophoneReadinessSideEffects = () => {
      * Named because the focus handler otherwise read as a run of early returns
      * whose reasons lived in comments rather than in the conditions.
      */
-    const ownsRetry = (held: boolean) =>
-      isMainLocalDataWindow() && shouldHoldNow(held);
+    const ownsRetry = (held: boolean | null) =>
+      // `null` is a failed read, folded in here so a caller cannot forget it: an
+      // answer nobody could obtain is not a hold, and the three callers would
+      // otherwise each repeat that check.
+      held !== null && isMainLocalDataWindow() && shouldHoldNow(held);
 
     /**
      * Re-reads the saved preference, returning whether it could be done.
@@ -749,6 +752,27 @@ export const MicrophoneReadinessSideEffects = () => {
     };
 
     /**
+     * The pre-roll and device this window should hold, read from the store now.
+     *
+     * Re-read rather than trusted from `ownsRetry`: `shouldHoldNow` is a separate
+     * function, so TypeScript cannot carry its narrowing across the call, and the
+     * store can be read again without changing the decision it just made.
+     *
+     * Rebuilt from the store rather than kept from the ring's old value, because
+     * that value is what a previous attempt wrote, and this retry exists
+     * precisely because that attempt did not leave a stream behind. The two
+     * defaults are the recorder's own, so an absent preference holds the device
+     * for a usable window rather than failing the retry.
+     */
+    const readHoldSnapshot = () => {
+      const state = getAppState();
+      return {
+        preroll: state.userPrefs?.microphonePrerollSeconds ?? 0.5,
+        device: state.onboarding.preferredMicrophone ?? null,
+      };
+    };
+
+    /**
      * Re-establishes the hold, on the answer the backend just gave.
      *
      * `publishHeld` is fire-and-forget, so reading `microphoneHeld` right after
@@ -758,28 +782,27 @@ export const MicrophoneReadinessSideEffects = () => {
      * exists to reopen a dead stream never ran.
      */
     const retryOnFocus = async () => {
+      // One question, so one guard: is there a hold that this window owns, on the
+      // answer the backend just gave? `null` means the read failed, which is not
+      // a hold either.
       const held = await readHeld();
-      if (held === null || !ownsRetry(held)) {
+      if (!ownsRetry(held)) {
         return;
       }
-      // Asked twice on purpose: once on what the backend reported, and again on
-      // what the re-read wrote. The second is the one that matters, because the
-      // first ran against a preference this window may have had reason to doubt.
-      if (!(await rereadPreference()) || !ownsRetry(held)) {
+      // Asked again on purpose, on what the re-read wrote rather than on what the
+      // store held before it: the first decision ran against a preference this
+      // window may have had reason to doubt, and only this one is authoritative.
+      const refreshed = await rereadPreference();
+      if (!refreshed) {
         return;
       }
-      // Re-read rather than trust `ownsRetry`: `shouldHoldNow` is a separate
-      // function, so TypeScript cannot carry its narrowing across the call, and
-      // the store can be read again without changing the decision it just made.
-      // Rebuilt from the store rather than kept, because the ring's old value is
-      // what a previous attempt wrote and this retry exists precisely because
-      // that attempt did not leave a stream behind.
-      const state = getAppState();
-      const preroll = state.userPrefs?.microphonePrerollSeconds ?? 0.5;
-      const device = state.onboarding.preferredMicrophone ?? null;
-      openedPrerollRef.current = { preroll, device };
+      if (!ownsRetry(held)) {
+        return;
+      }
+      const snapshot = readHoldSnapshot();
+      openedPrerollRef.current = snapshot;
       appliedRef.current = "open";
-      hold(preroll, device);
+      hold(snapshot.preroll, snapshot.device);
     };
     const onFocus = () => {
       // The listener itself cannot be async: `addEventListener` ignores the

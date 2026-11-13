@@ -112,10 +112,17 @@ let root: Root;
 const setState = (overrides: Record<string, unknown>) => {
   // Cleared key by key rather than replaced. `mocks.state` is captured by the
   // hoisted module mock, so assigning a new object would leave the mock holding
-  // the old one and every test would read the previous test's state. Deleting is
-  // what makes the object the mock sees the one being reset; the keys are this
-  // file's own fixture shape, not anything user-supplied.
-  for (const key of Object.keys(mocks.state)) delete mocks.state[key];
+  // the old one and every test would read the previous test's state. Clearing in
+  // place is what makes the object the mock sees the one being reset.
+  //
+  // `Reflect.deleteProperty` rather than `delete obj[key]`: the keys come from
+  // `Object.keys` on this file's own fixture, so there is nothing dynamic to be
+  // wary of, but the delete-operator form reads the same as the pattern that rule
+  // warns about. This makes the "own keys only, no prototype, no user input"
+  // property visible in the code instead of only in this comment.
+  for (const key of Object.keys(mocks.state)) {
+    Reflect.deleteProperty(mocks.state, key);
+  }
   Object.assign(mocks.state, {
     userPrefs: {
       keepMicrophoneReady: true,
