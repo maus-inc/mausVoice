@@ -1336,11 +1336,7 @@ fn draw_transcript(
     let permissions = state.assistant_permissions.borrow();
     let has_review = state.assistant_review.borrow().is_some();
 
-    if !rust_pill_shared::transcript_has_content(
-        messages.len(),
-        permissions.len(),
-        has_review,
-    ) {
+    if !rust_pill_shared::transcript_has_content(messages.len(), permissions.len(), has_review) {
         // Both halves of the scroll state go with the content. Nothing sets
         // them on this path below, so a panel that has just been emptied keeps
         // the height of the transcript it used to hold: the wheel can then

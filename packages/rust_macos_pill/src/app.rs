@@ -709,9 +709,7 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
             *ctx.state.assistant_streaming.borrow_mut() = streaming;
             *ctx.state.assistant_permissions.borrow_mut() = permissions;
 
-            if (active && !was_active)
-                || (review_id.is_some() && review_id != previous_review_id)
-            {
+            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
                 ctx.state.should_stick.set(true);
                 ctx.state.scroll_offset.set(0.0);
             }

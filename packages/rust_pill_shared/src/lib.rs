@@ -145,9 +145,7 @@ pub struct TranscriptViewportLayout {
 }
 
 /// Computes transcript viewport geometry for typing, review, and idle states.
-pub fn transcript_viewport_layout(
-    config: TranscriptViewportConfig,
-) -> TranscriptViewportLayout {
+pub fn transcript_viewport_layout(config: TranscriptViewportConfig) -> TranscriptViewportLayout {
     let scroll_bottom = if config.is_typing {
         config.panel_y + config.panel_height - config.input_height - config.review_actions_height
     } else {
