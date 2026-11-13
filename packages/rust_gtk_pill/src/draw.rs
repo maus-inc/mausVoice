@@ -6,7 +6,9 @@ use crate::ipc::{Phase, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{rect_contains, ClickAction, ClickRegion, PillState, RocketPhase};
-use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
+use rust_pill_shared::{
+    path_distances, rounded_rectangle_perimeter, transcript_viewport_layout, RoundedRectArcSteps,
+};
 
 // Cairo retains paint errors on the context; the draw callback reports them.
 // Saved-state boundaries abort on failure rather than applying unmatched transforms.
@@ -1359,8 +1361,7 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
     let is_compact = state.assistant_compact.get() && review_id.is_none();
     // A review types into the same entry the assistant uses.
     let is_typing = state.is_typing();
-    let review_actions_h =
-        rust_pill_shared::review_actions_height(review_id.is_some(), REVIEW_ACTIONS_HEIGHT);
+    let review_actions_h = rust_pill_shared::review_actions_height(review_id.is_some());
 
     let panel_w = if is_compact {
         PANEL_COMPACT_WIDTH
@@ -1416,20 +1417,7 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
 
         // Scroll view spans the full panel height (minus input bar if typing).
         // Header, pill, and input are layered on top.
-        let viewport = rust_pill_shared::transcript_viewport_layout(
-            rust_pill_shared::TranscriptViewportConfig {
-                panel_y: py,
-                panel_height: panel_h,
-                is_typing,
-                input_height: PANEL_INPUT_HEIGHT,
-                review_actions_height: review_actions_h,
-                transcript_top_offset: PANEL_TRANSCRIPT_TOP_OFFSET,
-                scroll_top_pad: SCROLL_TOP_PAD,
-                scroll_bottom_pad: SCROLL_BOTTOM_PAD,
-                pill_bottom_inset: PILL_BOTTOM_INSET,
-                expanded_pill_height: EXPANDED_PILL_HEIGHT,
-            },
-        );
+        let viewport = transcript_viewport_layout(py, panel_h, is_typing, review_id.is_some());
         let scroll_bottom = viewport.scroll_bottom;
         let scroll_h = viewport.scroll_height;
         state.viewport_height.set(scroll_h);
