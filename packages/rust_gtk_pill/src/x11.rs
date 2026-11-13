@@ -237,9 +237,7 @@ pub(crate) fn persist_drop_position(
     state.saved_x.set(drop_x as f64);
     state.saved_y.set(drop_y as f64);
     state.has_saved_position.set(true);
-    state
-        .saved_display_id
-        .set(display_id_at(window, state));
+    state.saved_display_id.set(display_id_at(window, state));
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
@@ -292,9 +290,7 @@ pub(crate) fn write_window_position(
     state.has_saved_position.set(true);
     // The pending release has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
-    state
-        .saved_display_id
-        .set(display_id_at(window, state));
+    state.saved_display_id.set(display_id_at(window, state));
     state.x11_release_persisted.set(true);
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
