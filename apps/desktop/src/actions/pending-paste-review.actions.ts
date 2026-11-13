@@ -234,12 +234,9 @@ const cancelPendingPasteReviewWithRetries = async (
   saved: ChatMessage,
   savedPending: PendingPasteReviewMetadata | null,
   remainingAttempts: number,
-): Promise<{
-  saved: ChatMessage;
-  savedPending: PendingPasteReviewMetadata | null;
-}> => {
+): Promise<PendingPasteReviewMetadata | null> => {
   if (savedPending?.status !== "pending" || remainingAttempts === 0) {
-    return { saved, savedPending };
+    return savedPending;
   }
   const nextSaved = await updatePendingPasteReview(
     saved,
@@ -270,13 +267,11 @@ export const cancelPendingPasteReview = async (
     text.trim() ? text : pending.text,
     "canceled",
   );
-  const result = await cancelPendingPasteReviewWithRetries(
+  const savedPending = await cancelPendingPasteReviewWithRetries(
     saved,
     getPendingPasteReview(saved.metadata),
     3,
   );
-  saved = result.saved;
-  const savedPending = result.savedPending;
   if (savedPending?.status !== "canceled") {
     throw new Error(
       getIntl().formatMessage({

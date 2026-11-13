@@ -1651,54 +1651,8 @@ fn draw_transcript(
     );
     cr.set_font_size(14.0);
 
-    y = draw_transcript_messages(
-        cr,
-        state,
-        &messages,
-        streaming.as_ref(),
-        area_x,
-        y,
-        area_w,
-        alpha,
-    );
-
-    for perm in permissions.iter() {
-        y += 12.0;
-        y = draw_permission_card(cr, state, perm, area_x, y, area_w, alpha);
-    }
-
-    let total_height = y + scroll - area_y + bottom_pad;
-    state.content_height.set(total_height);
-
-    // Trim the click targets to the part of the panel still on screen. A
-    // button the user cannot see must not take their click, and a button that
-    // is half out must only answer on the half that shows.
-    {
-        let mut regions = state.click_regions.borrow_mut();
-        let scrolled = regions.split_off(region_start);
-        regions.extend(scrolled.into_iter().filter_map(|mut region| {
-            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
-            region.y = y;
-            region.h = h;
-            Some(region)
-        }));
-    }
-
-    cr.restore().ok();
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_transcript_messages(
-    cr: &cairo::Context,
-    state: &PillState,
-    messages: &[crate::ipc::PillMessage],
-    streaming: Option<&PillStreaming>,
-    area_x: f64,
-    mut y: f64,
-    area_w: f64,
-    alpha: f64,
-) -> f64 {
     let line_height = 20.0;
+
     for (i, msg) in messages.iter().enumerate() {
         if i > 0 {
             y += 16.0;
@@ -1710,7 +1664,7 @@ fn draw_transcript_messages(
             y += 8.0;
         }
 
-        if let Some(stream) = streaming {
+        if let Some(ref stream) = *streaming {
             if stream.message_id == msg.id {
                 y = draw_streaming_activity(cr, stream, area_x, y, area_w, alpha);
             }
@@ -1768,7 +1722,30 @@ fn draw_transcript_messages(
             y = draw_thinking_text(cr, area_x, y, alpha, state);
         }
     }
-    y
+
+    for perm in permissions.iter() {
+        y += 12.0;
+        y = draw_permission_card(cr, state, perm, area_x, y, area_w, alpha);
+    }
+
+    let total_height = y + scroll - area_y + bottom_pad;
+    state.content_height.set(total_height);
+
+    // Trim the click targets to the part of the panel still on screen. A
+    // button the user cannot see must not take their click, and a button that
+    // is half out must only answer on the half that shows.
+    {
+        let mut regions = state.click_regions.borrow_mut();
+        let scrolled = regions.split_off(region_start);
+        regions.extend(scrolled.into_iter().filter_map(|mut region| {
+            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            region.y = y;
+            region.h = h;
+            Some(region)
+        }));
+    }
+
+    cr.restore().ok();
 }
 
 fn draw_streaming_activity(
