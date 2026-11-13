@@ -31,7 +31,22 @@ CARGO_HOME=/tmp/cargo-home
 export CARGO_HOME
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-if [ ! -x "$PREFIX/bin/cargo" ]; then
+# Whether the toolchain is *complete*, not merely present. `cargo` on its own is
+# not enough: an install that failed after the binaries landed leaves the
+# cross-target standard libraries, the vendor tree and the sysroot missing, and a
+# second run that saw `$PREFIX/bin/cargo` and skipped the whole block would then
+# announce a toolchain that cannot build the workspace. Each piece below is
+# checked where it is used, so a retry fills in whatever the last run did not.
+toolchain_installed() {
+  [ -x "$PREFIX/bin/cargo" ] &&
+    [ -d "$PREFIX/lib/rustlib/x86_64-pc-windows-msvc" ] &&
+    [ -d "$PREFIX/lib/rustlib/aarch64-apple-darwin" ] &&
+    [ -d /tmp/cargo-vendor ] &&
+    [ -f "$CARGO_HOME/config.toml" ] &&
+    [ -d /tmp/sysroot/usr/include/gtk-3.0 ]
+}
+
+if ! toolchain_installed; then
   echo "== fetching the vendored payload ==" >&2
   mkdir -p "$SV"
   ( cd "$REPO" \
@@ -92,12 +107,20 @@ fi
 # Seeded outside the install guard: the toolchain may already be unpacked while
 # this home is not, and a Cargo run without the vendor config goes to the network.
 if [ ! -f "$CARGO_HOME/config.toml" ]; then
-  mkdir -p "$CARGO_HOME"
+  mkdir -p "$CARGO_HOME" || {
+    _fail "could not create $CARGO_HOME"
+    return 1 2>/dev/null || exit 1
+  }
   if [ -f "$SV/rust/cargo-config.toml" ]; then
-    cp "$SV/rust/cargo-config.toml" "$CARGO_HOME/config.toml"
+    # Checked because an unguarded failure here reports readiness without the
+    # vendor config, and every later Cargo command then goes to the network.
+    cp "$SV/rust/cargo-config.toml" "$CARGO_HOME/config.toml" || {
+      _fail "could not install the cargo config into $CARGO_HOME"
+      return 1 2>/dev/null || exit 1
+    }
   else
-    echo "cargo config missing at $SV/rust/cargo-config.toml" >&2
-    exit 1
+    _fail "cargo config missing at $SV/rust/cargo-config.toml"
+    return 1 2>/dev/null || exit 1
   fi
 fi
 

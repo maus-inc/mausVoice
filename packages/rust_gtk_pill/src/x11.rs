@@ -558,6 +558,14 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // this slow timer only parks idle pills and heals hot-plug states.
         if dragging || state_tick.drag_motion.borrow().is_settling() {
             was_dragging.set(dragging);
+            // A drag that is starting has already called `SaveGuard::drag_started`,
+            // which clears the previous gesture's drag end. The record this timer
+            // keeps has to follow it, or the next unsettled drop would be treated as
+            // already recorded and the guard would refuse every save from then on:
+            // `allows_save` answers `false` for a drag that never ended, forever.
+            if dragging {
+                drop_recorded.set(false);
+            }
             return ControlFlow::Continue;
         }
 

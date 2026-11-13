@@ -2420,6 +2420,20 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
                     // `current_id` already resolved the window's screen above, with
                     // the remembered token as its own fallback.
                     state.saved_display_id.set(current_id);
+                    // The desktop holds the record, and it still names the origin
+                    // from before AppKit moved the window. Adopting the move only in
+                    // this process would leave a restart restoring the pill to the
+                    // old place, so it is published here rather than waiting for a
+                    // report that may never come.
+                    let (rect, monitor) = unsafe { pill_geometry(window) };
+                    ipc::send(&OutMessage::PositionChanged {
+                        report: rust_pill_shared::restore::PositionReport::new(
+                            true,
+                            Some(rect),
+                            Some(monitor),
+                            state.saved_display_id.get(),
+                        ),
+                    });
                 }
             }
         }

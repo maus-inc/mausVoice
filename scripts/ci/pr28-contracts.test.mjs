@@ -700,6 +700,100 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
   });
 
+  it("resets its fallback record when a new drag starts", () => {
+    // The X11 fallback saves a drag that ended without settling, and it records
+    // the drag end once because `drag_ended` starts the hold. `drag_started`
+    // clears that hold for the next gesture, so the flag has to be cleared with
+    // it: a second unsettled drop would otherwise be treated as already recorded,
+    // and `allows_save` answers false for a drag that never ended -- forever.
+    const x11 = read("packages/rust_gtk_pill/src/x11.rs");
+    // The block that runs while a drag is held or settling: from its guard up to
+    // the first statement after it.
+    const guard = x11.indexOf(
+      "if dragging || state_tick.drag_motion.borrow().is_settling()",
+    );
+    const next = x11.indexOf("let save_owed", guard);
+    assert.ok(guard > 0 && next > guard, "the settle guard is not recognisable");
+    const arm = x11.slice(guard, next);
+    assert.match(
+      arm,
+      /drop_recorded\.set\(false\)/,
+      "a new drag keeps the previous gesture's recorded drop",
+    );
+  });
+
+  it("publishes a position the system moved the window to", () => {
+    // `Relocation::Keep` adopts a move the system made. The desktop holds the
+    // record, so adopting it only in-process means a restart restores the pill to
+    // the place the system moved it away from.
+    const keep = (src, name) => {
+      const at = src.indexOf("Relocation::Keep");
+      assert.ok(at > 0, `${name}: the Keep arm is not recognisable`);
+      const end = src.indexOf("Relocation::", at + 20);
+      return src.slice(at, end > 0 ? end : at + 4000);
+    };
+    for (const [name, src] of [
+      ["windowsPill", source.windowsPill],
+      ["macApp", source.macApp],
+    ]) {
+      const arm = keep(src, name);
+      assert.match(
+        arm,
+        /PositionChanged/,
+        `${name}: an adopted move is never published, so a restart restores the old origin`,
+      );
+    }
+  });
+
+  it("reports the drop it recorded, not the window the retry happened to find", () => {
+    // The desktop stores the rectangle in the report. A retry runs after a delay,
+    // and reconciliation can move the window in between, so reporting the live
+    // rect would store one place while `saved_x`/`saved_y` hold another.
+    const write = scope("windowsPill", "fn write_drag_position(");
+    assert.match(write, /state\.drop_origin\.take\(\)/);
+    assert.match(
+      write,
+      /let reported = Rect \{[\s\S]{0,120}?x: origin\.0 as f64,[\s\S]{0,120}?y: origin\.1 as f64,/,
+      "windowsPill: the report carries the live rect instead of the drop",
+    );
+    assert.match(
+      write,
+      /Some\(reported\)/,
+      "windowsPill: the reported rectangle is not the one built from the drop",
+    );
+  });
+
+  it("installs every piece of the toolchain, not just cargo", () => {
+    // Readiness was `$PREFIX/bin/cargo` existing. An install that failed after the
+    // binaries landed leaves the cross-target libraries, the vendor tree, the
+    // cargo config and the sysroot missing, and a retry would skip the whole block
+    // and announce a toolchain that cannot build the workspace.
+    const script = read("setup-toolchain.sh");
+    assert.match(script, /toolchain_installed\(\)/);
+    for (const piece of [
+      "lib/rustlib/x86_64-pc-windows-msvc",
+      "lib/rustlib/aarch64-apple-darwin",
+      "/tmp/cargo-vendor",
+      "config.toml",
+      "gtk-3.0",
+    ]) {
+      assert.ok(
+        script.includes(piece),
+        `the retry check does not look for ${piece}, so a half-installed toolchain passes`,
+      );
+    }
+    // The config copy is a step that can fail, so it has to report.
+    const copyLine = script
+      .split("\n")
+      .find((line) => line.includes('cp "$SV/rust/cargo-config.toml"'));
+    assert.ok(copyLine, "the cargo config copy is gone");
+    assert.match(
+      script,
+      /cp "\$SV\/rust\/cargo-config\.toml"[^\n]*\|\|\s*\{/,
+      "an unchecked config copy reports readiness without the vendor config",
+    );
+  });
+
   it("spends a cursor-reset once it has been carried out", () => {
     // `ResetAtCursor` is the only anchor that both places and follows the
     // pointer. If it survives the placement that satisfied it, every later frame

@@ -1805,6 +1805,20 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                             cur_y as f64 + offset.1 + size.1 / 2.0,
                         ),
                     ));
+                // The desktop holds the record, and the record is now wrong: it
+                // still names the origin from before the system moved the window.
+                // Adopting the move in this process only would leave a restart
+                // restoring the pill to the old place, so the adoption is published
+                // here rather than waiting for a report that may never come.
+                let (published, monitor) = current_pill_geometry(hwnd);
+                ipc::send(&OutMessage::PositionChanged {
+                    report: rust_pill_shared::restore::PositionReport::new(
+                        true,
+                        Some(published),
+                        monitor,
+                        state.saved_display_id.get(),
+                    ),
+                });
             }
         }
         rust_pill_shared::layout::Relocation::Stranded => {
@@ -2766,17 +2780,43 @@ fn write_drag_position(hwnd: HWND, state: &PillState, now: f64) {
     state.has_saved_position.set(true);
     // The pending drop has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
-    // Name the display in the same breath as the rect, so the stored record can
-    // recognise this panel after it is unplugged and replugged.
-    let monitor_handle = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
-    state
-        .saved_display_id
-        .set(monitor_display_id(monitor_handle));
-    let (win_rect, monitor) = current_pill_geometry(hwnd);
+    // Name the display in the same breath as the origin, so the stored record can
+    // recognise this panel after it is unplugged and replugged. Resolved from the
+    // drop point rather than from the window, because the window is not necessarily
+    // there any more -- that is the whole reason this origin is remembered. A
+    // failed enumeration is not evidence of anything, so the window is the
+    // fallback rather than a reason to store no name at all.
+    let display_id = enumerate_work_areas_with_identity()
+        .and_then(|areas| {
+            let (offset, size) = live_pill_footprint(state);
+            rust_pill_shared::layout::display_id_of(
+                &areas,
+                (origin.0 as f64, origin.1 as f64),
+                (
+                    origin.0 as f64 + offset.0 + size.0 / 2.0,
+                    origin.1 as f64 + offset.1 + size.1 / 2.0,
+                ),
+            )
+        })
+        .or_else(|| {
+            let monitor_handle = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+            monitor_display_id(monitor_handle)
+        });
+    state.saved_display_id.set(display_id);
+    // The report carries the drop, not the live window: the desktop stores this
+    // rectangle, and reconciling the layout can have moved the window during the
+    // retry delay. Sending the live rect here would store a different place from
+    // the one `saved_x`/`saved_y` just recorded, in the same write.
+    let (live_rect, monitor) = current_pill_geometry(hwnd);
+    let reported = Rect {
+        x: origin.0 as f64,
+        y: origin.1 as f64,
+        ..live_rect
+    };
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
             true,
-            Some(win_rect),
+            Some(reported),
             monitor,
             state.saved_display_id.get(),
         ),
