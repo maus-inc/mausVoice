@@ -9,6 +9,7 @@ import {
   LANGUAGE_DISPLAY_NAMES,
 } from "./language.utils";
 import { ToneConfig } from "./tone.utils";
+import { getLogger } from "./log.utils";
 import { getMyUserName } from "./user.utils";
 import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
 
@@ -946,12 +947,14 @@ ${transcript}
 
 Execute the command and provide your response in ${languageName}.
 `;
-    console.log(
+    getLogger().verbose(
       "[Agent Prompt] Using tone template, result length:",
       base.length,
     );
   } else {
-    console.log("[Agent Prompt] Using default prompt (no tone template)");
+    getLogger().verbose(
+      "[Agent Prompt] Using default prompt (no tone template)",
+    );
     base = intl.formatMessage(
       {
         defaultMessage: `
