@@ -5,18 +5,8 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { checkForAppUpdates } from "../../actions/updater.actions";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { useAppStore } from "../../store";
+import { formatMediumDateTime } from "../../utils/format.utils";
 import { SettingRow } from "./SettingRow";
-
-const formatCheckedAt = (timestamp: number | null) => {
-  if (timestamp == null) {
-    return null;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(timestamp));
-};
 
 export const UpdateSettingSection = () => {
   const intl = useIntl();
@@ -50,7 +40,7 @@ export const UpdateSettingSection = () => {
       )
     : intl.formatMessage({ defaultMessage: "Version unavailable" });
 
-  const checkedAtLabel = formatCheckedAt(lastCheckedAt);
+  const checkedAtLabel = formatMediumDateTime(lastCheckedAt);
 
   const statusMessage = (() => {
     if (isChecking) {
