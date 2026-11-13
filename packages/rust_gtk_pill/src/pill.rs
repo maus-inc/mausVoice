@@ -34,35 +34,45 @@ const WAYLAND_DRAG_BOUNDS: rust_pill_shared::drag::DragBounds =
         max_y: 1e9,
     };
 
-/// Runs the GTK pill: picks the display backend, creates the frameless
-/// window, and drives the message/event loop until a quit message arrives.
-pub fn run(receiver: Receiver<InMessage>) {
-    // Phase message sequence guard: see ipc::InMessage::Phase.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
-    let backend = if gtk_layer_shell::is_supported() {
-        Backend::LayerShell
-    } else {
-        let display = gdk::Display::default().expect("display");
-        if display.type_().name() == "GdkX11Display" {
-            Backend::X11
-        } else {
-            Backend::PlainWayland
-        }
-    };
+// Phase message sequence guard: see ipc::InMessage::Phase.
+thread_local! {
+    static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
-    // X11 keeps room for the below selector slot under the pill, so a side
-    // flip animates inside space that is already there. LayerShell is bottom
-    // anchored (a taller surface would lift the pill) and PlainWayland is
-    // fullscreen, so both keep the typing size. X11 content and parking math
-    // exclude these reserved rows, preserving the visible pill and entry origin.
-    let window_h = if backend == Backend::X11 {
+/// The display backend the pill runs on.
+fn detect_backend() -> Backend {
+    if gtk_layer_shell::is_supported() {
+        return Backend::LayerShell;
+    }
+    let display = gdk::Display::default().expect("display");
+    if display.type_().name() == "GdkX11Display" {
+        Backend::X11
+    } else {
+        Backend::PlainWayland
+    }
+}
+
+/// X11 keeps room for the below selector slot under the pill, so a side flip
+/// animates inside space that is already there. LayerShell is bottom anchored (a
+/// taller surface would lift the pill) and PlainWayland is fullscreen, so both
+/// keep the typing size. X11 content and parking math exclude these reserved
+/// rows, preserving the visible pill and entry origin.
+fn pill_window_height(backend: Backend) -> i32 {
+    if backend == Backend::X11 {
         WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32
     } else {
         WINDOW_H_TYPING
-    };
+    }
+}
 
+/// The toplevel, with the backend's own window hints and the stylesheet applied.
+///
+/// `run` used to open with sixty lines of window class, transparent visual,
+/// per-backend hints and CSS before it registered a single signal.
+fn build_pill_window(
+    backend: Backend,
+    window_h: i32,
+) -> (gtk::Window, gtk::Overlay, gtk::DrawingArea) {
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
     if backend != Backend::PlainWayland {
         window.set_default_size(WINDOW_W_TYPING, window_h);
@@ -70,11 +80,9 @@ pub fn run(receiver: Receiver<InMessage>) {
     window.set_decorated(false);
     window.set_app_paintable(true);
 
-    {
-        let screen: gdk::Screen = gtk::prelude::WidgetExt::screen(&window).expect("screen");
-        if let Some(visual) = screen.rgba_visual() {
-            window.set_visual(Some(&visual));
-        }
+    let screen: gdk::Screen = gtk::prelude::WidgetExt::screen(&window).expect("screen");
+    if let Some(visual) = screen.rgba_visual() {
+        window.set_visual(Some(&visual));
     }
 
     match backend {
@@ -119,47 +127,541 @@ pub fn run(receiver: Receiver<InMessage>) {
         drawing_area.set_size_request(WINDOW_W_TYPING, window_h);
     }
     overlay_widget.add(&drawing_area);
+    (window, overlay_widget, drawing_area)
+}
 
-    let entry = gtk::Entry::new();
-    // Kept so a send can empty the widget from anywhere, the way the Windows pill reaches
-    // its Edit control. `connect_activate` closes over its own clone; the Send-button click
-    // is handled in `input.rs`, which has no widget.
-    ENTRY.with(|slot| *slot.borrow_mut() = Some(entry.clone()));
-    entry.set_placeholder_text(Some("Type a message…"));
-    entry.set_has_frame(false);
-    entry.set_halign(gtk::Align::Fill);
-    entry.set_valign(gtk::Align::End);
-    entry.set_visible(false);
-    entry.set_no_show_all(true);
-    overlay_widget.add_overlay(&entry);
+/// Apply every message waiting on the channel before the frame steps.
+///
+/// Draining here, rather than from a separate glib source, keeps message order
+/// and frame order the same: a phase that arrives mid-frame is applied on that
+/// frame, never after the tick that follows it.
+///
+/// Dispatch only: each message has its own handler below. They used to be match
+/// arms in one body, which made seventeen unrelated decisions into one function.
+fn drain_messages(
+    receiver: &Rc<RefCell<Receiver<InMessage>>>,
+    state_tick: &Rc<PillState>,
+    win_tick: &gtk::Window,
+    entry_tick: &gtk::Entry,
+    review_editor_tick: &gtk::TextView,
+    quit_tick: &Rc<Cell<bool>>,
+    backend_tick: Backend,
+) {
+    let rx = receiver.borrow();
+    while let Ok(msg) = rx.try_recv() {
+        match msg {
+            InMessage::Phase { phase, seq } => on_phase(phase, seq, state_tick),
+            InMessage::Levels { levels } => on_levels(levels, state_tick),
+            InMessage::StyleInfo { count, name } => on_style_info(count, name, state_tick),
+            InMessage::Toast { .. } => on_toast(msg, state_tick),
+            InMessage::DismissToast => clear_flash(state_tick),
+            InMessage::Fireworks { message } => on_fireworks(message, state_tick),
+            InMessage::Flame { message } => on_flame(message, state_tick),
+            InMessage::FlashBlue => on_flash_blue(state_tick),
+            InMessage::BroadcastTranscript { text } => on_broadcast_transcript(text, state_tick),
+            InMessage::StageText { text } => on_stage_text(text, state_tick),
+            InMessage::Visibility { visibility } => on_visibility(visibility, state_tick),
+            InMessage::WindowSize { ref size } => on_window_size(size, state_tick),
+            InMessage::AssistantState { .. } => on_assistant_state(
+                msg,
+                state_tick,
+                win_tick,
+                entry_tick,
+                review_editor_tick,
+                backend_tick,
+            ),
+            InMessage::ResetPosition { strategy } => {
+                on_reset_position(strategy, state_tick, win_tick)
+            }
+            InMessage::RequestPosition => on_request_position(state_tick, win_tick),
+            InMessage::Quit => on_quit(quit_tick),
+        }
+    }
+}
 
-    // Reviews get a real multiline editor in the transcript area; the small
-    // composer remains dedicated to assistant follow-ups.
-    let review_scroll =
-        gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
-    review_scroll.set_widget_name("review-editor");
-    review_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    review_scroll.set_shadow_type(gtk::ShadowType::None);
-    review_scroll.set_halign(gtk::Align::Fill);
-    review_scroll.set_valign(gtk::Align::Start);
-    review_scroll.set_visible(false);
-    review_scroll.set_no_show_all(true);
-    let review_editor = gtk::TextView::new();
-    let review_buffer = gtk::TextBuffer::new(None::<&gtk::TextTagTable>);
-    review_editor.set_buffer(Some(&review_buffer));
-    review_editor.set_wrap_mode(gtk::WrapMode::WordChar);
-    review_editor.set_left_margin(12);
-    review_editor.set_right_margin(12);
-    review_editor.set_top_margin(10);
-    review_editor.set_bottom_margin(10);
-    review_editor.set_accepts_tab(false);
-    review_scroll.add(&review_editor);
-    overlay_widget.add_overlay(&review_scroll);
-    REVIEW_EDITOR.with(|slot| *slot.borrow_mut() = Some(review_editor.clone()));
+/// Applies `InMessage::Phase`.
+fn on_phase(phase: Phase, seq: u64, state_tick: &Rc<PillState>) {
+    let stale = LAST_PHASE_SEQ.with(|last| {
+        let stale = seq < last.get();
+        if !stale {
+            last.set(seq);
+        }
+        stale
+    });
+    if stale {
+        return;
+    }
+    let prev = state_tick.phase.get();
+    state_tick.phase.set(phase);
+    state_tick
+        .style_tooltip_gate
+        .set_take_running(phase == Phase::Recording);
+    // A new take sweeps any banner parked above the pill (for example the
+    // retranscribing toast) so it cannot sit on the style selector for the whole
+    // take. A resume from Paused keeps toasts raised during the take, such as the
+    // cancel confirm.
+    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+        clear_flash(state_tick);
+    }
+    if rust_pill_shared::should_clear_stage_text_on_phase(
+        prev == Phase::Loading,
+        phase == Phase::Idle,
+        phase == Phase::Loading,
+    ) {
+        *state_tick.stage_text.borrow_mut() = None;
+    }
+    if phase == Phase::Loading && prev != Phase::Loading {
+        let offset = if reduced_motion() { 0.5 } else { 0.0 };
+        state_tick.loading_offset.set(offset);
+    }
+    if phase == Phase::Idle && prev != Phase::Idle {
+        state_tick.pending_levels.borrow_mut().clear();
+        state_tick.target_level.set(0.0);
+        state_tick.current_level.set(0.0);
+        state_tick.wave_phase.set(0.0);
+        state_tick.loading_offset.set(0.0);
+    }
+}
 
-    window.add(&overlay_widget);
+/// Applies `InMessage::Levels`.
+fn on_levels(levels: Vec<f32>, state_tick: &Rc<PillState>) {
+    *state_tick.pending_levels.borrow_mut() = levels;
+}
 
-    let state = Rc::new(PillState {
+/// Applies `InMessage::StyleInfo`.
+fn on_style_info(count: u32, name: String, state_tick: &Rc<PillState>) {
+    state_tick.style_count.set(count);
+    *state_tick.style_name.borrow_mut() = name;
+}
+
+/// Applies `InMessage::Toast`.
+fn on_toast(msg: InMessage, state_tick: &Rc<PillState>) {
+    let InMessage::Toast {
+        message,
+        toast_type,
+        duration,
+        action,
+        action_label,
+        reject_action,
+        reject_action_label,
+    } = msg
+    else {
+        return;
+    };
+    *state_tick.flash_message.borrow_mut() = message;
+    state_tick
+        .flash_is_error
+        .set(toast_type.as_deref() == Some("error"));
+    state_tick.flash_visible.set(true);
+    state_tick
+        .flash_timer
+        .set(duration.unwrap_or(FLASH_DURATION));
+    *state_tick.flash_action.borrow_mut() = action;
+    *state_tick.flash_action_label.borrow_mut() = action_label;
+    *state_tick.flash_reject_action.borrow_mut() = reject_action;
+    *state_tick.flash_reject_action_label.borrow_mut() = reject_action_label;
+}
+
+/// Applies `InMessage::Fireworks`.
+fn on_fireworks(message: String, state_tick: &Rc<PillState>) {
+    *state_tick.flash_message.borrow_mut() = message;
+    state_tick.flash_is_error.set(false);
+    *state_tick.flash_action.borrow_mut() = None;
+    *state_tick.flash_action_label.borrow_mut() = None;
+    *state_tick.flash_reject_action.borrow_mut() = None;
+    *state_tick.flash_reject_action_label.borrow_mut() = None;
+    state_tick.flash_visible.set(true);
+    state_tick.flash_timer.set(FIREWORKS_TOTAL_DURATION);
+    state_tick.fireworks_active.set(true);
+    state_tick.fireworks_elapsed.set(0.0);
+    state_tick.fireworks_next_launch.set(0);
+    state_tick.fireworks_rockets.borrow_mut().clear();
+}
+
+/// Applies `InMessage::Flame`.
+fn on_flame(message: String, state_tick: &Rc<PillState>) {
+    *state_tick.flash_message.borrow_mut() = message;
+    state_tick.flash_is_error.set(false);
+    *state_tick.flash_action.borrow_mut() = None;
+    *state_tick.flash_action_label.borrow_mut() = None;
+    *state_tick.flash_reject_action.borrow_mut() = None;
+    *state_tick.flash_reject_action_label.borrow_mut() = None;
+    state_tick.flash_visible.set(true);
+    state_tick.flash_timer.set(FLAME_TOTAL_DURATION);
+    state_tick.flame_active.set(true);
+    state_tick.flame_elapsed.set(0.0);
+    state_tick.flame_tongues.borrow_mut().clear();
+}
+
+/// Applies `InMessage::FlashBlue`.
+fn on_flash_blue(state_tick: &Rc<PillState>) {
+    state_tick.flash_blue_active.set(true);
+    state_tick.flash_blue_elapsed.set(0.0);
+}
+
+/// Applies `InMessage::BroadcastTranscript`.
+fn on_broadcast_transcript(text: String, state_tick: &Rc<PillState>) {
+    *state_tick.transcript_text.borrow_mut() = text;
+    state_tick.transcript_time_since_update.set(0.0);
+    state_tick.transcript_has_message.set(true);
+}
+
+/// Applies `InMessage::StageText`.
+fn on_stage_text(text: Option<String>, state_tick: &Rc<PillState>) {
+    let stage = rust_pill_shared::active_stage_text(text.as_deref());
+    *state_tick.stage_text.borrow_mut() = stage.map(str::to_owned);
+}
+
+/// Applies `InMessage::Visibility`.
+fn on_visibility(visibility: Visibility, state_tick: &Rc<PillState>) {
+    state_tick.visibility.set(visibility);
+}
+
+/// Applies `InMessage::WindowSize`.
+fn on_window_size(size: &str, state_tick: &Rc<PillState>) {
+    state_tick.window_mode.set(WindowMode::from_str(size));
+}
+
+/// Applies `InMessage::AssistantState`.
+fn on_assistant_state(
+    msg: InMessage,
+    state_tick: &Rc<PillState>,
+    win_tick: &gtk::Window,
+    entry_tick: &gtk::Entry,
+    review_editor_tick: &gtk::TextView,
+    backend_tick: Backend,
+) {
+    let InMessage::AssistantState {
+        active,
+        input_mode,
+        type_message_label,
+        compact,
+        conversation_id,
+        user_prompt,
+        messages,
+        streaming,
+        permissions,
+        review,
+    } = msg
+    else {
+        return;
+    };
+    let was_active = state_tick.assistant_active.get();
+    state_tick.assistant_active.set(active);
+    *state_tick.assistant_input_mode.borrow_mut() = input_mode;
+    *state_tick.assistant_type_message.borrow_mut() =
+        type_message_label.unwrap_or_else(|| "Type a message…".to_string());
+    entry_tick.set_placeholder_text(Some(state_tick.assistant_type_message.borrow().as_str()));
+    state_tick.assistant_compact.set(compact);
+    *state_tick.assistant_conversation_id.borrow_mut() = conversation_id;
+    *state_tick.assistant_user_prompt.borrow_mut() = user_prompt;
+    *state_tick.assistant_messages.borrow_mut() = messages;
+    *state_tick.assistant_streaming.borrow_mut() = streaming;
+    *state_tick.assistant_permissions.borrow_mut() = permissions;
+    let previous_review_id = state_tick
+        .assistant_review
+        .borrow()
+        .as_ref()
+        .map(|r| r.id.clone());
+    let review_id = review.as_ref().map(|r| r.id.clone());
+    let review_text = review.as_ref().map(|r| r.text.clone());
+    let review_ended = previous_review_id.is_some() && review_id.is_none();
+    state_tick
+        .focus_released_after_review
+        .set(next_focus_released_after_review(
+            previous_review_id.is_some(),
+            review_id.is_some(),
+            state_tick.focus_released_after_review.get(),
+        ));
+    if review_ended {
+        match backend_tick {
+            Backend::LayerShell => {
+                win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
+            }
+            Backend::X11 | Backend::PlainWayland => {
+                win_tick.set_accept_focus(false);
+                state_tick.focus_release_remap_pending.set(true);
+                let win = win_tick.clone();
+                let state = state_tick.clone();
+                win_tick.hide();
+                glib::timeout_add_local_once(Duration::from_millis(50), move || {
+                    state.focus_release_remap_pending.set(false);
+                    let should_show = rust_pill_shared::should_show_pill(
+                        state.visibility.get().into(),
+                        state.phase.get() != Phase::Idle,
+                        state.owns_panel(),
+                    );
+                    if should_show {
+                        win.show();
+                    }
+                });
+            }
+        }
+    } else if review_id.is_some() && review_id != previous_review_id {
+        // A new review can arrive while the editor widget is still visible from
+        // the prior review. Restore its keyboard acceptance explicitly;
+        // visibility-transition focus setup below will not run in that case.
+        match backend_tick {
+            Backend::LayerShell => {
+                win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+            }
+            Backend::X11 | Backend::PlainWayland => {
+                win_tick.set_accept_focus(true);
+            }
+        }
+    }
+    let review_accessible_name = review
+        .as_ref()
+        .and_then(|r| r.review_label.clone())
+        .unwrap_or_else(|| "Review transcript".to_string());
+    if let Some(accessible) = review_editor_tick.accessible() {
+        accessible.set_name(&review_accessible_name);
+    }
+    *state_tick.assistant_review.borrow_mut() = review.map(|review| *review);
+
+    // The entry is the review surface: a new transcript loads into it for
+    // editing, and answering the review empties it again. An unchanged id leaves
+    // the user's edits alone.
+    if review_id != previous_review_id {
+        let text = review_text.unwrap_or_default();
+        *state_tick.entry_text.borrow_mut() = text.clone();
+        entry_tick.set_text(&text);
+        set_review_editor_text(&text);
+    } else if crate::input::entry_should_be_cleared(
+        &state_tick.entry_text.borrow(),
+        &entry_tick.text(),
+    ) {
+        // The mirror was emptied somewhere that had no widget -- the Send-button
+        // click, or `submit_entry` -- and the id did not change, so the reload
+        // above did not run. Without this the widget keeps showing text that has
+        // already been sent. Windows reconciles the same way in its window
+        // procedure; this is that line.
+        entry_tick.set_text("");
+    }
+    if crate::input::entry_should_be_cleared(
+        &state_tick.entry_text.borrow(),
+        &review_editor_text(review_editor_tick),
+    ) {
+        set_review_editor_text("");
+    }
+
+    if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+        state_tick.should_stick.set(true);
+        state_tick.scroll_offset.set(0.0);
+    }
+}
+
+/// Applies `InMessage::ResetPosition`.
+fn on_reset_position(strategy: ResetStrategy, state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
+    state_tick.dragging.set(false);
+    state_tick.pointer_down.set(false);
+    state_tick.long_press_active.set(false);
+    state_tick.long_press_elapsed.set(0.0);
+    state_tick.drag_cancelled.set(true);
+    // The X11 idle timer must not save the cancelled gesture through its
+    // missed-release fallback after this reset.
+    state_tick.x11_release_persisted.set(true);
+    state_tick.drag_draw_offset_x.set(0.0);
+    state_tick.drag_draw_offset_y.set(0.0);
+    state_tick.drag_motion.borrow_mut().reset();
+    state_tick.selector_placement.borrow_mut().reset();
+    state_tick.crossing.borrow_mut().reset();
+    state_tick.has_saved_position.set(false);
+    state_tick.reset_strategy.set(strategy);
+    let (rect, monitor) = pill_geometry(win_tick, state_tick);
+    ipc::send(&OutMessage::PositionChanged {
+        has_saved_position: false,
+        rect,
+        monitor,
+    });
+}
+
+/// Applies `InMessage::RequestPosition`.
+fn on_request_position(state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
+    let (rect, monitor) = pill_geometry(win_tick, state_tick);
+    ipc::send(&OutMessage::PositionChanged {
+        has_saved_position: state_tick.has_saved_position.get(),
+        rect,
+        monitor,
+    });
+}
+
+/// Applies `InMessage::Quit`.
+fn on_quit(quit: &Rc<Cell<bool>>) {
+    quit.set(true);
+}
+
+/// One frame of the 16 ms loop, as a free function.
+///
+/// This was the body of the closure registered inside `run`, which is why `run`
+/// carried the loop's decisions as its own complexity. The handles it captured
+/// are parameters now, so the frame reads on its own.
+///
+/// `ControlFlow::Break` ends the loop, which is how a `Quit` message stops it.
+#[allow(clippy::too_many_arguments)]
+fn frame_tick(
+    receiver: &Rc<RefCell<Receiver<InMessage>>>,
+    state_tick: &Rc<PillState>,
+    win_tick: &gtk::Window,
+    entry_tick: &gtk::Entry,
+    review_scroll_tick: &gtk::ScrolledWindow,
+    review_editor_tick: &gtk::TextView,
+    da: &gtk::DrawingArea,
+    quit_tick: &Rc<Cell<bool>>,
+    backend_tick: Backend,
+) -> ControlFlow {
+    drain_messages(
+        receiver,
+        state_tick,
+        win_tick,
+        entry_tick,
+        review_editor_tick,
+        quit_tick,
+        backend_tick,
+    );
+
+    if quit_tick.get() {
+        return ControlFlow::Break;
+    }
+
+    release_pointer_if_button_up(win_tick, state_tick);
+    // One measured step for the whole frame: the transition springs and
+    // the drag controller share it, so a long frame slows everything
+    // together instead of each measuring a different slice.
+    let dt_tick = frame_dt();
+    tick(state_tick, dt_tick);
+    tick_drag_frame(
+        win_tick,
+        state_tick,
+        backend_tick,
+        drag_clock_now(),
+        dt_tick,
+    );
+    tick_hover_frame(state_tick);
+    tick_selector_placement(win_tick, state_tick, dt_tick);
+    tick_crossing_frame(win_tick, state_tick, dt_tick);
+
+    // The assistant keeps its compact composer. A transcript under review
+    // swaps in a multiline editor in the body, above the fixed decision row.
+    let is_typing = state_tick.is_typing();
+    let is_review = state_tick.assistant_review.borrow().is_some();
+    let target_was_visible = if is_review {
+        gtk::prelude::WidgetExt::is_visible(review_scroll_tick)
+    } else {
+        gtk::prelude::WidgetExt::is_visible(entry_tick)
+    };
+    if is_typing {
+        let (ox, oy) = state_tick.content_offset();
+        let dw = state_tick.draw_width.get();
+        let dh = state_tick.draw_height.get();
+        let panel_w = PANEL_EXPANDED_WIDTH;
+        let panel_x = (dw - panel_w) / 2.0;
+        let margin_start = (ox + panel_x + PANEL_CONTENT_SIDE_INSET) as i32;
+        let aw = state_tick.alloc_width.get();
+        let right_margin = if aw > 0.0 {
+            aw - ox - dw
+        } else {
+            WINDOW_W_TYPING as f64 - ox - dw
+        };
+        let margin_end =
+            (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
+        let ah = state_tick.alloc_height.get();
+        let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
+        entry_tick.set_margin_start(margin_start);
+        entry_tick.set_margin_end(margin_end);
+        entry_tick.set_margin_bottom((bottom_margin + PANEL_BOTTOM_MARGIN) as i32);
+        entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
+
+        review_scroll_tick.set_margin_start(margin_start);
+        review_scroll_tick.set_margin_end(margin_end);
+        review_scroll_tick.set_margin_top(
+            (oy + PANEL_TOP_MARGIN
+                + (1.0 - state_tick.panel_open_t.get()) * 12.0
+                + PANEL_TRANSCRIPT_TOP_OFFSET
+                + 28.0) as i32,
+        );
+        review_scroll_tick.set_height_request(PANEL_REVIEW_EDITOR_HEIGHT as i32);
+        let panel_opacity = state_tick.panel_open_t.get().clamp(0.0, 1.0);
+        review_scroll_tick.set_opacity(panel_opacity);
+        entry_tick.set_opacity(panel_opacity);
+    }
+
+    entry_tick.set_visible(is_typing && !is_review);
+    review_scroll_tick.set_visible(is_typing && is_review);
+    if is_typing && !target_was_visible {
+        let target: gtk::Widget = if is_review {
+            review_editor_tick.clone().upcast()
+        } else {
+            entry_tick.clone().upcast()
+        };
+        target.show();
+        if !state_tick.focus_released_after_review.get() {
+            match backend_tick {
+                Backend::LayerShell => {
+                    win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+                    glib::idle_add_local_once(move || {
+                        target.grab_focus();
+                    });
+                }
+                Backend::X11 => {
+                    win_tick.set_accept_focus(true);
+                    glib::timeout_add_local(Duration::from_millis(100), {
+                        let w = win_tick.clone();
+                        move || {
+                            x11::force_keyboard_focus(&w);
+                            target.grab_focus();
+                            ControlFlow::Break
+                        }
+                    });
+                }
+                Backend::PlainWayland => {
+                    win_tick.set_accept_focus(true);
+                    glib::idle_add_local_once(move || {
+                        target.grab_focus();
+                    });
+                }
+            }
+        }
+    } else if !is_typing {
+        entry_tick.select_region(0, 0);
+        entry_tick.hide();
+        review_scroll_tick.hide();
+        match backend_tick {
+            Backend::LayerShell => win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None),
+            _ => win_tick.set_accept_focus(false),
+        }
+    }
+
+    // One visibility policy for every backend. LayerShell and PlainWayland
+    // previously keyed off `phase == Recording` alone, which ignored the
+    // user's preference: a pill set to Hidden still appeared while
+    // recording, and Persistent never showed when idle.
+    let should_show = rust_pill_shared::should_show_pill(
+        state_tick.visibility.get().into(),
+        state_tick.phase.get() != Phase::Idle,
+        state_tick.owns_panel(),
+    );
+    if should_show {
+        if !state_tick.focus_release_remap_pending.get() {
+            win_tick.show();
+        }
+    } else {
+        win_tick.hide();
+    }
+
+    if let Some(gdk_win) = win_tick.window() {
+        input::update_input_region(&gdk_win, state_tick);
+    }
+    da.queue_draw();
+    ControlFlow::Continue
+}
+
+/// The pill's initial state.
+///
+/// This was a 120-line literal inside `run`. A literal is not testable, and
+/// it buried `run`'s own logic under field initialisation.
+fn initial_state(backend: Backend) -> Rc<PillState> {
+    Rc::new(PillState {
         phase: Cell::new(Phase::Idle),
         visibility: Cell::new(Visibility::WhileActive),
         expand_t: Cell::new(0.0),
@@ -274,8 +776,38 @@ pub fn run(receiver: Receiver<InMessage>) {
         alloc_width: Cell::new(0.0),
         alloc_height: Cell::new(0.0),
         backend: Cell::new(backend),
-    });
+    })
+}
 
+/// The things a signal handler needs to reach. Passed as one value because the
+/// alternative is seven positional arguments, four of which are clones of the
+/// same three widgets.
+#[derive(Clone, Copy)]
+struct Wiring<'a> {
+    window: &'a gtk::Window,
+    entry: &'a gtk::Entry,
+    drawing_area: &'a gtk::DrawingArea,
+    review_editor: &'a gtk::TextView,
+    review_buffer: &'a gtk::TextBuffer,
+    state: &'a Rc<PillState>,
+    backend: Backend,
+}
+
+/// Everything that reacts to a pointer event on the pill window.
+///
+/// `run` used to hold this inline: the signal registrations sat between the
+/// window construction and the first frame, so every closure body counted
+/// against `run`. The closures are unchanged; only the borrows they capture
+/// moved.
+fn wire_events(wiring: Wiring) {
+    let Wiring {
+        window,
+        entry,
+        review_editor,
+        state,
+        backend,
+        ..
+    } = wiring;
     if backend == Backend::X11 {
         let state_realize = state.clone();
         window.connect_realize(move |window| x11::setup_x11_window(window, state_realize.clone()));
@@ -482,7 +1014,23 @@ pub fn run(receiver: Receiver<InMessage>) {
         input::handle_scroll(&state_scroll, event);
         glib::Propagation::Proceed
     });
+}
 
+/// The signals that are about text, keys and drawing rather than the pointer.
+///
+/// Split from `wire_events` so neither function holds all of them: the pointer
+/// half and this one touch disjoint state, and the only thing they shared was
+/// being registered in one place.
+fn wire_entry_and_keys(wiring: Wiring) {
+    let Wiring {
+        window,
+        entry,
+        drawing_area,
+        review_editor,
+        review_buffer,
+        state,
+        ..
+    } = wiring;
     let state_focus_in = state.clone();
     let entry_focus_in = entry.clone();
     let review_focus_in = review_editor.clone();
@@ -626,6 +1174,173 @@ pub fn run(receiver: Receiver<InMessage>) {
             None => glib::Propagation::Proceed,
         }
     });
+}
+
+/// The pill's own widgets: the composer entry and the review editor.
+///
+/// `run` used to build these inline. Split out so `run` reads as the sequence of
+/// steps it is: window, widgets, wiring, frame loop, main loop.
+fn build_widgets(
+    overlay_widget: &gtk::Overlay,
+) -> (
+    gtk::Entry,
+    gtk::ScrolledWindow,
+    gtk::TextView,
+    gtk::TextBuffer,
+) {
+    let entry = gtk::Entry::new();
+    // Kept so a send can empty the widget from anywhere, the way the Windows pill reaches
+    // its Edit control. `connect_activate` closes over its own clone; the Send-button click
+    // is handled in `input.rs`, which has no widget.
+    ENTRY.with(|slot| *slot.borrow_mut() = Some(entry.clone()));
+    entry.set_placeholder_text(Some("Type a message…"));
+    entry.set_has_frame(false);
+    entry.set_halign(gtk::Align::Fill);
+    entry.set_valign(gtk::Align::End);
+    entry.set_visible(false);
+    entry.set_no_show_all(true);
+    overlay_widget.add_overlay(&entry);
+
+    // Reviews get a real multiline editor in the transcript area; the small
+    // composer remains dedicated to assistant follow-ups.
+    let review_scroll =
+        gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    review_scroll.set_widget_name("review-editor");
+    review_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    review_scroll.set_shadow_type(gtk::ShadowType::None);
+    review_scroll.set_halign(gtk::Align::Fill);
+    review_scroll.set_valign(gtk::Align::Start);
+    review_scroll.set_visible(false);
+    review_scroll.set_no_show_all(true);
+    let review_editor = gtk::TextView::new();
+    let review_buffer = gtk::TextBuffer::new(None::<&gtk::TextTagTable>);
+    review_editor.set_buffer(Some(&review_buffer));
+    review_editor.set_wrap_mode(gtk::WrapMode::WordChar);
+    review_editor.set_left_margin(12);
+    review_editor.set_right_margin(12);
+    review_editor.set_top_margin(10);
+    review_editor.set_bottom_margin(10);
+    review_editor.set_accepts_tab(false);
+    review_scroll.add(&review_editor);
+    overlay_widget.add_overlay(&review_scroll);
+    REVIEW_EDITOR.with(|slot| *slot.borrow_mut() = Some(review_editor.clone()));
+
+    (entry, review_scroll, review_editor, review_buffer)
+}
+
+/// Keep the overlay homed on a live monitor (LayerShell only).
+///
+/// LayerShell positions the surface, so a disconnected output leaves the pill on
+/// nothing. This is the only place that answers "which monitor", and it has to be
+/// a poll: the arrangements are not all events, and a change can land while the
+/// toplevel is unmapped.
+fn start_display_poll(window: &gtk::Window, state: &Rc<PillState>, quit_flag: &Rc<Cell<bool>>) {
+    let window_ref = window.clone();
+    let quit_monitor = quit_flag.clone();
+    let state_monitor = state.clone();
+    let last_geom: Rc<Cell<(i32, i32, i32, i32)>> = Rc::new(Cell::new((0, 0, 0, 0)));
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        if quit_monitor.get() {
+            return ControlFlow::Break;
+        }
+        let display = match gdk::Display::default() {
+            Some(d) => d,
+            None => return ControlFlow::Continue,
+        };
+        // Only re-home the overlay to the pointer's monitor for the FIRST
+        // placement (last_geom is still the sentinel) or while the user is
+        // actively dragging across screens. Chasing the pointer the rest
+        // of the time is what made the pinned pill hop displays whenever
+        // the cursor crossed an edge.
+        // The one exception: when the monitor the pill was homed on gets
+        // DISCONNECTED, the stored geometry stops matching any connected
+        // monitor and the layer-shell surface dies with the dead output —
+        // fall through so the pill is re-homed onto a live monitor.
+        let placed_once = last_geom.get() != (0, 0, 0, 0);
+        // A reset with the "cursor" strategy forces one re-home pass onto
+        // the pointer's monitor; the strategy is consumed once applied.
+        let reset_to_cursor = !state_monitor.dragging.get()
+            && state_monitor.reset_strategy.get() == ResetStrategy::Cursor;
+        if placed_once && !state_monitor.dragging.get() && !reset_to_cursor {
+            let stored = last_geom.get();
+            let still_connected = (0..display.n_monitors()).any(|i| {
+                display.monitor(i).is_some_and(|monitor| {
+                    let g = monitor.geometry();
+                    (g.x(), g.y(), g.width(), g.height()) == stored
+                })
+            });
+            if still_connected {
+                return ControlFlow::Continue;
+            }
+        }
+        let seat = match display.default_seat() {
+            Some(s) => s,
+            None => return ControlFlow::Continue,
+        };
+        let pointer = match seat.pointer() {
+            Some(p) => p,
+            None => return ControlFlow::Continue,
+        };
+        let (_, x, y) = pointer.position();
+        // If the pointer itself sits on dead/missing output hardware, fall
+        // back to the primary monitor so the pill always has a home.
+        let monitor = display
+            .monitor_at_point(x, y)
+            .or_else(|| display.primary_monitor())
+            .or_else(|| display.monitor(0));
+        if let Some(monitor) = monitor {
+            let g = monitor.geometry();
+            let new_geom = (g.x(), g.y(), g.width(), g.height());
+            if new_geom != last_geom.get() {
+                last_geom.set(new_geom);
+                window_ref.set_monitor(&monitor);
+            }
+            if reset_to_cursor {
+                state_monitor.reset_strategy.set(ResetStrategy::Current);
+            }
+        }
+        ControlFlow::Continue
+    });
+}
+
+/// Run the GTK main loop until the quit flag is set.
+fn run_main_loop(quit_flag: &Rc<Cell<bool>>) {
+    let quit_watch = quit_flag.clone();
+    let main_loop = glib::MainLoop::new(None, false);
+    let ml = main_loop.clone();
+    let _quit_watch = glib::timeout_add_local(Duration::from_millis(100), move || {
+        if quit_watch.get() {
+            ml.quit();
+            return ControlFlow::Break;
+        }
+        ControlFlow::Continue
+    });
+    main_loop.run();
+}
+
+/// Runs the GTK pill: picks the display backend, creates the frameless
+/// window, and drives the message/event loop until a quit message arrives.
+pub fn run(receiver: Receiver<InMessage>) {
+    let backend = detect_backend();
+    let window_h = pill_window_height(backend);
+    let (window, overlay_widget, drawing_area) = build_pill_window(backend, window_h);
+    let (entry, review_scroll, review_editor, review_buffer) = build_widgets(&overlay_widget);
+
+    window.add(&overlay_widget);
+
+    let state = initial_state(backend);
+
+    let wiring = Wiring {
+        window: &window,
+        entry: &entry,
+        drawing_area: &drawing_area,
+        review_editor: &review_editor,
+        review_buffer: &review_buffer,
+        state: &state,
+        backend,
+    };
+    wire_events(wiring);
+    wire_entry_and_keys(wiring);
 
     let receiver = Rc::new(RefCell::new(receiver));
     let state_tick = state.clone();
@@ -637,516 +1352,30 @@ pub fn run(receiver: Receiver<InMessage>) {
     let quit_flag = Rc::new(Cell::new(false));
     let quit_tick = quit_flag.clone();
     let backend_tick = backend;
-    glib::timeout_add_local(Duration::from_millis(16), move || {
-        let rx = receiver.borrow();
-        while let Ok(msg) = rx.try_recv() {
-            match msg {
-                InMessage::Phase { phase, seq } => {
-                    let stale = LAST_PHASE_SEQ.with(|last| {
-                        let stale = seq < last.get();
-                        if !stale {
-                            last.set(seq);
-                        }
-                        stale
-                    });
-                    if stale {
-                        continue;
-                    }
-                    let prev = state_tick.phase.get();
-                    state_tick.phase.set(phase);
-                    state_tick
-                        .style_tooltip_gate
-                        .set_take_running(phase == Phase::Recording);
-                    // A new take sweeps any banner parked above the pill (for
-                    // example the retranscribing toast) so it cannot sit on the
-                    // style selector for the whole take. A resume from Paused
-                    // keeps toasts raised during the take, such as the cancel
-                    // confirm.
-                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                        clear_flash(&state_tick);
-                    }
-                    if rust_pill_shared::should_clear_stage_text_on_phase(
-                        prev == Phase::Loading,
-                        phase == Phase::Idle,
-                        phase == Phase::Loading,
-                    ) {
-                        *state_tick.stage_text.borrow_mut() = None;
-                    }
-                    if phase == Phase::Loading && prev != Phase::Loading {
-                        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                        state_tick.loading_offset.set(offset);
-                    }
-                    if phase == Phase::Idle && prev != Phase::Idle {
-                        state_tick.pending_levels.borrow_mut().clear();
-                        state_tick.target_level.set(0.0);
-                        state_tick.current_level.set(0.0);
-                        state_tick.wave_phase.set(0.0);
-                        state_tick.loading_offset.set(0.0);
-                    }
-                }
-                InMessage::Levels { levels } => {
-                    *state_tick.pending_levels.borrow_mut() = levels;
-                }
-                InMessage::StyleInfo { count, name } => {
-                    state_tick.style_count.set(count);
-                    *state_tick.style_name.borrow_mut() = name;
-                }
-                InMessage::Toast {
-                    message,
-                    toast_type,
-                    duration,
-                    action,
-                    action_label,
-                    reject_action,
-                    reject_action_label,
-                } => {
-                    *state_tick.flash_message.borrow_mut() = message;
-                    state_tick
-                        .flash_is_error
-                        .set(toast_type.as_deref() == Some("error"));
-                    state_tick.flash_visible.set(true);
-                    state_tick
-                        .flash_timer
-                        .set(duration.unwrap_or(FLASH_DURATION));
-                    *state_tick.flash_action.borrow_mut() = action;
-                    *state_tick.flash_action_label.borrow_mut() = action_label;
-                    *state_tick.flash_reject_action.borrow_mut() = reject_action;
-                    *state_tick.flash_reject_action_label.borrow_mut() = reject_action_label;
-                }
-                InMessage::DismissToast => {
-                    clear_flash(&state_tick);
-                }
-                InMessage::Fireworks { message } => {
-                    *state_tick.flash_message.borrow_mut() = message;
-                    state_tick.flash_is_error.set(false);
-                    *state_tick.flash_action.borrow_mut() = None;
-                    *state_tick.flash_action_label.borrow_mut() = None;
-                    *state_tick.flash_reject_action.borrow_mut() = None;
-                    *state_tick.flash_reject_action_label.borrow_mut() = None;
-                    state_tick.flash_visible.set(true);
-                    state_tick.flash_timer.set(FIREWORKS_TOTAL_DURATION);
-
-                    state_tick.fireworks_active.set(true);
-                    state_tick.fireworks_elapsed.set(0.0);
-                    state_tick.fireworks_next_launch.set(0);
-                    state_tick.fireworks_rockets.borrow_mut().clear();
-                }
-                InMessage::Flame { message } => {
-                    *state_tick.flash_message.borrow_mut() = message;
-                    state_tick.flash_is_error.set(false);
-                    *state_tick.flash_action.borrow_mut() = None;
-                    *state_tick.flash_action_label.borrow_mut() = None;
-                    *state_tick.flash_reject_action.borrow_mut() = None;
-                    *state_tick.flash_reject_action_label.borrow_mut() = None;
-                    state_tick.flash_visible.set(true);
-                    state_tick.flash_timer.set(FLAME_TOTAL_DURATION);
-
-                    state_tick.flame_active.set(true);
-                    state_tick.flame_elapsed.set(0.0);
-                    state_tick.flame_tongues.borrow_mut().clear();
-                }
-                InMessage::FlashBlue => {
-                    state_tick.flash_blue_active.set(true);
-                    state_tick.flash_blue_elapsed.set(0.0);
-                }
-                InMessage::BroadcastTranscript { text } => {
-                    *state_tick.transcript_text.borrow_mut() = text;
-                    state_tick.transcript_time_since_update.set(0.0);
-                    state_tick.transcript_has_message.set(true);
-                }
-                InMessage::StageText { text } => {
-                    let stage = rust_pill_shared::active_stage_text(text.as_deref());
-                    *state_tick.stage_text.borrow_mut() = stage.map(str::to_owned);
-                }
-                InMessage::Visibility { visibility } => {
-                    state_tick.visibility.set(visibility);
-                }
-                InMessage::WindowSize { ref size } => {
-                    let mode = WindowMode::from_str(size);
-                    state_tick.window_mode.set(mode);
-                }
-                InMessage::AssistantState {
-                    active,
-                    input_mode,
-                    type_message_label,
-                    compact,
-                    conversation_id,
-                    user_prompt,
-                    messages,
-                    streaming,
-                    permissions,
-                    review,
-                } => {
-                    let was_active = state_tick.assistant_active.get();
-                    state_tick.assistant_active.set(active);
-                    *state_tick.assistant_input_mode.borrow_mut() = input_mode;
-                    *state_tick.assistant_type_message.borrow_mut() =
-                        type_message_label.unwrap_or_else(|| "Type a message…".to_string());
-                    entry_tick.set_placeholder_text(Some(
-                        state_tick.assistant_type_message.borrow().as_str(),
-                    ));
-                    state_tick.assistant_compact.set(compact);
-                    *state_tick.assistant_conversation_id.borrow_mut() = conversation_id;
-                    *state_tick.assistant_user_prompt.borrow_mut() = user_prompt;
-                    *state_tick.assistant_messages.borrow_mut() = messages;
-                    *state_tick.assistant_streaming.borrow_mut() = streaming;
-                    *state_tick.assistant_permissions.borrow_mut() = permissions;
-                    let previous_review_id = state_tick
-                        .assistant_review
-                        .borrow()
-                        .as_ref()
-                        .map(|r| r.id.clone());
-                    let review_id = review.as_ref().map(|r| r.id.clone());
-                    let review_text = review.as_ref().map(|r| r.text.clone());
-                    let review_ended = previous_review_id.is_some() && review_id.is_none();
-                    state_tick
-                        .focus_released_after_review
-                        .set(next_focus_released_after_review(
-                            previous_review_id.is_some(),
-                            review_id.is_some(),
-                            state_tick.focus_released_after_review.get(),
-                        ));
-                    if review_ended {
-                        match backend_tick {
-                            Backend::LayerShell => {
-                                win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
-                            }
-                            Backend::X11 | Backend::PlainWayland => {
-                                win_tick.set_accept_focus(false);
-                                state_tick.focus_release_remap_pending.set(true);
-                                let win = win_tick.clone();
-                                let state = state_tick.clone();
-                                win_tick.hide();
-                                glib::timeout_add_local_once(
-                                    Duration::from_millis(50),
-                                    move || {
-                                        state.focus_release_remap_pending.set(false);
-                                        let should_show = rust_pill_shared::should_show_pill(
-                                            state.visibility.get().into(),
-                                            state.phase.get() != Phase::Idle,
-                                            state.owns_panel(),
-                                        );
-                                        if should_show {
-                                            win.show();
-                                        }
-                                    },
-                                );
-                            }
-                        }
-                    } else if review_id.is_some() && review_id != previous_review_id {
-                        // A new review can arrive while the editor widget is
-                        // still visible from the prior review. Restore its
-                        // keyboard acceptance explicitly; visibility-transition
-                        // focus setup below will not run in that case.
-                        match backend_tick {
-                            Backend::LayerShell => {
-                                win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
-                            }
-                            Backend::X11 | Backend::PlainWayland => {
-                                win_tick.set_accept_focus(true);
-                            }
-                        }
-                    }
-                    let review_accessible_name = review
-                        .as_ref()
-                        .and_then(|r| r.review_label.clone())
-                        .unwrap_or_else(|| "Review transcript".to_string());
-                    if let Some(accessible) = review_editor_tick.accessible() {
-                        accessible.set_name(&review_accessible_name);
-                    }
-                    *state_tick.assistant_review.borrow_mut() = review.map(|review| *review);
-
-                    // The entry is the review surface: a new transcript loads
-                    // into it for editing, and answering the review empties it
-                    // again. An unchanged id leaves the user's edits alone.
-                    if review_id != previous_review_id {
-                        let text = review_text.unwrap_or_default();
-                        *state_tick.entry_text.borrow_mut() = text.clone();
-                        entry_tick.set_text(&text);
-                        set_review_editor_text(&text);
-                    } else if crate::input::entry_should_be_cleared(
-                        &state_tick.entry_text.borrow(),
-                        &entry_tick.text(),
-                    ) {
-                        // The mirror was emptied somewhere that had no widget -- the
-                        // Send-button click, or `submit_entry` -- and the id did not change,
-                        // so the reload above did not run. Without this the widget keeps
-                        // showing text that has already been sent. Windows reconciles the
-                        // same way in its window procedure; this is that line.
-                        entry_tick.set_text("");
-                    }
-                    if crate::input::entry_should_be_cleared(
-                        &state_tick.entry_text.borrow(),
-                        &review_editor_text(&review_editor),
-                    ) {
-                        set_review_editor_text("");
-                    }
-
-                    if (active && !was_active)
-                        || (review_id.is_some() && review_id != previous_review_id)
-                    {
-                        state_tick.should_stick.set(true);
-                        state_tick.scroll_offset.set(0.0);
-                    }
-                }
-                InMessage::ResetPosition { strategy } => {
-                    state_tick.dragging.set(false);
-                    state_tick.pointer_down.set(false);
-                    state_tick.long_press_active.set(false);
-                    state_tick.long_press_elapsed.set(0.0);
-                    state_tick.drag_cancelled.set(true);
-                    // The X11 idle timer must not save the cancelled gesture
-                    // through its missed-release fallback after this reset.
-                    state_tick.x11_release_persisted.set(true);
-                    state_tick.drag_draw_offset_x.set(0.0);
-                    state_tick.drag_draw_offset_y.set(0.0);
-                    state_tick.drag_motion.borrow_mut().reset();
-                    state_tick.selector_placement.borrow_mut().reset();
-                    state_tick.crossing.borrow_mut().reset();
-                    state_tick.has_saved_position.set(false);
-                    state_tick.reset_strategy.set(strategy);
-                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
-                    ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: false,
-                        rect,
-                        monitor,
-                    });
-                }
-                InMessage::RequestPosition => {
-                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
-                    ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: state_tick.has_saved_position.get(),
-                        rect,
-                        monitor,
-                    });
-                }
-                InMessage::Quit => {
-                    quit_tick.set(true);
-                }
-            }
-        }
-
-        if quit_tick.get() {
-            return ControlFlow::Break;
-        }
-
-        release_pointer_if_button_up(&win_tick, &state_tick);
-        // One measured step for the whole frame: the transition springs and
-        // the drag controller share it, so a long frame slows everything
-        // together instead of each measuring a different slice.
-        let dt_tick = frame_dt();
-        tick(&state_tick, dt_tick);
-        tick_drag_frame(
-            &win_tick,
+    let frame = move || {
+        frame_tick(
+            &receiver,
             &state_tick,
+            &win_tick,
+            &entry_tick,
+            &review_scroll_tick,
+            &review_editor_tick,
+            &da,
+            &quit_tick,
             backend_tick,
-            drag_clock_now(),
-            dt_tick,
-        );
-        tick_hover_frame(&state_tick);
-        tick_selector_placement(&win_tick, &state_tick, dt_tick);
-        tick_crossing_frame(&win_tick, &state_tick, dt_tick);
-
-        // The assistant keeps its compact composer. A transcript under review
-        // swaps in a multiline editor in the body, above the fixed decision row.
-        let is_typing = state_tick.is_typing();
-        let is_review = state_tick.assistant_review.borrow().is_some();
-        let target_was_visible = if is_review {
-            gtk::prelude::WidgetExt::is_visible(&review_scroll_tick)
-        } else {
-            gtk::prelude::WidgetExt::is_visible(&entry_tick)
-        };
-        if is_typing {
-            let (ox, oy) = state_tick.content_offset();
-            let dw = state_tick.draw_width.get();
-            let dh = state_tick.draw_height.get();
-            let panel_w = PANEL_EXPANDED_WIDTH;
-            let panel_x = (dw - panel_w) / 2.0;
-            let margin_start = (ox + panel_x + PANEL_CONTENT_SIDE_INSET) as i32;
-            let aw = state_tick.alloc_width.get();
-            let right_margin = if aw > 0.0 {
-                aw - ox - dw
-            } else {
-                WINDOW_W_TYPING as f64 - ox - dw
-            };
-            let margin_end =
-                (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
-            let ah = state_tick.alloc_height.get();
-            let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
-            entry_tick.set_margin_start(margin_start);
-            entry_tick.set_margin_end(margin_end);
-            entry_tick.set_margin_bottom((bottom_margin + PANEL_BOTTOM_MARGIN) as i32);
-            entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
-
-            review_scroll_tick.set_margin_start(margin_start);
-            review_scroll_tick.set_margin_end(margin_end);
-            review_scroll_tick.set_margin_top(
-                (oy + PANEL_TOP_MARGIN
-                    + (1.0 - state_tick.panel_open_t.get()) * 12.0
-                    + PANEL_TRANSCRIPT_TOP_OFFSET
-                    + 28.0) as i32,
-            );
-            review_scroll_tick.set_height_request(PANEL_REVIEW_EDITOR_HEIGHT as i32);
-            let panel_opacity = state_tick.panel_open_t.get().clamp(0.0, 1.0);
-            review_scroll_tick.set_opacity(panel_opacity);
-            entry_tick.set_opacity(panel_opacity);
-        }
-
-        entry_tick.set_visible(is_typing && !is_review);
-        review_scroll_tick.set_visible(is_typing && is_review);
-        if is_typing && !target_was_visible {
-            let target: gtk::Widget = if is_review {
-                review_editor_tick.clone().upcast()
-            } else {
-                entry_tick.clone().upcast()
-            };
-            target.show();
-            if !state_tick.focus_released_after_review.get() {
-                match backend_tick {
-                    Backend::LayerShell => {
-                        win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
-                        glib::idle_add_local_once(move || {
-                            target.grab_focus();
-                        });
-                    }
-                    Backend::X11 => {
-                        win_tick.set_accept_focus(true);
-                        glib::timeout_add_local(Duration::from_millis(100), {
-                            let w = win_tick.clone();
-                            move || {
-                                x11::force_keyboard_focus(&w);
-                                target.grab_focus();
-                                ControlFlow::Break
-                            }
-                        });
-                    }
-                    Backend::PlainWayland => {
-                        win_tick.set_accept_focus(true);
-                        glib::idle_add_local_once(move || {
-                            target.grab_focus();
-                        });
-                    }
-                }
-            }
-        } else if !is_typing {
-            entry_tick.select_region(0, 0);
-            entry_tick.hide();
-            review_scroll_tick.hide();
-            match backend_tick {
-                Backend::LayerShell => {
-                    win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None)
-                }
-                _ => win_tick.set_accept_focus(false),
-            }
-        }
-
-        // One visibility policy for every backend. LayerShell and PlainWayland
-        // previously keyed off `phase == Recording` alone, which ignored the
-        // user's preference: a pill set to Hidden still appeared while
-        // recording, and Persistent never showed when idle.
-        let should_show = rust_pill_shared::should_show_pill(
-            state_tick.visibility.get().into(),
-            state_tick.phase.get() != Phase::Idle,
-            state_tick.owns_panel(),
-        );
-        if should_show {
-            if !state_tick.focus_release_remap_pending.get() {
-                win_tick.show();
-            }
-        } else {
-            win_tick.hide();
-        }
-
-        if let Some(gdk_win) = win_tick.window() {
-            input::update_input_region(&gdk_win, &state_tick);
-        }
-        da.queue_draw();
-        ControlFlow::Continue
-    });
+        )
+    };
+    glib::timeout_add_local(Duration::from_millis(16), frame);
 
     window.show_all();
     entry.hide();
     ipc::send(&OutMessage::Ready);
 
     if backend == Backend::LayerShell {
-        let window_ref = window.clone();
-        let quit_monitor = quit_flag.clone();
-        let state_monitor = state.clone();
-        let last_geom: Rc<Cell<(i32, i32, i32, i32)>> = Rc::new(Cell::new((0, 0, 0, 0)));
-        glib::timeout_add_local(Duration::from_millis(100), move || {
-            if quit_monitor.get() {
-                return ControlFlow::Break;
-            }
-            let display = match gdk::Display::default() {
-                Some(d) => d,
-                None => return ControlFlow::Continue,
-            };
-            // Only re-home the overlay to the pointer's monitor for the FIRST
-            // placement (last_geom is still the sentinel) or while the user is
-            // actively dragging across screens. Chasing the pointer the rest
-            // of the time is what made the pinned pill hop displays whenever
-            // the cursor crossed an edge.
-            // The one exception: when the monitor the pill was homed on gets
-            // DISCONNECTED, the stored geometry stops matching any connected
-            // monitor and the layer-shell surface dies with the dead output —
-            // fall through so the pill is re-homed onto a live monitor.
-            let placed_once = last_geom.get() != (0, 0, 0, 0);
-            // A reset with the "cursor" strategy forces one re-home pass onto
-            // the pointer's monitor; the strategy is consumed once applied.
-            let reset_to_cursor = !state_monitor.dragging.get()
-                && state_monitor.reset_strategy.get() == ResetStrategy::Cursor;
-            if placed_once && !state_monitor.dragging.get() && !reset_to_cursor {
-                let stored = last_geom.get();
-                let still_connected = (0..display.n_monitors()).any(|i| {
-                    display.monitor(i).is_some_and(|monitor| {
-                        let g = monitor.geometry();
-                        (g.x(), g.y(), g.width(), g.height()) == stored
-                    })
-                });
-                if still_connected {
-                    return ControlFlow::Continue;
-                }
-            }
-            let seat = match display.default_seat() {
-                Some(s) => s,
-                None => return ControlFlow::Continue,
-            };
-            let pointer = match seat.pointer() {
-                Some(p) => p,
-                None => return ControlFlow::Continue,
-            };
-            let (_, x, y) = pointer.position();
-            // If the pointer itself sits on dead/missing output hardware, fall
-            // back to the primary monitor so the pill always has a home.
-            let monitor = display
-                .monitor_at_point(x, y)
-                .or_else(|| display.primary_monitor())
-                .or_else(|| display.monitor(0));
-            if let Some(monitor) = monitor {
-                let g = monitor.geometry();
-                let new_geom = (g.x(), g.y(), g.width(), g.height());
-                if new_geom != last_geom.get() {
-                    last_geom.set(new_geom);
-                    window_ref.set_monitor(&monitor);
-                }
-                if reset_to_cursor {
-                    state_monitor.reset_strategy.set(ResetStrategy::Current);
-                }
-            }
-            ControlFlow::Continue
-        });
+        start_display_poll(&window, &state, &quit_flag);
     }
 
-    let main_loop = glib::MainLoop::new(None, false);
-    let ml = main_loop.clone();
-    let _quit_watch = glib::timeout_add_local(Duration::from_millis(100), move || {
-        if quit_flag.get() {
-            ml.quit();
-            return ControlFlow::Break;
-        }
-        ControlFlow::Continue
-    });
-    main_loop.run();
+    run_main_loop(&quit_flag);
 }
 
 /// Builds the pill window rect and the work area of the monitor it lives on,
