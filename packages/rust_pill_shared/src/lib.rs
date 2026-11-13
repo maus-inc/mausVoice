@@ -177,7 +177,11 @@ pub fn transcript_viewport_layout(
 /// Review actions reserve input space only while a review is active.
 #[inline]
 pub const fn review_actions_height(has_review: bool, height: f64) -> f64 {
-    if has_review { height } else { 0.0 }
+    if has_review {
+        height
+    } else {
+        0.0
+    }
 }
 
 /// Shared pill visibility policy, used by every platform pill.
