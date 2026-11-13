@@ -37,6 +37,13 @@ const OUT = argDir > -1 ? process.argv[argDir + 1] : path.join(tmpdir(), "chr");
 // The package is installed outside the repository on purpose: it is a 67 MB
 // browser, and a verification tool must not add that to a checkout.
 const PKG_DIR = path.join(tmpdir(), "sparticuz-chromium");
+/** The installed package itself, whose own manifest carries its version. */
+const INSTALLED_PKG = path.join(
+  PKG_DIR,
+  "node_modules",
+  "@sparticuz",
+  "chromium",
+);
 
 const log = (message) => process.stderr.write(`${message}\n`);
 
@@ -95,6 +102,25 @@ if (existsSync(path.join(OUT, "chromium"))) {
   // of `/tmp/work` makes this `/tmp/work.partial`, which may well be somebody
   // else's directory. The same rule the guard above applies to `OUT` applies
   // here: only remove it if it is ours, meaning empty or carrying our marker.
+  //
+  // Stale partials from earlier runs are swept first.
+  //
+  // The pid suffix keeps two concurrent runs from colliding, but it also means a
+  // run that died leaves `${OUT}.partial-<its pid>`, which this run never touches
+  // and nothing ever removes. On a persistent `--dir` those accumulate, one full
+  // copy of the browser each. Only directories carrying the marker are removed:
+  // the marker is written before extraction begins, so it means "this script
+  // created this", not "this extraction finished", and an unmarked directory is
+  // left alone exactly as the guard below leaves it.
+  for (const sibling of readdirSync(path.dirname(OUT))) {
+    if (!sibling.startsWith(`${path.basename(OUT)}.partial-`)) continue;
+    const stale = path.join(path.dirname(OUT), sibling);
+    if (stale === STAGING) continue;
+    if (!existsSync(path.join(stale, MARKER))) continue;
+    log(`  removing a partial extraction left by an earlier run: ${sibling}`);
+    rmSync(stale, { recursive: true, force: true });
+  }
+
   if (existsSync(STAGING)) {
     const ours =
       readdirSync(STAGING).length === 0 ||
@@ -122,15 +148,19 @@ if (existsSync(path.join(OUT, "chromium"))) {
     }
   }
 
-  // The installed version, not just the presence of a package. A cache left by
-  // an older run at a different version would extract the wrong browser and
-  // report success, because the only check was that a `package.json` exists.
+  // The installed version, not the version some manifest *asks for*. Those are
+  // different facts, and reading the declaration was wrong in a way that only
+  // shows up on a stale cache: `PKG_DIR/package.json`'s dependency range is what
+  // the last install requested, so a cache left behind at an older version still
+  // declares the new one and passes the check, and the stale browser is then
+  // extracted and reported as a success. The installed package's own manifest is
+  // the only thing that knows what is actually on disk.
   const cachedVersion = (() => {
     try {
-      const manifest = JSON.parse(
-        readFileSync(path.join(PKG_DIR, "package.json"), "utf8"),
+      const installed = JSON.parse(
+        readFileSync(path.join(INSTALLED_PKG, "package.json"), "utf8"),
       );
-      return manifest.dependencies?.["@sparticuz/chromium"] ?? null;
+      return installed.version ?? null;
     } catch {
       return null;
     }

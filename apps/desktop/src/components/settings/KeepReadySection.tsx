@@ -91,10 +91,13 @@ export const KeepReadySection = ({
           max={MAX_MICROPHONE_PREROLL_SECONDS}
           step={0.1}
           valueLabelDisplay="auto"
-          // Through `useIntl`, not a template literal: `toFixed` always uses a
-          // decimal point -- German and most of the locales this ships with write
-          // a comma -- and a bare "s" is English. The precision stays at one
-          // decimal because that is the slider's step.
+          // Both halves have to be localized, and they are separate jobs:
+          // `formatNumber` writes the decimal separator this locale uses
+          // (`1,5` in German, `1.5` in English), and the message supplies the
+          // unit, which was a bare English "s". `toFixed` alone fixed neither --
+          // it always writes a point. The precision stays at one decimal because
+          // that is the slider's step, and the label should not claim more
+          // resolution than the control has.
           valueLabelFormat={(value) =>
             intl.formatMessage(
               {
@@ -102,7 +105,12 @@ export const KeepReadySection = ({
                 description:
                   "The pre-roll slider's value label: seconds of audio kept from before the press.",
               },
-              { seconds: value.toFixed(1) },
+              {
+                seconds: intl.formatNumber(value, {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                }),
+              },
             )
           }
           ariaLabel={prerollLabel}

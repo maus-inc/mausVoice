@@ -25,6 +25,8 @@ on:
       - "apps/desktop/src-tauri/examples/gen_bindings.rs"
       - "scripts/ci/check-workflow-pins.test.mjs"
       - "scripts/ci/verify-scripts-load.test.mjs"
+      - "scripts/ci/install-chromium-cache.test.mjs"
+      - "scripts/verify/install-chromium.mjs"
       # The guard reads these, so a change to one of them is exactly the edit
       # most likely to break it and the one that would not start the job.
       - "scripts/verify/**"
@@ -299,6 +301,15 @@ jobs:
         # module-scope shadowing bug is invisible to a parser and to every other
         # gate here, so it gets its own.
         run: node --test scripts/ci/verify-scripts-load.test.mjs
+      - name: Test the Chromium installer's cache and staging logic
+        # The installer decides "already installed" from a manifest and sweeps
+        # leftover partial extractions. Both are easy to get subtly wrong in ways
+        # only a stale cache shows: reading the dependency declaration instead of
+        # the installed package accepts an older browser, and a pid-suffixed
+        # staging directory means a failed run's leftovers are never removed.
+        # The tests build the fixture on disk rather than invoking the installer,
+        # because invoking it downloads ~150 MB.
+        run: node --test scripts/ci/install-chromium-cache.test.mjs
       - name: Test the warm-microphone QA matrix
         # `docs/qa/warm-microphone-edge-cases.md` cites a test for every row, and
         # this guard is what keeps those citations true: a row whose test was

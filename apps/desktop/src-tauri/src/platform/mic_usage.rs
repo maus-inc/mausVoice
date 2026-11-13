@@ -416,7 +416,101 @@ pub mod linux {
     pub(super) const PACTL_OVERRIDE_ENV: &str = "MAUSVOICE_PACTL";
 
     use super::CaptureUsage;
-    use std::process::Command;
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    /// How long `pactl` gets before it is killed.
+    ///
+    /// `Command::output()` has no timeout, so a `pactl` that is wedged against a
+    /// server that stopped answering never returns. This probe runs on a worker
+    /// thread reserved for blocking work, so a hang permanently occupies that
+    /// worker and every later usage query queues behind it -- the microphone
+    /// dialog's status line stops updating with no error anywhere. Three seconds
+    /// is far longer than a healthy `pactl list source-outputs` (tens of
+    /// milliseconds); anything slower is a fault worth reporting as one.
+    pub(super) const PACTL_TIMEOUT: Duration = Duration::from_secs(3);
+
+    /// How often the child is checked while inside the timeout.
+    const PACTL_POLL: Duration = Duration::from_millis(25);
+
+    /// The finished output of a child that was reaped, or why there is none.
+    enum Probe {
+        Finished(std::process::Output),
+        TimedOut,
+        SpawnFailed(std::io::Error),
+    }
+
+    /// Runs a command, kills it if it outlives `PACTL_TIMEOUT`, and reaps it.
+    ///
+    /// Written out rather than using `Command::output()` because the timeout is
+    /// the whole point: `output()` waits forever, and a wedged `pactl` is exactly
+    /// the case this probe exists to survive. The child is killed *and* waited
+    /// on, since killing without reaping leaves a zombie.
+    ///
+    /// Stdout is drained on a second thread. A child that fills the pipe buffer
+    /// blocks on write, which reads as a hang, so reading after the wait would
+    /// deadlock on exactly the long listing this timeout is meant to bound.
+    fn run_with_timeout(command: &mut Command) -> Probe {
+        let mut child = match command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(err) => return Probe::SpawnFailed(err),
+        };
+        let mut stdout = child.stdout.take();
+        let mut stderr = child.stderr.take();
+
+        let stdout_reader = std::thread::spawn(move || {
+            let mut buffer = Vec::new();
+            if let Some(pipe) = stdout.as_mut() {
+                let _ = pipe.read_to_end(&mut buffer);
+            }
+            buffer
+        });
+        let stderr_reader = std::thread::spawn(move || {
+            let mut buffer = Vec::new();
+            if let Some(pipe) = stderr.as_mut() {
+                let _ = pipe.read_to_end(&mut buffer);
+            }
+            buffer
+        });
+
+        let deadline = Instant::now() + PACTL_TIMEOUT;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        // Killed, then waited: without the wait the child stays a
+                        // zombie for the life of the process.
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break None;
+                    }
+                    std::thread::sleep(PACTL_POLL);
+                }
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+            }
+        };
+        let stdout = stdout_reader.join().unwrap_or_default();
+        let stderr = stderr_reader.join().unwrap_or_default();
+
+        match status {
+            Some(status) => Probe::Finished(std::process::Output {
+                status,
+                stdout,
+                stderr,
+            }),
+            None => Probe::TimedOut,
+        }
+    }
 
     /// Asks PulseAudio or PipeWire who is recording, through `pactl`.
     ///
@@ -439,13 +533,16 @@ pub mod linux {
         // be tested, and a wrong argument or a misread exit status would only
         // show up on a user's machine.
         let binary = std::env::var(PACTL_OVERRIDE_ENV).unwrap_or_else(|_| "pactl".to_string());
-        let output = match Command::new(&binary)
-            .arg("list")
-            .arg("source-outputs")
-            .output()
+        let output = match run_with_timeout(Command::new(&binary).arg("list").arg("source-outputs"))
         {
-            Ok(output) => output,
-            Err(err) => {
+            Probe::Finished(output) => output,
+            Probe::TimedOut => {
+                return CaptureUsage::Unavailable(format!(
+                    "pactl did not answer within {}s",
+                    PACTL_TIMEOUT.as_secs()
+                ));
+            }
+            Probe::SpawnFailed(err) => {
                 return CaptureUsage::Unavailable(format!("pactl not runnable: {err}"));
             }
         };
@@ -694,7 +791,7 @@ mod linux_command_tests {
     use super::linux::current_usage;
     // The override variable's name, imported from the module that reads it so
     // the tests cannot set one variable while the app reads another.
-    use super::linux::PACTL_OVERRIDE_ENV;
+    use super::linux::{PACTL_OVERRIDE_ENV, PACTL_TIMEOUT};
     use super::CaptureUsage;
     use std::io::Write;
 
@@ -789,6 +886,44 @@ mod linux_command_tests {
             }
             other => panic!("expected Unavailable, got {other:?}"),
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A `pactl` that never answers must be killed, not waited on forever.
+    ///
+    /// The blocking worker this runs on is shared, so a probe that never returns
+    /// takes that worker out permanently and every later usage query queues
+    /// behind it. The script sleeps in a way that survives the shell: `exec`
+    /// replaces the shell with `sleep`, so the process that is killed is the one
+    /// holding the pipe rather than a parent whose child outlives it.
+    #[test]
+    fn a_probe_that_hangs_is_killed_and_reported_as_a_timeout() {
+        let _guard = serialize_env();
+        let dir = std::env::temp_dir().join(format!("mausvoice-pactl-hang-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        // Longer than the timeout, short enough that a leaked process would still
+        // exit before the suite does.
+        let script = fake_pactl(&dir, "exec sleep 30");
+        std::env::set_var(PACTL_OVERRIDE_ENV, &script);
+
+        let started = std::time::Instant::now();
+        let usage = current_usage();
+        let elapsed = started.elapsed();
+        std::env::remove_var(PACTL_OVERRIDE_ENV);
+
+        match usage {
+            CaptureUsage::Unavailable(reason) => {
+                assert!(reason.contains("did not answer"), "reason was {reason}");
+            }
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+        // Deliberately generous on the upper bound: this asserts the probe
+        // *bounded* the wait, not that it hit the deadline precisely. A machine
+        // under load may overshoot by a poll interval or two.
+        assert!(
+            elapsed < PACTL_TIMEOUT + std::time::Duration::from_secs(5),
+            "the probe waited {elapsed:?}, so it did not time out"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

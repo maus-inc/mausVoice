@@ -112,7 +112,7 @@ Delivered. The second delivery ships `system/tools/bin/ffmpeg` 7.0.2-static, `ff
 
 Now delivered. The fourth delivery adds Chromium 156 in G25 at `system/tools/bin/chromium`, so the browser half of this gap is closed and a recording can run on Linux x86-64. The spec group G6 still declines to build a browser inside G9 itself; G25 is where it ships.
 
-To reproduce an install by hand, the archives are all in the npm package's own `bin` directory, not in a `lib` directory: `scripts/verify/install-chromium.mjs` sets `PKG_DIR` to `node_modules/@sparticuz/chromium`, then Brotli-decompresses `bin/chromium.br` to an executable, and decompresses and untars `bin/al2023.tar.br`, `bin/swiftshader.tar.br` and `bin/fonts.tar.br` into the staging directory. `al2023` extracts 12 shared libraries to the archive root, and the script then copies every `*.so` and `*.so.N` into `lib/` there, which is where the launcher's `LD_LIBRARY_PATH` looks.
+To reproduce an install by hand, the archives are all in the npm package's own `bin` directory, not in a `lib` directory: `scripts/verify/install-chromium.mjs` sets `PKG_DIR` to the temporary `sparticuz-chromium` directory and `pkgRoot` to `node_modules/@sparticuz/chromium` under it, then Brotli-decompresses `bin/chromium.br` to an executable, and decompresses and untars `bin/al2023.tar.br`, `bin/swiftshader.tar.br` and `bin/fonts.tar.br` into the staging directory. `al2023` extracts 12 shared libraries to the archive root, and the script then copies every `*.so` and `*.so.N` into `lib/` there, which is where the launcher's `LD_LIBRARY_PATH` looks.
 
 Substitute when no browser is available. Inspect `apps/preview` in both themes and write down the inspection rather than claiming a recording.
 

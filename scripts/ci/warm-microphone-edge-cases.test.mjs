@@ -117,27 +117,37 @@ const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 test("every test cited by the edge-case matrix exists", () => {
   const doc = readFileSync(DOC, "utf8");
-  // The matrix rows only. Scanning the whole document picked up prose in
-  // backticks -- `pactl list source-outputs` is a shell command named in the
-  // open-questions list, not a citation -- and treating it as a citation meant
-  // the guard reported a missing test that was never claimed to exist.
+  // The verdict cell only, not the whole row.
+  //
+  // The condition column names fields and values -- `linger_ms`, `NaN`,
+  // `expected_duration` -- and those are backticked too, so scanning the row
+  // treated identifiers as test citations and demanded a test named after each
+  // field. The claim being checked is "this row is verified by this test", and
+  // that claim lives entirely in the last cell.
+  //
+  // Scanning the whole document was the original mistake in the other
+  // direction: `pactl list source-outputs` is a shell command named in the
+  // open-questions list, and treating it as a citation meant the guard reported
+  // a missing test that was never claimed to exist.
   const matrix = doc
     .split("\n")
     .filter((line) => /^\| \d+ \|/.test(line))
+    .map((line) => line.slice(line.lastIndexOf("|", line.length - 2) + 1))
     .join("\n");
   // No token is discarded here. Anything that is not explicitly prose is
   // validated below, so a mistyped or deleted citation fails instead of being
   // filtered out of the check.
-  const cited = [...new Set(matrix.match(/`([^`]+)`/g) ?? [])]
-    .map((match) => match.slice(1, -1))
-    // A token matching either citation shape is always validated, whatever
-    // `isProseNotCitation` would say about it.
-    .filter(
-      (token) =>
-        isTestName(token) ||
-        looksLikeSentenceName(token) ||
-        !isProseNotCitation(token),
-    );
+  // Every backticked token in a verdict cell is a citation, with no prose filter.
+  //
+  // The filter this replaces existed because the scan covered whole rows and then
+  // the whole document, where most backticks are field names and shell commands.
+  // It hid a real case: a short name such as `gone` matched the "bare word"
+  // branch of `isProseNotCitation` and was dropped before validation, so a
+  // `Verified: gone` row asserted nothing. A verdict cell claims what proves the
+  // row, so anything named there has to be a test.
+  const cited = [...new Set(matrix.match(/`([^`]+)`/g) ?? [])].map((match) =>
+    match.slice(1, -1),
+  );
 
   assert.ok(
     cited.length >= 40,
@@ -150,6 +160,12 @@ test("every test cited by the edge-case matrix exists", () => {
   // it passed because the same phrase appeared in a string elsewhere. Requiring
   // the declaration is what makes this a check on tests rather than on text.
   const isDeclaredTest = (name) => {
+    // Rust declares a test as `fn <name>(`, optionally inside `mod tests`. Nothing
+    // else in the source takes that shape, so it is a declaration and not a
+    // mention -- which the old `codeOnly.includes(name)` arm could not tell apart.
+    if (new RegExp(`fn\\s+${escapeRe(name)}\\s*\\(`).test(codeOnly)) {
+      return true;
+    }
     const opener = ["it", "test", "describe"].join("|");
     // Built by concatenation rather than one template literal: the backtick and
     // the quote classes in one template are easy to escape wrongly, and a mangled
@@ -158,13 +174,18 @@ test("every test cited by the edge-case matrix exists", () => {
     return new RegExp(pattern, "m").test(codeOnly);
   };
 
-  // Both arms read `codeOnly`: a comment is not a test, and counting one let a
-  // deleted test keep its citation alive.
-  const missing = cited.filter(
-    (name) =>
-      !codeOnly.includes(name) &&
-      !(looksLikeSentenceName(name) && isDeclaredTest(name)),
-  );
+  // Every cited name has to be a *declaration*, in both naming styles.
+  //
+  // The old first arm was `codeOnly.includes(name)`, which accepted the name
+  // appearing anywhere in the source -- a comment, a string, an unrelated
+  // identifier -- so deleting the test while leaving its name in any of those
+  // kept the citation alive. That is the opposite of what this guard is for.
+  // Short snake_case names made it concrete: a name like `gone` is filtered out
+  // of the citation list as prose, and a name that survived the filter could
+  // still be satisfied by a doc comment.
+  //
+  // A comment is not a test, so both arms read `codeOnly`.
+  const missing = cited.filter((name) => !isDeclaredTest(name));
   assert.deepEqual(
     missing,
     [],
