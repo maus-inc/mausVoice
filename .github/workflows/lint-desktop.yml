@@ -17,9 +17,7 @@ on:
       - "scripts/ci/fallow.test.mjs"
       - ".fallowrc.json"
       - ".github/workflows/lint-desktop.yml"
-permissions:
-  contents: read
-  pull-requests: read
+permissions: {}
 
 # trigger-manual: false
 
