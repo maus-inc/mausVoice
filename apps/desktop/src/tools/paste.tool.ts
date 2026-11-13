@@ -40,6 +40,9 @@ const savePendingPasteReview = async (
   }
 };
 
+const PASTE_REVIEW_CLEANUP_TIMEOUT_MS = 5_000;
+const PASTE_CHAT_NAVIGATION_TIMEOUT_MS = 5_000;
+
 const requestOpenChatsNavigation = (conversationId: string): void => {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<never>((_, reject) => {
@@ -99,9 +102,6 @@ const createPasteReviewState = (): PasteReviewState => ({
   activeOpenSaves: 0,
 });
 
-const PASTE_REVIEW_CLEANUP_TIMEOUT_MS = 5_000;
-const PASTE_CHAT_NAVIGATION_TIMEOUT_MS = 5_000;
-
 const cancelUnusedPendingReview = (state: PasteReviewState): void => {
   if (
     !state.reviewResolved ||
@@ -144,6 +144,35 @@ const cancelUnusedPendingReview = (state: PasteReviewState): void => {
     });
 };
 
+const reconcileLatestExistingReviewDraft = async (
+  state: PasteReviewState,
+  saved: ChatMessage,
+  savedText: string,
+  generation: number,
+): Promise<ChatMessage> => {
+  const latestText = state.latestSaveText;
+  if (
+    generation === state.latestSaveGeneration ||
+    !latestText ||
+    savedText === latestText
+  ) {
+    return saved;
+  }
+
+  // Every correction must observe the previous CAS result before its next revision.
+  const corrected = await updatePendingPasteReviewDraft(
+    saved,
+    latestText,
+    state.latestSaveGeneration,
+  );
+  return reconcileLatestExistingReviewDraft(
+    state,
+    corrected,
+    latestText,
+    generation,
+  );
+};
+
 const updateLatestExistingReviewDraft = async (
   state: PasteReviewState,
   message: ChatMessage,
@@ -151,27 +180,12 @@ const updateLatestExistingReviewDraft = async (
   generation: number,
 ): Promise<void> => {
   const saved = await updatePendingPasteReviewDraft(message, text, generation);
-  if (generation === state.latestSaveGeneration) {
-    state.pendingReviewMessage = saved;
-    return;
-  }
-
-  let corrected = saved;
-  let correctedText = text;
-  while (
-    generation !== state.latestSaveGeneration &&
-    state.latestSaveText &&
-    correctedText !== state.latestSaveText
-  ) {
-    correctedText = state.latestSaveText;
-    // Corrected writes must observe the prior CAS result before the next revision.
-    corrected = await updatePendingPasteReviewDraft(
-      corrected,
-      correctedText,
-      state.latestSaveGeneration,
-    );
-  }
-  state.pendingReviewMessage = corrected;
+  state.pendingReviewMessage = await reconcileLatestExistingReviewDraft(
+    state,
+    saved,
+    text,
+    generation,
+  );
 };
 
 const createOrRecoverReviewDraft = async (

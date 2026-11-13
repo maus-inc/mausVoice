@@ -1239,44 +1239,17 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             );
         }
 
-        // Input bar
         if is_typing {
-            let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1 * alpha);
-            ctx.set_line_width(1.0);
-            ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET, input_y);
-            ctx.line_to(panel_x + panel_w - PANEL_CONTENT_SIDE_INSET, input_y);
-            ctx.stroke();
-
-            // Send button
-            let send_btn_size = 28.0;
-            let send_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - send_btn_size;
-            let send_y = input_y + (PANEL_INPUT_HEIGHT - send_btn_size) / 2.0;
-            let has_text = !state.entry_text.borrow().trim().is_empty();
-            if !has_text && review_id.is_none() {
-                ctx.select_font_face("Satoshi", false, false);
-                ctx.set_font_size(13.0);
-                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.42 * alpha);
-                ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET + 10.0, input_y + 29.0);
-                let placeholder = state.assistant_type_message.borrow();
-                ctx.show_text(&placeholder);
-            }
-            let text_alpha = if has_text { 0.82 } else { 0.2 };
-
-            ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-            let cx = send_x + send_btn_size / 2.0;
-            let cy = send_y + send_btn_size / 2.0;
-            ctx.draw_symbol("arrow.up.circle.fill", cx, cy, 18.0);
-
-            if has_text {
-                state.click_regions.borrow_mut().push(ClickRegion {
-                    x: send_x,
-                    y: send_y,
-                    w: send_btn_size,
-                    h: send_btn_size,
-                    action: ClickAction::SendButton,
-                });
-            }
+            draw_input_bar(
+                ctx,
+                state,
+                panel_x,
+                py,
+                panel_w,
+                panel_h,
+                alpha,
+                review_id.is_some(),
+            );
         }
     }
 
@@ -1296,6 +1269,53 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         h: HEADER_BUTTON_SIZE,
         action: ClickAction::AssistantClose,
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_input_bar(
+    ctx: &Ctx,
+    state: &PillState,
+    panel_x: f64,
+    py: f64,
+    panel_w: f64,
+    panel_h: f64,
+    alpha: f64,
+    is_review: bool,
+) {
+    let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1 * alpha);
+    ctx.set_line_width(1.0);
+    ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET, input_y);
+    ctx.line_to(panel_x + panel_w - PANEL_CONTENT_SIDE_INSET, input_y);
+    ctx.stroke();
+
+    let send_btn_size = 28.0;
+    let send_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - send_btn_size;
+    let send_y = input_y + (PANEL_INPUT_HEIGHT - send_btn_size) / 2.0;
+    let has_text = !state.entry_text.borrow().trim().is_empty();
+    if !has_text && !is_review {
+        ctx.select_font_face("Satoshi", false, false);
+        ctx.set_font_size(13.0);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.42 * alpha);
+        ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET + 10.0, input_y + 29.0);
+        let placeholder = state.assistant_type_message.borrow();
+        ctx.show_text(&placeholder);
+    }
+    let text_alpha = if has_text { 0.82 } else { 0.2 };
+    ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
+    let cx = send_x + send_btn_size / 2.0;
+    let cy = send_y + send_btn_size / 2.0;
+    ctx.draw_symbol("arrow.up.circle.fill", cx, cy, 18.0);
+
+    if has_text {
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: send_x,
+            y: send_y,
+            w: send_btn_size,
+            h: send_btn_size,
+            action: ClickAction::SendButton,
+        });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1376,8 +1396,54 @@ fn draw_transcript(
     ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
 
-    let line_height = 20.0;
+    y = draw_transcript_messages(
+        ctx,
+        state,
+        &messages,
+        streaming.as_ref(),
+        area_x,
+        y,
+        area_w,
+        alpha,
+    );
 
+    for perm in permissions.iter() {
+        y += 12.0;
+        y = draw_permission_card(ctx, state, perm, area_x, y, area_w, alpha);
+    }
+
+    let total_height = y + scroll - area_y + bottom_pad;
+    state.content_height.set(total_height);
+
+    // Trim the click targets to the part of the panel still on screen. A
+    // button the user cannot see must not take their click, and a button that
+    // is half out must only answer on the half that shows.
+    {
+        let mut regions = state.click_regions.borrow_mut();
+        let scrolled = regions.split_off(region_start);
+        regions.extend(scrolled.into_iter().filter_map(|mut region| {
+            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            region.y = y;
+            region.h = h;
+            Some(region)
+        }));
+    }
+
+    ctx.restore();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_transcript_messages(
+    ctx: &Ctx,
+    state: &PillState,
+    messages: &[crate::ipc::PillMessage],
+    streaming: Option<&PillStreaming>,
+    area_x: f64,
+    mut y: f64,
+    area_w: f64,
+    alpha: f64,
+) -> f64 {
+    let line_height = 20.0;
     for (i, msg) in messages.iter().enumerate() {
         if i > 0 {
             y += 16.0;
@@ -1389,7 +1455,7 @@ fn draw_transcript(
             y += 8.0;
         }
 
-        if let Some(ref stream) = *streaming {
+        if let Some(stream) = streaming {
             if stream.message_id == msg.id {
                 y = draw_streaming_activity(ctx, stream, area_x, y, area_w, alpha);
             }
@@ -1439,30 +1505,7 @@ fn draw_transcript(
             y = draw_thinking_text(ctx, area_x, y, alpha, state);
         }
     }
-
-    for perm in permissions.iter() {
-        y += 12.0;
-        y = draw_permission_card(ctx, state, perm, area_x, y, area_w, alpha);
-    }
-
-    let total_height = y + scroll - area_y + bottom_pad;
-    state.content_height.set(total_height);
-
-    // Trim the click targets to the part of the panel still on screen. A
-    // button the user cannot see must not take their click, and a button that
-    // is half out must only answer on the half that shows.
-    {
-        let mut regions = state.click_regions.borrow_mut();
-        let scrolled = regions.split_off(region_start);
-        regions.extend(scrolled.into_iter().filter_map(|mut region| {
-            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
-            region.y = y;
-            region.h = h;
-            Some(region)
-        }));
-    }
-
-    ctx.restore();
+    y
 }
 
 fn draw_streaming_activity(

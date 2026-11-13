@@ -475,6 +475,7 @@ describe("PasteTool review", () => {
   it("settles Open after saving even when Chats navigation stalls", async () => {
     vi.useFakeTimers();
     try {
+      // Simulate a navigation event that never resolves.
       emitMock.mockImplementationOnce(() => new Promise<void>(() => {}));
       reviewTranscriptBeforeInsertMock.mockImplementationOnce(
         async (

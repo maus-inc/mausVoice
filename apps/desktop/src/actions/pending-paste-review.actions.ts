@@ -230,6 +230,30 @@ export const copyPendingPasteReview = async (
   await updatePendingPasteReview(saved, savedPending, text, "copied");
 };
 
+const cancelPendingPasteReviewWithRetries = async (
+  saved: ChatMessage,
+  savedPending: PendingPasteReviewMetadata | null,
+  remainingAttempts: number,
+): Promise<{
+  saved: ChatMessage;
+  savedPending: PendingPasteReviewMetadata | null;
+}> => {
+  if (savedPending?.status !== "pending" || remainingAttempts === 0) {
+    return { saved, savedPending };
+  }
+  const nextSaved = await updatePendingPasteReview(
+    saved,
+    savedPending,
+    savedPending.text,
+    "canceled",
+  );
+  return cancelPendingPasteReviewWithRetries(
+    nextSaved,
+    getPendingPasteReview(nextSaved.metadata),
+    remainingAttempts - 1,
+  );
+};
+
 /** Mark a saved Paste review as intentionally dismissed, preserving its text. */
 export const cancelPendingPasteReview = async (
   message: ChatMessage,
@@ -246,22 +270,13 @@ export const cancelPendingPasteReview = async (
     text.trim() ? text : pending.text,
     "canceled",
   );
-  let savedPending = getPendingPasteReview(saved.metadata);
-  // Each retry uses the revision returned by the previous write; these writes
-  // must stay sequential so a fresh CAS can observe and preserve the newest text.
-  for (
-    let attempt = 0;
-    savedPending?.status === "pending" && attempt < 3;
-    attempt += 1
-  ) {
-    saved = await updatePendingPasteReview(
-      saved,
-      savedPending,
-      savedPending.text,
-      "canceled",
-    );
-    savedPending = getPendingPasteReview(saved.metadata);
-  }
+  const result = await cancelPendingPasteReviewWithRetries(
+    saved,
+    getPendingPasteReview(saved.metadata),
+    3,
+  );
+  saved = result.saved;
+  const savedPending = result.savedPending;
   if (savedPending?.status !== "canceled") {
     throw new Error(
       getIntl().formatMessage({

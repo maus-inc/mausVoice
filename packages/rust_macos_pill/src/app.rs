@@ -536,13 +536,233 @@ extern "C" fn tick_callback(_this: &Object, _sel: Sel, _timer: id) {
     perform_tick();
 }
 
-/// Runs one frame of the pill loop: processes queued IPC messages, advances
-/// the springs/animations, and repaints when the state changed.
-fn perform_tick() {
+/// Applies a single desktop message to the native pill state.
+fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
     // Phase message sequence guard: see ipc::InMessage::Phase.
     thread_local! {
         static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     }
+    match msg {
+        InMessage::Phase { phase, seq } => {
+            let stale = LAST_PHASE_SEQ.with(|last| {
+                let stale = seq < last.get();
+                if !stale {
+                    last.set(seq);
+                }
+                stale
+            });
+            if stale {
+                return;
+            }
+            let prev = ctx.state.phase.get();
+            ctx.state.phase.set(phase);
+            ctx.state
+                .style_tooltip_gate
+                .set_take_running(phase == Phase::Recording);
+            // A new take sweeps any banner parked above the pill (for
+            // example the retranscribing toast) so it cannot sit on the
+            // style selector for the whole take. A resume from Paused
+            // keeps toasts raised during the take, such as the cancel
+            // confirm.
+            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                clear_flash(&ctx.state);
+            }
+            if rust_pill_shared::should_clear_stage_text_on_phase(
+                prev == Phase::Loading,
+                phase == Phase::Idle,
+                phase == Phase::Loading,
+            ) {
+                *ctx.state.stage_text.borrow_mut() = None;
+            }
+            if phase == Phase::Loading && prev != Phase::Loading {
+                let offset = if reduced_motion() { 0.5 } else { 0.0 };
+                ctx.state.loading_offset.set(offset);
+            }
+            if phase == Phase::Idle && prev != Phase::Idle {
+                ctx.state.pending_levels.borrow_mut().clear();
+                ctx.state.target_level.set(0.0);
+                ctx.state.current_level.set(0.0);
+                ctx.state.wave_phase.set(0.0);
+                ctx.state.loading_offset.set(0.0);
+            }
+        }
+        InMessage::Levels { levels } => {
+            *ctx.state.pending_levels.borrow_mut() = levels;
+        }
+        InMessage::StyleInfo { count, name } => {
+            ctx.state.style_count.set(count);
+            *ctx.state.style_name.borrow_mut() = name;
+        }
+        InMessage::Toast {
+            message,
+            toast_type,
+            duration,
+            action,
+            action_label,
+            reject_action,
+            reject_action_label,
+        } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state
+                .flash_is_error
+                .set(toast_type.as_deref() == Some("error"));
+            ctx.state.flash_visible.set(true);
+            ctx.state
+                .flash_timer
+                .set(duration.unwrap_or(FLASH_DURATION));
+            *ctx.state.flash_action.borrow_mut() = action;
+            *ctx.state.flash_action_label.borrow_mut() = action_label;
+            *ctx.state.flash_reject_action.borrow_mut() = reject_action;
+            *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
+        }
+        InMessage::DismissToast => {
+            clear_flash(&ctx.state);
+        }
+        InMessage::Fireworks { message } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state.flash_is_error.set(false);
+            *ctx.state.flash_action.borrow_mut() = None;
+            *ctx.state.flash_action_label.borrow_mut() = None;
+            *ctx.state.flash_reject_action.borrow_mut() = None;
+            *ctx.state.flash_reject_action_label.borrow_mut() = None;
+            ctx.state.flash_visible.set(true);
+            ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
+
+            ctx.state.fireworks_active.set(true);
+            ctx.state.fireworks_elapsed.set(0.0);
+            ctx.state.fireworks_next_launch.set(0);
+            ctx.state.fireworks_rockets.borrow_mut().clear();
+        }
+        InMessage::Flame { message } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state.flash_is_error.set(false);
+            *ctx.state.flash_action.borrow_mut() = None;
+            *ctx.state.flash_action_label.borrow_mut() = None;
+            *ctx.state.flash_reject_action.borrow_mut() = None;
+            *ctx.state.flash_reject_action_label.borrow_mut() = None;
+            ctx.state.flash_visible.set(true);
+            ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
+
+            ctx.state.flame_active.set(true);
+            ctx.state.flame_elapsed.set(0.0);
+            ctx.state.flame_tongues.borrow_mut().clear();
+        }
+        InMessage::FlashBlue => {
+            ctx.state.flash_blue_active.set(true);
+            ctx.state.flash_blue_elapsed.set(0.0);
+        }
+        InMessage::BroadcastTranscript { text } => {
+            *ctx.state.transcript_text.borrow_mut() = text;
+            ctx.state.transcript_time_since_update.set(0.0);
+            ctx.state.transcript_has_message.set(true);
+        }
+        InMessage::StageText { text } => {
+            let stage = rust_pill_shared::active_stage_text(text.as_deref());
+            *ctx.state.stage_text.borrow_mut() = stage.map(str::to_owned);
+        }
+        InMessage::Visibility { visibility } => {
+            ctx.state.visibility.set(visibility);
+        }
+        InMessage::WindowSize { ref size } => {
+            let mode = WindowMode::from_str(size);
+            ctx.state.window_mode.set(mode);
+        }
+        InMessage::AssistantState {
+            active,
+            input_mode,
+            type_message_label,
+            compact,
+            conversation_id,
+            user_prompt,
+            messages,
+            streaming,
+            permissions,
+            review,
+        } => {
+            let was_active = ctx.state.assistant_active.get();
+            let previous_review_id = ctx
+                .state
+                .assistant_review
+                .borrow()
+                .as_ref()
+                .map(|r| r.id.clone());
+            let review_id = review.as_ref().map(|r| r.id.clone());
+            let review_text = review.as_ref().map(|r| r.text.clone());
+            *ctx.state.assistant_review.borrow_mut() = review.map(|review| *review);
+
+            // The entry is the review surface: a new transcript loads
+            // into it for editing, and answering the review empties it
+            // again. An unchanged id leaves the user's edits alone.
+            if review_id != previous_review_id {
+                let text = review_text.unwrap_or_default();
+                *ctx.state.entry_text.borrow_mut() = text.clone();
+                set_entry_text(&text);
+            }
+            ctx.state.assistant_active.set(active);
+            *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
+            *ctx.state.assistant_type_message.borrow_mut() =
+                type_message_label.unwrap_or_else(|| "Type a message…".to_string());
+            ctx.state.assistant_compact.set(compact);
+            *ctx.state.assistant_conversation_id.borrow_mut() = conversation_id;
+            *ctx.state.assistant_user_prompt.borrow_mut() = user_prompt;
+            *ctx.state.assistant_messages.borrow_mut() = messages;
+            *ctx.state.assistant_streaming.borrow_mut() = streaming;
+            *ctx.state.assistant_permissions.borrow_mut() = permissions;
+
+            if (active && !was_active)
+                || (review_id.is_some() && review_id != previous_review_id)
+            {
+                ctx.state.should_stick.set(true);
+                ctx.state.scroll_offset.set(0.0);
+            }
+        }
+        InMessage::ResetPosition { strategy } => {
+            // Cancel ownership, not a normal release: no final sample
+            // or old drop may re-arm/overwrite this reset.
+            ctx.state.dragging.set(false);
+            ctx.state.pointer_down.set(false);
+            ctx.state.long_press_active.set(false);
+            ctx.state.long_press_elapsed.set(0.0);
+            ctx.state.drag_cancelled.set(true);
+            ctx.state.has_saved_position.set(false);
+            ctx.state.drag_motion.borrow_mut().reset();
+            ctx.state.selector_placement.borrow_mut().reset();
+            ctx.state.crossing.borrow_mut().reset();
+            ctx.state.reset_strategy.set(strategy);
+            reposition_window(ctx.window, &ctx.state, dt, now);
+            let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: false,
+                rect: Some(rect),
+                monitor: Some(monitor),
+            });
+        }
+        InMessage::RequestPosition => {
+            let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: ctx.state.has_saved_position.get(),
+                rect: Some(rect),
+                monitor: Some(monitor),
+            });
+        }
+        InMessage::Quit => {
+            ctx.quit.set(true);
+        }
+    }
+}
+
+/// Drains IPC messages before the current animation frame is advanced.
+fn process_pending_messages(ctx: &AppContext, dt: f64, now: f64) {
+    // Process IPC messages
+    let rx = ctx.receiver.borrow();
+    while let Ok(msg) = rx.try_recv() {
+        apply_message(ctx, msg, dt, now);
+    }
+    drop(rx);
+}
+
+/// Runs one frame of the pill loop and repaints when state has changed.
+fn perform_tick() {
     APP_CTX.with(|cell| {
         let borrow = cell.borrow();
         let Some(ctx) = borrow.as_ref() else { return };
@@ -557,218 +777,7 @@ fn perform_tick() {
             (now - prev).clamp(0.001, 0.05)
         };
 
-        // Process IPC messages
-        let rx = ctx.receiver.borrow();
-        while let Ok(msg) = rx.try_recv() {
-            match msg {
-                InMessage::Phase { phase, seq } => {
-                    let stale = LAST_PHASE_SEQ.with(|last| {
-                        let stale = seq < last.get();
-                        if !stale {
-                            last.set(seq);
-                        }
-                        stale
-                    });
-                    if stale {
-                        continue;
-                    }
-                    let prev = ctx.state.phase.get();
-                    ctx.state.phase.set(phase);
-                    ctx.state
-                        .style_tooltip_gate
-                        .set_take_running(phase == Phase::Recording);
-                    // A new take sweeps any banner parked above the pill (for
-                    // example the retranscribing toast) so it cannot sit on the
-                    // style selector for the whole take. A resume from Paused
-                    // keeps toasts raised during the take, such as the cancel
-                    // confirm.
-                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                        clear_flash(&ctx.state);
-                    }
-                    if rust_pill_shared::should_clear_stage_text_on_phase(
-                        prev == Phase::Loading,
-                        phase == Phase::Idle,
-                        phase == Phase::Loading,
-                    ) {
-                        *ctx.state.stage_text.borrow_mut() = None;
-                    }
-                    if phase == Phase::Loading && prev != Phase::Loading {
-                        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                        ctx.state.loading_offset.set(offset);
-                    }
-                    if phase == Phase::Idle && prev != Phase::Idle {
-                        ctx.state.pending_levels.borrow_mut().clear();
-                        ctx.state.target_level.set(0.0);
-                        ctx.state.current_level.set(0.0);
-                        ctx.state.wave_phase.set(0.0);
-                        ctx.state.loading_offset.set(0.0);
-                    }
-                }
-                InMessage::Levels { levels } => {
-                    *ctx.state.pending_levels.borrow_mut() = levels;
-                }
-                InMessage::StyleInfo { count, name } => {
-                    ctx.state.style_count.set(count);
-                    *ctx.state.style_name.borrow_mut() = name;
-                }
-                InMessage::Toast {
-                    message,
-                    toast_type,
-                    duration,
-                    action,
-                    action_label,
-                    reject_action,
-                    reject_action_label,
-                } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state
-                        .flash_is_error
-                        .set(toast_type.as_deref() == Some("error"));
-                    ctx.state.flash_visible.set(true);
-                    ctx.state
-                        .flash_timer
-                        .set(duration.unwrap_or(FLASH_DURATION));
-                    *ctx.state.flash_action.borrow_mut() = action;
-                    *ctx.state.flash_action_label.borrow_mut() = action_label;
-                    *ctx.state.flash_reject_action.borrow_mut() = reject_action;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
-                }
-                InMessage::DismissToast => {
-                    clear_flash(&ctx.state);
-                }
-                InMessage::Fireworks { message } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state.flash_is_error.set(false);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
-                    *ctx.state.flash_reject_action.borrow_mut() = None;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
-                    ctx.state.flash_visible.set(true);
-                    ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
-
-                    ctx.state.fireworks_active.set(true);
-                    ctx.state.fireworks_elapsed.set(0.0);
-                    ctx.state.fireworks_next_launch.set(0);
-                    ctx.state.fireworks_rockets.borrow_mut().clear();
-                }
-                InMessage::Flame { message } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state.flash_is_error.set(false);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
-                    *ctx.state.flash_reject_action.borrow_mut() = None;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
-                    ctx.state.flash_visible.set(true);
-                    ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
-
-                    ctx.state.flame_active.set(true);
-                    ctx.state.flame_elapsed.set(0.0);
-                    ctx.state.flame_tongues.borrow_mut().clear();
-                }
-                InMessage::FlashBlue => {
-                    ctx.state.flash_blue_active.set(true);
-                    ctx.state.flash_blue_elapsed.set(0.0);
-                }
-                InMessage::BroadcastTranscript { text } => {
-                    *ctx.state.transcript_text.borrow_mut() = text;
-                    ctx.state.transcript_time_since_update.set(0.0);
-                    ctx.state.transcript_has_message.set(true);
-                }
-                InMessage::StageText { text } => {
-                    let stage = rust_pill_shared::active_stage_text(text.as_deref());
-                    *ctx.state.stage_text.borrow_mut() = stage.map(str::to_owned);
-                }
-                InMessage::Visibility { visibility } => {
-                    ctx.state.visibility.set(visibility);
-                }
-                InMessage::WindowSize { ref size } => {
-                    let mode = WindowMode::from_str(size);
-                    ctx.state.window_mode.set(mode);
-                }
-                InMessage::AssistantState {
-                    active,
-                    input_mode,
-                    type_message_label,
-                    compact,
-                    conversation_id,
-                    user_prompt,
-                    messages,
-                    streaming,
-                    permissions,
-                    review,
-                } => {
-                    let was_active = ctx.state.assistant_active.get();
-                    let previous_review_id = ctx
-                        .state
-                        .assistant_review
-                        .borrow()
-                        .as_ref()
-                        .map(|r| r.id.clone());
-                    let review_id = review.as_ref().map(|r| r.id.clone());
-                    let review_text = review.as_ref().map(|r| r.text.clone());
-                    *ctx.state.assistant_review.borrow_mut() = review.map(|review| *review);
-
-                    // The entry is the review surface: a new transcript loads
-                    // into it for editing, and answering the review empties it
-                    // again. An unchanged id leaves the user's edits alone.
-                    if review_id != previous_review_id {
-                        let text = review_text.unwrap_or_default();
-                        *ctx.state.entry_text.borrow_mut() = text.clone();
-                        set_entry_text(&text);
-                    }
-                    ctx.state.assistant_active.set(active);
-                    *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
-                    *ctx.state.assistant_type_message.borrow_mut() =
-                        type_message_label.unwrap_or_else(|| "Type a message…".to_string());
-                    ctx.state.assistant_compact.set(compact);
-                    *ctx.state.assistant_conversation_id.borrow_mut() = conversation_id;
-                    *ctx.state.assistant_user_prompt.borrow_mut() = user_prompt;
-                    *ctx.state.assistant_messages.borrow_mut() = messages;
-                    *ctx.state.assistant_streaming.borrow_mut() = streaming;
-                    *ctx.state.assistant_permissions.borrow_mut() = permissions;
-
-                    if (active && !was_active)
-                        || (review_id.is_some() && review_id != previous_review_id)
-                    {
-                        ctx.state.should_stick.set(true);
-                        ctx.state.scroll_offset.set(0.0);
-                    }
-                }
-                InMessage::ResetPosition { strategy } => {
-                    // Cancel ownership, not a normal release: no final sample
-                    // or old drop may re-arm/overwrite this reset.
-                    ctx.state.dragging.set(false);
-                    ctx.state.pointer_down.set(false);
-                    ctx.state.long_press_active.set(false);
-                    ctx.state.long_press_elapsed.set(0.0);
-                    ctx.state.drag_cancelled.set(true);
-                    ctx.state.has_saved_position.set(false);
-                    ctx.state.drag_motion.borrow_mut().reset();
-                    ctx.state.selector_placement.borrow_mut().reset();
-                    ctx.state.crossing.borrow_mut().reset();
-                    ctx.state.reset_strategy.set(strategy);
-                    reposition_window(ctx.window, &ctx.state, dt, now);
-                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
-                    ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: false,
-                        rect: Some(rect),
-                        monitor: Some(monitor),
-                    });
-                }
-                InMessage::RequestPosition => {
-                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
-                    ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: ctx.state.has_saved_position.get(),
-                        rect: Some(rect),
-                        monitor: Some(monitor),
-                    });
-                }
-                InMessage::Quit => {
-                    ctx.quit.set(true);
-                }
-            }
-        }
-        drop(rx);
+        process_pending_messages(ctx, dt, now);
 
         if ctx.quit.get() {
             unsafe {

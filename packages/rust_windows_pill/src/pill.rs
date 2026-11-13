@@ -612,53 +612,124 @@ fn clear_flash(state: &PillState) {
 
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
-fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
-    // Phase message sequence guard: see ipc::InMessage::Phase.
+fn process_phase_message(phase: Phase, seq: u64, state: &PillState) -> bool {
+    // Reject delayed phase updates so they cannot roll the pill back.
     thread_local! {
         static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     }
+    let stale = LAST_PHASE_SEQ.with(|last| {
+        let stale = seq < last.get();
+        if !stale {
+            last.set(seq);
+        }
+        stale
+    });
+    if stale {
+        return false;
+    }
+
+    let prev = state.phase.get();
+    state.phase.set(phase);
+    state
+        .style_tooltip_gate
+        .set_take_running(phase == Phase::Recording);
+    // A new take sweeps any banner parked above the pill (for example the
+    // retranscribing toast). Resuming from Paused keeps banners raised during it.
+    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+        clear_flash(state);
+    }
+    if rust_pill_shared::should_clear_stage_text_on_phase(
+        prev == Phase::Loading,
+        phase == Phase::Idle,
+        phase == Phase::Loading,
+    ) {
+        *state.stage_text.borrow_mut() = None;
+    }
+    if phase == Phase::Loading && prev != Phase::Loading {
+        let offset = if reduced_motion() { 0.5 } else { 0.0 };
+        state.loading_offset.set(offset);
+    }
+    if phase == Phase::Idle && prev != Phase::Idle {
+        state.pending_levels.borrow_mut().clear();
+        state.target_level.set(0.0);
+        state.current_level.set(0.0);
+        state.wave_phase.set(0.0);
+        state.loading_offset.set(0.0);
+    }
+    true
+}
+
+struct AssistantStateUpdate {
+    active: bool,
+    input_mode: String,
+    type_message_label: Option<String>,
+    compact: bool,
+    conversation_id: Option<String>,
+    user_prompt: Option<String>,
+    messages: Vec<crate::ipc::PillMessage>,
+    streaming: Option<crate::ipc::PillStreaming>,
+    permissions: Vec<crate::ipc::PillPermission>,
+    review: Option<Box<crate::ipc::PillReview>>,
+}
+
+fn process_assistant_state(state: &PillState, update: AssistantStateUpdate) {
+    let AssistantStateUpdate {
+        active,
+        input_mode,
+        type_message_label,
+        compact,
+        conversation_id,
+        user_prompt,
+        messages,
+        streaming,
+        permissions,
+        review,
+    } = update;
+    let was_active = state.assistant_active.get();
+    let previous_review_id = state
+        .assistant_review
+        .borrow()
+        .as_ref()
+        .map(|r| r.id.clone());
+    let review_id = review.as_ref().map(|r| r.id.clone());
+    let review_text = review.as_ref().map(|r| r.text.clone());
+    *state.assistant_review.borrow_mut() = review.map(|review| *review);
+    let review = state.assistant_review.borrow();
+    let label = match review.as_ref() {
+        Some(review) => review
+            .review_label
+            .as_deref()
+            .unwrap_or("REVIEW TRANSCRIPT"),
+        None => type_message_label.as_deref().unwrap_or("Type a message…"),
+    };
+    set_edit_accessible_label(label);
+
+    // Load each new transcript into the editor, but never overwrite an in-progress edit.
+    if review_id != previous_review_id {
+        let text = review_text.unwrap_or_default();
+        *state.entry_text.borrow_mut() = text.clone();
+        set_edit_text(&text);
+    }
+    state.assistant_active.set(active);
+    *state.assistant_input_mode.borrow_mut() = input_mode;
+    state.assistant_compact.set(compact);
+    *state.assistant_conversation_id.borrow_mut() = conversation_id;
+    *state.assistant_user_prompt.borrow_mut() = user_prompt;
+    *state.assistant_messages.borrow_mut() = messages;
+    *state.assistant_streaming.borrow_mut() = streaming;
+    *state.assistant_permissions.borrow_mut() = permissions;
+    if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+        state.should_stick.set(true);
+        state.scroll_offset.set(0.0);
+    }
+}
+
+fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
     state.dirty.set(true);
     match msg {
         InMessage::Phase { phase, seq } => {
-            let stale = LAST_PHASE_SEQ.with(|last| {
-                let stale = seq < last.get();
-                if !stale {
-                    last.set(seq);
-                }
-                stale
-            });
-            if stale {
+            if !process_phase_message(phase, seq, state) {
                 return;
-            }
-            let prev = state.phase.get();
-            state.phase.set(phase);
-            state
-                .style_tooltip_gate
-                .set_take_running(phase == Phase::Recording);
-            // A new take sweeps any banner parked above the pill (for example
-            // the retranscribing toast) so it cannot sit on the style selector
-            // for the whole take. A resume from Paused keeps toasts raised
-            // during the take, such as the cancel confirm.
-            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                clear_flash(state);
-            }
-            if rust_pill_shared::should_clear_stage_text_on_phase(
-                prev == Phase::Loading,
-                phase == Phase::Idle,
-                phase == Phase::Loading,
-            ) {
-                *state.stage_text.borrow_mut() = None;
-            }
-            if phase == Phase::Loading && prev != Phase::Loading {
-                let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                state.loading_offset.set(offset);
-            }
-            if phase == Phase::Idle && prev != Phase::Idle {
-                state.pending_levels.borrow_mut().clear();
-                state.target_level.set(0.0);
-                state.current_level.set(0.0);
-                state.wave_phase.set(0.0);
-                state.loading_offset.set(0.0);
             }
         }
         InMessage::Levels { levels } => {
@@ -749,47 +820,21 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             streaming,
             permissions,
             review,
-        } => {
-            let was_active = state.assistant_active.get();
-            let previous_review_id = state
-                .assistant_review
-                .borrow()
-                .as_ref()
-                .map(|r| r.id.clone());
-            let review_id = review.as_ref().map(|r| r.id.clone());
-            let review_text = review.as_ref().map(|r| r.text.clone());
-            *state.assistant_review.borrow_mut() = review.map(|review| *review);
-            let review = state.assistant_review.borrow();
-            let label = match review.as_ref() {
-                Some(review) => review
-                    .review_label
-                    .as_deref()
-                    .unwrap_or("REVIEW TRANSCRIPT"),
-                None => type_message_label.as_deref().unwrap_or("Type a message…"),
-            };
-            set_edit_accessible_label(label);
-
-            // The entry is the review surface: a new transcript loads into it
-            // for editing, and answering the review empties it again. An
-            // unchanged id leaves the user's edits alone.
-            if review_id != previous_review_id {
-                let text = review_text.unwrap_or_default();
-                *state.entry_text.borrow_mut() = text.clone();
-                set_edit_text(&text);
-            }
-            state.assistant_active.set(active);
-            *state.assistant_input_mode.borrow_mut() = input_mode;
-            state.assistant_compact.set(compact);
-            *state.assistant_conversation_id.borrow_mut() = conversation_id;
-            *state.assistant_user_prompt.borrow_mut() = user_prompt;
-            *state.assistant_messages.borrow_mut() = messages;
-            *state.assistant_streaming.borrow_mut() = streaming;
-            *state.assistant_permissions.borrow_mut() = permissions;
-            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
-                state.should_stick.set(true);
-                state.scroll_offset.set(0.0);
-            }
-        }
+        } => process_assistant_state(
+            state,
+            AssistantStateUpdate {
+                active,
+                input_mode,
+                type_message_label,
+                compact,
+                conversation_id,
+                user_prompt,
+                messages,
+                streaming,
+                permissions,
+                review,
+            },
+        ),
         InMessage::ResetPosition { strategy } => {
             let hwnd = HWND_CELL.with(|c| c.get());
             cancel_drag_gesture(hwnd, state);
