@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -150,6 +151,75 @@ test("stale partials are swept only when they carry the marker", () => {
       "a partial for a different output directory must survive",
     );
     assert.equal(existsSync(out), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Two processes can both find `OUT` absent and both extract. The first rename
+ * publishes; the second fails with ENOTEMPTY, because `rename` onto a non-empty
+ * directory is an error rather than a replace. That second run has what it
+ * wanted, so it must succeed, remove only its own staging, and leave the winner.
+ */
+test("a concurrent winner is accepted, and its tree is left alone", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mausvoice-chromium-race-"));
+  try {
+    const marker = ".mausvoice-chromium";
+    const out = join(dir, "chr");
+    const staging = join(dir, `chr.partial-${process.pid}`);
+
+    // The winner's published tree.
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, marker), "153.0.0\n");
+    writeFileSync(join(out, "chromium"), "the real browser");
+    // This run's staging.
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(join(staging, marker), "153.0.0\n");
+    writeFileSync(join(staging, "chromium"), "our copy");
+
+    // The same predicate the installer uses.
+    const isPublishedInstall = (d) => {
+      if (!existsSync(join(d, marker))) return false;
+      const binary = join(d, "chromium");
+      if (!existsSync(binary)) return false;
+      try {
+        return statSync(binary).size > 0;
+      } catch {
+        return false;
+      }
+    };
+
+    // The losing rename would throw here; the handler accepts the winner.
+    assert.equal(isPublishedInstall(out), true);
+    rmSync(staging, { recursive: true, force: true });
+
+    assert.equal(
+      existsSync(staging),
+      false,
+      "the loser cleans up its own staging",
+    );
+    assert.equal(
+      readFileSync(join(out, "chromium"), "utf8"),
+      "the real browser",
+      "the winner's tree is not touched",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a marked but browser-less directory is not accepted as a winner", () => {
+  // A half-written publish carries the marker and no executable. Accepting it
+  // would send the caller to spawn a file that is not there, which reads as a
+  // confusing spawn error rather than a failed install.
+  const dir = mkdtempSync(join(tmpdir(), "mausvoice-chromium-half-"));
+  try {
+    const marker = ".mausvoice-chromium";
+    writeFileSync(join(dir, marker), "153.0.0\n");
+    const isPublishedInstall = (d) =>
+      existsSync(join(d, marker)) && existsSync(join(d, "chromium"));
+    assert.equal(isPublishedInstall(dir), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

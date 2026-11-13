@@ -38,6 +38,30 @@ const OUT = argDir > -1 ? process.argv[argDir + 1] : path.join(tmpdir(), "chr");
 // browser, and a verification tool must not add that to a checkout.
 const PKG_DIR = path.join(tmpdir(), "sparticuz-chromium");
 /** The installed package itself, whose own manifest carries its version. */
+/**
+ * Whether `dir` holds a usable published browser, not just a directory.
+ *
+ * Checked before accepting a concurrent winner: the claim being made is "the
+ * browser this run wanted is already there", and the marker alone cannot make it
+ * -- a tree carrying the marker but no executable is a half-written publish, and
+ * treating it as a win would send the caller to spawn a file that is not there.
+ */
+function isPublishedInstall(dir) {
+  if (!existsSync(path.join(dir, MARKER))) {
+    return false;
+  }
+  const binary = path.join(dir, "chromium");
+  if (!existsSync(binary)) {
+    return false;
+  }
+  try {
+    // Non-empty: a zero-byte file left by an interrupted write is not a browser.
+    return statSync(binary).size > 0;
+  } catch {
+    return false;
+  }
+}
+
 const INSTALLED_PKG = path.join(
   PKG_DIR,
   "node_modules",
@@ -248,7 +272,24 @@ if (existsSync(path.join(OUT, "chromium"))) {
   // The marker is already there -- it was written above, before the extraction --
   // so this only refreshes the version it records.
   writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n`);
-  renameSync(STAGING, OUT);
+  // A concurrent winner is a success, not a failure.
+  //
+  // Two processes can both see `OUT` absent and both extract; the pid-suffixed
+  // staging directory is what lets them get this far without colliding. The first
+  // rename publishes its tree, and the second then fails with ENOTEMPTY, because
+  // `rename` onto an existing non-empty directory is an error rather than a
+  // replace. That is not a fault in this run: the browser it wanted is on disk.
+  try {
+    renameSync(STAGING, OUT);
+  } catch (error) {
+    if (!isPublishedInstall(OUT)) {
+      // Anything else is a real failure, and the staging directory is left in
+      // place because it may be the only complete copy.
+      throw error;
+    }
+    log(`  another run published ${OUT} first; using it`);
+    rmSync(STAGING, { recursive: true, force: true });
+  }
 }
 
 export const LAUNCH_FLAGS = [

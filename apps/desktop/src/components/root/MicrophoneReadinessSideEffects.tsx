@@ -356,19 +356,25 @@ export const MicrophoneReadinessSideEffects = () => {
               );
               return;
             }
-            publishHeld();
             if (result.status === "error") {
               // A device that will not open is not a preference failure: the next
               // press opens it the normal way and reports the real problem. The
               // preference stays on, because the user asked for it and it may work
               // once the device comes back.
               reportHoldFailure(result.error);
-              // The ring did not take the request, so the next attempt must not
-              // believe a stream is held.
+              // Nothing is held, so the next attempt must not believe a stream is,
+              // and neither must the *next* stale answer below. `heldRef` was set
+              // optimistically when this open was issued; a failure leaves it true
+              // and it is only otherwise cleared by a release, so a superseded open
+              // succeeding later would read that leftover flag as "a newer hold
+              // owns the device" and leave its own indefinite capture behind.
               openedPrerollRef.current = null;
               appliedRef.current = null;
+              heldRef.current = false;
+              publishHeld();
               return;
             }
+            publishHeld();
             clearHoldFailure();
           })
           .catch((error: unknown) => {
@@ -387,6 +393,10 @@ export const MicrophoneReadinessSideEffects = () => {
             reportHoldFailure(error);
             openedPrerollRef.current = null;
             appliedRef.current = null;
+            // Same reason as the error branch above: a rejected open holds
+            // nothing, and leaving `heldRef` set makes a later stale answer think
+            // a newer hold owns a stream that does not exist.
+            heldRef.current = false;
           }),
         "microphone warm open",
       );

@@ -756,6 +756,66 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.warmMicrophone).not.toHaveBeenCalled();
   });
 
+  it("closes a superseded open that succeeded after the current one failed", async () => {
+    // `heldRef` is set optimistically when an open is issued and otherwise only
+    // cleared by a release, so a *failed* open left it true. A stale answer
+    // consults that flag to decide whether a newer hold owns the device, so a
+    // leftover `true` made the superseded open below skip its close and leave an
+    // indefinite capture behind on a device nothing was tracking.
+    //
+    // Sequence: open #1 stays pending, a release invalidates it, open #2 is issued
+    // and fails, then #1 settles successfully. #1 is superseded, so it must close.
+    let settleFirst: ((value: unknown) => void) | undefined;
+    mocks.warmMicrophone.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settleFirst = resolve;
+        }),
+    );
+    mocks.warmMicrophone.mockImplementationOnce(() =>
+      Promise.resolve({ status: "error", error: "device busy" }),
+    );
+
+    setState({});
+    await render();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+    expect(settleFirst).toBeTypeOf("function");
+
+    // A release: the preference goes off, so open #1 is superseded.
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: false,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+    });
+    await rerender();
+
+    // Back on, so a second open is issued and this one fails.
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 0,
+      },
+      permissions: { microphone: { state: "authorized" } },
+      settings: { microphoneHeld: false },
+    });
+    await rerender();
+    expect(mocks.warmMicrophone.mock.calls.length).toBeGreaterThanOrEqual(2);
+    mocks.closeMicrophone.mockClear();
+
+    // Now the very first open — long superseded — finally succeeds.
+    await act(async () => {
+      settleFirst?.({ status: "ok", data: null });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // It is superseded and nothing newer is live, so it must be closed.
+    expect(mocks.closeMicrophone).toHaveBeenCalled();
+  });
+
   it("ignores a rejection from an open that a newer request superseded", async () => {
     // The success path already ignores a superseded answer; the rejection path
     // did not. Changing microphones mid-open let the older promise fail and
