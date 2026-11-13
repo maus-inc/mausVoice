@@ -339,10 +339,7 @@ const syncReviewTimeout = (
     armReviewTimeout(current);
     return;
   }
-  if (
-    current &&
-    (current.openSavePending || current.session.presentation === "composer")
-  ) {
+  if (current.openSavePending || current.session.presentation === "composer") {
     clearReviewTimeout();
     return;
   }
