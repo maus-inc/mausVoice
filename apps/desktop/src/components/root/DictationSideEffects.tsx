@@ -69,12 +69,14 @@ import type {
 import {
   attachSessionAudioIntake,
   createCurrentSegmentGuard,
-  forwardAudioChunk,
+  hasLiveAudioDiscontinuity,
   isRecordingStartCurrent,
   releaseRecordingResources,
   requiresLiveIntakeRecovery,
   stopNativeRecordingForAbort,
   stopOwnedNativeStart,
+  trackNativeStartHandle,
+  type SessionAudioIntake,
 } from "./dictation-recording-intake";
 import { createSystemVolumeDim } from "./dictation-volume-dim";
 import {
@@ -153,7 +155,6 @@ import {
 } from "../../utils/pipeline-trace";
 import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
 import { resolvePillWindowSize } from "../../utils/pill-window-size.utils";
-import { invokeStopRecording } from "../../utils/recorded-audio.utils";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -173,6 +174,12 @@ import {
 import { hasDictationBacklog } from "../../utils/output-routing.utils";
 import { surfaceMainWindow } from "../../utils/window.utils";
 import { resetHotkeyFilter } from "../../utils/hotkey-filter.utils";
+import {
+  discardNativeRecording,
+  invokeStopRecording,
+  pauseNativeRecording,
+  resumeNativeRecording,
+} from "../../utils/native-recording-session";
 
 const reportConversationOpenFailure = (error: unknown): void => {
   getLogger().warning(
@@ -221,10 +228,6 @@ const openPillConversationImpl = async (
   }
 };
 
-type StartRecordingResponse = {
-  sampleRate: number;
-};
-
 type PendingProviderStartup = {
   operationId: number;
   promise: Promise<void>;
@@ -254,6 +257,19 @@ type RawStopResp = {
   persist?: () => Promise<void>;
 };
 
+const logFinalizedTranscript = (
+  rawTranscript: string | null | undefined,
+  toneId: string | null | undefined,
+  appName: string | null | undefined,
+): void => {
+  const transcriptSummary = rawTranscript
+    ? `${rawTranscript.length} chars`
+    : "empty";
+  getLogger().verbose(
+    `Transcription result: rawTranscript=${transcriptSummary}, toneId=${toneId ?? "none"}, app=${appName ?? "unknown"}`,
+  );
+};
+
 type DictationToastOptions = {
   message: string;
   toastType: "info" | "error";
@@ -271,6 +287,7 @@ export type HandleEmptyResultInput = {
   /** Kind of the session that produced this result, per the dispatch table. */
   sessionKind: TranscriptionSessionKind;
   audioIntakeSubscriptionFailed?: boolean;
+  audioIntakeDiscontinuous?: boolean;
   strategy: Pick<BaseStrategy, "shouldStoreTranscript">;
   formatMessage: (descriptor: { defaultMessage: string }) => string;
   showToast: ShowDictationToast;
@@ -336,16 +353,30 @@ const toastEmptyTranscriptionOutcome = (
   showToast: ShowDictationToast,
   formatMessage: HandleEmptyResultInput["formatMessage"],
   recordingAudioSaved: boolean,
+  incompleteLiveAudio = false,
 ): void => {
-  const message = recordingAudioSaved
-    ? formatMessage({
-        defaultMessage:
-          "Transcription failed. Your recording is saved so you can retry.",
-      })
-    : formatMessage({
-        defaultMessage:
-          "Transcription failed. The recording audio was not saved.",
-      });
+  let message: string;
+  if (incompleteLiveAudio && recordingAudioSaved) {
+    message = formatMessage({
+      defaultMessage:
+        "Incomplete transcription: recording saved for retry. Some text may already have been inserted.",
+    });
+  } else if (incompleteLiveAudio) {
+    message = formatMessage({
+      defaultMessage:
+        "Incomplete transcription: recording audio not saved. Some text may already have been inserted.",
+    });
+  } else if (recordingAudioSaved) {
+    message = formatMessage({
+      defaultMessage:
+        "Transcription failed. Your recording is saved so you can retry.",
+    });
+  } else {
+    message = formatMessage({
+      defaultMessage:
+        "Transcription failed. The recording audio was not saved.",
+    });
+  }
   fireAndForgetToast(
     showToast,
     { message, toastType: "error", duration: 8_000 },
@@ -389,12 +420,19 @@ const queueFailedTranscriptionHistory = (
 ): void => {
   const persistAllowedAtCapture =
     input.persistAllowedAtCapture ?? isPersistenceAllowed();
+  const incompleteLiveAudio =
+    input.sessionKind === "live-streaming" && !!input.audioIntakeDiscontinuous;
   const canPersist =
     input.strategy.shouldStoreTranscript() &&
     persistAllowedAtCapture &&
     isPersistenceAllowed();
   if (!canPersist || isHistoryPersistQueueFull()) {
-    toastEmptyTranscriptionOutcome(input.showToast, input.formatMessage, false);
+    toastEmptyTranscriptionOutcome(
+      input.showToast,
+      input.formatMessage,
+      false,
+      incompleteLiveAudio,
+    );
     return;
   }
   enqueueTranscriptionHistory(
@@ -419,6 +457,7 @@ const queueFailedTranscriptionHistory = (
           input.showToast,
           input.formatMessage,
           stored.transcription?.audio != null,
+          incompleteLiveAudio,
         );
       },
     },
@@ -426,7 +465,12 @@ const queueFailedTranscriptionHistory = (
     getLogger().warning(
       `Could not preserve the failed recording: ${error instanceof Error ? error.message : String(error)}`,
     );
-    toastEmptyTranscriptionOutcome(input.showToast, input.formatMessage, false);
+    toastEmptyTranscriptionOutcome(
+      input.showToast,
+      input.formatMessage,
+      false,
+      incompleteLiveAudio,
+    );
   });
 };
 
@@ -437,8 +481,11 @@ export const handleEmptyTranscriptionResult = async (
     transcribeResult,
     sessionKind,
     audioIntakeSubscriptionFailed = false,
+    audioIntakeDiscontinuous = false,
   } = input;
-  if (transcribeResult?.rawTranscript) {
+  const incompleteLiveAudio =
+    sessionKind === "live-streaming" && audioIntakeDiscontinuous;
+  if (transcribeResult?.rawTranscript && !incompleteLiveAudio) {
     return { handled: false };
   }
   // A failed intake subscription costs a live-streaming provider its whole
@@ -450,15 +497,26 @@ export const handleEmptyTranscriptionResult = async (
     audioIntakeSubscriptionFailed,
     transcribeResult?.warnings ?? [],
   );
+  if (incompleteLiveAudio) {
+    recoveryWarnings.push(
+      "Live audio was incomplete; the transcript may be missing words.",
+    );
+  }
   if (recoveryWarnings.length === 0) {
     return { handled: false };
   }
 
   getLogger().warning(
-    `stopRecordingRaw: empty rawTranscript with ${recoveryWarnings.length} warning(s); preserving recording`,
+    `stopRecordingRaw: incomplete transcription with ${recoveryWarnings.length} warning(s); preserving recording`,
   );
   if (input.sendIdle) {
-    await input.sendIdle();
+    try {
+      await withTimeout(input.sendIdle(), 1_000, "Return pill to idle");
+    } catch (error) {
+      getLogger().warning(
+        `Could not return pill to idle before recovery: ${error}`,
+      );
+    }
   }
   queueFailedTranscriptionHistory(input, recoveryWarnings);
   input.refreshMember();
@@ -1079,6 +1137,7 @@ export const DictationSideEffects = () => {
   const strategyRef = useRef<BaseStrategy | null>(null);
   const sessionRef = useRef<TranscriptionSession | null>(null);
   const audioChunkUnlistenRef = useRef<UnlistenFn | null>(null);
+  const audioIntakeRef = useRef<SessionAudioIntake | null>(null);
   const recordingOperationRef = useRef(0);
   const audioIntakeSubscriptionFailedRef = useRef(false);
   /** Session kind of the open recording; read at stop by the empty-result handler. */
@@ -1244,6 +1303,7 @@ export const DictationSideEffects = () => {
       // arm timers or dim the volume after teardown.
       recordingOperationRef.current += 1;
       audioIntakeSubscriptionFailedRef.current = false;
+      audioIntakeRef.current = null;
       providerStartupAbortControllerRef.current?.abort(
         new DOMException("Dictation view unmounted", "AbortError"),
       );
@@ -1381,6 +1441,7 @@ export const DictationSideEffects = () => {
       // already in flight cannot apply after this returns.
       recordingOperationRef.current += 1;
       audioIntakeSubscriptionFailedRef.current = false;
+      audioIntakeRef.current = null;
       providerStartupAbortControllerRef.current?.abort(
         new DOMException("Dictation canceled", "AbortError"),
       );
@@ -1494,6 +1555,25 @@ export const DictationSideEffects = () => {
         getLogger().verbose(
           `Recording stopped (samples=${outAudio?.samples?.length ?? 0})`,
         );
+        // Native keeps what it captured when the device fails mid-recording and
+        // flags the result. The samples are still worth transcribing, but the
+        // user has to know the dictation was cut short instead of silently
+        // receiving a truncated transcript.
+        if (outAudio?.captureFailed) {
+          getLogger().warning(
+            "Recording capture failed partway; transcribing the captured audio",
+          );
+          runToast(
+            showToast({
+              message: intl.formatMessage({
+                defaultMessage:
+                  "Recording failed partway. Transcribing what was captured.",
+              }),
+              toastType: "error",
+              duration: 8_000,
+            }),
+          );
+        }
         return { outAudio, createdAt: dayjs().toISOString() };
       } catch (error) {
         getLogger().error(`Failed to stop recording: ${error}`);
@@ -1658,6 +1738,7 @@ export const DictationSideEffects = () => {
       createdAt,
       persistAllowedAtCapture,
       audioIntakeSubscriptionFailed,
+      audioIntakeDiscontinuous,
       recordingSessionKind,
     }: {
       audio: StopRecordingResponse;
@@ -1665,8 +1746,41 @@ export const DictationSideEffects = () => {
       createdAt: string;
       persistAllowedAtCapture: boolean;
       audioIntakeSubscriptionFailed: boolean;
+      audioIntakeDiscontinuous: boolean;
       recordingSessionKind: TranscriptionSessionKind;
     }): Promise<RawStopResp> => {
+      const preserveFailedRecording = (
+        transcribeResult: TranscriptionSessionResult | undefined,
+      ) => {
+        const strategy = strategyRef.current;
+        if (!strategy) return null;
+        return handleEmptyTranscriptionResult({
+          audio,
+          transcribeResult,
+          sessionKind: recordingSessionKind,
+          audioIntakeSubscriptionFailed,
+          audioIntakeDiscontinuous,
+          strategy,
+          formatMessage: intl.formatMessage,
+          showToast,
+          storeTranscriptionFn: storeTranscription,
+          refreshMember,
+          sendIdle: () => sendPhaseToPill("idle"),
+          createdAt,
+          persistAllowedAtCapture,
+        });
+      };
+      if (
+        recordingSessionKind === "live-streaming" &&
+        audioIntakeDiscontinuous
+      ) {
+        // Do not wait for a broken live provider to finalize before preserving
+        // the waveform: finalize can hang, reject, or return a plausible but
+        // incomplete transcript. The caller tears the session down afterward.
+        const preservation = preserveFailedRecording(undefined);
+        if (preservation) await preservation;
+        return { shouldContinue: false };
+      }
       getLogger().info("Finalizing transcription session");
       // Capture the language before the stop path clears the recording state.
       // The delayed recovery pass must use the same language as this utterance,
@@ -1715,28 +1829,14 @@ export const DictationSideEffects = () => {
         markPipeline(pipelineTraceRef.current, "transcribed");
       }
       const rawTranscript = transcribeResult?.rawTranscript;
-      getLogger().verbose(
-        `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
-      );
+      logFinalizedTranscript(rawTranscript, toneId, appTarget?.name);
 
       if (!rawTranscript || !transcribeResult) {
-        if (strategyRef.current) {
-          await handleEmptyTranscriptionResult({
-            audio,
-            transcribeResult,
-            sessionKind: recordingSessionKind,
-            audioIntakeSubscriptionFailed,
-            strategy: strategyRef.current,
-            formatMessage: intl.formatMessage,
-            showToast,
-            storeTranscriptionFn: storeTranscription,
-            refreshMember,
-            sendIdle: () => sendPhaseToPill("idle"),
-            createdAt,
-            persistAllowedAtCapture,
-          });
-        }
-        getLogger().warning("stopRecordingRaw: no rawTranscript from finalize");
+        const preservation = preserveFailedRecording(transcribeResult);
+        if (preservation) await preservation;
+        getLogger().warning(
+          "stopRecordingRaw: no complete transcript from finalize",
+        );
         return { shouldContinue: false };
       }
 
@@ -1757,6 +1857,7 @@ export const DictationSideEffects = () => {
 
   const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
     const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
+    const ownedAudioIntake = audioIntakeRef.current;
     const pendingProviderStartup = providerStartupRef.current;
     const audioIntakeSubscriptionFailed =
       audioIntakeSubscriptionFailedRef.current;
@@ -1784,6 +1885,11 @@ export const DictationSideEffects = () => {
       if (pendingProviderStartup) {
         await pendingProviderStartup.promise;
       }
+      const audioIntakeDiscontinuous = hasLiveAudioDiscontinuity(
+        recordingSessionKind,
+        ownedAudioIntake,
+        audio,
+      );
       sendPillStageText(intl.formatMessage({ defaultMessage: "Transcribing" }));
       return await finalizeAndPostProcess({
         audio,
@@ -1791,6 +1897,7 @@ export const DictationSideEffects = () => {
         createdAt,
         persistAllowedAtCapture,
         audioIntakeSubscriptionFailed,
+        audioIntakeDiscontinuous,
         recordingSessionKind,
       });
     } catch (error) {
@@ -1805,6 +1912,9 @@ export const DictationSideEffects = () => {
       if (audioChunkUnlistenRef.current === ownedAudioChunkUnlisten) {
         ownedAudioChunkUnlisten?.();
         audioChunkUnlistenRef.current = null;
+      }
+      if (audioIntakeRef.current === ownedAudioIntake) {
+        audioIntakeRef.current = null;
       }
       audioIntakeSubscriptionFailedRef.current = false;
       // Phase convergence: every stop path (success, error, watchdog
@@ -2073,9 +2183,9 @@ export const DictationSideEffects = () => {
 
       hardResetHotkeyState();
       clearRecordingTimers();
-      invoke("stop_recording").catch((e) =>
+      void discardNativeRecording().catch((e: unknown) =>
         getLogger().verbose(
-          `stop_recording failed during error handling: ${e}`,
+          `discard_recording failed during error handling: ${e}`,
         ),
       );
 
@@ -2103,6 +2213,7 @@ export const DictationSideEffects = () => {
       const clearGeneration = getLocalDataClearGeneration();
       const attempt = ++recordingOperationRef.current;
       audioIntakeSubscriptionFailedRef.current = false;
+      audioIntakeRef.current = null;
       const state = getAppState();
       const mode = args.mode;
       const language = args.language || getMyPrimaryDictationLanguage(state);
@@ -2157,6 +2268,8 @@ export const DictationSideEffects = () => {
         );
 
         let audioForwardingReady = false;
+        let chunkAdmission: { ownerId: string; generation: number } | null =
+          null;
         const isCurrentStart = () =>
           !isLocalDataClearRequested() &&
           clearGeneration === getLocalDataClearGeneration() &&
@@ -2180,6 +2293,7 @@ export const DictationSideEffects = () => {
               `[Dictation] Startup audio buffer overflowed; dropped ${droppedSamples} samples`,
             );
           },
+          () => chunkAdmission,
         );
         const startupAudioBuffer = intake.buffer;
         if (!intake.current) {
@@ -2187,6 +2301,7 @@ export const DictationSideEffects = () => {
           return;
         }
         audioIntakeSubscriptionFailedRef.current = intake.subscriptionFailed;
+        audioIntakeRef.current = intake;
         // The stop path passes both values to the empty-result handler, which
         // decides whether a lost subscription is a live-provider failure
         // (live-streaming kind) or only lost pause pretranscription
@@ -2205,7 +2320,14 @@ export const DictationSideEffects = () => {
             createCurrentSegmentGuard(
               operationId,
               () => recordingOperationRef.current,
-              (segment) => strategy.handleInterimSegment(segment),
+              (segment) => {
+                if (
+                  recordingSessionKindRef.current !== "live-streaming" ||
+                  !intake.hasDiscontinuity()
+                ) {
+                  strategy.handleInterimSegment(segment);
+                }
+              },
             ),
           );
         }
@@ -2250,9 +2372,20 @@ export const DictationSideEffects = () => {
         const [, startRecordingResult] = await Promise.all([
           strategy.setPhase("recording"),
           settleRecordingStart(
-            invokeGuardedRecordingStart<StartRecordingResponse>(
-              preferredMicrophone,
-            ),
+            invokeGuardedRecordingStart(preferredMicrophone, {
+              onAdmission: (handle) => {
+                chunkAdmission = handle;
+              },
+            }).then((result) => {
+              // Track the admission before anything can abort this start, so a
+              // stop that lands now addresses the stream this start opened.
+              trackNativeStartHandle(
+                nativeStartOwnerRef,
+                operationId,
+                result.handle,
+              );
+              return result;
+            }),
             isCurrentStart,
             startProviderRecordingTimers,
             () => stopOwnedNativeStart(nativeStartOwnerRef, operationId),
@@ -2293,9 +2426,7 @@ export const DictationSideEffects = () => {
           }
         };
         const replayStartupAudio = () => {
-          startupAudioBuffer.setSink((chunk, offset) => {
-            forwardAudioChunk(startedSession, chunk, offset);
-          });
+          startupAudioBuffer.setSink(intake.forward);
           startupAudioBuffer.replay();
           startupAudioBuffer.reset();
           audioForwardingReady = true;
@@ -2620,6 +2751,7 @@ export const DictationSideEffects = () => {
     // Stop the microphone/transcription without tearing down the assistant panel
     recordingOperationRef.current += 1;
     audioIntakeSubscriptionFailedRef.current = false;
+    audioIntakeRef.current = null;
     providerStartupAbortControllerRef.current?.abort(
       new DOMException("Switched to text mode", "AbortError"),
     );
@@ -2630,9 +2762,9 @@ export const DictationSideEffects = () => {
     hardResetHotkeyState();
     releaseAudioIntake();
     void sendPhaseToPill("idle");
-    invoke("stop_recording").catch((e) =>
+    void discardNativeRecording().catch((e: unknown) =>
       getLogger().verbose(
-        `stop_recording failed during type mode switch: ${e}`,
+        `discard_recording failed during type mode switch: ${e}`,
       ),
     );
     sessionRef.current?.cleanup();
@@ -2714,7 +2846,7 @@ export const DictationSideEffects = () => {
     try {
       getLogger().info("Pausing dictation");
       // Hold mic capture without finalizing the session so the user can resume.
-      await invoke("pause_recording");
+      await pauseNativeRecording();
       isPausedRef.current = true;
       // User-configured timers measure active audio. Provider hard limits are
       // wall-clock limits and intentionally continue while paused.
@@ -2746,7 +2878,7 @@ export const DictationSideEffects = () => {
     }
     try {
       getLogger().info("Resuming dictation");
-      await invoke("resume_recording");
+      await resumeNativeRecording();
       isPausedRef.current = false;
       await strategyRef.current.setPhase("recording");
       startUserRecordingTimers();

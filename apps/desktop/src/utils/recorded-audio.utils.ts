@@ -1,7 +1,18 @@
-import { invoke } from "@tauri-apps/api/core";
 import type { StopRecordingResponse } from "../types/transcription-session.types";
 
 const HEADER_BYTES = 4;
+
+/**
+ * The top bit of the sample-rate header means the capture failed partway
+ * through and the samples are what was recorded before it did. Native sets it
+ * in `encode_recording_result`; the rate itself never reaches this bit.
+ */
+const CAPTURE_FAILED_FLAG = 0x80000000;
+const SAMPLE_RATE_MASK = 0x7fffffff;
+
+const readCaptureFailed = (value: unknown): boolean =>
+  value === true ||
+  (typeof value === "number" && (value & CAPTURE_FAILED_FLAG) !== 0);
 const IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 
 const EMPTY_RESULT = (): StopRecordingResponse => ({
@@ -21,11 +32,16 @@ const EMPTY_RESULT = (): StopRecordingResponse => ({
 export const encodeRecordedAudio = (
   samples: number[] | Float32Array,
   sampleRate: number,
+  captureFailed = false,
 ): Uint8Array => {
   const sampleCount = samples.length;
   const bytes = new Uint8Array(HEADER_BYTES + sampleCount * 4);
   const view = new DataView(bytes.buffer);
-  view.setUint32(0, sampleRate, true);
+  view.setUint32(
+    0,
+    captureFailed ? (sampleRate | CAPTURE_FAILED_FLAG) >>> 0 : sampleRate,
+    true,
+  );
   if (IS_LITTLE_ENDIAN) {
     // Aligned: the f32 view writes the platform's little-endian layout
     // directly, which is the wire layout. `set` copies rather than aliases,
@@ -44,20 +60,27 @@ const decodeBinary = (bytes: Uint8Array): StopRecordingResponse => {
     return EMPTY_RESULT();
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const sampleRate = view.getUint32(0, true);
+  const header = view.getUint32(0, true);
+  // Leaving the flag in the rate made a failed capture look like a recording
+  // at an absurd rate, so every sample was resampled from a rate no device
+  // reports and the failure was never surfaced.
+  const sampleRate = header & SAMPLE_RATE_MASK;
+  const captureFailure = (header & CAPTURE_FAILED_FLAG) !== 0;
   const sampleCount = Math.floor((bytes.byteLength - HEADER_BYTES) / 4);
   const samplesOffset = bytes.byteOffset + HEADER_BYTES;
+  const failure = captureFailure ? { captureFailed: true } : {};
   if (IS_LITTLE_ENDIAN && samplesOffset % 4 === 0) {
     return {
       samples: new Float32Array(bytes.buffer, samplesOffset, sampleCount),
       sampleRate,
+      ...failure,
     };
   }
   const samples = new Float32Array(sampleCount);
   for (let index = 0; index < sampleCount; index += 1) {
     samples[index] = view.getFloat32(HEADER_BYTES + index * 4, true);
   }
-  return { samples, sampleRate };
+  return { samples, sampleRate, ...failure };
 };
 
 /**
@@ -99,9 +122,10 @@ export const decodeStopRecordingPayload = (
     return decodeBinary(Uint8Array.from(payload as number[]));
   }
   if (payload && typeof payload === "object" && "samples" in payload) {
-    const { samples, sampleRate } = payload as {
+    const { samples, sampleRate, captureFailed } = payload as {
       samples?: unknown;
       sampleRate?: unknown;
+      captureFailed?: unknown;
     };
     if (!isSampleArray(samples)) {
       return EMPTY_RESULT();
@@ -117,12 +141,8 @@ export const decodeStopRecordingPayload = (
         typeof sampleRate === "number" && Number.isFinite(sampleRate)
           ? sampleRate
           : 0,
+      ...(readCaptureFailed(captureFailed) ? { captureFailed: true } : {}),
     };
   }
   return EMPTY_RESULT();
 };
-
-export const invokeStopRecording = async (
-  invokeFn: (command: string) => Promise<unknown> = invoke,
-): Promise<StopRecordingResponse> =>
-  decodeStopRecordingPayload(await invokeFn("stop_recording"));

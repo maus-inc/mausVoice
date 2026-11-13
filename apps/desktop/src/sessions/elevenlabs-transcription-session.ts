@@ -12,7 +12,10 @@ import {
 } from "../utils/prompt.utils";
 import { secureFetch } from "../utils/secure-fetch.utils";
 import { drainSamples } from "./audio-buffer.utils";
-import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
+import {
+  BaseApiTranscriptionSession,
+  withPartialTranscript,
+} from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import {
   attachStreamingSocketHandlers,
@@ -308,10 +311,9 @@ const startElevenLabsStreaming = async (
 
     const finalize = (): Promise<string> => {
       return new Promise((resolveFinalize, rejectFinalize) => {
-        const settleFinalize = () => {
-          const text = getText();
-          if (sessionError && !text) {
-            rejectFinalize(sessionError);
+        const settleFinalize = (text: string) => {
+          if (sessionError) {
+            rejectFinalize(withPartialTranscript(sessionError, text));
           } else {
             resolveFinalize(text);
           }
@@ -327,7 +329,7 @@ const startElevenLabsStreaming = async (
           getLogger().verbose(
             "[ElevenLabs WebSocket] Already finalized, returning transcript",
           );
-          settleFinalize();
+          settleFinalize(getText());
           return;
         }
 
@@ -341,20 +343,14 @@ const startElevenLabsStreaming = async (
         );
 
         if (ws && ws.readyState === WebSocket.OPEN) {
-          bookkeeper.begin((text) => {
-            if (sessionError && !text) {
-              rejectFinalize(sessionError);
-            } else {
-              resolveFinalize(text);
-            }
-          });
+          bookkeeper.begin(settleFinalize);
           bookkeeper.armTimeout(
             6000,
             "Timeout waiting for final transcript, length:",
           );
         } else {
           cleanup();
-          settleFinalize();
+          settleFinalize(getText());
         }
       });
     };

@@ -380,9 +380,9 @@ jobs:
         working-directory: apps/desktop
         run: |
           if [ "$MAUSVOICE_PRERELEASE" = "true" ]; then
-            pnpm run tauri build --ci --features debug-assist ${{ matrix.args }}
+            pnpm run tauri build --ci --features debug-assist ${{ matrix.args }} -- --locked
           else
-            pnpm run tauri build --ci ${{ matrix.args }}
+            pnpm run tauri build --ci ${{ matrix.args }} -- --locked
           fi
 
       - name: Sign macOS DMG for manual updater

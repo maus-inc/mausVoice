@@ -7,7 +7,10 @@ import {
   DEEPGRAM_KEYTERM_BUDGET,
 } from "../utils/prompt.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
-import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
+import {
+  BaseApiTranscriptionSession,
+  withPartialTranscript,
+} from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import { createAudioChunkBuffer } from "./transcription-stream.utils";
 import {
@@ -73,15 +76,10 @@ const startDeepgramStreaming = async (
 
   const finalize = (): Promise<string> => {
     return new Promise((resolveFinalize, rejectFinalize) => {
-      // A rejection that landed after startup left the socket unable to
-      // deliver a transcript. Settling such a finalize with "" would produce a
-      // warning-free empty result that bypasses failed-audio recovery, so a
-      // rejected session with no transcript settles as a failure instead.
-      // Transcript text already accumulated is still returned.
       const settleFinalize = () => {
         const text = getText();
-        if (sessionError && !text) {
-          rejectFinalize(sessionError);
+        if (sessionError) {
+          rejectFinalize(withPartialTranscript(sessionError, text));
           return;
         }
         resolveFinalize(text);

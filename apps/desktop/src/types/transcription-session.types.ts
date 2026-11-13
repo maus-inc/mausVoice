@@ -1,7 +1,7 @@
 import type {
   PostProcessMetadata,
   TranscribeAudioMetadata,
-} from "../actions/transcribe.actions";
+} from "./transcription-metadata.types";
 import type { StopRecordingResponse } from "./recording.types";
 
 export type { StopRecordingResponse } from "./recording.types";

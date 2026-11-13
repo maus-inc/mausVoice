@@ -5,7 +5,10 @@ import {
   buildProviderVocabulary,
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
-import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
+import {
+  BaseApiTranscriptionSession,
+  withPartialTranscript,
+} from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import { createAudioChunkBuffer } from "./transcription-stream.utils";
 import {
@@ -55,7 +58,7 @@ export const startAssemblyAIStreaming = async (
       loggerPrefix: LOGGER_PREFIX,
     });
 
-    let currentTurn: number | undefined = 0;
+    let currentTurn: number | undefined;
 
     const getText = () => transcriptState.text();
 
@@ -77,8 +80,8 @@ export const startAssemblyAIStreaming = async (
       return new Promise((resolveFinalize, rejectFinalize) => {
         const settleFinalize = () => {
           const text = getText();
-          if (sessionError && !text) {
-            rejectFinalize(sessionError);
+          if (sessionError) {
+            rejectFinalize(withPartialTranscript(sessionError, text));
           } else {
             resolveFinalize(text);
           }
@@ -217,10 +220,8 @@ export const startAssemblyAIStreaming = async (
     };
 
     const handlePartialTurn = (data: AssemblyAIMessage) => {
-      if (currentTurn !== data.turn_order) {
-        currentTurn = data.turn_order;
-        transcriptState.setPartial(data.transcript ?? "");
-      }
+      currentTurn = data.turn_order;
+      transcriptState.setPartial(data.transcript ?? "");
     };
 
     const handleTurnMessage = (data: AssemblyAIMessage) => {

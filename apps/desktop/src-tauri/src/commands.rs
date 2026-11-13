@@ -72,6 +72,42 @@ async fn acquire_local_data_write_guard() -> Result<NativeLocalDataWriteGuard, S
         .map_err(|err| err.to_string())
 }
 
+// A stalled Tauri event delivery must not block the microphone callback or
+// recorder ownership. The FIFO is shared across recordings, bounded both in
+// item count and item size; an overflow is visible as an offset gap at the
+// receiver instead of being mistaken for complete live audio.
+static AUDIO_CHUNK_DISPATCH: std::sync::LazyLock<
+    Arc<crate::platform::event_dispatch::EventDispatcher>,
+> = std::sync::LazyLock::new(|| {
+    Arc::new(crate::platform::event_dispatch::EventDispatcher::new(
+        "audio-chunk-events",
+        16,
+    ))
+});
+static AUDIO_LEVEL_DISPATCH: std::sync::LazyLock<
+    Arc<crate::platform::event_dispatch::EventDispatcher>,
+> = std::sync::LazyLock::new(|| {
+    Arc::new(crate::platform::event_dispatch::EventDispatcher::new(
+        "audio-level-events",
+        1,
+    ))
+});
+const MAX_CHUNK_EVENT_SAMPLES: usize = 256 * 1024;
+
+// Phase delivery is replaceable state. A stalled pill pipe and a stalled
+// webview event use separate bounded workers, so neither can hold audio stop.
+static PHASE_UPDATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static PILL_PHASE_DISPATCH: std::sync::LazyLock<
+    crate::platform::latest_dispatch::LatestDispatcher,
+> = std::sync::LazyLock::new(|| {
+    crate::platform::latest_dispatch::LatestDispatcher::new("pill-phase-events")
+});
+static WEBVIEW_PHASE_DISPATCH: std::sync::LazyLock<
+    crate::platform::latest_dispatch::LatestDispatcher,
+> = std::sync::LazyLock::new(|| {
+    crate::platform::latest_dispatch::LatestDispatcher::new("webview-phase-events")
+});
+
 /// Drop-guard that clears an AtomicBool re-entry flag when it goes out of
 /// scope. Panics during the blocking work still release the guard so a
 /// crash on one command doesn't wedge the feature forever.
@@ -138,7 +174,7 @@ const CANCEL_TYPING_GRACE_MS: u64 = 2_000;
 /// so a backwards correction — an NTP step, a manual clock change, a VM
 /// resuming from suspend — of more than `CANCEL_TYPING_GRACE_MS` makes an
 /// already-expired latch satisfy `cancel_is_within_grace` for the whole offset,
-/// and `simulate_type` then returns `Ok(())` while typing nothing at all. A
+/// and `simulate_type` then cancels before typing anything. A
 /// forward jump expires a live cancel instead, which is exactly the loss the
 /// latch exists to prevent. A grace window is an elapsed time, so it is measured
 /// against a source that cannot be adjusted: `Instant`, captured once here.
@@ -288,6 +324,8 @@ use sqlx::Row;
 use crate::platform::input::paste_text_into_focused_field as platform_paste_text;
 
 /// Packs a finished recording as `[sample_rate: u32 LE][samples: f32 LE...]`.
+/// The high rate bit marks an incomplete capture; real sample rates must fit
+/// in the remaining 31 bits. Normal recordings retain the original layout.
 ///
 /// `stop_recording` returns these bytes as a raw IPC body. Serializing the
 /// samples as a JSON number array costs ~36 MB of text and hundreds of
@@ -554,6 +592,13 @@ pub enum PasteOutcome {
     CopiedToClipboard,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SimulatedTypingOutcome {
+    Completed,
+    CancelledBeforeStart,
+}
+
 #[derive(serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppTargetUpsertArgs {
@@ -637,6 +682,8 @@ pub enum AudioClip {
 #[serde(rename_all = "camelCase")]
 pub struct StartRecordingArgs {
     pub preferred_microphone: Option<String>,
+    #[serde(default)]
+    pub wait_for_release: bool,
 }
 
 #[derive(Debug, serde::Deserialize, specta::Type)]
@@ -694,12 +741,22 @@ const PRIVATE_HTTP_PRESTART_CANCELLATION_TTL: std::time::Duration =
     std::time::Duration::from_secs(30);
 const PRIVATE_HTTP_CANCELLED_ERROR: &str = "Private-network request was cancelled";
 
+#[derive(Clone, Copy, PartialEq, Eq, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum HttpRedirectMode {
+    Follow,
+    Manual,
+    Error,
+}
+
 #[derive(serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PrivateHttpRequest {
     pub request_id: String,
     pub url: String,
     pub method: String,
+    #[serde(default)]
+    pub redirect: Option<HttpRedirectMode>,
     pub headers: std::collections::HashMap<String, String>,
     /// RFC 4648 standard Base64 body. A string is substantially smaller than
     /// the JSON number array Specta generates for `Vec<u8>` and keeps large
@@ -1425,6 +1482,141 @@ pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
     }
 }
 
+/// Header names that must never be forwarded from a renderer-supplied request:
+/// the transport owns framing, and proxy credentials are filtered at intake.
+fn is_hop_by_hop_header(name: &str) -> bool {
+    matches!(
+        name,
+        "host"
+            | "content-length"
+            | "connection"
+            | "proxy-authorization"
+            | "proxy-connection"
+            | "transfer-encoding"
+            | "upgrade"
+    )
+}
+
+/// Provider API keys are also credentials, even when their header names are not
+/// part of the Fetch standard's authorization list. Keep this list aligned with
+/// secure-fetch.utils.ts. Proxy auth is filtered at intake and included here as
+/// defense in depth.
+fn is_credential_header(name: &str) -> bool {
+    matches!(
+        name,
+        "authorization"
+            | "cookie"
+            | "proxy-authorization"
+            | "api-key"
+            | "x-api-key"
+            | "x-goog-api-key"
+            | "xi-api-key"
+            | "ocp-apim-subscription-key"
+    )
+}
+
+/// Request-framing headers that no longer describe a body once a redirect
+/// rewrites the method to GET.
+fn is_body_header(name: &str) -> bool {
+    matches!(
+        name,
+        "content-length"
+            | "content-type"
+            | "content-encoding"
+            | "content-language"
+            | "content-location"
+    )
+}
+
+fn forwarded_request_headers(
+    headers: std::collections::HashMap<String, String>,
+) -> Result<Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)>, String> {
+    let mut forwarded = Vec::with_capacity(headers.len());
+    for (name, value) in headers {
+        let normalized = name.trim().to_ascii_lowercase();
+        if is_hop_by_hop_header(normalized.as_str()) {
+            continue;
+        }
+        let name = reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        let value = reqwest::header::HeaderValue::from_str(&value)
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        forwarded.push((name, value));
+    }
+    Ok(forwarded)
+}
+
+/// Build a client that dials only the addresses that already passed policy
+/// validation, so a DNS flip between validation and connect cannot land
+/// elsewhere.
+fn pinned_http_client(
+    url: &Url,
+    addrs: &[std::net::SocketAddr],
+    bypass_proxy: bool,
+) -> Result<reqwest::Client, String> {
+    let mut client_builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10 * 60))
+        .redirect(reqwest::redirect::Policy::none());
+    if bypass_proxy {
+        client_builder = client_builder.no_proxy();
+    }
+    if let url::Host::Domain(domain) = url
+        .host()
+        .ok_or_else(|| "HTTP request URL has no host".to_string())?
+    {
+        client_builder = client_builder.resolve_to_addrs(&domain.to_ascii_lowercase(), addrs);
+    }
+    client_builder
+        .build()
+        .map_err(|_| "Unable to initialize the HTTP client".to_string())
+}
+
+/// Fetch rewrites POST on 301/302 and non-GET/HEAD methods on 303. Every other
+/// method and status keeps the original method and body.
+fn redirect_discards_body(status: u16, method: &reqwest::Method) -> bool {
+    if matches!(status, 301 | 302) {
+        return *method == reqwest::Method::POST;
+    }
+    if status == 303 {
+        return *method != reqwest::Method::GET && *method != reqwest::Method::HEAD;
+    }
+    false
+}
+
+async fn read_private_http_response_body(
+    mut response: reqwest::Response,
+    initial_capacity: usize,
+    cancellation: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Result<Vec<u8>, String> {
+    let mut body = Vec::new();
+    reserve_private_http_response_body(&mut body, initial_capacity)?;
+    loop {
+        let chunk = tokio::select! {
+            _ = &mut *cancellation => {
+                return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
+            }
+            result = response.chunk() => result
+                .map_err(|_| "Unable to read the private-network response".to_string())?,
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if body
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES as usize)
+        {
+            return Err(format!(
+                "Private-network response exceeds the {} MiB limit",
+                MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+            ));
+        }
+        reserve_private_http_response_body(&mut body, chunk.len())?;
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 async fn execute_http_request(
     request: PrivateHttpRequest,
     policy: HttpRequestPolicy,
@@ -1433,6 +1625,8 @@ async fn execute_http_request(
     // command-scheduling race is consumed before networking can begin.
     let (_cancellation_guard, mut cancellation) =
         PrivateHttpCancellationGuard::register(request.request_id.clone())?;
+
+    let redirect_mode = request.redirect.unwrap_or(HttpRedirectMode::Follow);
 
     // The decoder preflights both the Base64 frame and its decoded size before
     // allocating the request body. Move and explicitly release the encoded
@@ -1472,28 +1666,7 @@ async fn execute_http_request(
 
     // Normalize header forwarding once; the redirect loop below reapplies the
     // same list to every hop.
-    let mut forwarded_headers: Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)> =
-        Vec::new();
-    for (name, value) in request.headers {
-        let normalized = name.trim().to_ascii_lowercase();
-        if matches!(
-            normalized.as_str(),
-            "host"
-                | "content-length"
-                | "connection"
-                | "proxy-authorization"
-                | "proxy-connection"
-                | "transfer-encoding"
-                | "upgrade"
-        ) {
-            continue;
-        }
-        let name = reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
-            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
-        let value = reqwest::header::HeaderValue::from_str(&value)
-            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
-        forwarded_headers.push((name, value));
-    }
+    let mut forwarded_headers = forwarded_request_headers(request.headers)?;
 
     // Manual redirect loop. reqwest's redirect closure can validate the next
     // URL string but cannot pin DNS for a host it has not seen yet, so every
@@ -1526,42 +1699,18 @@ async fn execute_http_request(
     // hop back) would leak them to whatever origin bounced the request. This
     // mirrors curl/reqwest, which remove and never re-add these headers.
     let mut credentials_stripped = false;
-    let mut response = loop {
+    let response = loop {
         validate_http_request_url(&current_url, &policy)?;
         let addrs = resolve_and_validate_url(&current_url, &policy).await?;
 
-        let mut client_builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10 * 60))
-            .redirect(reqwest::redirect::Policy::none());
-        if bypass_proxy {
-            client_builder = client_builder.no_proxy();
-        }
-        if let url::Host::Domain(domain) = current_url
-            .host()
-            .ok_or_else(|| "HTTP request URL has no host".to_string())?
-        {
-            // Pin the dial to the validated answers so a DNS flip between
-            // validation and connect cannot land elsewhere.
-            client_builder = client_builder.resolve_to_addrs(&domain.to_ascii_lowercase(), &addrs);
-        }
-        let client = client_builder
-            .build()
-            .map_err(|_| "Unable to initialize the HTTP client".to_string())?;
+        let client = pinned_http_client(&current_url, &addrs, bypass_proxy)?;
 
         let mut builder = client.request(current_method.clone(), current_url.clone());
         if !urls_share_origin(&credential_origin, &current_url) {
             credentials_stripped = true;
         }
         for (name, value) in &forwarded_headers {
-            // proxy-authorization is filtered at intake, but stays in the
-            // strip list as defense-in-depth against a future intake change.
-            // (www-authenticate is a response header and can never arrive.)
-            if credentials_stripped
-                && matches!(
-                    name.as_str(),
-                    "authorization" | "cookie" | "proxy-authorization"
-                )
-            {
+            if credentials_stripped && is_credential_header(name.as_str()) {
                 continue;
             }
             builder = builder.header(name.clone(), value.clone());
@@ -1577,8 +1726,15 @@ async fn execute_http_request(
         };
 
         let status = next_response.status();
-        if !status.is_redirection() {
+        if !matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
+            || redirect_mode == HttpRedirectMode::Manual
+        {
             break next_response;
+        }
+        // Fetch rejects redirect statuses in error mode even when Location is
+        // absent or invalid; only follow mode needs to examine the header.
+        if redirect_mode == HttpRedirectMode::Error {
+            return Err(format!("Redirect not allowed: {}", status.as_u16()));
         }
         let Some(location) = next_response
             .headers()
@@ -1596,14 +1752,12 @@ async fn execute_http_request(
         let next_url = current_url
             .join(location)
             .map_err(|_| "HTTP redirect location is invalid".to_string())?;
-        // Mirror reqwest's redirect semantics: 307/308 re-send the original
-        // method and body; 301/302/303 downgrade to a bodiless GET.
-        match status.as_u16() {
-            307 | 308 => {}
-            _ => {
-                current_method = reqwest::Method::GET;
-                current_body = None;
-            }
+        // Fetch rewrites POST on 301/302 and non-GET/HEAD methods on 303.
+        // Every other method and status keeps the original method and body.
+        if redirect_discards_body(status.as_u16(), &current_method) {
+            current_method = reqwest::Method::GET;
+            current_body = None;
+            forwarded_headers.retain(|(name, _)| !is_body_header(name.as_str()));
         }
         current_url = next_url;
     };
@@ -1633,32 +1787,8 @@ async fn execute_http_request(
         .content_length()
         .unwrap_or_default()
         .min(MAX_PRIVATE_HTTP_RESPONSE_BYTES) as usize;
-    let mut body = Vec::new();
-    reserve_private_http_response_body(&mut body, initial_capacity)?;
-    loop {
-        let chunk = tokio::select! {
-            _ = &mut cancellation => {
-                return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
-            }
-            result = response.chunk() => result
-                .map_err(|_| "Unable to read the private-network response".to_string())?,
-        };
-        let Some(chunk) = chunk else {
-            break;
-        };
-        if body
-            .len()
-            .checked_add(chunk.len())
-            .is_none_or(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES as usize)
-        {
-            return Err(format!(
-                "Private-network response exceeds the {} MiB limit",
-                MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
-            ));
-        }
-        reserve_private_http_response_body(&mut body, chunk.len())?;
-        body.extend_from_slice(&chunk);
-    }
+    let body =
+        read_private_http_response_body(response, initial_capacity, &mut cancellation).await?;
 
     Ok(PrivateHttpResponse {
         status,
@@ -2914,18 +3044,51 @@ pub async fn hotkey_delete(
 
 #[tauri::command]
 #[specta::specta]
+/// Replace the whole dictation group -- the primary `dictate` shortcut plus the
+/// additional language shortcuts -- in one transaction.
+///
+/// `additional` carries every row of the group the caller keeps, including any
+/// extra `dictate` row a user bound in the shortcuts dialog, so saving a
+/// language change cannot delete a shortcut the dialog never displayed.
+/// `expected` is the group the caller edited; passing `None` replaces whatever
+/// the group holds now, which is still atomic.
+pub async fn hotkey_replace_dictation_language_hotkeys(
+    primary: crate::domain::Hotkey,
+    additional: Vec<crate::domain::Hotkey>,
+    expected: Option<Vec<crate::domain::Hotkey>>,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
+    crate::db::hotkey_queries::replace_dictation_language_hotkeys(
+        database.pool(),
+        &primary,
+        &additional,
+        expected.as_deref(),
+    )
+    .await
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn hotkey_replace_style_hotkeys(
     prefix: String,
     hotkeys: Vec<crate::domain::Hotkey>,
+    expected: Option<Vec<crate::domain::Hotkey>>,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<Vec<crate::domain::Hotkey>, String> {
     let _write_guard = acquire_local_data_write_guard().await?;
     if prefix.is_empty() {
         return Err("hotkey prefix must not be empty".to_string());
     }
-    crate::db::hotkey_queries::replace_hotkeys_by_prefix(database.pool(), &prefix, &hotkeys)
-        .await
-        .map_err(|err| err.to_string())
+    crate::db::hotkey_queries::replace_hotkeys_by_prefix(
+        database.pool(),
+        &prefix,
+        &hotkeys,
+        expected.as_deref(),
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 fn current_timestamp_millis() -> Result<i64, String> {
@@ -3187,6 +3350,7 @@ pub async fn clear_local_data(
     database: State<'_, crate::state::OptionKeyDatabase>,
     receiver_state: State<'_, crate::state::RemoteReceiverState>,
     recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    ownership: State<'_, RecordingOwnerState>,
     floating_window_state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<(), String> {
     // Audio storage and transcription insertion are separate IPC calls. Keep
@@ -3194,6 +3358,12 @@ pub async fn clear_local_data(
     // between cancellation and cleanup. This lock comes before the native
     // local-data gate because transcription inserts acquire them in that order.
     let pool = database.pool();
+    // Refuse new recording claims before anything else observes the wipe, and
+    // keep refusing them until the reset finishes. Combined with the native
+    // clear gate below, no recorder can be admitted mid-wipe.
+    let ownership_reset = Arc::clone(&ownership);
+    ownership_reset.begin_reset()?;
+    let _reset_guard = RecordingResetGuard(Arc::clone(&ownership_reset));
     let mut reservations = AUDIO_SNAPSHOT_RESERVATIONS.lock().await;
     // Close the native gate before touching the durable marker. If marker I/O
     // fails, dropping this guard still leaves writes blocked, and invalidates
@@ -3219,27 +3389,19 @@ pub async fn clear_local_data(
     // gate closed afterward if teardown was incomplete.
     let listener_stop_error = crate::platform::keyboard::stop_key_listener().err();
     let recorder_for_stop = Arc::clone(&recorder);
-    let recorder_stop_error =
-        match tauri::async_runtime::spawn_blocking(move || match recorder_for_stop.stop() {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                let not_recording = (*err)
-                    .downcast_ref::<crate::errors::RecordingError>()
-                    .map(|inner| matches!(inner, crate::errors::RecordingError::NotRecording))
-                    .unwrap_or(false);
-                if not_recording {
-                    Ok(())
-                } else {
-                    Err(err.to_string())
-                }
-            }
-        })
-        .await
-        {
-            Ok(Ok(())) => None,
-            Ok(Err(message)) => Some(message),
-            Err(join_err) => Some(join_err.to_string()),
-        };
+    let ownership_for_stop = Arc::clone(&ownership_reset);
+    // Ownership-aware teardown: `force_stop` retires every live admission and
+    // retries the native release, so a recorder that is mid-open cannot revive
+    // itself after the guard above started refusing claims.
+    let recorder_stop_error = match tauri::async_runtime::spawn_blocking(move || {
+        force_stop_with_retry(ownership_for_stop, recorder_for_stop)
+    })
+    .await
+    {
+        Ok(Ok(())) => None,
+        Ok(Err(message)) => Some(message),
+        Err(join_err) => Some(join_err.to_string()),
+    };
     crate::system::local_data_clear_marker::mark_pending(&app).map_err(|error| {
         format!("Unable to persist the native local-data clear marker: {error}")
     })?;
@@ -3377,165 +3539,626 @@ pub fn play_audio(clip: AudioClip) -> Result<(), String> {
     Ok(())
 }
 
-async fn start_recorder_with_clear_gate(
-    recorder: Arc<dyn crate::platform::Recorder>,
-    preferred_microphone: Option<String>,
-    level_emitter: Option<LevelCallback>,
-    chunk_emitter: Option<ChunkCallback>,
-) -> Result<StartRecordingResponse, String> {
-    let operation = crate::db::local_data_write_gate::begin_local_data_remote_operation()
-        .map_err(|err| err.to_string())?;
+type RecordingOwnerState = Arc<crate::platform::recording_ownership::RecordingOwnership>;
 
-    recorder.set_preferred_input_device(preferred_microphone);
+/// Refuse a recording that would begin after a local-data clear has closed the
+/// write gate. The ownership layer additionally refuses claims while a reset is
+/// in progress; this is the fast, user-visible half of the same guarantee.
+fn ensure_recording_allowed() -> Result<(), String> {
+    if crate::db::local_data_write_gate::current_write_generation().is_none() {
+        return Err("Local data is being cleared".to_string());
+    }
+    Ok(())
+}
 
-    let recorder_clone = Arc::clone(&recorder);
-    let start_result = tauri::async_runtime::spawn_blocking(move || {
-        match recorder_clone.start(level_emitter, chunk_emitter) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                let already_recording = (*err)
-                    .downcast_ref::<crate::errors::RecordingError>()
-                    .map(|inner| matches!(inner, crate::errors::RecordingError::AlreadyRecording))
-                    .unwrap_or(false);
-                Err((err.to_string(), already_recording))
+fn recording_window_key(window: &tauri::Window) -> usize {
+    // Tauri compares windows by label. The resource table belongs to this
+    // particular window instance and stays allocated while a handle exists.
+    let resources = window.resources_table();
+    std::ptr::from_ref(&*resources) as usize
+}
+
+pub(crate) fn retire_recording_window(window: &tauri::Window) {
+    let Some(ownership) = window.try_state::<RecordingOwnerState>() else {
+        return;
+    };
+    let Some(scope) = ownership.close_window(recording_window_key(window)) else {
+        return;
+    };
+    let Some(recorder) = window.try_state::<Arc<dyn crate::platform::Recorder>>() else {
+        return;
+    };
+    let ownership = Arc::clone(&ownership);
+    let recorder = Arc::clone(&recorder);
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(Err(error)) =
+            ownership.stop_window(&scope, || discard_native_recording(recorder.as_ref()))
+        {
+            log::error!("Failed to stop recording for an unloaded window: {error}");
+            if let Some(token) = ownership.begin_release_retry_window(&scope) {
+                retry_recording_release(ownership, recorder, token);
             }
         }
+    });
+}
+
+fn take_native_recording(
+    recorder: &dyn crate::platform::Recorder,
+) -> (Result<Option<crate::domain::RecordingResult>, String>, bool) {
+    take_native_recording_using(recorder, false)
+}
+
+fn take_native_recording_using(
+    recorder: &dyn crate::platform::Recorder,
+    handoff: bool,
+) -> (Result<Option<crate::domain::RecordingResult>, String>, bool) {
+    let stopped = if handoff {
+        recorder.stop_for_handoff()
+    } else {
+        recorder.stop()
+    };
+    let result = match stopped {
+        Ok(result) => Ok(Some(result)),
+        Err(err) => {
+            let not_recording = (*err)
+                .downcast_ref::<crate::errors::RecordingError>()
+                .is_some_and(|inner| matches!(inner, crate::errors::RecordingError::NotRecording));
+            if not_recording {
+                Ok(None)
+            } else {
+                Err(err.to_string())
+            }
+        }
+    };
+    let still_recording = recorder.is_recording();
+    // Only the handoff contract can seal audio before hardware release, and
+    // such a result must be explicitly presented as a failed capture.
+    let result = if handoff && still_recording {
+        match result {
+            Ok(Some(recording)) if recording.capture_failed => Ok(Some(recording)),
+            Ok(_) => Err("Recording is still active after stop".into()),
+            Err(error) => Err(error),
+        }
+    } else {
+        result
+    };
+    (result, still_recording)
+}
+
+fn encode_recording_result(
+    recording: Option<crate::domain::RecordingResult>,
+) -> Result<Vec<u8>, String> {
+    match recording {
+        Some(result) => {
+            let rate = result.audio.sample_rate;
+            if rate & 0x8000_0000 != 0 {
+                return Err("Invalid recording sample rate".into());
+            }
+            let header = if result.capture_failed {
+                rate | 0x8000_0000
+            } else {
+                rate
+            };
+            Ok(encode_recorded_audio(&result.audio.samples, header))
+        }
+        None => Ok(encode_recorded_audio(&[], 0)),
+    }
+}
+
+fn stop_native_recording_handoff(
+    recorder: &dyn crate::platform::Recorder,
+) -> (Result<Vec<u8>, String>, bool) {
+    let (result, still_recording) = take_native_recording_using(recorder, true);
+    (result.and_then(encode_recording_result), still_recording)
+}
+
+fn discard_native_recording(
+    recorder: &dyn crate::platform::Recorder,
+) -> (Result<(), String>, bool) {
+    let (result, still_recording) = take_native_recording(recorder);
+    (result.map(|_| ()), still_recording)
+}
+
+fn start_recording_recovery_reaper(ownership: &RecordingOwnerState) {
+    if ownership.start_recovery_reaper() {
+        let ownership = Arc::clone(ownership);
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if !ownership.prune_recovered_audio() {
+                    break;
+                }
+            }
+        });
+    }
+}
+
+fn recover_abandoned_recording(
+    ownership: &RecordingOwnerState,
+    recorder: &dyn crate::platform::Recorder,
+    admission: &Arc<crate::platform::recording_ownership::RecordingAdmission>,
+) -> crate::platform::recording_ownership::RecoveryStop {
+    use crate::platform::recording_ownership::RecoveryStop;
+    if !admission.may_recover_audio() {
+        let (result, active) = discard_native_recording(recorder);
+        return RecoveryStop::unsealed(result, active);
+    }
+    let (result, active) = stop_native_recording_handoff(recorder);
+    match result {
+        Ok(bytes) => {
+            if ownership.retain_recording_audio(admission, Arc::new(bytes)) {
+                start_recording_recovery_reaper(ownership);
+            }
+            if active {
+                RecoveryStop::Sealed
+            } else {
+                RecoveryStop::Released(Ok(()))
+            }
+        }
+        Err(error) => {
+            if !active {
+                admission.mark_recovery_failed();
+            }
+            RecoveryStop::unsealed(Err(error), active)
+        }
+    }
+}
+
+fn force_stop_with_retry(
+    ownership: RecordingOwnerState,
+    recorder: Arc<dyn crate::platform::Recorder>,
+) -> Result<(), String> {
+    let result = ownership.force_stop(|| discard_native_recording(recorder.as_ref()));
+    if result.is_err() {
+        if let Some(token) = ownership
+            .pending_release()
+            .and_then(|id| ownership.begin_release_retry(&id))
+        {
+            retry_recording_release(ownership, recorder, token);
+        }
+    }
+    result
+}
+
+// Retry a release only while the same native owner instance remains installed.
+// The worker does not hold a blocking-pool thread while waiting between attempts.
+fn retry_recording_release(
+    ownership: RecordingOwnerState,
+    recorder: Arc<dyn crate::platform::Recorder>,
+    token: crate::platform::recording_ownership::RecordingRetry,
+) {
+    tauri::async_runtime::spawn(async move {
+        struct RetryGuard {
+            ownership: RecordingOwnerState,
+            token: crate::platform::recording_ownership::RecordingRetry,
+        }
+        impl Drop for RetryGuard {
+            fn drop(&mut self) {
+                self.ownership.end_release_retry(&self.token);
+            }
+        }
+        let guard = RetryGuard { ownership, token };
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            let ownership = Arc::clone(&guard.ownership);
+            let token = guard.token.clone();
+            let recorder = Arc::clone(&recorder);
+            match tauri::async_runtime::spawn_blocking(move || {
+                ownership.retry_release_with_recovery(&token, |handoff_complete| {
+                    if let Some(admission) = token.admission().filter(|_| !handoff_complete) {
+                        recover_abandoned_recording(&ownership, recorder.as_ref(), admission)
+                    } else {
+                        let (result, active) = discard_native_recording(recorder.as_ref());
+                        crate::platform::recording_ownership::RecoveryStop::unsealed(result, active)
+                    }
+                })
+            })
+            .await
+            {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(error) => {
+                    log::error!("Recording release retry task failed: {error}");
+                    break;
+                }
+            }
+        }
+    });
+}
+
+struct StartRecordingGuard {
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    ownership: RecordingOwnerState,
+    recorder: Arc<dyn crate::platform::Recorder>,
+    admission: Arc<crate::platform::recording_ownership::RecordingAdmission>,
+    armed: bool,
+}
+
+impl Drop for StartRecordingGuard {
+    fn drop(&mut self) {
+        self.ownership.finish_admission(&self.admission);
+        if !self.armed {
+            return;
+        }
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.ownership.wake_starts();
+        let ownership = Arc::clone(&self.ownership);
+        let recorder = Arc::clone(&self.recorder);
+        let admission = Arc::clone(&self.admission);
+        tauri::async_runtime::spawn_blocking(move || {
+            if matches!(
+                ownership.stop_admission_with_recovery(&admission, || {
+                    recover_abandoned_recording(&ownership, recorder.as_ref(), &admission)
+                }),
+                Some(Err(_))
+            ) {
+                if let Some(token) = ownership.begin_release_retry_admission(&admission) {
+                    retry_recording_release(ownership, recorder, token);
+                }
+            }
+        });
+    }
+}
+
+struct ExternalRecordingGuard {
+    ownership: RecordingOwnerState,
+    admission: Arc<crate::platform::recording_ownership::RecordingAdmission>,
+    armed: bool,
+}
+
+impl Drop for ExternalRecordingGuard {
+    fn drop(&mut self) {
+        self.ownership.finish_admission(&self.admission);
+        if self.armed {
+            self.admission.cancel();
+            self.ownership.wake_starts();
+            let ownership = Arc::clone(&self.ownership);
+            let admission = Arc::clone(&self.admission);
+            tauri::async_runtime::spawn_blocking(move || {
+                ownership.release_external_admission(&admission);
+            });
+        }
+    }
+}
+
+struct RecordingResetGuard(RecordingOwnerState);
+impl Drop for RecordingResetGuard {
+    fn drop(&mut self) {
+        self.0.end_reset();
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn recording_generation(
+    ownership: State<'_, RecordingOwnerState>,
+    window: tauri::Window,
+    owner_id: String,
+) -> Result<u64, String> {
+    let scope = ownership.window(recording_window_key(&window));
+    ownership.reserve(&owner_id, &scope)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn claim_browser_recording(
+    window: tauri::Window,
+    ownership: State<'_, RecordingOwnerState>,
+    owner_id: String,
+    generation: u64,
+) -> Result<(), String> {
+    ensure_recording_allowed()?;
+    let ownership = Arc::clone(&ownership);
+    let scope = ownership.window(recording_window_key(&window));
+    let admission = ownership.claim_admission(&owner_id, &scope, generation)?;
+    let mut guard = ExternalRecordingGuard {
+        ownership: Arc::clone(&ownership),
+        admission: Arc::clone(&admission),
+        armed: true,
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        window
+            .inner_size()
+            .map_err(|_| "Recording window is closed".to_string())?;
+        ownership.start_external(&admission)
     })
     .await
-    .map_err(|err| format!("Recording task panicked: {err}"))?;
-
-    // If a local-data clear began while the audio device was opening, stop the
-    // recorder before releasing `operation` so `begin_local_data_clear` never
-    // observes an active microphone after draining leases.
-    if let Err(err) = operation.ensure_current() {
-        let recorder_cleanup = Arc::clone(&recorder);
-        let _ = tauri::async_runtime::spawn_blocking(move || {
-            let _ = recorder_cleanup.stop();
-        })
-        .await;
-        return Err(err.to_string());
+    .map_err(|error| format!("Recording task panicked: {error}"))?;
+    if result.is_ok() {
+        guard.armed = false;
     }
+    result
+}
 
-    match start_result {
-        Ok(()) => {
-            let reported_sample_rate = recorder.current_sample_rate().unwrap_or(16_000);
-            Ok(StartRecordingResponse {
-                sample_rate: reported_sample_rate,
-            })
-        }
-        Err((message, already_recording)) => {
-            if already_recording {
-                let reported_sample_rate = recorder.current_sample_rate().unwrap_or(16_000);
-                return Ok(StartRecordingResponse {
-                    sample_rate: reported_sample_rate,
-                });
-            }
-
-            log::error!("Failed to start recording via command: {message}");
-            Err(message)
-        }
-    }
+#[tauri::command]
+#[specta::specta]
+pub async fn release_browser_recording(
+    window: tauri::Window,
+    ownership: State<'_, RecordingOwnerState>,
+    owner_id: String,
+    generation: u64,
+) -> Result<(), String> {
+    let ownership = Arc::clone(&ownership);
+    let scope = ownership.window(recording_window_key(&window));
+    tauri::async_runtime::spawn_blocking(move || {
+        ownership.release_external_scoped(&owner_id, &scope, generation)
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn start_recording(
     app: AppHandle,
+    window: tauri::Window,
     recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    ownership: State<'_, RecordingOwnerState>,
+    owner_id: String,
+    generation: u64,
     args: Option<StartRecordingArgs>,
 ) -> Result<StartRecordingResponse, String> {
+    ensure_recording_allowed()?;
     let options = args.unwrap_or_default();
-
+    let recorder = Arc::clone(&recorder);
+    let ownership = Arc::clone(&ownership);
+    let window_scope = ownership.window(recording_window_key(&window));
+    let admission = ownership.claim_admission(&owner_id, &window_scope, generation)?;
     let level_emit_handle = app.clone();
-    let level_emitter: LevelCallback = Arc::new(move |levels: Vec<f32>| {
-        if crate::db::local_data_write_gate::current_write_generation().is_none() {
-            return;
-        }
+    let level_delivery: LevelCallback = Arc::new(move |levels: Vec<f32>| {
         let overlay_state = level_emit_handle.state::<crate::state::OverlayState>();
         overlay_state.set_audio_levels(levels.clone());
         crate::platform::overlay::notify_audio_levels(&level_emit_handle, &levels);
-
         let payload = RecordingLevelPayload { levels };
         if let Err(err) = level_emit_handle.emit_to(EventTarget::any(), EVT_REC_LEVEL, payload) {
             log::error!("Failed to emit recording_level event: {err}");
         }
     });
-
+    // Both bounded workers are started before opening the microphone. Neither
+    // Tauri event dispatch nor pill IPC runs while a capture callback owns the
+    // admission gate.
+    let level_emitter = crate::platform::event_dispatch::bounded_level_callback(
+        Arc::clone(&AUDIO_LEVEL_DISPATCH),
+        Arc::clone(&admission),
+        level_delivery,
+    );
     let chunk_emit_handle = app.clone();
-    let chunk_emitter: ChunkCallback = Arc::new(move |samples: Vec<f32>, offset: u64| {
-        if crate::db::local_data_write_gate::current_write_generation().is_none() {
-            return;
-        }
-        let payload = AudioChunkPayload { samples, offset };
+    let chunk_owner = owner_id.clone();
+    let chunk_delivery: ChunkCallback = Arc::new(move |samples: Vec<f32>, offset: u64| {
+        let payload = AudioChunkPayload {
+            owner_id: chunk_owner.clone(),
+            generation,
+            samples,
+            offset,
+        };
         if let Err(err) = chunk_emit_handle.emit_to(EventTarget::any(), EVT_AUDIO_CHUNK, payload) {
             log::error!("Failed to emit audio_chunk event: {err}");
         }
     });
-
-    start_recorder_with_clear_gate(
-        Arc::clone(&recorder),
-        options.preferred_microphone,
-        Some(level_emitter),
-        Some(chunk_emitter),
-    )
+    let chunk_emitter = crate::platform::event_dispatch::bounded_chunk_callback(
+        Arc::clone(&AUDIO_CHUNK_DISPATCH),
+        chunk_delivery,
+        MAX_CHUNK_EVENT_SAMPLES,
+    );
+    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut guard = StartRecordingGuard {
+        cancelled: Arc::clone(&cancelled),
+        ownership: Arc::clone(&ownership),
+        recorder: Arc::clone(&recorder),
+        admission: Arc::clone(&admission),
+        armed: true,
+    };
+    let worker_recorder = Arc::clone(&recorder);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        window
+            .inner_size()
+            .map_err(|_| "Recording window is closed".to_string())?;
+        ownership.start_with_recovery(
+            &owner_id,
+            &window_scope,
+            generation,
+            crate::platform::recording_ownership::StartControl {
+                cancelled: &cancelled,
+                admission: Some(&admission),
+                wait: if options.wait_for_release {
+                    std::time::Duration::from_secs(2)
+                } else {
+                    std::time::Duration::ZERO
+                },
+            },
+            || {
+                worker_recorder.set_preferred_input_device(options.preferred_microphone);
+                worker_recorder
+                    .start(Some(level_emitter), Some(chunk_emitter))
+                    .map_err(|err| err.to_string())?;
+                Ok(StartRecordingResponse {
+                    sample_rate: worker_recorder.current_sample_rate().unwrap_or(16_000),
+                })
+            },
+            |owner_admission| {
+                use crate::platform::recording_ownership::RecoveryStop;
+                let outcome = if let Some(owner_admission) = &owner_admission {
+                    recover_abandoned_recording(
+                        &ownership,
+                        worker_recorder.as_ref(),
+                        owner_admission,
+                    )
+                } else {
+                    let (result, active) = discard_native_recording(worker_recorder.as_ref());
+                    RecoveryStop::unsealed(result, active)
+                };
+                if matches!(&outcome, RecoveryStop::Pending(_) | RecoveryStop::Sealed) {
+                    if let Some(retry) = owner_admission
+                        .as_ref()
+                        .and_then(|admission| ownership.begin_release_retry_admission(admission))
+                    {
+                        retry_recording_release(
+                            Arc::clone(&ownership),
+                            Arc::clone(&worker_recorder),
+                            retry,
+                        );
+                    }
+                }
+                outcome
+            },
+        )
+    })
     .await
+    .map_err(|err| format!("Recording task panicked: {err}"))?;
+    if result.is_ok() {
+        guard.armed = false;
+    }
+    result
 }
 
-/// Raw-body command, so it is registered in `app.rs` but kept out of the
-/// Specta bindings (Specta cannot describe `ipc::Response`). The frontend
-/// decodes it with `decodeStopRecordingPayload`.
+/// Raw-body command. Specta cannot describe `ipc::Response`.
 #[tauri::command]
 pub async fn stop_recording(
+    window: tauri::Window,
     recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    ownership: State<'_, RecordingOwnerState>,
+    owner_id: String,
+    generation: u64,
 ) -> Result<tauri::ipc::Response, String> {
     let recorder = Arc::clone(&recorder);
-
-    let bytes = tauri::async_runtime::spawn_blocking(move || match recorder.stop() {
-        Ok(result) => Ok(encode_recorded_audio(
-            &result.audio.samples,
-            result.audio.sample_rate,
-        )),
-        Err(err) => {
-            let not_recording = (*err)
-                .downcast_ref::<crate::errors::RecordingError>()
-                .map(|inner| matches!(inner, crate::errors::RecordingError::NotRecording))
-                .unwrap_or(false);
-
-            if not_recording {
-                return Ok(encode_recorded_audio(&[], 0));
-            }
-
-            let message = err.to_string();
-            log::error!("Failed to stop recording via command: {message}");
-            Err(message)
+    let ownership = Arc::clone(&ownership);
+    let scope = ownership.window(recording_window_key(&window));
+    // Record normal-stop intent before the blocking pool can queue this task
+    // behind a slow device open or a dropped start-command guard.
+    let stop_intent = ownership.note_scoped_normal_stop(&owner_id, &scope, generation)?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let _stop_intent = stop_intent;
+        let result = ownership.stop_or_recover_scoped(&owner_id, &scope, generation, || {
+            stop_native_recording_handoff(recorder.as_ref())
+        });
+        start_recording_recovery_reaper(&ownership);
+        // A sealed partial response may be delivered while the worker is still
+        // releasing hardware. Keep the owner reserved and retry until it ends.
+        if let Some(token) = ownership.begin_release_retry_scoped(&owner_id, &scope, generation) {
+            retry_recording_release(ownership, recorder, token);
         }
+        result.and_then(|bytes| match bytes {
+            None => Ok(0_u32.to_le_bytes().to_vec()),
+            Some(bytes) => match Arc::try_unwrap(bytes) {
+                Ok(bytes) => Ok(bytes),
+                Err(bytes) => {
+                    let mut response = Vec::new();
+                    response
+                        .try_reserve_exact(bytes.len())
+                        .map_err(|_| "Unable to allocate recording response".to_string())?;
+                    response.extend_from_slice(&bytes);
+                    Ok(response)
+                }
+            },
+        })
     })
     .await
     .map_err(|err| err.to_string())??;
-
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Retire only the recovery copy after a normal stop reply was received.
+#[tauri::command]
+#[specta::specta]
+pub fn acknowledge_recording(
+    window: tauri::Window,
+    ownership: State<'_, RecordingOwnerState>,
+    owner_id: String,
+    generation: u64,
+) {
+    let scope = ownership.window(recording_window_key(&window));
+    ownership.acknowledge_audio(&owner_id, &scope, generation);
+}
+
+/// Release an abandoned lease without affecting a different owner.
+#[tauri::command]
+#[specta::specta]
+pub async fn discard_recording(
+    window: tauri::Window,
+    recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    ownership: State<'_, RecordingOwnerState>,
+    owner_id: String,
+    generation: u64,
+) -> Result<(), String> {
+    let recorder = Arc::clone(&recorder);
+    let ownership = Arc::clone(&ownership);
+    let scope = ownership.window(recording_window_key(&window));
+    tauri::async_runtime::spawn_blocking(move || {
+        ownership.cancel_scoped_admission(&owner_id, &scope, generation);
+        let result = ownership.discard_scoped(&owner_id, &scope, generation, || {
+            discard_native_recording(recorder.as_ref())
+        });
+        if result.is_err() {
+            if let Some(token) = ownership.begin_release_retry_scoped(&owner_id, &scope, generation)
+            {
+                retry_recording_release(ownership, recorder, token);
+            }
+        }
+        result
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn force_stop_recording(
+    recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    ownership: State<'_, RecordingOwnerState>,
+) -> Result<(), String> {
+    let recorder = Arc::clone(&recorder);
+    let ownership = Arc::clone(&ownership);
+    ownership.begin_reset()?;
+    let guard = RecordingResetGuard(Arc::clone(&ownership));
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        force_stop_with_retry(ownership, recorder)
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn pause_recording(
+    window: tauri::Window,
     recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    ownership: State<'_, RecordingOwnerState>,
+    owner_id: String,
+    generation: u64,
 ) -> Result<(), String> {
     let recorder = Arc::clone(&recorder);
-    tauri::async_runtime::spawn_blocking(move || recorder.pause().map_err(|err| err.to_string()))
-        .await
-        .map_err(|err| err.to_string())?
+    let ownership = Arc::clone(&ownership);
+    let scope = ownership.window(recording_window_key(&window));
+    tauri::async_runtime::spawn_blocking(move || {
+        ownership.use_recording_scoped(&owner_id, &scope, generation, || {
+            recorder.pause().map_err(|err| err.to_string())
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn resume_recording(
+    window: tauri::Window,
     recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    ownership: State<'_, RecordingOwnerState>,
+    owner_id: String,
+    generation: u64,
 ) -> Result<(), String> {
     let recorder = Arc::clone(&recorder);
-    tauri::async_runtime::spawn_blocking(move || recorder.resume().map_err(|err| err.to_string()))
-        .await
-        .map_err(|err| err.to_string())?
+    let ownership = Arc::clone(&ownership);
+    let scope = ownership.window(recording_window_key(&window));
+    tauri::async_runtime::spawn_blocking(move || {
+        ownership.use_recording_scoped(&owner_id, &scope, generation, || {
+            recorder.resume().map_err(|err| err.to_string())
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 /// Raw-body command, so it is registered in `app.rs` but kept out of the
@@ -4148,9 +4771,9 @@ pub async fn paste(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
+pub async fn simulate_type(text: String, delay_ms: u64) -> Result<SimulatedTypingOutcome, String> {
     if text.trim().is_empty() {
-        return Ok(());
+        return Ok(SimulatedTypingOutcome::Completed);
     }
 
     // Taking the session slot and consuming any cancel that arrived before this
@@ -4158,11 +4781,8 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
     // case cannot slip between them.
     let (_session, cancelled) = TypingSession::begin()?;
     if cancelled {
-        // A cancel landed before the first keystroke. Report success, not an
-        // error: the user asked for this, and the frontend has no second
-        // message for a failure it did not cause.
         log::info!("Simulated typing cancelled before it started");
-        return Ok(());
+        return Ok(SimulatedTypingOutcome::CancelledBeforeStart);
     }
 
     let join_result = tauri::async_runtime::spawn_blocking(move || {
@@ -4176,7 +4796,7 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
                 log::error!("Simulated typing failed: {err}");
                 return Err(err.clone());
             }
-            Ok(())
+            Ok(SimulatedTypingOutcome::Completed)
         }
         Err(err) => {
             let message = format!("Simulate type task join error: {err}");
@@ -4208,15 +4828,31 @@ pub fn set_phase(
     let resolved =
         OverlayPhase::parse(phase.as_str()).ok_or_else(|| format!("invalid phase: {phase}"))?;
 
+    // Serialize the authoritative state update with both enqueues. A worker
+    // never holds this lock while performing potentially blocking delivery.
+    let _update = PHASE_UPDATE_LOCK
+        .lock()
+        .map_err(|_| "Phase update lock is poisoned".to_string())?;
     overlay_state.set_phase(&resolved);
-    crate::platform::overlay::notify_phase(&app, &resolved);
-
-    let payload = OverlayPhasePayload {
-        phase: resolved.clone(),
-    };
-
-    app.emit_to(EventTarget::any(), EVT_OVERLAY_PHASE, payload)
-        .map_err(|err| err.to_string())
+    let pill_app = app.clone();
+    let pill_phase = resolved.clone();
+    let pill_queued = PILL_PHASE_DISPATCH.submit(Box::new(move || {
+        crate::platform::overlay::notify_phase(&pill_app, &pill_phase);
+    }));
+    let webview_queued = WEBVIEW_PHASE_DISPATCH.submit(Box::new(move || {
+        let payload = OverlayPhasePayload { phase: resolved };
+        if let Err(err) = app.emit_to(EventTarget::any(), EVT_OVERLAY_PHASE, payload.clone()) {
+            log::warn!("Failed to emit overlay phase: {err}; retrying once");
+            if let Err(retry_err) = app.emit_to(EventTarget::any(), EVT_OVERLAY_PHASE, payload) {
+                log::error!("Failed to emit overlay phase on retry: {retry_err}");
+            }
+        }
+    }));
+    if pill_queued && webview_queued {
+        Ok(())
+    } else {
+        Err("Phase notification worker is unavailable".into())
+    }
 }
 
 #[tauri::command]
@@ -6606,6 +7242,359 @@ mod tests {
     static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
         once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
 
+    #[test]
+    fn stopped_native_audio_replays_its_exact_wire_bytes_without_stopping_twice() {
+        use crate::platform::Recorder;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        struct FakeRecorder {
+            active: AtomicBool,
+            stops: AtomicUsize,
+        }
+        impl Recorder for FakeRecorder {
+            fn start(
+                &self,
+                _: Option<LevelCallback>,
+                _: Option<ChunkCallback>,
+            ) -> Result<(), Box<dyn std::error::Error>> {
+                self.active.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            fn stop(&self) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+                self.stops.fetch_add(1, Ordering::SeqCst);
+                self.active.store(false, Ordering::SeqCst);
+                Ok(crate::domain::RecordingResult {
+                    metrics: crate::domain::RecordingMetrics {
+                        duration: std::time::Duration::ZERO,
+                        size_bytes: 8,
+                    },
+                    audio: crate::domain::RecordedAudio {
+                        samples: vec![0.5, -1.0],
+                        sample_rate: 48000,
+                    },
+                    capture_failed: false,
+                })
+            }
+            fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+            fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+            fn is_recording(&self) -> bool {
+                self.active.load(Ordering::SeqCst)
+            }
+        }
+        let recorder = FakeRecorder {
+            active: AtomicBool::new(false),
+            stops: AtomicUsize::new(0),
+        };
+        let ownership = crate::platform::recording_ownership::RecordingOwnership::default();
+        let window = ownership.window(201);
+        let token = ownership.reserve("owner", &window).unwrap();
+        let admission = ownership.claim_admission("owner", &window, token).unwrap();
+        ownership
+            .start_with_recovery(
+                "owner",
+                &window,
+                token,
+                crate::platform::recording_ownership::StartControl {
+                    cancelled: &AtomicBool::new(false),
+                    admission: Some(&admission),
+                    wait: std::time::Duration::ZERO,
+                },
+                || {
+                    recorder
+                        .start(None, None)
+                        .map_err(|error| error.to_string())
+                },
+                |_| panic!("unexpected cleanup"),
+            )
+            .unwrap();
+        ownership.finish_admission(&admission);
+        let first = ownership
+            .stop_or_recover_scoped("owner", &window, token, || {
+                stop_native_recording_handoff(&recorder)
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            first.as_slice(),
+            &[0x80, 0xbb, 0, 0, 0, 0, 0, 0x3f, 0, 0, 0x80, 0xbf]
+        );
+        let replay = ownership
+            .stop_or_recover_scoped("owner", &window, token, || {
+                stop_native_recording_handoff(&recorder)
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(recorder.stops.load(Ordering::SeqCst), 1);
+        ownership.acknowledge_audio("owner", &window, token);
+        assert!(ownership
+            .stop_or_recover_scoped("owner", &window, token, || panic!(
+                "acknowledged stop reopened driver"
+            ))
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn abandoned_cleanup_replays_sealed_partial_audio_until_acknowledged() {
+        use crate::platform::{
+            recording_ownership::{RecordingOwnership, RecoveryStop, StartControl},
+            Recorder,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::{mpsc, Mutex};
+        struct FakeRecorder {
+            active: AtomicBool,
+            handoffs: AtomicUsize,
+            discards: AtomicUsize,
+            entered: Mutex<Option<mpsc::Sender<()>>>,
+            release: Mutex<mpsc::Receiver<()>>,
+        }
+        impl Recorder for FakeRecorder {
+            fn start(
+                &self,
+                _: Option<LevelCallback>,
+                _: Option<ChunkCallback>,
+            ) -> Result<(), Box<dyn std::error::Error>> {
+                self.active.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            fn stop(&self) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+                if self.discards.fetch_add(1, Ordering::SeqCst) == 0 {
+                    // Model a stream whose pause failed and remains owned.
+                    return Err("Recording release is pending".into());
+                }
+                if let Some(entered) = self.entered.lock().unwrap().take() {
+                    entered.send(()).unwrap();
+                }
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(3))
+                    .unwrap();
+                self.active.store(false, Ordering::SeqCst);
+                Err(Box::new(crate::errors::RecordingError::NotRecording))
+            }
+            fn stop_for_handoff(
+                &self,
+            ) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+                self.handoffs.fetch_add(1, Ordering::SeqCst);
+                Ok(crate::domain::RecordingResult {
+                    metrics: crate::domain::RecordingMetrics {
+                        duration: std::time::Duration::ZERO,
+                        size_bytes: 4,
+                    },
+                    audio: crate::domain::RecordedAudio {
+                        samples: vec![0.5],
+                        sample_rate: 16_000,
+                    },
+                    capture_failed: true,
+                })
+            }
+            fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+            fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+            fn is_recording(&self) -> bool {
+                self.active.load(Ordering::SeqCst)
+            }
+        }
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let recorder = Arc::new(FakeRecorder {
+            active: AtomicBool::new(false),
+            handoffs: AtomicUsize::new(0),
+            discards: AtomicUsize::new(0),
+            entered: Mutex::new(Some(entered_tx)),
+            release: Mutex::new(release_rx),
+        });
+        let ownership = Arc::new(RecordingOwnership::default());
+        let window = ownership.window(660);
+        let token = ownership.reserve("old", &window).unwrap();
+        let admission = ownership.claim_admission("old", &window, token).unwrap();
+        ownership
+            .start_with_recovery(
+                "old",
+                &window,
+                token,
+                StartControl {
+                    admission: Some(&admission),
+                    cancelled: &AtomicBool::new(false),
+                    wait: std::time::Duration::ZERO,
+                },
+                || {
+                    recorder
+                        .start(None, None)
+                        .map_err(|error| error.to_string())
+                },
+                |_| panic!("unexpected cleanup"),
+            )
+            .unwrap();
+        assert!(ownership
+            .stop_admission_with_recovery(&admission, || recover_abandoned_recording(
+                &ownership,
+                recorder.as_ref(),
+                &admission
+            ))
+            .unwrap()
+            .is_err());
+        let recovered = ownership
+            .stop_or_recover_scoped("old", &window, token, || {
+                panic!("recovery must not stop again")
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.as_slice(), &[0x80, 0x3e, 0, 0x80, 0, 0, 0, 0x3f]);
+        assert!(recorder.is_recording());
+        let retry = ownership.begin_release_retry_admission(&admission).unwrap();
+        assert!(!ownership.retry_release_with_recovery(&retry, |sealed| {
+            assert!(sealed);
+            let (result, active) = discard_native_recording(recorder.as_ref());
+            assert!(result.is_err());
+            assert!(active);
+            RecoveryStop::unsealed(result, active)
+        }));
+        assert_eq!(
+            ownership
+                .stop_or_recover_scoped("old", &window, token, || panic!(
+                    "failed release must preserve the sealed audio"
+                ))
+                .unwrap(),
+            Some(Arc::clone(&recovered))
+        );
+        let release_worker = {
+            let ownership = Arc::clone(&ownership);
+            let recorder = Arc::clone(&recorder);
+            std::thread::spawn(move || {
+                ownership.retry_release_with_recovery(&retry, |sealed| {
+                    assert!(sealed);
+                    let (result, active) = discard_native_recording(recorder.as_ref());
+                    RecoveryStop::unsealed(result, active)
+                })
+            })
+        };
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(
+            ownership
+                .stop_or_recover_scoped("old", &window, token, || panic!(
+                    "replay must not wait for blocked release"
+                ))
+                .unwrap(),
+            Some(Arc::clone(&recovered))
+        );
+        let next = ownership.reserve("next", &window).unwrap();
+        let next_admission = ownership.claim_admission("next", &window, next).unwrap();
+        assert!(ownership
+            .start_with_recovery(
+                "next",
+                &window,
+                next,
+                StartControl {
+                    admission: Some(&next_admission),
+                    cancelled: &AtomicBool::new(false),
+                    wait: std::time::Duration::ZERO,
+                },
+                || -> Result<(), String> { panic!("successor opened before release") },
+                |_| panic!("busy owner was stopped twice")
+            )
+            .is_err());
+        ownership.acknowledge_audio("old", &window, token);
+        assert!(ownership
+            .stop_or_recover_scoped("old", &window, token, || panic!(
+                "acknowledged audio must not restart capture"
+            ))
+            .is_err());
+        release_tx.send(()).unwrap();
+        assert!(release_worker.join().unwrap());
+        assert_eq!(recorder.handoffs.load(Ordering::SeqCst), 1);
+        assert_eq!(recorder.discards.load(Ordering::SeqCst), 2);
+        assert!(ownership.pending_release().is_none());
+        assert!(ownership
+            .stop_or_recover_scoped("old", &window, token, || panic!(
+                "acknowledged audio must not return"
+            ))
+            .is_err());
+        let successor = ownership.reserve("successor", &window).unwrap();
+        let successor_admission = ownership
+            .claim_admission("successor", &window, successor)
+            .unwrap();
+        ownership
+            .start_with_recovery(
+                "successor",
+                &window,
+                successor,
+                StartControl {
+                    admission: Some(&successor_admission),
+                    cancelled: &AtomicBool::new(false),
+                    wait: std::time::Duration::ZERO,
+                },
+                || Ok(()),
+                |_| panic!("released owner must not need cleanup"),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_handoff_cannot_claim_complete_audio_from_an_active_driver() {
+        use crate::platform::Recorder;
+        struct Fake {
+            partial: bool,
+        }
+        impl Recorder for Fake {
+            fn start(
+                &self,
+                _: Option<LevelCallback>,
+                _: Option<ChunkCallback>,
+            ) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+            fn stop(&self) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+                self.stop_for_handoff()
+            }
+            fn stop_for_handoff(
+                &self,
+            ) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+                Ok(crate::domain::RecordingResult {
+                    metrics: crate::domain::RecordingMetrics {
+                        duration: std::time::Duration::ZERO,
+                        size_bytes: 4,
+                    },
+                    audio: crate::domain::RecordedAudio {
+                        samples: vec![0.5],
+                        sample_rate: 16000,
+                    },
+                    capture_failed: self.partial,
+                })
+            }
+            fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+            fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
+                Ok(())
+            }
+            fn is_recording(&self) -> bool {
+                true
+            }
+        }
+        let (result, active) = take_native_recording_using(&Fake { partial: false }, true);
+        assert!(active);
+        assert!(result.is_err());
+        let (result, active) = take_native_recording_using(&Fake { partial: true }, true);
+        assert!(active);
+        let wire = encode_recording_result(result.unwrap()).unwrap();
+        assert_eq!(
+            u32::from_le_bytes(wire[..4].try_into().unwrap()),
+            0x8000_0000 | 16000
+        );
+        assert_eq!(&wire[4..], &0.5_f32.to_le_bytes());
+    }
+
     /// The wire contract for the raw `stop_recording` body: a `u32` sample
     /// rate then the samples, both little-endian, with no padding between
     /// them.
@@ -6617,6 +7606,27 @@ mod tests {
     /// `apps/desktop/src/utils/recorded-audio.utils.ts` has to read, so an
     /// endianness or layout change here fails against the format rather than
     /// against a second copy of the encoder.
+    #[test]
+    fn incomplete_capture_is_marked_without_changing_sample_bytes() {
+        let result = crate::domain::RecordingResult {
+            metrics: crate::domain::RecordingMetrics {
+                duration: std::time::Duration::ZERO,
+                size_bytes: 4,
+            },
+            audio: crate::domain::RecordedAudio {
+                samples: vec![0.5],
+                sample_rate: 16_000,
+            },
+            capture_failed: true,
+        };
+        let encoded = encode_recording_result(Some(result)).unwrap();
+        assert_eq!(
+            u32::from_le_bytes(encoded[..4].try_into().unwrap()),
+            0x8000_0000 | 16_000
+        );
+        assert_eq!(&encoded[4..], &0.5_f32.to_le_bytes());
+    }
+
     #[test]
     fn recorded_audio_encoding_matches_the_wire_layout() {
         assert_eq!(
@@ -7131,7 +8141,7 @@ mod tests {
     fn the_cancel_signal_test_guard_restores_the_latch_as_well_as_the_flag() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         // Start from a known state whose flag has to survive the round trip.
         CANCEL_TYPING.store(true, Ordering::SeqCst);
@@ -7172,7 +8182,7 @@ mod tests {
     fn a_cancel_delivered_before_the_typing_session_starts_is_not_discarded() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _signal = CancelSignalTestGuard::take();
 
         // The frontend registers its blur/Escape handler *before* it issues the
@@ -7199,7 +8209,7 @@ mod tests {
     fn a_cancel_is_recorded_whether_or_not_a_session_is_live() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _signal = CancelSignalTestGuard::take();
 
         // No session live: still recorded, because the session may be starting.
@@ -7225,7 +8235,7 @@ mod tests {
     fn a_cancel_recorded_before_the_session_stops_it_from_typing() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _signal = CancelSignalTestGuard::take();
 
         // The pre-start window: the user hit Escape, the handler is live, but
@@ -7241,6 +8251,19 @@ mod tests {
         assert!(CANCEL_TYPING.load(Ordering::SeqCst));
     }
 
+    #[test]
+    fn cancelled_typing_reports_that_no_text_was_delivered() {
+        let _serialized = CANCEL_TYPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _signal = CancelSignalTestGuard::take();
+        cancel_typing().unwrap();
+        assert!(matches!(
+            tauri::async_runtime::block_on(simulate_type("not typed".into(), 0)),
+            Ok(SimulatedTypingOutcome::CancelledBeforeStart)
+        ));
+    }
+
     /// The other half of the contract, and the reason the session owns its
     /// latch: a cancel from an unrelated earlier moment must not kill a
     /// session that starts long afterwards.
@@ -7248,7 +8271,7 @@ mod tests {
     fn a_cancel_from_a_finished_session_does_not_abort_the_next_one() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _signal = CancelSignalTestGuard::take();
 
         // A cancel raised during a live session, which then ends...
@@ -7273,7 +8296,7 @@ mod tests {
     fn an_expired_cancel_does_not_abort_a_later_session() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _signal = CancelSignalTestGuard::take();
 
         // `0` is the "nothing latched" sentinel and never aborts.
@@ -7306,8 +8329,8 @@ mod tests {
     /// that cannot be stepped backwards by an NTP correction, a manual clock
     /// change, or a VM resuming from suspend. A backwards step of more than the
     /// grace window is enough on its own: an already-expired latch looks live
-    /// for the whole offset, and `simulate_type` returns `Ok(())` having typed
-    /// nothing, so the user's dictation silently disappears.
+    /// for the whole offset, and `simulate_type` cancels without typing even
+    /// though the user did not cancel this session.
     ///
     /// What is pinned is the *source*, not the arithmetic: `SystemTime` and this
     /// clock both satisfy "within the grace window" for a freshly armed latch,
@@ -7316,7 +8339,7 @@ mod tests {
     fn the_cancel_grace_clock_is_process_monotonic_rather_than_wall_clock() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         // A wall clock reading would be roughly 1.8e12 (milliseconds since the
         // Unix epoch), so this separates the two sources on its own.
@@ -7365,7 +8388,7 @@ mod tests {
         for _ in 0..ROUNDS {
             let _serialized = CANCEL_TYPING_TEST_LOCK
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let _signal = CancelSignalTestGuard::take();
 
             let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
@@ -7762,10 +8785,22 @@ mod tests {
             request_id: request_id.to_string(),
             url: url.to_string(),
             method: "POST".to_string(),
-            headers: [(
-                "authorization".to_string(),
-                "Bearer redirect-test-secret".to_string(),
-            )]
+            redirect: None,
+            headers: [
+                (
+                    "authorization".to_string(),
+                    "Bearer redirect-test-secret".to_string(),
+                ),
+                ("api-key".to_string(), "azure-secret".to_string()),
+                ("x-api-key".to_string(), "anthropic-secret".to_string()),
+                ("x-goog-api-key".to_string(), "gemini-secret".to_string()),
+                ("xi-api-key".to_string(), "elevenlabs-secret".to_string()),
+                (
+                    "ocp-apim-subscription-key".to_string(),
+                    "azure-speech-secret".to_string(),
+                ),
+                ("x-request-id".to_string(), "request-1".to_string()),
+            ]
             .into_iter()
             .collect(),
             body_base64: Some(
@@ -7837,15 +8872,198 @@ mod tests {
 
         assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
         assert_eq!(heads.len(), 3);
-        assert!(
-            heads[0].to_ascii_lowercase().contains("authorization"),
-            "the credential origin receives its header"
-        );
-        for (index, head) in heads.iter().enumerate().skip(1) {
+        for name in [
+            "authorization",
+            "api-key",
+            "x-api-key",
+            "x-goog-api-key",
+            "xi-api-key",
+            "ocp-apim-subscription-key",
+        ] {
+            let header = format!("\r\n{name}:");
             assert!(
-                !head.to_ascii_lowercase().contains("authorization"),
-                "hop {index} must not carry credentials: {head}"
+                heads[0].to_ascii_lowercase().contains(&header),
+                "origin must receive {name}"
             );
+            for (index, head) in heads.iter().enumerate().skip(1) {
+                assert!(
+                    !head.to_ascii_lowercase().contains(&header),
+                    "hop {index} must not carry {name}"
+                );
+            }
+        }
+        for head in &heads {
+            assert!(head
+                .to_ascii_lowercase()
+                .contains("\r\nx-request-id: request-1"));
+        }
+    }
+
+    #[tokio::test]
+    async fn private_http_respects_manual_and_error_redirect_modes() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        for mode in [HttpRedirectMode::Manual, HttpRedirectMode::Error] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let start = Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap();
+            let next = Url::parse(&format!("http://127.0.0.1:{port}/next")).unwrap();
+            let mut heads = spawn_head_capturing_server(
+                listener,
+                vec![redirect_response(&next), REDIRECT_OK_RESPONSE.to_string()],
+            );
+            let mut request = credentialed_post(redirect_chain_test_id(), &start);
+            request.redirect = Some(mode);
+            let result = execute_http_request(request, HttpRequestPolicy::PrivateNetwork).await;
+            match mode {
+                HttpRedirectMode::Manual => {
+                    let response = result.expect("manual response");
+                    assert_eq!(response.status, 307);
+                    assert_eq!(response.headers.get("location"), Some(&next.to_string()));
+                }
+                _ => {
+                    let Err(error) = result else {
+                        panic!("error mode must reject redirects")
+                    };
+                    assert_eq!(error, "Redirect not allowed: 307");
+                }
+            }
+            assert!(heads.try_recv().is_ok());
+            assert!(
+                heads.try_recv().is_err(),
+                "redirect mode must not contact the second URL"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn private_http_redirect_mode_applies_before_location_parsing() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        for status in [301, 302, 303, 307, 308] {
+            for mode in [
+                HttpRedirectMode::Error,
+                HttpRedirectMode::Follow,
+                HttpRedirectMode::Manual,
+            ] {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let port = listener.local_addr().unwrap().port();
+                let start = Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap();
+                let response = format!(
+                    "HTTP/1.1 {status} Redirect\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let mut heads = spawn_head_capturing_server(listener, vec![response]);
+                let mut request = credentialed_post(redirect_chain_test_id(), &start);
+                request.redirect = Some(mode);
+                let result = execute_http_request(request, HttpRequestPolicy::PrivateNetwork).await;
+                if mode == HttpRedirectMode::Error {
+                    assert_eq!(
+                        result.err().expect("error mode rejects redirect status"),
+                        format!("Redirect not allowed: {status}")
+                    );
+                } else {
+                    assert_eq!(result.expect("response without Location").status, status);
+                }
+                assert!(heads.try_recv().is_ok());
+                assert!(heads.try_recv().is_err());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn private_http_does_not_follow_non_redirect_statuses() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let start = Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap();
+        let response =
+            "HTTP/1.1 304 Not Modified\r\nlocation: /next\r\nconnection: close\r\n\r\n".to_string();
+        let mut heads =
+            spawn_head_capturing_server(listener, vec![response, REDIRECT_OK_RESPONSE.to_string()]);
+        let result = execute_http_request(
+            credentialed_post(redirect_chain_test_id(), &start),
+            HttpRequestPolicy::PrivateNetwork,
+        )
+        .await
+        .expect("304 is returned");
+        assert_eq!(result.status, 304);
+        assert!(heads.try_recv().is_ok());
+        assert!(
+            heads.try_recv().is_err(),
+            "304 must not start another request"
+        );
+    }
+
+    #[test]
+    fn private_http_rejects_unknown_redirect_mode_at_the_ipc_boundary() {
+        let request = serde_json::json!({
+            "requestId": "00000000-0000-4000-8000-000000000000",
+            "url": "http://127.0.0.1:1/",
+            "method": "GET",
+            "headers": {},
+            "bodyBase64": null,
+            "redirect": "surprise",
+        });
+        assert!(serde_json::from_value::<PrivateHttpRequest>(request).is_err());
+    }
+
+    #[tokio::test]
+    async fn private_http_redirects_preserve_or_discard_body_by_fetch_rules() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        for (status, method, expected_method, keeps_body) in [
+            (301, "POST", "GET", false),
+            (302, "PUT", "PUT", true),
+            (303, "DELETE", "GET", false),
+            (303, "HEAD", "HEAD", false),
+            (307, "POST", "POST", true),
+            (308, "POST", "POST", true),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let start = Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap();
+            let redirect = format!("HTTP/1.1 {status} Redirect\r\nlocation: /next\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+            let mut heads = spawn_head_capturing_server(
+                listener,
+                vec![redirect, REDIRECT_OK_RESPONSE.to_string()],
+            );
+            let mut request = credentialed_post(redirect_chain_test_id(), &start);
+            request.method = method.to_string();
+            if method == "HEAD" {
+                request.body_base64 = None;
+            }
+            for name in [
+                "content-type",
+                "content-encoding",
+                "content-language",
+                "content-location",
+            ] {
+                request
+                    .headers
+                    .insert(name.to_string(), "test-value".to_string());
+            }
+            let result = execute_http_request(request, HttpRequestPolicy::PrivateNetwork).await;
+            assert!(result.is_ok(), "{status} {method} should succeed");
+            assert!(heads.try_recv().is_ok());
+            let second = heads
+                .try_recv()
+                .expect("the redirect must make a second request")
+                .to_ascii_lowercase();
+            assert!(
+                second.starts_with(&format!("{} /next ", expected_method.to_ascii_lowercase())),
+                "{status} {method}: {second}"
+            );
+            if method != "HEAD" {
+                for name in [
+                    "content-type",
+                    "content-encoding",
+                    "content-language",
+                    "content-location",
+                ] {
+                    assert_eq!(
+                        second.contains(&format!("\r\n{name}:")),
+                        keeps_body,
+                        "{status} {method} header {name}: {second}"
+                    );
+                }
+            }
         }
     }
 
@@ -7873,10 +9091,19 @@ mod tests {
         assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
         assert_eq!(heads.len(), 2);
         for (index, head) in heads.iter().enumerate() {
-            assert!(
-                head.to_ascii_lowercase().contains("authorization"),
-                "same-origin hop {index} keeps credentials"
-            );
+            for name in [
+                "authorization",
+                "api-key",
+                "x-api-key",
+                "x-goog-api-key",
+                "xi-api-key",
+                "ocp-apim-subscription-key",
+            ] {
+                assert!(
+                    head.to_ascii_lowercase().contains(&format!("\r\n{name}:")),
+                    "same-origin hop {index} must retain {name}"
+                );
+            }
         }
     }
 
@@ -8125,6 +9352,7 @@ mod tests {
             request_id: request_id.clone(),
             url: "http://127.0.0.1:1/never-started".to_string(),
             method: "GET".to_string(),
+            redirect: None,
             headers: std::collections::HashMap::new(),
             body_base64: None,
         })
@@ -8209,6 +9437,7 @@ mod tests {
             request_id: request_id.clone(),
             url: format!("http://{address}/slow"),
             method: "GET".to_string(),
+            redirect: None,
             headers: std::collections::HashMap::new(),
             body_base64: None,
         }));
@@ -10380,13 +11609,13 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
     }
 
     #[tokio::test]
-    async fn start_recorder_with_clear_gate_stops_in_flight_open_and_blocks_post_clear_starts() {
+    async fn a_local_data_clear_refuses_new_recordings_and_aborts_an_in_flight_start() {
+        use crate::platform::recording_ownership::{RecordingOwnership, StartControl};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
         struct GateTestRecorder {
             active: AtomicBool,
-            starts: std::sync::atomic::AtomicUsize,
-            stops: std::sync::atomic::AtomicUsize,
-            entered_tx: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-            release_rx: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+            starts: AtomicUsize,
         }
 
         impl crate::platform::Recorder for GateTestRecorder {
@@ -10396,18 +11625,11 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
                 _chunk_callback: Option<ChunkCallback>,
             ) -> Result<(), Box<dyn std::error::Error>> {
                 self.starts.fetch_add(1, Ordering::SeqCst);
-                if let Some(tx) = self.entered_tx.lock().unwrap().take() {
-                    let _ = tx.send(());
-                }
-                if let Some(rx) = self.release_rx.lock().unwrap().take() {
-                    let _ = rx.recv();
-                }
                 self.active.store(true, Ordering::SeqCst);
                 Ok(())
             }
 
             fn stop(&self) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
-                self.stops.fetch_add(1, Ordering::SeqCst);
                 self.active.store(false, Ordering::SeqCst);
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
@@ -10418,6 +11640,7 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
                         samples: Vec::new(),
                         sample_rate: 16_000,
                     },
+                    capture_failed: false,
                 })
             }
 
@@ -10428,59 +11651,76 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
             fn resume(&self) -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             }
+
+            fn is_recording(&self) -> bool {
+                self.active.load(Ordering::SeqCst)
+            }
         }
 
         let _test_guard = crate::db::local_data_write_gate::TEST_LOCK.lock().await;
-        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        let recorder = Arc::new(GateTestRecorder {
-            active: AtomicBool::new(false),
-            starts: std::sync::atomic::AtomicUsize::new(0),
-            stops: std::sync::atomic::AtomicUsize::new(0),
-            entered_tx: std::sync::Mutex::new(Some(entered_tx)),
-            release_rx: std::sync::Mutex::new(Some(release_rx)),
-        });
+        let clear_guard = crate::db::local_data_write_gate::begin_local_data_clear()
+            .await
+            .expect("close the clear gate");
 
-        let recorder_for_start: Arc<dyn crate::platform::Recorder> = recorder.clone();
-        let start_task = tokio::spawn(async move {
-            start_recorder_with_clear_gate(recorder_for_start, None, None, None).await
-        });
-
-        entered_rx.await.expect("recorder start must enter");
-
-        let mut clear_task =
-            tokio::spawn(crate::db::local_data_write_gate::begin_local_data_clear());
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(25), &mut clear_task)
-                .await
-                .is_err(),
-            "clear must wait while start_recording holds a remote-operation lease"
+        // A start that arrives after the gate closed is refused before the
+        // microphone is opened.
+        assert_eq!(
+            ensure_recording_allowed().unwrap_err(),
+            "Local data is being cleared"
         );
 
-        release_tx.send(()).expect("unblock audio device open");
-        let start_outcome = start_task.await.expect("start task must join");
-        match start_outcome {
-            Err(msg) => assert!(
-                msg.contains("Local data is being cleared"),
-                "expected clear gate error, got {msg}"
-            ),
-            Ok(_) => panic!("expected clear gate error, got a successful start"),
-        }
+        // The ownership layer refuses claims for the whole reset window, so a
+        // recording cannot be admitted behind the closed gate.
+        let ownership = RecordingOwnership::default();
+        let window = ownership.window(0);
+        let generation = ownership
+            .reserve("owner", &window)
+            .expect("reserve a generation");
+        ownership.begin_reset().expect("begin reset");
+        let err = match ownership.claim_admission("owner", &window, generation) {
+            Ok(_) => panic!("claims must be refused during a reset"),
+            Err(err) => err,
+        };
+        assert!(err.contains("reset") || err.contains("cancelled"), "{err}");
 
-        let clear_guard = clear_task
-            .await
-            .expect("clear task must join")
-            .expect("clear must acquire guard after start drains");
-        assert!(!recorder.active.load(Ordering::SeqCst));
-        assert_eq!(recorder.starts.load(Ordering::SeqCst), 1);
-        assert_eq!(recorder.stops.load(Ordering::SeqCst), 1);
-
-        let blocked_start =
-            start_recorder_with_clear_gate(recorder.clone(), None, None, None).await;
-        assert!(blocked_start
-            .as_ref()
-            .is_err_and(|msg| msg.contains("Local data is being cleared")));
-        assert_eq!(recorder.starts.load(Ordering::SeqCst), 1);
+        // Even an admission taken before the reset cannot start the recorder.
+        // `begin_reset` cancels every reservation it finds, so the admission
+        // has to be claimed before the reset it is supposed to survive.
+        ownership.end_reset();
+        let generation = ownership
+            .reserve("owner", &window)
+            .expect("reserve a generation after the reset");
+        let admission = ownership
+            .claim_admission("owner", &window, generation)
+            .expect("claim before the reset");
+        ownership.begin_reset().expect("begin reset again");
+        let recorder = Arc::new(GateTestRecorder {
+            active: AtomicBool::new(false),
+            starts: AtomicUsize::new(0),
+        });
+        let cancelled = AtomicBool::new(false);
+        let recorder_for_start: Arc<dyn crate::platform::Recorder> = recorder.clone();
+        let start = ownership
+            .start(
+                "owner",
+                &window,
+                generation,
+                StartControl {
+                    cancelled: &cancelled,
+                    admission: Some(&admission),
+                    wait: std::time::Duration::ZERO,
+                },
+                || {
+                    recorder_for_start
+                        .start(None, None)
+                        .map_err(|err| err.to_string())
+                },
+                || recorder_for_start.stop().is_ok(),
+            )
+            .expect_err("a start during a reset must be cancelled");
+        assert!(start.contains("cancelled"), "{start}");
+        assert_eq!(recorder.starts.load(Ordering::SeqCst), 0);
+        ownership.end_reset();
 
         clear_guard.mark_ready_for_frontend_completion();
         drop(clear_guard);

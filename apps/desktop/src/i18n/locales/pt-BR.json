@@ -227,6 +227,7 @@
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Não foi possível salvar a transcrição editada. Ela permanece no indicador para você tentar novamente.",
   "could_not_save_this_paste_review_it_remains_open_so_you_can": "Não foi possível salvar esta revisão do Paste. Ela continua aberta para você tentar novamente.",
   "could_not_save_your_profile_please_try_again": "Não foi possível salvar seu perfil. Tente novamente.",
+  "could_not_start_recording_please_try_again": "Não foi possível iniciar a gravação. Tente novamente.",
   "count_count_plural_one_transcription_other_transcriptions": "{count} {count, plural, one {transcrição} other {transcrições}}",
   "count_incognito_dictation_in_streaks_and_word_counts_without": "Conta o ditado em modo incógnito nas sequências e contagens de palavras, sem salvar o texto.",
   "count_plural_0_no_settings_found_one_setting_found_other_set": "{count, plural, =0 {Nenhuma configuração encontrada.} one {# configuração encontrada.} other {# configurações encontradas.}}",
@@ -509,6 +510,8 @@
   "include_incognito_in_stats": "Incluir modo incógnito nas estatísticas",
   "include_v1_path": "Incluir caminho /v1",
   "incognito_mode": "Modo incógnito",
+  "incomplete_transcription_recording_audio_not_saved_some_text": "Transcrição incompleta: o áudio da gravação não foi salvo. Algum texto pode já ter sido inserido.",
+  "incomplete_transcription_recording_saved_for_retry_some_text": "Transcrição incompleta: a gravação foi salva para tentar novamente. Algum texto pode já ter sido inserido.",
   "input_output": "Entrada: ... Saída: ...",
   "input_permissions": "Permissões de entrada",
   "input_permissions_configured": "Permissões de entrada configuradas.",
@@ -784,6 +787,7 @@
   "recommended_with_gpu_acceleration": "Recomendado com aceleração por GPU",
   "record": "Gravar",
   "recording_failed": "Falha na gravação",
+  "recording_failed_partway_transcribing_what_was_captured": "A gravação falhou no meio do caminho. Transcrevendo o que foi capturado.",
   "recording_keys": "Gravando teclas...",
   "recording_stopped_duration_limit_reached": "Gravação interrompida: limite de duração atingido",
   "recording_stopped_provider_duration_limit_reached": "Gravação interrompida: limite de duração do provedor atingido",
@@ -1027,7 +1031,7 @@
   "this_will_prompt_for_administrator_privileges_uac_so_the_pil": "Isso solicitará privilégios de administrador (UAC) para que a pílula possa capturar e digitar entradas globalmente. Continuar?",
   "this_will_request_accessibility_and_microphone_access_so_the": "Isso solicitará acesso de Acessibilidade e Microfone para que a pílula possa capturar e digitar entradas globalmente. Continuar?",
   "thought_process": "Processo de pensamento",
-  "tip": "Tip:",
+  "tip": "Dica:",
   "tip_choose_a_stronger_model_for_better_results_smaller_or_we": "Dica: Escolha um modelo mais potente para melhores resultados. Modelos menores ou mais fracos podem produzir resultados de menor qualidade.",
   "tip_run_agent_mode_multiple_times_to_keep_refining_it_rememb": "Dica: Execute o Modo Agente várias vezes para continuar refinando! Ele lembra o que está na caixa de texto.",
   "title": "Título",
@@ -1202,5 +1206,6 @@
   "your_profile_name_and_photo": "Seu nome e sua foto de perfil",
   "your_profile_your_sign_in_and_your_account": "Seu perfil, seu login e sua conta.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "A sua gravação é enviada para {provider} em partes durante as pausas, e o resto depois que você para. O áudio já enviado não pode ser recuperado.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Suas gravações e seu histórico salvos foram removidos, mas o mausVoice não conseguiu acessar o armazenamento deste computador, então algumas preferências podem permanecer. Verifique se o aplicativo pode armazenar dados e tente novamente."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Suas gravações e seu histórico salvos foram removidos, mas o mausVoice não conseguiu acessar o armazenamento deste computador, então algumas preferências podem permanecer. Verifique se o aplicativo pode armazenar dados e tente novamente.",
+  "your_style_shortcuts_changed_in_another_window_review_them_a": "Seus atalhos de estilo mudaram em outra janela. Revise-os e salve novamente."
 }

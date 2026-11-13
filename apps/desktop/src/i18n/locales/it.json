@@ -227,6 +227,7 @@
   "could_not_save_the_edited_transcript_it_remains_on_the_pill": "Non è stato possibile salvare la trascrizione modificata. Rimane nella pillola così puoi riprovare.",
   "could_not_save_this_paste_review_it_remains_open_so_you_can": "Impossibile salvare questa revisione di Paste. Rimane aperta così puoi riprovare.",
   "could_not_save_your_profile_please_try_again": "Impossibile salvare il profilo. Riprova.",
+  "could_not_start_recording_please_try_again": "Impossibile avviare la registrazione. Riprova.",
   "count_count_plural_one_transcription_other_transcriptions": "{count} {count, plural, one {trascrizione} other {trascrizioni}}",
   "count_incognito_dictation_in_streaks_and_word_counts_without": "Conta la dettatura in incognito nelle serie e nei conteggi delle parole, senza salvare il testo.",
   "count_plural_0_no_settings_found_one_setting_found_other_set": "{count, plural, =0 {Nessuna impostazione trovata.} one {# impostazione trovata.} other {# impostazioni trovate.}}",
@@ -509,6 +510,8 @@
   "include_incognito_in_stats": "Includi incognito nelle statistiche",
   "include_v1_path": "Includi il percorso /v1",
   "incognito_mode": "Modalità in incognito",
+  "incomplete_transcription_recording_audio_not_saved_some_text": "Trascrizione incompleta: l’audio della registrazione non è stato salvato. Parte del testo potrebbe essere già stata inserita.",
+  "incomplete_transcription_recording_saved_for_retry_some_text": "Trascrizione incompleta: la registrazione è stata salvata per riprovare. Parte del testo potrebbe essere già stata inserita.",
   "input_output": "Input: ... Output: ...",
   "input_permissions": "Permessi di input",
   "input_permissions_configured": "Autorizzazioni di input configurate.",
@@ -784,6 +787,7 @@
   "recommended_with_gpu_acceleration": "Consigliato con accelerazione GPU",
   "record": "Registra",
   "recording_failed": "Registrazione fallita",
+  "recording_failed_partway_transcribing_what_was_captured": "La registrazione si è interrotta a metà. Trascriviamo quanto è stato catturato.",
   "recording_keys": "Registrazione dei tasti...",
   "recording_stopped_duration_limit_reached": "Registrazione interrotta: limite di durata raggiunto",
   "recording_stopped_provider_duration_limit_reached": "Registrazione interrotta: raggiunto il limite di durata del provider",
@@ -1027,7 +1031,7 @@
   "this_will_prompt_for_administrator_privileges_uac_so_the_pil": "Questo mostrerà una richiesta di privilegi di amministratore (UAC) così la pillola può catturare e digitare input a livello globale. Continuare?",
   "this_will_request_accessibility_and_microphone_access_so_the": "Questo richiederà l'accesso a Accessibilità e Microfono così la pillola può catturare e digitare input a livello globale. Continuare?",
   "thought_process": "Processo di pensiero",
-  "tip": "Tip:",
+  "tip": "Suggerimento:",
   "tip_choose_a_stronger_model_for_better_results_smaller_or_we": "Suggerimento: Scegli un modello più potente per risultati migliori. I modelli più piccoli o più deboli potrebbero produrre risultati di qualità inferiore.",
   "tip_run_agent_mode_multiple_times_to_keep_refining_it_rememb": "Suggerimento: esegui la modalità agente più volte per continuare a perfezionare! Ricorda cosa c'è nel campo di testo.",
   "title": "Titolo",
@@ -1202,5 +1206,6 @@
   "your_profile_name_and_photo": "Il tuo nome e la tua foto del profilo",
   "your_profile_your_sign_in_and_your_account": "Il tuo profilo, il tuo accesso e il tuo account.",
   "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an": "La registrazione viene inviata a {provider} a pezzi durante le tue pause, e il resto quando ti fermi. L’audio già inviato non può essere richiamato.",
-  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Le tue registrazioni e la cronologia salvate sono state rimosse, ma mausVoice non è riuscito ad accedere alla memoria di questo computer, quindi alcune preferenze potrebbero restare. Controlla che l’app possa salvare dati e riprova."
+  "your_saved_recordings_and_history_were_removed_but_mausvoice": "Le tue registrazioni e la cronologia salvate sono state rimosse, ma mausVoice non è riuscito ad accedere alla memoria di questo computer, quindi alcune preferenze potrebbero restare. Controlla che l’app possa salvare dati e riprova.",
+  "your_style_shortcuts_changed_in_another_window_review_them_a": "Le scorciatoie di stile sono cambiate in un'altra finestra. Controllale e salva di nuovo."
 }

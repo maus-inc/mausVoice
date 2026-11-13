@@ -187,9 +187,10 @@ export const createAppRouter = (root: ReactNode = <Root />) =>
 let desktopRouter: ReturnType<typeof createAppRouter> | undefined;
 export const getBrowserRouter = () => (desktopRouter ??= createAppRouter());
 
-// Make the lazy router available to actions without importing this route graph.
+// Register the lazy entry point as soon as this module loads, including before
+// Router mounts, without making action modules import this entire route graph.
 registerAppNavigation((path) => getBrowserRouter().navigate(path));
 
-const Router = () => <RouterProvider router={getBrowserRouter()} />;
-
-export default Router;
+export default function Router() {
+  return <RouterProvider router={getBrowserRouter()} />;
+}

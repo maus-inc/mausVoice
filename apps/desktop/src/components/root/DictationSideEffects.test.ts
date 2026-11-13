@@ -305,6 +305,170 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
     );
   });
 
+  it("recovers rather than accepting a nonempty partial live transcript after audio loss", async () => {
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
+      Promise.resolve(),
+    );
+    const storeTranscriptionFn = vi.fn<
+      HandleEmptyResultInput["storeTranscriptionFn"]
+    >(() => Promise.resolve({ transcription: null, wordCount: 0 }));
+    const result = await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
+      transcribeResult: {
+        rawTranscript: "partial words",
+        metadata: {},
+        warnings: [],
+      },
+      sessionKind: "live-streaming",
+      audioIntakeDiscontinuous: true,
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast,
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+    });
+    await flushHistoryPersist();
+    expect(result).toEqual({ handled: true });
+    expect(asStoreCall(storeTranscriptionFn).rawTranscript).toBeNull();
+    expect(asStoreCall(storeTranscriptionFn).warnings).toContain(
+      "Live audio was incomplete; the transcript may be missing words.",
+    );
+    expect(asToastCall(showToast).message).toBe(
+      "Incomplete transcription: recording audio not saved. Some text may already have been inserted.",
+    );
+  });
+
+  it("names saved audio when a discontinuous live recording was retained", async () => {
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
+      Promise.resolve(),
+    );
+    const storeTranscriptionFn = vi.fn<
+      HandleEmptyResultInput["storeTranscriptionFn"]
+    >(() =>
+      Promise.resolve({
+        transcription: {
+          id: "failure-row",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          createdByUserId: "user",
+          transcript: "",
+          isDeleted: false,
+          audio: { filePath: "failure.wav", durationMs: 1 },
+        },
+        wordCount: 0,
+      }),
+    );
+    await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
+      transcribeResult: undefined,
+      sessionKind: "live-streaming",
+      audioIntakeDiscontinuous: true,
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast,
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+    });
+    await flushHistoryPersist();
+    expect(asToastCall(showToast).message).toBe(
+      "Incomplete transcription: recording saved for retry. Some text may already have been inserted.",
+    );
+  });
+
+  it("preserves failed audio even when the pill cannot return to idle", async () => {
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>();
+    const storeTranscriptionFn = vi.fn<
+      HandleEmptyResultInput["storeTranscriptionFn"]
+    >(() => Promise.resolve({ transcription: null, wordCount: 0 }));
+    await expect(
+      handleEmptyTranscriptionResult({
+        audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
+        transcribeResult: undefined,
+        sessionKind: "live-streaming",
+        audioIntakeDiscontinuous: true,
+        strategy: baseStrategyStub(),
+        formatMessage: (descriptor) => descriptor.defaultMessage,
+        showToast,
+        storeTranscriptionFn,
+        refreshMember: vi.fn(),
+        sendIdle: () => Promise.reject(new Error("pill unavailable")),
+      }),
+    ).resolves.toEqual({ handled: true });
+    await flushHistoryPersist();
+    expect(storeTranscriptionFn).toHaveBeenCalledOnce();
+  });
+
+  it("preserves failed audio when returning the pill to idle hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      const storeTranscriptionFn = vi.fn<
+        HandleEmptyResultInput["storeTranscriptionFn"]
+      >(() => Promise.resolve({ transcription: null, wordCount: 0 }));
+      const handling = handleEmptyTranscriptionResult({
+        audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
+        transcribeResult: undefined,
+        sessionKind: "live-streaming",
+        audioIntakeDiscontinuous: true,
+        strategy: baseStrategyStub(),
+        formatMessage: (descriptor) => descriptor.defaultMessage,
+        showToast: vi.fn(),
+        storeTranscriptionFn,
+        refreshMember: vi.fn(),
+        sendIdle: () => new Promise(() => {}),
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(handling).resolves.toEqual({ handled: true });
+      await flushHistoryPersist();
+      expect(storeTranscriptionFn).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not persist incomplete live audio when the capture policy forbids it", async () => {
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>();
+    const storeTranscriptionFn =
+      vi.fn<HandleEmptyResultInput["storeTranscriptionFn"]>();
+    await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
+      transcribeResult: undefined,
+      sessionKind: "live-streaming",
+      audioIntakeDiscontinuous: true,
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast,
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+      persistAllowedAtCapture: false,
+    });
+    await flushHistoryPersist();
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(asToastCall(showToast).message).toBe(
+      "Incomplete transcription: recording audio not saved. Some text may already have been inserted.",
+    );
+  });
+
+  it("ignores live audio loss for non-live sessions with a complete result", async () => {
+    const storeTranscriptionFn =
+      vi.fn<HandleEmptyResultInput["storeTranscriptionFn"]>();
+    const result = await handleEmptyTranscriptionResult({
+      audio: { samples: new Float32Array([0.1]), sampleRate: 16_000 },
+      transcribeResult: {
+        rawTranscript: "complete",
+        metadata: {},
+        warnings: [],
+      },
+      sessionKind: "after-stop",
+      audioIntakeDiscontinuous: true,
+      strategy: baseStrategyStub(),
+      formatMessage: (descriptor) => descriptor.defaultMessage,
+      showToast: vi.fn(),
+      storeTranscriptionFn,
+      refreshMember: vi.fn(),
+    });
+    expect(result).toEqual({ handled: false });
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+  });
+
   it("ignores a failed intake subscription for a batch/after-stop session", async () => {
     // The failure only disables pause pretranscription for these kinds; the
     // full recording is still transcribed at stop, so an empty provider result

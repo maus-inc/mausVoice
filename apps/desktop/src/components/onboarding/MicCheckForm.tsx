@@ -1,6 +1,5 @@
 import { ArrowForward, Check } from "@mui/icons-material";
 import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import {
@@ -24,6 +23,10 @@ import {
   DualPaneLayout,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
+import {
+  discardNativeRecording,
+  stopNativeRecording,
+} from "../../utils/native-recording-session";
 
 export const MicCheckForm = () => {
   const theme = useTheme();
@@ -75,14 +78,14 @@ export const MicCheckForm = () => {
     setSyncedRecordingState("starting");
 
     try {
-      await invokeGuardedRecordingStart<void>(preferredMicrophone ?? null);
+      await invokeGuardedRecordingStart(preferredMicrophone ?? null);
       if (
         !mountedRef.current ||
         opId !== opIdRef.current ||
         isLocalDataClearRequested() ||
         clearGeneration !== getLocalDataClearGeneration()
       ) {
-        await invoke("stop_recording").catch(() => undefined);
+        await discardNativeRecording();
         if (opId === opIdRef.current) {
           setSyncedRecordingState("idle");
         }
@@ -112,7 +115,7 @@ export const MicCheckForm = () => {
     setSyncedRecordingState("stopping");
 
     try {
-      await invoke("stop_recording");
+      await stopNativeRecording();
     } catch (error) {
       console.error("Failed to stop recording", error);
     } finally {

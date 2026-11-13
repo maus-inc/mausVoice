@@ -304,7 +304,7 @@ mod thock_limiter {
             fn take() -> Self {
                 let queued = VOLUME_TEST_LOCK
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 Self {
                     _queued: queued,
                     previous_bits: INTERACTION_FEEDBACK_VOLUME.load(Ordering::Relaxed),
