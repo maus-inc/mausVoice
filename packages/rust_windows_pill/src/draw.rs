@@ -1056,8 +1056,6 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let is_compact = state.assistant_compact.get() && review_id.is_none();
     // A review types into the same entry the assistant uses.
     let is_typing = state.is_typing();
-    let review_actions_h = rust_pill_shared::review_actions_height(review_id.is_some());
-
     let panel_w = if is_compact {
         PANEL_COMPACT_WIDTH
     } else {

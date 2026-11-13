@@ -612,7 +612,7 @@ fn clear_flash(state: &PillState) {
 
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
-fn process_phase_message(phase: Phase, seq: u64, state: &PillState) -> bool {
+fn process_phase_message(phase: Phase, seq: u64, state: &PillState) {
     // Reject delayed phase updates so they cannot roll the pill back.
     thread_local! {
         static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -625,7 +625,7 @@ fn process_phase_message(phase: Phase, seq: u64, state: &PillState) -> bool {
         stale
     });
     if stale {
-        return false;
+        return;
     }
 
     let prev = state.phase.get();
@@ -656,7 +656,6 @@ fn process_phase_message(phase: Phase, seq: u64, state: &PillState) -> bool {
         state.wave_phase.set(0.0);
         state.loading_offset.set(0.0);
     }
-    true
 }
 
 struct AssistantStateUpdate {
@@ -728,9 +727,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
     state.dirty.set(true);
     match msg {
         InMessage::Phase { phase, seq } => {
-            if !process_phase_message(phase, seq, state) {
-                return;
-            }
+            process_phase_message(phase, seq, state);
         }
         InMessage::Levels { levels } => {
             *state.pending_levels.borrow_mut() = levels;
