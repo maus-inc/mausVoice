@@ -29,8 +29,12 @@ import { isPermissionAuthorized } from "../../utils/permission.utils";
  * so a held-open device is what makes a press feel instant. The cost is the
  * operating system's microphone-in-use indicator, which is why this only
  * happens when the user asked for it, and why the device is released the moment
- * the preference goes off, a recording starts, permission is revoked, or local
- * data is being cleared.
+ * the preference goes off, permission is revoked, or local data is being cleared.
+ *
+ * A recording starting is deliberately *not* on that list. It adopts the held
+ * stream: releasing it on the press made every dictation pay the device open that
+ * the hold exists to avoid, and the indicator blinked for the whole cycle. What
+ * becomes of the stream is the stop path's decision, not the press's.
  *
  * This component owns the device. Nothing else calls `warmMicrophone` or
  * `closeMicrophone`, so there is exactly one place that can leave a stream open
