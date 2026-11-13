@@ -1,6 +1,7 @@
 /** Shared building blocks for component demos: state matrices, labeled
  *  cells, token swatches. All preview chrome uses the real desktop theme. */
 import { Box, Paper, Stack, Typography } from "@mui/material";
+import { onDark } from "@desktop/styles/palette";
 import type { ReactNode } from "react";
 
 export const DemoSection = ({
@@ -76,7 +77,7 @@ export const State = ({
     </Box>
     <Typography
       variant="labelSmall"
-      sx={{ color: dark ? "rgba(255,255,255,0.72)" : "text.secondary" }}
+      sx={{ color: dark ? onDark(0.72) : "text.secondary" }}
     >
       {label}
     </Typography>

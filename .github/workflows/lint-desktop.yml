@@ -43,6 +43,7 @@ jobs:
     # repository's default token scope.
     permissions:
       contents: read
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix:

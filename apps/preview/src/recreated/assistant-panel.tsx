@@ -14,6 +14,8 @@
  *  native text surface in the transcript body, scrollable, above fixed actions.
  */
 import { Box } from "@mui/material";
+import { surfaces, onDark } from "@desktop/styles/palette";
+import { hairline } from "@desktop/styles/shadows";
 import { useSpecValue } from "../lib/spec-store";
 
 export type PanelSize = "compact" | "expanded" | "typing";
@@ -246,9 +248,9 @@ export const AssistantPanel = ({
                     resize: "none",
                     overflowY: "auto",
                     borderRadius: 2,
-                    border: "1px solid rgba(255,255,255,0.14)",
-                    backgroundColor: "rgba(16,16,16,0.98)",
-                    color: "rgba(255,255,255,0.94)",
+                    border: hairline.dark(0.14),
+                    backgroundColor: surfaces.dark.level1,
+                    color: onDark(0.94),
                     font: `14px/20px ${Satoshi}`,
                   }}
                 />

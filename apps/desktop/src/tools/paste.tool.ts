@@ -253,7 +253,7 @@ const openPendingPasteInChats = async (
       pendingReviewId,
       reviewedText,
     );
-    if (signal?.aborted) return;
+    if (signal?.aborted || state.reviewResolved) return;
     state.openedPendingPaste = true;
     // Durable persistence completes the review. Navigation is best-effort and
     // must not leave Open retryable after the card is already committed.

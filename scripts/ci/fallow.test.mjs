@@ -170,9 +170,16 @@ const architectureCycles = (cwd) => {
     },
   );
   assert.ifError(result.error);
-  return (JSON.parse(result.stdout).circular_dependencies ?? []).map(
-    cycleSignature,
+  assert.ok(
+    result.status === 0 || result.status === 1,
+    `Fallow architecture analysis failed with exit code ${result.status}: ${result.stderr}`,
   );
+  const report = JSON.parse(result.stdout);
+  assert.ok(
+    Array.isArray(report.circular_dependencies),
+    "Fallow architecture report must include circular_dependencies",
+  );
+  return report.circular_dependencies.map(cycleSignature);
 };
 
 const resolveBaseSha = () => {
