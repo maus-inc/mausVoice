@@ -1082,11 +1082,8 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let is_compact = state.assistant_compact.get() && review_id.is_none();
     // A review types into the same entry the assistant uses.
     let is_typing = state.is_typing();
-    let review_actions_h = if review_id.is_some() {
-        REVIEW_ACTIONS_HEIGHT
-    } else {
-        0.0
-    };
+    let review_actions_h =
+        rust_pill_shared::review_actions_height(review_id.is_some(), REVIEW_ACTIONS_HEIGHT);
 
     let panel_w = if is_compact {
         PANEL_COMPACT_WIDTH
@@ -1140,20 +1137,25 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         let content_x = panel_x + PANEL_CONTENT_SIDE_INSET;
         let content_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0;
 
-        let scroll_bottom = if is_typing {
-            py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
-        } else {
-            py + panel_h
-        };
-        let scroll_h = (scroll_bottom - py).max(0.0);
+        let viewport = rust_pill_shared::transcript_viewport_layout(
+            rust_pill_shared::TranscriptViewportConfig {
+                panel_y: py,
+                panel_height: panel_h,
+                is_typing,
+                input_height: PANEL_INPUT_HEIGHT,
+                review_actions_height: review_actions_h,
+                transcript_top_offset: PANEL_TRANSCRIPT_TOP_OFFSET,
+                scroll_top_pad: SCROLL_TOP_PAD,
+                scroll_bottom_pad: SCROLL_BOTTOM_PAD,
+                pill_bottom_inset: PILL_BOTTOM_INSET,
+                expanded_pill_height: EXPANDED_PILL_HEIGHT,
+            },
+        );
+        let scroll_bottom = viewport.scroll_bottom;
+        let scroll_h = viewport.scroll_height;
         state.viewport_height.set(scroll_h);
-
-        let top_pad = PANEL_TRANSCRIPT_TOP_OFFSET + SCROLL_TOP_PAD;
-        let bottom_pad = if is_typing {
-            SCROLL_BOTTOM_PAD
-        } else {
-            PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT + SCROLL_BOTTOM_PAD
-        };
+        let top_pad = viewport.top_pad;
+        let bottom_pad = viewport.bottom_pad;
 
         draw_transcript(
             ctx, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad,
@@ -1178,11 +1180,7 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         );
 
         // Bottom gradient
-        let bot_area = if is_typing {
-            0.0
-        } else {
-            PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT
-        };
+        let bot_area = viewport.bottom_gradient_area;
         let bot_grad_h = bot_area + 16.0;
         let bot_y = scroll_bottom - bot_grad_h;
         ctx.draw_linear_gradient_in_rect(
@@ -1240,16 +1238,40 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         }
 
         if is_typing {
-            draw_input_bar(
-                ctx,
-                state,
-                panel_x,
-                py,
-                panel_w,
-                panel_h,
-                alpha,
-                review_id.is_some(),
-            );
+            let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
+            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1 * alpha);
+            ctx.set_line_width(1.0);
+            ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET, input_y);
+            ctx.line_to(panel_x + panel_w - PANEL_CONTENT_SIDE_INSET, input_y);
+            ctx.stroke();
+
+            let send_btn_size = 28.0;
+            let send_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - send_btn_size;
+            let send_y = input_y + (PANEL_INPUT_HEIGHT - send_btn_size) / 2.0;
+            let has_text = !state.entry_text.borrow().trim().is_empty();
+            if !has_text && review_id.is_none() {
+                ctx.select_font_face("Satoshi", false, false);
+                ctx.set_font_size(13.0);
+                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.42 * alpha);
+                ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET + 10.0, input_y + 29.0);
+                let placeholder = state.assistant_type_message.borrow();
+                ctx.show_text(&placeholder);
+            }
+            let text_alpha = if has_text { 0.82 } else { 0.2 };
+            ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
+            let cx = send_x + send_btn_size / 2.0;
+            let cy = send_y + send_btn_size / 2.0;
+            ctx.draw_symbol("arrow.up.circle.fill", cx, cy, 18.0);
+
+            if has_text {
+                state.click_regions.borrow_mut().push(ClickRegion {
+                    x: send_x,
+                    y: send_y,
+                    w: send_btn_size,
+                    h: send_btn_size,
+                    action: ClickAction::SendButton,
+                });
+            }
         }
     }
 
@@ -1269,53 +1291,6 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         h: HEADER_BUTTON_SIZE,
         action: ClickAction::AssistantClose,
     });
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_input_bar(
-    ctx: &Ctx,
-    state: &PillState,
-    panel_x: f64,
-    py: f64,
-    panel_w: f64,
-    panel_h: f64,
-    alpha: f64,
-    is_review: bool,
-) {
-    let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1 * alpha);
-    ctx.set_line_width(1.0);
-    ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET, input_y);
-    ctx.line_to(panel_x + panel_w - PANEL_CONTENT_SIDE_INSET, input_y);
-    ctx.stroke();
-
-    let send_btn_size = 28.0;
-    let send_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - send_btn_size;
-    let send_y = input_y + (PANEL_INPUT_HEIGHT - send_btn_size) / 2.0;
-    let has_text = !state.entry_text.borrow().trim().is_empty();
-    if !has_text && !is_review {
-        ctx.select_font_face("Satoshi", false, false);
-        ctx.set_font_size(13.0);
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.42 * alpha);
-        ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET + 10.0, input_y + 29.0);
-        let placeholder = state.assistant_type_message.borrow();
-        ctx.show_text(&placeholder);
-    }
-    let text_alpha = if has_text { 0.82 } else { 0.2 };
-    ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-    let cx = send_x + send_btn_size / 2.0;
-    let cy = send_y + send_btn_size / 2.0;
-    ctx.draw_symbol("arrow.up.circle.fill", cx, cy, 18.0);
-
-    if has_text {
-        state.click_regions.borrow_mut().push(ClickRegion {
-            x: send_x,
-            y: send_y,
-            w: send_btn_size,
-            h: send_btn_size,
-            action: ClickAction::SendButton,
-        });
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

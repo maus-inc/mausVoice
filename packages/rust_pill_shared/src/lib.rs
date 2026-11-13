@@ -119,6 +119,67 @@ pub const fn transcript_has_content(
     message_count > 0 || permission_count > 0 || has_review
 }
 
+/// Native assistant-panel input needed to compute its transcript viewport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TranscriptViewportConfig {
+    pub panel_y: f64,
+    pub panel_height: f64,
+    pub is_typing: bool,
+    pub input_height: f64,
+    pub review_actions_height: f64,
+    pub transcript_top_offset: f64,
+    pub scroll_top_pad: f64,
+    pub scroll_bottom_pad: f64,
+    pub pill_bottom_inset: f64,
+    pub expanded_pill_height: f64,
+}
+
+/// Geometry shared by each native renderer's transcript viewport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TranscriptViewportLayout {
+    pub scroll_bottom: f64,
+    pub scroll_height: f64,
+    pub top_pad: f64,
+    pub bottom_pad: f64,
+    pub bottom_gradient_area: f64,
+}
+
+/// Computes transcript viewport geometry for typing, review, and idle states.
+pub fn transcript_viewport_layout(
+    config: TranscriptViewportConfig,
+) -> TranscriptViewportLayout {
+    let scroll_bottom = if config.is_typing {
+        config.panel_y + config.panel_height - config.input_height - config.review_actions_height
+    } else {
+        config.panel_y + config.panel_height
+    };
+    let scroll_height = (scroll_bottom - config.panel_y).max(0.0);
+    let bottom_pad = if config.is_typing {
+        config.scroll_bottom_pad
+    } else {
+        config.pill_bottom_inset + config.expanded_pill_height + config.scroll_bottom_pad
+    };
+    let bottom_gradient_area = if config.is_typing {
+        0.0
+    } else {
+        config.pill_bottom_inset + config.expanded_pill_height
+    };
+
+    TranscriptViewportLayout {
+        scroll_bottom,
+        scroll_height,
+        top_pad: config.transcript_top_offset + config.scroll_top_pad,
+        bottom_pad,
+        bottom_gradient_area,
+    }
+}
+
+/// Review actions reserve input space only while a review is active.
+#[inline]
+pub const fn review_actions_height(has_review: bool, height: f64) -> f64 {
+    if has_review { height } else { 0.0 }
+}
+
 /// Shared pill visibility policy, used by every platform pill.
 ///
 /// | preference    | idle    | recording | pill owns the surface |
@@ -1339,6 +1400,38 @@ mod tests {
         assert!(transcript_has_content(1, 0, false));
         assert!(transcript_has_content(0, 1, false));
         assert!(transcript_has_content(0, 0, true));
+    }
+
+    #[test]
+    fn transcript_viewport_geometry_reserves_input_and_pill_space() {
+        let config = TranscriptViewportConfig {
+            panel_y: 10.0,
+            panel_height: 200.0,
+            is_typing: true,
+            input_height: 40.0,
+            review_actions_height: 20.0,
+            transcript_top_offset: 30.0,
+            scroll_top_pad: 4.0,
+            scroll_bottom_pad: 6.0,
+            pill_bottom_inset: 12.0,
+            expanded_pill_height: 24.0,
+        };
+        let typing = transcript_viewport_layout(config);
+        assert_eq!(typing.scroll_bottom, 150.0);
+        assert_eq!(typing.scroll_height, 140.0);
+        assert_eq!(typing.top_pad, 34.0);
+        assert_eq!(typing.bottom_pad, 6.0);
+        assert_eq!(typing.bottom_gradient_area, 0.0);
+
+        let idle = transcript_viewport_layout(TranscriptViewportConfig {
+            is_typing: false,
+            ..config
+        });
+        assert_eq!(idle.scroll_bottom, 210.0);
+        assert_eq!(idle.bottom_pad, 42.0);
+        assert_eq!(idle.bottom_gradient_area, 36.0);
+        assert_eq!(review_actions_height(false, 20.0), 0.0);
+        assert_eq!(review_actions_height(true, 20.0), 20.0);
     }
 
     #[test]

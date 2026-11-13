@@ -272,7 +272,7 @@ export const AssistantPanel = ({
                 gap: 1,
               }}
             >
-              <Box sx={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
+              <Box sx={{ fontSize: 11, color: onDark(0.45) }}>
                 Enter inserts · Shift+Enter for a new line
               </Box>
               <Box sx={{ flex: 1 }} />

@@ -1359,11 +1359,8 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
     let is_compact = state.assistant_compact.get() && review_id.is_none();
     // A review types into the same entry the assistant uses.
     let is_typing = state.is_typing();
-    let review_actions_h = if review_id.is_some() {
-        REVIEW_ACTIONS_HEIGHT
-    } else {
-        0.0
-    };
+    let review_actions_h =
+        rust_pill_shared::review_actions_height(review_id.is_some(), REVIEW_ACTIONS_HEIGHT);
 
     let panel_w = if is_compact {
         PANEL_COMPACT_WIDTH
@@ -1419,21 +1416,25 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
 
         // Scroll view spans the full panel height (minus input bar if typing).
         // Header, pill, and input are layered on top.
-        let scroll_bottom = if is_typing {
-            py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
-        } else {
-            py + panel_h
-        };
-        let scroll_h = (scroll_bottom - py).max(0.0);
+        let viewport = rust_pill_shared::transcript_viewport_layout(
+            rust_pill_shared::TranscriptViewportConfig {
+                panel_y: py,
+                panel_height: panel_h,
+                is_typing,
+                input_height: PANEL_INPUT_HEIGHT,
+                review_actions_height: review_actions_h,
+                transcript_top_offset: PANEL_TRANSCRIPT_TOP_OFFSET,
+                scroll_top_pad: SCROLL_TOP_PAD,
+                scroll_bottom_pad: SCROLL_BOTTOM_PAD,
+                pill_bottom_inset: PILL_BOTTOM_INSET,
+                expanded_pill_height: EXPANDED_PILL_HEIGHT,
+            },
+        );
+        let scroll_bottom = viewport.scroll_bottom;
+        let scroll_h = viewport.scroll_height;
         state.viewport_height.set(scroll_h);
-
-        // Content padding clears the header area at top and pill/input at bottom
-        let top_pad = PANEL_TRANSCRIPT_TOP_OFFSET + SCROLL_TOP_PAD;
-        let bottom_pad = if is_typing {
-            SCROLL_BOTTOM_PAD
-        } else {
-            PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT + SCROLL_BOTTOM_PAD
-        };
+        let top_pad = viewport.top_pad;
+        let bottom_pad = viewport.bottom_pad;
 
         draw_transcript(
             cr, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad,
@@ -1450,11 +1451,7 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
         let _ = cr.fill();
 
         // Bottom gradient: opaque over pill/bottom area, fades into content
-        let bot_area = if is_typing {
-            0.0
-        } else {
-            PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT
-        };
+        let bot_area = viewport.bottom_gradient_area;
         let bot_grad_h = bot_area + 16.0;
         let bot_y = scroll_bottom - bot_grad_h;
         let bot_grad = cairo::LinearGradient::new(0.0, bot_y, 0.0, scroll_bottom);
