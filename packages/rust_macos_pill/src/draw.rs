@@ -1239,44 +1239,17 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             );
         }
 
-        // Input bar
         if is_typing {
-            let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1 * alpha);
-            ctx.set_line_width(1.0);
-            ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET, input_y);
-            ctx.line_to(panel_x + panel_w - PANEL_CONTENT_SIDE_INSET, input_y);
-            ctx.stroke();
-
-            // Send button
-            let send_btn_size = 28.0;
-            let send_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - send_btn_size;
-            let send_y = input_y + (PANEL_INPUT_HEIGHT - send_btn_size) / 2.0;
-            let has_text = !state.entry_text.borrow().trim().is_empty();
-            if !has_text && review_id.is_none() {
-                ctx.select_font_face("Satoshi", false, false);
-                ctx.set_font_size(13.0);
-                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.42 * alpha);
-                ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET + 10.0, input_y + 29.0);
-                let placeholder = state.assistant_type_message.borrow();
-                ctx.show_text(&placeholder);
-            }
-            let text_alpha = if has_text { 0.82 } else { 0.2 };
-
-            ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-            let cx = send_x + send_btn_size / 2.0;
-            let cy = send_y + send_btn_size / 2.0;
-            ctx.draw_symbol("arrow.up.circle.fill", cx, cy, 18.0);
-
-            if has_text {
-                state.click_regions.borrow_mut().push(ClickRegion {
-                    x: send_x,
-                    y: send_y,
-                    w: send_btn_size,
-                    h: send_btn_size,
-                    action: ClickAction::SendButton,
-                });
-            }
+            draw_input_bar(
+                ctx,
+                state,
+                panel_x,
+                py,
+                panel_w,
+                panel_h,
+                alpha,
+                review_id.is_some(),
+            );
         }
     }
 
@@ -1296,6 +1269,53 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         h: HEADER_BUTTON_SIZE,
         action: ClickAction::AssistantClose,
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_input_bar(
+    ctx: &Ctx,
+    state: &PillState,
+    panel_x: f64,
+    py: f64,
+    panel_w: f64,
+    panel_h: f64,
+    alpha: f64,
+    is_review: bool,
+) {
+    let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1 * alpha);
+    ctx.set_line_width(1.0);
+    ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET, input_y);
+    ctx.line_to(panel_x + panel_w - PANEL_CONTENT_SIDE_INSET, input_y);
+    ctx.stroke();
+
+    let send_btn_size = 28.0;
+    let send_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - send_btn_size;
+    let send_y = input_y + (PANEL_INPUT_HEIGHT - send_btn_size) / 2.0;
+    let has_text = !state.entry_text.borrow().trim().is_empty();
+    if !has_text && !is_review {
+        ctx.select_font_face("Satoshi", false, false);
+        ctx.set_font_size(13.0);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.42 * alpha);
+        ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET + 10.0, input_y + 29.0);
+        let placeholder = state.assistant_type_message.borrow();
+        ctx.show_text(&placeholder);
+    }
+    let text_alpha = if has_text { 0.82 } else { 0.2 };
+    ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
+    let cx = send_x + send_btn_size / 2.0;
+    let cy = send_y + send_btn_size / 2.0;
+    ctx.draw_symbol("arrow.up.circle.fill", cx, cy, 18.0);
+
+    if has_text {
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: send_x,
+            y: send_y,
+            w: send_btn_size,
+            h: send_btn_size,
+            action: ClickAction::SendButton,
+        });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1341,7 +1361,11 @@ fn draw_transcript(
     let permissions = state.assistant_permissions.borrow();
     let has_review = state.assistant_review.borrow().is_some();
 
-    if messages.is_empty() && permissions.is_empty() && !has_review {
+    if !rust_pill_shared::transcript_has_content(
+        messages.len(),
+        permissions.len(),
+        has_review,
+    ) {
         // Both halves of the scroll state go with the content. Nothing sets
         // them on this path below, so a panel that has just been emptied keeps
         // the height of the transcript it used to hold: the wheel can then

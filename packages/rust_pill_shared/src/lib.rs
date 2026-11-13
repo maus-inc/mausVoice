@@ -106,6 +106,19 @@ pub enum PillVisibility {
     Persistent,
 }
 
+/// Whether a transcript panel has anything to display or act on.
+///
+/// Shared so the platform renderers clear their scroll state under the same
+/// empty-content condition without duplicating policy logic.
+#[inline]
+pub const fn transcript_has_content(
+    message_count: usize,
+    permission_count: usize,
+    has_review: bool,
+) -> bool {
+    message_count > 0 || permission_count > 0 || has_review
+}
+
 /// Shared pill visibility policy, used by every platform pill.
 ///
 /// | preference    | idle    | recording | pill owns the surface |
@@ -1319,6 +1332,14 @@ pub fn advance_ring(anim: &mut RingAnim, tick: RingTick, hold_delay: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transcript_content_includes_messages_permissions_or_review() {
+        assert!(!transcript_has_content(0, 0, false));
+        assert!(transcript_has_content(1, 0, false));
+        assert!(transcript_has_content(0, 1, false));
+        assert!(transcript_has_content(0, 0, true));
+    }
 
     #[test]
     fn default_and_new_start_the_shared_controllers_idle() {
