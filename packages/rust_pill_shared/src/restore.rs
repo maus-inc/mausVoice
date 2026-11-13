@@ -400,14 +400,23 @@ fn choose_display(parked: &ParkedWindow, displays: &[MonitorRect]) -> Option<(us
         // Several candidates and none matches the saved rect: the panel was
         // resized or rearranged. Fall back to the candidate that contains the saved
         // origin, so a pill parked on the right-hand panel of two identically named
-        // ones does not come back on the left. Only if none contains it does list
-        // order decide, because then nothing distinguishes them.
+        // ones does not come back on the left. If the saved centre is outside every
+        // candidate, the saved display origin decides, and only when nothing
+        // distinguishes the candidates does list order.
         if let Some(&index) = candidates.iter().find(|&&index| {
             contains_point(
                 displays[index],
                 parked.x + parked.width / 2.0,
                 parked.y + parked.height / 2.0,
             )
+        }) {
+            return Some((index, false));
+        }
+        // The saved centre can fall outside every candidate, for example when the
+        // panel shrank past it. The saved display origin still identifies the right
+        // panel in that case, so it is checked before list order decides.
+        if let Some(&index) = candidates.iter().find(|&&index| {
+            displays[index].x == parked.display.x && displays[index].y == parked.display.y
         }) {
             return Some((index, false));
         }
@@ -1156,6 +1165,32 @@ mod tests {
         let saved_rect = rect(1920.0, 0.0, 2560.0, 1440.0);
         let placement = restore(
             named_parked(2400.0, 300.0, saved_rect, 5),
+            &[left, right],
+            (200.0, 60.0),
+            bounds,
+        );
+        match placement {
+            Placement::Restore { x, .. } => assert!(
+                x >= 1920.0,
+                "restored onto the left panel (x = {x}) although the pill was parked on the right"
+            ),
+            Placement::PlatformDefault => panic!("one of the two panels should have taken it"),
+        }
+    }
+
+    /// A shrunk panel whose saved centre falls outside it still wins over list
+    /// order when its origin still matches, so the pill does not come back on a
+    /// different panel that shares its token.
+    #[test]
+    fn a_shrunk_panel_is_chosen_by_origin_when_the_saved_centre_falls_outside() {
+        let left = display(0.0, 0.0, 1920.0, 1040.0, Some(5));
+        let right = display(1920.0, 0.0, 1920.0, 1040.0, Some(5));
+        // The saved rect is the right panel's older, larger size. Neither
+        // candidate matches it and the saved centre sits past both, so only the
+        // saved display origin can tell the right panel from the left.
+        let saved_rect = display(1920.0, 0.0, 2560.0, 1440.0, Some(5));
+        let placement = restore(
+            named_parked(4200.0, 1300.0, saved_rect, 5),
             &[left, right],
             (200.0, 60.0),
             bounds,

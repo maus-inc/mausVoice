@@ -97,31 +97,17 @@ fn root_pointer(window: &gtk::Window) -> (c_int, c_int) {
     query_root_pointer(xdisplay_for_window(window))
 }
 
-/// The token of the monitor a toplevel origin sits on.
+/// The token of the monitor the pill was dropped on, if it can be named.
 ///
-/// Named rather than derived from the pointer, so the record names the display
-/// the pill was dropped on even if the pointer has since moved off it.
-fn display_id_at(window: &gtk::Window, state: &PillState, x: f64, y: f64) -> Option<u64> {
-    // Prefer the monitor the visible pill is on. The transparent toplevel can
-    // start on one monitor while the pill is drawn on the next one, and pairing
-    // that neighbour's work area (which `pill_geometry` reports) with this
-    // monitor's token makes the record describe two different displays. The
-    // reconciliation path already resolves the pill this way, so both agree.
-    if let Some(id) = crate::pill::pill_monitor_id(window, state) {
-        return Some(id);
-    }
-    let display = window.display();
-    let scale = x11_root_scale(window);
-    let areas: Vec<_> = (0..display.n_monitors())
-        .filter_map(|index| display.monitor(index))
-        .map(|monitor| work_area_rect(&monitor, scale))
-        .collect();
-    // Nearest when the point is in no work area, which happens at a shared edge:
-    // the footprint clamp deliberately lets the transparent window overhang the
-    // work area so the *visible* pill can sit flush against the edge. Answering
-    // `None` there dropped the display identity from the saved record and quietly
-    // downgraded every later restore to geometry matching.
-    rust_pill_shared::layout::display_for_point(&areas, x, y).and_then(|index| areas[index].id)
+/// The monitor is resolved through the same function `pill_geometry` uses, so
+/// the saved token and the saved work area always describe one display. A second
+/// resolution from the toplevel origin could land on a neighbour, because the
+/// toplevel is allowed to overhang the work area at a shared edge while the
+/// visible pill sits on the next monitor. A monitor with no token yields `None`,
+/// which downgrades that one record to geometry matching rather than naming the
+/// wrong display.
+fn display_id_at(window: &gtk::Window, state: &PillState) -> Option<u64> {
+    crate::pill::pill_monitor_id(window, state)
 }
 
 /// Moves the toplevel to an absolute root position.
@@ -253,7 +239,7 @@ pub(crate) fn persist_drop_position(
     state.has_saved_position.set(true);
     state
         .saved_display_id
-        .set(display_id_at(window, state, drop_x as f64, drop_y as f64));
+        .set(display_id_at(window, state));
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
@@ -308,7 +294,7 @@ pub(crate) fn write_window_position(
     state.drag_save_due.set(None);
     state
         .saved_display_id
-        .set(display_id_at(window, state, x, y));
+        .set(display_id_at(window, state));
     state.x11_release_persisted.set(true);
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {

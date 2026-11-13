@@ -1852,15 +1852,19 @@ pub(crate) fn x11_pill_center(state: &PillState, scale: f64) -> Option<X11PillCe
     Some(X11PillCenter { root, offset })
 }
 
-/// Resolve the monitor and rendered pill center from the applied X11 origin.
 /// The stable token of the monitor the visible pill is on, if it can be named.
 ///
-/// This is the same resolution [`x11_pill_monitor`] uses for reconciliation, so a
-/// published position and the work area published beside it cannot disagree about
-/// which display they describe.
+/// The monitor comes from [`pill_monitor`], the same function `pill_geometry`
+/// resolves its work area from, so a published position and the work area
+/// published beside it cannot disagree about which display they describe.
 pub(crate) fn pill_monitor_id(window: &gtk::Window, state: &PillState) -> Option<u64> {
-    let (monitor, ..) = x11_pill_monitor(window, state)?;
-    x11::monitor_display_id(&monitor)
+    // The token must come from the same monitor `pill_geometry` reports. When the
+    // visible pill cannot be resolved, `pill_monitor` falls back to a monitor
+    // chosen from the window or the saved origin, and that fallback can land on a
+    // neighbour while the geometry follows a different one. Reading the token
+    // from `pill_monitor` keeps the two describing one display; a monitor with no
+    // token yields `None` rather than a neighbour's token.
+    x11::monitor_display_id(&pill_monitor(window, state)?)
 }
 
 fn x11_pill_monitor(window: &gtk::Window, state: &PillState) -> Option<(gdk::Monitor, f64, f64)> {
