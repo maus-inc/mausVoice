@@ -610,54 +610,6 @@ fn clear_flash(state: &PillState) {
     );
 }
 
-/// Applies one IPC message to the pill state and marks the surface dirty so
-/// the next timer tick repaints.
-fn process_phase_message(phase: Phase, seq: u64, state: &PillState) {
-    // Reject delayed phase updates so they cannot roll the pill back.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
-    let stale = LAST_PHASE_SEQ.with(|last| {
-        let stale = seq < last.get();
-        if !stale {
-            last.set(seq);
-        }
-        stale
-    });
-    if stale {
-        return;
-    }
-
-    let prev = state.phase.get();
-    state.phase.set(phase);
-    state
-        .style_tooltip_gate
-        .set_take_running(phase == Phase::Recording);
-    // A new take sweeps any banner parked above the pill (for example the
-    // retranscribing toast). Resuming from Paused keeps banners raised during it.
-    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-        clear_flash(state);
-    }
-    if rust_pill_shared::should_clear_stage_text_on_phase(
-        prev == Phase::Loading,
-        phase == Phase::Idle,
-        phase == Phase::Loading,
-    ) {
-        *state.stage_text.borrow_mut() = None;
-    }
-    if phase == Phase::Loading && prev != Phase::Loading {
-        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-        state.loading_offset.set(offset);
-    }
-    if phase == Phase::Idle && prev != Phase::Idle {
-        state.pending_levels.borrow_mut().clear();
-        state.target_level.set(0.0);
-        state.current_level.set(0.0);
-        state.wave_phase.set(0.0);
-        state.loading_offset.set(0.0);
-    }
-}
-
 struct AssistantStateUpdate {
     active: bool,
     input_mode: String,
@@ -724,10 +676,54 @@ fn process_assistant_state(state: &PillState, update: AssistantStateUpdate) {
 }
 
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
+    // Phase message sequence guard: see ipc::InMessage::Phase.
+    thread_local! {
+        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
     state.dirty.set(true);
     match msg {
         InMessage::Phase { phase, seq } => {
-            process_phase_message(phase, seq, state);
+            // Reject delayed phase updates so they cannot roll the pill back.
+            let stale = LAST_PHASE_SEQ.with(|last| {
+                let stale = seq < last.get();
+                if !stale {
+                    last.set(seq);
+                }
+                stale
+            });
+            if stale {
+                return;
+            }
+
+            let prev = state.phase.get();
+            state.phase.set(phase);
+            state
+                .style_tooltip_gate
+                .set_take_running(phase == Phase::Recording);
+            // A new take sweeps any banner parked above the pill (for example the
+            // retranscribing toast). Resuming from Paused keeps banners raised
+            // during it.
+            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                clear_flash(state);
+            }
+            if rust_pill_shared::should_clear_stage_text_on_phase(
+                prev == Phase::Loading,
+                phase == Phase::Idle,
+                phase == Phase::Loading,
+            ) {
+                *state.stage_text.borrow_mut() = None;
+            }
+            if phase == Phase::Loading && prev != Phase::Loading {
+                let offset = if reduced_motion() { 0.5 } else { 0.0 };
+                state.loading_offset.set(offset);
+            }
+            if phase == Phase::Idle && prev != Phase::Idle {
+                state.pending_levels.borrow_mut().clear();
+                state.target_level.set(0.0);
+                state.current_level.set(0.0);
+                state.wave_phase.set(0.0);
+                state.loading_offset.set(0.0);
+            }
         }
         InMessage::Levels { levels } => {
             *state.pending_levels.borrow_mut() = levels;
