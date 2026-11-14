@@ -45,7 +45,9 @@ const read = (relativePath) =>
 const rustFilesUnder = (directory) => {
   const found = [];
   const walk = (relativePath) => {
-    for (const entry of readdirSync(join(repoRoot, relativePath), { withFileTypes: true })) {
+    for (const entry of readdirSync(join(repoRoot, relativePath), {
+      withFileTypes: true,
+    })) {
       const child = `${relativePath}/${entry.name}`;
       if (entry.isDirectory()) walk(child);
       else if (entry.name.endsWith(".rs")) found.push(child);
@@ -537,8 +539,14 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     // actually happened.
     // The net now lives in `settle_unrecorded_drop`, so the predicate is written
     // against the borrowed state it is handed.
-    assert.match(source.gtkX11, /!was_dragging\.get\(\) \|\| state\.x11_release_persisted\.get\(\)/);
-    assert.doesNotMatch(source.gtkX11, /x11_release_persisted\.replace\(false\)/);
+    assert.match(
+      source.gtkX11,
+      /!was_dragging\.get\(\) \|\| state\.x11_release_persisted\.get\(\)/,
+    );
+    assert.doesNotMatch(
+      source.gtkX11,
+      /x11_release_persisted\.replace\(false\)/,
+    );
   });
 
   it("emits the frontend reset state event after a native position change", () => {
@@ -745,7 +753,10 @@ describe("PR28 ring-alpha render-loop policy", () => {
     const app = source.macApp;
     const spend = app.indexOf(".after_placement()");
     const bail = app.indexOf("let Some((screen, frame)) = target else {");
-    assert.ok(spend > 0 && bail > 0, "the reset spend or the bail is not recognisable");
+    assert.ok(
+      spend > 0 && bail > 0,
+      "the reset spend or the bail is not recognisable",
+    );
     assert.ok(
       spend > bail,
       "macOS: the cursor reset is spent before the placement can fail",
@@ -777,7 +788,31 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // restore ran. Falling back to it pairs the destination's geometry with the
     // dead display's name, which is exactly what the restore is correcting.
     const app = source.macApp;
-    assert.match(app, /saved_display_id: Cell::new\(restored\.and\(restored_display_id\)\)/);
+    assert.match(
+      app,
+      /saved_display_id: Cell::new\(restored\.and\(restored_display_id\)\)/,
+    );
+  });
+
+  it("reads save_owed after the settle net, so a refused drop is not parked away", () => {
+    // `settle_unrecorded_drop` can arm the deadline by refusing a save. If the
+    // idle timer reads `save_owed` before that call, the same tick falls through
+    // to the idle parking below and moves the window back to the pre-drop
+    // position before the frame retry can store the drop -- the retry then saves
+    // the place the pill was dragged away from. The read must come after.
+    const x11 = read("packages/rust_gtk_pill/src/x11.rs");
+    const net = x11.indexOf("settle_unrecorded_drop(&win_tick");
+    const owed = x11.indexOf(
+      "let save_owed = state_tick.drag_save_due.get().is_some();",
+    );
+    assert.ok(
+      net > 0 && owed > 0,
+      "the idle timer's net or save_owed read moved",
+    );
+    assert.ok(
+      owed > net,
+      "save_owed is read before the settle net, so a refused drop can be parked away",
+    );
   });
 
   it("arms the save deadline when the X11 fallback is refused", () => {
@@ -787,7 +822,10 @@ describe("PR28 ring-alpha render-loop policy", () => {
     const reduce = read("packages/rust_gtk_pill/src/x11.rs");
     const at = reduce.indexOf("pub(crate) fn persist_drop_position(");
     assert.ok(at > 0, "the fallback is not recognisable");
-    const refusal = reduce.slice(at, reduce.indexOf("let (root_x, root_y)", at));
+    const refusal = reduce.slice(
+      at,
+      reduce.indexOf("let (root_x, root_y)", at),
+    );
     assert.match(
       refusal,
       /state\.drag_save_due\.set\(due\)/,
@@ -871,7 +909,8 @@ describe("PR28 ring-alpha render-loop policy", () => {
       write.indexOf("ipc::send"),
     );
     assert.ok(afterSave.length > 0, "the save path is not recognisable");
-    const geometryUses = afterSave.match(/current_pill_geometry\(hwnd\)/g) ?? [];
+    const geometryUses =
+      afterSave.match(/current_pill_geometry\(hwnd\)/g) ?? [];
     assert.equal(
       geometryUses.length,
       1,
@@ -1000,7 +1039,10 @@ describe("PR28 ring-alpha render-loop policy", () => {
         "arm_pulse.set(rust_pill_shared::pulse_armed())",
         from,
       );
-      assert.ok(from >= 0 && to > from, `${name}: the arm branch is not recognisable`);
+      assert.ok(
+        from >= 0 && to > from,
+        `${name}: the arm branch is not recognisable`,
+      );
       const arm = pill.slice(from, to);
       assert.match(
         arm,
@@ -2283,10 +2325,7 @@ describe("native gesture adapter contracts", () => {
     );
     // The idle placement it compensates for is applied by `park_window`, which is
     // the only caller that reaches the default anchor.
-    assert.match(
-      source.macPill,
-      /fn park_window\(/,
-    );
+    assert.match(source.macPill, /fn park_window\(/);
     assert.match(
       source.macPill,
       /fn below_selector_slot_does_not_lift_the_content_canvas/,
@@ -2411,7 +2450,9 @@ describe("native gesture adapter contracts", () => {
     );
     // Every pill understands the message, or one platform re-leaks the position.
     const ipcFor = (name) =>
-      ({ gtkPill: "gtkIpc", windowsPill: "windowsIpc", macApp: "macIpc" })[name];
+      ({ gtkPill: "gtkIpc", windowsPill: "windowsIpc", macApp: "macIpc" })[
+        name
+      ];
     for (const name of ["gtkPill", "windowsPill", "macApp"]) {
       assert.match(
         source[name],
@@ -2498,12 +2539,24 @@ describe("native gesture adapter contracts", () => {
     const saves = [
       ["windowsPill", "fn write_drag_position(", /allows_save\(now\)/],
       ["macPill", "fn write_drag_position(", /allows_save\(now\)/],
-      ["gtkX11", "pub\(crate\) fn write_window_position(", /allows_save\(now\)/],
+      [
+        "gtkX11",
+        "pub\(crate\) fn write_window_position(",
+        /allows_save\(now\)/,
+      ],
     ];
     for (const [name, marker, pattern] of saves) {
       const save = scope(name, marker);
-      assert.match(save, /save_guard\.borrow\(\)\.allows_save\(/, `${name}: the save path never asks the guard`);
-      assert.match(save, pattern, `${name}: the guard's verdict is not what decides the save`);
+      assert.match(
+        save,
+        /save_guard\.borrow\(\)\.allows_save\(/,
+        `${name}: the save path never asks the guard`,
+      );
+      assert.match(
+        save,
+        pattern,
+        `${name}: the guard's verdict is not what decides the save`,
+      );
       // The refusal has to be a return, not a logged warning that falls through.
       // `[^}]` is not enough now that the refusal records the drop origin before
       // it returns: the point is still that the branch ends in a `return`, so the
@@ -2570,7 +2623,8 @@ describe("native gesture adapter contracts", () => {
       "restore: the token is stored but never matched",
     );
     assert.ok(
-      choose.indexOf("display.id == Some(saved)") < choose.indexOf("same_geometry"),
+      choose.indexOf("display.id == Some(saved)") <
+        choose.indexOf("same_geometry"),
       "restore: geometry wins over the display's identity",
     );
     // A version bump is what stops an old row, which cannot name its display,
@@ -2636,7 +2690,8 @@ describe("native gesture adapter contracts", () => {
     // one and forgotten in the other.
     const windows = source.windowsPill;
     assert.equal(
-      (windows.match(/unsafe extern "system" fn collect_monitor_rect\(/g) || []).length,
+      (windows.match(/unsafe extern "system" fn collect_monitor_rect\(/g) || [])
+        .length,
       1,
       "windowsPill: two enumeration callbacks, so their fields can diverge",
     );
@@ -2649,7 +2704,10 @@ describe("native gesture adapter contracts", () => {
     // them came to answer "cleared" differently from the third.
     const shared = read("packages/rust_pill_shared/src/layout.rs");
     assert.match(shared, /pub enum Anchor \{/);
-    assert.match(shared, /pub fn pill_anchor\(saved: bool, restarted: bool\) -> Anchor/);
+    assert.match(
+      shared,
+      /pub fn pill_anchor\(saved: bool, restarted: bool\) -> Anchor/,
+    );
     assert.match(shared, /pub fn places\(self\) -> bool/);
     // No platform may keep its own reset-strategy field again: the anchor plus the
     // follow-the-pointer flag are the whole state.
@@ -2687,11 +2745,20 @@ describe("native gesture adapter contracts", () => {
     // deadline lost the position outright: the pill reopened where it sat before
     // the user moved it, on every platform, silently.
     const shared = read("packages/rust_pill_shared/src/layout.rs");
-    assert.match(shared, /pub fn save_due_at\(&self, now: f64\) -> Option<f64>/);
+    assert.match(
+      shared,
+      /pub fn save_due_at\(&self, now: f64\) -> Option<f64>/,
+    );
     // The deadline is parked by the writer the entry point hands the drop to.
     for (const [name, persist] of [
-      ["windowsPill", "fn write_drag_position(hwnd: HWND, state: &PillState, now: f64)"],
-      ["macApp", "fn write_drag_position(state: &PillState, window: id, now: f64)"],
+      [
+        "windowsPill",
+        "fn write_drag_position(hwnd: HWND, state: &PillState, now: f64)",
+      ],
+      [
+        "macApp",
+        "fn write_drag_position(state: &PillState, window: id, now: f64)",
+      ],
       ["gtkX11", "pub(crate) fn write_window_position("],
     ]) {
       const body = scope(name, persist);
@@ -2740,7 +2807,10 @@ describe("native gesture adapter contracts", () => {
     // primary one owns negative coordinates. `x < 0 && y < 0` therefore described
     // a real window as unapplied, and unplugging that display left the pill with
     // nothing to reconcile from.
-    assert.match(source.gtkPill, /pub\(crate\) const UNAPPLIED_ORIGIN: i32 = i32::MIN;/);
+    assert.match(
+      source.gtkPill,
+      /pub\(crate\) const UNAPPLIED_ORIGIN: i32 = i32::MIN;/,
+    );
     assert.doesNotMatch(
       source.gtkPill,
       /origin_x < 0\.0 && origin_y < 0\.0/,
@@ -2887,9 +2957,16 @@ describe("native gesture adapter contracts", () => {
     // at its old size resizes the window back on the next frame and undoes
     // WM_DPICHANGED entirely.
     const gfx = read("packages/rust_windows_pill/src/gfx.rs");
-    assert.match(gfx, /pub\(crate\) fn resize\(&mut self, width: i32, height: i32\)/);
+    assert.match(
+      gfx,
+      /pub\(crate\) fn resize\(&mut self, width: i32, height: i32\)/,
+    );
     const dpi = scope("windowsPill", "unsafe fn on_wm_dpichanged(");
-    assert.match(dpi, /gfx\.resize\(w, h\)/, "windowsPill: the surface ignores the DPI size");
+    assert.match(
+      dpi,
+      /gfx\.resize\(w, h\)/,
+      "windowsPill: the surface ignores the DPI size",
+    );
     // The surface is what UpdateLayeredWindow presents, so this is the only place
     // the suggestion can survive.
     const layered = scope("windowsPill", "fn update_layered(");
@@ -2984,7 +3061,10 @@ describe("native gesture adapter contracts", () => {
       /initial_state\(restored\.map\(\|\(origin, _\)\| origin\), restored_display_id\)/,
     );
     const seeded = scope("windowsPill", "fn initial_state(");
-    assert.match(seeded, /has_saved_position: Cell::new\(restored\.is_some\(\)\)/);
+    assert.match(
+      seeded,
+      /has_saved_position: Cell::new\(restored\.is_some\(\)\)/,
+    );
     assert.match(
       seeded,
       /saved_x: Cell::new\(restored\.map_or\(0, \|origin\| origin\.0\)\)/,
@@ -3318,10 +3398,14 @@ describe("macOS saved-position scope", () => {
   it("starts at the restored position and only captures origins from this instance's live canvas", () => {
     // The pill starts saved only when the host restored a position for it, so a
     // launch with nothing stored still parks at the default corner.
-    assert.match(source.macApp, /has_saved_position: Cell::new\(restored\.is_some\(\)\)/);
+    assert.match(
+      source.macApp,
+      /has_saved_position: Cell::new\(restored\.is_some\(\)\)/,
+    );
     // Exactly one live capture, plus the one seed of the restored value at setup.
     // Anything else means a second code path writes the saved origin.
-    const seeds = source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
+    const seeds =
+      source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
     assert.equal(seeds, 1, "the restored origin must be seeded exactly once");
     // Four writers of the saved origin, each with its own reason: the drop, the
     // idle clamp that holds the window at a moved origin, the reconciliation that
@@ -3535,7 +3619,16 @@ describe("native pill loading animation behind stage text", () => {
       ["macos", source.macApp],
       ["windows", source.windowsPill],
     ]) {
-      const phaseArm = handlerBody(pathOf.get(label === "macos" ? "macPill" : label === "gtk" ? "gtkPill" : "windowsPill"), "Phase");
+      const phaseArm = handlerBody(
+        pathOf.get(
+          label === "macos"
+            ? "macPill"
+            : label === "gtk"
+              ? "gtkPill"
+              : "windowsPill",
+        ),
+        "Phase",
+      );
       assert.match(
         phaseArm,
         /if rust_pill_shared::should_clear_stage_text_on_phase\(\s*prev == Phase::Loading,\s*phase == Phase::Idle,\s*phase == Phase::Loading,\s*\) \{\s*\*[\w.]*stage_text\.borrow_mut\(\) = None;\s*\}/,
@@ -3557,7 +3650,16 @@ describe("native pill loading animation behind stage text", () => {
         `${label}: tick must advance loading_offset via rust_pill_shared::advance_loading_offset with dt and reduced_motion()`,
       );
 
-      const stageTextArm = handlerBody(pathOf.get(label === "macos" ? "macPill" : label === "gtk" ? "gtkPill" : "windowsPill"), "StageText");
+      const stageTextArm = handlerBody(
+        pathOf.get(
+          label === "macos"
+            ? "macPill"
+            : label === "gtk"
+              ? "gtkPill"
+              : "windowsPill",
+        ),
+        "StageText",
+      );
       assert.match(
         stageTextArm,
         /let stage = rust_pill_shared::active_stage_text\(text\.as_deref\(\)\);\s*\*[\w.]*stage_text\.borrow_mut\(\) = stage\.map\(str::to_owned\);/,

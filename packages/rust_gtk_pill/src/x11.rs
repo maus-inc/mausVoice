@@ -619,13 +619,6 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             return ControlFlow::Continue;
         }
 
-        // A drop the save guard refused is retried on the frame clock, and until
-        // that retry writes it the window is still standing where the user dropped
-        // it. Parking it here would move it back to `saved_x`/`saved_y` -- the
-        // position from before the drop -- so the retry would store that instead of
-        // the drop. The retry itself runs below; only the parking is skipped.
-        let save_owed = state_tick.drag_save_due.get().is_some();
-
         // Net for a drag that ended without arming a settle, such as when
         // no monitor could be resolved before release. Normal releases
         // persist the settled position and mark it consumed, so this skips.
@@ -634,6 +627,19 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // on every pass meant a release deferred by the save guard consumed it
         // anyway, so the net saw nothing left to save and the position was lost.
         settle_unrecorded_drop(&win_tick, &state_tick, &was_dragging, &drop_recorded);
+
+        // A drop the save guard refused is retried on the frame clock, and until
+        // that retry writes it the window is still standing where the user dropped
+        // it. Parking it here would move it back to `saved_x`/`saved_y` -- the
+        // position from before the drop -- so the retry would store that instead of
+        // the drop. The retry itself runs below; only the parking is skipped.
+        //
+        // Read after `settle_unrecorded_drop`, not before: that call can itself arm
+        // the deadline by refusing a save. A value read before it would miss the
+        // drop the net had just parked, so the same tick would fall through to the
+        // idle parking below and move the window back to the pre-drop position
+        // before the frame retry could store the drop.
+        let save_owed = state_tick.drag_save_due.get().is_some();
 
         // Pick the anchor that decides which monitor owns the pill: the saved
         // drop point when parked, else wherever the pill already is. (Drags
