@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ChatMessage, ToolPermission } from "@maus-inc/types";
 import { isEqual } from "lodash-es";
 import { useEffect, useRef } from "react";
-import { useIntl } from "react-intl";
+import { type IntlShape, useIntl } from "react-intl";
 import type { AppState } from "../../state/app.state";
 import { useAppStore } from "../../store";
 import { markdownToPillText } from "../../utils/assistant-pill-text.utils";
@@ -19,6 +19,7 @@ type NativePillPayload = {
   type: "assistant_state";
   active: boolean;
   input_mode: string;
+  type_message_label: string;
   compact: boolean;
   conversation_id: string | null;
   user_prompt: string | null;
@@ -47,7 +48,8 @@ type NativePillPayload = {
   review: {
     id: string;
     text: string;
-    /** Localized captions for every control the pill draws for this review. */
+    review_label: string;
+    /** Localized title and control captions drawn by the native pill. */
     edit_label: string;
     insert_label: string;
     copy_label: string;
@@ -55,6 +57,24 @@ type NativePillPayload = {
     hint: string;
   } | null;
 };
+
+const localizeReview = (
+  review: { id: string; text: string },
+  intl: IntlShape,
+): NativePillPayload["review"] => ({
+  ...review,
+  review_label: intl.formatMessage({
+    id: "review_transcript",
+    defaultMessage: "Review transcript",
+  }),
+  edit_label: intl.formatMessage({ id: "edit", defaultMessage: "Edit" }),
+  insert_label: intl.formatMessage({ defaultMessage: "Insert" }),
+  copy_label: intl.formatMessage({ defaultMessage: "Copy" }),
+  cancel_label: intl.formatMessage({ defaultMessage: "Cancel" }),
+  hint: intl.formatMessage({
+    defaultMessage: "Enter inserts · Shift+Enter for a new line",
+  }),
+});
 
 const formatPromptPreview = (text: string): string | null => {
   const normalized = text.trim().replace(/\s+/g, " ");
@@ -235,31 +255,17 @@ const useNativePillAssistantSync = () => {
       type: "assistant_state",
       active,
       input_mode: state.assistantInputMode ?? "voice",
+      type_message_label: intl.formatMessage({
+        id: "type_a_message",
+        defaultMessage: "Type a message…",
+      }),
       compact,
       conversation_id: conversationId,
       user_prompt: userPrompt,
       messages: pillMessages,
       streaming,
       permissions,
-      review: review
-        ? {
-            ...review,
-            // The pill draws these captions itself, so every one of them has to
-            // cross the bridge. Shipping them as literals left a German user
-            // reading "Insert" and "Cancel" on the one surface that asks them
-            // to accept or reject their own dictation.
-            edit_label: intl.formatMessage({
-              id: "edit",
-              defaultMessage: "Edit",
-            }),
-            insert_label: intl.formatMessage({ defaultMessage: "Insert" }),
-            copy_label: intl.formatMessage({ defaultMessage: "Copy" }),
-            cancel_label: intl.formatMessage({ defaultMessage: "Cancel" }),
-            hint: intl.formatMessage({
-              defaultMessage: "Edit below, then press Enter to insert",
-            }),
-          }
-        : null,
+      review: review ? localizeReview(review, intl) : null,
     };
 
     invoke("sync_native_pill_assistant", {

@@ -209,6 +209,21 @@ const stubComposerDefaults = () => {
   mocks.listen.mockResolvedValue(vi.fn());
 };
 
+const useFakeWindowTimers = (): (() => void) => {
+  vi.useFakeTimers();
+  const globalRef = globalThis as { window?: unknown };
+  const previousWindow = globalRef.window;
+  globalRef.window = {
+    setTimeout: (...args: Parameters<typeof setTimeout>) => setTimeout(...args),
+    clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
+      clearTimeout(...args),
+  };
+  return () => {
+    globalRef.window = previousWindow;
+    vi.useRealTimers();
+  };
+};
+
 describe("reviewTextInComposer", () => {
   beforeEach(() => {
     resetComposerMocks();
@@ -222,6 +237,32 @@ describe("reviewTextInComposer", () => {
     mocks.listen.mockResolvedValue(vi.fn());
   });
 
+  it("does not send an agent Paste composer failure to transcription History", async () => {
+    mocks.invoke.mockImplementation((cmd: string) =>
+      cmd === "floating_window_create"
+        ? Promise.reject(new Error("window unavailable"))
+        : Promise.resolve(),
+    );
+    const onFailure = vi.fn();
+
+    await expect(
+      reviewTextInComposer("agent text", {
+        source: "assistant-tool",
+        onFailure,
+      }),
+    ).resolves.toBeNull();
+
+    expect(onFailure).toHaveBeenCalledOnce();
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          "Could not open the Paste review. Nothing was inserted. Run Paste again to retry.",
+        toastType: "error",
+        duration: 8000,
+      }),
+    );
+  });
+
   it("returns null and surfaces a recovery toast when window creation fails", async () => {
     mocks.invoke.mockImplementation((cmd: string) =>
       // Reject rather than throw: the code under test calls `invoke` inside its
@@ -229,7 +270,7 @@ describe("reviewTextInComposer", () => {
       // promise exactly as a real IPC call would be.
       cmd === "floating_window_create"
         ? Promise.reject(new Error("0x8007139F"))
-        : Promise.resolve(undefined),
+        : Promise.resolve(),
     );
     const result = await reviewTextInComposer("hello");
     expect(result).toBeNull();
@@ -249,7 +290,7 @@ describe("reviewTextInComposer", () => {
         created += 1;
         return Promise.resolve({ id: `floating-${created}` });
       }
-      return Promise.resolve(undefined);
+      return Promise.resolve();
     });
 
     // Start the first review but do NOT await it. The synchronous entry
@@ -293,6 +334,50 @@ describe("reviewTextInComposer cleanup", () => {
     stubComposerDefaults();
   });
 
+  it("waits for native window destruction before returning accepted text", async () => {
+    const listeners = installPerEventListener();
+    let finishDestroy: (() => void) | undefined;
+    let createdId = "";
+    mocks.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "floating_window_create") {
+        createdId = "floating-1";
+        return Promise.resolve({ id: createdId });
+      }
+      if (cmd === "floating_window_destroy") {
+        return new Promise<void>((resolve) => {
+          finishDestroy = resolve;
+        });
+      }
+      return Promise.resolve();
+    });
+
+    const resultPromise = reviewTextInComposer("draft");
+    for (let i = 0; i < 20 && !createdId; i += 1) {
+      await Promise.resolve();
+    }
+    const firstRequestId = mocks.invoke.mock.calls.find(
+      (c: unknown[]) => c[0] === "composer_register_text",
+    )?.[1]?.requestId as string;
+    const resultListener = listeners.get("composer-result")?.[0];
+    resultListener?.({
+      payload: { requestId: firstRequestId, accepted: true, text: "edited" },
+    });
+
+    let resolved = false;
+    const observedResult = resultPromise.then((result) => {
+      resolved = true;
+      return result;
+    });
+    for (let i = 0; i < 10 && !finishDestroy; i += 1) {
+      await Promise.resolve();
+    }
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    finishDestroy?.();
+    await expect(observedResult).resolves.toBe("edited");
+  });
+
   it("destroys the window and discards its text when the user accepts", async () => {
     const listeners = installPerEventListener();
     let createdId = "";
@@ -303,7 +388,7 @@ describe("reviewTextInComposer cleanup", () => {
       }
       // Every branch must return a promise: `composer.utils.ts` chains
       // `.catch()` directly onto the `invoke` result.
-      return Promise.resolve(undefined);
+      return Promise.resolve();
     });
 
     const promise = reviewTextInComposer("draft");
@@ -348,17 +433,8 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
   it("destroys a blank composer window and toasts recovery when composer-ready never arrives", async () => {
     // Production guards the blank-page failure class with a 15s
     // `composer-ready` timer armed only after the floating window exists.
-    // Node has no `window`, so shim it onto globalThis with arrow wrappers
-    // that resolve at call time — vi.useFakeTimers then controls both.
-    vi.useFakeTimers();
-    const globalRef = globalThis as { window?: unknown };
-    const previousWindow = globalRef.window;
-    globalRef.window = {
-      setTimeout: (...args: Parameters<typeof setTimeout>) =>
-        setTimeout(...args),
-      clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
-        clearTimeout(...args),
-    };
+    // A window timer shim lets fake timers cover the readiness timeout too.
+    const restoreTimers = useFakeWindowTimers();
 
     try {
       installPerEventListener();
@@ -370,7 +446,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
         }
         // `composer.utils.ts` chains `.catch()` onto the `invoke` result, so
         // every branch has to return a promise.
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       });
 
       // Fresh module instance: reviewTextInComposer guards on a
@@ -411,22 +487,83 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
       );
       expect(destroyCall?.[1]).toEqual({ id: "floating-blank" });
     } finally {
-      globalRef.window = previousWindow;
-      vi.useRealTimers();
+      restoreTimers();
     }
   }, 20_000);
 
-  it("settles and shows recovery when window creation hangs beyond setup deadline", async () => {
-    vi.useFakeTimers();
-    const globalRef = globalThis as { window?: unknown };
-    const previousWindow = globalRef.window;
-    globalRef.window = {
-      setTimeout: (...args: Parameters<typeof setTimeout>) =>
-        setTimeout(...args),
-      clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
-        clearTimeout(...args),
-    };
+  it.each([
+    [
+      "assistant-tool",
+      "Paste review expired. Nothing was inserted. Run Paste again to retry.",
+    ],
+    ["dictation", "Review expired — the transcript is kept in your history."],
+  ] as const)(
+    "reports an unanswered %s composer review as expired",
+    async (source, message) => {
+      const restoreTimers = useFakeWindowTimers();
+      try {
+        const listeners = installPerEventListener();
+        mocks.invoke.mockImplementation((cmd: string) => {
+          if (cmd === "floating_window_create") {
+            return Promise.resolve({ id: "floating-review" });
+          }
+          if (
+            cmd === "composer_discard_text" ||
+            cmd === "floating_window_destroy"
+          ) {
+            return new Promise<void>(() => {});
+          }
+          return Promise.resolve();
+        });
 
+        vi.resetModules();
+        const { reviewTextInComposer: freshReview } =
+          await import("./composer.utils");
+        const onExpire = vi.fn();
+        const promise = freshReview("agent text", { source, onExpire });
+        const createWindowWasCalled = () =>
+          mocks.invoke.mock.calls.some(
+            ([command]: unknown[]) => command === "floating_window_create",
+          );
+        for (let i = 0; i < 40 && !createWindowWasCalled(); i += 1) {
+          await vi.advanceTimersByTimeAsync(5);
+        }
+        expect(createWindowWasCalled()).toBe(true);
+        const requestId = mocks.invoke.mock.calls.find(
+          (call: unknown[]) => call[0] === "composer_register_text",
+        )?.[1]?.requestId as string;
+        listeners.get("composer-ready")?.[0]?.({
+          payload: { requestId },
+        });
+
+        await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+        await expect(promise).resolves.toBeNull();
+        expect(onExpire).toHaveBeenCalledOnce();
+        expect(mocks.showToast).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message,
+            toastType: "info",
+            duration: 8000,
+          }),
+        );
+        expect(mocks.invoke).toHaveBeenCalledWith("floating_window_destroy", {
+          id: "floating-review",
+        });
+        if (source === "dictation") {
+          expect(mocks.showToast).toHaveBeenCalledWith(
+            expect.objectContaining({ action: "open_transcriptions" }),
+          );
+        }
+      } finally {
+        restoreTimers();
+      }
+    },
+    20_000,
+  );
+
+  it("settles and shows recovery when window creation hangs beyond setup deadline", async () => {
+    const restoreTimers = useFakeWindowTimers();
     try {
       installPerEventListener();
       // floating_window_create never resolves (stalled native IPC call)
@@ -434,7 +571,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
         if (cmd === "floating_window_create") {
           return new Promise(() => undefined);
         }
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       });
 
       vi.resetModules();
@@ -454,8 +591,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
         }),
       );
     } finally {
-      globalRef.window = previousWindow;
-      vi.useRealTimers();
+      restoreTimers();
     }
   }, 20_000);
 });

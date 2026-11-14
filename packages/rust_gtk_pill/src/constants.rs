@@ -1,5 +1,7 @@
 use std::f64::consts::PI;
 
+pub(crate) use rust_pill_shared::transcript_viewport::*;
+
 pub(crate) const TAU: f64 = PI * 2.0;
 
 // ── Dictation pill layout ──────────────────────────────────────────
@@ -26,7 +28,6 @@ pub(crate) use rust_pill_shared::{DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS};
 pub(crate) const MIN_PILL_WIDTH: f64 = 48.0;
 pub(crate) const MIN_PILL_HEIGHT: f64 = 6.0;
 pub(crate) const EXPANDED_PILL_WIDTH: f64 = 120.0;
-pub(crate) const EXPANDED_PILL_HEIGHT: f64 = 32.0;
 
 /// Upper bound for the pill corner radius. The radius actually painted is
 /// derived from the pill's live geometry (`draw::pill_radius`) so the corner
@@ -109,18 +110,12 @@ pub(crate) const PANEL_TYPING_HEIGHT: f64 = 338.0;
 pub(crate) const PANEL_RADIUS: f64 = 24.0;
 pub(crate) const PANEL_BG_ALPHA: f64 = 0.96;
 pub(crate) const PANEL_BORDER_ALPHA: f64 = 0.12;
-pub(crate) const PANEL_INPUT_HEIGHT: f64 = 48.0;
+pub(crate) const PANEL_REVIEW_EDITOR_HEIGHT: f64 = 128.0;
 pub(crate) const PANEL_HEADER_OFFSET_TOP: f64 = 10.0;
 pub(crate) const PANEL_HEADER_OFFSET_LEFT: f64 = 10.0;
 pub(crate) const PANEL_HEADER_OFFSET_RIGHT: f64 = 24.0;
 pub(crate) const PANEL_CONTENT_SIDE_INSET: f64 = 24.0;
-pub(crate) const PANEL_TRANSCRIPT_TOP_OFFSET: f64 = 56.0;
 pub(crate) const HEADER_BUTTON_SIZE: f64 = 28.0;
-pub(crate) const SCROLL_TOP_PAD: f64 = 12.0;
-pub(crate) const SCROLL_BOTTOM_PAD: f64 = 12.0;
-
-// The pill sits inside the panel, this many px above the panel bottom.
-pub(crate) const PILL_BOTTOM_INSET: f64 = 8.0;
 
 // Top/bottom padding around the panel inside the window.
 pub(crate) const PANEL_TOP_MARGIN: f64 = 14.0;
@@ -141,10 +136,6 @@ pub(crate) const PERM_BUTTON_GAP: f64 = 6.0;
 
 // Review-before-insert card.
 pub(crate) const REVIEW_TITLE_HEIGHT: f64 = 20.0;
-pub(crate) const REVIEW_LINE_HEIGHT: f64 = 20.0;
-/// Height of the row of review buttons that sits above the input bar. The row
-/// is fixed there rather than in the scrolling text, so it is always reachable.
-pub(crate) const REVIEW_ACTIONS_HEIGHT: f64 = 44.0;
 
 // ── Window sizes for each mode ────────────────────────────────────
 // Height = PANEL_TOP_MARGIN + panel_height + PANEL_BOTTOM_MARGIN

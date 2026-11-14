@@ -406,7 +406,7 @@ describe("i18n catalogs", () => {
       "the_online_styling_reply_was_unusable_and_the_transcript_cou",
       "the_online_styling_reply_was_unusable_the_original_transcrip",
       "the_provider_reply_was_unusable_the_raw_transcript_is_availa",
-      "could_not_copy_the_transcript_it_is_saved_in_your_history",
+      "could_not_copy_the_reviewed_text_the_review_remains_open_so",
     ]) {
       expect(korean[key], `ko:${key} must exist`).toBeTypeOf("string");
       expect(korean[key], `ko:${key}`).not.toMatch(audioWording);

@@ -6,7 +6,9 @@ use crate::ipc::{Phase, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{rect_contains, ClickAction, ClickRegion, PillState, RocketPhase};
-use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
+use rust_pill_shared::{
+    path_distances, rounded_rectangle_perimeter, transcript_viewport_layout, RoundedRectArcSteps,
+};
 
 // Cairo retains paint errors on the context; the draw callback reports them.
 // Saved-state boundaries abort on failure rather than applying unmatched transforms.
@@ -1359,12 +1361,6 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
     let is_compact = state.assistant_compact.get() && review_id.is_none();
     // A review types into the same entry the assistant uses.
     let is_typing = state.is_typing();
-    let review_actions_h = if review_id.is_some() {
-        REVIEW_ACTIONS_HEIGHT
-    } else {
-        0.0
-    };
-
     let panel_w = if is_compact {
         PANEL_COMPACT_WIDTH
     } else {
@@ -1419,21 +1415,12 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
 
         // Scroll view spans the full panel height (minus input bar if typing).
         // Header, pill, and input are layered on top.
-        let scroll_bottom = if is_typing {
-            py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
-        } else {
-            py + panel_h
-        };
-        let scroll_h = (scroll_bottom - py).max(0.0);
+        let viewport = transcript_viewport_layout(py, panel_h, is_typing, review_id.is_some());
+        let scroll_bottom = viewport.scroll_bottom;
+        let scroll_h = viewport.scroll_height;
         state.viewport_height.set(scroll_h);
-
-        // Content padding clears the header area at top and pill/input at bottom
-        let top_pad = PANEL_TRANSCRIPT_TOP_OFFSET + SCROLL_TOP_PAD;
-        let bottom_pad = if is_typing {
-            SCROLL_BOTTOM_PAD
-        } else {
-            PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT + SCROLL_BOTTOM_PAD
-        };
+        let top_pad = viewport.top_pad;
+        let bottom_pad = viewport.bottom_pad;
 
         draw_transcript(
             cr, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad,
@@ -1450,11 +1437,7 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
         let _ = cr.fill();
 
         // Bottom gradient: opaque over pill/bottom area, fades into content
-        let bot_area = if is_typing {
-            0.0
-        } else {
-            PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT
-        };
+        let bot_area = viewport.bottom_gradient_area;
         let bot_grad_h = bot_area + 16.0;
         let bot_y = scroll_bottom - bot_grad_h;
         let bot_grad = cairo::LinearGradient::new(0.0, bot_y, 0.0, scroll_bottom);
@@ -1610,9 +1593,9 @@ fn draw_transcript(
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
     let permissions = state.assistant_permissions.borrow();
-    let review = state.assistant_review.borrow();
+    let has_review = state.assistant_review.borrow().is_some();
 
-    if messages.is_empty() && permissions.is_empty() && review.is_none() {
+    if !rust_pill_shared::transcript_has_content(messages.len(), permissions.len(), has_review) {
         // Both halves of the scroll state go with the content. Nothing sets
         // them on this path below, so a panel that has just been emptied keeps
         // the height of the transcript it used to hold: the wheel can then
@@ -1638,6 +1621,11 @@ fn draw_transcript(
 
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
+    if has_review {
+        // The native editor is fixed above the scrolling transcript. Keep its
+        // heading fixed too, and start conversation content below the editor.
+        y = draw_review_text(cr, state, area_x, area_y + top_pad, area_w, alpha) - scroll;
+    }
 
     cr.select_font_face(
         "Satoshi",
@@ -1721,13 +1709,6 @@ fn draw_transcript(
     for perm in permissions.iter() {
         y += 12.0;
         y = draw_permission_card(cr, state, perm, area_x, y, area_w, alpha);
-    }
-
-    if review.is_some() {
-        if !messages.is_empty() || !permissions.is_empty() {
-            y += 12.0;
-        }
-        y = draw_review_text(cr, state, area_x, y, area_w, alpha);
     }
 
     let total_height = y + scroll - area_y + bottom_pad;
@@ -1833,46 +1814,111 @@ fn draw_thinking_text(cr: &cairo::Context, x: f64, y: f64, alpha: f64, state: &P
     y + 20.0
 }
 
-/// The transcript under review, drawn in the panel body like an assistant
-/// message. The text comes from the entry, which is loaded with the transcript
-/// when the review arrives, so what is shown here is exactly what will be
-/// inserted, edits included. It scrolls with the rest of the panel, so there is
-/// no cap on its length.
+/// Pango applies font fallback per run, unlike Cairo's toy `show_text` API.
+fn review_heading_layout(cr: &cairo::Context, label: &str) -> pango::Layout {
+    let layout = pangocairo::functions::create_layout(cr);
+    let mut font = pango::FontDescription::new();
+    font.set_family("Satoshi");
+    font.set_weight(pango::Weight::Bold);
+    font.set_absolute_size(11.0 * pango::SCALE as f64);
+    layout.set_font_description(Some(&font));
+    layout.set_text(label);
+    layout
+}
+
+fn draw_review_heading(cr: &cairo::Context, label: &str, x: f64, baseline_y: f64) {
+    let layout = review_heading_layout(cr, label);
+    let baseline = layout.baseline() as f64 / pango::SCALE as f64;
+    cr.move_to(x, baseline_y - baseline);
+    pangocairo::functions::show_layout(cr, &layout);
+}
+
+fn review_hint_layout(cr: &cairo::Context, hint: &str, max_width: f64) -> pango::Layout {
+    let layout = pangocairo::functions::create_layout(cr);
+    let mut font = pango::FontDescription::new();
+    font.set_family("Satoshi");
+    font.set_weight(pango::Weight::Normal);
+    font.set_absolute_size(11.0 * pango::SCALE as f64);
+    layout.set_font_description(Some(&font));
+    layout.set_text(hint);
+    layout.set_single_paragraph_mode(true);
+    layout.set_width((max_width.max(0.0) * pango::SCALE as f64).round() as i32);
+    layout.set_ellipsize(pango::EllipsizeMode::End);
+    layout
+}
+
+#[cfg(test)]
+mod review_heading_layout_tests {
+    use super::*;
+
+    #[test]
+    fn cjk_review_heading_uses_unicode_pango_layout() {
+        let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 240, 32).unwrap();
+        let label = "审阅转写内容";
+        {
+            let cr = cairo::Context::new(&surface).unwrap();
+            cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+            let layout = review_heading_layout(&cr, label);
+            assert_eq!(layout.text().as_str(), label);
+            let (width, height) = layout.pixel_size();
+            assert!(
+                width > 0 && height > 0,
+                "CJK heading should have layout bounds"
+            );
+            draw_review_heading(&cr, label, 0.0, 20.0);
+        }
+
+        surface.flush();
+        let pixels = surface.data().unwrap();
+        assert!(
+            pixels.iter().any(|pixel| *pixel != 0),
+            "Pango should paint the localized heading to the Cairo surface"
+        );
+
+        // Actual glyph coverage depends on installed system fonts; lean CI images may not
+        // include any CJK fallback font. Pango can use system fallback fonts when available.
+    }
+
+    #[test]
+    fn cjk_review_hint_uses_fallback_and_respects_its_width_budget() {
+        let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 100, 32).unwrap();
+        {
+            let cr = cairo::Context::new(&surface).unwrap();
+            let layout = review_hint_layout(&cr, "按 Enter 插入 · Shift+Enter 换行", 72.0);
+            let (width, height) = layout.pixel_size();
+            assert!(width <= 72, "hint should fit its button-row budget");
+            assert!(height > 0, "hint should retain a visible line");
+            cr.move_to(0.0, 20.0);
+            pangocairo::functions::show_layout(&cr, &layout);
+        }
+
+        surface.flush();
+        assert!(surface.data().unwrap().iter().any(|pixel| *pixel != 0));
+    }
+}
+
+/// Reserve space for the native multiline editor and draw its heading. The
+/// editor owns the transcript text while reviewing; drawing a Cairo copy here
+/// would show stale or doubled text underneath it.
 fn draw_review_text(
     cr: &cairo::Context,
     state: &PillState,
     x: f64,
     y: f64,
-    w: f64,
+    _w: f64,
     alpha: f64,
 ) -> f64 {
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-    cr.set_font_size(11.0);
-    cr.move_to(x, y + 12.0);
-    let _ = cr.show_text("REVIEW TRANSCRIPT");
+    let review = state.assistant_review.borrow();
+    let label = review
+        .as_ref()
+        .and_then(|review| review.review_label.as_deref())
+        .unwrap_or("REVIEW TRANSCRIPT");
+    draw_review_heading(cr, label, x, y + 12.0);
 
-    let mut text_y = y + REVIEW_TITLE_HEIGHT;
-
-    cr.select_font_face(
-        "Satoshi",
-        cairo::FontSlant::Normal,
-        cairo::FontWeight::Normal,
-    );
-    cr.set_font_size(14.0);
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.92 * alpha);
-    let text = state.entry_text.borrow();
-    let (preview, _) = rust_pill_shared::bound_review_preview_text(&text);
-    for line in wrap_text(cr, preview.as_str(), w)
-        .into_iter()
-        .take(rust_pill_shared::MAX_REVIEW_PREVIEW_LINES)
-    {
-        cr.move_to(x, text_y + REVIEW_LINE_HEIGHT * 0.75);
-        let _ = cr.show_text(&line);
-        text_y += REVIEW_LINE_HEIGHT;
-    }
-
-    text_y
+    // Keep layout height aligned with the transparent native editor overlay,
+    // but leave all transcript glyphs to GTK's editable TextView.
+    y + REVIEW_TITLE_HEIGHT + PANEL_REVIEW_EDITOR_HEIGHT
 }
 
 /// The decisions the user can take on the transcript. Drawn as a fixed row
@@ -1893,7 +1939,7 @@ fn draw_review_actions(
     let hint = hint_binding
         .as_ref()
         .and_then(|review| review.hint.as_deref())
-        .unwrap_or("Edit below, then press Enter to insert");
+        .unwrap_or("Enter inserts · Shift+Enter for a new line");
 
     // Every caption here is drawn by the pill, so every caption has to come
     // from the desktop's locale. The English fallbacks only apply to a sender
@@ -1941,19 +1987,9 @@ fn draw_review_actions(
         ),
     ];
 
-    // The hint and the buttons share this line, so the hint has to know how much
-    // room the button row leaves before it can be drawn. Measuring the buttons
-    // first is what makes that possible; previously the hint was drawn first
-    // and the French and German translations -- both far longer than the English
-    // default -- ran under the leftmost button by 35.7px and 32.6px.
-    // Measure at the size the labels are actually drawn at, which is 11px Normal
-    // (see the set_font_size further down, just before `show_text`). Nothing in
-    // this function set a font before this point, so `text_extents` was measuring
-    // against whatever the previous call left behind -- 14px from
-    // `draw_review_text`, against 11px at the draw site, so about a quarter wider
-    // per label. Because `row_width` is the sum of those widths, the hint
-    // was budgeted less room than it actually had and elided further than the
-    // overlap this measuring exists to prevent.
+    // The hint and buttons share this line, so reserve space for button captions
+    // before creating the width-constrained Pango hint layout. Button widths are
+    // measured at their 11px Satoshi rendering size to prevent overlap.
     cr.select_font_face(
         "Satoshi",
         cairo::FontSlant::Normal,
@@ -1974,19 +2010,14 @@ fn draw_review_actions(
     let hint_budget =
         rust_pill_shared::text_fit::hint_budget(buttons_left, hint_x, PERM_BUTTON_GAP);
 
-    let hint = rust_pill_shared::text_fit::elide_to_width(hint, hint_budget, "…", |s| {
-        cr.text_extents(s).map(|ext| ext.width()).unwrap_or(0.0)
-    });
-    if !hint.is_empty() {
+    let hint_layout = review_hint_layout(cr, hint, hint_budget);
+    let (hint_width, _) = hint_layout.pixel_size();
+    if hint_width > 0 {
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
-        cr.select_font_face(
-            "Satoshi",
-            cairo::FontSlant::Normal,
-            cairo::FontWeight::Normal,
-        );
-        cr.set_font_size(11.0);
-        cr.move_to(hint_x, y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0);
-        let _ = cr.show_text(&hint);
+        let baseline = hint_layout.baseline() as f64 / pango::SCALE as f64;
+        let baseline_y = y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0;
+        cr.move_to(hint_x, baseline_y - baseline);
+        pangocairo::functions::show_layout(cr, &hint_layout);
     }
 
     let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;

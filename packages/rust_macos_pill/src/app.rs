@@ -146,6 +146,7 @@ struct AppContext {
     window: id,
     view: id,
     entry: id,
+    entry_container: id,
     quit: Cell<bool>,
     last_tick_time: Cell<f64>,
     embedded: bool,
@@ -238,16 +239,12 @@ fn register_pill_view_class() -> &'static Class {
             hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
         );
         decl.add_method(
-            sel!(textFieldAction:),
-            text_field_action as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(controlTextDidChange:),
+            sel!(textDidChange:),
             control_text_did_change as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
-            sel!(control:textView:doCommandBySelector:),
-            control_do_command as extern "C" fn(&Object, Sel, id, id, Sel) -> BOOL,
+            sel!(textView:doCommandBySelector:),
+            text_view_do_command as extern "C" fn(&Object, Sel, id, Sel) -> BOOL,
         );
         decl.add_method(
             sel!(cancelOperation:),
@@ -431,9 +428,9 @@ extern "C" fn hit_test(this: &Object, _sel: Sel, point: NSPoint) -> id {
 /// replaced rather than dropping the whole entry.
 ///
 /// # Safety
-/// `field` must be a live `NSTextField`.
+/// `field` must be a live `NSTextView`.
 unsafe fn field_string(field: id) -> String {
-    let ns_text: id = msg_send![field, stringValue];
+    let ns_text: id = msg_send![field, string];
     if ns_text.is_null() {
         return String::new();
     }
@@ -446,24 +443,8 @@ unsafe fn field_string(field: id) -> String {
         .into_owned()
 }
 
-extern "C" fn text_field_action(_this: &Object, _sel: Sel, sender: id) {
-    with_ctx(|ctx| {
-        unsafe {
-            *ctx.state.entry_text.borrow_mut() = field_string(sender);
-        }
-        // Enter submits: an insert decision while a transcript is under review,
-        // a message to the assistant otherwise.
-        if input::submit_entry(&ctx.state) {
-            set_entry_text("");
-        }
-    });
-}
-
-/// Mirror every keystroke into state, the way the GTK pill does on `changed`.
-///
-/// The field only fires its action once the edit is committed, so without this
-/// the buttons on the review panel would answer with the text as it stood at
-/// the last frame instead of the text on screen.
+/// Mirror every NSTextView edit into state. Review buttons submit this mirror,
+/// so it must track the live buffer rather than the last committed edit.
 extern "C" fn control_text_did_change(_this: &Object, _sel: Sel, notification: id) {
     with_ctx(|ctx| unsafe {
         let control: id = msg_send![notification, object];
@@ -482,17 +463,37 @@ extern "C" fn control_text_did_change(_this: &Object, _sel: Sel, notification: i
 /// Windows pill. The field editor holds the keyboard while the entry is being
 /// edited, and it routes Escape here as `cancelOperation:`. Every other command
 /// keeps its standard behaviour.
-extern "C" fn control_do_command(
+extern "C" fn text_view_do_command(
     _this: &Object,
     _sel: Sel,
-    _control: id,
     _text_view: id,
     command: Sel,
 ) -> BOOL {
-    if command != sel!(cancelOperation:) {
+    if command == sel!(insertNewline:) {
+        // Keep Enter-to-submit in both modes. Review text uses Shift+Return
+        // for a line break, preserving the established insert shortcut.
+        let is_review =
+            with_ctx(|ctx| ctx.state.assistant_review.borrow().is_some()).unwrap_or(false);
+        let mut shift_down = false;
+        unsafe {
+            let app: id = msg_send![class!(NSApplication), sharedApplication];
+            let event: id = msg_send![app, currentEvent];
+            if !event.is_null() {
+                let flags: u64 = msg_send![event, modifierFlags];
+                shift_down = flags & (1 << 17) != 0;
+            }
+        }
+        if !is_review || !shift_down {
+            with_ctx(|ctx| {
+                if input::submit_entry(&ctx.state) {
+                    set_entry_text("");
+                }
+            });
+            return YES;
+        }
         return NO;
     }
-    if cancel_pending_review() {
+    if command == sel!(cancelOperation:) && cancel_pending_review() {
         YES
     } else {
         NO
@@ -525,7 +526,7 @@ fn cancel_pending_review() -> bool {
 pub(crate) fn set_entry_text(text: &str) {
     with_ctx(|ctx| unsafe {
         with_ns_string(text, |ns| {
-            let _: () = msg_send![ctx.entry, setStringValue:ns];
+            let _: () = msg_send![ctx.entry, setString:ns];
         });
     });
 }
@@ -535,13 +536,231 @@ extern "C" fn tick_callback(_this: &Object, _sel: Sel, _timer: id) {
     perform_tick();
 }
 
-/// Runs one frame of the pill loop: processes queued IPC messages, advances
-/// the springs/animations, and repaints when the state changed.
-fn perform_tick() {
+/// Applies a single desktop message to the native pill state.
+fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
     // Phase message sequence guard: see ipc::InMessage::Phase.
     thread_local! {
         static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     }
+    match msg {
+        InMessage::Phase { phase, seq } => {
+            let stale = LAST_PHASE_SEQ.with(|last| {
+                let stale = seq < last.get();
+                if !stale {
+                    last.set(seq);
+                }
+                stale
+            });
+            if stale {
+                return;
+            }
+            let prev = ctx.state.phase.get();
+            ctx.state.phase.set(phase);
+            ctx.state
+                .style_tooltip_gate
+                .set_take_running(phase == Phase::Recording);
+            // A new take sweeps any banner parked above the pill (for
+            // example the retranscribing toast) so it cannot sit on the
+            // style selector for the whole take. A resume from Paused
+            // keeps toasts raised during the take, such as the cancel
+            // confirm.
+            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                clear_flash(&ctx.state);
+            }
+            if rust_pill_shared::should_clear_stage_text_on_phase(
+                prev == Phase::Loading,
+                phase == Phase::Idle,
+                phase == Phase::Loading,
+            ) {
+                *ctx.state.stage_text.borrow_mut() = None;
+            }
+            if phase == Phase::Loading && prev != Phase::Loading {
+                let offset = if reduced_motion() { 0.5 } else { 0.0 };
+                ctx.state.loading_offset.set(offset);
+            }
+            if phase == Phase::Idle && prev != Phase::Idle {
+                ctx.state.pending_levels.borrow_mut().clear();
+                ctx.state.target_level.set(0.0);
+                ctx.state.current_level.set(0.0);
+                ctx.state.wave_phase.set(0.0);
+                ctx.state.loading_offset.set(0.0);
+            }
+        }
+        InMessage::Levels { levels } => {
+            *ctx.state.pending_levels.borrow_mut() = levels;
+        }
+        InMessage::StyleInfo { count, name } => {
+            ctx.state.style_count.set(count);
+            *ctx.state.style_name.borrow_mut() = name;
+        }
+        InMessage::Toast {
+            message,
+            toast_type,
+            duration,
+            action,
+            action_label,
+            reject_action,
+            reject_action_label,
+        } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state
+                .flash_is_error
+                .set(toast_type.as_deref() == Some("error"));
+            ctx.state.flash_visible.set(true);
+            ctx.state
+                .flash_timer
+                .set(duration.unwrap_or(FLASH_DURATION));
+            *ctx.state.flash_action.borrow_mut() = action;
+            *ctx.state.flash_action_label.borrow_mut() = action_label;
+            *ctx.state.flash_reject_action.borrow_mut() = reject_action;
+            *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
+        }
+        InMessage::DismissToast => {
+            clear_flash(&ctx.state);
+        }
+        InMessage::Fireworks { message } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state.flash_is_error.set(false);
+            *ctx.state.flash_action.borrow_mut() = None;
+            *ctx.state.flash_action_label.borrow_mut() = None;
+            *ctx.state.flash_reject_action.borrow_mut() = None;
+            *ctx.state.flash_reject_action_label.borrow_mut() = None;
+            ctx.state.flash_visible.set(true);
+            ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
+
+            ctx.state.fireworks_active.set(true);
+            ctx.state.fireworks_elapsed.set(0.0);
+            ctx.state.fireworks_next_launch.set(0);
+            ctx.state.fireworks_rockets.borrow_mut().clear();
+        }
+        InMessage::Flame { message } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state.flash_is_error.set(false);
+            *ctx.state.flash_action.borrow_mut() = None;
+            *ctx.state.flash_action_label.borrow_mut() = None;
+            *ctx.state.flash_reject_action.borrow_mut() = None;
+            *ctx.state.flash_reject_action_label.borrow_mut() = None;
+            ctx.state.flash_visible.set(true);
+            ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
+
+            ctx.state.flame_active.set(true);
+            ctx.state.flame_elapsed.set(0.0);
+            ctx.state.flame_tongues.borrow_mut().clear();
+        }
+        InMessage::FlashBlue => {
+            ctx.state.flash_blue_active.set(true);
+            ctx.state.flash_blue_elapsed.set(0.0);
+        }
+        InMessage::BroadcastTranscript { text } => {
+            *ctx.state.transcript_text.borrow_mut() = text;
+            ctx.state.transcript_time_since_update.set(0.0);
+            ctx.state.transcript_has_message.set(true);
+        }
+        InMessage::StageText { text } => {
+            let stage = rust_pill_shared::active_stage_text(text.as_deref());
+            *ctx.state.stage_text.borrow_mut() = stage.map(str::to_owned);
+        }
+        InMessage::Visibility { visibility } => {
+            ctx.state.visibility.set(visibility);
+        }
+        InMessage::WindowSize { ref size } => {
+            let mode = WindowMode::from_str(size);
+            ctx.state.window_mode.set(mode);
+        }
+        InMessage::AssistantState {
+            active,
+            input_mode,
+            type_message_label,
+            compact,
+            conversation_id,
+            user_prompt,
+            messages,
+            streaming,
+            permissions,
+            review,
+        } => {
+            let was_active = ctx.state.assistant_active.get();
+            let previous_review_id = ctx
+                .state
+                .assistant_review
+                .borrow()
+                .as_ref()
+                .map(|r| r.id.clone());
+            let review_id = review.as_ref().map(|r| r.id.clone());
+            let review_text = review.as_ref().map(|r| r.text.clone());
+            *ctx.state.assistant_review.borrow_mut() = review.map(|review| *review);
+
+            // The entry is the review surface: a new transcript loads
+            // into it for editing, and answering the review empties it
+            // again. An unchanged id leaves the user's edits alone.
+            if review_id != previous_review_id {
+                let text = review_text.unwrap_or_default();
+                *ctx.state.entry_text.borrow_mut() = text.clone();
+                set_entry_text(&text);
+            }
+            ctx.state.assistant_active.set(active);
+            *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
+            *ctx.state.assistant_type_message.borrow_mut() =
+                type_message_label.unwrap_or_else(|| "Type a message…".to_string());
+            ctx.state.assistant_compact.set(compact);
+            *ctx.state.assistant_conversation_id.borrow_mut() = conversation_id;
+            *ctx.state.assistant_user_prompt.borrow_mut() = user_prompt;
+            *ctx.state.assistant_messages.borrow_mut() = messages;
+            *ctx.state.assistant_streaming.borrow_mut() = streaming;
+            *ctx.state.assistant_permissions.borrow_mut() = permissions;
+
+            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+                ctx.state.should_stick.set(true);
+                ctx.state.scroll_offset.set(0.0);
+            }
+        }
+        InMessage::ResetPosition { strategy } => {
+            // Cancel ownership, not a normal release: no final sample
+            // or old drop may re-arm/overwrite this reset.
+            ctx.state.dragging.set(false);
+            ctx.state.pointer_down.set(false);
+            ctx.state.long_press_active.set(false);
+            ctx.state.long_press_elapsed.set(0.0);
+            ctx.state.drag_cancelled.set(true);
+            ctx.state.has_saved_position.set(false);
+            ctx.state.drag_motion.borrow_mut().reset();
+            ctx.state.selector_placement.borrow_mut().reset();
+            ctx.state.crossing.borrow_mut().reset();
+            ctx.state.reset_strategy.set(strategy);
+            reposition_window(ctx.window, &ctx.state, dt, now);
+            let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: false,
+                rect: Some(rect),
+                monitor: Some(monitor),
+            });
+        }
+        InMessage::RequestPosition => {
+            let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: ctx.state.has_saved_position.get(),
+                rect: Some(rect),
+                monitor: Some(monitor),
+            });
+        }
+        InMessage::Quit => {
+            ctx.quit.set(true);
+        }
+    }
+}
+
+/// Drains IPC messages before the current animation frame is advanced.
+fn process_pending_messages(ctx: &AppContext, dt: f64, now: f64) {
+    // Process IPC messages
+    let rx = ctx.receiver.borrow();
+    while let Ok(msg) = rx.try_recv() {
+        apply_message(ctx, msg, dt, now);
+    }
+    drop(rx);
+}
+
+/// Runs one frame of the pill loop and repaints when state has changed.
+fn perform_tick() {
     APP_CTX.with(|cell| {
         let borrow = cell.borrow();
         let Some(ctx) = borrow.as_ref() else { return };
@@ -556,215 +775,7 @@ fn perform_tick() {
             (now - prev).clamp(0.001, 0.05)
         };
 
-        // Process IPC messages
-        let rx = ctx.receiver.borrow();
-        while let Ok(msg) = rx.try_recv() {
-            match msg {
-                InMessage::Phase { phase, seq } => {
-                    let stale = LAST_PHASE_SEQ.with(|last| {
-                        let stale = seq < last.get();
-                        if !stale {
-                            last.set(seq);
-                        }
-                        stale
-                    });
-                    if stale {
-                        continue;
-                    }
-                    let prev = ctx.state.phase.get();
-                    ctx.state.phase.set(phase);
-                    ctx.state
-                        .style_tooltip_gate
-                        .set_take_running(phase == Phase::Recording);
-                    // A new take sweeps any banner parked above the pill (for
-                    // example the retranscribing toast) so it cannot sit on the
-                    // style selector for the whole take. A resume from Paused
-                    // keeps toasts raised during the take, such as the cancel
-                    // confirm.
-                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                        clear_flash(&ctx.state);
-                    }
-                    if rust_pill_shared::should_clear_stage_text_on_phase(
-                        prev == Phase::Loading,
-                        phase == Phase::Idle,
-                        phase == Phase::Loading,
-                    ) {
-                        *ctx.state.stage_text.borrow_mut() = None;
-                    }
-                    if phase == Phase::Loading && prev != Phase::Loading {
-                        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                        ctx.state.loading_offset.set(offset);
-                    }
-                    if phase == Phase::Idle && prev != Phase::Idle {
-                        ctx.state.pending_levels.borrow_mut().clear();
-                        ctx.state.target_level.set(0.0);
-                        ctx.state.current_level.set(0.0);
-                        ctx.state.wave_phase.set(0.0);
-                        ctx.state.loading_offset.set(0.0);
-                    }
-                }
-                InMessage::Levels { levels } => {
-                    *ctx.state.pending_levels.borrow_mut() = levels;
-                }
-                InMessage::StyleInfo { count, name } => {
-                    ctx.state.style_count.set(count);
-                    *ctx.state.style_name.borrow_mut() = name;
-                }
-                InMessage::Toast {
-                    message,
-                    toast_type,
-                    duration,
-                    action,
-                    action_label,
-                    reject_action,
-                    reject_action_label,
-                } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state
-                        .flash_is_error
-                        .set(toast_type.as_deref() == Some("error"));
-                    ctx.state.flash_visible.set(true);
-                    ctx.state
-                        .flash_timer
-                        .set(duration.unwrap_or(FLASH_DURATION));
-                    *ctx.state.flash_action.borrow_mut() = action;
-                    *ctx.state.flash_action_label.borrow_mut() = action_label;
-                    *ctx.state.flash_reject_action.borrow_mut() = reject_action;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
-                }
-                InMessage::DismissToast => {
-                    clear_flash(&ctx.state);
-                }
-                InMessage::Fireworks { message } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state.flash_is_error.set(false);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
-                    *ctx.state.flash_reject_action.borrow_mut() = None;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
-                    ctx.state.flash_visible.set(true);
-                    ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
-
-                    ctx.state.fireworks_active.set(true);
-                    ctx.state.fireworks_elapsed.set(0.0);
-                    ctx.state.fireworks_next_launch.set(0);
-                    ctx.state.fireworks_rockets.borrow_mut().clear();
-                }
-                InMessage::Flame { message } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state.flash_is_error.set(false);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
-                    *ctx.state.flash_reject_action.borrow_mut() = None;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
-                    ctx.state.flash_visible.set(true);
-                    ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
-
-                    ctx.state.flame_active.set(true);
-                    ctx.state.flame_elapsed.set(0.0);
-                    ctx.state.flame_tongues.borrow_mut().clear();
-                }
-                InMessage::FlashBlue => {
-                    ctx.state.flash_blue_active.set(true);
-                    ctx.state.flash_blue_elapsed.set(0.0);
-                }
-                InMessage::BroadcastTranscript { text } => {
-                    *ctx.state.transcript_text.borrow_mut() = text;
-                    ctx.state.transcript_time_since_update.set(0.0);
-                    ctx.state.transcript_has_message.set(true);
-                }
-                InMessage::StageText { text } => {
-                    let stage = rust_pill_shared::active_stage_text(text.as_deref());
-                    *ctx.state.stage_text.borrow_mut() = stage.map(str::to_owned);
-                }
-                InMessage::Visibility { visibility } => {
-                    ctx.state.visibility.set(visibility);
-                }
-                InMessage::WindowSize { ref size } => {
-                    let mode = WindowMode::from_str(size);
-                    ctx.state.window_mode.set(mode);
-                }
-                InMessage::AssistantState {
-                    active,
-                    input_mode,
-                    compact,
-                    conversation_id,
-                    user_prompt,
-                    messages,
-                    streaming,
-                    permissions,
-                    review,
-                } => {
-                    let was_active = ctx.state.assistant_active.get();
-                    let previous_review_id = ctx
-                        .state
-                        .assistant_review
-                        .borrow()
-                        .as_ref()
-                        .map(|r| r.id.clone());
-                    let review_id = review.as_ref().map(|r| r.id.clone());
-                    let review_text = review.as_ref().map(|r| r.text.clone());
-                    *ctx.state.assistant_review.borrow_mut() = review.map(|review| *review);
-
-                    // The entry is the review surface: a new transcript loads
-                    // into it for editing, and answering the review empties it
-                    // again. An unchanged id leaves the user's edits alone.
-                    if review_id != previous_review_id {
-                        let text = review_text.unwrap_or_default();
-                        *ctx.state.entry_text.borrow_mut() = text.clone();
-                        set_entry_text(&text);
-                    }
-                    ctx.state.assistant_active.set(active);
-                    *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
-                    ctx.state.assistant_compact.set(compact);
-                    *ctx.state.assistant_conversation_id.borrow_mut() = conversation_id;
-                    *ctx.state.assistant_user_prompt.borrow_mut() = user_prompt;
-                    *ctx.state.assistant_messages.borrow_mut() = messages;
-                    *ctx.state.assistant_streaming.borrow_mut() = streaming;
-                    *ctx.state.assistant_permissions.borrow_mut() = permissions;
-
-                    if (active && !was_active)
-                        || (review_id.is_some() && review_id != previous_review_id)
-                    {
-                        ctx.state.should_stick.set(true);
-                        ctx.state.scroll_offset.set(0.0);
-                    }
-                }
-                InMessage::ResetPosition { strategy } => {
-                    // Cancel ownership, not a normal release: no final sample
-                    // or old drop may re-arm/overwrite this reset.
-                    ctx.state.dragging.set(false);
-                    ctx.state.pointer_down.set(false);
-                    ctx.state.long_press_active.set(false);
-                    ctx.state.long_press_elapsed.set(0.0);
-                    ctx.state.drag_cancelled.set(true);
-                    ctx.state.has_saved_position.set(false);
-                    ctx.state.drag_motion.borrow_mut().reset();
-                    ctx.state.selector_placement.borrow_mut().reset();
-                    ctx.state.crossing.borrow_mut().reset();
-                    ctx.state.reset_strategy.set(strategy);
-                    reposition_window(ctx.window, &ctx.state, dt, now);
-                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
-                    ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: false,
-                        rect: Some(rect),
-                        monitor: Some(monitor),
-                    });
-                }
-                InMessage::RequestPosition => {
-                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
-                    ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: ctx.state.has_saved_position.get(),
-                        rect: Some(rect),
-                        monitor: Some(monitor),
-                    });
-                }
-                InMessage::Quit => {
-                    ctx.quit.set(true);
-                }
-            }
-        }
-        drop(rx);
+        process_pending_messages(ctx, dt, now);
 
         if ctx.quit.get() {
             unsafe {
@@ -788,23 +799,36 @@ fn perform_tick() {
 
         tick(&ctx.state, ctx.window, dt);
 
-        // Show/hide entry for typing mode
+        // The review editor sits in the transcript body; follow-ups retain
+        // their compact composer at the bottom. Keep its geometry and opacity
+        // on the panel's spring so the native control enters with the surface.
         let is_typing = ctx.state.is_typing();
+        let is_review = ctx.state.assistant_review.borrow().is_some();
         unsafe {
             let entry = ctx.entry;
-            let entry_hidden: BOOL = msg_send![entry, isHidden];
-            if is_typing && entry_hidden != NO {
-                let _: () = msg_send![entry, setHidden:NO];
+            let container = ctx.entry_container;
+            if is_typing {
+                let mut frame = typing_entry_frame(is_review);
+                frame.origin.y += (1.0 - ctx.state.panel_open_t.get()) * 12.0;
+                let _: () = msg_send![container, setFrame:frame];
+                let _: () = msg_send![container, setAlphaValue:ctx.state.panel_open_t.get()];
+                let border_type = if is_review { 2u64 } else { 0u64 };
+                let draws_background = if is_review { YES } else { NO };
+                let _: () = msg_send![container, setBorderType:border_type];
+                let _: () = msg_send![container, setDrawsBackground:draws_background];
+            }
+            let container_hidden: BOOL = msg_send![container, isHidden];
+            if is_typing && container_hidden != NO {
+                let _: () = msg_send![container, setHidden:NO];
                 let _: () = msg_send![ctx.window, makeKeyWindow];
                 let _: () = msg_send![ctx.window, makeFirstResponder:entry];
-            } else if !is_typing && entry_hidden == NO {
-                let _: () = msg_send![entry, setHidden:YES];
+            } else if !is_typing && container_hidden == NO {
+                let _: () = msg_send![container, setHidden:YES];
                 let _: () = msg_send![ctx.window, resignKeyWindow];
             }
 
-            // Sync entry text to state. `controlTextDidChange:` already does
-            // this on every keystroke; this covers changes the delegate does
-            // not see, such as a paste routed by the system.
+            // `textDidChange:` mirrors every edit; this frame read also covers
+            // system-routed paste and other changes that bypass keystrokes.
             if is_typing {
                 *ctx.state.entry_text.borrow_mut() = field_string(entry);
             }
@@ -1878,10 +1902,22 @@ fn default_content_origin_y(work_bottom: f64, window_height: f64) -> f64 {
     work_bottom + MARGIN_BOTTOM as f64 - below_content
 }
 
-// The native entry shares the fixed content coordinates used by draw_all and
+// The native editor shares the fixed panel coordinates used by draw_all and
 // hit testing. Extra window space is reserved only for the below selector.
-fn typing_entry_frame() -> NSRect {
+fn typing_entry_frame(is_review: bool) -> NSRect {
     let panel_x = (WINDOW_W_TYPING as f64 - PANEL_EXPANDED_WIDTH) / 2.0;
+    if is_review {
+        return NSRect::new(
+            NSPoint::new(
+                panel_x + PANEL_CONTENT_SIDE_INSET,
+                PANEL_TOP_MARGIN + PANEL_TRANSCRIPT_TOP_OFFSET + 28.0,
+            ),
+            NSSize::new(
+                PANEL_EXPANDED_WIDTH - PANEL_CONTENT_SIDE_INSET * 2.0,
+                PANEL_REVIEW_EDITOR_HEIGHT,
+            ),
+        );
+    }
     let top_pad = 12.0;
     NSRect::new(
         NSPoint::new(
@@ -1940,37 +1976,51 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let _: () = msg_send![view, setWantsLayer:YES];
     window.setContentView_(view);
 
-    // Create text field for typing mode
-    let entry_frame = typing_entry_frame();
-    let entry: id = msg_send![class!(NSTextField), alloc];
-    let entry: id = msg_send![entry, initWithFrame:entry_frame];
-    let _: () = msg_send![entry, setBordered:NO];
-    let _: () = msg_send![entry, setDrawsBackground:NO];
-    let _: () = msg_send![entry, setFocusRingType:1u64]; // NSFocusRingTypeNone
+    // Native multiline editor. The scroll view provides a quiet inset surface
+    // and visible scroll affordance; the NSTextView keeps long reviews readable
+    // without forcing the transcript into a single horizontal line.
+    let entry_frame = typing_entry_frame(false);
+    let entry_container: id = msg_send![class!(NSScrollView), alloc];
+    let entry_container: id = msg_send![entry_container, initWithFrame:entry_frame];
+    let _: () = msg_send![entry_container, setBorderType:0u64]; // NSNoBorder outside review
+    let _: () = msg_send![entry_container, setHasVerticalScroller:YES];
+    let _: () = msg_send![entry_container, setAutohidesScrollers:YES];
+    let _: () = msg_send![entry_container, setDrawsBackground:NO];
+    let surface: id = msg_send![class!(NSColor),
+        colorWithSRGBRed:0.045_f64 green:0.045_f64 blue:0.045_f64 alpha:1.0_f64
+    ];
+    let _: () = msg_send![entry_container, setBackgroundColor:surface];
 
+    let entry: id = msg_send![class!(NSTextView), alloc];
+    let entry_text_frame = NSRect::new(NSPoint::new(0.0, 0.0), entry_frame.size);
+    let entry: id = msg_send![entry, initWithFrame:entry_text_frame];
+    let _: () = msg_send![entry, setRichText:NO];
+    let _: () = msg_send![entry, setImportsGraphics:NO];
+    let _: () = msg_send![entry, setAllowsUndo:YES];
+    let min_editor_size = NSSize::new(0.0, 0.0);
+    let max_editor_size = NSSize::new(1000000.0, 1000000.0);
+    let _: () = msg_send![entry, setMinSize:min_editor_size];
+    let _: () = msg_send![entry, setMaxSize:max_editor_size];
+    let _: () = msg_send![entry, setVerticallyResizable:YES];
+    let _: () = msg_send![entry, setHorizontallyResizable:NO];
+    let _: () = msg_send![entry, setDrawsBackground:NO];
+    let text_inset = NSSize::new(10.0, 8.0);
+    let _: () = msg_send![entry, setTextContainerInset:text_inset];
+    let _: () = msg_send![entry, setAutoresizingMask:2u64]; // NSViewWidthSizable
+    let text_container: id = msg_send![entry, textContainer];
+    let _: () = msg_send![text_container, setWidthTracksTextView:YES];
+    let text_container_size = NSSize::new(entry_frame.size.width, 1000000.0);
+    let _: () = msg_send![text_container, setContainerSize:text_container_size];
     let white: id = msg_send![class!(NSColor),
-        colorWithSRGBRed:1.0_f64
-        green:1.0_f64
-        blue:1.0_f64
-        alpha:0.92_f64
+        colorWithSRGBRed:1.0_f64 green:1.0_f64 blue:1.0_f64 alpha:0.94_f64
     ];
     let _: () = msg_send![entry, setTextColor:white];
-
     let font: id = crate::font::satoshi_font(14.0, false);
     let _: () = msg_send![entry, setFont:font];
-
-    with_ns_string("Type a message...", |placeholder| {
-        let _: () = msg_send![entry, setPlaceholderString:placeholder];
-    });
-
-    let _: () = msg_send![entry, setTarget:view];
-    let _: () = msg_send![entry, setAction:sel!(textFieldAction:)];
-    // The view is also the field's editing delegate: it mirrors each keystroke
-    // into state and turns Escape into a cancel decision while a transcript is
-    // under review.
     let _: () = msg_send![entry, setDelegate:view];
-    let _: () = msg_send![entry, setHidden:YES];
-    let _: () = msg_send![view, addSubview:entry];
+    let _: () = msg_send![entry_container, setDocumentView:entry];
+    let _: () = msg_send![entry_container, setHidden:YES];
+    let _: () = msg_send![view, addSubview:entry_container];
 
     // Initialize state
     let state = Rc::new(PillState {
@@ -1998,6 +2048,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         draw_h_velocity: Cell::new(0.0),
         assistant_active: Cell::new(false),
         assistant_input_mode: RefCell::new("voice".to_string()),
+        assistant_type_message: RefCell::new("Type a message…".to_string()),
         assistant_compact: Cell::new(true),
         assistant_conversation_id: RefCell::new(None),
         assistant_user_prompt: RefCell::new(None),
@@ -2081,6 +2132,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
             window,
             view,
             entry,
+            entry_container,
             quit: Cell::new(false),
             last_tick_time: Cell::new(0.0),
             embedded,
@@ -2162,11 +2214,23 @@ mod typing_geometry_tests {
 
     #[test]
     fn native_entry_stays_inside_the_painted_input_row() {
-        let frame = typing_entry_frame();
+        let frame = typing_entry_frame(false);
         let panel_bottom = WINDOW_H_TYPING as f64 - PANEL_BOTTOM_MARGIN;
         let input_top = panel_bottom - PANEL_INPUT_HEIGHT;
         assert!(frame.origin.y >= input_top);
         assert!(frame.size.height > 0.0);
         assert_eq!(frame.origin.y + frame.size.height, panel_bottom);
+    }
+
+    #[test]
+    fn review_editor_occupies_the_transcript_body_and_stops_before_actions() {
+        let frame = typing_entry_frame(true);
+        let actions_top = WINDOW_H_TYPING as f64
+            - PANEL_BOTTOM_MARGIN
+            - PANEL_INPUT_HEIGHT
+            - REVIEW_ACTIONS_HEIGHT;
+        assert!(frame.origin.y >= PANEL_TOP_MARGIN + PANEL_TRANSCRIPT_TOP_OFFSET);
+        assert!(frame.origin.y + frame.size.height < actions_top);
+        assert_eq!(frame.size.height, PANEL_REVIEW_EDITOR_HEIGHT);
     }
 }

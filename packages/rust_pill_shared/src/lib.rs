@@ -19,6 +19,16 @@ pub mod text_fit;
 use std::cell::{Cell, RefCell};
 use std::f64::consts::FRAC_PI_2;
 
+pub mod transcript_viewport {
+    pub const EXPANDED_PILL_HEIGHT: f64 = 32.0;
+    pub const PANEL_INPUT_HEIGHT: f64 = 48.0;
+    pub const PANEL_TRANSCRIPT_TOP_OFFSET: f64 = 56.0;
+    pub const SCROLL_TOP_PAD: f64 = 12.0;
+    pub const SCROLL_BOTTOM_PAD: f64 = 12.0;
+    pub const PILL_BOTTOM_INSET: f64 = 8.0;
+    pub const REVIEW_ACTIONS_HEIGHT: f64 = 44.0;
+}
+
 /// Build the perimeter of an axis-aligned rounded rectangle as an ordered
 /// list of `(x, y)` points. The path traces clockwise starting from the
 /// left end of the top edge, goes through four quarter-circle corners,
@@ -105,6 +115,76 @@ pub enum PillVisibility {
     Hidden,
     WhileActive,
     Persistent,
+}
+
+/// Whether a transcript panel has anything to display or act on.
+///
+/// Shared so the platform renderers clear their scroll state under the same
+/// empty-content condition without duplicating policy logic.
+#[inline]
+pub const fn transcript_has_content(
+    message_count: usize,
+    permission_count: usize,
+    has_review: bool,
+) -> bool {
+    message_count > 0 || permission_count > 0 || has_review
+}
+
+/// Geometry shared by each native renderer's transcript viewport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TranscriptViewportLayout {
+    pub scroll_bottom: f64,
+    pub scroll_height: f64,
+    pub top_pad: f64,
+    pub bottom_pad: f64,
+    pub bottom_gradient_area: f64,
+}
+
+/// Computes transcript viewport geometry for typing, review, and idle states.
+pub fn transcript_viewport_layout(
+    panel_y: f64,
+    panel_height: f64,
+    is_typing: bool,
+    has_review: bool,
+) -> TranscriptViewportLayout {
+    let review_actions_height = review_actions_height(has_review);
+    let scroll_bottom = if is_typing {
+        panel_y + panel_height - transcript_viewport::PANEL_INPUT_HEIGHT - review_actions_height
+    } else {
+        panel_y + panel_height
+    };
+    let scroll_height = (scroll_bottom - panel_y).max(0.0);
+    let bottom_pad = if is_typing {
+        transcript_viewport::SCROLL_BOTTOM_PAD
+    } else {
+        transcript_viewport::PILL_BOTTOM_INSET
+            + transcript_viewport::EXPANDED_PILL_HEIGHT
+            + transcript_viewport::SCROLL_BOTTOM_PAD
+    };
+    let bottom_gradient_area = if is_typing {
+        0.0
+    } else {
+        transcript_viewport::PILL_BOTTOM_INSET + transcript_viewport::EXPANDED_PILL_HEIGHT
+    };
+
+    TranscriptViewportLayout {
+        scroll_bottom,
+        scroll_height,
+        top_pad: transcript_viewport::PANEL_TRANSCRIPT_TOP_OFFSET
+            + transcript_viewport::SCROLL_TOP_PAD,
+        bottom_pad,
+        bottom_gradient_area,
+    }
+}
+
+/// Review actions reserve input space only while a review is active.
+#[inline]
+pub const fn review_actions_height(has_review: bool) -> f64 {
+    if has_review {
+        transcript_viewport::REVIEW_ACTIONS_HEIGHT
+    } else {
+        0.0
+    }
 }
 
 /// Unconfirmed microphone shutdown and its scoped cancel affordance must be
@@ -1370,6 +1450,34 @@ pub fn advance_ring(anim: &mut RingAnim, tick: RingTick, hold_delay: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transcript_content_includes_messages_permissions_or_review() {
+        assert!(!transcript_has_content(0, 0, false));
+        assert!(transcript_has_content(1, 0, false));
+        assert!(transcript_has_content(0, 1, false));
+        assert!(transcript_has_content(0, 0, true));
+    }
+
+    #[test]
+    fn transcript_viewport_geometry_reserves_input_and_pill_space() {
+        let typing = transcript_viewport_layout(10.0, 200.0, true, true);
+        assert_eq!(typing.scroll_bottom, 118.0);
+        assert_eq!(typing.scroll_height, 108.0);
+        assert_eq!(typing.top_pad, 68.0);
+        assert_eq!(typing.bottom_pad, 12.0);
+        assert_eq!(typing.bottom_gradient_area, 0.0);
+
+        let idle = transcript_viewport_layout(10.0, 200.0, false, true);
+        assert_eq!(idle.scroll_bottom, 210.0);
+        assert_eq!(idle.bottom_pad, 52.0);
+        assert_eq!(idle.bottom_gradient_area, 40.0);
+        assert_eq!(review_actions_height(false), 0.0);
+        assert_eq!(
+            review_actions_height(true),
+            transcript_viewport::REVIEW_ACTIONS_HEIGHT
+        );
+    }
 
     #[test]
     fn default_and_new_start_the_shared_controllers_idle() {

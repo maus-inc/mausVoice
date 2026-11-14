@@ -5,7 +5,7 @@ import { AppTarget } from "@maus-inc/types";
 import { delayed } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useIntl } from "react-intl";
+import { type IntlShape, useIntl } from "react-intl";
 import {
   loadManualStyleForCurrentApp,
   saveManualStyleForApp,
@@ -180,6 +180,53 @@ import {
   pauseNativeRecording,
   resumeNativeRecording,
 } from "../../utils/native-recording-session";
+
+const reportConversationOpenFailure = (error: unknown): void => {
+  getLogger().warning(
+    `Failed to open the conversation: ${error instanceof Error ? error.message : String(error)}`,
+  );
+};
+
+const openPillConversationImpl = async (
+  conversationId: string | undefined,
+  isPendingPasteReview: boolean,
+  intl: IntlShape,
+  abortRecording: () => Promise<void>,
+): Promise<void> => {
+  let recoveryToastShown = false;
+  const reportPasteRecovery = () => {
+    if (!isPendingPasteReview || recoveryToastShown) return;
+    recoveryToastShown = true;
+    runToast(
+      showToast({
+        message: intl.formatMessage({
+          defaultMessage:
+            "Your Paste review was saved. If Chats did not open, find the review in Chats to finish the paste.",
+        }),
+        toastType: "info",
+        duration: 8000,
+      }),
+    );
+  };
+  const reportOpenFailure = (error: unknown) => {
+    reportConversationOpenFailure(error);
+    reportPasteRecovery();
+  };
+  const id = conversationId ?? getAppState().pillConversationId;
+  if (id) {
+    loadChatMessages(id).catch(reportOpenFailure);
+    await getBrowserRouter()
+      .navigate(`/dashboard/chats?id=${encodeURIComponent(id)}`)
+      .catch(reportOpenFailure);
+  }
+  try {
+    if (!(await surfaceMainWindow())) reportPasteRecovery();
+    await abortRecording();
+  } catch (error) {
+    reportPasteRecovery();
+    throw error;
+  }
+};
 
 type PendingProviderStartup = {
   operationId: number;
@@ -482,12 +529,8 @@ export const handleEmptyTranscriptionResult = async (
  * success into a retry that creates a duplicate transcription.
  */
 export const surfacePersistedReviewInHistory = async (): Promise<void> => {
-  try {
-    await surfaceMainWindow();
-  } catch (error) {
-    getLogger().warning(
-      `Could not surface the saved transcript: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  if (!(await surfaceMainWindow())) {
+    getLogger().warning("Could not surface the saved transcript");
   }
   try {
     await getBrowserRouter().navigate("/dashboard/transcriptions");
@@ -2685,41 +2728,15 @@ export const DictationSideEffects = () => {
   // map, strategy) and repushes on any change, so a per-component effect keyed
   // to just recording/styling state can't leave the listener stale.
 
-  // `loadChatMessages` below is discarded, so a rejection from it would be
-  // unhandled rather than reported, and it can reject: it awaits
-  // `getChatMessageRepo().listChatMessages(...)` (`chat.actions.ts:288`) with no
-  // try/catch of its own, straight through to the Tauri IPC.
-  //
-  // `surfaceMainWindow()` was named here as a second source and cannot be one --
-  // `window.utils.ts:22-35` attaches `.catch()` to the invoke BEFORE awaiting the
-  // memoized promise, so `await surfaceWindowPromise` there cannot throw. Naming it
-  // would have sent the next reader looking for a rejection that is not reachable.
-  const reportConversationOpenFailure = (error: unknown): void => {
-    getLogger().warning(
-      `Failed to open the conversation: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  };
-
   const openPillConversation = useCallback(
-    async (conversationId?: string) => {
-      const id = conversationId ?? getAppState().pillConversationId;
-      if (id) {
-        void loadChatMessages(id).catch(reportConversationOpenFailure);
-        // `navigate` returns a promise; a rejection here would otherwise be
-        // unhandled, so it is caught on the promise rather than by a surrounding
-        // try/catch that cannot see it.
-        await getBrowserRouter()
-          .navigate(`/dashboard/chats?id=${encodeURIComponent(id)}`)
-          .catch((error: unknown) => {
-            getLogger().warning(
-              `Failed to navigate to the conversation: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          });
-      }
-      await surfaceMainWindow();
-      await abortRecording();
-    },
-    [abortRecording],
+    (conversationId?: string, isPendingPasteReview = false) =>
+      openPillConversationImpl(
+        conversationId,
+        isPendingPasteReview,
+        intl,
+        abortRecording,
+      ),
+    [abortRecording, intl],
   );
 
   useTauriListen<void>("assistant-mode-close", async () => {
@@ -2790,15 +2807,16 @@ export const DictationSideEffects = () => {
     },
   );
 
-  useTauriListen<{ conversationId: string }>(
-    "open-pill-conversation",
-    (payload) => {
-      if (!isMainWindow) return;
-      void openPillConversation(payload.conversationId).catch(
-        reportConversationOpenFailure,
-      );
-    },
-  );
+  useTauriListen<{
+    conversationId: string;
+    pendingPasteReview?: boolean;
+  }>("open-pill-conversation", (payload) => {
+    if (!isMainWindow) return;
+    openPillConversation(
+      payload.conversationId,
+      payload.pendingPasteReview === true,
+    ).catch(reportConversationOpenFailure);
+  });
 
   useHotkeyFire({
     actionName: OPEN_CHAT_HOTKEY,

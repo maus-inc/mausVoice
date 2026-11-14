@@ -40,8 +40,9 @@ thread_local! {
     static HWND_CELL: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static TYPING_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static EDIT_CONTAINER: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
+    static EDIT_LABEL_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
-    static EDIT_BG_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
+    static EDIT_SURFACE_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
     // Cached reduced-motion probe (see reduced_motion()); re-read at most
     // every 2 s so the frame loop never pays for a settings call per tick.
     static REDUCED_MOTION_CACHED: Cell<bool> = const { Cell::new(false) };
@@ -609,8 +610,71 @@ fn clear_flash(state: &PillState) {
     );
 }
 
-/// Applies one IPC message to the pill state and marks the surface dirty so
-/// the next timer tick repaints.
+struct AssistantStateUpdate {
+    active: bool,
+    input_mode: String,
+    type_message_label: Option<String>,
+    compact: bool,
+    conversation_id: Option<String>,
+    user_prompt: Option<String>,
+    messages: Vec<crate::ipc::PillMessage>,
+    streaming: Option<crate::ipc::PillStreaming>,
+    permissions: Vec<crate::ipc::PillPermission>,
+    review: Option<Box<crate::ipc::PillReview>>,
+}
+
+fn process_assistant_state(state: &PillState, update: AssistantStateUpdate) {
+    let AssistantStateUpdate {
+        active,
+        input_mode,
+        type_message_label,
+        compact,
+        conversation_id,
+        user_prompt,
+        messages,
+        streaming,
+        permissions,
+        review,
+    } = update;
+    let was_active = state.assistant_active.get();
+    let previous_review_id = state
+        .assistant_review
+        .borrow()
+        .as_ref()
+        .map(|r| r.id.clone());
+    let review_id = review.as_ref().map(|r| r.id.clone());
+    let review_text = review.as_ref().map(|r| r.text.clone());
+    *state.assistant_review.borrow_mut() = review.map(|review| *review);
+    let review = state.assistant_review.borrow();
+    let label = match review.as_ref() {
+        Some(review) => review
+            .review_label
+            .as_deref()
+            .unwrap_or("REVIEW TRANSCRIPT"),
+        None => type_message_label.as_deref().unwrap_or("Type a message…"),
+    };
+    set_edit_accessible_label(label);
+
+    // Load each new transcript into the editor, but never overwrite an in-progress edit.
+    if review_id != previous_review_id {
+        let text = review_text.unwrap_or_default();
+        *state.entry_text.borrow_mut() = text.clone();
+        set_edit_text(&text);
+    }
+    state.assistant_active.set(active);
+    *state.assistant_input_mode.borrow_mut() = input_mode;
+    state.assistant_compact.set(compact);
+    *state.assistant_conversation_id.borrow_mut() = conversation_id;
+    *state.assistant_user_prompt.borrow_mut() = user_prompt;
+    *state.assistant_messages.borrow_mut() = messages;
+    *state.assistant_streaming.borrow_mut() = streaming;
+    *state.assistant_permissions.borrow_mut() = permissions;
+    if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+        state.should_stick.set(true);
+        state.scroll_offset.set(0.0);
+    }
+}
+
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
     // Phase message sequence guard: see ipc::InMessage::Phase.
     thread_local! {
@@ -619,6 +683,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
     state.dirty.set(true);
     match msg {
         InMessage::Phase { phase, seq } => {
+            // Reject delayed phase updates so they cannot roll the pill back.
             let stale = LAST_PHASE_SEQ.with(|last| {
                 let stale = seq < last.get();
                 if !stale {
@@ -629,15 +694,15 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             if stale {
                 return;
             }
+
             let prev = state.phase.get();
             state.phase.set(phase);
             state
                 .style_tooltip_gate
                 .set_take_running(phase == Phase::Recording);
-            // A new take sweeps any banner parked above the pill (for example
-            // the retranscribing toast) so it cannot sit on the style selector
-            // for the whole take. A resume from Paused keeps toasts raised
-            // during the take, such as the cancel confirm.
+            // A new take sweeps any banner parked above the pill (for example the
+            // retranscribing toast). Resuming from Paused keeps banners raised
+            // during it.
             if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
                 clear_flash(state);
             }
@@ -740,6 +805,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         InMessage::AssistantState {
             active,
             input_mode,
+            type_message_label,
             compact,
             conversation_id,
             user_prompt,
@@ -747,38 +813,21 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             streaming,
             permissions,
             review,
-        } => {
-            let was_active = state.assistant_active.get();
-            let previous_review_id = state
-                .assistant_review
-                .borrow()
-                .as_ref()
-                .map(|r| r.id.clone());
-            let review_id = review.as_ref().map(|r| r.id.clone());
-            let review_text = review.as_ref().map(|r| r.text.clone());
-            *state.assistant_review.borrow_mut() = review.map(|review| *review);
-
-            // The entry is the review surface: a new transcript loads into it
-            // for editing, and answering the review empties it again. An
-            // unchanged id leaves the user's edits alone.
-            if review_id != previous_review_id {
-                let text = review_text.unwrap_or_default();
-                *state.entry_text.borrow_mut() = text.clone();
-                set_edit_text(&text);
-            }
-            state.assistant_active.set(active);
-            *state.assistant_input_mode.borrow_mut() = input_mode;
-            state.assistant_compact.set(compact);
-            *state.assistant_conversation_id.borrow_mut() = conversation_id;
-            *state.assistant_user_prompt.borrow_mut() = user_prompt;
-            *state.assistant_messages.borrow_mut() = messages;
-            *state.assistant_streaming.borrow_mut() = streaming;
-            *state.assistant_permissions.borrow_mut() = permissions;
-            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
-                state.should_stick.set(true);
-                state.scroll_offset.set(0.0);
-            }
-        }
+        } => process_assistant_state(
+            state,
+            AssistantStateUpdate {
+                active,
+                input_mode,
+                type_message_label,
+                compact,
+                conversation_id,
+                user_prompt,
+                messages,
+                streaming,
+                permissions,
+                review,
+            },
+        ),
         InMessage::ResetPosition { strategy } => {
             let hwnd = HWND_CELL.with(|c| c.get());
             cancel_drag_gesture(hwnd, state);
@@ -2190,21 +2239,28 @@ fn tick_ring(state: &PillState, dt: f64) {
 
 // ── Native text input overlay ────────────────────────────────────────
 
-const ES_AUTOHSCROLL: u32 = 0x0080;
+const ES_MULTILINE: u32 = 0x0004;
+const ES_AUTOVSCROLL: u32 = 0x0040;
+const ES_WANTRETURN: u32 = 0x1000;
 const EN_CHANGE_NOTIFICATION: u16 = 0x0300;
 const EM_SETMARGINS: u32 = 0x00D3;
 const EM_GETSEL: u32 = 0x00B0;
 const EM_SETSEL: u32 = 0x00B1;
+const EDIT_LABEL_HEIGHT: i32 = 16;
+const STATIC_CENTER_IMAGE: u32 = 0x0200;
 const EM_REPLACESEL: u32 = 0x00C2;
 const EC_LEFTMARGIN: u32 = 1;
 const EC_RIGHTMARGIN: u32 = 2;
 const EDIT_COLOR_KEY: u32 = 0x00010001; // RGB(1,0,1) - unique color for transparency
 const EDIT_TEXT_COLOR: u32 = 0x00E8E8E8; // RGB(232, 232, 232)
+const EDIT_LABEL_COLOR: u32 = 0x00909090; // muted caption against the panel
+const EDIT_SURFACE: u32 = 0x00101010; // near-black inset matching the panel
 
 fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
     unsafe {
         let brush = CreateSolidBrush(COLORREF(EDIT_COLOR_KEY));
-        EDIT_BG_BRUSH.with(|b| b.set(brush));
+        let surface_brush = CreateSolidBrush(COLORREF(EDIT_SURFACE));
+        EDIT_SURFACE_BRUSH.with(|b| b.set(surface_brush));
 
         let class_name = w!("MausVoiceInput");
         let wc = WNDCLASSEXW {
@@ -2233,15 +2289,39 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         )
         .unwrap();
 
+        let label = CreateWindowExW(
+            WS_EX_TRANSPARENT,
+            w!("STATIC"),
+            w!("Type a message…"),
+            WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | STATIC_CENTER_IMAGE),
+            8,
+            0,
+            384,
+            EDIT_LABEL_HEIGHT,
+            Some(container),
+            None,
+            Some(hinstance.into()),
+            None,
+        )
+        .unwrap();
+
         let edit = CreateWindowExW(
             WS_EX_LEFT,
             w!("EDIT"),
             w!(""),
-            WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | ES_AUTOHSCROLL),
+            WINDOW_STYLE(
+                WS_CHILD.0
+                    | WS_VISIBLE.0
+                    | WS_BORDER.0
+                    | ES_MULTILINE
+                    | ES_AUTOVSCROLL
+                    | ES_WANTRETURN
+                    | WS_VSCROLL.0,
+            ),
             0,
-            0,
+            EDIT_LABEL_HEIGHT,
             400,
-            PANEL_INPUT_HEIGHT as i32,
+            PANEL_INPUT_HEIGHT as i32 - EDIT_LABEL_HEIGHT,
             Some(container),
             None,
             Some(hinstance.into()),
@@ -2258,6 +2338,14 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         lf.lfHeight = -18;
         lf.lfWeight = 500; // Medium
         let font = CreateFontIndirectW(&lf);
+        lf.lfHeight = -14;
+        let label_font = CreateFontIndirectW(&lf);
+        SendMessageW(
+            label,
+            WM_SETFONT,
+            Some(WPARAM(label_font.0 as usize)),
+            Some(LPARAM(1)),
+        );
         SendMessageW(
             edit,
             WM_SETFONT,
@@ -2275,6 +2363,7 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         );
 
         EDIT_CONTAINER.with(|c| c.set(container));
+        EDIT_LABEL_HWND.with(|l| l.set(label));
         EDIT_HWND.with(|e| e.set(edit));
     }
 }
@@ -2289,18 +2378,28 @@ unsafe extern "system" fn edit_container_proc(
         WM_CTLCOLOREDIT => {
             let hdc = HDC(wparam.0 as *mut std::ffi::c_void);
             SetTextColor(hdc, COLORREF(EDIT_TEXT_COLOR));
+            SetBkMode(hdc, OPAQUE);
+            SetBkColor(hdc, COLORREF(EDIT_SURFACE));
+            let brush = EDIT_SURFACE_BRUSH.with(Cell::get);
+            LRESULT(brush.0 as isize)
+        }
+        WM_CTLCOLORSTATIC => {
+            let hdc = HDC(wparam.0 as *mut std::ffi::c_void);
+            SetTextColor(hdc, COLORREF(EDIT_LABEL_COLOR));
             SetBkMode(hdc, TRANSPARENT);
-            let brush = EDIT_BG_BRUSH.with(|b| b.get());
+            let brush = EDIT_SURFACE_BRUSH.with(Cell::get);
             LRESULT(brush.0 as isize)
         }
         WM_COMMAND => {
             let notification = ((wparam.0 >> 16) & 0xFFFF) as u16;
             if notification == EN_CHANGE_NOTIFICATION {
-                // Sync native Edit text → state.entry_text
+                // Sync native Edit text → state.entry_text and keep the static
+                // composer prompt from covering text as the user types.
                 let text = get_edit_text();
                 STATE.with(|s| {
                     if let Some(ref state) = *s.borrow() {
-                        *state.entry_text.borrow_mut() = text;
+                        *state.entry_text.borrow_mut() = text.clone();
+                        update_edit_label_visibility(state, &text);
                     }
                 });
             }
@@ -2321,12 +2420,16 @@ fn handle_edit_message(msg: &MSG) -> bool {
     match msg.message {
         WM_KEYDOWN => {
             let ctrl = unsafe { (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 };
+            let shift = unsafe { (GetKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0 };
 
-            if msg.wParam.0 == VK_RETURN.0 as usize {
-                // Enter submits: an insert decision while a transcript is under
-                // review, a message to the assistant otherwise. Nothing was
-                // sent when the entry holds only blanks, so the text has to
-                // stay put instead of being wiped for no result.
+            let is_review = STATE.with(|s| {
+                s.borrow()
+                    .as_ref()
+                    .is_some_and(|state| state.assistant_review.borrow().is_some())
+            });
+            if msg.wParam.0 == VK_RETURN.0 as usize && (!shift || !is_review) {
+                // Keep Enter-to-submit. Shift+Enter adds a line to the review
+                // transcript without changing the established submit shortcut.
                 let sent = STATE.with(|s| match *s.borrow() {
                     Some(ref state) => input::submit_entry(state),
                     None => false,
@@ -2370,14 +2473,45 @@ fn handle_edit_message(msg: &MSG) -> bool {
     }
 }
 
+fn ctrl_backspace_range(
+    text: &[u16],
+    selection_start: usize,
+    selection_end: usize,
+) -> Option<(usize, usize)> {
+    let start = selection_start.min(selection_end).min(text.len());
+    let end = selection_start.max(selection_end).min(text.len());
+    if start != end {
+        return Some((start, end));
+    }
+    if end == 0 {
+        return None;
+    }
+    let word_start = ctrl_backspace_start(text, end);
+    (word_start < end).then_some((word_start, end))
+}
+
+fn ctrl_backspace_start(text: &[u16], caret: usize) -> usize {
+    let mut pos = caret.min(text.len());
+    while pos > 0 && (text[pos - 1] == b' ' as u16 || text[pos - 1] == b'\t' as u16) {
+        pos -= 1;
+    }
+    while pos > 0 && !matches!(text[pos - 1], 0x20 | 0x09 | 0x0D | 0x0A) {
+        pos -= 1;
+    }
+    pos
+}
+
 fn ctrl_backspace(edit: HWND) {
     unsafe {
-        // Get caret position from return value: LOWORD=start, HIWORD=end
-        let result = SendMessageW(edit, EM_GETSEL, None, None);
-        let caret = ((result.0 >> 16) & 0xFFFF) as usize;
-        if caret == 0 {
-            return;
-        }
+        // Use the output pointers to avoid the return value's 16-bit offsets.
+        let mut selection_start = 0u32;
+        let mut selection_end = 0u32;
+        SendMessageW(
+            edit,
+            EM_GETSEL,
+            Some(WPARAM(&mut selection_start as *mut u32 as usize)),
+            Some(LPARAM(&mut selection_end as *mut u32 as isize)),
+        );
 
         // Get text as UTF-16
         let len = GetWindowTextLengthW(edit);
@@ -2386,24 +2520,19 @@ fn ctrl_backspace(edit: HWND) {
         }
         let mut buf = vec![0u16; (len + 1) as usize];
         GetWindowTextW(edit, &mut buf);
+        let text = &buf[..len as usize];
+        let Some((start, end)) =
+            ctrl_backspace_range(text, selection_start as usize, selection_end as usize)
+        else {
+            return;
+        };
 
-        let mut pos = caret.min(len as usize);
-
-        // Skip whitespace backwards
-        while pos > 0 && (buf[pos - 1] == b' ' as u16 || buf[pos - 1] == b'\t' as u16) {
-            pos -= 1;
-        }
-        // Skip non-whitespace backwards
-        while pos > 0 && buf[pos - 1] != b' ' as u16 && buf[pos - 1] != b'\t' as u16 {
-            pos -= 1;
-        }
-
-        // Select from word start to caret and replace with empty
+        // Delete the selected range or the previous word, whichever applies.
         SendMessageW(
             edit,
             EM_SETSEL,
-            Some(WPARAM(pos)),
-            Some(LPARAM(caret as isize)),
+            Some(WPARAM(start)),
+            Some(LPARAM(end as isize)),
         );
         let empty: [u16; 1] = [0];
         SendMessageW(
@@ -2418,6 +2547,7 @@ fn ctrl_backspace(edit: HWND) {
 fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     let is_typing = state.is_typing();
     let container = EDIT_CONTAINER.with(|c| c.get());
+    let label = EDIT_LABEL_HWND.with(Cell::get);
     let edit = EDIT_HWND.with(|e| e.get());
 
     if !is_typing {
@@ -2439,10 +2569,26 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     let panel_h = wh - PANEL_TOP_MARGIN - PANEL_BOTTOM_MARGIN;
     let y_shift = (1.0 - state.panel_open_t.get()) * 12.0;
     let py = PANEL_TOP_MARGIN + y_shift;
-    let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
+    let is_review = state.assistant_review.borrow().is_some();
+    // During review the native multiline editor takes the transcript's place
+    // in the body, leaving the fixed action row and composer rail unobstructed.
+    let input_y = if is_review {
+        py + PANEL_TRANSCRIPT_TOP_OFFSET + 28.0
+    } else {
+        py + panel_h - PANEL_INPUT_HEIGHT
+    };
+    let editor_h = if is_review {
+        PANEL_REVIEW_EDITOR_HEIGHT
+    } else {
+        PANEL_INPUT_HEIGHT
+    };
     let input_x = panel_x + PANEL_CONTENT_SIDE_INSET;
     let send_btn_size = 28.0_f64;
-    let input_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0 - send_btn_size - 8.0;
+    let input_w = if is_review {
+        panel_w - PANEL_CONTENT_SIDE_INSET * 2.0
+    } else {
+        panel_w - PANEL_CONTENT_SIDE_INSET * 2.0 - send_btn_size - 8.0
+    };
 
     let mut win_rect = RECT::default();
     unsafe {
@@ -2451,10 +2597,11 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
 
     let screen_x = win_rect.left as f64 + ox + input_x;
     let screen_y = win_rect.top as f64 + oy + input_y + 1.0;
-    let h = PANEL_INPUT_HEIGHT - 1.0;
+    let h = editor_h;
 
     unsafe {
-        // Color key makes the background transparent; alpha matches text to panel opacity
+        // Keep the overlay transparent outside the editor and fade the inset
+        // with the panel.
         let alpha = (state.panel_open_t.get() * PANEL_BG_ALPHA * 255.0) as u8;
         let _ = SetLayeredWindowAttributes(
             container,
@@ -2473,13 +2620,22 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
         let _ = SetWindowPos(
-            edit,
+            label,
             None,
             0,
             0,
             input_w as i32,
-            h as i32,
+            EDIT_LABEL_HEIGHT,
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE,
+        );
+        let _ = SetWindowPos(
+            edit,
+            None,
+            0,
+            EDIT_LABEL_HEIGHT,
+            input_w as i32,
+            (h as i32 - EDIT_LABEL_HEIGHT).max(1),
+            SWP_NOZORDER | SWP_NOACTIVATE,
         );
     }
 
@@ -2488,6 +2644,24 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     let edit_text = get_edit_text();
     if state_text.is_empty() && !edit_text.is_empty() {
         set_edit_text("");
+    }
+    update_edit_label_visibility(state, &get_edit_text());
+}
+
+fn should_show_edit_label(is_review: bool, text: &str) -> bool {
+    is_review || text.is_empty()
+}
+
+fn update_edit_label_visibility(state: &PillState, text: &str) {
+    let is_review = state.assistant_review.borrow().is_some();
+    let label = EDIT_LABEL_HWND.with(Cell::get);
+    unsafe {
+        let command = if should_show_edit_label(is_review, text) {
+            SW_SHOWNOACTIVATE
+        } else {
+            SW_HIDE
+        };
+        let _ = ShowWindow(label, command);
     }
 }
 
@@ -2500,15 +2674,34 @@ fn get_edit_text() -> String {
         }
         let mut buf = vec![0u16; (len + 1) as usize];
         GetWindowTextW(edit, &mut buf);
-        String::from_utf16_lossy(&buf[..len as usize])
+        normalize_edit_text(&String::from_utf16_lossy(&buf[..len as usize]))
     }
+}
+
+fn normalize_edit_text(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn to_edit_control_text(text: &str) -> String {
+    normalize_edit_text(text).replace('\n', "\r\n")
 }
 
 fn set_edit_text(text: &str) {
     let edit = EDIT_HWND.with(|e| e.get());
-    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = to_edit_control_text(text)
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     unsafe {
         let _ = SetWindowTextW(edit, PCWSTR(wide.as_ptr()));
+    }
+}
+
+fn set_edit_accessible_label(text: &str) {
+    let label = EDIT_LABEL_HWND.with(Cell::get);
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let _ = SetWindowTextW(label, PCWSTR(wide.as_ptr()));
     }
 }
 
@@ -2528,6 +2721,57 @@ pub(crate) fn focus_edit_control() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_edit_control_line_endings_round_trip_as_lf() {
+        assert_eq!(
+            to_edit_control_text("first\nsecond\n"),
+            "first\r\nsecond\r\n"
+        );
+        assert_eq!(to_edit_control_text("first\r\nsecond"), "first\r\nsecond");
+        assert_eq!(
+            normalize_edit_text("first\r\nsecond\r\n"),
+            "first\nsecond\n"
+        );
+    }
+
+    #[test]
+    fn composer_prompt_hides_while_typing_and_review_heading_stays_fixed() {
+        assert!(should_show_edit_label(false, ""));
+        assert!(!should_show_edit_label(false, "assistant message"));
+        // The review heading is owned by the fixed native overlay label.
+        assert!(should_show_edit_label(true, "transcript text"));
+    }
+
+    #[test]
+    fn ctrl_backspace_never_crosses_a_line_break() {
+        let text: Vec<u16> = "first\r\n  second".encode_utf16().collect();
+        let line_start = "first\r\n  ".encode_utf16().count();
+        assert_eq!(ctrl_backspace_start(&text, line_start), line_start - 2);
+        assert_eq!(ctrl_backspace_start(&text, text.len()), line_start);
+    }
+
+    #[test]
+    fn ctrl_backspace_deletes_a_selection_without_extending_past_it() {
+        let text: Vec<u16> = "first selected last".encode_utf16().collect();
+        let selection_start = "first ".encode_utf16().count();
+        let selection_end = "first selected".encode_utf16().count();
+
+        assert_eq!(
+            ctrl_backspace_range(&text, selection_start, selection_end),
+            Some((selection_start, selection_end)),
+        );
+        assert_eq!(
+            ctrl_backspace_range(&text, selection_end, selection_start),
+            Some((selection_start, selection_end)),
+        );
+    }
+
+    #[test]
+    fn ctrl_backspace_still_removes_the_previous_word_on_a_line() {
+        let text: Vec<u16> = "first second".encode_utf16().collect();
+        assert_eq!(ctrl_backspace_start(&text, text.len()), 6);
+    }
 
     #[test]
     fn clearing_crossing_deformation_requests_the_final_repaint() {

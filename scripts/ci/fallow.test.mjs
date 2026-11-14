@@ -153,79 +153,134 @@ test("architecture detects a cyclic fixture", (t) => {
   );
 });
 
-// Cycles the consolidated base already had when the recorder-ownership work
-// landed on top of it. They all pass through the `sessions/index.ts` barrel,
-// `utils/user.utils.ts`, or the `agents/index.ts` barrel; breaking them is a
-// separate refactor of that layout, not part of this branch.
-//
-// The gate is "no new cycles": anything observed that is not listed here fails,
-// and an entry is deleted as soon as its cycle is broken. The cycle the
-// recording-ownership modules could have introduced — `native-recording-session.ts`
-// importing `recorded-audio.utils.ts` while that module imported it back — was
-// removed by moving `invokeStopRecording` onto the session module.
-const INHERITED_CYCLES = [
-  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts",
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
-  // The same action-to-session cycle, reported along its other two routes:
-  // `local-transcription-session.ts` calls `transcribeAudio`, and
-  // `prompt.utils.ts` reaches `user.utils.ts` first. Both were hidden while the
-  // shorter route through `types/transcription-session.types.ts` existed, and
-  // surface when that type import moves to a leaf module.
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts",
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts",
-  "apps/desktop/src/sessions/assemblyai-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/azure-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/azure-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/deepgram-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/deepgram-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/elevenlabs-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/elevenlabs-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/gladia-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/gladia-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts",
-  "apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts",
-  "apps/desktop/src/sessions/index.ts -> apps/desktop/src/utils/user.utils.ts",
-  "apps/desktop/src/utils/feature.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/utils/keyboard.utils.ts",
-  "apps/desktop/src/utils/keyboard.utils.ts -> apps/desktop/src/utils/user.utils.ts",
-];
+const cycleSignature = ({ files }) =>
+  files
+    .map((_, index) => [...files.slice(index), ...files.slice(0, index)])
+    .map((cycle) => cycle.join(" -> "))
+    .sort()[0];
 
-const cycleSignature = ({ files }) => files.join(" -> ");
-
-test("the module graph gains no new circular dependencies", () => {
+const architectureCycles = (cwd) => {
   const result = spawnSync(
     fallow,
     ["architecture", "--format", "json", "--quiet"],
     {
-      cwd: root,
+      cwd,
       encoding: "utf8",
       ...(process.platform === "win32" ? { shell: true } : {}),
     },
   );
   assert.ifError(result.error);
-  const observed = (JSON.parse(result.stdout).circular_dependencies ?? []).map(
-    cycleSignature,
+  assert.ok(
+    result.status === 0 || result.status === 1,
+    `Fallow architecture analysis failed with exit code ${result.status}: ${result.stderr}`,
   );
+  const report = JSON.parse(result.stdout);
+  assert.ok(
+    Array.isArray(report.circular_dependencies),
+    "Fallow architecture report must include circular_dependencies",
+  );
+  return report.circular_dependencies.map(cycleSignature);
+};
+
+const resolveBaseSha = () => {
+  const requestedBaseSha = process.env.BASE_SHA;
+  if (requestedBaseSha && !/^0+$/.test(requestedBaseSha)) {
+    const readSha = () =>
+      spawnSync("git", ["rev-parse", "--verify", requestedBaseSha], {
+        cwd: root,
+        encoding: "utf8",
+      });
+    let result = readSha();
+    if (result.status !== 0) {
+      execFileSync(
+        "git",
+        ["fetch", "--depth=1", "--no-tags", "origin", requestedBaseSha],
+        { cwd: root, stdio: "pipe", timeout: 60_000 },
+      );
+      result = readSha();
+    }
+    assert.equal(
+      result.status,
+      0,
+      `could not resolve pushed base ${requestedBaseSha}; the checkout must include it or fetch it`,
+    );
+    return result.stdout.trim();
+  }
+
+  const baseBranch =
+    process.env.GITHUB_BASE_REF || process.env.DEFAULT_BRANCH || "main";
+  const baseRef = `refs/remotes/origin/${baseBranch}`;
+  const readBaseSha = () =>
+    spawnSync("git", ["rev-parse", "--verify", baseRef], {
+      cwd: root,
+      encoding: "utf8",
+    });
+  let result = readBaseSha();
+  if (result.status !== 0) {
+    // The test only needs the target tip for `git archive`; never expand a
+    // shallow checkout into the repository's complete history.
+    execFileSync(
+      "git",
+      [
+        "fetch",
+        "--depth=1",
+        "--no-tags",
+        "origin",
+        `refs/heads/${baseBranch}:${baseRef}`,
+      ],
+      { cwd: root, stdio: "pipe", timeout: 60_000 },
+    );
+    result = readBaseSha();
+  }
+  assert.equal(
+    result.status,
+    0,
+    `could not resolve target branch ${baseRef}; set BASE_SHA explicitly`,
+  );
+  return result.stdout.trim();
+};
+
+test("the module graph gains no new circular dependencies", (t) => {
+  // Compare against the target branch tip, not a hard-coded cycle snapshot.
+  // Long-lived PRs can predate fixes already present on their target branch.
+  const baseSha = resolveBaseSha();
+  const dir = mkdtempSync(resolve(tmpdir(), "mausvoice-fallow-base-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const archive = execFileSync("git", ["archive", baseSha], {
+    cwd: root,
+    maxBuffer: 128 * 1024 * 1024,
+  });
+  execFileSync("tar", ["-xf", "-", "-C", dir], { input: archive });
+  const changedFiles = new Set([
+    ...execFileSync("git", ["diff", "--name-only", baseSha], {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean),
+    ...execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean),
+  ]);
+  const architectureConfigChanged = changedFiles.has(".fallowrc.json");
+  const inherited = new Set(architectureCycles(dir));
+  const observed = architectureCycles(root);
+  // Keep each side's own Fallow config. If this branch changes graph
+  // configuration, compare every cycle; otherwise only cycles touching changed
+  // modules can be introduced by source edits.
   const newCycles = observed.filter(
-    (cycle) => !INHERITED_CYCLES.includes(cycle),
+    (cycle) =>
+      (architectureConfigChanged ||
+        cycle.split(" -> ").some((file) => changedFiles.has(file))) &&
+      !inherited.has(cycle),
   );
   assert.deepEqual(
     newCycles,
     [],
     `new circular dependencies must be broken before merging:\n${newCycles.join("\n")}`,
-  );
-  // A list that only grows stops describing the tree. The entry for a cycle
-  // that has been broken comes out in the commit that breaks it, so a fixed
-  // cycle whose entry is still listed fails here rather than sitting in the
-  // allowlist for good.
-  const fixedCycles = INHERITED_CYCLES.filter(
-    (cycle) => !observed.includes(cycle),
-  );
-  assert.deepEqual(
-    fixedCycles,
-    [],
-    `these listed cycles no longer exist; delete their entries:\n${fixedCycles.join("\n")}`,
   );
 });
 

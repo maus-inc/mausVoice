@@ -103,6 +103,43 @@ const source = Object.fromEntries(
 // One function's body, for the guards that read code rather than the file.
 const scope = (name, marker) => scopeOf(pathOf.get(name), marker);
 
+// The body of one message handler, whichever shape it has.
+//
+// A message used to be a match arm inline in the drain loop, so guards split the
+// file on the arm's pattern and read up to the next variant. Now each message is
+// its own function, and splitting on the arm would read an empty string -- every
+// assertion inside it then fails, or worse, a `doesNotMatch` passes for the wrong
+// reason. This finds the handler for a variant by its `fn on_*` name, then by the
+// arm that dispatches to it.
+const handlerBody = (path, variant) => {
+  // Reads the file itself: `source` is collapsed, and on collapsed text a comment
+  // that names a variant looks the same as the arm that matches it.
+  const text = readRaw(path);
+  const snake = variant.replace(/(?<!^)([A-Z])/g, "_$1").toLowerCase();
+  const fnAt = text.indexOf(`fn on_${snake}(`);
+  if (fnAt !== -1) {
+    const start = text.lastIndexOf("\n", fnAt) + 1;
+    let depth = 0;
+    for (let i = text.indexOf("{", fnAt); i < text.length; i += 1) {
+      if (text[i] === "{") depth += 1;
+      else if (text[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return collapse(text.slice(start, i + 1));
+      }
+    }
+  }
+  // Otherwise an inline arm, found by its own line rather than by substring.
+  const arm = new RegExp(`^ *InMessage::${variant}\\b`);
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => arm.test(line));
+  if (start === -1) return "";
+  const indent = /^ */.exec(lines[start])[0].length;
+  const next = new RegExp(`^ {0,${indent}}InMessage::[A-Z]`);
+  let end = start + 1;
+  while (end < lines.length && !next.test(lines[end])) end += 1;
+  return collapse(lines.slice(start, end).join("\n"));
+};
+
 // The `jobs:` table of a workflow as { name, body } records. A guard that has to
 // prove a secret is inside a guarded job cannot scan the file as one string:
 // the guard and the secret are the same text wherever they both appear.
@@ -1715,9 +1752,7 @@ describe("native gesture adapter contracts", () => {
   ]) {
     it(`cancels ${platform} pointer state rather than rearming a reset drag`, () => {
       const pill = source[`${platform}Pill`];
-      const reset = pill
-        .split("InMessage::ResetPosition { strategy } => {")[1]
-        .split("InMessage::RequestPosition")[0];
+      const reset = handlerBody(pathOf.get(`${platform}Pill`), "ResetPosition");
       for (const field of ["dragging", "pointer_down", "long_press_active"]) {
         assert.ok(reset.includes(`${state}.${field}.set(false)`));
       }
@@ -1900,7 +1935,10 @@ describe("native gesture adapter contracts", () => {
       source.gtkPill,
       /drag_press_offset\.set\(x11::physical_grab_offset/,
     );
-    assert.match(source.gtkPill, /win_press\.scale_factor\(\)/);
+    assert.match(
+      source.gtkPill,
+      /physical_grab_offset\(\(x, y\), window\.scale_factor\(\)\)/,
+    );
     assert.equal(
       (source.gtkX11.match(/state\.drag_press_offset\.get\(\)/g) ?? []).length,
       2,
@@ -2421,9 +2459,16 @@ describe("native pill loading animation behind stage text", () => {
       ["macos", source.macApp],
       ["windows", source.windowsPill],
     ]) {
-      const phaseArm = text
-        .split("InMessage::Phase { phase, seq } => {")[1]
-        .split("InMessage::Levels")[0];
+      const phaseArm = handlerBody(
+        pathOf.get(
+          label === "macos"
+            ? "macPill"
+            : label === "gtk"
+              ? "gtkPill"
+              : "windowsPill",
+        ),
+        "Phase",
+      );
       assert.match(
         phaseArm,
         /if rust_pill_shared::should_clear_stage_text_on_phase\(\s*prev == Phase::Loading,\s*phase == Phase::Idle,\s*phase == Phase::Loading,\s*\) \{\s*\*[\w.]*stage_text\.borrow_mut\(\) = None;\s*\}/,
@@ -2445,9 +2490,16 @@ describe("native pill loading animation behind stage text", () => {
         `${label}: tick must advance loading_offset via rust_pill_shared::advance_loading_offset with dt and reduced_motion()`,
       );
 
-      const stageTextArm = text
-        .split("InMessage::StageText { text } => {")[1]
-        .split("}")[0];
+      const stageTextArm = handlerBody(
+        pathOf.get(
+          label === "macos"
+            ? "macPill"
+            : label === "gtk"
+              ? "gtkPill"
+              : "windowsPill",
+        ),
+        "StageText",
+      );
       assert.match(
         stageTextArm,
         /let stage = rust_pill_shared::active_stage_text\(text\.as_deref\(\)\);\s*\*[\w.]*stage_text\.borrow_mut\(\) = stage\.map\(str::to_owned\);/,

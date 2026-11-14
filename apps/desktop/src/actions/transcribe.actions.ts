@@ -21,7 +21,7 @@ import type {
   PostProcessMetadata,
   TranscribeAudioMetadata,
 } from "../types/transcription-metadata.types";
-import { StopRecordingResponse } from "../types/transcription-session.types";
+import type { StopRecordingResponse } from "../types/recording.types";
 import { resolveProcessedTranscription } from "../utils/ai.utils";
 import { createId } from "../utils/id.utils";
 import {

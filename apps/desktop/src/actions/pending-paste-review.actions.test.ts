@@ -4,13 +4,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const createChatMessageMock = vi.hoisted(() => vi.fn());
 const updateChatMessageMock = vi.hoisted(() => vi.fn());
 const invokeMock = vi.hoisted(() => vi.fn());
+const listChatMessagesMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./chat.actions", () => ({
-  createChatMessage: createChatMessageMock,
-  updateChatMessage: updateChatMessageMock,
+vi.mock("./chat-message.actions", () => ({
+  createChatMessageWithRepo: (_repo: unknown, message: ChatMessage) =>
+    createChatMessageMock(message),
+  updateChatMessageWithRepo: (_repo: unknown, message: ChatMessage) =>
+    updateChatMessageMock(message),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
+vi.mock("../repos/chat-message.repo", () => ({
+  LocalChatMessageRepo: class {
+    listChatMessages = listChatMessagesMock;
+  },
+}));
 
 const { intlFormatMessage } = vi.hoisted(() => ({
   /** Every descriptor the code under test asked the intl layer to format. */
@@ -36,6 +44,8 @@ import {
   copyPendingPasteReview,
   createPendingPasteReview,
   getPendingPasteReview,
+  updatePendingPasteReviewDraft,
+  updatePendingPasteReviewDraftById,
 } from "./pending-paste-review.actions";
 
 /** The Error a call rejected with, so an assertion can read `error.message`. */
@@ -60,6 +70,7 @@ const pendingMessage = (): ChatMessage => ({
     toolCallState: "awaiting-manual-paste",
     text: "edited in the pill",
     status: "pending",
+    draftRevision: 0,
   },
 });
 
@@ -73,6 +84,7 @@ describe("pending Paste reviews", () => {
       Promise.resolve(message),
     );
     invokeMock.mockResolvedValue(undefined);
+    listChatMessagesMock.mockResolvedValue([]);
   });
 
   it("stores the edited text and tool state before the native review closes", async () => {
@@ -92,6 +104,7 @@ describe("pending Paste reviews", () => {
           toolCallState: "awaiting-manual-paste",
           text: "edited in the pill",
           status: "pending",
+          draftRevision: 0,
         },
       }),
     );
@@ -102,6 +115,89 @@ describe("pending Paste reviews", () => {
       }),
     );
   });
+
+  it("uses a caller-provided id so Open retries target the same card", async () => {
+    await createPendingPasteReview(
+      "conversation-1",
+      "saved draft",
+      "stable-review-id",
+    );
+
+    expect(createChatMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "stable-review-id",
+        conversationId: "conversation-1",
+      }),
+    );
+  });
+
+  it("updates an existing pending card when Open is retried with new text", async () => {
+    const message = pendingMessage();
+    const saved = await updatePendingPasteReviewDraft(message, "latest draft");
+
+    expect(updateChatMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: message.id,
+        conversationId: message.conversationId,
+        metadata: expect.objectContaining({
+          text: "latest draft",
+          status: "pending",
+        }),
+      }),
+    );
+    expect(saved.id).toBe(message.id);
+  });
+
+  it("updates a card by its stable id after a create response is lost", async () => {
+    listChatMessagesMock.mockResolvedValue([
+      {
+        ...pendingMessage(),
+        id: "pending-review-1",
+        conversationId: "conversation-1",
+      },
+    ]);
+    await updatePendingPasteReviewDraftById(
+      "conversation-1",
+      "pending-review-1",
+      "latest draft",
+      1,
+    );
+
+    expect(updateChatMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "pending-review-1",
+        conversationId: "conversation-1",
+        metadata: expect.objectContaining({
+          text: "latest draft",
+          status: "pending",
+          draftRevision: 1,
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    ["missing", []],
+    [
+      "owned by another conversation",
+      [{ ...pendingMessage(), conversationId: "other" }],
+    ],
+  ])(
+    "rejects by-id recovery when the card is %s",
+    async (_reason, messages) => {
+      listChatMessagesMock.mockResolvedValue(messages);
+
+      await expect(
+        updatePendingPasteReviewDraftById(
+          "conversation-1",
+          "review-1",
+          "latest draft",
+          1,
+        ),
+      ).rejects.toThrow("This Paste review is no longer pending");
+      expect(updateChatMessageMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("persists the latest edit before copying it for manual paste", async () => {
     const message = pendingMessage();
@@ -128,6 +224,24 @@ describe("pending Paste reviews", () => {
         }),
       }),
     );
+  });
+
+  it("does not copy text when a newer draft won the persistence race", async () => {
+    updateChatMessageMock.mockImplementationOnce((message) =>
+      Promise.resolve({
+        ...message,
+        metadata: {
+          ...message.metadata,
+          text: "newer draft",
+          draftRevision: 2,
+        },
+      }),
+    );
+
+    await expect(
+      copyPendingPasteReview(pendingMessage(), "stale draft"),
+    ).rejects.toThrow("This Paste review is no longer pending");
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("leaves a durable retryable review when copying fails", async () => {
@@ -157,6 +271,36 @@ describe("pending Paste reviews", () => {
         metadata: expect.objectContaining({
           text: "edited again",
           status: "canceled",
+        }),
+      }),
+    );
+  });
+
+  it("retries cancel against a newer stored draft without replacing its text", async () => {
+    updateChatMessageMock
+      .mockImplementationOnce((message) =>
+        Promise.resolve({
+          ...message,
+          metadata: {
+            ...message.metadata,
+            text: "newer draft",
+            status: "pending",
+            draftRevision: 2,
+          },
+        }),
+      )
+      .mockImplementationOnce((message) => Promise.resolve(message));
+
+    await cancelPendingPasteReview(pendingMessage(), "");
+
+    expect(updateChatMessageMock).toHaveBeenCalledTimes(2);
+    expect(updateChatMessageMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          text: "newer draft",
+          status: "canceled",
+          draftRevision: 3,
         }),
       }),
     );

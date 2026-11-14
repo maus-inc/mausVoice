@@ -10,9 +10,12 @@
  *  review eyebrow Satoshi 11 italic white .5, text 14 white .92 ·
  *  hint 11 white .45 · perm title 12 white .82, desc 11 white .5 ·
  *  buttons fill white .08, border white .15, label 11, radius 6 ·
- *  cards fill white .06, border white .12.
+ *  cards fill white .06, border white .12 · review editor is a 128px multiline
+ *  native text surface in the transcript body, scrollable, above fixed actions.
  */
 import { Box } from "@mui/material";
+import { surfaces, onDark } from "@desktop/styles/palette";
+import { hairline } from "@desktop/styles/shadows";
 import { useSpecValue } from "../lib/spec-store";
 
 export type PanelSize = "compact" | "expanded" | "typing";
@@ -80,7 +83,7 @@ export const AssistantPanel = ({
 
   return (
     <Box
-      role="img"
+      role="group"
       aria-label={`Assistant panel — ${size} — ${variant}`}
       sx={{
         width: win.w * scale,
@@ -231,14 +234,26 @@ export const AssistantPanel = ({
                   REVIEW TRANSCRIPT
                 </Box>
                 <Box
+                  component="textarea"
+                  aria-label="Edit transcript before inserting"
+                  defaultValue="Send the quarterly report to Priya by Friday. Please include the revised forecast and the final slide deck."
+                  spellCheck
                   sx={{
-                    fontSize: 14,
-                    lineHeight: "20px",
-                    color: "rgba(255,255,255,0.92)",
+                    display: "block",
+                    boxSizing: "border-box",
+                    width: "100%",
+                    height: 128,
+                    mt: 1,
+                    p: 1.25,
+                    resize: "none",
+                    overflowY: "auto",
+                    borderRadius: 2,
+                    border: hairline.dark(0.14),
+                    backgroundColor: surfaces.dark.level1,
+                    color: onDark(0.94),
+                    font: `14px/20px ${Satoshi}`,
                   }}
-                >
-                  “Send the quarterly report to Priya by Friday.”
-                </Box>
+                />
               </>
             )}
           </Box>
@@ -257,8 +272,8 @@ export const AssistantPanel = ({
                 gap: 1,
               }}
             >
-              <Box sx={{ fontSize: 11, color: "rgba(255,255,255,0.45)" }}>
-                Edit below, then press Enter to insert
+              <Box sx={{ fontSize: 11, color: onDark(0.45) }}>
+                Enter inserts · Shift+Enter for a new line
               </Box>
               <Box sx={{ flex: 1 }} />
               {["Reject", "Accept"].map((label) => (
@@ -308,7 +323,11 @@ export const AssistantPanel = ({
                 flexShrink: 0,
               }}
             />
-            <Box>Type a follow-up…</Box>
+            <Box>
+              {variant === "review"
+                ? "Transcript ready to insert"
+                : "Type a follow-up…"}
+            </Box>
           </Box>
         </Box>
       </Box>

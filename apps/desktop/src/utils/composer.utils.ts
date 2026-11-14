@@ -6,11 +6,19 @@ import { runToast, showToast } from "../actions/toast.actions";
 import { createId } from "./id.utils";
 import { requestPillPosition } from "./native-pill.utils";
 import { getLogger } from "./log.utils";
+import { showDictationReviewExpiredToast } from "./review-recovery.utils";
 
 export type ComposerResult = {
   requestId: string;
   accepted: boolean;
   text: string;
+};
+
+type ComposerReviewOptions = {
+  originalText?: string;
+  source?: "dictation" | "assistant-tool";
+  onExpire?: () => void;
+  onFailure?: () => void;
 };
 
 export type Rect = {
@@ -36,6 +44,7 @@ const COMPOSER_TIMEOUT_MS = 5 * 60 * 1000;
  * safety net for an unresponsive webview.
  */
 const COMPOSER_READY_TIMEOUT_MS = 15_000;
+const COMPOSER_CLOSE_TIMEOUT_MS = 5_000;
 
 // Gap (logical px) kept between the native pill and the composer window so the
 // composer never overlaps the pill.
@@ -217,11 +226,52 @@ export const ensurePillGeometry = async (): Promise<boolean> => {
 /** The slot remains owned until settlement cleanup begins, never by a late setup. */
 let activeComposer: ComposerReview | null = null;
 
-const destroyComposerWindow = async (id: string): Promise<void> => {
-  if (!id) return;
-  await invoke("floating_window_destroy", { id }).catch(() => {
+const notifyReviewExpiry = (options: ComposerReviewOptions): void => {
+  try {
+    options.onExpire?.();
+  } catch (error) {
+    getLogger().warning(`Could not report expired review: ${error}`);
+  }
+};
+
+const notifyAssistantToolRecovery = (
+  options: ComposerReviewOptions,
+  expired = false,
+): void => {
+  try {
+    if (expired) options.onExpire?.();
+    else options.onFailure?.();
+  } catch (error) {
+    getLogger().warning(`Could not report Paste review recovery: ${error}`);
+  }
+
+  const message = expired
+    ? getIntl().formatMessage({
+        defaultMessage:
+          "Paste review expired. Nothing was inserted. Run Paste again to retry.",
+      })
+    : getIntl().formatMessage({
+        defaultMessage:
+          "Could not open the Paste review. Nothing was inserted. Run Paste again to retry.",
+      });
+  runToast(
+    showToast({
+      message,
+      toastType: expired ? "info" : "error",
+      duration: 8000,
+    }),
+  );
+};
+
+const destroyComposerWindow = async (id: string): Promise<boolean> => {
+  if (!id) return true;
+  try {
+    await invoke("floating_window_destroy", { id });
+    return true;
+  } catch {
     // Closing the window manually can win this race.
-  });
+    return false;
+  }
 };
 
 const releaseComposerListener = (dispose: () => void): void => {
@@ -249,6 +299,7 @@ class ComposerReview {
   constructor(
     private readonly text: string,
     private readonly originalText: string,
+    private readonly options: ComposerReviewOptions,
   ) {}
 
   async run(): Promise<string | null> {
@@ -268,12 +319,12 @@ class ComposerReview {
       if (activeComposer === this) activeComposer = null;
       for (const dispose of this.cleanups) releaseComposerListener(dispose);
       this.cleanups.clear();
-      await invoke("composer_discard_text", {
+      void invoke("composer_discard_text", {
         requestId: this.requestId,
       }).catch(() => {
         // The composer may already have consumed the request.
       });
-      await this.destroyWindow();
+      this.destroyWindow();
     }
   }
 
@@ -282,14 +333,14 @@ class ComposerReview {
       getLogger().error(
         "reviewTextInComposer: setup timeout (window creation or listener stalled)",
       );
-      void this.destroyWindow();
+      this.destroyWindow();
       this.showRecovery();
       this.finish(null);
     }, COMPOSER_READY_TIMEOUT_MS);
   }
 
-  private finish(value: string | null): void {
-    if (this.settled) return;
+  private markSettled(): boolean {
+    if (this.settled) return false;
     this.settled = true;
     clearTimeout(this.setupTimer);
     clearTimeout(this.readyTimer);
@@ -297,7 +348,40 @@ class ComposerReview {
     this.setupTimer = undefined;
     this.readyTimer = undefined;
     this.decisionTimer = undefined;
+    return true;
+  }
+
+  private finish(value: string | null): void {
+    if (!this.markSettled()) return;
     this.resolveResult(value);
+  }
+
+  private async finishAccepted(value: string): Promise<void> {
+    if (!this.markSettled()) return;
+
+    const id = this.windowId;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    const closed = await Promise.race([
+      destroyComposerWindow(id),
+      new Promise<boolean>((resolve) => {
+        closeTimer = setTimeout(
+          () => resolve(false),
+          COMPOSER_CLOSE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    clearTimeout(closeTimer);
+
+    if (closed) {
+      this.windowId = "";
+      this.resolveResult(value);
+      return;
+    }
+
+    // Never hand accepted text back for insertion while the composer might
+    // still own focus. The usual `finally` path retries teardown detached.
+    this.showRecovery();
+    this.resolveResult(null);
   }
 
   /** A native registration may complete after the result. Dispose it immediately. */
@@ -353,7 +437,15 @@ class ComposerReview {
     if (
       !(await this.listen<ComposerResult>("composer-result", (payload) => {
         if (payload.requestId !== this.requestId) return;
-        this.finish(payload.accepted ? payload.text : null);
+        if (payload.accepted) {
+          this.finishAccepted(payload.text).catch((error: unknown) => {
+            getLogger().error("Could not close the accepted composer", error);
+            this.showRecovery();
+            this.resolveResult(null);
+          });
+        } else {
+          this.finish(null);
+        }
       }))
     )
       return;
@@ -387,24 +479,37 @@ class ComposerReview {
           "reviewTextInComposer: composer-ready timeout (webview likely blank)",
         );
         // Do not queue destruction behind an unresponsive text-discard IPC.
-        void this.destroyWindow();
+        this.destroyWindow();
         this.showRecovery();
         this.finish(null);
       }, COMPOSER_READY_TIMEOUT_MS);
     }
-    this.decisionTimer = setTimeout(
-      () => this.finish(null),
-      COMPOSER_TIMEOUT_MS,
-    );
+    this.decisionTimer = setTimeout(() => {
+      this.showRecovery(true);
+      this.finish(null);
+    }, COMPOSER_TIMEOUT_MS);
   }
 
-  private async destroyWindow(): Promise<void> {
+  private destroyWindow(): void {
     const id = this.windowId;
     this.windowId = "";
-    await destroyComposerWindow(id);
+    // Window disposal is best-effort; a stuck native IPC must not hold up the
+    // review result after the composer has already timed out or closed.
+    void destroyComposerWindow(id);
   }
 
-  private showRecovery(): void {
+  private showRecovery(expired = false): void {
+    if (this.options.source === "assistant-tool") {
+      notifyAssistantToolRecovery(this.options, expired);
+      return;
+    }
+
+    if (expired) {
+      notifyReviewExpiry(this.options);
+      showDictationReviewExpiredToast();
+      return;
+    }
+
     runToast(
       showToast({
         message: getIntl().formatMessage({
@@ -433,7 +538,7 @@ class ComposerReview {
 /** Review one transcript; resolve edited text or null on cancel/close/failure. */
 export const reviewTextInComposer = async (
   text: string,
-  options?: { originalText?: string },
+  options: ComposerReviewOptions = {},
 ): Promise<string | null> => {
   if (activeComposer) {
     if (activeComposer.windowId) {
@@ -444,9 +549,16 @@ export const reviewTextInComposer = async (
     getLogger().warning(
       "reviewTextInComposer: a composer window is already open; focusing it",
     );
+    if (options.source === "assistant-tool") {
+      notifyAssistantToolRecovery(options);
+    }
     return null;
   }
-  const review = new ComposerReview(text, options?.originalText ?? text);
+  const review = new ComposerReview(
+    text,
+    options.originalText ?? text,
+    options,
+  );
   // Synchronous reservation: two callers cannot both reach native creation.
   activeComposer = review;
   return review.run();

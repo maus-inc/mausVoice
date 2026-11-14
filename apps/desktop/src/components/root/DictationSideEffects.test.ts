@@ -136,13 +136,11 @@ describe("surfacePersistedReviewInHistory", () => {
     surfaceMainWindowMock.mockReset();
     warningMock.mockReset();
     navigateMock.mockResolvedValue(undefined);
-    surfaceMainWindowMock.mockResolvedValue(undefined);
+    surfaceMainWindowMock.mockResolvedValue(true);
   });
 
   it("keeps durable review persistence successful when surfacing the window fails", async () => {
-    surfaceMainWindowMock.mockRejectedValueOnce(
-      new Error("window unavailable"),
-    );
+    surfaceMainWindowMock.mockResolvedValueOnce(false);
 
     await expect(surfacePersistedReviewInHistory()).resolves.toBeUndefined();
 

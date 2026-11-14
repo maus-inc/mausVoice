@@ -4,7 +4,7 @@ import { withLocalDataWriteSync } from "./local-data-write-gate";
 
 const SURFACE_WINDOW_FLAG_KEY = "mausvoice:surface-main-window-on-launch";
 
-let surfaceWindowPromise: Promise<void> | null = null;
+let surfaceWindowPromise: Promise<boolean> | null = null;
 
 const getLocalStorage = (): Storage | null => {
   if (typeof window === "undefined") {
@@ -19,26 +19,28 @@ const getLocalStorage = (): Storage | null => {
   }
 };
 
-export const surfaceMainWindow = async (): Promise<void> => {
+export const surfaceMainWindow = async (): Promise<boolean> => {
   if (!surfaceWindowPromise) {
     surfaceWindowPromise = invoke<void>("surface_main_window")
-      .catch(async (error) => {
+      .then(() => true)
+      .catch((error) => {
         console.error(
           "Failed to surface main window via native command",
           error,
         );
+        return false;
       })
       .finally(() => {
         surfaceWindowPromise = null;
       });
   }
 
-  await surfaceWindowPromise;
+  return surfaceWindowPromise;
 };
 
 /**
  * Fire-and-forget surfacing for synchronous listener bodies that must not
- * wait on the IPC. `surfaceMainWindow` swallows and logs its own failures;
+ * wait on the IPC. `surfaceMainWindow` returns false and logs native failures;
  * the catch here keeps the intentionally detached promise explicit for the
  * floating-promise linters, in one place instead of at every call site.
  */

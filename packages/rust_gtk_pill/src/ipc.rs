@@ -89,6 +89,8 @@ pub struct PillReview {
     /// Translated by the owning desktop webview. Older senders omit these,
     /// so each falls back to the English caption the pill used to hardcode.
     #[serde(default)]
+    pub review_label: Option<String>,
+    #[serde(default)]
     pub edit_label: Option<String>,
     #[serde(default)]
     pub insert_label: Option<String>,
@@ -96,7 +98,7 @@ pub struct PillReview {
     pub copy_label: Option<String>,
     #[serde(default)]
     pub cancel_label: Option<String>,
-    /// The "Edit below, then press Enter to insert" hint above the row.
+    /// The localized editing and multiline-submit hint above the row.
     #[serde(default)]
     pub hint: Option<String>,
 }
@@ -161,6 +163,8 @@ pub enum InMessage {
     AssistantState {
         active: bool,
         input_mode: String,
+        #[serde(default)]
+        type_message_label: Option<String>,
         compact: bool,
         conversation_id: Option<String>,
         user_prompt: Option<String>,
@@ -169,7 +173,7 @@ pub enum InMessage {
         permissions: Vec<PillPermission>,
         /// Transcript awaiting a review decision, if any.
         ///
-        /// Boxed: a review carries five localized captions, which makes this
+        /// Boxed: a review carries several localized fields, which makes this
         /// variant much larger than its neighbours. Boxing keeps the enum at
         /// the size of its largest other field, and a review arrives once per
         /// sync rather than once per frame.
@@ -307,8 +311,9 @@ mod review_localization_tests {
         let legacy: PillReview = serde_json::from_str(r#"{"id":"r1","text":"draft"}"#).unwrap();
         assert!(legacy.edit_label.is_none());
         let localized: PillReview =
-            serde_json::from_str(r#"{"id":"r1","text":"draft","edit_label":"Bearbeiten"}"#)
+            serde_json::from_str(r#"{"id":"r1","text":"draft","review_label":"Transkript prüfen","edit_label":"Bearbeiten"}"#)
                 .unwrap();
+        assert_eq!(localized.review_label.as_deref(), Some("Transkript prüfen"));
         assert_eq!(localized.edit_label.as_deref(), Some("Bearbeiten"));
         assert_eq!(localized.text, "draft");
     }
@@ -319,6 +324,7 @@ mod review_localization_tests {
     #[test]
     fn review_captions_default_to_none_and_accept_every_locale() {
         let legacy: PillReview = serde_json::from_str(r#"{"id":"r1","text":"draft"}"#).unwrap();
+        assert!(legacy.review_label.is_none());
         assert!(legacy.insert_label.is_none());
         assert!(legacy.copy_label.is_none());
         assert!(legacy.cancel_label.is_none());
@@ -328,6 +334,7 @@ mod review_localization_tests {
             r#"{
                 "id":"r1",
                 "text":"draft",
+                "review_label":"Transkript prüfen",
                 "edit_label":"Bearbeiten",
                 "insert_label":"Einfuegen",
                 "copy_label":"Kopieren",
@@ -336,6 +343,7 @@ mod review_localization_tests {
             }"#,
         )
         .unwrap();
+        assert_eq!(localized.review_label.as_deref(), Some("Transkript prüfen"));
         assert_eq!(localized.edit_label.as_deref(), Some("Bearbeiten"));
         assert_eq!(localized.insert_label.as_deref(), Some("Einfuegen"));
         assert_eq!(localized.copy_label.as_deref(), Some("Kopieren"));
@@ -346,7 +354,7 @@ mod review_localization_tests {
         );
     }
 
-    /// The review variant is boxed so a five-caption review does not inflate the
+    /// The review variant is boxed so its captions do not inflate the
     /// whole message enum. This pins the wire shape, because a boxed field
     /// still deserializes from the same flat JSON object.
     #[test]
