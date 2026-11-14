@@ -1935,7 +1935,10 @@ describe("native gesture adapter contracts", () => {
       source.gtkPill,
       /drag_press_offset\.set\(x11::physical_grab_offset/,
     );
-    assert.match(source.gtkPill, /win_press\.scale_factor\(\)/);
+    assert.match(
+      source.gtkPill,
+      /physical_grab_offset\(\(x, y\), window\.scale_factor\(\)\)/,
+    );
     assert.equal(
       (source.gtkX11.match(/state\.drag_press_offset\.get\(\)/g) ?? []).length,
       2,
