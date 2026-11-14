@@ -184,20 +184,17 @@ pub enum InMessage {
         #[serde(default)]
         review: Option<Box<PillReview>>,
     },
-    /// Clears the saved position; `strategy` picks which monitor the pill
-    /// re-homes onto ("current" = the monitor it lives on, "cursor" = the
-    /// monitor under the pointer).
+    /// Clear the stored record and re-home onto the display named by `strategy`;
+    /// the mapping lives in `Anchor::from_reset`.
     ResetPosition {
         #[serde(default)]
         strategy: ResetStrategy,
     },
-    /// Ask the pill to re-publish its current geometry.
-    ///
-    /// The pill only emits `PositionChanged` when the user moves it, so a
-    /// freshly started session has no geometry on the desktop side and
-    /// windows anchored to the pill (the review composer) fall back to the
-    /// OS-centred placement. The desktop asks for the geometry once the
-    /// listener is live instead of waiting for the first drag.
+    /// The clear wiped the row while the pill still held it in memory, so this
+    /// tells the pill to stop calling its current frame saved.
+    ForgetPosition,
+    /// The desktop's geometry is stale after a relaunch; this asks the pill to
+    /// publish it rather than waiting for a drag.
     RequestPosition,
     Quit,
 }
@@ -246,9 +243,8 @@ pub enum OutMessage {
         text: Option<String>,
     },
     PositionChanged {
-        has_saved_position: bool,
-        rect: Option<Rect>,
-        monitor: Option<Rect>,
+        #[serde(flatten)]
+        report: rust_pill_shared::restore::PositionReport<Rect>,
     },
     /// Haptic/audio feedback request for the desktop process.
     /// `kind` values: "press", "deep", "release".

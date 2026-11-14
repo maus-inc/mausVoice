@@ -1,8 +1,6 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{
-    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
-};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Visibility};
 
 use crate::constants::*;
 
@@ -238,15 +236,39 @@ pub(crate) struct PillState {
     pub(crate) selector_placement: RefCell<rust_pill_shared::placement::SelectorPlacement>,
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
-    pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+    /// Stable token of the display the saved position belongs to, or `None` when
+    /// it could not be named. Published with the position so the stored record
+    /// can name the display rather than only its rectangle.
+    pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// When a drop that the display-change hold refused may be written, or `None`
+    /// when no save is owed. The drag controller reports `settled` exactly once,
+    /// so a refused save has to be retried from here or the drop is lost.
+    pub(crate) drag_save_due: Cell<Option<f64>>,
+    /// The window origin the gesture ended at, kept while a guarded save is owed.
+    ///
+    /// The retry runs after a delay, and the pill's own reconciliation can move the
+    /// window in between. `saved_x`/`saved_y` still describe the position from
+    /// before the drop, so they cannot answer where it landed; this can.
+    pub(crate) drop_origin: Cell<Option<(f64, f64)>>,
+    /// Holds position saves until the display layout has been steady, so a frame
+    /// macOS forced during a display change is never stored as the user's
+    /// position. See rust_pill_shared::layout::SaveGuard.
+    pub(crate) save_guard: RefCell<rust_pill_shared::layout::SaveGuard>,
+    /// The display-arrangement signature this pill last reconciled against, and
+    /// when it last looked. `didChangeScreenParameters` is the primary signal;
+    /// the poll covers a notification that arrives while the app is not
+    /// frontmost, which macOS can drop.
+    pub(crate) layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>,
     /// True once the pill has been placed at least once. A brand-new window
     /// sits at (0, 0) before its first layout, so an origin check alone would
     /// mistake a legitimately-placed window for "never positioned" and keep
     /// chasing the cursor; this flag lets the first placement follow the cursor
     /// and then stays put.
     pub(crate) first_placement_done: Cell<bool>,
+    /// Why this pill has no stored position and where a due placement goes.
+    pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
 
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,

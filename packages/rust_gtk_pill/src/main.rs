@@ -32,7 +32,11 @@ fn main() {
         if !is_x11_display {
             if let Ok(exe) = std::env::current_exe() {
                 use std::os::unix::process::CommandExt;
+                // Carry the arguments across, or the re-executed process loses
+                // `--saved-position` and the pill silently re-homes to its
+                // default corner on every launch under XWayland.
                 let err = std::process::Command::new(exe)
+                    .args(std::env::args_os().skip(1))
                     .env("GDK_BACKEND", "x11")
                     .exec();
                 eprintln!("re-exec with GDK_BACKEND=x11 failed ({err}), staying on wayland");
@@ -40,7 +44,11 @@ fn main() {
         }
     }
 
+    // Wayland gives a client no way to query where its surface is, so a stored
+    // position cannot be applied there. The record is still parsed, and the
+    // backend decides whether it can use it.
+    let restored_position = rust_pill_shared::restore::saved_position_from_process_args();
     let (sender, receiver) = std::sync::mpsc::channel();
     ipc::start_stdin_reader(sender);
-    pill::run(receiver);
+    pill::run(receiver, restored_position);
 }

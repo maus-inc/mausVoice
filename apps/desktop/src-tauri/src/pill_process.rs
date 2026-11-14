@@ -220,6 +220,14 @@ pub fn try_spawn_pill(app: &tauri::AppHandle, pill_path: &std::path::Path) -> bo
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
 
+    // The position the user left the pill at, handed over before the first
+    // frame. The line protocol on stdin is only read once the window exists, so
+    // an argument is the only way to place the window correctly rather than
+    // moving it after the user has already seen it in the default corner.
+    if let Some(argument) = crate::pill_position::saved_position_argument(app) {
+        command.arg(argument);
+    }
+
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -377,7 +385,31 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Tell the pill to stop treating its current spot as saved, without moving it.
+///
+/// Sent after a local-data clear wipes the stored row. The pill keeps the
+/// position it is sitting at in memory, and the reloaded window asks for it, so
+/// without this the row is written straight back.
+pub fn notify_forget_position(app: &tauri::AppHandle) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<PillProcess>>() {
+        Some(pill) => pill
+            .send(r#"{"type":"forget_position"}"#)
+            .map_err(|err| format!("failed to forget the pill position: {err}")),
+        None => Err("Pill position forgotten with no managed pill process".to_string()),
+    }
+}
+
 pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
+    // The stored record is what the next launch restores, so a reset has to
+    // forget it before it tells the pill to re-home. Otherwise the pill moves
+    // back to the default corner now and returns to the old spot next launch.
+    //
+    // A reset that reports success while the row survives is the failure this
+    // guards: the window moves, the user sees it move, and the next launch
+    // undoes it. Failing leaves the pill where it is, which is recoverable.
+    if !crate::pill_position::clear_saved_position(app) {
+        return Err("Could not clear the pill's stored position, so it was not reset".to_string());
+    }
     match app.try_state::<std::sync::Arc<PillProcess>>() {
         Some(pill) => {
             let msg = format!(r#"{{"type":"reset_position","strategy":"{strategy}"}}"#);
@@ -531,6 +563,10 @@ pub(crate) enum PillEvent {
         has_saved_position: bool,
         rect: Option<serde_json::Value>,
         monitor: Option<serde_json::Value>,
+        /// The pill's stable token for the display it is parked on, when it could
+        /// name one. Carried through to the stored record so the next launch can
+        /// recognise that display rather than only its rectangle.
+        display_id: Option<u64>,
     },
 }
 
@@ -734,10 +770,15 @@ pub(crate) fn parse_pill_event(line: &str) -> Option<PillEvent> {
                 .unwrap_or(false);
             let rect = val.get("rect").cloned().filter(|v| v.is_object());
             let monitor = val.get("monitor").cloned().filter(|v| v.is_object());
+            // A token that is not a number is treated as absent rather than
+            // guessed at: an unnamed display falls back to geometry, which is
+            // what every build before this one did.
+            let display_id = val.get("display_id").and_then(|v| v.as_u64());
             Some(PillEvent::PositionChanged {
                 has_saved_position,
                 rect,
                 monitor,
+                display_id,
             })
         }
         _ => None,
@@ -816,7 +857,23 @@ fn dispatch_pill_event(app: &tauri::AppHandle, event: PillEvent) {
             has_saved_position,
             rect,
             monitor,
+            display_id,
         } => {
+            // Every report is accounted for before it is acted on, including the
+            // ones that carry nothing: a clear is declared by the pill's answer that
+            // the record is gone, and that answer is a `has_saved_position: false`
+            // report. Reading only the saves would never see it, and the erase would
+            // stay undeclared for the rest of the process.
+            let storable = crate::pill_position::note_report(has_saved_position);
+            // Only a geometry the pill considers saved describes where the user
+            // left it. A reset publishes `has_saved_position: false` with the
+            // default corner it just moved to, and storing that would undo the
+            // reset on the next launch.
+            if storable && has_saved_position {
+                if let (Some(rect), Some(monitor)) = (rect.as_ref(), monitor.as_ref()) {
+                    crate::pill_position::store_published_position(app, rect, monitor, display_id);
+                }
+            }
             let payload = serde_json::json!({
                 "hasSavedPosition": has_saved_position,
                 "rect": rect,

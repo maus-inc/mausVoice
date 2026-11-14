@@ -120,8 +120,8 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
         let panel_bottom = wh - PANEL_BOTTOM_MARGIN;
         panel_bottom - PILL_BOTTOM_INSET - base_h
     } else {
-        // Collapsed: hug the bottom (4px); expanded: rise to centered position
-        let collapsed_bottom = 4.0;
+        // Collapsed: hug the bottom; expanded: rise to the centered position
+        let collapsed_bottom = COLLAPSED_BOTTOM_INSET;
         let expanded_bottom = (PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0;
         let bottom_offset = lerp(collapsed_bottom, expanded_bottom, expand_t);
         wh - bottom_offset - base_h

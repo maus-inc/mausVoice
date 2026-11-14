@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -23,6 +23,7 @@ use crate::nsstring::with_ns_string;
 use rust_pill_shared::clock::monotonic_now as drag_now;
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
+use rust_pill_shared::restore::ParkedWindow;
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -53,9 +54,78 @@ unsafe fn screens() -> id {
     msg_send![class!(NSScreen), screens]
 }
 
+/// A display's UUID, which CoreFoundation owns until it is released.
+type CFUUIDRef = *mut c_void;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGDisplayCreateUUIDFromDisplayID(display: u32) -> CFUUIDRef;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFUUIDCreateString(allocator: *const c_void, uuid: CFUUIDRef) -> id;
+    fn CFRelease(value: *const c_void);
+}
+
 /// Returns the visible frame of a screen.
 unsafe fn screen_visible_frame(screen: id) -> NSRect {
     msg_send![screen, visibleFrame]
+}
+
+/// The stable token of a screen, or `None` when it cannot be named.
+///
+/// `NSScreen`'s device description carries an `NSScreenNumber`, which is a
+/// `CGDirectDisplayID`. That id is only stable for the life of the display's
+/// connection: it changes across reboots, when a panel is replugged, and when
+/// the arrangement changes enough for the window server to renumber. Storing it
+/// would make a saved position unrecognisable after a restart, which is the
+/// exact case the record exists for.
+///
+/// `CGDisplayCreateUUIDFromDisplayID` gives the display's UUID, which macOS
+/// keeps for the physical panel, so the same monitor is recognised across
+/// reconnects and reboots. The UUID is released after it is read; only its
+/// string form matters here, and that is immediately reduced to a token.
+unsafe fn screen_display_id(screen: id) -> Option<u64> {
+    let description: id = msg_send![screen, deviceDescription];
+    if description.is_null() {
+        return None;
+    }
+    let number: id = msg_send![description, objectForKey: ns_string("NSScreenNumber")];
+    if number.is_null() {
+        return None;
+    }
+    let display: u32 = msg_send![number, unsignedIntValue];
+    let uuid = CGDisplayCreateUUIDFromDisplayID(display);
+    if uuid.is_null() {
+        return None;
+    }
+    let uuid_string: id = CFUUIDCreateString(std::ptr::null(), uuid);
+    CFRelease(uuid as *const c_void);
+    if uuid_string.is_null() {
+        return None;
+    }
+    let utf8: *const c_char = msg_send![uuid_string, UTF8String];
+    let name = if utf8.is_null() {
+        None
+    } else {
+        std::ffi::CStr::from_ptr(utf8)
+            .to_str()
+            .ok()
+            .map(str::to_string)
+    };
+    CFRelease(uuid_string as *const c_void);
+    name.and_then(|name| rust_pill_shared::layout::display_identity(&name))
+}
+
+/// A static `NSString` for a literal key, which is how an `NSDictionary` lookup
+/// has to be spelled when the key is not already an `id`.
+unsafe fn ns_string(value: &str) -> id {
+    let string: id = msg_send![class!(NSString), alloc];
+    let string: id =
+        msg_send![string, initWithBytes:value.as_ptr() length:value.len() encoding:4u64];
+    let _: id = msg_send![string, autorelease];
+    string
 }
 
 /// Converts an AppKit (bottom-left origin, y-up) rectangle into the top-left,
@@ -272,6 +342,60 @@ fn register_pill_window_class() -> &'static Class {
     decl.register()
 }
 
+/// Registers the object that listens for a screen-parameter change.
+///
+/// macOS has no per-window notification for "the displays changed". It posts
+/// `NSApplicationDidChangeScreenParametersNotification` on the default
+/// notification centre, and a response is required: when a display sleeps,
+/// disconnects, changes resolution or changes scale, AppKit relocates the
+/// windows it thinks no longer fit, and nothing tells the window whether the
+/// move was its or the user's. Without an observer the pill is left wherever
+/// AppKit put it, and its next save stores that instead of the place the user
+/// chose.
+fn register_screen_observer_class() -> &'static Class {
+    if let Some(known) = Class::get("MausVoiceScreenObserver") {
+        return known;
+    }
+    let superclass = Class::get("NSObject").unwrap();
+    let mut decl = ClassDecl::new("MausVoiceScreenObserver", superclass).unwrap();
+    // SAFETY: the selector and the trampoline agree on the signature
+    // `(self, _cmd, NSNotification *)`, which is what the notification centre
+    // sends.
+    unsafe {
+        decl.add_method(
+            sel!(screenParametersChanged:),
+            screen_parameters_changed as extern "C" fn(&Object, Sel, id),
+        );
+    }
+    decl.register()
+}
+
+/// `NSApplicationDidChangeScreenParametersNotification` handler.
+///
+/// Runs on the main thread, synchronously with the notification, which is the
+/// only point at which the new display list is guaranteed to be readable.
+extern "C" fn screen_parameters_changed(_this: &Object, _sel: Sel, _notification: id) {
+    with_ctx(|ctx| unsafe {
+        reconcile_display_layout(ctx.window, &ctx.state);
+    });
+}
+
+/// Start observing screen-parameter changes. The observer is never removed: the
+/// pill owns it for the life of the process, and the notification centre holds it
+/// weakly enough that a leaked registration cannot outlive the app.
+unsafe fn observe_screen_parameters() {
+    let observer_class = register_screen_observer_class();
+    let observer: id = msg_send![observer_class, new];
+    let center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
+    let name: id = ns_string("NSApplicationDidChangeScreenParametersNotification");
+    let _: () = msg_send![center,
+        addObserver:observer
+        selector:sel!(screenParametersChanged:)
+        name:name
+        object:nil
+    ];
+}
+
 // ── ObjC method implementations ──────────────────────────────────
 
 extern "C" fn is_flipped(_this: &Object, _sel: Sel) -> BOOL {
@@ -312,6 +436,10 @@ extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
                 ctx.state.long_press_elapsed.set(0.0);
                 ctx.state.long_press_start_x.set(view_loc.x);
                 ctx.state.long_press_start_y.set(view_loc.y);
+                // A display change while this gesture is live makes the drop
+                // suspect, so the guard has to know a drag is in flight before the
+                // change arrives rather than afterwards.
+                ctx.state.save_guard.borrow_mut().drag_started();
             }
         }
     });
@@ -739,24 +867,65 @@ fn perform_tick() {
                     ctx.state.long_press_elapsed.set(0.0);
                     ctx.state.drag_cancelled.set(true);
                     ctx.state.has_saved_position.set(false);
+                    ctx.state.saved_display_id.set(None);
+                    // A save still owed from the cancelled gesture would publish the
+                    // pre-reset origin once the guard expires, recreating the row the
+                    // reset just dropped -- the same hazard the other two pills clear
+                    // here.
+                    ctx.state.drag_save_due.set(None);
                     ctx.state.drag_motion.borrow_mut().reset();
                     ctx.state.selector_placement.borrow_mut().reset();
                     ctx.state.crossing.borrow_mut().reset();
-                    ctx.state.reset_strategy.set(strategy);
+                    ctx.state
+                        .anchor
+                        .set(rust_pill_shared::layout::Anchor::from_reset(
+                            strategy == ResetStrategy::Cursor,
+                        ));
                     reposition_window(ctx.window, &ctx.state, dt, now);
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: false,
-                        rect: Some(rect),
-                        monitor: Some(monitor),
+                        report: rust_pill_shared::restore::PositionReport::new(
+                            false,
+                            Some(rect),
+                            Some(monitor),
+                            None,
+                        ),
                     });
+                }
+                InMessage::ForgetPosition => {
+                    // A drag still held, or a settle that has not finished, would
+                    // reach `persist_drag_position` on a later frame and publish a
+                    // saved position again -- recreating the row the clear just
+                    // deleted. Cancel the gesture first, the same as the other two
+                    // pills; a drag started after the clear still saves normally.
+                    ctx.state.dragging.set(false);
+                    ctx.state.pointer_down.set(false);
+                    ctx.state.long_press_active.set(false);
+                    ctx.state.drag_cancelled.set(true);
+                    ctx.state.drag_motion.borrow_mut().reset();
+                    // Stop treating where the pill is sitting as the saved position.
+                    // Local data was just cleared, and the next `RequestPosition`
+                    // republishes this flag, so leaving it set would write the row back.
+                    ctx.state.has_saved_position.set(false);
+                    ctx.state.saved_display_id.set(None);
+                    // A clear drops the record without moving the window, and it also
+                    // cancels any placement still owed: a pill the user has been
+                    // looking at must not follow the pointer because a database was
+                    // wiped.
+                    ctx.state.drag_save_due.set(None);
+                    ctx.state
+                        .anchor
+                        .set(rust_pill_shared::layout::Anchor::from_forget());
                 }
                 InMessage::RequestPosition => {
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: ctx.state.has_saved_position.get(),
-                        rect: Some(rect),
-                        monitor: Some(monitor),
+                        report: rust_pill_shared::restore::PositionReport::new(
+                            ctx.state.has_saved_position.get(),
+                            Some(rect),
+                            Some(monitor),
+                            ctx.state.saved_display_id.get(),
+                        ),
                     });
                 }
                 InMessage::Quit => {
@@ -824,6 +993,14 @@ fn perform_tick() {
             }
         }
 
+        // The notification is the primary signal, but macOS can drop it while the
+        // app is not frontmost, and a screen that sleeps and wakes within one run
+        // loop turn can produce no notification at all. A cheap signature of the
+        // arrangement catches what the notification misses, only later.
+        unsafe {
+            poll_display_layout(ctx.window, &ctx.state, now);
+        }
+
         // Reposition window: follow cursor when dragging, auto-center otherwise
         reposition_window(ctx.window, &ctx.state, dt, now);
         // Reset/rehome must finish before the detector seeds its next sample.
@@ -861,22 +1038,97 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
     state.pointer_down.set(false);
 }
 
-/// Retains the settled position for this pill instance: stores the live
-/// window origin (not the cursor) and tells the desktop, so the saved point
-/// matches the parked pill exactly. This is not durable storage: setup starts
-/// unsaved, and the desktop caches geometry only for composer placement.
-/// Any future cross-launch restore must record the coordinate schema/canvas
-/// height rather than interpreting an older host origin in a resized canvas.
+/// Retains the settled position and tells the desktop, which stores it so the
+/// next launch can restore it.
+///
+/// The live window origin (not the cursor) is what is kept, so the saved point
+/// matches where the pill landed. The state copy stays in Cocoa's bottom-left
+/// space for this process's own placement, while the record the desktop stores
+/// is the published top-down rect, so save and restore use one space.
 fn persist_drag_position(state: &PillState, window: id) {
-    let frame = unsafe { window_frame(window) };
-    state.saved_x.set(frame.origin.x);
-    state.saved_y.set(frame.origin.y);
+    let now = drag_now();
+    // The drop is recorded exactly here, once per gesture. Retries must not come
+    // through this function: `drag_ended` is what starts the drag hold, so a retry
+    // that called it would push the hold's start forward on every frame and the
+    // hold would never expire.
+    state.save_guard.borrow_mut().drag_ended(now);
+    write_drag_position(state, window, now);
+}
+
+/// Write a drop the guard has allowed, without re-recording when it landed.
+///
+/// This is the retry path. It only asks whether the holds have passed; the drop
+/// time it is measured against was set once, by the release.
+fn write_drag_position(state: &PillState, window: id, now: f64) {
+    // Read before the save is attempted: a successful save clears it.
+    let due = state.save_guard.borrow().save_due_at(now);
+    if !state.save_guard.borrow().allows_save(now) {
+        // The layout changed under this drag, so the frame it ended on is one
+        // AppKit chose. Storing it would replace the position the user actually
+        // picked with the one macOS improvised, and afterwards the two are
+        // indistinguishable.
+        //
+        // The drop is still the user's, and the controller reports `settled` only
+        // once, so the deadline is what keeps it from being lost.
+        //
+        // The origin is recorded now, while it is still the drop. Waiting for the
+        // retry would read whatever the window had been moved to by then, and the
+        // drop this deadline exists to protect would be replaced by the idle
+        // placement it was parked at.
+        // Recorded here so the retry cannot read a different one: between the
+        // refusal and the retry the window can be moved by something that is not
+        // the user, and the drop this deadline exists to protect would be replaced
+        // by wherever it ended up.
+        let frame = unsafe { window_frame(window) };
+        state
+            .drop_origin
+            .set(Some((frame.origin.x, frame.origin.y)));
+        state.drag_save_due.set(due);
+        return;
+    }
+    // The recorded drop wins over the live frame, for the same reason: a retry
+    // runs after a delay, and the pill's own reconciliation can have moved the
+    // window in between. Consumed so a later gesture cannot inherit a stale one.
+    let origin = match state.drop_origin.take() {
+        Some(origin) => origin,
+        None => {
+            let frame = unsafe { window_frame(window) };
+            (frame.origin.x, frame.origin.y)
+        }
+    };
+    state.saved_x.set(origin.0);
+    state.saved_y.set(origin.1);
     state.has_saved_position.set(true);
-    let (rect, monitor) = unsafe { pill_geometry(window) };
+    // The pending drop has been recorded, so no retry is owed.
+    state.drag_save_due.set(None);
+    // Name the display from the drop point, not from the window: the window is not
+    // necessarily there any more, and the record is what the next launch restores.
+    // A nameless result stays nameless and matches by geometry.
+    let display_id = unsafe {
+        let screen: id = msg_send![window, screen];
+        if screen.is_null() {
+            None
+        } else {
+            screen_display_id(screen)
+        }
+    };
+    state.saved_display_id.set(display_id);
+    // The report carries the drop too. `pill_geometry` reads the live window, so
+    // using it here would store a rectangle from a different place than
+    // `saved_x`/`saved_y` in the same call -- and the desktop keeps the rectangle.
+    let (live_rect, monitor) = unsafe { pill_geometry(window) };
+    let reported = Rect {
+        x: origin.0,
+        y: origin.1,
+        ..live_rect
+    };
     ipc::send(&OutMessage::PositionChanged {
-        has_saved_position: true,
-        rect: Some(rect),
-        monitor: Some(monitor),
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            Some(reported),
+            Some(monitor),
+            display_id,
+        ),
     });
 }
 
@@ -954,12 +1206,12 @@ fn clear_flash(state: &PillState) {
 }
 
 fn ns_rect_to_monitor_rect(frame: NSRect) -> rust_pill_shared::edge::MonitorRect {
-    rust_pill_shared::edge::MonitorRect {
-        x: frame.origin.x,
-        y: frame.origin.y,
-        width: frame.size.width,
-        height: frame.size.height,
-    }
+    rust_pill_shared::edge::MonitorRect::without_id(
+        frame.origin.x,
+        frame.origin.y,
+        frame.size.width,
+        frame.size.height,
+    )
 }
 
 fn crossing_identity(
@@ -1571,6 +1823,11 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         // Enter drag mode directly (skip balloon pop for snappy interaction).
         state.dragging.set(true);
         state.drag_cancelled.set(false);
+        // A save still owed from the previous gesture belongs to a drop the user
+        // has already made. Left armed, the frame loop's retry would fire during
+        // this drag and store the window while it is moving -- a position nobody
+        // chose. This gesture will produce its own drop.
+        state.drag_save_due.set(None);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
         state.arm_pulse.set(rust_pill_shared::pulse_armed());
 
@@ -1637,6 +1894,120 @@ fn tick_ring(state: &PillState, dt: f64) {
 
 // ── Window positioning ────────────────────────────────────────────
 
+/// The per-frame facts an anchor decision reads, gathered once.
+///
+/// `reposition_window` used to inline the anchor choice as a four-armed
+/// `if`-chain, which Sonar read as 34 cognitive complexity against a limit of 30.
+/// The chain was not the problem — the placement rules are genuinely conditional —
+/// so the arms move here, named, rather than being flattened into a lookup.
+struct AnchorContext {
+    dragging: bool,
+    follows_pointer: bool,
+    reset_placement: bool,
+    anchor: rust_pill_shared::layout::Anchor,
+    mouse: (f64, f64),
+    win_origin: (f64, f64),
+}
+
+/// Where this frame's placement is anchored, in Cocoa global points.
+///
+/// Order matters and is the same order the documentation in `reposition_window`
+/// gives: a held or settling drag owns the window, then a reset the user asked
+/// for, then the saved position, then where the window already sits.
+fn choose_anchor(
+    state: &PillState,
+    context: &AnchorContext,
+    footprint_center: impl Fn(f64, f64) -> (f64, f64),
+) -> (f64, f64) {
+    if context.follows_pointer {
+        return state
+            .drag_motion
+            .borrow()
+            .monitor_anchor(context.mouse, context.dragging);
+    }
+    // A cleared pill never reaches here: the caller returns before placement, so
+    // this branch only serves a reset that named the pointer.
+    if context.reset_placement && context.anchor.follows_pointer() {
+        return context.mouse;
+    }
+    if state.has_saved_position.get() {
+        return footprint_center(state.saved_x.get(), state.saved_y.get());
+    }
+    footprint_center(context.win_origin.0, context.win_origin.1)
+}
+
+/// Resolve one screen into the visible frame, drag region and edge mask.
+///
+/// Both the matched-screen path and the disappeared-display fallback call this,
+/// so the fallback cannot answer a different question from the fast path — which
+/// is what it did while the two blocks were written out separately.
+fn resolve_placement(
+    state: &PillState,
+    screen: id,
+    frame: NSRect,
+    monitor_frames: &[rust_pill_shared::edge::MonitorRect],
+    seam_point: (f64, f64),
+    dragging: bool,
+) -> (
+    NSRect,
+    rust_pill_shared::edge::MonitorRect,
+    rust_pill_shared::edge::EdgeMask,
+) {
+    unsafe {
+        let visible = screen_visible_frame(screen);
+        let full = ns_rect_to_monitor_rect(frame);
+        let work_area = ns_rect_to_monitor_rect(visible);
+        let region = if dragging {
+            state.drag_motion.borrow_mut().resolve_drag_region(
+                full,
+                work_area,
+                monitor_frames,
+                seam_point,
+            )
+        } else {
+            rust_pill_shared::edge::drag_region(full, work_area, monitor_frames, seam_point)
+        };
+        (visible, region.bounds, region.edge_mask)
+    }
+}
+
+/// The drag bounds for this frame.
+///
+/// In dictation mode the OS window is a fixed transparent canvas, so the clamp
+/// has to apply to the visible pill footprint rather than to the canvas.
+fn clamp_bounds(
+    state: &PillState,
+    clamp_frame: rust_pill_shared::edge::MonitorRect,
+    footprint: (f64, f64, f64, f64),
+    win: (f64, f64),
+) -> DragBounds {
+    let (fx, fy, pw, ph) = footprint;
+    let (win_w, win_h) = win;
+    let (min_x, min_y, max_x, max_y) = if state.effective_window_mode() == WindowMode::Dictation
+        && !state.assistant_active.get()
+    {
+        (
+            clamp_frame.x - fx,
+            clamp_frame.y - win_h + fy + ph,
+            clamp_frame.right() - fx - pw,
+            clamp_frame.bottom() - win_h + fy,
+        )
+    } else {
+        (
+            clamp_frame.x,
+            clamp_frame.y,
+            clamp_frame.right() - win_w,
+            clamp_frame.bottom() - win_h,
+        )
+    };
+    DragBounds {
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+    }
+}
+
 fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
     unsafe {
         let mouse_loc = mouse_location();
@@ -1654,10 +2025,27 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         // pointer crossed a screen edge.
         let dragging = state.dragging.get();
         let settling = state.drag_motion.borrow().is_settling();
-        // The pill's first placement (before any saved position) should follow
-        // the cursor's screen once; afterwards it stays put even if it happens
-        // to sit at (0, 0), so a legitimately-placed window is never chased.
-        let first_placement = !state.first_placement_done.get();
+        // One question, answered in one place: is this pill due a placement, and
+        // does that placement follow the pointer? The shared model owns both
+        // halves so the three pills cannot answer differently.
+        let anchor = if state.has_saved_position.get() {
+            rust_pill_shared::layout::Anchor::Saved
+        } else {
+            state.anchor.get()
+        };
+        // A reset is a placement the user asked for, so it is due even though the
+        // pill has already been placed once in this process. Only an initial launch
+        // is one-shot; the anchor's variant is what makes a reset follow the
+        // pointer, and demoting it is what stops the pill being chased.
+        // A launch placement happens once per process; a reset is due every time it
+        // is asked for. `first_placement_done` is only that one-shot latch.
+        let first_placement = anchor == rust_pill_shared::layout::Anchor::LaunchAtCursor
+            && !state.first_placement_done.get();
+        let reset_placement = matches!(
+            anchor,
+            rust_pill_shared::layout::Anchor::ResetAtCursor
+                | rust_pill_shared::layout::Anchor::ResetAtCurrent
+        );
         let (px, py, pw, ph) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
@@ -1667,31 +2055,35 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let footprint_center = |origin_x: f64, origin_y: f64| {
             (origin_x + fx + pw / 2.0, origin_y + win_h - fy - ph / 2.0)
         };
-        // A reset with the "cursor" strategy re-homes onto the screen under
-        // the pointer exactly once; the strategy is consumed so later ticks
-        // keep the pill where it landed instead of chasing the cursor.
-        let reset_to_cursor =
-            !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
-        let (anchor_x, anchor_y) =
-            if dragging || settling || (!state.has_saved_position.get() && first_placement) {
-                // First placement at the cursor: mark it done so subsequent ticks
-                // keep the window where it landed instead of re-chasing the cursor.
-                if !dragging && !settling && !state.has_saved_position.get() {
-                    state.first_placement_done.set(true);
-                    state.reset_strategy.set(ResetStrategy::Current);
-                }
-                state
-                    .drag_motion
-                    .borrow()
-                    .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
-            } else if reset_to_cursor {
-                state.reset_strategy.set(ResetStrategy::Current);
-                (mouse_loc.x, mouse_loc.y)
-            } else if state.has_saved_position.get() {
-                footprint_center(state.saved_x.get(), state.saved_y.get())
-            } else {
-                footprint_center(win_frame.origin.x, win_frame.origin.y)
-            };
+        // Three placements, in priority order, and they are not the same thing:
+        //
+        //   * a held or settling drag owns the window and follows the pointer;
+        //   * a first placement happens once per process and follows the pointer;
+        //   * a reset the user asked for is due a placement even though one has
+        //     already happened, and follows the pointer only when it asked to.
+        //
+        // Only the first two are one-shot. A reset must not be, or the pill the
+        // user just asked to re-home stays exactly where it was, and a first
+        // placement must be, or it chases the pointer forever.
+        let follows_pointer = dragging || settling || first_placement;
+        // A first placement is consumed here rather than earlier, so a frame that
+        // bails out before `choose_anchor` cannot spend the one-shot. Demoting the
+        // anchor is what stops later ticks chasing the pointer.
+        if follows_pointer && first_placement {
+            state.first_placement_done.set(true);
+            state
+                .anchor
+                .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
+        }
+        let context = AnchorContext {
+            dragging,
+            follows_pointer,
+            reset_placement,
+            anchor,
+            mouse: (mouse_loc.x, mouse_loc.y),
+            win_origin: (win_frame.origin.x, win_frame.origin.y),
+        };
+        let (anchor_x, anchor_y) = choose_anchor(state, &context, footprint_center);
 
         // Resolve monitor bounds in Cocoa's global point space. A connected
         // neighbor opens only its shared edge; the visible frame remains the
@@ -1703,11 +2095,8 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 ns_rect_to_monitor_rect(frame)
             })
             .collect();
-        let mut chosen: Option<(
-            NSRect,
-            rust_pill_shared::edge::MonitorRect,
-            rust_pill_shared::edge::EdgeMask,
-        )> = None;
+        let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
+        let mut chosen = None;
         for i in 0..count {
             let screen: id = msg_send![screens, objectAtIndex:i];
             let frame: NSRect = msg_send![screen, frame];
@@ -1716,60 +2105,39 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 && anchor_y >= frame.origin.y
                 && anchor_y < frame.origin.y + frame.size.height
             {
-                let visible = screen_visible_frame(screen);
-                let full = ns_rect_to_monitor_rect(frame);
-                let work_area = ns_rect_to_monitor_rect(visible);
-                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
-                let region = if dragging {
-                    state.drag_motion.borrow_mut().resolve_drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                } else {
-                    rust_pill_shared::edge::drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                };
-                chosen = Some((visible, region.bounds, region.edge_mask));
+                chosen = Some((screen, frame));
                 break;
             }
         }
 
         // If a display disappears mid-drag, retain the primary screen's safe
-        // visible frame rather than freezing at stale coordinates.
-        let (visible, drag_region, edge_mask) = match chosen {
-            Some(resolved) => resolved,
-            None if count > 0 => {
+        // visible frame rather than freezing at stale coordinates. The same
+        // resolution serves both, so the fallback cannot drift from it.
+        let target = chosen.or_else(|| {
+            (count > 0).then(|| {
                 let primary: id = msg_send![screens, objectAtIndex:0usize];
                 let frame: NSRect = msg_send![primary, frame];
-                let visible = screen_visible_frame(primary);
-                let full = ns_rect_to_monitor_rect(frame);
-                let work_area = ns_rect_to_monitor_rect(visible);
-                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
-                let region = if dragging {
-                    state.drag_motion.borrow_mut().resolve_drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                } else {
-                    rust_pill_shared::edge::drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                };
-                (visible, region.bounds, region.edge_mask)
-            }
-            None => return,
+                (primary, frame)
+            })
+        });
+        let Some((screen, frame)) = target else {
+            return;
         };
+        // A cursor-reset is spent by being carried out, on the same rule as the
+        // launch placement above but without touching its one-shot latch: left as
+        // `ResetAtCursor`, every later tick reads "follow the pointer" again and
+        // the pill hops to whichever display the cursor crosses onto.
+        //
+        // Spent here, after a target exists and not before. `screens()` can return
+        // nothing -- a lid closing, every display asleep -- and this returns without
+        // placing anything above. Spending it there would turn a reset that never
+        // happened into one that can never happen: when the displays come back the
+        // pill would stay on the old one, having quietly spent the request.
+        if reset_placement {
+            state.anchor.set(state.anchor.get().after_placement());
+        }
+        let (visible, drag_region, edge_mask) =
+            resolve_placement(state, screen, frame, &monitor_frames, seam_point, dragging);
 
         // Keep the work-area clamp on exposed sides, but use the full display
         // edge on shared seams so the grab point can cross without resistance.
@@ -1781,34 +2149,13 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 y: visible.origin.y,
                 width: visible.size.width,
                 height: visible.size.height,
+                id: None,
             }
         };
         // The OS window is a fixed transparent canvas; clamp the visible pill
         // footprint in dictation mode so transparent canvas margins do not
         // box the pill away from the actual screen edge.
-        let (min_x, min_y, max_x, max_y) = if state.effective_window_mode() == WindowMode::Dictation
-            && !state.assistant_active.get()
-        {
-            (
-                clamp_frame.x - fx,
-                clamp_frame.y - win_h + fy + ph,
-                clamp_frame.right() - fx - pw,
-                clamp_frame.bottom() - win_h + fy,
-            )
-        } else {
-            (
-                clamp_frame.x,
-                clamp_frame.y,
-                clamp_frame.right() - win_w,
-                clamp_frame.bottom() - win_h,
-            )
-        };
-        let mut bounds = DragBounds {
-            min_x,
-            min_y,
-            max_x,
-            max_y,
-        };
+        let mut bounds = clamp_bounds(state, clamp_frame, (fx, fy, pw, ph), (win_w, win_h));
         if dragging {
             bounds.apply_shared_seam_bounds(
                 drag_region,
@@ -1824,52 +2171,122 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         };
         bounds.collapse_inverted(edge_work_mask, (win_frame.origin.x, win_frame.origin.y));
 
-        // Drag motion runs through the shared controller: direct 1:1 tracking
-        // while held, a velocity-aware settle after release. Both apply every
-        // frame with no deadband, so the window never trails the cursor; the
-        // parked branches below keep their 1 px deadband against jitter.
         if dragging || settling {
-            let output = state.drag_motion.borrow_mut().advance(&DragFrame {
-                pointer_x: mouse_loc.x,
-                pointer_y: mouse_loc.y,
-                now,
-                dt,
-                bounds,
-                edge_work: Some(rust_pill_shared::edge::EdgeWork {
-                    width: visible.size.width,
-                    height: visible.size.height,
+            drive_drag_frame(
+                window,
+                state,
+                DragTick {
+                    pointer: (mouse_loc.x, mouse_loc.y),
+                    now,
+                    dt,
+                    bounds,
+                    visible,
                     edges: edge_work_mask,
-                }),
-                held: dragging,
-                reduced_motion: reduced_motion(),
-            });
-            set_window_origin(window, NSPoint::new(output.x, output.y));
-            if settling && output.settled {
-                persist_drag_position(state, window);
-            }
+                    dragging,
+                    settling,
+                },
+            );
             return;
         }
 
-        let (target_x, target_y) = if state.has_saved_position.get() {
-            // Use persisted position from last drag, clamped into the visible
-            // frame of the screen that position belongs to.
-            let mut tx = state.saved_x.get();
-            let mut ty = state.saved_y.get();
-            tx = tx.max(bounds.min_x).min(bounds.max_x);
-            ty = ty.max(bounds.min_y).min(bounds.max_y);
-            (tx, ty)
-        } else {
-            // Default: centre at bottom of the pill's own screen.
-            let tx = visible.origin.x + (visible.size.width - win_w) / 2.0;
-            let ty = default_content_origin_y(visible.origin.y, win_h);
-            (tx, ty)
-        };
-
-        let current_origin = window_frame(window).origin;
-        if (current_origin.x - target_x).abs() > 1.0 || (current_origin.y - target_y).abs() > 1.0 {
-            let origin = NSPoint::new(target_x, target_y);
-            set_window_origin(window, origin);
+        // A drop the display change held back is written as soon as both holds
+        // have passed: the controller reports `settled` once, so nothing else
+        // would come back for it.
+        //
+        // Checked before the idle placement, not after: while a save is owed the
+        // window is still standing where the user dropped it, and parking it first
+        // would move it off that spot before the retry could read it.
+        if state.drag_save_due.get().is_some() {
+            write_drag_position(state, window, drag_now());
+            return;
         }
+
+        park_window(window, state, anchor, visible, bounds, win_h);
+    }
+}
+
+/// One frame of a held or settling drag.
+struct DragTick {
+    pointer: (f64, f64),
+    now: f64,
+    dt: f64,
+    bounds: rust_pill_shared::drag::DragBounds,
+    visible: NSRect,
+    edges: rust_pill_shared::edge::EdgeMask,
+    dragging: bool,
+    settling: bool,
+}
+
+/// Advance the shared drag controller and move the window to where it lands.
+///
+/// Drag motion is direct 1:1 tracking while held and a velocity-aware settle after
+/// release. Both apply every frame with no deadband, so the window never trails the
+/// cursor; the parked path keeps its 1 px deadband against jitter.
+fn drive_drag_frame(window: id, state: &PillState, tick: DragTick) {
+    let output = state.drag_motion.borrow_mut().advance(&DragFrame {
+        pointer_x: tick.pointer.0,
+        pointer_y: tick.pointer.1,
+        now: tick.now,
+        dt: tick.dt,
+        bounds: tick.bounds,
+        edge_work: Some(rust_pill_shared::edge::EdgeWork {
+            width: tick.visible.size.width,
+            height: tick.visible.size.height,
+            edges: tick.edges,
+        }),
+        held: tick.dragging,
+        reduced_motion: reduced_motion(),
+    });
+    unsafe { set_window_origin(window, NSPoint::new(output.x, output.y)) };
+    if tick.settling && output.settled {
+        persist_drag_position(state, window);
+    }
+}
+
+/// Hold the window at the parked origin for this frame.
+///
+/// The saved origin comes from the last drag and is clamped into the visible
+/// frame of the screen that position belongs to; with nothing saved, the pill
+/// centres at the bottom of its own screen. Both are the *idle* placement, which
+/// is the one case that has no cursor to follow.
+fn park_window(
+    window: id,
+    state: &PillState,
+    anchor: rust_pill_shared::layout::Anchor,
+    visible: NSRect,
+    bounds: rust_pill_shared::drag::DragBounds,
+    win_h: f64,
+) {
+    if !anchor.places() {
+        // No stored position and nothing asked for a placement: the flag was
+        // cleared deliberately, by `ForgetPosition` after a local-data clear.
+        // That command's contract is that the pill stays where it is, so falling
+        // through to the default anchor would move a visible pill as a side
+        // effect of wiping the database.
+        return;
+    }
+    let (target_x, target_y) = if state.has_saved_position.get() {
+        let tx = state.saved_x.get().clamp(bounds.min_x, bounds.max_x);
+        let ty = state.saved_y.get().clamp(bounds.min_y, bounds.max_y);
+        (tx, ty)
+    } else {
+        let win_w = unsafe { window_frame(window) }.size.width;
+        let tx = visible.origin.x + (visible.size.width - win_w) / 2.0;
+        (tx, default_content_origin_y(visible.origin.y, win_h))
+    };
+
+    let current_origin = unsafe { window_frame(window).origin };
+    if (current_origin.x - target_x).abs() > 1.0 || (current_origin.y - target_y).abs() > 1.0 {
+        unsafe { set_window_origin(window, NSPoint::new(target_x, target_y)) };
+    }
+    // The clamp is what the window is held at, so it is what the stored record
+    // has to say. Leaving the pre-clamp origin behind publishes a spot the pill
+    // is not on, and the next tick would put it back there.
+    if (target_x - state.saved_x.get()).abs() > f64::EPSILON
+        || (target_y - state.saved_y.get()).abs() > f64::EPSILON
+    {
+        state.saved_x.set(target_x);
+        state.saved_y.set(target_y);
     }
 }
 
@@ -1895,9 +2312,237 @@ fn typing_entry_frame() -> NSRect {
     )
 }
 
+// ── Display changes ──────────────────────────────────────────────
+
+/// Every connected screen's visible frame in top-down points, each with its
+/// stable token, plus the primary display's top edge.
+///
+/// Returns `None` with no screens, which happens briefly when every display
+/// disconnects or the lid closes. A caller must read that as "nothing to
+/// act on", not as "the pill's display was unplugged".
+unsafe fn display_areas() -> Option<(Vec<rust_pill_shared::edge::MonitorRect>, f64)> {
+    let screen_list = screens();
+    if screen_list.is_null() {
+        return None;
+    }
+    let count: usize = msg_send![screen_list, count];
+    if count == 0 {
+        return None;
+    }
+    let primary: id = msg_send![screen_list, objectAtIndex: 0usize];
+    let primary_frame: NSRect = msg_send![primary, frame];
+    let primary_top = primary_frame.origin.y + primary_frame.size.height;
+
+    let mut areas = Vec::with_capacity(count);
+    for index in 0..count {
+        let screen: id = msg_send![screen_list, objectAtIndex: index];
+        let area = to_top_down(screen_visible_frame(screen), primary_top);
+        areas.push(rust_pill_shared::edge::MonitorRect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height,
+            id: screen_display_id(screen),
+        });
+    }
+    Some((areas, primary_top))
+}
+
+/// Reconcile the pill's window against the displays connected right now.
+///
+/// macOS moves and re-clamps windows itself when a display sleeps, disconnects
+/// or changes resolution, and it does not tell the window whether the move was
+/// its or the user's. So the same three steps run here as on the other
+/// platforms: hold saves until the layout settles, resolve the position against
+/// the new layout, and adopt whatever the resolution decides so the next launch
+/// restores the place the user can actually see.
+unsafe fn reconcile_display_layout(window: id, state: &PillState) {
+    let now = drag_now();
+    state.save_guard.borrow_mut().layout_changed(now);
+    if state.dragging.get() {
+        // A drag held across the change cannot be saved when it ends: the frame
+        // it would record is the one macOS put the window in.
+        state
+            .save_guard
+            .borrow_mut()
+            .layout_changed_during_drag(now);
+    }
+    let Some((areas, primary_top)) = display_areas() else {
+        // No screens is not evidence that the pill's screen is gone: every
+        // display disconnecting briefly looks like this. Leaving the window alone
+        // is what keeps its position intact for when one comes back.
+        return;
+    };
+    let frame = window_frame(window);
+    let (window_w, window_h) = (frame.size.width, frame.size.height);
+    if window_w <= 0.0 || window_h <= 0.0 {
+        return;
+    }
+    let top_down = to_top_down(frame, primary_top);
+    // The window's own screen decides which display this record is about, and its
+    // token is what makes that decision survive a replug. The remembered token is
+    // the fallback for the moment the window is on no screen at all.
+    let current_screen: id = msg_send![window, screen];
+    let current_id = if current_screen.is_null() {
+        state.saved_display_id.get()
+    } else {
+        screen_display_id(current_screen).or(state.saved_display_id.get())
+    };
+    // The display the pill is on: named when possible, else the one containing the
+    // footprint centre, else the nearest. The shared helper owns all three so no
+    // platform can pick a different fallback.
+    let (footprint_offset, footprint_size) = rust_pill_shared::restore::centered_bottom_footprint(
+        (window_w, window_h),
+        (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
+        COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+    );
+    let Some(parked) = rust_pill_shared::layout::describe_parked(
+        &areas,
+        (top_down.x, top_down.y),
+        (window_w, window_h),
+        (
+            top_down.x + footprint_offset.0 + footprint_size.0 / 2.0,
+            top_down.y + footprint_offset.1 + footprint_size.1 / 2.0,
+        ),
+        current_id,
+    ) else {
+        return;
+    };
+
+    let relocation = rust_pill_shared::layout::reconcile(
+        parked,
+        &areas,
+        (window_w, window_h),
+        |_work, window| {
+            rust_pill_shared::restore::centered_bottom_footprint(
+                window,
+                (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
+                COLLAPSED_BOTTOM_INSET
+                    + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+            )
+        },
+        |work, _window| {
+            // The same footprint clamp `reposition_window` applies when idle, so
+            // a reconciled origin is a fixed point of the idle tick.
+            rust_pill_shared::restore::footprint_bounds(work, footprint_offset, footprint_size)
+        },
+    );
+
+    match relocation {
+        rust_pill_shared::layout::Relocation::Keep => {
+            // AppKit may have moved a still-visible window itself. Keeping the old
+            // stored origin would have the next idle tick snap it back there,
+            // undoing a placement the user can see. This is the system's move, not
+            // a drag, so it is adopted without going through the save guard -- and
+            // only when there is a position to keep.
+            if state.has_saved_position.get() {
+                let frame = window_frame(window);
+                if frame.origin.x != state.saved_x.get() || frame.origin.y != state.saved_y.get() {
+                    state.saved_x.set(frame.origin.x);
+                    state.saved_y.set(frame.origin.y);
+                    // The origin moved, so the display it names may have changed
+                    // with it: the system can place a window on the neighbour when
+                    // a DPI change resizes it. Keeping the old token would publish
+                    // the new geometry under the display the pill just left, and the
+                    // next launch would restore it against the wrong panel.
+                    // `current_id` already resolved the window's screen above, with
+                    // the remembered token as its own fallback.
+                    state.saved_display_id.set(current_id);
+                    // The desktop holds the record, and it still names the origin
+                    // from before AppKit moved the window. Adopting the move only in
+                    // this process would leave a restart restoring the pill to the
+                    // old place, so it is published here rather than waiting for a
+                    // report that may never come.
+                    let (rect, monitor) = unsafe { pill_geometry(window) };
+                    ipc::send(&OutMessage::PositionChanged {
+                        report: rust_pill_shared::restore::PositionReport::new(
+                            true,
+                            Some(rect),
+                            Some(monitor),
+                            state.saved_display_id.get(),
+                        ),
+                    });
+                }
+            }
+        }
+        rust_pill_shared::layout::Relocation::Stranded => {
+            // Nowhere to move it to. Leaving it keeps the stored position.
+        }
+        rust_pill_shared::layout::Relocation::Move { x, y } => {
+            // Back into Cocoa's bottom-left space exactly once, at the point of
+            // use.
+            let origin = NSPoint::new(x, primary_top - (y + window_h));
+            set_window_origin(window, origin);
+            // A forget or a reset leaves the pill deliberately unsaved: the move
+            // still has to happen, but it must not write the row back.
+            // A stored position has to exist to be kept: a relocation is not a
+            // save, and after a reset or a clear there is nothing to record.
+            if !state.has_saved_position.get() {
+                return;
+            }
+            state.saved_x.set(origin.x);
+            state.saved_y.set(origin.y);
+            state.has_saved_position.set(true);
+            state
+                .saved_display_id
+                .set(rust_pill_shared::layout::display_id_of(
+                    &areas,
+                    (origin.x, origin.y),
+                    (
+                        x + footprint_offset.0 + footprint_size.0 / 2.0,
+                        y + footprint_offset.1 + footprint_size.1 / 2.0,
+                    ),
+                ));
+            persist_reconciled_position(state, window);
+        }
+    }
+}
+
+/// Reconcile if the display arrangement changed and no notification said so.
+///
+/// Coarse on purpose: the signature only has to notice that something about the
+/// arrangement is different, and the reconciliation decides what to do.
+/// Enumerating screens every frame would be wasteful, so this looks a few times
+/// a second, far faster than a display changes and far slower than a frame.
+unsafe fn poll_display_layout(window: id, state: &PillState, now: f64) {
+    let Some((areas, _)) = display_areas() else {
+        return;
+    };
+    let outcome = state
+        .layout_poll
+        .borrow_mut()
+        .observe(now, rust_pill_shared::layout::layout_signature(&areas));
+    if outcome == rust_pill_shared::layout::PollOutcome::Changed {
+        unsafe { reconcile_display_layout(window, state) };
+    }
+}
+
+/// Tell the desktop where the pill ended up after a display change made the pill
+/// move itself.
+///
+/// This is not a drag save, so it does not go through the save guard: the pill
+/// chose this position, and it is the only place the pill can be. Storing it is
+/// what stops the next launch restoring an origin that no longer has a screen
+/// under it.
+unsafe fn persist_reconciled_position(state: &PillState, window: id) {
+    let (rect, monitor) = pill_geometry(window);
+    ipc::send(&OutMessage::PositionChanged {
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            Some(rect),
+            Some(monitor),
+            state.saved_display_id.get(),
+        ),
+    });
+}
+
 // ── Shared setup (used by both standalone and embedded modes) ─────
 
-unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
+unsafe fn setup(
+    receiver: Receiver<InMessage>,
+    embedded: bool,
+    saved_position: Option<ParkedWindow>,
+) {
     let view_class = register_pill_view_class();
     let window_class = register_pill_window_class();
 
@@ -1940,6 +2585,10 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let _: () = msg_send![view, setWantsLayer:YES];
     window.setContentView_(view);
 
+    // From this point the pill reacts to displays appearing, disappearing,
+    // moving and rescaling instead of being stranded by them.
+    observe_screen_parameters();
+
     // Create text field for typing mode
     let entry_frame = typing_entry_frame();
     let entry: id = msg_send![class!(NSTextField), alloc];
@@ -1973,6 +2622,97 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let _: () = msg_send![view, addSubview:entry];
 
     // Initialize state
+    // Resolve the stored position against the displays connected now, before
+    // the state exists. A saved origin only means something on the display it
+    // was captured on, so an unplugged, resized or moved display is dealt with
+    // here instead of dragging the window to a coordinate with no screen under
+    // it.
+    //
+    // The record is stored in the top-down space the pill publishes, so this
+    // works in that space and converts the answer back to Cocoa's bottom-left
+    // origin once, at the end.
+    // The destination token travels with the frame: when the saved display is
+    // gone the frame is remapped onto one that remains, and the state must name
+    // the display it actually landed on.
+    let mut restored_display_id: Option<u64> = None;
+    let restored = saved_position.and_then(|parked| {
+        let screen_list = screens();
+        let count: usize = unsafe { msg_send![screen_list, count] };
+        if count == 0 {
+            return None;
+        }
+        let primary: id = unsafe { msg_send![screen_list, objectAtIndex: 0usize] };
+        let primary_frame: NSRect = unsafe { msg_send![primary, frame] };
+        let primary_top = primary_frame.origin.y + primary_frame.size.height;
+
+        // The visible area is what the record stores and what the pill publishes,
+        // so it is the same rect used here to recognise the saved display.
+        let mut display_rects = Vec::with_capacity(count);
+        for index in 0..count {
+            let (area, id) = unsafe {
+                let screen: id = msg_send![screen_list, objectAtIndex: index];
+                (
+                    to_top_down(screen_visible_frame(screen), primary_top),
+                    screen_display_id(screen),
+                )
+            };
+            display_rects.push(rust_pill_shared::edge::MonitorRect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: area.height,
+                id,
+            });
+        }
+
+        // At rest the pill is collapsed, so `expand_t` is 0 and the draw size is
+        // the collapsed size.
+        let resting_pill_w = MIN_PILL_WIDTH;
+        let resting_pill_h = MIN_PILL_HEIGHT;
+        let placement = rust_pill_shared::restore::restore(
+            parked,
+            &display_rects,
+            (window_w, window_h),
+            |work, _window| {
+                // The pill's visible footprint, not the OS window. The window is
+                // a large transparent canvas with the pill drawn inside it, so
+                // clamping the canvas pulls a pill parked at an edge inward by
+                // hundreds of pixels, and the idle tick in `reposition_window`
+                // then puts it back: the restore looks like it was ignored.
+                //
+                // The pill starts collapsed, so its resting arrangement is the
+                // shared one: centred, sitting `COLLAPSED_BOTTOM_INSET` above the
+                // window's bottom edge.
+                let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
+                    (window_w, window_h),
+                    (resting_pill_w, resting_pill_h),
+                    COLLAPSED_BOTTOM_INSET
+                        + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+                );
+                rust_pill_shared::restore::footprint_bounds(work, offset, size)
+            },
+        );
+        match placement {
+            rust_pill_shared::restore::Placement::Restore { x, y, display_id } => {
+                restored_display_id = display_id;
+                Some(NSRect::new(
+                    NSPoint::new(x, primary_top - (y + window_h)),
+                    NSSize::new(window_w, window_h),
+                ))
+            }
+            rust_pill_shared::restore::Placement::PlatformDefault => {
+                // The platform chooses the placement, so the record's display is
+                // not where this pill is. Leaving `restored_display_id` unset here
+                // used to fall through to the *record's* token below, which named
+                // the display that just went away -- the very case that produced
+                // this default. Without a position there is nothing to name, and
+                // matching on geometry is what a nameless record does.
+                restored_display_id = None;
+                None
+            }
+        }
+    });
+
     let state = Rc::new(PillState {
         phase: Cell::new(Phase::Idle),
         visibility: Cell::new(Visibility::WhileActive),
@@ -2054,11 +2794,26 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         hover_intent: RefCell::new(HoverIntent::new()),
         crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
         selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
-        has_saved_position: Cell::new(false),
-        reset_strategy: Cell::new(ResetStrategy::Current),
-        saved_x: Cell::new(0.0),
-        saved_y: Cell::new(0.0),
+        has_saved_position: Cell::new(restored.is_some()),
+        saved_x: Cell::new(restored.map_or(0.0, |window| window.origin.x)),
+        saved_y: Cell::new(restored.map_or(0.0, |window| window.origin.y)),
+        // Only a restored record may name a display, and only the display that
+        // restore actually chose. `restored_display_id` is that answer -- `None`
+        // when the destination could not be named, because the record's display is
+        // the one that went away. Falling back to the record's token here would
+        // pair the destination's geometry with the dead display's name, which is
+        // the pairing this restore exists to correct; the X11 path was fixed the
+        // same way. A nameless destination matches by geometry instead.
+        //
+        // With no placement at all there is nothing to name either: the record's
+        // token describes a display this process never went to.
+        saved_display_id: Cell::new(restored.and(restored_display_id)),
+        drag_save_due: Cell::new(None),
+        drop_origin: Cell::new(None),
+        save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
+        layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),
         first_placement_done: Cell::new(false),
+        anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
         drag_label_t: Cell::new(0.0),
@@ -2102,6 +2857,13 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         ];
     }
 
+    // A restored position is applied to the window here, before the first
+    // frame, so the pill appears where the user left it rather than moving
+    // there once the run loop starts.
+    if let Some(frame) = restored {
+        set_window_origin(window, frame.origin);
+    }
+
     // Position and show (orderFront only — don't steal focus from other apps)
     with_ctx(|ctx| {
         reposition_window(window, &ctx.state, 1.0 / 60.0, drag_now());
@@ -2114,13 +2876,13 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
 // ── Standalone binary entry point ────────────────────────────────
 
 #[allow(dead_code)]
-pub fn run(receiver: Receiver<InMessage>) {
+pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) {
     unsafe {
         let _pool = NSAutoreleasePool::new(nil);
         let app = NSApp();
         app.setActivationPolicy_(NSApplicationActivationPolicyAccessory);
 
-        setup(receiver, false);
+        setup(receiver, false, saved_position);
 
         app.run();
     }
@@ -2130,9 +2892,9 @@ pub fn run(receiver: Receiver<InMessage>) {
 // Hooks into the host app's existing NSApplication run loop.
 
 #[allow(dead_code)]
-pub(crate) fn run_embedded(receiver: Receiver<InMessage>) {
+pub(crate) fn run_embedded(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) {
     unsafe {
-        setup(receiver, true);
+        setup(receiver, true, saved_position);
     }
 }
 

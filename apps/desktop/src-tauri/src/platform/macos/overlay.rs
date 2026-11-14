@@ -102,8 +102,14 @@ pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {
     let (in_tx, in_rx) = mpsc::channel::<InMessage>();
     let (out_tx, out_rx) = mpsc::channel::<OutMessage>();
 
+    // The pill is linked into this process, so it gets the stored position
+    // directly instead of through a spawn argument. It applies the position
+    // before its first frame, so a restore is never a visible jump.
+    let saved_position = crate::pill_position::read_saved_position_record(app)
+        .and_then(|record| rust_pill_shared::restore::ParkedWindow::decode(&record));
+
     // Start the pill on the main thread (Tauri setup runs on main thread)
-    rust_macos_pill::start(out_tx, in_rx);
+    rust_macos_pill::start(out_tx, in_rx, saved_position);
 
     let pill = std::sync::Arc::new(MacosPill {
         sender: Mutex::new(Some(in_tx)),
@@ -202,7 +208,24 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Tell the linked pill to stop treating its current spot as saved, without
+/// moving it. Sent after a local-data clear so the reloaded window cannot write
+/// the cleared position straight back.
+pub fn notify_forget_position(app: &tauri::AppHandle) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<MacosPill>>() {
+        Some(pill) => pill.send(InMessage::ForgetPosition),
+        None => Err("Pill position forgotten with no managed macOS pill".to_string()),
+    }
+}
+
 pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
+    // The stored record is what the next launch restores, so a reset has to
+    // forget it before it tells the pill to re-home. A clear that failed would
+    // leave that record to undo the reset on the next launch, so it is reported
+    // rather than swallowed.
+    if !crate::pill_position::clear_saved_position(app) {
+        return Err("Could not clear the pill's stored position, so it was not reset".to_string());
+    }
     let strategy = if strategy == "cursor" {
         ResetStrategy::Cursor
     } else {
@@ -306,17 +329,38 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     crate::system::audio_feedback::play_thock(&kind);
                 }
                 OutMessage::Hover { .. } => {}
-                OutMessage::PositionChanged {
-                    has_saved_position,
-                    rect,
-                    monitor,
-                } => {
+                OutMessage::PositionChanged { report } => {
+                    // The four fields are one record on the wire, so they are read
+                    // as one: a variant that carried them separately could be
+                    // destructured into a position with no display, or a display
+                    // with no position.
+                    let has_saved_position = report.has_saved_position;
+                    let (rect, monitor) = (report.rect, report.monitor);
+                    let display_id = report.display.display_id;
                     let rect_json = rect.map(|r| {
                         serde_json::json!({ "x": r.x, "y": r.y, "width": r.width, "height": r.height })
                     });
                     let monitor_json = monitor.map(|m| {
                         serde_json::json!({ "x": m.x, "y": m.y, "width": m.width, "height": m.height })
                     });
+                    // Every report is accounted for before it is acted on, including
+                    // the ones that carry nothing: a clear is declared by the pill's
+                    // answer that the record is gone, and that answer is a
+                    // `has_saved_position: false` report. Reading only the saves
+                    // would never see it, and the erase would stay undeclared.
+                    let storable = crate::pill_position::note_report(has_saved_position);
+                    // Only a geometry the pill considers saved describes where
+                    // the user left it. A reset publishes the default corner it
+                    // just moved to, and storing that would undo the reset.
+                    if storable && has_saved_position {
+                        if let (Some(rect), Some(monitor)) =
+                            (rect_json.as_ref(), monitor_json.as_ref())
+                        {
+                            crate::pill_position::store_published_position(
+                                &app, rect, monitor, display_id,
+                            );
+                        }
+                    }
                     let payload = serde_json::json!({
                         "hasSavedPosition": has_saved_position,
                         "rect": rect_json,

@@ -8,7 +8,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 
 use crate::constants::MARGIN_BOTTOM;
-use crate::ipc::{self, OutMessage, ResetStrategy};
+use crate::ipc::{self, OutMessage};
 use crate::state::{PillState, WindowMode};
 use rust_pill_shared::drag::{DragBounds, DragFrame, DragPhase};
 
@@ -97,8 +97,21 @@ fn root_pointer(window: &gtk::Window) -> (c_int, c_int) {
     query_root_pointer(xdisplay_for_window(window))
 }
 
+/// The token of the monitor the pill was dropped on, if it can be named.
+///
+/// The monitor is resolved through the same function `pill_geometry` uses, so
+/// the saved token and the saved work area always describe one display. A second
+/// resolution from the toplevel origin could land on a neighbour, because the
+/// toplevel is allowed to overhang the work area at a shared edge while the
+/// visible pill sits on the next monitor. A monitor with no token yields `None`,
+/// which downgrades that one record to geometry matching rather than naming the
+/// wrong display.
+fn display_id_at(window: &gtk::Window, state: &PillState) -> Option<u64> {
+    crate::pill::pill_monitor_id(window, state)
+}
+
 /// Moves the toplevel to an absolute root position.
-fn move_toplevel(window: &gtk::Window, x: c_int, y: c_int) {
+pub(crate) fn move_toplevel(window: &gtk::Window, x: c_int, y: c_int) {
     let Some(xid) = toplevel_xid(window) else {
         return;
     };
@@ -110,6 +123,71 @@ fn move_toplevel(window: &gtk::Window, x: c_int, y: c_int) {
 }
 
 /// Persists the X11 drop position derived from the live pointer.
+/// Account for a frame that is inside a drag or its settle.
+///
+/// A drag that is starting has already called `SaveGuard::drag_started`, which
+/// clears the previous gesture's drag end. The record this timer keeps has to
+/// follow it, or the next unsettled drop would be treated as already recorded and
+/// the guard would refuse every save from then on: `allows_save` answers `false`
+/// for a drag that never ended, forever.
+fn note_drag_holds(was_dragging: &Cell<bool>, drop_recorded: &Cell<bool>, dragging: bool) {
+    was_dragging.set(dragging);
+    if dragging {
+        drop_recorded.set(false);
+    }
+}
+
+/// The net for a drag that ended without arming a settle.
+///
+/// A release that armed no settle -- because no monitor could be resolved before
+/// it -- is also a release that can skip `drag_ended`. If a layout change landed
+/// during that drag, `allows_save` then answers `false` forever through its "a
+/// drag that never ended has no settled frame" arm, so this would retry every
+/// 100 ms and never save, and the next launch would restore the position from
+/// before the drag. Recording it here is the same drop, learned one path later.
+///
+/// Named rather than inlined because the timer closure that owns it also decides
+/// where to park an idle pill, and the two questions share nothing but a caller.
+fn settle_unrecorded_drop(
+    window: &gtk::Window,
+    state: &Rc<PillState>,
+    was_dragging: &Cell<bool>,
+    drop_recorded: &Cell<bool>,
+) {
+    if !was_dragging.get() || state.x11_release_persisted.get() {
+        was_dragging.set(false);
+        drop_recorded.set(false);
+        return;
+    }
+    // Record the drop once, on the first pass that sees it. Only once, because
+    // `drag_ended` starts the drag hold: re-recording every pass would push the
+    // hold's start forward and nothing would ever save.
+    if !drop_recorded.get() {
+        state
+            .save_guard
+            .borrow_mut()
+            .drag_ended(crate::pill::drag_clock_now());
+        drop_recorded.set(true);
+    }
+    // A refusal from the save guard is temporary, so the net has to stay armed
+    // for it: clearing the marker here is what used to lose the drop, because
+    // nothing else would come back for it.
+    let allowed = state
+        .save_guard
+        .borrow()
+        .allows_save(crate::pill::drag_clock_now());
+    if let Some(pos) = persist_drop_position(window, state) {
+        state.x11_drag_applied.set(pos);
+        was_dragging.set(false);
+        drop_recorded.set(false);
+    } else if allowed {
+        // The guard allowed it, so no monitor could be resolved: that is not
+        // something a retry can fix.
+        was_dragging.set(false);
+        drop_recorded.set(false);
+    }
+}
+
 ///
 /// Only the slow timer calls this now, as a net for drags that ended without
 /// a settle (for example, when no connected monitor could be resolved to arm
@@ -120,6 +198,26 @@ pub(crate) fn persist_drop_position(
     window: &gtk::Window,
     state: &PillState,
 ) -> Option<(c_int, c_int)> {
+    // This path publishes a position like any other, so it takes the same guard.
+    // It runs from the slow timer for a drag that ended without arming a settle,
+    // and a display change can land in that window too: publishing then would
+    // overwrite the position the user chose with the frame the layout left behind,
+    // which is exactly what the guard exists to prevent.
+    let now = crate::pill::drag_clock_now();
+    if !state.save_guard.borrow().allows_save(now) {
+        // Arm the deadline, exactly as `write_window_position` does in its refusal.
+        // Without it `drag_save_due` stays `None`, `save_owed` stays false, and the
+        // slow timer's idle parking moves the window back to the position from
+        // before the drop on every pass -- so the retry the caller keeps for would
+        // save the place the pill had already been dragged away from.
+        //
+        // `save_due_at` is asked before `drag_save_due` is set, because a save that
+        // is not owed answers `None` and clearing the deadline is the correct
+        // outcome for it.
+        let due = state.save_guard.borrow().save_due_at(now);
+        state.drag_save_due.set(due);
+        return None;
+    }
     let (root_x, root_y) = root_pointer(window);
     let (drop_x, drop_y) = pill_pos_on_monitor(
         root_x as f64,
@@ -139,11 +237,15 @@ pub(crate) fn persist_drop_position(
     state.saved_x.set(drop_x as f64);
     state.saved_y.set(drop_y as f64);
     state.has_saved_position.set(true);
+    state.saved_display_id.set(display_id_at(window, state));
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
-        has_saved_position: true,
-        rect,
-        monitor,
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            rect,
+            monitor,
+            state.saved_display_id.get(),
+        ),
     });
     Some((drop_x, drop_y))
 }
@@ -152,15 +254,52 @@ pub(crate) fn persist_drop_position(
 /// calls this when a release settle finishes) and marks the release consumed
 /// so the slow timer cannot overwrite it with a later cursor poll.
 pub(crate) fn persist_window_position(window: &gtk::Window, state: &PillState, x: f64, y: f64) {
+    let now = crate::pill::drag_clock_now();
+    // The release is recorded here, once per gesture. Retries must not come
+    // through this function: it is what starts the drag hold, so a retry calling
+    // it would move the hold's start forward every frame and nothing would save.
+    state.save_guard.borrow_mut().drag_ended(now);
+    write_window_position(window, state, x, y, now);
+}
+
+/// Write a release the guard has allowed, without re-recording when it landed.
+///
+/// This is the retry path: it only asks whether the holds have passed, against
+/// the release time recorded by the actual drop.
+pub(crate) fn write_window_position(
+    window: &gtk::Window,
+    state: &PillState,
+    x: f64,
+    y: f64,
+    now: f64,
+) {
+    // Read before the save is attempted: a successful save clears it.
+    let due = state.save_guard.borrow().save_due_at(now);
+    if !state.save_guard.borrow().allows_save(now) {
+        // A display change landed while this drag was held, so the frame it ended
+        // on is one the layout chose. Storing it would replace the position the
+        // user picked with the one RandR left behind.
+        //
+        // The release is still the user's, and it is reported once per settle, so
+        // the deadline is what stops the drop from being lost outright.
+        state.drag_save_due.set(due);
+        return;
+    }
     state.saved_x.set(x);
     state.saved_y.set(y);
     state.has_saved_position.set(true);
+    // The pending release has been recorded, so no retry is owed.
+    state.drag_save_due.set(None);
+    state.saved_display_id.set(display_id_at(window, state));
     state.x11_release_persisted.set(true);
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
-        has_saved_position: true,
-        rect,
-        monitor,
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            rect,
+            monitor,
+            state.saved_display_id.get(),
+        ),
     });
 }
 
@@ -246,6 +385,103 @@ pub(crate) fn tick_drag_frame(window: &gtk::Window, state: &PillState, now: f64,
     }
 }
 
+/// A stable token for a monitor, or `None` when GDK cannot describe it.
+///
+/// GDK's X11 backend exposes no output name and no EDID through this version of
+/// the API, so the token is built from what it does expose: the manufacturer,
+/// the model, and the panel's physical size in millimetres. That triple comes
+/// from the EDID, so it survives a replug and a reboot, and it distinguishes two
+/// different panels where a rectangle cannot.
+///
+/// Two panels of the same make and model therefore share a token, which is a real
+/// limit of this API rather than an oversight: GDK 0.18 gives no serial number to
+/// separate them. A shared token is still safe, because `choose_display` treats a
+/// token match as "remap within this display" rather than "restore this exact
+/// origin", and geometry decides when the token is ambiguous.
+pub(crate) fn monitor_display_id(monitor: &gdk::Monitor) -> Option<u64> {
+    let manufacturer = monitor.manufacturer().unwrap_or_default();
+    let model = monitor.model().unwrap_or_default();
+    if manufacturer.is_empty() && model.is_empty() {
+        return None;
+    }
+    // Unit separator between fields, so a manufacturer or model that happens to
+    // contain the separator cannot make two different panels hash alike.
+    let name = format!(
+        "{}\u{1f}-{}\u{1f}-{}x{}",
+        manufacturer,
+        model,
+        monitor.width_mm(),
+        monitor.height_mm()
+    );
+    rust_pill_shared::layout::display_identity(&name)
+}
+
+/// The size of a display work area as the restore math expects it.
+pub(crate) fn work_area_rect(
+    monitor: &gdk::Monitor,
+    scale: f64,
+) -> rust_pill_shared::edge::MonitorRect {
+    let work = crate::pill::logical_rect_to_physical(&monitor.workarea(), scale);
+    rust_pill_shared::edge::MonitorRect {
+        x: work.x,
+        y: work.y,
+        width: work.width,
+        height: work.height,
+        id: monitor_display_id(monitor),
+    }
+}
+
+/// Resolve a stored position against the monitors connected now.
+///
+/// The record is what this pill publishes: the toplevel origin in physical root
+/// pixels plus the work area of the monitor it sat on. `None` means the monitor
+/// is gone and nothing in the current layout relates to it, which leaves the
+/// caller free to park the pill with its usual anchor instead of guessing.
+fn restored_position(
+    display: &gdk::Display,
+    window: &gtk::Window,
+    state: &PillState,
+) -> Option<((c_int, c_int), Option<u64>)> {
+    let parked = state.restored_position.get()?;
+    let scale = x11_root_scale(window);
+    let work_areas: Vec<_> = (0..display.n_monitors())
+        .filter_map(|index| display.monitor(index))
+        .map(|monitor| work_area_rect(&monitor, scale))
+        .collect();
+    let (alloc_w, alloc_h) = window.size();
+    let window_w = alloc_w as f64 * scale;
+    let window_h = alloc_h as f64 * scale;
+    // The drawn pill's rect inside the toplevel. Its top-left offset from the
+    // window origin is what `footprint_bounds` needs, and its size is the
+    // footprint that has to stay on screen.
+    let (offset_x, offset_y, pill_w, pill_h) =
+        crate::draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let (content_x, content_y) = state.content_offset();
+    let fx = (content_x + offset_x) * scale;
+    let fy = (content_y + offset_y) * scale;
+    let fw = pill_w * scale;
+    let fh = pill_h * scale;
+    let placement = rust_pill_shared::restore::restore(
+        parked,
+        &work_areas,
+        (window_w, window_h),
+        |work, _window| {
+            // The visible pill footprint, not the transparent toplevel, is what
+            // has to stay on screen. This is the same bounds
+            // `placement_on_monitor` builds for dictation mode, so a restored
+            // origin survives the idle tick instead of being pulled inward by
+            // the toplevel's transparent margins.
+            rust_pill_shared::restore::footprint_bounds(work, (fx, fy), (fw, fh))
+        },
+    );
+    match placement {
+        rust_pill_shared::restore::Placement::Restore { x, y, display_id } => {
+            Some(((x.round() as c_int, y.round() as c_int), display_id))
+        }
+        rust_pill_shared::restore::Placement::PlatformDefault => None,
+    }
+}
+
 pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     const XA_ATOM: XAtom = 4;
 
@@ -317,6 +553,10 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         }
     };
 
+    // A stored position wins over the pointer's monitor. It is resolved here,
+    // during realize, so the pill is never painted at the default corner first.
+    let restored = restored_position(&display, window, &state);
+
     let (cx, cy) = cursor_pos();
     let init_pos = pill_pos_on_monitor(
         cx as f64,
@@ -337,13 +577,36 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         })
     })
     .unwrap_or((0, 0));
+    let target = restored.map_or(init_pos, |(origin, _)| origin);
     unsafe {
-        XMoveWindow(xdisplay, xwindow, init_pos.0, init_pos.1);
+        XMoveWindow(xdisplay, xwindow, target.0, target.1);
         XFlush(xdisplay);
     }
 
-    state.x11_drag_applied.set(init_pos);
+    state.x11_drag_applied.set(target);
+    if let Some(((x, y), display_id)) = restored {
+        state.saved_x.set(x as f64);
+        state.saved_y.set(y as f64);
+        state.has_saved_position.set(true);
+        // Carry the display identity into this process's state, so the next save
+        // republishes it. Dropping it here would silently downgrade every later
+        // save to geometry-only matching.
+        //
+        // The token is the one the placement landed on, not the one the record
+        // asked for: when the saved display is disconnected the position is
+        // remapped onto a connected one, and keeping the missing display's name
+        // would store this rectangle under a display that is not there.
+        //
+        // `display_id` is the identity of the display chosen *now*. When it is
+        // `None` the destination could not be named, and the record's token is the
+        // display that went away -- the one this restore just failed to find.
+        // Falling back to it would pair the new geometry with the dead display's
+        // name, which is exactly the pairing this restore exists to correct, so a
+        // nameless destination stays nameless and matching is done on geometry.
+        state.saved_display_id.set(display_id);
+    }
     let was_dragging = Rc::new(Cell::new(false));
+    let drop_recorded = Rc::new(Cell::new(false));
     let win_tick = window.clone();
     let state_tick = state.clone();
     glib::timeout_add_local(Duration::from_millis(100), move || {
@@ -352,7 +615,7 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // The frame tick owns the window while a drag is held or settling;
         // this slow timer only parks idle pills and heals hot-plug states.
         if dragging || state_tick.drag_motion.borrow().is_settling() {
-            was_dragging.set(dragging);
+            note_drag_holds(&was_dragging, &drop_recorded, dragging);
             return ControlFlow::Continue;
         }
 
@@ -360,12 +623,23 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // no monitor could be resolved before release. Normal releases
         // persist the settled position and mark it consumed, so this skips.
         // Past the guard above, dragging is always false here.
-        if was_dragging.get() && !state_tick.x11_release_persisted.replace(false) {
-            if let Some(pos) = persist_drop_position(&win_tick, &state_tick) {
-                state_tick.x11_drag_applied.set(pos);
-            }
-        }
-        was_dragging.set(false);
+        // The flag is only cleared by a release that actually persisted. Clearing it
+        // on every pass meant a release deferred by the save guard consumed it
+        // anyway, so the net saw nothing left to save and the position was lost.
+        settle_unrecorded_drop(&win_tick, &state_tick, &was_dragging, &drop_recorded);
+
+        // A drop the save guard refused is retried on the frame clock, and until
+        // that retry writes it the window is still standing where the user dropped
+        // it. Parking it here would move it back to `saved_x`/`saved_y` -- the
+        // position from before the drop -- so the retry would store that instead of
+        // the drop. The retry itself runs below; only the parking is skipped.
+        //
+        // Read after `settle_unrecorded_drop`, not before: that call can itself arm
+        // the deadline by refusing a save. A value read before it would miss the
+        // drop the net had just parked, so the same tick would fall through to the
+        // idle parking below and move the window back to the pre-drop position
+        // before the frame retry could store the drop.
+        let save_owed = state_tick.drag_save_due.get().is_some();
 
         // Pick the anchor that decides which monitor owns the pill: the saved
         // drop point when parked, else wherever the pill already is. (Drags
@@ -398,8 +672,7 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // A reset with the "cursor" strategy re-homes onto the monitor under
         // the pointer exactly once; the strategy is consumed so later ticks
         // keep the pill where it landed instead of chasing the cursor.
-        let reset_to_cursor = !state_tick.has_saved_position.get()
-            && state_tick.reset_strategy.get() == ResetStrategy::Cursor;
+        let reset_to_cursor = state_tick.anchor.get().follows_pointer();
 
         let (anchor_x, anchor_y) = if state_tick.has_saved_position.get() {
             (
@@ -407,7 +680,9 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
                 state_tick.saved_y.get() + center_y,
             )
         } else if reset_to_cursor {
-            state_tick.reset_strategy.set(ResetStrategy::Current);
+            state_tick
+                .anchor
+                .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
             let (ax, ay) = cursor_pos();
             (ax as f64, ay as f64)
         } else {
@@ -415,6 +690,10 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             (prev.0 as f64 + center_x, prev.1 as f64 + center_y)
         };
 
+        if save_owed {
+            // The frame tick owns the window until the owed save lands.
+            return ControlFlow::Continue;
+        }
         if let Some((new_x, new_y)) = pill_pos_on_monitor(
             anchor_x,
             anchor_y,
@@ -531,6 +810,7 @@ fn placement_on_monitor(
                     y: rect.y,
                     width: rect.width,
                     height: rect.height,
+                    id: None,
                 }
             })
             .collect()
@@ -542,12 +822,14 @@ fn placement_on_monitor(
         y: full.y,
         width: full.width,
         height: full.height,
+        id: None,
     };
     let work_area = rust_pill_shared::edge::MonitorRect {
         x: wa.x,
         y: wa.y,
         width: wa.width,
         height: wa.height,
+        id: None,
     };
     let region = if seams_open {
         state.drag_motion.borrow_mut().resolve_drag_region(
