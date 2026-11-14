@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+use gtk::cairo;
 use gtk::gdk;
 use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
@@ -851,53 +852,7 @@ fn wire_events(wiring: Wiring) {
     let state_motion = state.clone();
     let win_motion = window.clone();
     window.connect_motion_notify_event(move |_, event| {
-        let (mx, my) = event.position();
-        // A button-release event is not guaranteed to arrive (a grab can be
-        // broken by another client). The motion event carries the live button
-        // mask, so clear a stale pin before reading it. The frame tick runs the
-        // same check against the pointer device, which covers a missed release
-        // with no subsequent motion.
-        if state_motion.pointer_down.get()
-            && !event.state().contains(gdk::ModifierType::BUTTON1_MASK)
-        {
-            clear_pointer_pin(&state_motion, &win_motion);
-        }
-
-        // Record the probe; the frame tick runs it through the hover-intent
-        // controller (dwell to arm, grace to exit, pin while held), so bursts
-        // of motion coalesce into one hover decision per frame.
-        state_motion
-            .hover_probed
-            .set(input::is_over_pill_area(&state_motion, mx, my));
-        state_motion.hover_probe_x.set(mx);
-        state_motion.hover_probe_y.set(my);
-
-        if state_motion.long_press_active.get() {
-            let start_x = state_motion.long_press_start_x.get();
-            let start_y = state_motion.long_press_start_y.get();
-            let dx = mx - start_x;
-            let dy = my - start_y;
-            if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
-                state_motion.long_press_active.set(false);
-                state_motion.long_press_elapsed.set(0.0);
-                state_motion.drag_cancelled.set(true);
-                state_motion.cancel_flash.set(CANCEL_FLASH_DURATION);
-            }
-        }
-
-        // While dragging on Wayland, record the newest pointer sample; the frame
-        // tick applies it through the shared controller (newest wins, so a
-        // burst of motion events coalesces into one move per frame). X11
-        // samples the root pointer on the frame clock instead.
-        if state_motion.dragging.get() && state_motion.backend.get() != Backend::X11 {
-            state_motion.drag_last_x.set(mx);
-            state_motion.drag_last_y.set(my);
-            state_motion
-                .drag_motion
-                .borrow_mut()
-                .push_sample(mx, my, drag_clock_now());
-        }
-
+        apply_motion_event(&state_motion, &win_motion, event);
         glib::Propagation::Proceed
     });
 
@@ -919,47 +874,14 @@ fn wire_events(wiring: Wiring) {
     let win_press = window.clone();
     let backend_press = backend;
     window.connect_button_press_event(move |_, event| {
-        state_press.drag_cancelled.set(false);
-        let (x, y) = event.position();
-        let is_typing = state_press.is_typing();
-        let focus_was_released = state_press.focus_released_after_review.replace(false);
-        if focus_was_released {
-            match backend_press {
-                Backend::LayerShell => {
-                    win_press.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
-                }
-                Backend::X11 | Backend::PlainWayland => win_press.set_accept_focus(true),
-            }
-        }
-        if is_typing {
-            if backend_press == Backend::X11 {
-                x11::force_keyboard_focus(&win_press);
-            }
-            if state_press.assistant_review.borrow().is_some() {
-                review_press.grab_focus();
-            } else {
-                entry_press.grab_focus();
-            }
-        }
-        if input::is_on_pill_at(&state_press, x, y) {
-            if state_press.drag_motion.borrow_mut().interrupt_settle() {
-                persist_drag_position(&win_press, &state_press);
-            }
-            state_press.pointer_down.set(true);
-            state_press.long_press_active.set(true);
-            state_press.long_press_elapsed.set(0.0);
-            state_press.long_press_start_x.set(x);
-            state_press.long_press_start_y.set(y);
-            state_press.drag_cursor_x.set(x);
-            state_press.drag_cursor_y.set(y);
-            state_press
-                .drag_press_offset
-                .set(x11::physical_grab_offset((x, y), win_press.scale_factor()));
-            // Seed the Wayland sample so the first drag frame has a sane
-            // pointer even if no motion event arrived since the press.
-            state_press.drag_last_x.set(x);
-            state_press.drag_last_y.set(y);
-        }
+        handle_pill_press(
+            &state_press,
+            &entry_press,
+            &review_press,
+            &win_press,
+            backend_press,
+            event,
+        );
         glib::Propagation::Proceed
     });
 
@@ -979,33 +901,7 @@ fn wire_events(wiring: Wiring) {
     let win_click = window.clone();
     let last_click: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
     window.connect_button_release_event(move |_, event| {
-        let now = Instant::now();
-        if let Some(prev) = last_click.get() {
-            if now.duration_since(prev) < Duration::from_millis(150) {
-                return glib::Propagation::Proceed;
-            }
-        }
-        last_click.set(Some(now));
-        let was_dragging = state_click.dragging.get();
-        // End the gesture and persist the dropped position (if still dragging)
-        // through the shared teardown, so the button-release path and the
-        // frame-tick missed-release backstop cannot drift apart.
-        clear_pointer_pin(&state_click, &win_click);
-        if !was_dragging && !state_click.drag_cancelled.get() {
-            let (x, y) = event.position();
-            input::handle_click(&state_click, x, y);
-        }
-
-        // Hover was pinned for the duration of the gesture; re-probe against
-        // the cursor's real position now that the pointer is free. The frame
-        // tick applies it (with exit grace), so releasing outside fades out
-        // instead of snapping off.
-        let (rx, ry) = event.position();
-        state_click
-            .hover_probed
-            .set(input::is_over_pill_area(&state_click, rx, ry));
-        state_click.hover_probe_x.set(rx);
-        state_click.hover_probe_y.set(ry);
+        handle_pill_release(&state_click, &win_click, &last_click, event);
         glib::Propagation::Proceed
     });
 
@@ -1014,6 +910,235 @@ fn wire_events(wiring: Wiring) {
         input::handle_scroll(&state_scroll, event);
         glib::Propagation::Proceed
     });
+}
+
+/// Applies one pointer-motion event to the pill state.
+///
+/// Pulled out of the `motion-notify-event` closure so the closure stays a
+/// registration and the branch-heavy body is a named step. The behaviour is
+/// unchanged: clear a stale pin, record the hover probe, break a long press
+/// that has travelled too far, and feed the newest Wayland drag sample.
+fn apply_motion_event(state: &Rc<PillState>, window: &gtk::Window, event: &gdk::EventMotion) {
+    let (mx, my) = event.position();
+    // A button-release event is not guaranteed to arrive (a grab can be
+    // broken by another client). The motion event carries the live button
+    // mask, so clear a stale pin before reading it. The frame tick runs the
+    // same check against the pointer device, which covers a missed release
+    // with no subsequent motion.
+    if state.pointer_down.get() && !event.state().contains(gdk::ModifierType::BUTTON1_MASK) {
+        clear_pointer_pin(state, window);
+    }
+
+    // Record the probe; the frame tick runs it through the hover-intent
+    // controller (dwell to arm, grace to exit, pin while held), so bursts
+    // of motion coalesce into one hover decision per frame.
+    state
+        .hover_probed
+        .set(input::is_over_pill_area(state, mx, my));
+    state.hover_probe_x.set(mx);
+    state.hover_probe_y.set(my);
+
+    if state.long_press_active.get() {
+        let start_x = state.long_press_start_x.get();
+        let start_y = state.long_press_start_y.get();
+        let dx = mx - start_x;
+        let dy = my - start_y;
+        if (dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD * LONG_PRESS_MOVE_THRESHOLD {
+            state.long_press_active.set(false);
+            state.long_press_elapsed.set(0.0);
+            state.drag_cancelled.set(true);
+            state.cancel_flash.set(CANCEL_FLASH_DURATION);
+        }
+    }
+
+    // While dragging on Wayland, record the newest pointer sample; the frame
+    // tick applies it through the shared controller (newest wins, so a
+    // burst of motion events coalesces into one move per frame). X11
+    // samples the root pointer on the frame clock instead.
+    if state.dragging.get() && state.backend.get() != Backend::X11 {
+        state.drag_last_x.set(mx);
+        state.drag_last_y.set(my);
+        state
+            .drag_motion
+            .borrow_mut()
+            .push_sample(mx, my, drag_clock_now());
+    }
+}
+
+/// Applies one button-press event to the pill state.
+///
+/// Pulled out of the `button-press-event` closure so the closure stays a
+/// registration. The behaviour is unchanged: restore focus when it was
+/// released after a review, focus the active text widget while typing, and
+/// start a drag when the press landed on the pill.
+fn handle_pill_press(
+    state: &Rc<PillState>,
+    entry: &gtk::Entry,
+    review_editor: &gtk::TextView,
+    window: &gtk::Window,
+    backend: Backend,
+    event: &gdk::EventButton,
+) {
+    state.drag_cancelled.set(false);
+    let (x, y) = event.position();
+    let is_typing = state.is_typing();
+    let focus_was_released = state.focus_released_after_review.replace(false);
+    if focus_was_released {
+        match backend {
+            Backend::LayerShell => {
+                window.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+            }
+            Backend::X11 | Backend::PlainWayland => window.set_accept_focus(true),
+        }
+    }
+    if is_typing {
+        if backend == Backend::X11 {
+            x11::force_keyboard_focus(window);
+        }
+        if state.assistant_review.borrow().is_some() {
+            review_editor.grab_focus();
+        } else {
+            entry.grab_focus();
+        }
+    }
+    if input::is_on_pill_at(state, x, y) {
+        if state.drag_motion.borrow_mut().interrupt_settle() {
+            persist_drag_position(window, state);
+        }
+        state.pointer_down.set(true);
+        state.long_press_active.set(true);
+        state.long_press_elapsed.set(0.0);
+        state.long_press_start_x.set(x);
+        state.long_press_start_y.set(y);
+        state.drag_cursor_x.set(x);
+        state.drag_cursor_y.set(y);
+        state
+            .drag_press_offset
+            .set(x11::physical_grab_offset((x, y), window.scale_factor()));
+        // Seed the Wayland sample so the first drag frame has a sane
+        // pointer even if no motion event arrived since the press.
+        state.drag_last_x.set(x);
+        state.drag_last_y.set(y);
+    }
+}
+
+/// Applies one button-release event to the pill state.
+///
+/// Pulled out of the `button-release-event` closure so the closure stays a
+/// registration. The double-click guard and the shared teardown both live
+/// here. Returns `true` when the press should be ignored as a double click.
+fn handle_pill_release(
+    state: &Rc<PillState>,
+    window: &gtk::Window,
+    last_click: &Cell<Option<Instant>>,
+    event: &gdk::EventButton,
+) {
+    let now = Instant::now();
+    if let Some(prev) = last_click.get() {
+        if now.duration_since(prev) < Duration::from_millis(150) {
+            return;
+        }
+    }
+    last_click.set(Some(now));
+    let was_dragging = state.dragging.get();
+    // End the gesture and persist the dropped position (if still dragging)
+    // through the shared teardown, so the button-release path and the
+    // frame-tick missed-release backstop cannot drift apart.
+    clear_pointer_pin(state, window);
+    if !was_dragging && !state.drag_cancelled.get() {
+        let (x, y) = event.position();
+        input::handle_click(state, x, y);
+    }
+
+    // Hover was pinned for the duration of the gesture; re-probe against
+    // the cursor's real position now that the pointer is free. The frame
+    // tick applies it (with exit grace), so releasing outside fades out
+    // instead of snapping off.
+    let (rx, ry) = event.position();
+    state
+        .hover_probed
+        .set(input::is_over_pill_area(state, rx, ry));
+    state.hover_probe_x.set(rx);
+    state.hover_probe_y.set(ry);
+}
+
+/// Paints one frame and rebuilds the input region when a drawn shape moved.
+///
+/// Pulled out of the `draw` closure so the closure stays a registration and
+/// the region-rebuild reasoning reads on its own. draw_tooltip() computes
+/// tooltip_width during this pass, but the tick rebuilds the Wayland input
+/// region *before* drawing, so on the frame the tooltip first appears the
+/// region was built with a width of 0.0 and the tooltip is left out. Rebuild
+/// here when the width changes. The toast buttons need the same treatment, and
+/// for one more reason: draw_flash_message() scales the banner about its centre
+/// from half size up to full, so it re-registers both buttons at new
+/// coordinates every frame of the animation, and a shape left to the next tick
+/// is a whole frame behind the painted button.
+fn draw_pill_frame(
+    state: &Rc<PillState>,
+    window: &gtk::Window,
+    last_draw_error: &Cell<Option<Instant>>,
+    cr: &cairo::Context,
+) {
+    let width_before = state.tooltip_width.get();
+    let flash_before = input::flash_click_signature(state);
+    draw::draw_all(cr, state);
+    if let Err(error) = cr.status() {
+        let now = Instant::now();
+        if last_draw_error
+            .get()
+            .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(2))
+        {
+            eprintln!("pill drawing failed: {error}");
+            last_draw_error.set(Some(now));
+        }
+    }
+    let shape_is_stale = state.tooltip_width.get() != width_before
+        || input::flash_click_signature(state) != flash_before;
+    if let Some(gdk_win) = window.window().filter(|_| shape_is_stale) {
+        input::update_input_region(&gdk_win, state);
+    }
+}
+
+/// Handles one key press in the review editor.
+///
+/// Pulled out of the `key-press-event` closure so the closure stays a
+/// registration. Routes both keyboard paste shortcuts through the text-only
+/// clipboard path, since GTK's default key bindings bypass the action signal
+/// on some backends, and submits the review on an unmodified Enter.
+fn handle_review_key_press(
+    view: &gtk::TextView,
+    state: &Rc<PillState>,
+    event: &gdk::EventKey,
+) -> glib::Propagation {
+    if view.im_context_filter_keypress(event) {
+        return glib::Propagation::Stop;
+    }
+    let modifiers = event.state();
+    let ctrl_v = modifiers.contains(gdk::ModifierType::CONTROL_MASK)
+        && matches!(
+            event.keyval(),
+            gdk::keys::constants::v | gdk::keys::constants::V
+        );
+    let shift_insert = modifiers.contains(gdk::ModifierType::SHIFT_MASK)
+        && event.keyval() == gdk::keys::constants::Insert;
+    if ctrl_v || shift_insert {
+        request_review_clipboard_text(view, state);
+        return glib::Propagation::Stop;
+    }
+
+    let is_submit = matches!(
+        event.keyval(),
+        gdk::keys::constants::Return | gdk::keys::constants::KP_Enter
+    ) && !event.state().contains(gdk::ModifierType::SHIFT_MASK);
+    if !is_submit {
+        return glib::Propagation::Proceed;
+    }
+    *state.entry_text.borrow_mut() = review_editor_text(view);
+    if input::submit_entry(state) {
+        view.buffer().expect("review editor buffer").set_text("");
+    }
+    glib::Propagation::Stop
 }
 
 /// The signals that are about text, keys and drawing rather than the pointer.
@@ -1062,36 +1187,7 @@ fn wire_entry_and_keys(wiring: Wiring) {
     let win_draw = window.clone();
     let last_draw_error = Cell::new(None::<Instant>);
     drawing_area.connect_draw(move |_area, cr| {
-        // draw_tooltip() computes tooltip_width during this pass. The tick
-        // rebuilds the Wayland input region *before* drawing, so on the frame
-        // the tooltip first appears the region was built with a width of 0.0
-        // and build_input_region() left the tooltip out. Rebuild the region
-        // here when the width changes, so the tooltip is never painted outside
-        // its own input shape.
-        //
-        // The toast buttons need the same treatment for the same reason, and
-        // for one more: draw_flash_message() scales the banner about its centre
-        // from half size up to full, so it re-registers both buttons at new
-        // coordinates every frame of the animation. A shape left to the next
-        // tick is a whole frame of the animation behind the painted button.
-        let width_before = state_draw.tooltip_width.get();
-        let flash_before = input::flash_click_signature(&state_draw);
-        draw::draw_all(cr, &state_draw);
-        if let Err(error) = cr.status() {
-            let now = Instant::now();
-            if last_draw_error
-                .get()
-                .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(2))
-            {
-                eprintln!("pill drawing failed: {error}");
-                last_draw_error.set(Some(now));
-            }
-        }
-        let shape_is_stale = state_draw.tooltip_width.get() != width_before
-            || input::flash_click_signature(&state_draw) != flash_before;
-        if let Some(gdk_win) = win_draw.window().filter(|_| shape_is_stale) {
-            input::update_input_region(&gdk_win, &state_draw);
-        }
+        draw_pill_frame(&state_draw, &win_draw, &last_draw_error, cr);
         glib::Propagation::Proceed
     });
 
@@ -1125,36 +1221,7 @@ fn wire_entry_and_keys(wiring: Wiring) {
 
     let state_review_submit = state.clone();
     review_editor.connect_key_press_event(move |view, event| {
-        if view.im_context_filter_keypress(event) {
-            return glib::Propagation::Stop;
-        }
-        let modifiers = event.state();
-        let ctrl_v = modifiers.contains(gdk::ModifierType::CONTROL_MASK)
-            && matches!(
-                event.keyval(),
-                gdk::keys::constants::v | gdk::keys::constants::V
-            );
-        let shift_insert = modifiers.contains(gdk::ModifierType::SHIFT_MASK)
-            && event.keyval() == gdk::keys::constants::Insert;
-        if ctrl_v || shift_insert {
-            // GTK's default key bindings bypass the action signal on some
-            // backends, so route both keyboard paste shortcuts through text.
-            request_review_clipboard_text(view, &state_review_submit);
-            return glib::Propagation::Stop;
-        }
-
-        let is_submit = matches!(
-            event.keyval(),
-            gdk::keys::constants::Return | gdk::keys::constants::KP_Enter
-        ) && !event.state().contains(gdk::ModifierType::SHIFT_MASK);
-        if !is_submit {
-            return glib::Propagation::Proceed;
-        }
-        *state_review_submit.entry_text.borrow_mut() = review_editor_text(view);
-        if input::submit_entry(&state_review_submit) {
-            view.buffer().expect("review editor buffer").set_text("");
-        }
-        glib::Propagation::Stop
+        handle_review_key_press(view, &state_review_submit, event)
     });
 
     let state_escape = state.clone();
