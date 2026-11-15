@@ -13,6 +13,7 @@ pub mod edge;
 pub mod hover;
 pub mod ipc;
 pub mod layout;
+pub mod level;
 pub mod placement;
 pub mod restore;
 pub mod spring;

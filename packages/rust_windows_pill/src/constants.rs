@@ -35,14 +35,9 @@ pub(crate) const TOOLTIP_RADIUS: f64 = 12.0;
 pub(crate) const TOOLTIP_FIXED_WIDTH: f64 = 172.0;
 
 // ── Waveform ─────────────────────────────────────────────────────
-pub(crate) const LEVEL_SMOOTHING: f64 = 0.18;
-pub(crate) const TARGET_DECAY_PER_FRAME: f64 = 0.985;
-pub(crate) const WAVE_BASE_PHASE_STEP: f64 = 0.11;
-pub(crate) const WAVE_PHASE_GAIN: f64 = 0.32;
 pub(crate) const MIN_AMPLITUDE: f64 = 0.03;
 pub(crate) const MAX_AMPLITUDE: f64 = 1.3;
 pub(crate) const STROKE_WIDTH: f64 = 1.6;
-pub(crate) const PROCESSING_BASE_LEVEL: f64 = 0.16;
 
 pub(crate) struct WaveConfig {
     pub(crate) frequency: f64,

@@ -1991,7 +1991,7 @@ fn tick(state: &PillState, dt: f64) {
     let is_loading = phase == Phase::Loading;
     let hovered = state.hovered.get();
 
-    tick_audio_levels(state, phase);
+    tick_audio_levels(state, phase, dt);
 
     // Pill expand/collapse — PILL_EXPAND_STIFFNESS is snappier than the
     // generic 200 so the primary affordance feels instant. The spring
@@ -2186,70 +2186,24 @@ fn tick(state: &PillState, dt: f64) {
     }
 }
 
-/// Audio-level meters and the waveform phase they drive: pending input levels
-/// fold into the target level, decay toward silence when idle, and advance the
-/// wave animation at a level-dependent rate.
-fn tick_audio_levels(state: &PillState, phase: Phase) {
-    let is_recording = phase == Phase::Recording;
-    let is_loading = phase == Phase::Loading;
-
-    if is_recording {
-        let levels = std::mem::take(&mut *state.pending_levels.borrow_mut());
-        if !levels.is_empty() {
-            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
-            let avg = sum / levels.len() as f64;
-            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
-            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
-            let boosted = (combined.sqrt() * 1.35).min(1.0);
-            let target = state.target_level.get();
-            state
-                .target_level
-                .set((target * 0.25 + boosted * 0.75).min(1.0));
-        }
-    } else {
-        // Levels queued while not recording are stale. Without this they stay in
-        // the mailbox until the next recording starts and are then folded into
-        // that recording's first frame, so a burst of audio captured while the
-        // pill sat idle or loading moves the meter before any of it was spoken.
-        // Same guard as `rust_windows_pill::pill`.
-        state.pending_levels.borrow_mut().clear();
-        if is_loading {
-            let target = state.target_level.get();
-            state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
-        } else {
-            state.target_level.set(0.0);
-            state.current_level.set(state.current_level.get() * 0.4);
-            if state.current_level.get() < 0.0002 {
-                state.current_level.set(0.0);
-            }
-        }
+/// Audio-level meters and the waveform phase they drive.
+///
+/// The arithmetic is shared with the other two pills -- it was the same code
+/// written three times, and this copy had drifted: it advanced the wave at a
+/// fixed rate per frame rather than per second, so the animation ran at the
+/// compositor's rate. One call now, with the same inputs as Windows and macOS.
+fn tick_audio_levels(state: &PillState, phase: Phase, dt: f64) {
+    rust_pill_shared::level::Meter {
+        current: &state.current_level,
+        target: &state.target_level,
+        wave_phase: &state.wave_phase,
+        pending_levels: &state.pending_levels,
     }
-
-    let current = state.current_level.get();
-    let target = state.target_level.get();
-    let new_current = current + (target - current) * LEVEL_SMOOTHING;
-    state.current_level.set(if new_current < 0.0002 {
-        0.0
-    } else {
-        new_current
-    });
-
-    let decayed = target * TARGET_DECAY_PER_FRAME;
-    state
-        .target_level
-        .set(if decayed < 0.0005 { 0.0 } else { decayed });
-
-    let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording {
-        PROCESSING_BASE_LEVEL
-    } else {
-        0.0
-    };
-    let effective_level = level.max(base_level);
-    let advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level;
-    state
-        .wave_phase
-        .set((state.wave_phase.get() + advance) % TAU);
+    .tick(
+        phase == Phase::Recording,
+        phase == Phase::Loading,
+        dt * 60.0,
+    );
 }
 
 /// Flash banner (native pill toast) expiry and fade spring. An action-less

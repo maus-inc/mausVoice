@@ -1361,77 +1361,25 @@ fn tick_spatial_feedback(window: id, state: &PillState, dt: f64, now: f64) {
 fn tick(state: &PillState, window: id, dt: f64) {
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
-    let is_recording = phase == Phase::Recording;
-    let is_loading = phase == Phase::Loading;
     let hovered = state.hovered.get();
     let frame_scale = dt * 60.0; // Scale factor relative to 60fps baseline
 
-    // Audio levels (frame-rate independent)
-    if is_recording {
-        let levels = std::mem::take(&mut *state.pending_levels.borrow_mut());
-        if !levels.is_empty() {
-            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
-            let avg = sum / levels.len() as f64;
-            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
-            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
-            let boosted = (combined.sqrt() * 1.35).min(1.0);
-            let target = state.target_level.get();
-            let mix = 1.0 - 0.25_f64.powf(frame_scale);
-            state
-                .target_level
-                .set((target * (1.0 - mix) + boosted * mix).min(1.0));
-        }
-    } else {
-        // Levels queued while not recording are stale. Without this they stay in
-        // the mailbox until the next recording starts and are then folded into
-        // that recording's first frame, so a burst of audio captured while the
-        // pill sat idle or loading moves the meter before any of it was spoken.
-        // Same guard as `rust_windows_pill::pill`.
-        state.pending_levels.borrow_mut().clear();
-        if is_loading {
-            let target = state.target_level.get();
-            state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
-        } else {
-            state.target_level.set(0.0);
-            state
-                .current_level
-                .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
-            if state.current_level.get() < 0.0002 {
-                state.current_level.set(0.0);
-            }
-        }
+    // The meter's arithmetic is shared: it was byte-identical on all three
+    // platforms, so a different smoothing constant would have been a different
+    // instrument. One call, and the level it returns is what the rest of the
+    // frame may use.
+    rust_pill_shared::level::Meter {
+        current: &state.current_level,
+        target: &state.target_level,
+        wave_phase: &state.wave_phase,
+        pending_levels: &state.pending_levels,
     }
+    .tick(
+        phase == Phase::Recording,
+        phase == Phase::Loading,
+        frame_scale,
+    );
 
-    let current = state.current_level.get();
-    let target = state.target_level.get();
-    let smoothing = 1.0 - (1.0 - LEVEL_SMOOTHING).powf(frame_scale);
-    let new_current = current + (target - current) * smoothing;
-    state.current_level.set(if new_current < 0.0002 {
-        0.0
-    } else {
-        new_current
-    });
-
-    let decay = TARGET_DECAY_PER_FRAME.powf(frame_scale);
-    let decayed = target * decay;
-    state
-        .target_level
-        .set(if decayed < 0.0005 { 0.0 } else { decayed });
-
-    let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording {
-        PROCESSING_BASE_LEVEL
-    } else {
-        0.0
-    };
-    let effective_level = level.max(base_level);
-    let advance = (WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level) * frame_scale;
-    state
-        .wave_phase
-        .set((state.wave_phase.get() + advance) % TAU);
-
-    // Pill expand/collapse (spring) — snappier than tooltip/panel so the
-    // primary affordance feels instant. See PILL_EXPAND_STIFFNESS.
     // Paused keeps the pill fully expanded (voice field stays open, not mini mode).
     let expand_target =
         if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused {
@@ -1448,7 +1396,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     );
 
     // Loading offset
-    if is_loading {
+    if phase == Phase::Loading {
         let next_offset = rust_pill_shared::advance_loading_offset(
             state.loading_offset.get(),
             LOADING_SPEED,
