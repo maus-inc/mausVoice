@@ -1,38 +1,10 @@
 use std::cell::{Cell, RefCell};
 
 use crate::constants::*;
+pub(crate) use rust_pill_shared::fireworks::{Rocket, RocketPhase};
+pub(crate) use rust_pill_shared::flame::FlameTongue;
+
 use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Visibility};
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum RocketPhase {
-    Rising,
-    Exploding,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Spark {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) life: f64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Rocket {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) trail: Vec<(f64, f64)>,
-    pub(crate) fuse: f64,
-    pub(crate) phase: RocketPhase,
-    pub(crate) num_sparks: usize,
-    pub(crate) launch_index: usize,
-    pub(crate) sparks: Vec<Spark>,
-    pub(crate) trail_alpha: f64,
-    pub(crate) color: (f64, f64, f64),
-}
 
 #[derive(Debug, Clone)]
 pub(crate) enum ClickAction {
@@ -101,15 +73,6 @@ impl WindowMode {
             Self::AssistantTyping => (WINDOW_W_TYPING, WINDOW_H_TYPING),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FlameTongue {
-    pub(crate) t: f64,
-    pub(crate) height: f64,
-    pub(crate) width: f64,
-    pub(crate) phase: f64,
-    pub(crate) speed: f64,
 }
 
 #[derive(Debug, Clone)]

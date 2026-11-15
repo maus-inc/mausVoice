@@ -15,8 +15,7 @@ use crate::draw;
 use crate::gfx::Gfx;
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
-use crate::state;
-use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
+use crate::state::{ClickAction, PillState, WindowMode};
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
 use rust_pill_shared::edge::MonitorRect;
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
@@ -764,7 +763,9 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             *state.flash_reject_action.borrow_mut() = None;
             *state.flash_reject_action_label.borrow_mut() = None;
             state.flash_visible.set(true);
-            state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
+            state
+                .flash_timer
+                .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
             state.fireworks_active.set(true);
             state.fireworks_elapsed.set(0.0);
             state.fireworks_next_launch.set(0);
@@ -778,7 +779,9 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             *state.flash_reject_action.borrow_mut() = None;
             *state.flash_reject_action_label.borrow_mut() = None;
             state.flash_visible.set(true);
-            state.flash_timer.set(FLAME_TOTAL_DURATION);
+            state
+                .flash_timer
+                .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
 
             state.flame_active.set(true);
             state.flame_elapsed.set(0.0);
@@ -1141,142 +1144,34 @@ fn tick(state: &PillState, dt: f64) {
     }
 }
 
+/// The celebration, drawn from just above the pill.
+///
+/// The flight, the burst and the fade are shared with the other two pills -- the
+/// arithmetic here was identical on all three, down to the gravity constant.
 fn tick_fireworks(state: &PillState, dt: f64) {
-    if !state.fireworks_active.get() {
-        return;
-    }
-
-    let elapsed = state.fireworks_elapsed.get() + dt;
-    state.fireworks_elapsed.set(elapsed);
-
     let ww = state.draw_width.get();
     let wh = state.draw_height.get();
     let (_, pill_y, _, _) = draw::pill_position(state, ww, wh);
-    let origin_x = ww / 2.0;
-    let origin_y = pill_y - FLASH_GAP - FLASH_HEIGHT / 2.0;
-
-    let mut next = state.fireworks_next_launch.get();
-    let mut rockets = state.fireworks_rockets.borrow_mut();
-
-    while next < FIREWORK_LAUNCHES.len() && elapsed >= FIREWORK_LAUNCHES[next].time {
-        let launch = &FIREWORK_LAUNCHES[next];
-        let angle_rad = launch.angle_deg.to_radians();
-        let color = FIREWORK_COLORS[next % FIREWORK_COLORS.len()];
-        rockets.push(Rocket {
-            x: origin_x,
-            y: origin_y,
-            vx: launch.speed * angle_rad.sin(),
-            vy: -launch.speed * angle_rad.cos(),
-            trail: vec![(origin_x, origin_y)],
-            fuse: launch.fuse,
-            phase: RocketPhase::Rising,
-            num_sparks: launch.num_sparks,
-            launch_index: next,
-            sparks: Vec::new(),
-            trail_alpha: 1.0,
-            color,
-        });
-        next += 1;
+    rust_pill_shared::fireworks::Fireworks {
+        active: &state.fireworks_active,
+        elapsed: &state.fireworks_elapsed,
+        next_launch: &state.fireworks_next_launch,
+        rockets: &state.fireworks_rockets,
     }
-    state.fireworks_next_launch.set(next);
-
-    for rocket in rockets.iter_mut() {
-        match rocket.phase {
-            RocketPhase::Rising => {
-                rocket.vy += FIREWORKS_GRAVITY * dt;
-                rocket.x += rocket.vx * dt;
-                rocket.y += rocket.vy * dt;
-                rocket.trail.push((rocket.x, rocket.y));
-                if rocket.trail.len() > FIREWORKS_TRAIL_MAX {
-                    rocket.trail.remove(0);
-                }
-                rocket.fuse -= dt;
-                if rocket.fuse <= 0.0 {
-                    rocket.phase = RocketPhase::Exploding;
-                    let offset = rocket.launch_index as f64 * 0.7;
-                    for i in 0..rocket.num_sparks {
-                        let n = rocket.num_sparks.max(1) as f64;
-                        let angle = TAU * i as f64 / n + offset;
-                        let speed_t = ((i * 7 + 3) % rocket.num_sparks.max(1)) as f64 / n;
-                        let speed = FIREWORKS_SPARK_BASE_SPEED * (0.6 + 0.8 * speed_t);
-                        rocket.sparks.push(Spark {
-                            x: rocket.x,
-                            y: rocket.y,
-                            vx: speed * angle.cos(),
-                            vy: speed * angle.sin(),
-                            life: 1.0,
-                        });
-                    }
-                }
-            }
-            RocketPhase::Exploding => {
-                for spark in rocket.sparks.iter_mut() {
-                    let drag = (-FIREWORKS_SPARK_DRAG * dt).exp();
-                    spark.vx *= drag;
-                    spark.vy *= drag;
-                    spark.vy += FIREWORKS_GRAVITY * 0.3 * dt;
-                    spark.x += spark.vx * dt;
-                    spark.y += spark.vy * dt;
-                    spark.life -= dt / FIREWORKS_SPARK_LIFE;
-                }
-                rocket.trail_alpha -= FIREWORKS_TRAIL_FADE_RATE * dt;
-                if rocket.trail_alpha < 0.0 {
-                    rocket.trail_alpha = 0.0;
-                }
-            }
-        }
-    }
-
-    rockets.retain(|r| match r.phase {
-        RocketPhase::Rising => true,
-        RocketPhase::Exploding => r.trail_alpha > 0.01 || r.sparks.iter().any(|s| s.life > 0.0),
-    });
-
-    if elapsed >= FIREWORKS_TOTAL_DURATION && rockets.is_empty() {
-        state.fireworks_active.set(false);
-    }
+    .tick(dt, (ww / 2.0, pill_y - FLASH_GAP - FLASH_HEIGHT / 2.0));
 }
 
+/// The flame, swaying on its own schedule.
+///
+/// The tongue sizes, their sway and the burn-out are shared; only the seeding is
+/// the platform's, and the two that hashed their tongues use the shared hash.
 fn tick_flame(state: &PillState, dt: f64) {
-    if !state.flame_active.get() {
-        return;
+    rust_pill_shared::flame::Flame {
+        active: &state.flame_active,
+        elapsed: &state.flame_elapsed,
+        tongues: &state.flame_tongues,
     }
-    let elapsed = state.flame_elapsed.get() + dt;
-    state.flame_elapsed.set(elapsed);
-
-    let mut tongues = state.flame_tongues.borrow_mut();
-
-    if tongues.is_empty() {
-        for i in 0..FLAME_TONGUE_COUNT {
-            let t = if FLAME_TONGUE_COUNT > 1 {
-                i as f64 / (FLAME_TONGUE_COUNT - 1) as f64
-            } else {
-                0.5
-            };
-            let hash = (i as u64).wrapping_mul(2654435761);
-            let h_t = (hash % 1000) as f64 / 1000.0;
-            let w_t = ((hash >> 10) % 1000) as f64 / 1000.0;
-            let phase = ((hash >> 20) % 1000) as f64 / 1000.0 * TAU;
-            let speed_var = ((hash >> 30) % 1000) as f64 / 1000.0;
-
-            tongues.push(state::FlameTongue {
-                t,
-                height: FLAME_MIN_HEIGHT + (FLAME_MAX_HEIGHT - FLAME_MIN_HEIGHT) * h_t,
-                width: FLAME_MIN_WIDTH + (FLAME_MAX_WIDTH - FLAME_MIN_WIDTH) * w_t,
-                phase,
-                speed: FLAME_SPEED_BASE * (0.8 + 0.4 * speed_var),
-            });
-        }
-    }
-
-    for tongue in tongues.iter_mut() {
-        tongue.phase += tongue.speed * dt;
-    }
-
-    if elapsed >= FLAME_TOTAL_DURATION {
-        state.flame_active.set(false);
-        tongues.clear();
-    }
+    .tick(dt, rust_pill_shared::flame::hashed_tongue);
 }
 
 fn tick_flash_blue(state: &PillState, dt: f64) {

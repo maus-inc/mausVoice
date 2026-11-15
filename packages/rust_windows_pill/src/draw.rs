@@ -822,7 +822,8 @@ fn draw_flame(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let usable = pill_w - inset * 2.0;
 
     let fade_in = (elapsed / 0.3).clamp(0.0, 1.0);
-    let fade_out = ((FLAME_TOTAL_DURATION - elapsed) / 0.8).clamp(0.0, 1.0);
+    let fade_out =
+        ((rust_pill_shared::flame::FLAME_TOTAL_DURATION - elapsed) / 0.8).clamp(0.0, 1.0);
     let alpha = fade_in * fade_out;
     if alpha < 0.01 {
         return;
@@ -835,8 +836,8 @@ fn draw_flame(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         let w = tongue.width * (0.85 + 0.15 * flicker);
         let hw = w / 2.0;
 
-        let sway =
-            tongue.phase.sin() * FLAME_SWAY + (tongue.phase * 1.7 + 1.0).sin() * FLAME_SWAY * 0.4;
+        let sway = tongue.phase.sin() * rust_pill_shared::flame::FLAME_SWAY
+            + (tongue.phase * 1.7 + 1.0).sin() * rust_pill_shared::flame::FLAME_SWAY * 0.4;
 
         let base_x = pill_x + inset + usable * tongue.t;
         let cx = base_x + sway * 0.3;
@@ -999,18 +1000,18 @@ fn draw_fireworks(gfx: &Gfx, state: &PillState) {
                     rocket.trail[i].0,
                     rocket.trail[i].1,
                     [rc, gc, bc, alpha],
-                    FIREWORKS_ROCKET_LINE_WIDTH,
+                    rust_pill_shared::fireworks::FIREWORKS_ROCKET_LINE_WIDTH,
                 );
             }
         }
 
         if rocket.phase == RocketPhase::Rising {
-            let hs = FIREWORKS_HEAD_SIZE / 2.0;
+            let hs = rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE / 2.0;
             gfx.fill_rounded_rect(
                 rocket.x - hs,
                 rocket.y - hs,
-                FIREWORKS_HEAD_SIZE,
-                FIREWORKS_HEAD_SIZE,
+                rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE,
+                rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE,
                 hs,
                 [rc, gc, bc, 0.95],
             );
@@ -1034,7 +1035,7 @@ fn draw_fireworks(gfx: &Gfx, state: &PillState) {
                 spark.x,
                 spark.y,
                 [rc, gc, bc, alpha],
-                FIREWORKS_SPARK_LINE_WIDTH,
+                rust_pill_shared::fireworks::FIREWORKS_SPARK_LINE_WIDTH,
             );
         }
     }
