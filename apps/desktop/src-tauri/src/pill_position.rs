@@ -273,7 +273,6 @@ fn erase_is_undeclared() -> bool {
     ERASE_DECLARED.load(Ordering::Acquire)
 }
 
-
 /// Forget the stored position, which is what "Reset Pill Position" means.
 ///
 /// Runs on the same path that tells the pill to re-home, so a reset that the
@@ -515,7 +514,10 @@ mod tests {
         assert!(note_report(true), "an ordinary save always stores");
         let _declaration = mark_position_erased();
         assert!(erase_is_undeclared());
-        assert!(!note_report(false), "a report with no position is not storable");
+        assert!(
+            !note_report(false),
+            "a report with no position is not storable"
+        );
         assert!(
             !erase_is_undeclared(),
             "the answer to a clear is what spends the declaration"
