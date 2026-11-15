@@ -808,6 +808,25 @@ impl LayoutPoll {
         }
     }
 
+    /// Seed the baseline from the arrangement at launch, without acting on it.
+    ///
+    /// A fresh poll returns [`PollOutcome::Baseline`] on its first observation and
+    /// reconciles nothing, which is right for a change that arrives after launch:
+    /// acting on the first signature treats the launch itself as a display change
+    /// and moves a pill that was just restored. The arrangement can change between
+    /// the pill's own placement and that first poll, though, and the baseline would
+    /// then absorb the change instead of reconciling it, leaving a pill placed on a
+    /// display that is already gone. Seeding at placement time makes the first poll
+    /// compare against the arrangement the pill was actually placed on.
+    ///
+    /// Separate from [`Self::observe`] because the interval guard would answer
+    /// [`PollOutcome::TooSoon`] and store nothing when the pill realizes inside the
+    /// first interval, which is exactly the window this has to cover.
+    pub fn seed(&mut self, now: f64, signature: u64) {
+        self.polled_at = now;
+        self.signature = Some(signature);
+    }
+
     /// When the arrangement was last read.
     pub fn polled_at(self) -> f64 {
         self.polled_at

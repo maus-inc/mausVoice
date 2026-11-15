@@ -195,10 +195,13 @@ fn on_fireworks(message: String, state_tick: &Rc<PillState>) {
         .flash_timer
         .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
 
-    state_tick.fireworks_active.set(true);
-    state_tick.fireworks_elapsed.set(0.0);
-    state_tick.fireworks_next_launch.set(0);
-    state_tick.fireworks_rockets.borrow_mut().clear();
+    rust_pill_shared::fireworks::Fireworks {
+        active: &state_tick.fireworks_active,
+        elapsed: &state_tick.fireworks_elapsed,
+        next_launch: &state_tick.fireworks_next_launch,
+        rockets: &state_tick.fireworks_rockets,
+    }
+    .restart(reduced_motion());
 }
 
 /// Applies `InMessage::Flame`.
@@ -1255,7 +1258,10 @@ pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow
 
     if backend == Backend::X11 {
         let state_realize = state.clone();
-        window.connect_realize(move |window| x11::setup_x11_window(window, state_realize.clone()));
+        window.connect_realize(move |window| {
+            x11::setup_x11_window(window, state_realize.clone());
+            seed_layout_baseline(window, &state_realize);
+        });
     }
 
     let state_alloc = state.clone();
@@ -1542,6 +1548,31 @@ fn poll_display_layout(window: &gtk::Window, state: &PillState) {
     if outcome == rust_pill_shared::layout::PollOutcome::Changed {
         reconcile_display_layout(window, state);
     }
+}
+
+/// Record the arrangement the pill was placed against, before the first poll.
+///
+/// A fresh poll treats its first observation as the baseline and reconciles
+/// nothing, so an output removed between the placement and that first sample would
+/// be absorbed into the baseline instead of reconciled, leaving the pill parked
+/// over empty root space. Seeding at realize makes the first poll compare against
+/// the arrangement the pill was actually placed on, so a removal in that window
+/// reads as a change. The seed itself is not acted on, which is the whole point:
+/// acting on it would treat the launch as a display change and move the restored
+/// pill.
+fn seed_layout_baseline(window: &gtk::Window, state: &PillState) {
+    if state.backend.get() != Backend::X11 {
+        return;
+    }
+    let display = window.display();
+    let scale = x11::x11_root_scale(window);
+    let Some(areas) = monitor_areas(&display, scale) else {
+        return;
+    };
+    state.layout_poll.borrow_mut().seed(
+        drag_clock_now(),
+        rust_pill_shared::layout::layout_signature(&areas),
+    );
 }
 
 /// Ends the gesture and tears down any active drag.

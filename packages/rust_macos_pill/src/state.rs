@@ -3,7 +3,7 @@ use std::cell::{Cell, RefCell};
 pub(crate) use rust_pill_shared::fireworks::{Rocket, RocketPhase};
 pub(crate) use rust_pill_shared::flame::FlameTongue;
 
-use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Visibility};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Rect, Visibility};
 
 use crate::constants::*;
 
@@ -73,6 +73,21 @@ impl WindowMode {
             Self::AssistantTyping => (WINDOW_W_TYPING, WINDOW_H_TYPING),
         }
     }
+}
+
+/// A drop a save guard deferred, held until the retry may write it.
+///
+/// The rectangle and the display it belonged to are captured together, at the
+/// moment the gesture ended, so a reconciliation that moves the window during the
+/// hold cannot make the retry pair the retained rectangle with a panel the drop
+/// was never on. `frame` is in Cocoa's bottom-up space, because that is what the
+/// idle tick parks the window with; `monitor` and `display_id` are in the
+/// desktop's top-down space, because that is what the record stores.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DropRecord {
+    pub(crate) frame: (f64, f64, f64, f64),
+    pub(crate) monitor: Rect,
+    pub(crate) display_id: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -209,7 +224,8 @@ pub(crate) struct PillState {
     /// when no save is owed. The drag controller reports `settled` exactly once,
     /// so a refused save has to be retried from here or the drop is lost.
     pub(crate) drag_save_due: Cell<Option<f64>>,
-    /// The window frame the gesture ended at, kept while a guarded save is owed.
+    /// The window frame the gesture ended at, kept while a guarded save is owed,
+    /// together with the display it was on when it landed.
     ///
     /// The retry runs after a delay, and the pill's own reconciliation can move the
     /// window in between. `saved_x`/`saved_y` still describe the position from
@@ -218,8 +234,11 @@ pub(crate) struct PillState {
     /// A whole frame rather than an origin, because the report needs the frame
     /// flipped into the desktop's top-down space while `saved_x`/`saved_y` need the
     /// origin in Cocoa's bottom-up one. Keeping one value and deriving both is what
-    /// stops the two from describing different places.
-    pub(crate) drop_frame: Cell<Option<(f64, f64, f64, f64)>>,
+    /// stops the two from describing different places. The display is retained with
+    /// it for the same reason: reading the live screen at retry time would pair the
+    /// retained rectangle with the panel reconciliation moved the window onto, so a
+    /// restart would restore the drop against the wrong monitor.
+    pub(crate) drop_frame: Cell<Option<DropRecord>>,
     /// Holds position saves until the display layout has been steady, so a frame
     /// macOS forced during a display change is never stored as the user's
     /// position. See rust_pill_shared::layout::SaveGuard.

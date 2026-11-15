@@ -214,7 +214,7 @@ unsafe fn pill_geometry(window: id) -> (Rect, Rect) {
     (rect, monitor)
 }
 
-use crate::state::{PillState, WindowMode};
+use crate::state::{DropRecord, PillState, WindowMode};
 
 // ── CVDisplayLink & timing ───────────────────────────────────────
 
@@ -808,10 +808,13 @@ fn perform_tick() {
                         .flash_timer
                         .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
 
-                    ctx.state.fireworks_active.set(true);
-                    ctx.state.fireworks_elapsed.set(0.0);
-                    ctx.state.fireworks_next_launch.set(0);
-                    ctx.state.fireworks_rockets.borrow_mut().clear();
+                    rust_pill_shared::fireworks::Fireworks {
+                        active: &ctx.state.fireworks_active,
+                        elapsed: &ctx.state.fireworks_elapsed,
+                        next_launch: &ctx.state.fireworks_next_launch,
+                        rockets: &ctx.state.fireworks_rockets,
+                    }
+                    .restart(reduced_motion());
                 }
                 InMessage::Flame { message } => {
                     *ctx.state.flash_message.borrow_mut() = message;
@@ -1083,6 +1086,29 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
     state.pointer_down.set(false);
 }
 
+/// The monitor work area and display token for the window's current frame.
+///
+/// Read at the instant a drop lands and retained with the frame, so a
+/// reconciliation that moves the window during the save hold cannot make the
+/// retry pair the retained rectangle with a panel the drop was never on. The
+/// shape mirrors [`pill_geometry`], including the null-screen fallback where the
+/// window's own frame stands in for the monitor.
+unsafe fn drop_display_for(window: id) -> (Rect, Option<u64>) {
+    let screen: id = msg_send![window, screen];
+    let primary_top = primary_top_for(window);
+    let monitor = if (screen as *mut std::ffi::c_void).is_null() {
+        to_top_down(window_frame(window), primary_top)
+    } else {
+        to_top_down(screen_visible_frame(screen), primary_top)
+    };
+    let display_id = if (screen as *mut std::ffi::c_void).is_null() {
+        None
+    } else {
+        screen_display_id(screen)
+    };
+    (monitor, display_id)
+}
+
 /// Retains the settled position and tells the desktop, which stores it so the
 /// next launch can restore it.
 ///
@@ -1125,6 +1151,13 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
         // space and the report has to be flipped the same way `pill_geometry` flips
         // it. Converting one field at a time is how a Y value in the wrong space
         // gets stored as if it were right.
+        //
+        // The display is retained beside the frame, read at the same instant. The
+        // retry runs after a delay, and reconciliation can move the window onto
+        // another panel in between; reading the live screen then would publish the
+        // retained rectangle with that panel's work area and token, so a restart
+        // would restore the drop against a monitor it was never on.
+        //
         // Only the first refusal records. This function is retried every frame
         // for as long as the save is held, and display reconciliation is not held
         // with it: if a display change relocates the window during the hold, a
@@ -1132,9 +1165,12 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
         // macOS improvised. The retained drop is consumed by the successful save
         // and cleared when a new gesture starts.
         if state.drop_frame.get().is_none() {
-            state
-                .drop_frame
-                .set(Some(unsafe { frame_tuple(window_frame(window)) }));
+            let (monitor, display_id) = unsafe { drop_display_for(window) };
+            state.drop_frame.set(Some(DropRecord {
+                frame: unsafe { frame_tuple(window_frame(window)) },
+                monitor,
+                display_id,
+            }));
         }
         state.drag_save_due.set(due);
         return;
@@ -1142,26 +1178,25 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
     // The recorded drop wins over the live frame, for the same reason: a retry
     // runs after a delay, and the pill's own reconciliation can have moved the
     // window in between. Consumed so a later gesture cannot inherit a stale one.
-    let frame = match state.drop_frame.take() {
-        Some(frame) => frame_from_tuple(frame),
-        None => unsafe { window_frame(window) },
+    // Its retained display is what the record names: `pill_geometry` and
+    // `msg_send![window, screen]` read the live window, which may no longer be
+    // where the user dropped it.
+    let (frame, monitor, display_id) = match state.drop_frame.take() {
+        Some(record) => (
+            frame_from_tuple(record.frame),
+            record.monitor,
+            record.display_id,
+        ),
+        None => unsafe {
+            let (monitor, display_id) = drop_display_for(window);
+            (window_frame(window), monitor, display_id)
+        },
     };
     state.saved_x.set(frame.origin.x);
     state.saved_y.set(frame.origin.y);
     state.has_saved_position.set(true);
     // The pending drop has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
-    // Name the display from the drop point, not from the window: the window is not
-    // necessarily there any more, and the record is what the next launch restores.
-    // A nameless result stays nameless and matches by geometry.
-    let display_id = unsafe {
-        let screen: id = msg_send![window, screen];
-        if screen.is_null() {
-            None
-        } else {
-            screen_display_id(screen)
-        }
-    };
     state.saved_display_id.set(display_id);
     // The report carries the drop too. `pill_geometry` reads the live window, so
     // using it here would store a rectangle from a different place than
@@ -1171,7 +1206,6 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
     // top-down, so it goes through the same conversion `pill_geometry` applies
     // rather than having its Y value copied across. `saved_x`/`saved_y` stay in
     // Cocoa space, because that is what the idle tick parks the window with.
-    let (_, monitor) = unsafe { pill_geometry(window) };
     let reported = to_top_down(frame, unsafe { primary_top_for(window) });
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(

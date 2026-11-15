@@ -785,6 +785,149 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
   });
 
+  it("keeps the retained drop's own display, not the one reconciliation moved it onto", () => {
+    // The display is read when the drop lands and retained with the frame. A retry
+    // runs after the layout hold, and reconciliation can have moved the window onto
+    // another panel by then; reading the live screen at retry time would pair the
+    // retained rectangle with that panel, so a restart restores the drop against a
+    // monitor it was never on.
+    const state = source.macState;
+    assert.match(
+      state,
+      /pub\(crate\) struct DropRecord \{[\s\S]{0,200}?monitor: Rect,[\s\S]{0,80}?display_id: Option<u64>/,
+      "macOS: the retained drop carries no display, so the retry must read the live screen",
+    );
+    const write = scope("macApp", "fn write_drag_position(");
+    // The retained record is read whole, and its monitor and display go into the
+    // report rather than the live window's.
+    assert.match(
+      write,
+      /Some\(record\) => \([\s\S]{0,160}?frame_from_tuple\(record\.frame\),\s*record\.monitor,\s*record\.display_id,?\s*\)/,
+      "macOS: the retry reads the live display instead of the retained one",
+    );
+    assert.match(write, /Some\(monitor\)/, "macOS: the retained monitor is dropped");
+    // And the record is filled at the same instant the frame is, so the two cannot
+    // describe different panels.
+    assert.match(
+      write,
+      /let \(monitor, display_id\) = unsafe \{ drop_display_for\(window\) \};/,
+      "macOS: the display is not captured with the frame",
+    );
+  });
+
+  it("drops the previous gesture's recorded drop when the next drag starts", () => {
+    // A drop the guard refused leaves `drop_origin` recorded for the frame loop's
+    // retry. Left behind when a new drag starts, a destroy before this gesture
+    // settles would store the place the user moved away from.
+    const arm = source.windowsPill.slice(
+      source.windowsPill.indexOf("elapsed >= LONG_PRESS_DURATION"),
+      source.windowsPill.indexOf(
+        "arm_pulse.set(rust_pill_shared::pulse_armed())",
+      ),
+    );
+    assert.match(
+      arm,
+      /state\.drop_origin\.set\(None\)/,
+      "windowsPill: the previous gesture's recorded drop survives into this one",
+    );
+  });
+
+  it("writes the recorded drop when shutdown drains an owed save", () => {
+    // A destroy has no frame loop after it, so the writer it calls must not read
+    // the live rect: reconciliation can have moved the window since the drop, and
+    // the user's release is not that move. The recorded origin wins, guard or not.
+    // The guarded writer and the shutdown writer both end in the one store, so the
+    // drop cannot mean two different things depending on which path ran.
+    const write = scope("windowsPill", "fn write_drag_position_unchecked(");
+    assert.match(
+      write,
+      /store_recorded_drop\(hwnd, state\)/,
+      "windowsPill: the shutdown write does not go through the shared store",
+    );
+    const store = scope("windowsPill", "fn store_recorded_drop(");
+    assert.match(store, /state\.drop_origin\.take\(\)/);
+    assert.match(
+      store,
+      /let reported = Rect \{[\s\S]{0,120}?x: origin\.0 as f64,[\s\S]{0,120}?y: origin\.1 as f64,/,
+      "windowsPill: the shared store carries the live rect instead of the drop",
+    );
+    // And the guarded writer reaches the same store, so the two paths cannot drift.
+    const guarded = scope("windowsPill", "fn write_drag_position(");
+    assert.match(guarded, /store_recorded_drop\(hwnd, state\)/);
+    // The drain reaches it, and the guarded writer is not the path destroy takes
+    // (that one can defer and park a retry that never runs).
+    const destroy = scope("windowsPill", "unsafe fn on_wm_destroy(");
+    assert.match(destroy, /write_drag_position_unchecked\(hwnd, state\)/);
+  });
+
+  it("probes the visible pill's centre for the work area, not the window's", () => {
+    // The window is taller than the pill, so on vertically offset displays its
+    // centre can be on a different panel than the pill. The work area must come
+    // from the same footprint centre the display token is resolved from.
+    const helper = scope("windowsPill", "fn work_area_for_report(");
+    assert.match(
+      helper,
+      /published\.x \+ offset\.0 \+ size\.0 \/ 2\.0/,
+      "windowsPill: the work area is probed from the window's centre, not the pill's",
+    );
+    assert.match(
+      helper,
+      /published\.y \+ offset\.1 \+ size\.1 \/ 2\.0/,
+      "windowsPill: the work area is probed from the window's centre, not the pill's",
+    );
+  });
+
+  it("seeds the layout baseline where the pill was placed", () => {
+    // A fresh poll treats its first observation as the baseline and reconciles
+    // nothing, so an output removed between the placement and that first sample is
+    // absorbed instead of reconciled. Seeding at realize makes the first poll
+    // compare against the arrangement the pill was placed on.
+    assert.match(source.layout, /pub fn seed\(&mut self, now: f64, signature: u64\)/);
+    const realize = source.gtkPill.slice(
+      source.gtkPill.indexOf("window.connect_realize("),
+      source.gtkPill.indexOf("window.connect_size_allocate("),
+    );
+    assert.match(
+      realize,
+      /seed_layout_baseline\(window, &state_realize\)/,
+      "gtkPill: the baseline is not seeded at realize",
+    );
+    const seed = scope("gtkPill", "fn seed_layout_baseline(");
+    assert.match(seed, /\.seed\(/);
+    assert.doesNotMatch(
+      seed,
+      /reconcile_display_layout/,
+      "gtkPill: the seed acts on the launch as if it were a display change",
+    );
+  });
+
+  it("honors reduced motion in the fireworks activation on every pill", () => {
+    // Rockets fly under gravity, which is the motion the setting asks to suppress.
+    // Every platform shares `Fireworks::restart`, so the reduced-motion decision is
+    // made once rather than re-derived at three call sites.
+    const fireworks = read("packages/rust_pill_shared/src/fireworks.rs");
+    assert.match(
+      fireworks,
+      /pub fn restart\(&self, reduced_motion: bool\)/,
+    );
+    assert.match(
+      fireworks,
+      /self\.active\.set\(!reduced_motion\)/,
+      "the shared restart no longer honors reduced motion",
+    );
+    for (const [name, src] of [
+      ["windowsPill", source.windowsPill],
+      ["macApp", source.macApp],
+      ["gtkPill", source.gtkPill],
+    ]) {
+      assert.match(
+        src,
+        /rust_pill_shared::fireworks::Fireworks \{[\s\S]{0,300}?\}\s*\.restart\(reduced_motion\(\)\)/,
+        `${name}: the fireworks activation does not go through the shared reduced-motion rule`,
+      );
+    }
+  });
+
   it("reports the macOS drop in the desktop's coordinate space", () => {
     // `window_frame` is Cocoa bottom-left; `pill_geometry` and restore are top-down.
     // Copying origin.1 across would store a Y value in the wrong space, which is
@@ -975,7 +1118,9 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // The desktop stores the rectangle in the report. A retry runs after a delay,
     // and reconciliation can move the window in between, so reporting the live
     // rect would store one place while `saved_x`/`saved_y` hold another.
-    const write = scope("windowsPill", "fn write_drag_position(");
+    // The store is one function now, shared by the guarded writer and the shutdown
+    // writer, so the assertions live on it rather than on one caller.
+    const write = scope("windowsPill", "fn store_recorded_drop(");
     assert.match(write, /state\.drop_origin\.take\(\)/);
     assert.match(
       write,
@@ -1115,7 +1260,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
       /state\.drop_origin\.set\(Some\(\(x, y\)\)\)/,
       "windowsPill: the settle never records the drop origin",
     );
-    const write = scope("windowsPill", "fn write_drag_position(");
+    const write = scope("windowsPill", "fn store_recorded_drop(");
     assert.match(
       write,
       /state\.drop_origin\.take\(\)/,
@@ -3117,8 +3262,8 @@ describe("native gesture adapter contracts", () => {
     // the retry lives on the frame loop, and there is no frame loop after
     // `WM_DESTROY`: a write that defers here is a position lost. The latch must
     // only be cleared on the path that actually writes, so `write_drag_position`
-    // has to be reachable without an early return in between -- and the writer
-    // itself must be the thing that leaves the drop.
+    // has to be reachable without an early return in between -- and the shared
+    // store it reaches must be the thing that leaves the drop.
     const write = scope("windowsPill", "fn write_drag_position(");
     assert.match(
       save,
@@ -3127,6 +3272,12 @@ describe("native gesture adapter contracts", () => {
     );
     assert.match(
       write,
+      /store_recorded_drop\(hwnd, state\)/,
+      "windowsPill: the writer does not leave the drop",
+    );
+    const store = scope("windowsPill", "fn store_recorded_drop(");
+    assert.match(
+      store,
       /state\.drag_save_due\.set\(None\)/,
       "windowsPill: a written drop leaves a retry owed, so destroy would store it twice",
     );

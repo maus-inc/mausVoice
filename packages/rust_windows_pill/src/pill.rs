@@ -766,10 +766,13 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state
                 .flash_timer
                 .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
-            state.fireworks_active.set(true);
-            state.fireworks_elapsed.set(0.0);
-            state.fireworks_next_launch.set(0);
-            state.fireworks_rockets.borrow_mut().clear();
+            rust_pill_shared::fireworks::Fireworks {
+                active: &state.fireworks_active,
+                elapsed: &state.fireworks_elapsed,
+                next_launch: &state.fireworks_next_launch,
+                rockets: &state.fireworks_rockets,
+            }
+            .restart(reduced_motion());
         }
         InMessage::Flame { message } => {
             *state.flash_message.borrow_mut() = message;
@@ -1662,7 +1665,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                     report: rust_pill_shared::restore::PositionReport::new(
                         true,
                         Some(published),
-                        monitor,
+                        work_area_for_report(monitor, &published, (offset, size)),
                         state.saved_display_id.get(),
                     ),
                 });
@@ -1704,7 +1707,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                 report: rust_pill_shared::restore::PositionReport::new(
                     true,
                     Some(published),
-                    work_area_for_report(monitor, &published),
+                    work_area_for_report(monitor, &published, (offset, size)),
                     state.saved_display_id.get(),
                 ),
             });
@@ -1724,12 +1727,19 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
 /// would describe two different panels and a restart would clamp against one it
 /// was never on.
 ///
-/// The work area is therefore resolved from the rectangle's own centre, keeping
-/// the window's monitor only as a fallback for a point no display answers for.
-fn work_area_for_report(monitor: Option<Rect>, published: &Rect) -> Option<Rect> {
+/// The work area is therefore resolved from the visible pill's own centre, the
+/// same point the relocation uses to name the display, so the work area and the
+/// token cannot disagree. The window's monitor is only the fallback for a point no
+/// display answers for.
+fn work_area_for_report(
+    monitor: Option<Rect>,
+    published: &Rect,
+    footprint: ((f64, f64), (f64, f64)),
+) -> Option<Rect> {
+    let (offset, size) = footprint;
     monitor_work_area_at(
-        published.x + published.width / 2.0,
-        published.y + published.height / 2.0,
+        published.x + offset.0 + size.0 / 2.0,
+        published.y + offset.1 + size.1 / 2.0,
     )
     .or(monitor)
 }
@@ -2458,6 +2468,10 @@ fn tick_long_press(state: &PillState, dt: f64) {
         // this drag and store the window while it is moving -- a position nobody
         // chose. This gesture will produce its own drop.
         state.drag_save_due.set(None);
+        // The previous gesture's recorded drop goes with its deadline. Left behind,
+        // a destroy before this drag settles would have `write_drag_position` consume
+        // it and store the place the user moved away from, not where they are.
+        state.drop_origin.set(None);
         // A display change while this drag is held makes the drop suspect, so the
         // guard has to know a drag is in flight before the change arrives.
         state.save_guard.borrow_mut().drag_started();
@@ -2661,11 +2675,18 @@ fn write_drag_position(hwnd: HWND, state: &PillState, now: f64) {
         state.drag_save_due.set(due);
         return;
     }
-    // Leave the pill where it was dropped instead of snapping back. The recorded
-    // drop wins over the live rect: between the drop and this retry the window can
-    // be moved by things that are not the user -- settling, a restore of the old
-    // position -- and the saved point must be the one they released at.
-    //
+    // Leave the pill where it was dropped instead of snapping back.
+    store_recorded_drop(hwnd, state);
+}
+
+/// Store the recorded drop and publish it, without consulting the save guard.
+///
+/// Shared by the guarded writer and the shutdown writer, so the two cannot
+/// disagree about what a stored drop is. The recorded origin wins over the live
+/// rect: between the drop and this call the window can be moved by things that
+/// are not the user -- settling, reconciliation, a restore of the old position --
+/// and the saved point must be the one they released at.
+fn store_recorded_drop(hwnd: HWND, state: &PillState) {
     // `drop_origin` is consumed here so a later gesture cannot inherit a stale one.
     let origin = state.drop_origin.take().unwrap_or_else(|| {
         let mut rect = RECT::default();
@@ -2742,28 +2763,12 @@ fn write_drag_position(hwnd: HWND, state: &PillState, now: f64) {
 /// `WM_DESTROY` there is no later frame to prefer and no retry to park: refusing
 /// here does not avoid a bad record, it only guarantees a missing one. The pill's
 /// last position is worth more than the exactness of the frame it was read on.
+///
+/// The recorded drop still wins over the live rect, guard or no guard: the window
+/// can have been moved by reconciliation since the user released it, and storing
+/// that move as the user's choice is wrong whether the process is ending or not.
 fn write_drag_position_unchecked(hwnd: HWND, state: &PillState) {
-    let mut rect = RECT::default();
-    unsafe {
-        let _ = GetWindowRect(hwnd, &mut rect);
-    }
-    state.saved_x.set(rect.left);
-    state.saved_y.set(rect.top);
-    state.has_saved_position.set(true);
-    state.drag_save_due.set(None);
-    let monitor_handle = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
-    state
-        .saved_display_id
-        .set(monitor_display_id(monitor_handle));
-    let (win_rect, monitor) = current_pill_geometry(hwnd);
-    ipc::send(&OutMessage::PositionChanged {
-        report: rust_pill_shared::restore::PositionReport::new(
-            true,
-            Some(win_rect),
-            monitor,
-            state.saved_display_id.get(),
-        ),
-    });
+    store_recorded_drop(hwnd, state);
 }
 
 /// Fallback release detection.

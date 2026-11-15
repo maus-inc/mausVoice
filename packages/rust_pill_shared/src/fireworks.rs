@@ -262,11 +262,17 @@ impl Fireworks<'_> {
     /// Separate from `tick` because the three renderers each opened the animation
     /// by clearing the same four values in the same order; forgetting one of them
     /// makes the second celebration start mid-air with the first one's rockets.
-    pub fn restart(&self) {
+    ///
+    /// `reduced_motion` keeps the celebration static. Rockets fly under gravity,
+    /// which is exactly the motion the setting asks to suppress, and the other
+    /// pill animations already honor it. The celebration still lands: the caller
+    /// raises the message banner for the same duration, so the user gets the
+    /// feedback without the flight.
+    pub fn restart(&self, reduced_motion: bool) {
         self.elapsed.set(0.0);
         self.next_launch.set(0);
         self.rockets.borrow_mut().clear();
-        self.active.set(true);
+        self.active.set(!reduced_motion);
     }
 }
 
@@ -395,11 +401,31 @@ mod tests {
         assert!(!h.rockets.borrow().is_empty());
 
         h.active.set(false);
-        h.fw().restart();
+        h.fw().restart(false);
         assert!(h.active.get());
         assert_eq!(h.elapsed.get(), 0.0);
         assert_eq!(h.next_launch.get(), 0);
         assert!(h.rockets.borrow().is_empty());
+    }
+
+    /// Reduced motion keeps the celebration still: `restart` clears the same
+    /// state but never activates the flight, so no rocket is launched and no
+    /// frame moves one. The caller raises the banner for the same duration, so
+    /// the feedback still lands.
+    #[test]
+    fn reduced_motion_keeps_the_celebration_still() {
+        let h = Harness::new();
+        h.active.set(false);
+        h.fw().restart(true);
+        assert!(!h.active.get(), "reduced motion must not start the flight");
+        for _ in 0..120 {
+            h.fw().tick(1.0 / 60.0, (0.0, 0.0));
+        }
+        assert!(
+            h.rockets.borrow().is_empty(),
+            "a rocket flew under reduced motion"
+        );
+        assert_eq!(h.elapsed.get(), 0.0, "the clock advanced with no animation");
     }
 
     /// Gravity acts on a rising rocket: it slows, then falls back.
