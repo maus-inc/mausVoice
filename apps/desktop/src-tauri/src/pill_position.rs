@@ -16,7 +16,8 @@
 //! cannot read its stored position starts in the default corner, which is
 //! exactly what every launch did before the position was stored.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use tauri::Manager;
 
@@ -164,44 +165,79 @@ pub fn store_published_position(
 /// `has_saved_position: false`, and that answer is ordered before any drag that
 /// follows it. So the erase is *declared*, and the declaration is spent by the
 /// report that declares it -- never by a save.
-static ERASE_UNDECLARED: AtomicBool = AtomicBool::new(false);
-
-/// Which declaration the flag belongs to.
 ///
-/// A clear that fails has to take its own declaration back, and only its own: by
-/// the time the failure returns, a second clear can have started and declared in
-/// turn, and rolling that one back would leave a clear in flight with nothing
-/// protecting it. So each declaration gets an id, and the rollback is a
-/// compare-and-exchange on that id rather than a plain store.
-static ERASE_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// ## Why the declarations are kept under one lock
+///
+/// A declaration id and the fact that a declaration is outstanding have to move
+/// together. Held as two atomics they did not: a failed clear could pass its
+/// compare-and-exchange and then be overtaken -- a second clear declares between
+/// the comparison and the flag store, and the first clear's `false` lands on top
+/// of the second's declaration, leaving a clear in flight with nothing protecting
+/// it. A reviewer caught exactly that window.
+///
+/// Merging the two into one compare-and-exchange closes the window but not the
+/// class: a single bit cannot say *which* clear is outstanding, so one clear
+/// withdrawing its own declaration would still drop the protection another clear
+/// was holding. The declarations are therefore a list under a mutex, each one
+/// withdrawing exactly its own entry and a report clearing the list, because the
+/// report answers every clear that was owed one.
+///
+/// The save path reads a mirror flag rather than taking the lock. Writes to the
+/// mirror happen only while the list is locked, so it is always a value the list
+/// held, and it is cleared only once nothing is outstanding.
+static ERASE: Mutex<EraseState> = Mutex::new(EraseState {
+    next_id: 0,
+    outstanding: Vec::new(),
+});
+
+/// What is under [`ERASE`].
+struct EraseState {
+    /// The id of the last declaration; only ever moves forward, so an id is
+    /// never reused.
+    next_id: u64,
+    /// Declarations that no report has answered yet.
+    outstanding: Vec<u64>,
+}
+
+/// The mirror [`erase_is_undeclared`] reads, written only while [`ERASE`] is held.
+static ERASE_DECLARED: AtomicBool = AtomicBool::new(false);
+
+/// The lock, made poison-proof: a panic while holding it cannot leave the list
+/// inconsistent, because every mutation is a single assignment on a `Vec<u64>`
+/// and nothing here can panic mid-update.
+fn erase_state() -> std::sync::MutexGuard<'static, EraseState> {
+    ERASE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Declare that the record is about to be erased, returning the id of this
 /// declaration so a failed clear can withdraw exactly this one.
 fn mark_position_erased() -> u64 {
-    let generation = ERASE_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
-    ERASE_UNDECLARED.store(true, Ordering::Release);
-    generation
+    let mut state = erase_state();
+    state.next_id += 1;
+    let id = state.next_id;
+    state.outstanding.push(id);
+    ERASE_DECLARED.store(true, Ordering::Release);
+    id
 }
 
-/// Withdraw a declaration whose clear failed, unless a later one has replaced it.
+/// Withdraw a declaration whose clear failed, and only that one.
 ///
 /// Without this the declaration outlives the clear that never happened. The reset
 /// wrappers return before telling the pill to forget, so no report ever arrives to
 /// spend the declaration, and every drag after the failed reset is silently
 /// dropped -- the pill looks parked with a record that was never written.
+///
+/// Withdrawing is per declaration, not per flag: another clear may be in flight,
+/// and taking its protection back would let the publish it is waiting on restore
+/// the record it is clearing. A declaration a report has already answered is no
+/// longer in the list, so its late withdrawal does nothing.
 fn withdraw_erase(generation: u64) {
-    // Ordered so the load of the flag cannot be reordered before the exchange that
-    // proves this declaration is still the current one.
-    if ERASE_GENERATION
-        .compare_exchange(
-            generation,
-            generation.wrapping_sub(1),
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        )
-        .is_ok()
-    {
-        ERASE_UNDECLARED.store(false, Ordering::Release);
+    let mut state = erase_state();
+    state.outstanding.retain(|id| *id != generation);
+    if state.outstanding.is_empty() {
+        ERASE_DECLARED.store(false, Ordering::Release);
     }
 }
 
@@ -216,22 +252,27 @@ pub(crate) fn note_report(has_saved_position: bool) -> bool {
         return true;
     }
     // A report with no position is either the answer to a clear -- which spends
-    // the declaration -- or an ordinary reset, which leaves it alone. Spent by a
-    // `swap` so two clears cannot leave one declaration behind for a later save.
-    ERASE_UNDECLARED.swap(false, Ordering::AcqRel);
+    // the declarations -- or an ordinary reset, which leaves them alone. One
+    // report answers every clear that was owed one: the pill publishes its
+    // position from a single queue, so the first report that says the record is
+    // gone is ordered after all of them.
+    let mut state = erase_state();
+    state.outstanding.clear();
+    ERASE_DECLARED.store(false, Ordering::Release);
     false
 }
 
 /// Whether a save may still land, given what the queue has delivered so far.
 ///
-/// False only while an erase is declared and unanswered: in that window the pill
+/// True only while an erase is declared and unanswered: in that window the pill
 /// has not yet reached the report that proves it knows the record is gone, so a
 /// save sitting in the queue ahead of that report describes the position before
-/// the erase. Once the declaration is spent this is true for the rest of the
-/// process, which is what makes the very next drag storable.
+/// the erase. Once the report arrives this is false for the rest of the process,
+/// which is what makes the very next drag storable.
 fn erase_is_undeclared() -> bool {
-    ERASE_UNDECLARED.load(Ordering::Acquire)
+    ERASE_DECLARED.load(Ordering::Acquire)
 }
+
 
 /// Forget the stored position, which is what "Reset Pill Position" means.
 ///
@@ -419,5 +460,138 @@ mod tests {
             format!("{}{good}", rust_pill_shared::restore::SAVED_POSITION_ARG)
         );
         assert!(ParkedWindow::decode("not a record").is_none());
+    }
+
+    /// The latch is process-wide, so the tests that drive it take turns.
+    static LATCH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn latch() -> std::sync::MutexGuard<'static, ()> {
+        let guard = LATCH
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = erase_state();
+        state.outstanding.clear();
+        ERASE_DECLARED.store(false, Ordering::Release);
+        drop(state);
+        guard
+    }
+
+    /// The window a reviewer found: a failed clear must not take a second
+    /// clear's declaration with it. Held as two atomics, the first clear could
+    /// pass its comparison and then store `false` over the declaration the second
+    /// clear had just made, leaving that clear in flight with nothing protecting
+    /// it. There is no gap to pause in now, because the ownership test and the
+    /// clear are the same compare-and-exchange; this drives the interleaving that
+    /// used to break it.
+    #[test]
+    fn a_withdrawing_clear_does_not_clear_a_later_declaration() {
+        let _turn = latch();
+        let first = mark_position_erased();
+        // The second clear declares before the first one's failure returns.
+        let second = mark_position_erased();
+        assert_ne!(first, second, "two declarations are separable");
+        assert!(erase_is_undeclared());
+
+        withdraw_erase(first);
+        assert!(
+            erase_is_undeclared(),
+            "the failed clear withdrew the other clear's protection, so a queued \
+             report could restore the record it is clearing"
+        );
+
+        withdraw_erase(second);
+        assert!(
+            !erase_is_undeclared(),
+            "the clear that owns the declaration has to be able to take it back"
+        );
+    }
+
+    /// The declaration is spent by the pill's answer, and only by that: the drop
+    /// the user makes afterwards has to store normally, which is why this is a
+    /// count and not a discard-the-next-publish flag.
+    #[test]
+    fn a_report_spends_the_declaration_and_the_next_drop_stores() {
+        let _turn = latch();
+        assert!(note_report(true), "an ordinary save always stores");
+        let _declaration = mark_position_erased();
+        assert!(erase_is_undeclared());
+        assert!(!note_report(false), "a report with no position is not storable");
+        assert!(
+            !erase_is_undeclared(),
+            "the answer to a clear is what spends the declaration"
+        );
+        assert!(
+            note_report(true),
+            "the drop after the answer has to store, or the pill looks parked \
+             with an empty table"
+        );
+    }
+
+    /// An ordinary reset -- one that was not asked for by a clear -- reports no
+    /// position too, and must not spend a declaration that is not there or disturb
+    /// one that is.
+    #[test]
+    fn a_report_with_nothing_declared_changes_nothing() {
+        let _turn = latch();
+        assert!(!note_report(false));
+        assert!(!erase_is_undeclared());
+        assert!(!note_report(false));
+        assert!(note_report(true));
+    }
+
+    /// The invariant the list buys: a clear's withdrawal takes back its own
+    /// declaration and nothing else, so when every clear has withdrawn, none is
+    /// left standing. Held as two atomics, a withdraw that passed its comparison
+    /// could store `false` *after* a concurrent clear declared, and that clear
+    /// would then be unprotected.
+    #[test]
+    fn concurrent_clears_never_leave_a_declaration_behind() {
+        let _turn = latch();
+        for _ in 0..200 {
+            let threads: Vec<_> = (0..8)
+                .map(|_| {
+                    std::thread::spawn(|| {
+                        for _ in 0..50 {
+                            let id = mark_position_erased();
+                            // A declaration is visible to the save path no later
+                            // than the declaration call returns, and no assertion
+                            // is made on it here: another clear may legitimately
+                            // spend it in between, which is the point of the design.
+                            // Half the clears succeed, half fail and withdraw.
+                            if id % 2 == 0 {
+                                withdraw_erase(id);
+                            } else {
+                                note_report(false);
+                            }
+                        }
+                    })
+                })
+                .collect();
+            for thread in threads {
+                thread.join().expect("worker");
+            }
+            // Every clear above either withdrew its declaration or spent it with a
+            // report, so nothing may still be declared.
+            assert!(
+                !erase_is_undeclared(),
+                "a declaration outlived every clear that could own it"
+            );
+            note_report(false);
+        }
+    }
+
+    /// Ids only move forward, so a rollback can never be mistaken for a later
+    /// declaration that happens to reuse the id.
+    #[test]
+    fn declaration_ids_are_never_reused() {
+        let _turn = latch();
+        let mut previous = 0;
+        for _ in 0..64 {
+            let id = mark_position_erased();
+            assert!(id > previous, "{id} did not advance past {previous}");
+            previous = id;
+            withdraw_erase(id);
+        }
+        assert!(!erase_is_undeclared());
     }
 }

@@ -717,7 +717,19 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // The rollback must be tied to its own declaration: a plain store can cancel a
     // newer clear that started in the meantime.
     const pos = read("apps/desktop/src-tauri/src/pill_position.rs");
-    assert.match(pos, /static ERASE_GENERATION: AtomicU64/);
+    // The declarations are a list under one lock. They were a flag plus a
+    // generation counter held as two atomics, and a reviewer showed the window in
+    // that: a withdraw could pass its comparison, then a second clear declared,
+    // then the withdraw stored `false` over it -- leaving a clear in flight with
+    // nothing protecting it. Even one merged word only fixes that instance: a
+    // single bit cannot say *which* clear is outstanding, so one clear taking its
+    // own declaration back would still drop another's. Each declaration is its own
+    // entry, and a withdraw removes exactly its own.
+    assert.match(
+      pos,
+      /static ERASE: Mutex<EraseState>/,
+      "the declarations are not behind one lock, so a withdraw can race a declaration",
+    );
     assert.match(
       pos,
       /fn mark_position_erased\(\) -> u64/,
@@ -726,8 +738,15 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(pos, /fn withdraw_erase\(generation: u64\)/);
     assert.match(
       pos,
-      /compare_exchange\(\s*generation,\s*generation\.wrapping_sub\(1\)/,
+      /state\.outstanding\.retain\(\|id\| \*id != generation\)/,
       "the rollback is not tied to its own declaration, so it can cancel a newer clear",
+    );
+    // The list and the flag the save path reads are written under the same lock,
+    // and the flag is cleared only once nothing is outstanding.
+    assert.match(
+      pos,
+      /state\.outstanding\.retain\(\|id\| \*id != generation\);\s*if state\.outstanding\.is_empty\(\) \{\s*ERASE_DECLARED\.store\(false/,
+      "the flag can be cleared while a clear is still owed its answer",
     );
     // Every failure return from the clear has to withdraw.
     const clear = pos.slice(
@@ -801,7 +820,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
     assert.match(
       pos,
-      /ERASE_UNDECLARED\.swap\(false/,
+      /state\.outstanding\.clear\(\);\s*ERASE_DECLARED\.store\(false/,
       "the declaration is not spent by the answer that spends it",
     );
     // The gate on the write is the declaration being unanswered, not a one-shot
