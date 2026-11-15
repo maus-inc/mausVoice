@@ -710,6 +710,82 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
   });
 
+  it("withdraws an erase that never happened", () => {
+    // A clear declares the erase before it deletes. If the delete fails, the reset
+    // wrappers return before telling the pill to forget, so no report ever arrives
+    // to spend the declaration -- and every drag after the failed reset is dropped.
+    // The rollback must be tied to its own declaration: a plain store can cancel a
+    // newer clear that started in the meantime.
+    const pos = read("apps/desktop/src-tauri/src/pill_position.rs");
+    assert.match(pos, /static ERASE_GENERATION: AtomicU64/);
+    assert.match(
+      pos,
+      /fn mark_position_erased\(\) -> u64/,
+      "the declaration does not report which one it made",
+    );
+    assert.match(pos, /fn withdraw_erase\(generation: u64\)/);
+    assert.match(
+      pos,
+      /compare_exchange\(\s*generation,\s*generation\.wrapping_sub\(1\)/,
+      "the rollback is not tied to its own declaration, so it can cancel a newer clear",
+    );
+    // Every failure return from the clear has to withdraw.
+    const clear = pos.slice(
+      pos.indexOf("pub fn clear_saved_position("),
+      pos.indexOf("pub fn saved_position_argument("),
+    );
+    const withdrawals = (clear.match(/withdraw_erase\(declaration\)/g) ?? []).length;
+    assert.ok(
+      withdrawals >= 2,
+      "a failed clear leaves its declaration set and drops every later save",
+    );
+    // The declaration precedes the delete, which is what keeps a publish queued
+    // behind the clear from landing after it.
+    assert.ok(
+      clear.indexOf("let declaration = mark_position_erased()") <
+        clear.indexOf("clear_pill_position"),
+      "the declaration must precede the delete",
+    );
+  });
+
+  it("clears the retained drop with the gesture it belongs to", () => {
+    // `drop_frame` belongs to one gesture. Left behind by a reset, a forget or the
+    // next drag, the write `take()`s it and stores the previous drop instead.
+    const app = source.macApp;
+    // Three cancellations -- reset, forget and a drag starting -- each clears it.
+    const clears = (app.match(/drop_frame\.set\(None\)/g) ?? []).length;
+    assert.ok(
+      clears >= 3,
+      "a cancelled or replaced gesture keeps the previous drop, so the next save stores it",
+    );
+    // Each cancellation clears it next to the deadline it belongs to.
+    assert.match(
+      app,
+      /ctx\.state\.drag_save_due\.set\(None\);[\s\S]{0,400}?ctx\.state\.drop_frame\.set\(None\)/,
+      "a cancelled gesture keeps the previous drop, so the next save stores it",
+    );
+  });
+
+  it("reports the macOS drop in the desktop's coordinate space", () => {
+    // `window_frame` is Cocoa bottom-left; `pill_geometry` and restore are top-down.
+    // Copying origin.1 across would store a Y value in the wrong space, which is
+    // indistinguishable from the pill being parked somewhere else.
+    const write = scope("macApp", "fn write_drag_position(");
+    assert.match(
+      write,
+      /let reported = to_top_down\(frame, unsafe \{ primary_top_for\(window\) \}\)/,
+      "the report carries the Cocoa Y value instead of the converted one",
+    );
+    // And the conversion is shared with `pill_geometry`, not reimplemented.
+    assert.match(source.macApp, /fn primary_top_for\(window: id\) -> f64/);
+    const geometry = scope("macApp", "unsafe fn pill_geometry(");
+    assert.match(
+      geometry,
+      /let primary_top = primary_top_for\(window\);/,
+      "pill_geometry computes the flip point separately, so the two can disagree",
+    );
+  });
+
   it("never lets an erase discard the first genuine save", () => {
     // A one-shot "drop the next publish" flag cannot tell a stale publish from the
     // user's next drag: a clear with nothing in flight leaves the flag set, and the
@@ -767,18 +843,18 @@ describe("PR28 ring-alpha render-loop policy", () => {
     const write = scope("macApp", "fn write_drag_position(");
     assert.match(
       write,
-      /state\.drop_origin\.set\(Some/,
+      /state\.drop_frame\.set\(Some/,
       "macOS: the refused drop is not recorded",
     );
     assert.match(
       write,
-      /state\.drop_origin\.take\(\)/,
+      /state\.drop_frame\.take\(\)/,
       "macOS: the retry never reads the recorded drop",
     );
     assert.match(
       write,
-      /let reported = Rect \{[\s\S]{0,120}?x: origin\.0,/,
-      "macOS: the report carries the live frame instead of the drop",
+      /let reported = to_top_down\(frame, unsafe \{ primary_top_for\(window\) \}\)/,
+      "macOS: the report is not flipped from the Cocoa drop into top-down space",
     );
     assert.match(write, /Some\(reported\)/);
   });
@@ -933,13 +1009,24 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // Existence is not completion. An interrupted `tar` leaves a tree that looks
     // whole by name, so each unpacked tree is published only after it succeeded and
     // the retry asks for the marker, not the directory.
+    // Scoped to the readiness function: the payload path also appears in the copy
+    // step, so a whole-file search would pass with the check removed.
+    const readiness = script.slice(
+      script.indexOf("toolchain_installed() {"),
+      script.indexOf("\n}", script.indexOf("toolchain_installed() {")),
+    );
+    assert.ok(readiness.length > 0, "the readiness check is not recognisable");
     for (const marker of [
       ".install-complete",
       "/tmp/cargo-vendor/.unpack-complete",
       "/tmp/sysroot/.unpack-complete",
+      // The payload itself: with it gone and the outputs intact, setup used to skip
+      // the fetch and then fail on the missing source, and every later run repeated
+      // that failure instead of refetching.
+      '$SV/rust/cargo-config.toml',
     ]) {
       assert.ok(
-        script.includes(marker),
+        readiness.includes(marker),
         `the retry check does not look for ${marker}, so a half-unpacked tree passes`,
       );
     }
@@ -3433,9 +3520,9 @@ describe("macOS saved-position scope", () => {
     // frame it finds when the write runs: between the two, reconciliation can move
     // the window, and a retry that read the live frame would store that move as the
     // user's choice.
-    assert.match(capture, /state\.drop_origin\.take\(\)/);
-    assert.match(capture, /saved_x\.set\(origin\.0\)/);
-    assert.match(capture, /saved_y\.set\(origin\.1\)/);
+    assert.match(capture, /state\.drop_frame\.take\(\)/);
+    assert.match(capture, /saved_x\.set\(frame\.origin\.x\)/);
+    assert.match(capture, /saved_y\.set\(frame\.origin\.y\)/);
     assert.match(capture, /OutMessage::PositionChanged/);
     const desktopCache = read("apps/desktop/src/utils/composer.utils.ts")
       .split("export const setPillGeometry =")[1]

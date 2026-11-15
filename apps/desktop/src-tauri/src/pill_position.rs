@@ -16,7 +16,7 @@
 //! cannot read its stored position starts in the default corner, which is
 //! exactly what every launch did before the position was stored.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use tauri::Manager;
 
@@ -166,8 +166,43 @@ pub fn store_published_position(
 /// report that declares it -- never by a save.
 static ERASE_UNDECLARED: AtomicBool = AtomicBool::new(false);
 
-fn mark_position_erased() {
+/// Which declaration the flag belongs to.
+///
+/// A clear that fails has to take its own declaration back, and only its own: by
+/// the time the failure returns, a second clear can have started and declared in
+/// turn, and rolling that one back would leave a clear in flight with nothing
+/// protecting it. So each declaration gets an id, and the rollback is a
+/// compare-and-exchange on that id rather than a plain store.
+static ERASE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Declare that the record is about to be erased, returning the id of this
+/// declaration so a failed clear can withdraw exactly this one.
+fn mark_position_erased() -> u64 {
+    let generation = ERASE_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     ERASE_UNDECLARED.store(true, Ordering::Release);
+    generation
+}
+
+/// Withdraw a declaration whose clear failed, unless a later one has replaced it.
+///
+/// Without this the declaration outlives the clear that never happened. The reset
+/// wrappers return before telling the pill to forget, so no report ever arrives to
+/// spend the declaration, and every drag after the failed reset is silently
+/// dropped -- the pill looks parked with a record that was never written.
+fn withdraw_erase(generation: u64) {
+    // Ordered so the load of the flag cannot be reordered before the exchange that
+    // proves this declaration is still the current one.
+    if ERASE_GENERATION
+        .compare_exchange(
+            generation,
+            generation.wrapping_sub(1),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_ok()
+    {
+        ERASE_UNDECLARED.store(false, Ordering::Release);
+    }
 }
 
 /// Account for a report the pill published, returning whether it describes a
@@ -209,8 +244,11 @@ fn erase_is_undeclared() -> bool {
 pub fn clear_saved_position(app: &tauri::AppHandle) -> bool {
     // Set before the delete, not after: a publish queued behind this call has to
     // find the latch already closed when it runs.
-    mark_position_erased();
+    let declaration = mark_position_erased();
     let Some(database) = app.try_state::<OptionKeyDatabase>() else {
+        // Nothing was erased, so nothing may stay declared: no report is coming to
+        // spend it.
+        withdraw_erase(declaration);
         return false;
     };
     let pool = database.pool();
@@ -230,6 +268,11 @@ pub fn clear_saved_position(app: &tauri::AppHandle) -> bool {
             } else {
                 log::warn!("Could not clear the pill's stored position: {err}");
             }
+            // The clear failed, so the record is still there and the pill was never
+            // told to forget -- but in both arms the declaration must go, because
+            // the outcome is the same one way or the other: nothing erased, nothing
+            // to retract, and no answer coming.
+            withdraw_erase(declaration);
             false
         }
     }

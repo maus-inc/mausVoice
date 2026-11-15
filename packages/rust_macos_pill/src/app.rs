@@ -141,6 +141,47 @@ fn to_top_down(rect: NSRect, primary_top: f64) -> Rect {
     }
 }
 
+/// Store a frame without depending on `NSRect` being `Debug` or `Clone`.
+///
+/// `PillState` derives both, and `NSRect` implements neither, so the recorded drop
+/// crosses the state boundary as four numbers and is rebuilt on the way out.
+fn frame_tuple(frame: NSRect) -> (f64, f64, f64, f64) {
+    (
+        frame.origin.x,
+        frame.origin.y,
+        frame.size.width,
+        frame.size.height,
+    )
+}
+
+fn frame_from_tuple(frame: (f64, f64, f64, f64)) -> NSRect {
+    NSRect::new(
+        NSPoint::new(frame.0, frame.1),
+        NSSize::new(frame.2, frame.3),
+    )
+}
+
+/// The Y coordinate top-down space is measured from, for this window.
+///
+/// Cocoa counts up from the bottom of the primary display, so flipping a rect
+/// needs that display's top edge. Shared rather than written out at each call
+/// site: two copies of this arithmetic are two chances to flip against a
+/// different line, which looks exactly like a position being wrong.
+unsafe fn primary_top_for(window: id) -> f64 {
+    let frame = window_frame(window);
+    let primary_screens = screens();
+    let count: usize = msg_send![primary_screens, count];
+    if count > 0 {
+        let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
+        let pf: NSRect = msg_send![primary, frame];
+        pf.origin.y + pf.size.height
+    } else {
+        // No displays: the window's own frame stands in, so the pair stays
+        // self-consistent instead of being measured against nothing.
+        frame.origin.y + frame.size.height
+    }
+}
+
 /// Reads the pill window's screen rect and the visible frame of the monitor it
 /// lives on, already flipped into Tauri's top-down coordinate space, so the
 /// desktop can anchor the composer next to the real pill.
@@ -159,15 +200,7 @@ unsafe fn pill_geometry(window: id) -> (Rect, Rect) {
     // copied here. There is no meaningful monitor to report with no displays, so the window's
     // own frame stands in for both, which keeps the returned pair self-consistent instead of
     // measuring against a zeroed rect.
-    let primary_screens = screens();
-    let count: usize = msg_send![primary_screens, count];
-    let primary_top = if count > 0 {
-        let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
-        let pf: NSRect = msg_send![primary, frame];
-        pf.origin.y + pf.size.height
-    } else {
-        frame.origin.y + frame.size.height
-    };
+    let primary_top = primary_top_for(window);
 
     let rect = to_top_down(frame, primary_top);
     // `msg_send![window, screen]` is nil when the window is on no display. Sending
@@ -873,6 +906,10 @@ fn perform_tick() {
                     // reset just dropped -- the same hazard the other two pills clear
                     // here.
                     ctx.state.drag_save_due.set(None);
+                    // The recorded drop belongs to the gesture being cancelled. Left
+                    // behind, the next drag's write would consume it and save a place
+                    // this gesture already moved away from.
+                    ctx.state.drop_frame.set(None);
                     ctx.state.drag_motion.borrow_mut().reset();
                     ctx.state.selector_placement.borrow_mut().reset();
                     ctx.state.crossing.borrow_mut().reset();
@@ -913,6 +950,10 @@ fn perform_tick() {
                     // looking at must not follow the pointer because a database was
                     // wiped.
                     ctx.state.drag_save_due.set(None);
+                    // The recorded drop belongs to the gesture being cancelled. Left
+                    // behind, the next drag's write would consume it and save a place
+                    // this gesture already moved away from.
+                    ctx.state.drop_frame.set(None);
                     ctx.state
                         .anchor
                         .set(rust_pill_shared::layout::Anchor::from_forget());
@@ -1075,29 +1116,26 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
         // retry would read whatever the window had been moved to by then, and the
         // drop this deadline exists to protect would be replaced by the idle
         // placement it was parked at.
-        // Recorded here so the retry cannot read a different one: between the
-        // refusal and the retry the window can be moved by something that is not
-        // the user, and the drop this deadline exists to protect would be replaced
-        // by wherever it ended up.
-        let frame = unsafe { window_frame(window) };
+        //
+        // The whole frame, not just its origin: the drop is in Cocoa's bottom-left
+        // space and the report has to be flipped the same way `pill_geometry` flips
+        // it. Converting one field at a time is how a Y value in the wrong space
+        // gets stored as if it were right.
         state
-            .drop_origin
-            .set(Some((frame.origin.x, frame.origin.y)));
+            .drop_frame
+            .set(Some(unsafe { frame_tuple(window_frame(window)) }));
         state.drag_save_due.set(due);
         return;
     }
     // The recorded drop wins over the live frame, for the same reason: a retry
     // runs after a delay, and the pill's own reconciliation can have moved the
     // window in between. Consumed so a later gesture cannot inherit a stale one.
-    let origin = match state.drop_origin.take() {
-        Some(origin) => origin,
-        None => {
-            let frame = unsafe { window_frame(window) };
-            (frame.origin.x, frame.origin.y)
-        }
+    let frame = match state.drop_frame.take() {
+        Some(frame) => frame_from_tuple(frame),
+        None => unsafe { window_frame(window) },
     };
-    state.saved_x.set(origin.0);
-    state.saved_y.set(origin.1);
+    state.saved_x.set(frame.origin.x);
+    state.saved_y.set(frame.origin.y);
     state.has_saved_position.set(true);
     // The pending drop has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
@@ -1116,12 +1154,13 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
     // The report carries the drop too. `pill_geometry` reads the live window, so
     // using it here would store a rectangle from a different place than
     // `saved_x`/`saved_y` in the same call -- and the desktop keeps the rectangle.
-    let (live_rect, monitor) = unsafe { pill_geometry(window) };
-    let reported = Rect {
-        x: origin.0,
-        y: origin.1,
-        ..live_rect
-    };
+    //
+    // The retained frame is in Cocoa's bottom-left space and the desktop expects
+    // top-down, so it goes through the same conversion `pill_geometry` applies
+    // rather than having its Y value copied across. `saved_x`/`saved_y` stay in
+    // Cocoa space, because that is what the idle tick parks the window with.
+    let (_, monitor) = unsafe { pill_geometry(window) };
+    let reported = to_top_down(frame, unsafe { primary_top_for(window) });
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
             true,
@@ -1828,6 +1867,9 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         // this drag and store the window while it is moving -- a position nobody
         // chose. This gesture will produce its own drop.
         state.drag_save_due.set(None);
+        // A drop still recorded belongs to the gesture that just ended. Left behind,
+        // it would be written in place of the next one.
+        state.drop_frame.set(None);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
         state.arm_pulse.set(rust_pill_shared::pulse_armed());
 
@@ -2809,7 +2851,7 @@ unsafe fn setup(
         // token describes a display this process never went to.
         saved_display_id: Cell::new(restored.and(restored_display_id)),
         drag_save_due: Cell::new(None),
-        drop_origin: Cell::new(None),
+        drop_frame: Cell::new(None),
         save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
         layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),
         first_placement_done: Cell::new(false),

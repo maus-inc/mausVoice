@@ -46,8 +46,14 @@ toolchain_installed() {
   [ -x "$PREFIX/bin/cargo" ] &&
     [ -f "$PREFIX/.install-complete" ] &&
     [ -f /tmp/cargo-vendor/.unpack-complete ] &&
+    [ -f /tmp/sysroot/.unpack-complete ] &&
     [ -f "$CARGO_HOME/config.toml" ] &&
-    [ -f /tmp/sysroot/.unpack-complete ]
+    # The payload itself belongs in this list. Every other check reads something
+    # the payload produced, so with /tmp/vend gone and the outputs intact, setup
+    # would skip the fetch and then fail on the missing source -- and no later run
+    # would refetch it, so the failure repeated until the payload came back.
+    [ -f "$SV/rust/cargo-config.toml" ] &&
+    [ -d "$SV/rust/toolchain" ]
 }
 
 if ! toolchain_installed; then
