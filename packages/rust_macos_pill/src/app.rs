@@ -1121,9 +1121,17 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
         // space and the report has to be flipped the same way `pill_geometry` flips
         // it. Converting one field at a time is how a Y value in the wrong space
         // gets stored as if it were right.
-        state
-            .drop_frame
-            .set(Some(unsafe { frame_tuple(window_frame(window)) }));
+        // Only the first refusal records. This function is retried every frame
+        // for as long as the save is held, and display reconciliation is not held
+        // with it: if a display change relocates the window during the hold, a
+        // later refusal would overwrite the frame the user dropped with the frame
+        // macOS improvised. The retained drop is consumed by the successful save
+        // and cleared when a new gesture starts.
+        if state.drop_frame.get().is_none() {
+            state
+                .drop_frame
+                .set(Some(unsafe { frame_tuple(window_frame(window)) }));
+        }
         state.drag_save_due.set(due);
         return;
     }

@@ -1809,12 +1809,34 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                 report: rust_pill_shared::restore::PositionReport::new(
                     true,
                     Some(published),
-                    monitor,
+                    work_area_for_report(monitor, &published),
                     state.saved_display_id.get(),
                 ),
             });
         }
     }
+}
+
+/// The work area that belongs to the rectangle being published, not to the
+/// window that produced it.
+///
+/// The window is taller than the pill: it keeps transparent rows for the style
+/// selector. On displays with vertically offset tops, a pill sitting fully on one
+/// panel can still have its window straddle the other, and then
+/// `MonitorFromWindow` answers with the neighbour. The record would pair the
+/// pill's rectangle with that neighbour's work area -- and with the display token
+/// the relocation resolved for the pill's own centre -- so the stored record
+/// would describe two different panels and a restart would clamp against one it
+/// was never on.
+///
+/// The work area is therefore resolved from the rectangle's own centre, keeping
+/// the window's monitor only as a fallback for a point no display answers for.
+fn work_area_for_report(monitor: Option<Rect>, published: &Rect) -> Option<Rect> {
+    monitor_work_area_at(
+        published.x + published.width / 2.0,
+        published.y + published.height / 2.0,
+    )
+    .or(monitor)
 }
 
 // Drawing and the native entry use the fixed typing canvas. Extra selector

@@ -286,8 +286,17 @@ pub fn saved_position_argument(app: &tauri::AppHandle) -> Option<String> {
     let record = read_saved_position_record(app)?;
     // Validate before crossing the boundary: a record this build's own reader
     // would reject must not be handed over as if it were usable.
-    ParkedWindow::decode(&record)?;
-    Some(format!("{SAVED_POSITION_ARG}{record}"))
+    let parked = ParkedWindow::decode(&record)?;
+    // Re-encoded from the decoded window rather than forwarded verbatim. The
+    // stored text is not bounded by anything the pill controls: a row carrying a
+    // field this build does not know about still decodes, because serde ignores
+    // unknown fields, and forwarding it would put arbitrary length on a command
+    // line with an OS limit. Exceeding that limit makes the spawn fail, and the
+    // symptom is the pill never appearing -- a bad record taking the whole overlay
+    // with it. Re-encoding keeps every field the reader uses and drops the rest, so
+    // the argument is the size of a window by construction.
+    let normalized = parked.encode()?;
+    Some(format!("{SAVED_POSITION_ARG}{normalized}"))
 }
 
 /// Tell a running pill to stop treating its current spot as saved.
@@ -297,9 +306,25 @@ pub fn saved_position_argument(app: &tauri::AppHandle) -> Option<String> {
 /// Without this the pill answers with the position it was at before the wipe and
 /// the row is written straight back.
 ///
+/// Telling the pill is half of it. The pill publishes `PositionChanged` from the
+/// frame that ran *before* the wipe, and nothing about that message is stale once
+/// it reaches the store: the write gate has reopened, so it would be stored, and
+/// the next launch would restore the position the user just cleared. The other
+/// half is the erase declaration, the same one a reset takes, because the queue
+/// state is the same in both cases -- a publish may already be in flight. The
+/// declaration is spent by the pill's answer to `ForgetPosition`, which is ordered
+/// ahead of anything the user does next, so the drop they make afterwards still
+/// stores normally.
+///
+/// Ordered declaration-first: a publish that runs between these two lines must
+/// already find the latch closed.
+///
 /// Best effort: a pill that is not running has nothing in memory to forget, and
-/// the row it would have restored from is already gone.
+/// the row it would have restored from is already gone. It still answers the
+/// declaration with a fresh report when it next starts, and a report with no
+/// position spends it either way.
 pub fn forget_running_pill_position(app: &tauri::AppHandle) {
+    let _ = mark_position_erased();
     if let Err(err) = crate::platform::overlay::notify_forget_position(app) {
         log::debug!("No running pill to forget the cleared position: {err}");
     }

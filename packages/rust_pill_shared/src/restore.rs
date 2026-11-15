@@ -238,11 +238,20 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let record = args.into_iter().find_map(|arg| {
+    let mut records = args.into_iter().filter_map(|arg| {
         arg.as_ref()
             .strip_prefix(SAVED_POSITION_ARG)
             .map(str::to_string)
-    })?;
+    });
+    let record = records.next()?;
+    // A second flag means the caller and the pill disagree about where the pill
+    // is. Taking either would be a coin toss between two positions, and the one it
+    // picked would look authoritative afterwards -- restored, then saved again. No
+    // launch in this app produces two flags, so a second one is a malformed
+    // command line, and the documented answer to a malformed one is `None`.
+    if records.next().is_some() {
+        return None;
+    }
     ParkedWindow::decode(&record)
 }
 
@@ -259,11 +268,18 @@ where
 /// looks for is ASCII written by the desktop process, so a lossy conversion could
 /// only ever manufacture a match, and skipping cannot lose a real one.
 pub fn saved_position_from_process_args() -> Option<ParkedWindow> {
-    let record = std::env::args_os().find_map(|arg| {
+    // The same scan `saved_position_from_args` performs, over the same list, so
+    // the one rule about a repeated flag holds for both entry points rather than
+    // only for the one a test can drive.
+    let mut records = std::env::args_os().filter_map(|arg| {
         arg.to_str()
             .and_then(|arg| arg.strip_prefix(SAVED_POSITION_ARG))
             .map(str::to_string)
-    })?;
+    });
+    let record = records.next()?;
+    if records.next().is_some() {
+        return None;
+    }
     ParkedWindow::decode(&record)
 }
 
@@ -839,6 +855,19 @@ mod tests {
             saved_position_from_args(["--saved-position=not-a-record"]),
             None,
             "a malformed record must not be trusted"
+        );
+        // Two flags describe two positions, and the reader cannot tell which one
+        // the caller meant. Picking either would restore a spot the user may never
+        // have chosen, so the ambiguity is answered the way a malformed line is.
+        let other = rect(0.0, 0.0, 2560.0, 1440.0);
+        let second = parked(50.0, 60.0, other).encode().expect("encoded");
+        assert_eq!(
+            saved_position_from_args([
+                format!("{SAVED_POSITION_ARG}{record}"),
+                format!("{SAVED_POSITION_ARG}{second}"),
+            ]),
+            None,
+            "a repeated flag is ambiguous, not first-wins"
         );
     }
 

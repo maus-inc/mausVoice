@@ -2933,20 +2933,40 @@ describe("native gesture adapter contracts", () => {
       source.pillPosition,
       /pub fn clear_saved_position\(app: &tauri::AppHandle\) -> bool/,
     );
+    // Matched through the brace to the `return`, not just to the call: an `if`
+    // whose failure branch logged and carried on would satisfy a bare match while
+    // the reset moved the pill anyway, which is the exact outcome the guard exists
+    // to prevent. The branch has to leave the function.
+    const bails = /if !crate::pill_position::clear_saved_position\(app\) \{\s*return\b/;
     for (const [name, marker] of [
       ["pillProcess", "pub fn notify_reset_position"],
     ]) {
       const body = scope(name, marker);
       assert.match(
         body,
-        /if !crate::pill_position::clear_saved_position\(app\)/,
+        bails,
         `${name}: a failed clear still resets, and the next launch undoes it`,
       );
+      // And the move happens after the guard, so there is no path to it that the
+      // clear has not answered.
+      assert.ok(
+        body.indexOf("clear_saved_position") <
+          body.indexOf("reset_position\",\"strategy"),
+        `${name}: the pill is told to re-home before the record is cleared`,
+      );
     }
+    const macReset = read(
+      "apps/desktop/src-tauri/src/platform/macos/overlay.rs",
+    );
     assert.match(
-      read("apps/desktop/src-tauri/src/platform/macos/overlay.rs"),
-      /if !crate::pill_position::clear_saved_position\(app\)/,
+      macReset,
+      bails,
       "the macOS overlay reset has the same hole as the generic path",
+    );
+    assert.ok(
+      macReset.indexOf("clear_saved_position") <
+        macReset.indexOf("InMessage::ResetPosition"),
+      "the macOS pill is told to re-home before the record is cleared",
     );
   });
 
@@ -3109,7 +3129,20 @@ describe("native gesture adapter contracts", () => {
     // process that has no way to report anything.
     const shared = read("packages/rust_pill_shared/src/restore.rs");
     assert.match(shared, /pub fn saved_position_from_process_args\(\)/);
-    assert.match(shared, /std::env::args_os\(\)\.find_map\(/);
+    // `args_os` rather than `args`, and the non-Unicode argument is skipped rather
+    // than converted: the scan has to be able to walk past a path it cannot read.
+    assert.match(shared, /std::env::args_os\(\)/);
+    assert.match(shared, /arg\.to_str\(\)/);
+    // A repeated flag describes two positions, so it is answered the way the
+    // documentation says a repeated one is: `None`, not first-wins.
+    const reader = shared.split("pub fn saved_position_from_args")[1].split(
+      "\n}\n",
+    )[0];
+    assert.match(
+      reader,
+      /if records\.next\(\)\.is_some\(\) \{\s*return None;/,
+      "shared: a repeated --saved-position is ambiguous, not first-wins",
+    );
     for (const name of ["gtkMain", "windowsMain", "macMain"]) {
       assert.doesNotMatch(
         source[name],
