@@ -208,7 +208,7 @@ static ERASE_DECLARED: AtomicBool = AtomicBool::new(false);
 fn erase_state() -> std::sync::MutexGuard<'static, EraseState> {
     ERASE
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Declare that the record is about to be erased, returning the id of this
@@ -467,7 +467,7 @@ mod tests {
     fn latch() -> std::sync::MutexGuard<'static, ()> {
         let guard = LATCH
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut state = erase_state();
         state.outstanding.clear();
         ERASE_DECLARED.store(false, Ordering::Release);
