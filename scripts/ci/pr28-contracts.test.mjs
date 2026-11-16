@@ -802,15 +802,15 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // report rather than the live window's.
     assert.match(
       write,
-      /Some\(record\) => \([\s\S]{0,160}?frame_from_tuple\(record\.frame\),\s*record\.monitor,\s*record\.display_id,?\s*\)/,
+      /Some\(record\) => \([\s\S]{0,200}?frame_from_tuple\(record\.frame\),\s*record\.monitor,\s*record\.display_id,\s*record\.primary_top,?\s*\)/,
       "macOS: the retry reads the live display instead of the retained one",
     );
     assert.match(write, /Some\(monitor\)/, "macOS: the retained monitor is dropped");
     // And the record is filled at the same instant the frame is, so the two cannot
-    // describe different panels.
+    // describe different panels, and the flip basis is captured with them.
     assert.match(
       write,
-      /let \(monitor, display_id\) = unsafe \{ drop_display_for\(window\) \};/,
+      /let \(monitor, display_id, primary_top\) = unsafe \{ drop_display_for\(window\) \};/,
       "macOS: the display is not captured with the frame",
     );
   });
@@ -935,7 +935,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     const write = scope("macApp", "fn write_drag_position(");
     assert.match(
       write,
-      /let reported = to_top_down\(frame, unsafe \{ primary_top_for\(window\) \}\)/,
+      /let reported = to_top_down\(frame, primary_top\)/,
       "the report carries the Cocoa Y value instead of the converted one",
     );
     // And the conversion is shared with `pill_geometry`, not reimplemented.
@@ -945,6 +945,42 @@ describe("PR28 ring-alpha render-loop policy", () => {
       geometry,
       /let primary_top = primary_top_for\(window\);/,
       "pill_geometry computes the flip point separately, so the two can disagree",
+    );
+  });
+
+  it("flips the macOS drop against the basis the monitor was converted with", () => {
+    // The record holds a Cocoa frame and a top-down monitor converted together at
+    // capture time. Flipping the frame at retry time against a fresh `primary_top`
+    // would pair the retained monitor with a rect measured against a later primary
+    // display height, so the two halves of one report would describe two
+    // arrangements. The basis is therefore retained with the drop and reused.
+    const write = scope("macApp", "fn write_drag_position(");
+    assert.match(
+      write,
+      /to_top_down\(frame, primary_top\)/,
+      "macOS: the retry re-reads the flip basis instead of the retained one",
+    );
+    assert.doesNotMatch(
+      write,
+      /to_top_down\(frame, unsafe \{ primary_top_for\(window\) \}\)/,
+      "macOS: the retry converts against the live primary top, not the capture-time one",
+    );
+    // The basis is captured with the frame and the display, in one record.
+    const capture = scope("macApp", "unsafe fn drop_display_for(");
+    assert.match(
+      capture,
+      /\(monitor, display_id, primary_top\)/,
+      "macOS: the drop capture does not return the flip basis",
+    );
+    assert.match(
+      source.macState,
+      /struct DropRecord \{[\s\S]*?primary_top: f64,[\s\S]*?\}/,
+      "macOS: DropRecord does not retain the flip basis",
+    );
+    assert.match(
+      write,
+      /record\.primary_top/,
+      "macOS: the retry does not read the retained flip basis",
     );
   });
 
@@ -1015,7 +1051,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
     assert.match(
       write,
-      /let reported = to_top_down\(frame, unsafe \{ primary_top_for\(window\) \}\)/,
+      /let reported = to_top_down\(frame, primary_top\)/,
       "macOS: the report is not flipped from the Cocoa drop into top-down space",
     );
     assert.match(write, /Some\(reported\)/);

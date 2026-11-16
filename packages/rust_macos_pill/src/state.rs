@@ -83,11 +83,18 @@ impl WindowMode {
 /// was never on. `frame` is in Cocoa's bottom-up space, because that is what the
 /// idle tick parks the window with; `monitor` and `display_id` are in the
 /// desktop's top-down space, because that is what the record stores.
+///
+/// `primary_top` is the basis `monitor` was flipped against, kept so the retry
+/// flips `frame` against the same line. Re-reading it at the retry would convert
+/// a frame captured against one primary top with another, so a primary-display
+/// height change during the hold would publish a rectangle offset from the
+/// `monitor` beside it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DropRecord {
     pub(crate) frame: (f64, f64, f64, f64),
     pub(crate) monitor: Rect,
     pub(crate) display_id: Option<u64>,
+    pub(crate) primary_top: f64,
 }
 
 #[derive(Debug, Clone)]

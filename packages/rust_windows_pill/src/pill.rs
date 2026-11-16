@@ -581,6 +581,12 @@ fn on_cursor_tick(hwnd: HWND) {
 /// is far faster than a user can notice and far slower than a display changes.
 fn poll_display_layout(hwnd: HWND, state: &PillState) {
     let now = drag_now();
+    // Check the interval before enumerating. `enumerate_work_areas_with_identity`
+    // walks every monitor, and this runs on every cursor tick; taking the
+    // arrangement only to have `observe` discard it inside the interval is wasted.
+    if !state.layout_poll.borrow().is_due(now) {
+        return;
+    }
     let Some(areas) = enumerate_work_areas_with_identity() else {
         // Same rule as the message path: a failed enumeration is not evidence.
         return;

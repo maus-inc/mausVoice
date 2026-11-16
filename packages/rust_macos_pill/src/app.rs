@@ -1093,7 +1093,7 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
 /// retry pair the retained rectangle with a panel the drop was never on. The
 /// shape mirrors [`pill_geometry`], including the null-screen fallback where the
 /// window's own frame stands in for the monitor.
-unsafe fn drop_display_for(window: id) -> (Rect, Option<u64>) {
+unsafe fn drop_display_for(window: id) -> (Rect, Option<u64>, f64) {
     let screen: id = msg_send![window, screen];
     let primary_top = primary_top_for(window);
     let monitor = if (screen as *mut std::ffi::c_void).is_null() {
@@ -1106,7 +1106,7 @@ unsafe fn drop_display_for(window: id) -> (Rect, Option<u64>) {
     } else {
         screen_display_id(screen)
     };
-    (monitor, display_id)
+    (monitor, display_id, primary_top)
 }
 
 /// Retains the settled position and tells the desktop, which stores it so the
@@ -1165,11 +1165,12 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
         // macOS improvised. The retained drop is consumed by the successful save
         // and cleared when a new gesture starts.
         if state.drop_frame.get().is_none() {
-            let (monitor, display_id) = unsafe { drop_display_for(window) };
+            let (monitor, display_id, primary_top) = unsafe { drop_display_for(window) };
             state.drop_frame.set(Some(DropRecord {
                 frame: unsafe { frame_tuple(window_frame(window)) },
                 monitor,
                 display_id,
+                primary_top,
             }));
         }
         state.drag_save_due.set(due);
@@ -1181,15 +1182,16 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
     // Its retained display is what the record names: `pill_geometry` and
     // `msg_send![window, screen]` read the live window, which may no longer be
     // where the user dropped it.
-    let (frame, monitor, display_id) = match state.drop_frame.take() {
+    let (frame, monitor, display_id, primary_top) = match state.drop_frame.take() {
         Some(record) => (
             frame_from_tuple(record.frame),
             record.monitor,
             record.display_id,
+            record.primary_top,
         ),
         None => unsafe {
-            let (monitor, display_id) = drop_display_for(window);
-            (window_frame(window), monitor, display_id)
+            let (monitor, display_id, primary_top) = drop_display_for(window);
+            (window_frame(window), monitor, display_id, primary_top)
         },
     };
     state.saved_x.set(frame.origin.x);
@@ -1206,7 +1208,11 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
     // top-down, so it goes through the same conversion `pill_geometry` applies
     // rather than having its Y value copied across. `saved_x`/`saved_y` stay in
     // Cocoa space, because that is what the idle tick parks the window with.
-    let reported = to_top_down(frame, unsafe { primary_top_for(window) });
+    //
+    // Flipped against the retained `primary_top`, not a fresh read: the monitor
+    // beside it was converted at capture time, and pairing that with a rect
+    // flipped against a later line would publish two halves from two arrangements.
+    let reported = to_top_down(frame, primary_top);
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
             true,
@@ -1990,15 +1996,12 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         // user just asked to re-home stays exactly where it was, and a first
         // placement must be, or it chases the pointer forever.
         let follows_pointer = dragging || settling || first_placement;
-        // A first placement is consumed here rather than earlier, so a frame that
-        // bails out before `choose_anchor` cannot spend the one-shot. Demoting the
-        // anchor is what stops later ticks chasing the pointer.
-        if follows_pointer && first_placement {
-            state.first_placement_done.set(true);
-            state
-                .anchor
-                .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
-        }
+        // A first placement is consumed only once a placement will actually happen,
+        // beside the reset below and for the same reason. `screens()` can return
+        // nothing -- a lid closing, every display asleep -- and this returns without
+        // placing anything. Spending the one-shot here would turn a launch placement
+        // that never happened into one that can never happen: when the displays come
+        // back the pill would stay where it is instead of following the cursor.
         let context = AnchorContext {
             dragging,
             follows_pointer,
@@ -2059,6 +2062,14 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         // pill would stay on the old one, having quietly spent the request.
         if reset_placement {
             state.anchor.set(state.anchor.get().after_placement());
+        }
+        // The launch placement is the same one-shot, spent only now that a target
+        // exists. Demoting the anchor is what stops later ticks chasing the pointer.
+        if follows_pointer && first_placement {
+            state.first_placement_done.set(true);
+            state
+                .anchor
+                .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
         }
         let (visible, drag_region, edge_mask) =
             resolve_placement(state, screen, frame, &monitor_frames, seam_point, dragging);
@@ -2429,6 +2440,12 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
 /// Enumerating screens every frame would be wasteful, so this looks a few times
 /// a second, far faster than a display changes and far slower than a frame.
 unsafe fn poll_display_layout(window: id, state: &PillState, now: f64) {
+    // Check the interval before enumerating. `display_areas` builds a UUID string
+    // per screen, and this runs every frame; taking the arrangement only to have
+    // `observe` discard it inside the interval is wasted work on the render thread.
+    if !state.layout_poll.borrow().is_due(now) {
+        return;
+    }
     let Some((areas, _)) = display_areas() else {
         return;
     };

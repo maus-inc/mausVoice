@@ -837,6 +837,18 @@ impl LayoutPoll {
         self.signature
     }
 
+    /// Whether the interval has elapsed, so a fresh signature is worth taking.
+    ///
+    /// The platform polls call this *before* enumerating displays. The
+    /// enumeration is the expensive half, and on macOS it also builds a UUID
+    /// string per screen, so taking it every frame only for [`Self::observe`]'s
+    /// interval guard to discard it 29 times out of 30 is wasted work on the
+    /// render thread. Same comparison as the guard, so a caller that gates on
+    /// this sees exactly the ticks `observe` would not have called `TooSoon`.
+    pub fn is_due(self, now: f64) -> bool {
+        elapsed_at_least(now, self.polled_at, LAYOUT_POLL_SECONDS)
+    }
+
     /// Read `signature` at `now`, storing both values, and report what changed.
     ///
     /// The baseline rule is the part that is easy to get wrong and invisible when
@@ -1611,5 +1623,41 @@ pub(crate) mod tests {
             PollOutcome::Changed,
             "a resumed poll compared against the wrong arrangement"
         );
+    }
+
+    /// `is_due` is the pre-enumeration gate, so it has to agree with the guard
+    /// inside `observe` on every input. If it were looser the platform polls would
+    /// enumerate displays on ticks that store nothing; if it were tighter a real
+    /// change would be skipped until a later tick. Both are silent.
+    #[test]
+    fn is_due_matches_the_interval_guard_inside_observe() {
+        // A fresh poll counts from zero, so it is due once the clock has advanced
+        // by one interval, exactly as `observe` would not answer `TooSoon`.
+        let mut poll = LayoutPoll::new();
+        assert!(!poll.is_due(0.0));
+        assert!(!poll.is_due(0.49));
+        assert!(poll.is_due(0.5), "the interval boundary must be due");
+        assert!(poll.is_due(1.0));
+
+        assert_eq!(poll.observe(10.0, 42), PollOutcome::Baseline);
+        for now in [10.0, 10.2, 10.49, f64::NAN, f64::INFINITY, 5.0] {
+            assert!(
+                !poll.is_due(now),
+                "is_due said {now} was due while observe would answer TooSoon"
+            );
+        }
+        assert!(poll.is_due(10.5), "the interval boundary must be due");
+        assert!(poll.is_due(11.0));
+
+        // The two agree across a sweep, so the gate cannot drift from the guard.
+        // `is_due` is read first because `observe` advances the interval.
+        let mut poll = LayoutPoll::new();
+        let _ = poll.observe(10.0, 42);
+        for step in 0..=200 {
+            let now = 10.0 + step as f64 * 0.01;
+            let due = poll.is_due(now);
+            let guard = poll.observe(now, 43) != PollOutcome::TooSoon;
+            assert_eq!(due, guard, "is_due disagreed with observe at {now}");
+        }
     }
 }

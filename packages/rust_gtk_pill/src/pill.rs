@@ -1536,6 +1536,12 @@ fn poll_display_layout(window: &gtk::Window, state: &PillState) {
         return;
     }
     let now = drag_clock_now();
+    // Check the interval before enumerating: `monitor_areas` walks the X server
+    // every frame otherwise, only for `observe` to discard the result inside the
+    // interval.
+    if !state.layout_poll.borrow().is_due(now) {
+        return;
+    }
     let display = window.display();
     let scale = x11::x11_root_scale(window);
     let Some(areas) = monitor_areas(&display, scale) else {
