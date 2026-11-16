@@ -19,7 +19,7 @@ const getLocalStorage = (): Storage | null => {
   }
 };
 
-export const surfaceMainWindow = async (): Promise<boolean> => {
+export const surfaceMainWindow = (): Promise<boolean> => {
   if (!surfaceWindowPromise) {
     surfaceWindowPromise = invoke<void>("surface_main_window")
       .then(() => true)
