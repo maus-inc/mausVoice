@@ -597,28 +597,49 @@ fn frame_tick(
         };
         target.show();
         if !state_tick.focus_released_after_review.get() {
+            // A delayed grab must recheck the review owner. The review can end
+            // inside the 100 ms X11 window, and a stale grab would pull
+            // keyboard focus back from the target application.
             match backend_tick {
                 Backend::LayerShell => {
                     win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+                    let state_focus = state_tick.clone();
                     glib::idle_add_local_once(move || {
-                        target.grab_focus();
+                        if should_grab_focus_on_focus_in(
+                            state_focus.is_typing(),
+                            state_focus.focus_released_after_review.get(),
+                        ) {
+                            target.grab_focus();
+                        }
                     });
                 }
                 Backend::X11 => {
                     win_tick.set_accept_focus(true);
+                    let state_focus = state_tick.clone();
                     glib::timeout_add_local(Duration::from_millis(100), {
                         let w = win_tick.clone();
                         move || {
-                            x11::force_keyboard_focus(&w);
-                            target.grab_focus();
+                            if should_grab_focus_on_focus_in(
+                                state_focus.is_typing(),
+                                state_focus.focus_released_after_review.get(),
+                            ) {
+                                x11::force_keyboard_focus(&w);
+                                target.grab_focus();
+                            }
                             ControlFlow::Break
                         }
                     });
                 }
                 Backend::PlainWayland => {
                     win_tick.set_accept_focus(true);
+                    let state_focus = state_tick.clone();
                     glib::idle_add_local_once(move || {
-                        target.grab_focus();
+                        if should_grab_focus_on_focus_in(
+                            state_focus.is_typing(),
+                            state_focus.focus_released_after_review.get(),
+                        ) {
+                            target.grab_focus();
+                        }
                     });
                 }
             }
@@ -888,7 +909,22 @@ fn wire_events(wiring: Wiring) {
     {
         let win_ep = window.clone();
         let backend_ep = backend;
+        let state_ep = state.clone();
         entry.connect_button_press_event(move |e, _| {
+            // A review that just ended set keyboard mode to None and turned off
+            // focus acceptance. GtkEntry's default handler runs after this one
+            // and can consume the press, so the window handler that normally
+            // restores them never runs. Restore both here, in the widget the
+            // click actually landed on. The flag is read, not cleared, so the
+            // window handler still performs its own restore when it does run.
+            if state_ep.focus_released_after_review.get() {
+                match backend_ep {
+                    Backend::LayerShell => {
+                        win_ep.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+                    }
+                    Backend::X11 | Backend::PlainWayland => win_ep.set_accept_focus(true),
+                }
+            }
             if backend_ep == Backend::X11 {
                 x11::force_keyboard_focus(&win_ep);
             }
@@ -1537,18 +1573,40 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
     };
     let buffer = view.buffer().expect("review editor buffer");
     let state_clipboard = Rc::clone(state);
+    let view_paste = view.clone();
     gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
         if !clipboard_result_is_current(&review_id, state_clipboard.pending_review_id().as_deref())
         {
             return;
         }
-        if let Some(text) = text {
-            buffer.begin_user_action();
-            if let Some((mut start, mut end)) = buffer.selection_bounds() {
-                buffer.delete(&mut start, &mut end);
-            }
-            buffer.insert_at_cursor(text);
-            buffer.end_user_action();
+        let Some(text) = text else {
+            return;
+        };
+        // Bound an accidental giant paste before it reaches the buffer. Every
+        // later change copies the whole buffer into `entry_text`, so an
+        // unbounded insert would make editing expensive. Rejecting keeps the
+        // user's draft rather than replacing it with something they cannot
+        // work with.
+        let selected = buffer
+            .selection_bounds()
+            .map(|(start, end)| (end.offset() - start.offset()).max(0) as usize)
+            .unwrap_or(0);
+        let prospective =
+            (buffer.char_count().max(0) as usize + text.chars().count()).saturating_sub(selected);
+        if prospective > MAX_REVIEW_EDITOR_CHARS {
+            eprintln!("Rejected a review paste that exceeded the editor budget");
+            return;
+        }
+        buffer.begin_user_action();
+        if let Some((mut start, mut end)) = buffer.selection_bounds() {
+            buffer.delete(&mut start, &mut end);
+        }
+        buffer.insert_at_cursor(text);
+        buffer.end_user_action();
+        // Stopping GTK's default handler also drops its scroll-after-paste, so
+        // scroll the insertion mark into view to match the built-in behavior.
+        if let Some(insert) = buffer.get_insert() {
+            view_paste.scroll_mark_onscreen(&insert);
         }
     });
 }

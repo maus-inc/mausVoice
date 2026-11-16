@@ -244,6 +244,29 @@ describe("pending Paste reviews", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("reports Copy as incomplete when the copied stamp loses the race", async () => {
+    updateChatMessageMock
+      .mockImplementationOnce((message) => Promise.resolve(message))
+      .mockImplementationOnce((message) =>
+        Promise.resolve({
+          ...message,
+          metadata: {
+            ...message.metadata,
+            text: "newer draft",
+            status: "pending",
+            draftRevision: 2,
+          },
+        }),
+      );
+
+    await expect(
+      copyPendingPasteReview(pendingMessage(), "edited again"),
+    ).rejects.toThrow("This Paste review is no longer pending");
+    expect(invokeMock).toHaveBeenCalledWith("copy_to_clipboard", {
+      text: "edited again",
+    });
+  });
+
   it("leaves a durable retryable review when copying fails", async () => {
     const message = pendingMessage();
     invokeMock.mockRejectedValueOnce(new Error("clipboard unavailable"));

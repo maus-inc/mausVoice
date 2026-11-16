@@ -6,7 +6,11 @@ use std::time::{Duration, Instant};
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+};
 use windows::Win32::System::LibraryLoader::*;
+use windows::Win32::UI::Accessibility::{CLSID_AccPropServices, IAccPropServices, PROPID_ACC_NAME};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -63,6 +67,11 @@ thread_local! {
 pub fn run(receiver: Receiver<InMessage>) {
     let t0 = Instant::now();
     unsafe {
+        // The message-loop thread owns the HWNDs and now also the accessible
+        // property service. An apartment-threaded COM init here is required
+        // before `set_edit_accessible_name` can call `CoCreateInstance`; a
+        // failure only disables the accessible name, never the pill.
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
             windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
         );
@@ -2365,6 +2374,9 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         EDIT_CONTAINER.with(|c| c.set(container));
         EDIT_LABEL_HWND.with(|l| l.set(label));
         EDIT_HWND.with(|e| e.set(edit));
+        // Name the field before the first assistant-state update so a screen
+        // reader that reaches it early still gets the type-mode caption.
+        set_edit_accessible_name("Type a message…");
     }
 }
 
@@ -2702,6 +2714,35 @@ fn set_edit_accessible_label(text: &str) {
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         let _ = SetWindowTextW(label, PCWSTR(wide.as_ptr()));
+    }
+    set_edit_accessible_name(text);
+}
+
+/// Publish the localized caption as the EDIT control's MSAA Name. The cue
+/// banner above the field is a separate STATIC window, so a screen reader that
+/// queries the edit control itself would otherwise announce it as unnamed and
+/// cannot tell whether the field edits a transcript or composes a message.
+fn set_edit_accessible_name(text: &str) {
+    let edit = EDIT_HWND.with(Cell::get);
+    if edit.0.is_null() {
+        return;
+    }
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        // Best effort: a COM failure only leaves the field unnamed, which is no
+        // worse than the pre-existing state, so it must not disturb the pill.
+        let Ok(service): Result<IAccPropServices> =
+            CoCreateInstance(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER)
+        else {
+            return;
+        };
+        let _ = service.SetHwndPropStr(
+            edit,
+            OBJID_CLIENT.0 as u32,
+            CHILDID_SELF,
+            PROPID_ACC_NAME,
+            PCWSTR(wide.as_ptr()),
+        );
     }
 }
 

@@ -7,7 +7,7 @@
  *  top margin 14, bottom margin 10 · header offsets 10/10, right 24 ·
  *  header buttons 28 · content side inset 24 · transcript top offset 56 ·
  *  input bar 48 · perm card 68 (buttons 80×26, gap 6, first +16) ·
- *  review eyebrow Satoshi 11 italic white .5, text 14 white .92 ·
+ *  review eyebrow Satoshi 11 bold white .5, text 14 white .92 ·
  *  hint 11 white .45 · perm title 12 white .82, desc 11 white .5 ·
  *  buttons fill white .08, border white .15, label 11, radius 6 ·
  *  cards fill white .06, border white .12 · review editor is a 128px multiline
@@ -140,6 +140,12 @@ export const AssistantPanel = ({
               top: 56,
               bottom: 48 + (variant === "review" ? 44 : 0),
               overflow: "hidden",
+              // The review editor fills the space the heading leaves so a
+              // shorter panel clips nothing; other variants stack normally.
+              ...(variant === "review" && {
+                display: "flex",
+                flexDirection: "column",
+              }),
             }}
           >
             {variant === "transcript" && (
@@ -226,7 +232,7 @@ export const AssistantPanel = ({
                 <Box
                   sx={{
                     fontSize: 11,
-                    fontStyle: "italic",
+                    fontWeight: 600,
                     color: "rgba(255,255,255,0.5)",
                     height: 20,
                   }}
@@ -242,7 +248,10 @@ export const AssistantPanel = ({
                     display: "block",
                     boxSizing: "border-box",
                     width: "100%",
-                    height: 128,
+                    // Grow into the review body instead of a fixed 128px that
+                    // the shorter expanded panel clips.
+                    flex: 1,
+                    minHeight: 0,
                     mt: 1,
                     p: 1.25,
                     resize: "none",

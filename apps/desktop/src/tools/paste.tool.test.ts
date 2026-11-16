@@ -18,12 +18,18 @@ const state = vi.hoisted(() => ({
 vi.mock("../actions/pill-review.actions", () => ({
   reviewTranscriptBeforeInsert: reviewTranscriptBeforeInsertMock,
 }));
-vi.mock("../actions/pending-paste-review.actions", () => ({
-  cancelPendingPasteReview: cancelPendingPasteReviewMock,
-  createPendingPasteReview: createPendingPasteReviewMock,
-  updatePendingPasteReviewDraft: updatePendingPasteReviewDraftMock,
-  updatePendingPasteReviewDraftById: updatePendingPasteReviewDraftByIdMock,
-}));
+vi.mock("../actions/pending-paste-review.actions", async () => {
+  const actual = await vi.importActual<
+    typeof import("../actions/pending-paste-review.actions")
+  >("../actions/pending-paste-review.actions");
+  return {
+    cancelPendingPasteReview: cancelPendingPasteReviewMock,
+    createPendingPasteReview: createPendingPasteReviewMock,
+    updatePendingPasteReviewDraft: updatePendingPasteReviewDraftMock,
+    updatePendingPasteReviewDraftById: updatePendingPasteReviewDraftByIdMock,
+    getPendingPasteReview: actual.getPendingPasteReview,
+  };
+});
 vi.mock("../store", () => ({ getAppState: () => state }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/api/event", () => ({ emit: emitMock }));
@@ -107,6 +113,46 @@ describe("PasteTool review", () => {
     // The card says a paste is waiting on the user, which is false once the
     // text is in the target app.
     expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a conflict when a lost Open save returns another writer's row", async () => {
+    // A lost compare-and-set returns the stored row, which carries the winner's
+    // text at the revision this save requested.
+    createPendingPasteReviewMock.mockResolvedValue({
+      id: "pending-review",
+      conversationId: "conv-1",
+      role: "system",
+      content: "",
+      createdAt: "2026-09-09T12:00:00.000Z",
+      metadata: {
+        type: "pending-paste-review",
+        toolName: "paste",
+        toolCallState: "awaiting-manual-paste",
+        text: "another writer",
+        status: "pending",
+        draftRevision: 0,
+      },
+    });
+    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
+      async (
+        _text: string,
+        _source: string,
+        options?: { onOpen?: (text: string) => Promise<void> },
+      ) => {
+        await options?.onOpen?.("edited in pill");
+        return null;
+      },
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).rejects.toThrow("This Paste review is no longer pending");
+
+    expect(emitMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("saves the review and reports the failure when the insert errors", async () => {

@@ -18,7 +18,11 @@ export const createChatMessageWithRepo = (
       draft.chatMessageById[saved.id] = saved;
       const ids =
         draft.chatMessageIdsByConversationId[saved.conversationId] ?? [];
-      ids.push(saved.id);
+      // A late create response can arrive after a retry re-created the same id,
+      // so registering it must not list the message twice.
+      if (!ids.includes(saved.id)) {
+        ids.push(saved.id);
+      }
       draft.chatMessageIdsByConversationId[saved.conversationId] = ids;
     }, lease);
 

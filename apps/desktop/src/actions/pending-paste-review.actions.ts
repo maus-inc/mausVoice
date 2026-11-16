@@ -227,7 +227,22 @@ export const copyPendingPasteReview = async (
     );
   }
   await invoke("copy_to_clipboard", { text });
-  await updatePendingPasteReview(saved, savedPending, text, "copied");
+  const copied = await updatePendingPasteReview(
+    saved,
+    savedPending,
+    text,
+    "copied",
+  );
+  // The clipboard text is already delivered, but the card must actually record
+  // it. A lost compare-and-set returns the stored row, so a newer draft can
+  // leave Chats showing a pending card while Copy reports success.
+  if (getPendingPasteReview(copied.metadata)?.status !== "copied") {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
+  }
 };
 
 const cancelPendingPasteReviewWithRetries = async (
@@ -261,7 +276,7 @@ export const cancelPendingPasteReview = async (
   // Cancel dismisses the action, not its durable record. Treat an empty editor
   // as no replacement so a deletion immediately before Cancel cannot erase the
   // text that Open preserved from the pill.
-  let saved = await updatePendingPasteReview(
+  const saved = await updatePendingPasteReview(
     message,
     pending,
     text.trim() ? text : pending.text,

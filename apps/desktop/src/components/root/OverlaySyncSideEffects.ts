@@ -64,10 +64,9 @@ const localizeReview = (
 ): NativePillPayload["review"] => ({
   ...review,
   review_label: intl.formatMessage({
-    id: "review_transcript",
     defaultMessage: "Review transcript",
   }),
-  edit_label: intl.formatMessage({ id: "edit", defaultMessage: "Edit" }),
+  edit_label: intl.formatMessage({ defaultMessage: "Edit" }),
   insert_label: intl.formatMessage({ defaultMessage: "Insert" }),
   copy_label: intl.formatMessage({ defaultMessage: "Copy" }),
   cancel_label: intl.formatMessage({ defaultMessage: "Cancel" }),
@@ -256,7 +255,6 @@ const useNativePillAssistantSync = () => {
       active,
       input_mode: state.assistantInputMode ?? "voice",
       type_message_label: intl.formatMessage({
-        id: "type_a_message",
         defaultMessage: "Type a message…",
       }),
       compact,

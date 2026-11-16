@@ -265,15 +265,19 @@ test("the module graph gains no new circular dependencies", (t) => {
       .split("\n")
       .filter(Boolean),
   ]);
-  const architectureConfigChanged = changedFiles.has(".fallowrc.json");
+  // A resolver change re-resolves imports for every module, so a new cycle can
+  // form between files that did not change. Compare every cycle when either the
+  // Fallow config or a TypeScript path-alias config moved; otherwise only
+  // cycles touching changed modules can be introduced by source edits.
+  const graphConfigChanged = [...changedFiles].some(
+    (file) =>
+      file === ".fallowrc.json" || /(^|\/)tsconfig[^/]*\.json$/.test(file),
+  );
   const inherited = new Set(architectureCycles(dir));
   const observed = architectureCycles(root);
-  // Keep each side's own Fallow config. If this branch changes graph
-  // configuration, compare every cycle; otherwise only cycles touching changed
-  // modules can be introduced by source edits.
   const newCycles = observed.filter(
     (cycle) =>
-      (architectureConfigChanged ||
+      (graphConfigChanged ||
         cycle.split(" -> ").some((file) => changedFiles.has(file))) &&
       !inherited.has(cycle),
   );
@@ -428,6 +432,9 @@ test("architecture policies allow the preview dependency and gate prohibited cro
       'import { desktop } from "../../../apps/desktop/src/main.js";',
       'export const shared = eval("1");',
       'export const generated = Function("return 1");',
+      'export const globalEval = globalThis.eval("1");',
+      'export const windowEval = window.eval("1");',
+      'export const windowGenerated = window.Function("return 1");',
       "",
     ].join("\n"),
   );
@@ -435,7 +442,7 @@ test("architecture policies allow the preview dependency and gate prohibited cro
   assert.equal(changed.status, 1);
   assert.equal(changed.report.verdict, "fail");
   assert.equal(changed.report.dead_code.boundary_violations.length, 1);
-  assert.equal(changed.report.dead_code.boundary_call_violations.length, 2);
+  assert.equal(changed.report.dead_code.boundary_call_violations.length, 5);
 
   writeFileSync(
     resolve(dir, "apps/desktop/src/main.js"),

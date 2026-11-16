@@ -16,6 +16,7 @@ import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import {
   cancelPendingPasteReview,
   createPendingPasteReview,
+  getPendingPasteReview,
   updatePendingPasteReviewDraft,
   updatePendingPasteReviewDraftById,
 } from "../actions/pending-paste-review.actions";
@@ -151,11 +152,22 @@ const reconcileLatestExistingReviewDraft = async (
   generation: number,
 ): Promise<ChatMessage> => {
   const latestText = state.latestSaveText;
-  if (
-    generation === state.latestSaveGeneration ||
-    !latestText ||
-    savedText === latestText
-  ) {
+  if (generation === state.latestSaveGeneration) {
+    // This is the latest save. A lost compare-and-set returns the stored row
+    // without our text, so report the conflict instead of storing a row whose
+    // revision matches but whose wording does not. A row that is not a pending
+    // review at all has already been rejected upstream.
+    const stored = getPendingPasteReview(saved.metadata);
+    if (stored && stored.text !== savedText) {
+      throw new Error(
+        getIntl().formatMessage({
+          defaultMessage: "This Paste review is no longer pending",
+        }),
+      );
+    }
+    return saved;
+  }
+  if (!latestText || savedText === latestText) {
     return saved;
   }
 
@@ -201,9 +213,15 @@ const createOrRecoverReviewDraft = async (
       text,
       pendingReviewId ?? undefined,
     );
-    if (generation === state.latestSaveGeneration) {
-      state.pendingReviewMessage = saved;
-    }
+    // A newer save can land while this create is in flight. The create writes
+    // its own row into the store on the way back, so converge the durable row
+    // and the store on the latest text, exactly as the update path does.
+    state.pendingReviewMessage = await reconcileLatestExistingReviewDraft(
+      state,
+      saved,
+      text,
+      generation,
+    );
   } catch (error) {
     const duplicateId =
       String(error).toLowerCase().includes("unique constraint failed") &&

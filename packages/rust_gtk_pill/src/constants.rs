@@ -111,6 +111,10 @@ pub(crate) const PANEL_RADIUS: f64 = 24.0;
 pub(crate) const PANEL_BG_ALPHA: f64 = 0.96;
 pub(crate) const PANEL_BORDER_ALPHA: f64 = 0.12;
 pub(crate) const PANEL_REVIEW_EDITOR_HEIGHT: f64 = 128.0;
+/// Character budget for the review editor. Bounds an accidental giant paste
+/// before it reaches the buffer, since every later change copies the whole
+/// buffer into `entry_text`.
+pub(crate) const MAX_REVIEW_EDITOR_CHARS: usize = 100_000;
 pub(crate) const PANEL_HEADER_OFFSET_TOP: f64 = 10.0;
 pub(crate) const PANEL_HEADER_OFFSET_LEFT: f64 = 10.0;
 pub(crate) const PANEL_HEADER_OFFSET_RIGHT: f64 = 24.0;

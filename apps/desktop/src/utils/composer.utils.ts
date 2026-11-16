@@ -234,6 +234,14 @@ const notifyReviewExpiry = (options: ComposerReviewOptions): void => {
   }
 };
 
+const notifyReviewFailure = (options: ComposerReviewOptions): void => {
+  try {
+    options.onFailure?.();
+  } catch (error) {
+    getLogger().warning(`Could not report failed review: ${error}`);
+  }
+};
+
 const notifyAssistantToolRecovery = (
   options: ComposerReviewOptions,
   expired = false,
@@ -510,6 +518,7 @@ class ComposerReview {
       return;
     }
 
+    notifyReviewFailure(this.options);
     runToast(
       showToast({
         message: getIntl().formatMessage({
