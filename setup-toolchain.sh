@@ -53,7 +53,11 @@ toolchain_installed() {
     # would skip the fetch and then fail on the missing source -- and no later run
     # would refetch it, so the failure repeated until the payload came back.
     [ -f "$SV/rust/cargo-config.toml" ] &&
-    [ -d "$SV/rust/toolchain" ]
+    [ -d "$SV/rust/toolchain" ] &&
+    # The native payloads, for the same reason as the cargo config: a run that
+    # installed the toolchain but not these would report ready and then send the
+    # two transcription `build.rs` scripts to a blocked host.
+    [ -d "$SV/native" ]
 }
 
 if ! toolchain_installed; then
@@ -61,7 +65,7 @@ if ! toolchain_installed; then
   mkdir -p "$SV"
   ( cd "$REPO" \
     && git fetch --depth=1 origin vendor/sandbox-toolchain >/dev/null 2>&1 \
-    && git archive FETCH_HEAD rust system | tar -x -C "$SV" ) || {
+    && git archive FETCH_HEAD rust system native | tar -x -C "$SV" ) || {
     _fail "could not fetch the vendored payload from vendor/sandbox-toolchain"
     return 1 2>/dev/null || exit 1
   }
@@ -181,6 +185,27 @@ if [ ! -f /tmp/sysroot/.unpack-complete ]; then
   : > /tmp/sysroot/.unpack-complete
 fi
 
+# The ONNX Runtime library, unpacked from the payload archive. Its `build.rs`
+# would download this from a GitHub Release the sandbox cannot reach, and it wants
+# a path to the library file rather than to the archive, so the `.tgz` is opened
+# here. Staged and published with a marker, for the same reason as the sysroot: a
+# half-written tree must not satisfy the retry check.
+if [ ! -f /tmp/ort/.unpack-complete ]; then
+  echo "== unpacking onnxruntime ==" >&2
+  rm -rf /tmp/ort.staging
+  mkdir -p /tmp/ort.staging
+  tar xzf "$SV"/native/onnxruntime/onnxruntime-linux-x64-*.tgz -C /tmp/ort.staging || {
+    _fail "could not unpack the onnxruntime archive"
+    return 1 2>/dev/null || exit 1
+  }
+  rm -rf /tmp/ort
+  mv /tmp/ort.staging /tmp/ort || {
+    _fail "could not publish the onnxruntime tree"
+    return 1 2>/dev/null || exit 1
+  }
+  : > /tmp/ort/.unpack-complete
+fi
+
 export PATH="$PREFIX/bin:$SV/system/tools/bin:$PATH"
 export LD_LIBRARY_PATH="$PREFIX/lib:/tmp/sysroot/usr/lib/x86_64-linux-gnu:/tmp/sysroot/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export CARGO_TARGET_DIR=/tmp/target
@@ -189,6 +214,18 @@ export PKG_CONFIG="$SV/system/tools/bin/pkg-config"
 export PKG_CONFIG_SYSROOT_DIR=/tmp/sysroot
 export PKG_CONFIG_PATH=/tmp/sysroot/usr/lib/x86_64-linux-gnu/pkgconfig:/tmp/sysroot/usr/share/pkgconfig
 export LIBCLANG_PATH=/tmp/sysroot/usr/lib/llvm-14/lib
+
+# The two native archives the transcription `build.rs` scripts would otherwise
+# download from GitHub Releases, which the sandbox cannot reach. Pointing at the
+# payload keeps both builds offline. `MAUSVOICE_ORT_DYLIB_PATH` is a file, and the
+# archive's `.so` is a symlink, so the check follows it. `SHERPA_ONNX_ARCHIVE_DIR`
+# is the directory holding the archive, so `build.rs` still verifies its digest.
+export MAUSVOICE_ORT_DYLIB_PATH="$(find /tmp/ort -name libonnxruntime.so | head -1)"
+[ -f "$MAUSVOICE_ORT_DYLIB_PATH" ] || {
+  _fail "onnxruntime library not found under /tmp/ort"
+  return 1 2>/dev/null || exit 1
+}
+export SHERPA_ONNX_ARCHIVE_DIR="$SV/native/sherpa-onnx"
 
 # Readiness is `cargo` actually answering, not the last command having run.
 # Checked separately so a toolchain that unpacked but cannot execute is reported

@@ -1214,6 +1214,29 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
   });
 
+  it("provisions the native payloads the transcription build scripts download", () => {
+    // Both `build.rs` scripts fetch release archives from GitHub Releases, which
+    // a restricted sandbox cannot reach. The vendor branch pre-seeds them under
+    // `native/`, so setup has to carry them and point the two env vars at them,
+    // or a transcription build fails on the download instead of using the payload.
+    const script = read("setup-toolchain.sh");
+    assert.match(
+      script,
+      /git archive FETCH_HEAD rust system native/,
+      "the payload fetch omits native/, so the archives are never present",
+    );
+    assert.match(
+      script,
+      /export MAUSVOICE_ORT_DYLIB_PATH="\$\(find \/tmp\/ort -name libonnxruntime\.so \| head -1\)"/,
+      "MAUSVOICE_ORT_DYLIB_PATH is not pointed at the unpacked payload",
+    );
+    assert.match(
+      script,
+      /export SHERPA_ONNX_ARCHIVE_DIR="\$SV\/native\/sherpa-onnx"/,
+      "SHERPA_ONNX_ARCHIVE_DIR is not pointed at the payload archive directory",
+    );
+  });
+
   it("spends a cursor-reset once it has been carried out", () => {
     // `ResetAtCursor` is the only anchor that both places and follows the
     // pointer. If it survives the placement that satisfied it, every later frame
