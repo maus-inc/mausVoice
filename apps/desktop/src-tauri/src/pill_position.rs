@@ -233,7 +233,11 @@ fn mark_position_erased() -> u64 {
 /// and taking its protection back would let the publish it is waiting on restore
 /// the record it is clearing. A declaration a report has already answered is no
 /// longer in the list, so its late withdrawal does nothing.
-fn withdraw_erase(generation: u64) {
+///
+/// A clear whose pill message could not be sent withdraws here too, because that
+/// pill will never answer: the declaration would close the latch for the rest of
+/// the process and drop every later save.
+pub(crate) fn withdraw_erase(generation: u64) {
     let mut state = erase_state();
     state.outstanding.retain(|id| *id != generation);
     if state.outstanding.is_empty() {
@@ -244,22 +248,29 @@ fn withdraw_erase(generation: u64) {
 /// Account for a report the pill published, returning whether it describes a
 /// record that should be stored.
 ///
-/// Called for every `PositionChanged`, whether or not it carries a position: the
-/// erase is declared by the report that says there is no position, so the reports
-/// that carry nothing are exactly the ones that have to be read.
-pub(crate) fn note_report(has_saved_position: bool) -> bool {
-    if has_saved_position {
-        return true;
+/// Called for every `PositionChanged`. `ack` is the id of the newest clear the
+/// pill has applied, echoed on every report, and it retires every declaration at
+/// or below it: the pill applies clears in order, so an answer for `ack` means
+/// every clear up to `ack` is applied and no later one is. A report that names no
+/// clear retires nothing.
+///
+/// Retiring *every* outstanding declaration, which is what this used to do, is the
+/// race a reviewer caught. A reset's answer can sit in the pipe while a later clear
+/// is declared, and an answer that retired that later clear's declaration opened
+/// the latch to a save the pill had published before the clear: the row the user
+/// just cleared came back on the next launch.
+///
+/// The save path is untouched: a report that says a position is saved is always
+/// storable, so a drop the user makes after a clear still stores.
+pub(crate) fn note_report(has_saved_position: bool, ack: Option<u64>) -> bool {
+    if let Some(ack) = ack {
+        let mut state = erase_state();
+        state.outstanding.retain(|id| *id > ack);
+        if state.outstanding.is_empty() {
+            ERASE_DECLARED.store(false, Ordering::Release);
+        }
     }
-    // A report with no position is either the answer to a clear -- which spends
-    // the declarations -- or an ordinary reset, which leaves them alone. One
-    // report answers every clear that was owed one: the pill publishes its
-    // position from a single queue, so the first report that says the record is
-    // gone is ordered after all of them.
-    let mut state = erase_state();
-    state.outstanding.clear();
-    ERASE_DECLARED.store(false, Ordering::Release);
-    false
+    has_saved_position
 }
 
 /// Whether a save may still land, given what the queue has delivered so far.
@@ -278,10 +289,12 @@ fn erase_is_undeclared() -> bool {
 /// Runs on the same path that tells the pill to re-home, so a reset that the
 /// user confirms is not undone by the next launch.
 ///
-/// Returns whether the record is gone. A reset that reports success while the row
+/// Returns the declaration id when the record is gone, so the caller can hand it
+/// to the pill and have the pill's answer retire exactly this declaration. `None`
+/// when the record could not be cleared; a reset that reports success while the row
 /// survives moves the window and then restores the old spot next launch, so the
 /// caller has to be able to tell the difference.
-pub fn clear_saved_position(app: &tauri::AppHandle) -> bool {
+pub fn clear_saved_position(app: &tauri::AppHandle) -> Option<u64> {
     // Set before the delete, not after: a publish queued behind this call has to
     // find the latch already closed when it runs.
     let declaration = mark_position_erased();
@@ -289,7 +302,7 @@ pub fn clear_saved_position(app: &tauri::AppHandle) -> bool {
         // Nothing was erased, so nothing may stay declared: no report is coming to
         // spend it.
         withdraw_erase(declaration);
-        return false;
+        return None;
     };
     let pool = database.pool();
     let cleared = tauri::async_runtime::block_on(async {
@@ -297,7 +310,7 @@ pub fn clear_saved_position(app: &tauri::AppHandle) -> bool {
         pill_position_queries::clear_pill_position(pool).await
     });
     match cleared {
-        Ok(()) => true,
+        Ok(()) => Some(declaration),
         Err(err) => {
             // Nothing is stored if local data is being cleared right now, which is
             // the outcome this wanted. Only a real database error is worth a warning.
@@ -313,7 +326,7 @@ pub fn clear_saved_position(app: &tauri::AppHandle) -> bool {
             // the outcome is the same one way or the other: nothing erased, nothing
             // to retract, and no answer coming.
             withdraw_erase(declaration);
-            false
+            None
         }
     }
 }
@@ -360,13 +373,20 @@ pub fn saved_position_argument(app: &tauri::AppHandle) -> Option<String> {
 /// already find the latch closed.
 ///
 /// Best effort: a pill that is not running has nothing in memory to forget, and
-/// the row it would have restored from is already gone. It still answers the
-/// declaration with a fresh report when it next starts, and a report with no
-/// position spends it either way.
-pub fn forget_running_pill_position(app: &tauri::AppHandle) {
-    let _ = mark_position_erased();
-    if let Err(err) = crate::platform::overlay::notify_forget_position(app) {
-        log::debug!("No running pill to forget the cleared position: {err}");
+/// the row it would have restored from is already gone.
+///
+/// Returns the declaration id when the pill was told, so its answer can retire
+/// exactly this declaration; `None` when there is no running pill to answer, and
+/// the declaration is withdrawn here rather than left to close the latch forever.
+pub fn forget_running_pill_position(app: &tauri::AppHandle) -> Option<u64> {
+    let declaration = mark_position_erased();
+    match crate::platform::overlay::notify_forget_position(app, Some(declaration)) {
+        Ok(()) => Some(declaration),
+        Err(err) => {
+            log::debug!("No running pill to forget the cleared position: {err}");
+            withdraw_erase(declaration);
+            None
+        }
     }
 }
 
@@ -511,11 +531,11 @@ mod tests {
     #[test]
     fn a_report_spends_the_declaration_and_the_next_drop_stores() {
         let _turn = latch();
-        assert!(note_report(true), "an ordinary save always stores");
-        let _declaration = mark_position_erased();
+        assert!(note_report(true, None), "an ordinary save always stores");
+        let declaration = mark_position_erased();
         assert!(erase_is_undeclared());
         assert!(
-            !note_report(false),
+            !note_report(false, Some(declaration)),
             "a report with no position is not storable"
         );
         assert!(
@@ -523,10 +543,34 @@ mod tests {
             "the answer to a clear is what spends the declaration"
         );
         assert!(
-            note_report(true),
+            note_report(true, None),
             "the drop after the answer has to store, or the pill looks parked \
              with an empty table"
         );
+    }
+
+    /// The window a reviewer found, driven end to end. A reset is declared first,
+    /// its answer is delayed in the pipe, and a clear is declared after it. The
+    /// reset's answer names only the reset, so it must leave the clear's
+    /// declaration standing; otherwise a save published before the clear passes the
+    /// latch and puts the cleared row back on the next launch.
+    #[test]
+    fn an_earlier_answers_ack_does_not_spend_a_later_declaration() {
+        let _turn = latch();
+        let reset = mark_position_erased();
+        let clear = mark_position_erased();
+        assert!(reset < clear, "the clear is declared after the reset");
+        // The reset's answer arrives now, naming only the reset.
+        assert!(!note_report(false, Some(reset)));
+        assert!(
+            erase_is_undeclared(),
+            "the reset's answer opened the latch for a save published before the \
+             clear, so the cleared row would come back on the next launch"
+        );
+        // The clear's own answer is what opens it again.
+        assert!(!note_report(false, Some(clear)));
+        assert!(!erase_is_undeclared());
+        assert!(note_report(true, None), "the next drop stores");
     }
 
     /// An ordinary reset -- one that was not asked for by a clear -- reports no
@@ -535,10 +579,10 @@ mod tests {
     #[test]
     fn a_report_with_nothing_declared_changes_nothing() {
         let _turn = latch();
-        assert!(!note_report(false));
+        assert!(!note_report(false, None));
         assert!(!erase_is_undeclared());
-        assert!(!note_report(false));
-        assert!(note_report(true));
+        assert!(!note_report(false, None));
+        assert!(note_report(true, None));
     }
 
     /// The invariant the list buys: a clear's withdrawal takes back its own
@@ -558,12 +602,12 @@ mod tests {
                             // A declaration is visible to the save path no later
                             // than the declaration call returns, and no assertion
                             // is made on it here: another clear may legitimately
-                            // spend it in between, which is the point of the design.
+                            // answer it in between, which is the point of the design.
                             // Half the clears succeed, half fail and withdraw.
                             if id % 2 == 0 {
                                 withdraw_erase(id);
                             } else {
-                                note_report(false);
+                                note_report(false, Some(id));
                             }
                         }
                     })
@@ -572,13 +616,13 @@ mod tests {
             for thread in threads {
                 thread.join().expect("worker");
             }
-            // Every clear above either withdrew its declaration or spent it with a
-            // report, so nothing may still be declared.
+            // Every clear above either withdrew its declaration or answered it, so
+            // nothing may still be declared.
             assert!(
                 !erase_is_undeclared(),
                 "a declaration outlived every clear that could own it"
             );
-            note_report(false);
+            note_report(false, None);
         }
     }
 

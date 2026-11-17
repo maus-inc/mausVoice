@@ -177,14 +177,21 @@ pub enum InMessage {
         review: Option<Box<PillReview>>,
     },
     /// Clear the saved record; `strategy` names the display the window re-homes
-    /// onto. See `rust_pill_shared::layout::Anchor::from_reset`.
+    /// onto. See `rust_pill_shared::layout::Anchor::from_reset`. `ack` is the
+    /// desktop's declaration id, echoed back on the report that answers it.
     ResetPosition {
         #[serde(default)]
         strategy: ResetStrategy,
+        #[serde(default)]
+        ack: Option<u64>,
     },
     /// Drop the parked position but leave the window alone, so a request that
-    /// follows a local-data clear cannot republish the wiped row.
-    ForgetPosition,
+    /// follows a local-data clear cannot republish the wiped row. `ack` is the
+    /// desktop's declaration id, echoed back on the report that answers it.
+    ForgetPosition {
+        #[serde(default)]
+        ack: Option<u64>,
+    },
     /// Re-publish the window geometry; see `restore::PositionReport` for why a
     /// fresh session has none to publish.
     RequestPosition,
@@ -260,6 +267,18 @@ pub enum OutMessage {
 /// write to a pipe that is drained by the desktop, and a failure returns
 /// immediately rather than retrying, so it is safe on the GTK main loop.
 pub fn send(msg: &OutMessage) -> bool {
+    // Every position report carries the newest clear this pill has applied, so the
+    // desktop can retire that clear's declaration and no later one.
+    let acked;
+    let msg = match msg {
+        OutMessage::PositionChanged { report } => {
+            acked = OutMessage::PositionChanged {
+                report: report.with_ack(rust_pill_shared::ipc::applied_clear()),
+            };
+            &acked
+        }
+        other => other,
+    };
     let mut stdout = io::stdout().lock();
     if serde_json::to_writer(&mut stdout, msg).is_err() {
         return false;

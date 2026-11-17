@@ -210,10 +210,12 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
 
 /// Tell the linked pill to stop treating its current spot as saved, without
 /// moving it. Sent after a local-data clear so the reloaded window cannot write
-/// the cleared position straight back.
-pub fn notify_forget_position(app: &tauri::AppHandle) -> Result<(), String> {
+/// the cleared position straight back. `ack` is the declaration the pill's answer
+/// retires; the caller withdraws it when this returns an error, so a clear that
+/// never reached the pill cannot close the latch forever.
+pub fn notify_forget_position(app: &tauri::AppHandle, ack: Option<u64>) -> Result<(), String> {
     match app.try_state::<std::sync::Arc<MacosPill>>() {
-        Some(pill) => pill.send(InMessage::ForgetPosition),
+        Some(pill) => pill.send(InMessage::ForgetPosition { ack }),
         None => Err("Pill position forgotten with no managed macOS pill".to_string()),
     }
 }
@@ -223,16 +225,19 @@ pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(
     // forget it before it tells the pill to re-home. A clear that failed would
     // leave that record to undo the reset on the next launch, so it is reported
     // rather than swallowed.
-    if !crate::pill_position::clear_saved_position(app) {
+    let Some(declaration) = crate::pill_position::clear_saved_position(app) else {
         return Err("Could not clear the pill's stored position, so it was not reset".to_string());
-    }
+    };
     let strategy = if strategy == "cursor" {
         ResetStrategy::Cursor
     } else {
         ResetStrategy::Current
     };
     match app.try_state::<std::sync::Arc<MacosPill>>() {
-        Some(pill) => pill.send(InMessage::ResetPosition { strategy }),
+        Some(pill) => pill.send(InMessage::ResetPosition {
+            strategy,
+            ack: Some(declaration),
+        }),
         None => Err("Reset position requested with no managed macOS pill".to_string()),
     }
 }
@@ -337,6 +342,9 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let has_saved_position = report.has_saved_position;
                     let (rect, monitor) = (report.rect, report.monitor);
                     let display_id = report.display.display_id;
+                    // The newest clear the pill has applied, echoed from the id this
+                    // desktop sent with the clear. `None` retires nothing.
+                    let ack = report.ack;
                     let rect_json = rect.map(|r| {
                         serde_json::json!({ "x": r.x, "y": r.y, "width": r.width, "height": r.height })
                     });
@@ -344,11 +352,10 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                         serde_json::json!({ "x": m.x, "y": m.y, "width": m.width, "height": m.height })
                     });
                     // Every report is accounted for before it is acted on, including
-                    // the ones that carry nothing: a clear is declared by the pill's
-                    // answer that the record is gone, and that answer is a
-                    // `has_saved_position: false` report. Reading only the saves
-                    // would never see it, and the erase would stay undeclared.
-                    let storable = crate::pill_position::note_report(has_saved_position);
+                    // the ones that carry nothing: a clear is answered by the report
+                    // that names its id, and that answer is what retires the clear's
+                    // declaration.
+                    let storable = crate::pill_position::note_report(has_saved_position, ack);
                     // Only a geometry the pill considers saved describes where
                     // the user left it. A reset publishes the default corner it
                     // just moved to, and storing that would undo the reset.

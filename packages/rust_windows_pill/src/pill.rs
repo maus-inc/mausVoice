@@ -131,6 +131,14 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
 
     let state = initial_state(restored.map(|(origin, _)| origin), restored_display_id);
+    // Record the arrangement the window was just placed against, before the first
+    // poll. A fresh poll treats its first observation as the baseline and
+    // reconciles nothing, so an output removed between this placement and that
+    // first sample would be absorbed into the baseline instead of reconciled,
+    // leaving the pill parked over empty desktop. The seed itself is not acted on:
+    // acting on it would treat the launch as a display change and move a restored
+    // pill.
+    seed_layout_baseline(&state);
 
     STATE.with(|s| *s.borrow_mut() = Some(state));
     GFX.with(|g| *g.borrow_mut() = Some(gfx));
@@ -600,6 +608,25 @@ fn poll_display_layout(hwnd: HWND, state: &PillState) {
     }
 }
 
+/// Record the arrangement the pill was placed against, before the first poll.
+///
+/// A fresh poll treats its first observation as the baseline and reconciles
+/// nothing, so an output removed between the placement and that first sample would
+/// be absorbed into the baseline instead of reconciled, leaving the pill parked
+/// over empty desktop. Seeding at launch makes the first poll compare against the
+/// arrangement the pill was actually placed on, so a removal in that window reads
+/// as a change. The seed itself is not acted on, which is the whole point: acting
+/// on it would treat the launch as a display change and move a restored pill.
+fn seed_layout_baseline(state: &PillState) {
+    let Some(areas) = enumerate_work_areas_with_identity() else {
+        return;
+    };
+    state.layout_poll.borrow_mut().seed(
+        drag_now(),
+        rust_pill_shared::layout::layout_signature(&areas),
+    );
+}
+
 fn maybe_reassert_topmost(hwnd: HWND, now: Instant) {
     let last = LAST_TOPMOST_REASSERT.with(|cell| cell.get());
     if !should_reassert_topmost(last, now) {
@@ -857,7 +884,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 state.scroll_offset.set(0.0);
             }
         }
-        InMessage::ResetPosition { strategy } => {
+        InMessage::ResetPosition { strategy, ack } => {
             let hwnd = HWND_CELL.with(|c| c.get());
             cancel_drag_gesture(hwnd, state);
             state.has_saved_position.set(false);
@@ -878,6 +905,9 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.dirty.set(true);
             reposition_to_cursor_monitor(hwnd, state);
             check_hover(hwnd, state);
+            // Record this clear before the report goes out, so the answer carries
+            // its id and the desktop retires exactly this declaration.
+            rust_pill_shared::ipc::record_applied_clear(ack);
             let (rect, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
                 report: rust_pill_shared::restore::PositionReport::new(
@@ -888,7 +918,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 ),
             });
         }
-        InMessage::ForgetPosition => {
+        InMessage::ForgetPosition { ack } => {
             // A drag that is still held, or a settle that has not finished, would
             // reach `persist_drag_position` on a later frame and publish a saved
             // position again -- recreating the row the clear just deleted. Cancel
@@ -911,6 +941,10 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state
                 .anchor
                 .set(rust_pill_shared::layout::Anchor::from_forget());
+            // This clear answers with the report the reloaded window's
+            // `RequestPosition` asks for, so the id is held for the reports that
+            // follow.
+            rust_pill_shared::ipc::record_applied_clear(ack);
         }
         InMessage::RequestPosition => {
             let hwnd = HWND_CELL.with(|c| c.get());

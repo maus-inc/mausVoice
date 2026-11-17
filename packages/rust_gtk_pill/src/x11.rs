@@ -670,8 +670,12 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         let center_y = (oy + pill_y + pill_h / 2.0) * surface_scale;
 
         // A reset with the "cursor" strategy re-homes onto the monitor under
-        // the pointer exactly once; the strategy is consumed so later ticks
-        // keep the pill where it landed instead of chasing the cursor.
+        // the pointer exactly once. The strategy is demoted only after a
+        // placement actually lands, not before: monitor resolution can fail
+        // (a display reconfig mid-tick) and the placement below then leaves the
+        // window alone, so consuming the request first would drop a reset the
+        // user asked for with nothing done to carry it out. The macOS path spends
+        // its cursor-reset under the same rule.
         let reset_to_cursor = state_tick.anchor.get().follows_pointer();
 
         let (anchor_x, anchor_y) = if state_tick.has_saved_position.get() {
@@ -680,9 +684,6 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
                 state_tick.saved_y.get() + center_y,
             )
         } else if reset_to_cursor {
-            state_tick
-                .anchor
-                .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
             let (ax, ay) = cursor_pos();
             (ax as f64, ay as f64)
         } else {
@@ -702,6 +703,11 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             &win_tick,
             &state_tick,
         ) {
+            if reset_to_cursor {
+                state_tick
+                    .anchor
+                    .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
+            }
             let prev = state_tick.x11_drag_applied.get();
             if new_x != prev.0 || new_y != prev.1 {
                 state_tick.x11_drag_applied.set((new_x, new_y));
@@ -713,7 +719,8 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         } else {
             // Monitor resolution failed (e.g. display reconfig mid-tick): leave
             // the window where it is rather than mutating saved-position state or
-            // snapping to the origin.
+            // snapping to the origin. The cursor-reset stays armed so a later tick
+            // that can resolve a monitor still carries it out.
         }
         ControlFlow::Continue
     });

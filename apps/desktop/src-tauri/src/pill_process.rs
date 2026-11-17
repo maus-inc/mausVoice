@@ -389,11 +389,14 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
 ///
 /// Sent after a local-data clear wipes the stored row. The pill keeps the
 /// position it is sitting at in memory, and the reloaded window asks for it, so
-/// without this the row is written straight back.
-pub fn notify_forget_position(app: &tauri::AppHandle) -> Result<(), String> {
+/// without this the row is written straight back. `ack` is the declaration the
+/// pill's answer retires; the caller withdraws it when this returns an error, so a
+/// clear that never reached the pill cannot close the latch forever.
+pub fn notify_forget_position(app: &tauri::AppHandle, ack: Option<u64>) -> Result<(), String> {
+    let ack = ack.map_or_else(String::new, |id| format!(r#","ack":{id}"#));
     match app.try_state::<std::sync::Arc<PillProcess>>() {
         Some(pill) => pill
-            .send(r#"{"type":"forget_position"}"#)
+            .send(&format!(r#"{{"type":"forget_position"{ack}}}"#))
             .map_err(|err| format!("failed to forget the pill position: {err}")),
         None => Err("Pill position forgotten with no managed pill process".to_string()),
     }
@@ -407,12 +410,14 @@ pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(
     // A reset that reports success while the row survives is the failure this
     // guards: the window moves, the user sees it move, and the next launch
     // undoes it. Failing leaves the pill where it is, which is recoverable.
-    if !crate::pill_position::clear_saved_position(app) {
+    let Some(declaration) = crate::pill_position::clear_saved_position(app) else {
         return Err("Could not clear the pill's stored position, so it was not reset".to_string());
-    }
+    };
     match app.try_state::<std::sync::Arc<PillProcess>>() {
         Some(pill) => {
-            let msg = format!(r#"{{"type":"reset_position","strategy":"{strategy}"}}"#);
+            let msg = format!(
+                r#"{{"type":"reset_position","strategy":"{strategy}","ack":{declaration}}}"#
+            );
             pill.send(&msg)
                 .map_err(|err| format!("failed to reset pill position: {err}"))
         }
@@ -567,6 +572,10 @@ pub(crate) enum PillEvent {
         /// name one. Carried through to the stored record so the next launch can
         /// recognise that display rather than only its rectangle.
         display_id: Option<u64>,
+        /// The newest clear the pill has applied, echoed from the id the desktop
+        /// sent with that clear. Retires exactly the declarations at or below it,
+        /// so an earlier clear's answer cannot retract a later clear's declaration.
+        ack: Option<u64>,
     },
 }
 
@@ -774,11 +783,16 @@ pub(crate) fn parse_pill_event(line: &str) -> Option<PillEvent> {
             // guessed at: an unnamed display falls back to geometry, which is
             // what every build before this one did.
             let display_id = val.get("display_id").and_then(|v| v.as_u64());
+            // A report may carry the id of the clear it answers. A missing or
+            // non-numeric one is treated as absent, which retires nothing, so a
+            // malformed field cannot open the latch.
+            let ack = val.get("ack").and_then(|v| v.as_u64());
             Some(PillEvent::PositionChanged {
                 has_saved_position,
                 rect,
                 monitor,
                 display_id,
+                ack,
             })
         }
         _ => None,
@@ -858,13 +872,12 @@ fn dispatch_pill_event(app: &tauri::AppHandle, event: PillEvent) {
             rect,
             monitor,
             display_id,
+            ack,
         } => {
             // Every report is accounted for before it is acted on, including the
-            // ones that carry nothing: a clear is declared by the pill's answer that
-            // the record is gone, and that answer is a `has_saved_position: false`
-            // report. Reading only the saves would never see it, and the erase would
-            // stay undeclared for the rest of the process.
-            let storable = crate::pill_position::note_report(has_saved_position);
+            // ones that carry nothing: a clear is answered by the report that names
+            // its id, and that answer is what retires the clear's declaration.
+            let storable = crate::pill_position::note_report(has_saved_position, ack);
             // Only a geometry the pill considers saved describes where the user
             // left it. A reset publishes `has_saved_position: false` with the
             // default corner it just moved to, and storing that would undo the

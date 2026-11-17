@@ -176,18 +176,25 @@ pub enum InMessage {
         review: Option<Box<PillReview>>,
     },
     /// Forget the stored record and re-home onto the display `strategy` picks.
-    /// `Anchor::from_reset` is where that choice is made.
+    /// `Anchor::from_reset` is where that choice is made. `ack` is the desktop's
+    /// declaration id, echoed back on the report that answers it.
     ResetPosition {
         #[serde(default)]
         strategy: ResetStrategy,
+        #[serde(default)]
+        ack: Option<u64>,
     },
     /// User preference for which screen edge the pill anchors to.
     PillPlacement {
         placement: String,
     },
     /// Stop treating the current rect as saved. Local data was cleared, and the
-    /// next position request would otherwise write the row back.
-    ForgetPosition,
+    /// next position request would otherwise write the row back. `ack` is the
+    /// desktop's declaration id, echoed back on the report that answers it.
+    ForgetPosition {
+        #[serde(default)]
+        ack: Option<u64>,
+    },
     /// Ask for the geometry again. The pill only publishes after a move, so the
     /// desktop has none until it asks.
     RequestPosition,
@@ -257,6 +264,18 @@ pub enum OutMessage {
 /// error with `let _ =`, which is why this pill was the only one of the three
 /// that threw the entry away on a failed write.
 pub fn send(msg: &OutMessage) -> bool {
+    // Every position report carries the newest clear this pill has applied, so the
+    // desktop can retire that clear's declaration and no later one.
+    let acked;
+    let msg = match msg {
+        OutMessage::PositionChanged { report } => {
+            acked = OutMessage::PositionChanged {
+                report: report.with_ack(rust_pill_shared::ipc::applied_clear()),
+            };
+            &acked
+        }
+        other => other,
+    };
     let mut stdout = io::stdout().lock();
     if serde_json::to_writer(&mut stdout, msg).is_err() {
         return false;

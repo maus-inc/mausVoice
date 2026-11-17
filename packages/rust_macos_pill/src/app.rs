@@ -185,31 +185,28 @@ unsafe fn primary_top_for(window: id) -> f64 {
 /// Reads the pill window's screen rect and the visible frame of the monitor it
 /// lives on, already flipped into Tauri's top-down coordinate space, so the
 /// desktop can anchor the composer next to the real pill.
-unsafe fn pill_geometry(window: id) -> (Rect, Rect) {
+unsafe fn pill_geometry(window: id) -> (Rect, Option<Rect>) {
     let frame = window_frame(window);
     let screen: id = msg_send![window, screen];
 
     // `NSScreen.screens` can be EMPTY -- briefly when every display disconnects, the lid
     // closes, or the display sleeps. `objectAtIndex:0` on an empty array raises
     // `NSRangeException`, which is an Objective-C exception: it cannot be caught from Rust and
-    // takes the pill process down with it. This runs from `tick_spatial_feedback` every frame,
-    // and from `ResetPosition`, `RequestPosition` and `persist_drag_position`, so the window is
-    // wide.
-    //
-    // `pill_center_monitor` already guards exactly this and returns `unknown`; the shape is
-    // copied here. There is no meaningful monitor to report with no displays, so the window's
-    // own frame stands in for both, which keeps the returned pair self-consistent instead of
-    // measuring against a zeroed rect.
+    // takes the pill process down with it. `primary_top_for` guards that by falling back to
+    // the window's own frame, and this runs from `tick_spatial_feedback` every frame, and from
+    // `ResetPosition`, `RequestPosition` and `persist_drag_position`, so the window is wide.
     let primary_top = primary_top_for(window);
 
     let rect = to_top_down(frame, primary_top);
-    // `msg_send![window, screen]` is nil when the window is on no display. Sending
-    // `visibleFrame` to nil yields a zeroed NSRect, and the y-offset arithmetic above would
-    // then be computed against nothing, so the frame stands in for it as well.
+    // `msg_send![window, screen]` is nil when the window is on no display, and the screen list
+    // can be empty. There is no monitor to report then, so the monitor is `None` rather than a
+    // window-sized rect standing in for one: the desktop stores the reported work area as the
+    // place the pill was parked, so a fabricated one would overwrite the real record with a
+    // rect that names no display. Windows and GTK already report `None` here.
     let monitor = if (screen as *mut std::ffi::c_void).is_null() {
-        to_top_down(frame, primary_top)
+        None
     } else {
-        to_top_down(screen_visible_frame(screen), primary_top)
+        Some(to_top_down(screen_visible_frame(screen), primary_top))
     };
     (rect, monitor)
 }
@@ -898,7 +895,7 @@ fn perform_tick() {
                         ctx.state.scroll_offset.set(0.0);
                     }
                 }
-                InMessage::ResetPosition { strategy } => {
+                InMessage::ResetPosition { strategy, ack } => {
                     // Cancel ownership, not a normal release: no final sample
                     // or old drop may re-arm/overwrite this reset.
                     ctx.state.dragging.set(false);
@@ -926,17 +923,21 @@ fn perform_tick() {
                             strategy == ResetStrategy::Cursor,
                         ));
                     reposition_window(ctx.window, &ctx.state, dt, now);
+                    // Record this clear before the report goes out, so the answer
+                    // carries its id and the desktop retires exactly this
+                    // declaration, not a later clear's.
+                    rust_pill_shared::ipc::record_applied_clear(ack);
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
                         report: rust_pill_shared::restore::PositionReport::new(
                             false,
                             Some(rect),
-                            Some(monitor),
+                            monitor,
                             None,
                         ),
                     });
                 }
-                InMessage::ForgetPosition => {
+                InMessage::ForgetPosition { ack } => {
                     // A drag still held, or a settle that has not finished, would
                     // reach `persist_drag_position` on a later frame and publish a
                     // saved position again -- recreating the row the clear just
@@ -964,6 +965,10 @@ fn perform_tick() {
                     ctx.state
                         .anchor
                         .set(rust_pill_shared::layout::Anchor::from_forget());
+                    // This clear answers with the report the reloaded window's
+                    // `RequestPosition` asks for, so the id is held for the reports
+                    // that follow.
+                    rust_pill_shared::ipc::record_applied_clear(ack);
                 }
                 InMessage::RequestPosition => {
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
@@ -971,7 +976,7 @@ fn perform_tick() {
                         report: rust_pill_shared::restore::PositionReport::new(
                             ctx.state.has_saved_position.get(),
                             Some(rect),
-                            Some(monitor),
+                            monitor,
                             ctx.state.saved_display_id.get(),
                         ),
                     });
@@ -1091,15 +1096,16 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
 /// Read at the instant a drop lands and retained with the frame, so a
 /// reconciliation that moves the window during the save hold cannot make the
 /// retry pair the retained rectangle with a panel the drop was never on. The
-/// shape mirrors [`pill_geometry`], including the null-screen fallback where the
-/// window's own frame stands in for the monitor.
-unsafe fn drop_display_for(window: id) -> (Rect, Option<u64>, f64) {
+/// shape mirrors [`pill_geometry`]: the monitor is `None` when the window is on
+/// no screen, because a window-sized rect standing in for a work area would be
+/// stored as the place the pill was parked.
+unsafe fn drop_display_for(window: id) -> (Option<Rect>, Option<u64>, f64) {
     let screen: id = msg_send![window, screen];
     let primary_top = primary_top_for(window);
     let monitor = if (screen as *mut std::ffi::c_void).is_null() {
-        to_top_down(window_frame(window), primary_top)
+        None
     } else {
-        to_top_down(screen_visible_frame(screen), primary_top)
+        Some(to_top_down(screen_visible_frame(screen), primary_top))
     };
     let display_id = if (screen as *mut std::ffi::c_void).is_null() {
         None
@@ -1217,7 +1223,7 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
         report: rust_pill_shared::restore::PositionReport::new(
             true,
             Some(reported),
-            Some(monitor),
+            monitor,
             display_id,
         ),
     });
@@ -1392,7 +1398,14 @@ fn tick_spatial_feedback(window: id, state: &PillState, dt: f64, now: f64) {
         let (_, oy) = state.content_offset();
         let (_, pill_y, _, _) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
-        (rect.y - monitor.y) / state.ui_scale + oy + pill_y
+        let local_top = oy + pill_y;
+        // With no monitor to measure against there is no headroom to report, so
+        // the local top stands in, exactly as GTK's `selector_headroom` does when
+        // `pill_monitor` yields nothing.
+        match monitor {
+            Some(monitor) => (rect.y - monitor.y) / state.ui_scale + local_top,
+            None => local_top,
+        }
     };
     state
         .selector_placement
@@ -2393,7 +2406,7 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
                         report: rust_pill_shared::restore::PositionReport::new(
                             true,
                             Some(rect),
-                            Some(monitor),
+                            monitor,
                             state.saved_display_id.get(),
                         ),
                     });
@@ -2458,6 +2471,25 @@ unsafe fn poll_display_layout(window: id, state: &PillState, now: f64) {
     }
 }
 
+/// Record the arrangement the pill was placed against, before the first poll.
+///
+/// A fresh poll treats its first observation as the baseline and reconciles
+/// nothing, so a screen removed between the placement and that first sample would
+/// be absorbed into the baseline instead of reconciled, leaving the pill parked
+/// over empty desktop. Seeding at launch makes the first poll compare against the
+/// arrangement the pill was actually placed on, so a removal in that window reads
+/// as a change. The seed itself is not acted on, which is the whole point: acting
+/// on it would treat the launch as a display change and move a restored pill.
+unsafe fn seed_layout_baseline(state: &PillState) {
+    let Some((areas, _)) = display_areas() else {
+        return;
+    };
+    state.layout_poll.borrow_mut().seed(
+        drag_now(),
+        rust_pill_shared::layout::layout_signature(&areas),
+    );
+}
+
 /// Tell the desktop where the pill ended up after a display change made the pill
 /// move itself.
 ///
@@ -2471,7 +2503,7 @@ unsafe fn persist_reconciled_position(state: &PillState, window: id) {
         report: rust_pill_shared::restore::PositionReport::new(
             true,
             Some(rect),
-            Some(monitor),
+            monitor,
             state.saved_display_id.get(),
         ),
     });
@@ -2808,6 +2840,14 @@ unsafe fn setup(
     // Position and show (orderFront only — don't steal focus from other apps)
     with_ctx(|ctx| {
         reposition_window(window, &ctx.state, 1.0 / 60.0, drag_now());
+        // Record the arrangement the window was just placed against, before the
+        // first poll. A fresh poll treats its first observation as the baseline and
+        // reconciles nothing, so a screen removed between this placement and that
+        // first sample would be absorbed into the baseline instead of reconciled,
+        // leaving the pill parked over empty desktop. The seed is not acted on:
+        // acting on it would treat the launch as a display change and move a
+        // restored pill.
+        seed_layout_baseline(&ctx.state);
     });
     let _: () = msg_send![window, orderFront:nil];
 

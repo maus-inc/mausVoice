@@ -81,10 +81,10 @@ fn drain_messages(
             InMessage::Visibility { visibility } => on_visibility(visibility, state_tick),
             InMessage::WindowSize { ref size } => on_window_size(size, state_tick),
             InMessage::AssistantState { .. } => on_assistant_state(msg, state_tick, entry_tick),
-            InMessage::ResetPosition { strategy } => {
-                on_reset_position(strategy, state_tick, win_tick)
+            InMessage::ResetPosition { strategy, ack } => {
+                on_reset_position(strategy, ack, state_tick, win_tick)
             }
-            InMessage::ForgetPosition => on_forget_position(state_tick),
+            InMessage::ForgetPosition { ack } => on_forget_position(ack, state_tick),
             InMessage::RequestPosition => on_request_position(state_tick, win_tick),
             InMessage::Quit => on_quit(quit),
         }
@@ -312,7 +312,12 @@ fn on_assistant_state(msg: InMessage, state_tick: &Rc<PillState>, entry_tick: &g
 }
 
 /// Applies `InMessage::ResetPosition`.
-fn on_reset_position(strategy: ResetStrategy, state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
+fn on_reset_position(
+    strategy: ResetStrategy,
+    ack: Option<u64>,
+    state_tick: &Rc<PillState>,
+    win_tick: &gtk::Window,
+) {
     state_tick.dragging.set(false);
     state_tick.pointer_down.set(false);
     state_tick.long_press_active.set(false);
@@ -338,6 +343,9 @@ fn on_reset_position(strategy: ResetStrategy, state_tick: &Rc<PillState>, win_ti
         .set(rust_pill_shared::layout::Anchor::from_reset(
             strategy == ResetStrategy::Cursor,
         ));
+    // Record this clear before the report goes out, so the answer carries its id
+    // and the desktop retires exactly this declaration, not a later clear's.
+    rust_pill_shared::ipc::record_applied_clear(ack);
     let (rect, monitor) = pill_geometry(win_tick, state_tick);
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(false, rect, monitor, None),
@@ -345,7 +353,7 @@ fn on_reset_position(strategy: ResetStrategy, state_tick: &Rc<PillState>, win_ti
 }
 
 /// Applies `InMessage::ForgetPosition`.
-fn on_forget_position(state_tick: &Rc<PillState>) {
+fn on_forget_position(ack: Option<u64>, state_tick: &Rc<PillState>) {
     // A drag still held, or a settle that has not finished, would reach
     // a save path on a later frame and publish a saved position again --
     // recreating the row the clear just deleted. Cancel the gesture
@@ -370,6 +378,9 @@ fn on_forget_position(state_tick: &Rc<PillState>) {
     state_tick
         .anchor
         .set(rust_pill_shared::layout::Anchor::from_forget());
+    // This clear answers with the report the reloaded window's `RequestPosition`
+    // asks for, so the id is held for the reports that follow.
+    rust_pill_shared::ipc::record_applied_clear(ack);
 }
 
 /// Applies `InMessage::RequestPosition`.

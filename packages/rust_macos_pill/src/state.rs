@@ -92,7 +92,9 @@ impl WindowMode {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DropRecord {
     pub(crate) frame: (f64, f64, f64, f64),
-    pub(crate) monitor: Rect,
+    /// `None` when the window was on no screen at the drop, so the report carries
+    /// no monitor rather than a fabricated one.
+    pub(crate) monitor: Option<Rect>,
     pub(crate) display_id: Option<u64>,
     pub(crate) primary_top: f64,
 }

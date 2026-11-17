@@ -580,6 +580,16 @@ pub struct PositionReport<R> {
     /// than nesting under a wrapper object.
     #[serde(flatten)]
     pub display: DisplayRef,
+    /// The clear this report answers, when it answers one.
+    ///
+    /// The desktop declares an erase, tells the pill, and hands over the
+    /// declaration's id; the pill echoes it on the report that answers that clear.
+    /// The desktop retires exactly the clears at or below the echoed id, never a
+    /// later one. Retiring every outstanding declaration instead let an earlier
+    /// clear's answer open the latch for a save published before a later clear,
+    /// and that save put the row the user had just cleared back on the next launch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ack: Option<u64>,
 }
 
 /// The display a published position belongs to.
@@ -610,7 +620,14 @@ impl<R> PositionReport<R> {
             rect,
             monitor,
             display: DisplayRef::new(display_id),
+            ack: None,
         }
+    }
+
+    /// Tag this report as the answer to the clear with `ack`'s id, if any.
+    pub fn with_ack(mut self, ack: Option<u64>) -> Self {
+        self.ack = ack;
+        self
     }
 }
 

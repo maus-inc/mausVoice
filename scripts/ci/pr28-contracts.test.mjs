@@ -468,12 +468,17 @@ describe("PR28 native reset contracts", () => {
       source.commands,
       /crate::platform::overlay::notify_reset_position\(&app, &strategy\)/,
     );
+    // The reset hands the clear's declaration id to the pill so its answer
+    // retires exactly this declaration, not a later clear's.
     assert.match(
       source.macOverlay,
-      /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
+      /pill\.send\(InMessage::ResetPosition \{\s*strategy,\s*ack: Some\(declaration\),\s*\}\)/,
     );
     assertGlobReexportCarriesReset();
-    assert.match(source.macPill, /InMessage::ResetPosition \{ strategy \}/);
+    assert.match(
+      source.macPill,
+      /InMessage::ResetPosition \{ strategy, ack \}/,
+    );
   });
 
   it("keeps tray reset state synchronized after native position events", () => {
@@ -511,10 +516,11 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
       source.pillProcess,
       /Reset position requested with no managed pill process/,
     );
-    // Each platform overlay routes the reset into its pill channel.
+    // Each platform overlay routes the reset into its pill channel, carrying the
+    // clear's declaration id so the pill's answer retires exactly it.
     assert.match(
       source.macOverlay,
-      /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
+      /pill\.send\(InMessage::ResetPosition \{\s*strategy,\s*ack: Some\(declaration\),\s*\}\)/,
     );
     // Both overlays re-export the shared notifiers with a glob rather than
     // naming each one, so the route lives in the module they pull from. What the
@@ -753,7 +759,8 @@ describe("PR28 ring-alpha render-loop policy", () => {
       pos.indexOf("pub fn clear_saved_position("),
       pos.indexOf("pub fn saved_position_argument("),
     );
-    const withdrawals = (clear.match(/withdraw_erase\(declaration\)/g) ?? []).length;
+    const withdrawals = (clear.match(/withdraw_erase\(declaration\)/g) ?? [])
+      .length;
     assert.ok(
       withdrawals >= 2,
       "a failed clear leaves its declaration set and drops every later save",
@@ -794,18 +801,23 @@ describe("PR28 ring-alpha render-loop policy", () => {
     const state = source.macState;
     assert.match(
       state,
-      /pub\(crate\) struct DropRecord \{[\s\S]{0,200}?monitor: Rect,[\s\S]{0,80}?display_id: Option<u64>/,
+      /pub\(crate\) struct DropRecord \{[\s\S]{0,200}?monitor: Option<Rect>,[\s\S]{0,80}?display_id: Option<u64>/,
       "macOS: the retained drop carries no display, so the retry must read the live screen",
     );
     const write = scope("macApp", "fn write_drag_position(");
     // The retained record is read whole, and its monitor and display go into the
-    // report rather than the live window's.
+    // report rather than the live window's. The monitor is already an `Option`, so
+    // it is passed through as captured, never re-derived from the live screen.
     assert.match(
       write,
       /Some\(record\) => \([\s\S]{0,200}?frame_from_tuple\(record\.frame\),\s*record\.monitor,\s*record\.display_id,\s*record\.primary_top,?\s*\)/,
       "macOS: the retry reads the live display instead of the retained one",
     );
-    assert.match(write, /Some\(monitor\)/, "macOS: the retained monitor is dropped");
+    assert.match(
+      write,
+      /report: rust_pill_shared::restore::PositionReport::new\(\s*true,\s*Some\(reported\),\s*monitor,\s*display_id,\s*\)/,
+      "macOS: the retained monitor is dropped",
+    );
     // And the record is filled at the same instant the frame is, so the two cannot
     // describe different panels, and the flip basis is captured with them.
     assert.match(
@@ -882,7 +894,10 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // nothing, so an output removed between the placement and that first sample is
     // absorbed instead of reconciled. Seeding at realize makes the first poll
     // compare against the arrangement the pill was placed on.
-    assert.match(source.layout, /pub fn seed\(&mut self, now: f64, signature: u64\)/);
+    assert.match(
+      source.layout,
+      /pub fn seed\(&mut self, now: f64, signature: u64\)/,
+    );
     const realize = source.gtkPill.slice(
       source.gtkPill.indexOf("window.connect_realize("),
       source.gtkPill.indexOf("window.connect_size_allocate("),
@@ -906,10 +921,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // Every platform shares `Fireworks::restart`, so the reduced-motion decision is
     // made once rather than re-derived at three call sites.
     const fireworks = read("packages/rust_pill_shared/src/fireworks.rs");
-    assert.match(
-      fireworks,
-      /pub fn restart\(&self, reduced_motion: bool\)/,
-    );
+    assert.match(fireworks, /pub fn restart\(&self, reduced_motion: bool\)/);
     assert.match(
       fireworks,
       /self\.active\.set\(!reduced_motion\)/,
@@ -988,33 +1000,38 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // A one-shot "drop the next publish" flag cannot tell a stale publish from the
     // user's next drag: a clear with nothing in flight leaves the flag set, and the
     // drop made right after it is thrown away -- the pill looks parked while the
-    // database is empty. The erase is declared instead, and spent by the report that
-    // declares it (the pill's `has_saved_position: false` answer), never by a save.
+    // database is empty. The erase is declared instead, and retired by the report
+    // that names the clear's id, never by a save.
     const pos = read("apps/desktop/src-tauri/src/pill_position.rs");
-    assert.match(pos, /fn note_report\(has_saved_position: bool\) -> bool/);
     assert.match(
       pos,
-      /if has_saved_position \{\s*return true;/,
-      "a save must never be discarded by the erase accounting",
+      /fn note_report\(has_saved_position: bool, ack: Option<u64>\) -> bool/,
     );
     assert.match(
       pos,
-      /state\.outstanding\.clear\(\);\s*ERASE_DECLARED\.store\(false/,
-      "the declaration is not spent by the answer that spends it",
+      /has_saved_position \}/,
+      "a save must never be discarded by the erase accounting",
+    );
+    // The report retires exactly the declarations at or below the clear it names,
+    // so an earlier clear's answer cannot retract a later clear's declaration.
+    assert.match(
+      pos,
+      /state\.outstanding\.retain\(\|id\| \*id > ack\);\s*if state\.outstanding\.is_empty\(\) \{\s*ERASE_DECLARED\.store\(false/,
+      "the declaration is not retired by the answer that names it",
     );
     // The gate on the write is the declaration being unanswered, not a one-shot
     // take, so the very next drag stores.
     assert.match(pos, /if erase_is_undeclared\(\)/);
     assert.doesNotMatch(pos, /take_erased_publish/);
     // And every report is accounted for, not only the saves: reading only the
-    // saves would never see the answer that spends the declaration.
+    // saves would never see the answer that retires the declaration.
     for (const file of [
       "apps/desktop/src-tauri/src/pill_process.rs",
       "apps/desktop/src-tauri/src/platform/macos/overlay.rs",
     ]) {
       assert.match(
         read(file),
-        /pill_position::note_report\(has_saved_position\)/,
+        /pill_position::note_report\(has_saved_position, ack\)/,
         `${file}: reports that carry no position are not accounted for`,
       );
     }
@@ -1223,7 +1240,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
       // The payload itself: with it gone and the outputs intact, setup used to skip
       // the fetch and then fail on the missing source, and every later run repeated
       // that failure instead of refetching.
-      '$SV/rust/cargo-config.toml',
+      "$SV/rust/cargo-config.toml",
     ]) {
       assert.ok(
         readiness.includes(marker),
@@ -2511,7 +2528,7 @@ describe("native gesture adapter contracts", () => {
 
   it("cancels Windows gesture ownership before resetting its position", () => {
     const reset = source.windowsPill
-      .split("InMessage::ResetPosition { strategy } => {")[1]
+      .split("InMessage::ResetPosition { strategy, ack } => {")[1]
       .split("InMessage::RequestPosition")[0];
     assert.match(reset, /cancel_drag_gesture\(hwnd, state\)/);
     assert.ok(
@@ -2759,6 +2776,8 @@ describe("native gesture adapter contracts", () => {
       "the pill must forget before writes reopen",
     );
     // Every pill understands the message, or one platform re-leaks the position.
+    // The clear hands its declaration id to the pill so the pill's answer retires
+    // exactly this declaration, not a later clear's.
     const ipcFor = (name) =>
       ({ gtkPill: "gtkIpc", windowsPill: "windowsIpc", macApp: "macIpc" })[
         name
@@ -2766,15 +2785,23 @@ describe("native gesture adapter contracts", () => {
     for (const name of ["gtkPill", "windowsPill", "macApp"]) {
       assert.match(
         source[name],
-        /InMessage::ForgetPosition/,
+        /InMessage::ForgetPosition \{ ack \}/,
         `${name}: no handler, so this backend writes the cleared row back`,
       );
       assert.match(
         source[ipcFor(name)],
-        /ForgetPosition,/,
+        /ForgetPosition \{\s*#\[serde\(default\)\]\s*ack: Option<u64>,\s*\}/,
         `${ipcFor(name)}: the variant is what serde turns into forget_position`,
       );
     }
+    // The desktop withdraws the declaration when the pill could not be told, so a
+    // clear that never reached the pill cannot close the latch for the rest of the
+    // process.
+    assert.match(
+      source.pillPosition,
+      /pub fn forget_running_pill_position\(app: &tauri::AppHandle\) -> Option<u64>/,
+    );
+    assert.match(source.pillPosition, /withdraw_erase\(declaration\)/);
   });
 
   it("reacts to a display change on every platform", () => {
@@ -3151,16 +3178,19 @@ describe("native gesture adapter contracts", () => {
   it("fails a reset whose stored record survived the clear", () => {
     // A reset that reports success while the row is still there moves the window
     // and then restores the old spot next launch. The clear has to answer, and the
-    // reset has to act on the answer.
+    // reset has to act on the answer. The clear now returns the declaration id when
+    // the record is gone, and `None` when it is not, so the reset binds it with
+    // `let ... else` and bails on `None`.
     assert.match(
       source.pillPosition,
-      /pub fn clear_saved_position\(app: &tauri::AppHandle\) -> bool/,
+      /pub fn clear_saved_position\(app: &tauri::AppHandle\) -> Option<u64>/,
     );
     // Matched through the brace to the `return`, not just to the call: an `if`
     // whose failure branch logged and carried on would satisfy a bare match while
     // the reset moved the pill anyway, which is the exact outcome the guard exists
     // to prevent. The branch has to leave the function.
-    const bails = /if !crate::pill_position::clear_saved_position\(app\) \{\s*return\b/;
+    const bails =
+      /let Some\(declaration\) = crate::pill_position::clear_saved_position\(app\) else \{\s*return\b/;
     for (const [name, marker] of [
       ["pillProcess", "pub fn notify_reset_position"],
     ]) {
@@ -3174,7 +3204,7 @@ describe("native gesture adapter contracts", () => {
       // clear has not answered.
       assert.ok(
         body.indexOf("clear_saved_position") <
-          body.indexOf("reset_position\",\"strategy"),
+          body.indexOf('reset_position","strategy'),
         `${name}: the pill is told to re-home before the record is cleared`,
       );
     }
@@ -3364,9 +3394,9 @@ describe("native gesture adapter contracts", () => {
     assert.match(shared, /arg\.to_str\(\)/);
     // A repeated flag describes two positions, so it is answered the way the
     // documentation says a repeated one is: `None`, not first-wins.
-    const reader = shared.split("pub fn saved_position_from_args")[1].split(
-      "\n}\n",
-    )[0];
+    const reader = shared
+      .split("pub fn saved_position_from_args")[1]
+      .split("\n}\n")[0];
     assert.match(
       reader,
       /if records\.next\(\)\.is_some\(\) \{\s*return None;/,

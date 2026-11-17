@@ -185,14 +185,21 @@ pub enum InMessage {
         review: Option<Box<PillReview>>,
     },
     /// Clear the stored record and re-home onto the display named by `strategy`;
-    /// the mapping lives in `Anchor::from_reset`.
+    /// the mapping lives in `Anchor::from_reset`. `ack` is the desktop's
+    /// declaration id, echoed back on the report that answers it.
     ResetPosition {
         #[serde(default)]
         strategy: ResetStrategy,
+        #[serde(default)]
+        ack: Option<u64>,
     },
     /// The clear wiped the row while the pill still held it in memory, so this
-    /// tells the pill to stop calling its current frame saved.
-    ForgetPosition,
+    /// tells the pill to stop calling its current frame saved. `ack` is the
+    /// desktop's declaration id, echoed back on the report that answers it.
+    ForgetPosition {
+        #[serde(default)]
+        ack: Option<u64>,
+    },
     /// The desktop's geometry is stale after a relaunch; this asks the pill to
     /// publish it rather than waiting for a drag.
     RequestPosition,
@@ -254,6 +261,20 @@ pub enum OutMessage {
 }
 
 pub fn send(msg: &OutMessage) -> bool {
+    // Every position report carries the newest clear this pill has applied, so the
+    // desktop can retire that clear's declaration and no later one. Stamped here,
+    // before the message is cloned onto the channel or written to stdout, so both
+    // paths carry it.
+    let acked;
+    let msg = match msg {
+        OutMessage::PositionChanged { report } => {
+            acked = OutMessage::PositionChanged {
+                report: report.with_ack(rust_pill_shared::ipc::applied_clear()),
+            };
+            &acked
+        }
+        other => other,
+    };
     let sent_via_channel = OUT_SENDER.with(|cell| {
         cell.borrow()
             .as_ref()
