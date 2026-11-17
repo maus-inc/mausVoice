@@ -743,6 +743,8 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
                 monitor: Some(monitor),
             });
         }
+        // Windows-only anchor preference; the desktop does not send it here.
+        InMessage::PillPlacement { .. } => {}
         InMessage::Quit => {
             ctx.quit.set(true);
         }

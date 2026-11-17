@@ -145,6 +145,21 @@ const cancelUnusedPendingReview = (state: PasteReviewState): void => {
     });
 };
 
+/** Reject a save whose stored row no longer carries the text we wrote. */
+const assertLatestDraftMatches = (
+  saved: ChatMessage,
+  savedText: string,
+): void => {
+  const stored = getPendingPasteReview(saved.metadata);
+  if (stored && stored.text !== savedText) {
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
+  }
+};
+
 const reconcileLatestExistingReviewDraft = async (
   state: PasteReviewState,
   saved: ChatMessage,
@@ -157,14 +172,7 @@ const reconcileLatestExistingReviewDraft = async (
     // without our text, so report the conflict instead of storing a row whose
     // revision matches but whose wording does not. A row that is not a pending
     // review at all has already been rejected upstream.
-    const stored = getPendingPasteReview(saved.metadata);
-    if (stored && stored.text !== savedText) {
-      throw new Error(
-        getIntl().formatMessage({
-          defaultMessage: "This Paste review is no longer pending",
-        }),
-      );
-    }
+    assertLatestDraftMatches(saved, savedText);
     return saved;
   }
   if (!latestText || savedText === latestText) {
@@ -200,6 +208,15 @@ const updateLatestExistingReviewDraft = async (
   );
 };
 
+/** Whether a create failed because the reused id was already committed. */
+const isDuplicateIdError = (error: unknown): boolean => {
+  const message = String(error).toLowerCase();
+  return (
+    message.includes("unique constraint failed") &&
+    message.includes("chat_messages.id")
+  );
+};
+
 const createOrRecoverReviewDraft = async (
   state: PasteReviewState,
   conversationId: string,
@@ -223,11 +240,8 @@ const createOrRecoverReviewDraft = async (
       generation,
     );
   } catch (error) {
-    const duplicateId =
-      String(error).toLowerCase().includes("unique constraint failed") &&
-      String(error).toLowerCase().includes("chat_messages.id");
     if (
-      !duplicateId ||
+      !isDuplicateIdError(error) ||
       generation !== state.latestSaveGeneration ||
       !pendingReviewId
     ) {

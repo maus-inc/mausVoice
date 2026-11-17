@@ -2210,15 +2210,26 @@ describe("native gesture adapter contracts", () => {
 
 describe("native review and monitor contracts", () => {
   it("passes localized Edit captions through all three native review payloads", () => {
+    // The wire schema is shared now: the three pill crates re-export it from
+    // `rust_pill_shared::schema`, so the localized `edit_label` is defined once
+    // and every platform reads the same field. The payload shape is asserted at
+    // its definition, and each platform's `draw_review_actions` is asserted to
+    // consume it rather than a hard-coded "Edit".
+    const schema = read("packages/rust_pill_shared/src/schema.rs");
+    assert.match(
+      schema,
+      /#\[serde\(default\)\]\s*pub edit_label: Option<String>/,
+    );
     for (const platform of ["gtk", "macos", "windows"]) {
       const ipc = read(`packages/rust_${platform}_pill/src/ipc.rs`);
+      assert.match(
+        ipc,
+        /pub use rust_pill_shared::schema::\*;/,
+        `${platform}: ipc.rs must re-export the shared schema, not fork it`,
+      );
       const draw = read(`packages/rust_${platform}_pill/src/draw.rs`).split(
         "fn draw_review_actions(",
       )[1];
-      assert.match(
-        ipc,
-        /#\[serde\(default\)\]\s*pub edit_label: Option<String>/,
-      );
       assert.match(draw, /review\.edit_label\.as_deref\(\)/);
       assert.match(draw, /edit_label,\s*ClickAction::ReviewEdit/);
       assert.doesNotMatch(draw, /"Edit",\s*ClickAction::ReviewEdit/);

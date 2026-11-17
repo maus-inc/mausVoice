@@ -175,6 +175,8 @@ fn drain_messages(
                 on_reset_position(strategy, state_tick, win_tick)
             }
             InMessage::RequestPosition => on_request_position(state_tick, win_tick),
+            // Windows-only anchor preference; the desktop does not send it here.
+            InMessage::PillPlacement { .. } => {}
             InMessage::Quit => on_quit(quit_tick),
         }
     }
@@ -492,6 +494,151 @@ fn on_quit(quit: &Rc<Cell<bool>>) {
     quit.set(true);
 }
 
+/// Sizes the composer widgets for the typing panel.
+///
+/// The entry and the review editor share one column, so both take the same
+/// side margins. The editor sits above the fixed decision row and only shows
+/// while a review is pending.
+fn layout_composer(
+    state_tick: &Rc<PillState>,
+    entry_tick: &gtk::Entry,
+    review_scroll_tick: &gtk::ScrolledWindow,
+) {
+    let (ox, oy) = state_tick.content_offset();
+    let dw = state_tick.draw_width.get();
+    let dh = state_tick.draw_height.get();
+    let panel_w = PANEL_EXPANDED_WIDTH;
+    let panel_x = (dw - panel_w) / 2.0;
+    let margin_start = (ox + panel_x + PANEL_CONTENT_SIDE_INSET) as i32;
+    let aw = state_tick.alloc_width.get();
+    let right_margin = if aw > 0.0 {
+        aw - ox - dw
+    } else {
+        WINDOW_W_TYPING as f64 - ox - dw
+    };
+    let margin_end = (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
+    let ah = state_tick.alloc_height.get();
+    let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
+    entry_tick.set_margin_start(margin_start);
+    entry_tick.set_margin_end(margin_end);
+    entry_tick.set_margin_bottom((bottom_margin + PANEL_BOTTOM_MARGIN) as i32);
+    entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
+
+    review_scroll_tick.set_margin_start(margin_start);
+    review_scroll_tick.set_margin_end(margin_end);
+    review_scroll_tick.set_margin_top(
+        (oy + PANEL_TOP_MARGIN
+            + (1.0 - state_tick.panel_open_t.get()) * 12.0
+            + PANEL_TRANSCRIPT_TOP_OFFSET
+            + 28.0) as i32,
+    );
+    review_scroll_tick.set_height_request(PANEL_REVIEW_EDITOR_HEIGHT as i32);
+    let panel_opacity = state_tick.panel_open_t.get().clamp(0.0, 1.0);
+    review_scroll_tick.set_opacity(panel_opacity);
+    entry_tick.set_opacity(panel_opacity);
+}
+
+/// Shows the composer widget the current mode owns and moves focus to it.
+///
+/// A review swaps the entry for the multiline editor. Focus is grabbed only
+/// on the frame the target appears, and a delayed grab rechecks the review
+/// owner because the review can end inside the 100 ms X11 window.
+fn sync_composer_visibility(
+    state_tick: &Rc<PillState>,
+    win_tick: &gtk::Window,
+    entry_tick: &gtk::Entry,
+    review_scroll_tick: &gtk::ScrolledWindow,
+    review_editor_tick: &gtk::TextView,
+    backend_tick: Backend,
+) {
+    let is_typing = state_tick.is_typing();
+    let is_review = state_tick.assistant_review.borrow().is_some();
+    let target_was_visible = if is_review {
+        gtk::prelude::WidgetExt::is_visible(review_scroll_tick)
+    } else {
+        gtk::prelude::WidgetExt::is_visible(entry_tick)
+    };
+
+    entry_tick.set_visible(is_typing && !is_review);
+    review_scroll_tick.set_visible(is_typing && is_review);
+
+    if is_typing && !target_was_visible {
+        let target: gtk::Widget = if is_review {
+            review_editor_tick.clone().upcast()
+        } else {
+            entry_tick.clone().upcast()
+        };
+        target.show();
+        if !state_tick.focus_released_after_review.get() {
+            grab_composer_focus(state_tick, win_tick, backend_tick, &target);
+        }
+    } else if !is_typing {
+        entry_tick.select_region(0, 0);
+        entry_tick.hide();
+        review_scroll_tick.hide();
+        match backend_tick {
+            Backend::LayerShell => win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None),
+            _ => win_tick.set_accept_focus(false),
+        }
+    }
+}
+
+/// Grabs keyboard focus for the composer on the backend's own schedule.
+///
+/// Each backend has a different latency before a grab sticks, so each one gets
+/// the same recheck against the review owner rather than a bare `grab_focus`.
+fn grab_composer_focus(
+    state_tick: &Rc<PillState>,
+    win_tick: &gtk::Window,
+    backend_tick: Backend,
+    target: &gtk::Widget,
+) {
+    let target = target.clone();
+    match backend_tick {
+        Backend::LayerShell => {
+            win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+            let state_focus = state_tick.clone();
+            glib::idle_add_local_once(move || {
+                if should_grab_focus_on_focus_in(
+                    state_focus.is_typing(),
+                    state_focus.focus_released_after_review.get(),
+                ) {
+                    target.grab_focus();
+                }
+            });
+        }
+        Backend::X11 => {
+            win_tick.set_accept_focus(true);
+            let state_focus = state_tick.clone();
+            glib::timeout_add_local(Duration::from_millis(100), {
+                let w = win_tick.clone();
+                move || {
+                    if should_grab_focus_on_focus_in(
+                        state_focus.is_typing(),
+                        state_focus.focus_released_after_review.get(),
+                    ) {
+                        x11::force_keyboard_focus(&w);
+                        target.grab_focus();
+                    }
+                    ControlFlow::Break
+                }
+            });
+        }
+        Backend::PlainWayland => {
+            win_tick.set_accept_focus(true);
+            let state_focus = state_tick.clone();
+            glib::idle_add_local_once(move || {
+                if should_grab_focus_on_focus_in(
+                    state_focus.is_typing(),
+                    state_focus.focus_released_after_review.get(),
+                ) {
+                    target.grab_focus();
+                }
+            });
+        }
+    }
+}
+
 /// One frame of the 16 ms loop, as a free function.
 ///
 /// This was the body of the closure registered inside `run`, which is why `run`
@@ -544,115 +691,17 @@ fn frame_tick(
 
     // The assistant keeps its compact composer. A transcript under review
     // swaps in a multiline editor in the body, above the fixed decision row.
-    let is_typing = state_tick.is_typing();
-    let is_review = state_tick.assistant_review.borrow().is_some();
-    let target_was_visible = if is_review {
-        gtk::prelude::WidgetExt::is_visible(review_scroll_tick)
-    } else {
-        gtk::prelude::WidgetExt::is_visible(entry_tick)
-    };
-    if is_typing {
-        let (ox, oy) = state_tick.content_offset();
-        let dw = state_tick.draw_width.get();
-        let dh = state_tick.draw_height.get();
-        let panel_w = PANEL_EXPANDED_WIDTH;
-        let panel_x = (dw - panel_w) / 2.0;
-        let margin_start = (ox + panel_x + PANEL_CONTENT_SIDE_INSET) as i32;
-        let aw = state_tick.alloc_width.get();
-        let right_margin = if aw > 0.0 {
-            aw - ox - dw
-        } else {
-            WINDOW_W_TYPING as f64 - ox - dw
-        };
-        let margin_end =
-            (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
-        let ah = state_tick.alloc_height.get();
-        let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
-        entry_tick.set_margin_start(margin_start);
-        entry_tick.set_margin_end(margin_end);
-        entry_tick.set_margin_bottom((bottom_margin + PANEL_BOTTOM_MARGIN) as i32);
-        entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
-
-        review_scroll_tick.set_margin_start(margin_start);
-        review_scroll_tick.set_margin_end(margin_end);
-        review_scroll_tick.set_margin_top(
-            (oy + PANEL_TOP_MARGIN
-                + (1.0 - state_tick.panel_open_t.get()) * 12.0
-                + PANEL_TRANSCRIPT_TOP_OFFSET
-                + 28.0) as i32,
-        );
-        review_scroll_tick.set_height_request(PANEL_REVIEW_EDITOR_HEIGHT as i32);
-        let panel_opacity = state_tick.panel_open_t.get().clamp(0.0, 1.0);
-        review_scroll_tick.set_opacity(panel_opacity);
-        entry_tick.set_opacity(panel_opacity);
+    if state_tick.is_typing() {
+        layout_composer(state_tick, entry_tick, review_scroll_tick);
     }
-
-    entry_tick.set_visible(is_typing && !is_review);
-    review_scroll_tick.set_visible(is_typing && is_review);
-    if is_typing && !target_was_visible {
-        let target: gtk::Widget = if is_review {
-            review_editor_tick.clone().upcast()
-        } else {
-            entry_tick.clone().upcast()
-        };
-        target.show();
-        if !state_tick.focus_released_after_review.get() {
-            // A delayed grab must recheck the review owner. The review can end
-            // inside the 100 ms X11 window, and a stale grab would pull
-            // keyboard focus back from the target application.
-            match backend_tick {
-                Backend::LayerShell => {
-                    win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
-                    let state_focus = state_tick.clone();
-                    glib::idle_add_local_once(move || {
-                        if should_grab_focus_on_focus_in(
-                            state_focus.is_typing(),
-                            state_focus.focus_released_after_review.get(),
-                        ) {
-                            target.grab_focus();
-                        }
-                    });
-                }
-                Backend::X11 => {
-                    win_tick.set_accept_focus(true);
-                    let state_focus = state_tick.clone();
-                    glib::timeout_add_local(Duration::from_millis(100), {
-                        let w = win_tick.clone();
-                        move || {
-                            if should_grab_focus_on_focus_in(
-                                state_focus.is_typing(),
-                                state_focus.focus_released_after_review.get(),
-                            ) {
-                                x11::force_keyboard_focus(&w);
-                                target.grab_focus();
-                            }
-                            ControlFlow::Break
-                        }
-                    });
-                }
-                Backend::PlainWayland => {
-                    win_tick.set_accept_focus(true);
-                    let state_focus = state_tick.clone();
-                    glib::idle_add_local_once(move || {
-                        if should_grab_focus_on_focus_in(
-                            state_focus.is_typing(),
-                            state_focus.focus_released_after_review.get(),
-                        ) {
-                            target.grab_focus();
-                        }
-                    });
-                }
-            }
-        }
-    } else if !is_typing {
-        entry_tick.select_region(0, 0);
-        entry_tick.hide();
-        review_scroll_tick.hide();
-        match backend_tick {
-            Backend::LayerShell => win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None),
-            _ => win_tick.set_accept_focus(false),
-        }
-    }
+    sync_composer_visibility(
+        state_tick,
+        win_tick,
+        entry_tick,
+        review_scroll_tick,
+        review_editor_tick,
+        backend_tick,
+    );
 
     // One visibility policy for every backend. LayerShell and PlainWayland
     // previously keyed off `phase == Recording` alone, which ignored the
