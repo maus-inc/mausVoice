@@ -261,20 +261,6 @@ pub enum OutMessage {
 }
 
 pub fn send(msg: &OutMessage) -> bool {
-    // Every position report carries the newest clear this pill has applied, so the
-    // desktop can retire that clear's declaration and no later one. Stamped here,
-    // before the message is cloned onto the channel or written to stdout, so both
-    // paths carry it.
-    let acked;
-    let msg = match msg {
-        OutMessage::PositionChanged { report } => {
-            acked = OutMessage::PositionChanged {
-                report: report.with_ack(rust_pill_shared::ipc::applied_clear()),
-            };
-            &acked
-        }
-        other => other,
-    };
     let sent_via_channel = OUT_SENDER.with(|cell| {
         cell.borrow()
             .as_ref()

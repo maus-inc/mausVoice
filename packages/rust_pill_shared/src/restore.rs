@@ -609,6 +609,13 @@ impl DisplayRef {
 }
 
 impl<R> PositionReport<R> {
+    /// Build a report and stamp it with the newest clear this pill has applied.
+    ///
+    /// The stamp belongs here rather than at the send site because every
+    /// published position answers the desktop's declarations, and the three
+    /// platform crates each carried their own copy of that stamping until they
+    /// drifted. Stamping once, where the report is born, keeps the invariant in
+    /// the shared type instead of in three send functions.
     pub fn new(
         has_saved_position: bool,
         rect: Option<R>,
@@ -620,14 +627,8 @@ impl<R> PositionReport<R> {
             rect,
             monitor,
             display: DisplayRef::new(display_id),
-            ack: None,
+            ack: crate::ipc::applied_clear(),
         }
-    }
-
-    /// Tag this report as the answer to the clear with `ack`'s id, if any.
-    pub fn with_ack(mut self, ack: Option<u64>) -> Self {
-        self.ack = ack;
-        self
     }
 }
 
@@ -1402,5 +1403,16 @@ mod tests {
             json.contains("\"rect\":null"),
             "the null shape the desktop filters changed: {json}"
         );
+    }
+
+    /// The stamp lives in `PositionReport::new`, not in a send function, so a
+    /// report is born answering the newest clear. This pins that the constructor
+    /// reads the shared applied-clear, which is the whole point of moving the
+    /// stamp here: three platform send functions used to carry their own copy.
+    #[test]
+    fn a_report_is_stamped_with_the_newest_applied_clear() {
+        crate::ipc::record_applied_clear(Some(7));
+        let report = PositionReport::<()>::new(false, None, None, None);
+        assert_eq!(report.ack, Some(7));
     }
 }

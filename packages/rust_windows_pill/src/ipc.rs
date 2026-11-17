@@ -264,18 +264,6 @@ pub enum OutMessage {
 /// error with `let _ =`, which is why this pill was the only one of the three
 /// that threw the entry away on a failed write.
 pub fn send(msg: &OutMessage) -> bool {
-    // Every position report carries the newest clear this pill has applied, so the
-    // desktop can retire that clear's declaration and no later one.
-    let acked;
-    let msg = match msg {
-        OutMessage::PositionChanged { report } => {
-            acked = OutMessage::PositionChanged {
-                report: report.with_ack(rust_pill_shared::ipc::applied_clear()),
-            };
-            &acked
-        }
-        other => other,
-    };
     let mut stdout = io::stdout().lock();
     if serde_json::to_writer(&mut stdout, msg).is_err() {
         return false;
