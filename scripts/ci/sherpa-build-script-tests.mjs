@@ -69,6 +69,10 @@ const workspaceLock = join(
   "rust_transcription",
   "Cargo.lock",
 );
+// The probe build copies the patch crate to a temp directory, so rustup would not see
+// this file and the probe would fall back to the runner's default toolchain. It is
+// copied into the probe crate so the build script is compiled by the pinned channel.
+const toolchainFile = join(repoRoot, "rust-toolchain.toml");
 
 // Every build script cargo compiles is called this, which is why the unit is also
 // selected by `CARGO_PKG_NAME`: matching on the crate name alone would happily
@@ -463,6 +467,18 @@ function probeBuild(workDir) {
   const seedLock = existsSync(workspaceLock);
   if (seedLock) copyFileSync(workspaceLock, join(crateDir, "Cargo.lock"));
 
+  // The probe crate lives in a temp directory, so rustup would not find the
+  // repository's `rust-toolchain.toml` and would compile the build script with the
+  // runner's default toolchain instead of the pinned one. That is not the compiler a
+  // real build uses, and on 2026-11-18 it broke this step: the runner's stable moved
+  // to 1.100.0, which renames and relocates the build-script binary, while the pinned
+  // 1.88.0 a real build uses does not. Copying the file into the probe crate makes
+  // rustup resolve the same channel here that it resolves for the rest of the
+  // repository.
+  if (existsSync(toolchainFile)) {
+    copyFileSync(toolchainFile, join(crateDir, "rust-toolchain.toml"));
+  }
+
   // Ladder of attempts, most constrained first. Each rung differs in exactly one
   // thing, so the failure that survives all of them names a single cause.
   const allowFetch = process.env.SHERPA_BUILD_SCRIPT_TESTS_ALLOW_FETCH === "1";
@@ -654,24 +670,31 @@ function probeBuildFailureMessage(failures, { seedLock, homes, home }) {
 }
 
 /**
- * The name cargo gives the build-script binary on THIS host.
+ * The names cargo has given the build-script binary on THIS host.
  *
- * Cargo appends the target's executable suffix, so the file on disk is
- * `build-script-build.exe` on Windows and has no suffix elsewhere. Looking for the
- * extensionless name alone made `candidates` empty on the `windows-latest` leg of
- * test-package-rust-transcription, which failed the step after doing all the cargo
- * work and before running a single test -- a green-looking job on every other
- * platform and a hard failure on one.
+ * Cargo appends the target's executable suffix, so the file carries `.exe` on
+ * Windows and no suffix elsewhere. Cargo 1.100 also renamed the file and moved it.
+ * Up to 1.99 the build script binary sits at
+ * `build/<pkg>-<hash>/build-script-build`; from 1.100 it sits at
+ * `build/<pkg>/<hash>/out/build_script_build`. Both spellings are accepted so a
+ * move of the runner's stable toolchain does not break this harness, which is what
+ * happened on 2026-11-18 when the runner went from 1.99.1 to 1.100.0 and the old
+ * `build-script-build`-only lookup found nothing.
+ *
+ * Exported and parameterised because nothing on Linux can observe `process.platform`
+ * choosing the suffix: the names are identical here with or without it, so a test
+ * that asserted the real call would pass either way.
  */
-export function buildScriptBinaryName(hostPlatform = process.platform) {
-  return hostPlatform === "win32" ? "build-script-build.exe" : "build-script-build";
+export function buildScriptBinaryNames(hostPlatform = process.platform) {
+  const suffix = hostPlatform === "win32" ? ".exe" : "";
+  return [`build-script-build${suffix}`, `build_script_build${suffix}`];
 }
 
 /**
  * The name the REPLAYED rustc invocation is told to write, which has to be the name this
  * host will execute.
  *
- * The same trap as `buildScriptBinaryName`, one step later. `-o` writes whatever it is
+ * The same trap as the build-script names, one step later. `-o` writes whatever it is
  * given, so a suffixless name produces a file Windows will not start -- and the failure
  * reads like a missing file rather than a missing extension:
  *
@@ -685,22 +708,57 @@ export function replayedTestBinaryName(hostPlatform = process.platform) {
   return `sherpa-build-script-tests${hostPlatform === "win32" ? ".exe" : ""}`;
 }
 
-/** The build script binary cargo actually produced, used for the marker check. */
-function cargoBuildScriptBinary(targetDir, hostPlatform = process.platform) {
+/**
+ * Every file under `dir` whose basename is in `names`, descending `depth` levels.
+ *
+ * A recursive walk rather than a fixed path because cargo moved the file into a
+ * nested `out/` directory in 1.100, and a `readdirSync` one level deep only ever
+ * matched the pre-1.100 layout. An unreadable directory is skipped rather than
+ * thrown, so a transient permission error surfaces as "found 0" and a clear refusal
+ * instead of an unhandled exception.
+ */
+function findFilesNamed(dir, names, depth) {
+  const found = [];
+  if (depth < 0) return found;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    // A missing or unreadable directory yields no match. The caller turns an empty
+    // result into a named refusal, so this cannot pass silently.
+    return found;
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      found.push(...findFilesNamed(full, names, depth - 1));
+    } else if (names.includes(entry.name)) {
+      found.push(full);
+    }
+  }
+  return found;
+}
+
+/**
+ * The build script binary cargo actually produced, used for the marker check.
+ *
+ * Searched by name under the package's own build directory rather than by a
+ * hard-coded path, because cargo 1.100 moved and renamed the file. Only the
+ * `sherpa-onnx-sys` subtree is walked, so a dependency's build script (every one of
+ * which is also called `build_script_build`) can never be mistaken for this one.
+ */
+export function cargoBuildScriptBinary(targetDir, hostPlatform = process.platform) {
   const buildRoot = join(targetDir, "debug", "build");
-  const names = [buildScriptBinaryName(hostPlatform), "build-script-build"]
-    .filter((name, i, all) => all.indexOf(name) === i);
+  const names = buildScriptBinaryNames(hostPlatform);
   const candidates = [];
   if (existsSync(buildRoot)) {
-    for (const entry of readdirSync(buildRoot)) {
-      if (!entry.startsWith(`${SHERPA_PKG_NAME}-`)) continue;
-      for (const name of names) {
-        const candidate = join(buildRoot, entry, name);
-        if (existsSync(candidate)) {
-          candidates.push(candidate);
-          break;
-        }
-      }
+    for (const entry of readdirSync(buildRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (!entry.name.startsWith(SHERPA_PKG_NAME)) continue;
+      // `build/sherpa-onnx-sys/<hash>/out/build_script_build` sits two levels below
+      // the package directory; the bound leaves headroom for one more without
+      // letting the walk escape into unrelated parts of the target tree.
+      candidates.push(...findFilesNamed(join(buildRoot, entry.name), names, 4));
     }
   }
   if (candidates.length !== 1) {
@@ -781,7 +839,7 @@ function runHarness(workDir) {
 
   // WITH the executable suffix, or the replay produces a file Windows will not run.
   //
-  // This is the same trap `buildScriptBinaryName` exists for, one step later: the replayed
+  // This is the same trap `buildScriptBinaryNames` exists for, one step later: the replayed
   // rustc writes whatever `-o` says, so the name has to be the one the host will execute.
   // Without it the Windows leg got all the way to running the tests -- 18 of them, compiled
   // from the right source with the right externs -- and then failed with
