@@ -404,9 +404,16 @@ fn content_origin(aw: f64, ah: f64, dw: f64, dh: f64, below_slot: f64) -> (f64, 
             content_canvas_height(ah, below_slot) - dh - MARGIN_BOTTOM as f64,
         )
     } else {
+        // Before the first size-allocate the allocation cells are still zero, so
+        // this branch stands in for the size the window is about to have. It has
+        // to agree with the allocated branch or a caller that runs at realize --
+        // the X11 restore does -- lands MARGIN_BOTTOM pixels high. The X11
+        // selector slot cancels in the vertical term (it is added to the height
+        // and subtracted again as `below_slot`), so the typing height alone is
+        // the correct stand-in.
         (
             (WINDOW_W_TYPING as f64 - dw) / 2.0,
-            WINDOW_H_TYPING as f64 - dh,
+            WINDOW_H_TYPING as f64 - dh - MARGIN_BOTTOM as f64,
         )
     }
 }
@@ -446,5 +453,30 @@ mod tests {
             content_origin(1000.0, 800.0, 200.0, 100.0, 0.0),
             (400.0, 700.0 - MARGIN_BOTTOM as f64)
         );
+    }
+
+    #[test]
+    fn pre_allocation_origin_matches_the_allocated_origin() {
+        // The fallback stands in for the size the window is about to have, so it
+        // must agree with the allocated branch once that size is known. The X11
+        // restore runs at realize and reads the fallback; a mismatch parks the
+        // pill off by the difference. Covered for both the X11 slot and none.
+        let dw = 200.0;
+        let dh = 100.0;
+        for slot in [
+            0.0,
+            rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+        ] {
+            assert_eq!(
+                content_origin(0.0, 0.0, dw, dh, slot),
+                content_origin(
+                    WINDOW_W_TYPING as f64,
+                    WINDOW_H_TYPING as f64 + slot,
+                    dw,
+                    dh,
+                    slot,
+                ),
+            );
+        }
     }
 }
