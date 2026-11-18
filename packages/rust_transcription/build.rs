@@ -27,6 +27,7 @@ enum ArchiveKind {
 fn main() {
     println!("cargo:rerun-if-env-changed=MAUSVOICE_ORT_DYLIB_PATH");
     println!("cargo:rerun-if-env-changed=ORT_DYLIB_PATH");
+    println!("cargo:rerun-if-env-changed=MAUSVOICE_ORT_DOWNLOAD_BASE_URLS");
     println!("cargo:rerun-if-changed=build.rs");
 
     let target = env::var("TARGET").expect("Cargo did not provide TARGET");
@@ -144,11 +145,32 @@ fn verify_file_digest(path: &Path, expected_sha256: &str) -> bool {
     actual.eq_ignore_ascii_case(expected_sha256)
 }
 
+/// One download attempt's outcome, split so the caller can tell a definitive
+/// "this source does not have the file" apart from a transient network fault.
+/// A 404 must move straight to the next source rather than replay three times,
+/// while a timeout or a 5xx is worth retrying against the same source.
+struct DownloadError {
+    message: String,
+    retryable: bool,
+}
+
+impl DownloadError {
+    fn transient(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: true,
+        }
+    }
+
+    fn terminal(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: false,
+        }
+    }
+}
+
 fn download_verified(asset: &RuntimeAsset, archive_path: &Path) {
-    let url = format!(
-        "https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VERSION}/{}",
-        asset.archive_name
-    );
     let temporary_path = archive_path.with_extension(format!(
         "{}.{}.part",
         archive_path
@@ -164,63 +186,74 @@ fn download_verified(asset: &RuntimeAsset, archive_path: &Path) {
             .timeout_recv_body(Some(Duration::from_secs(300)))
             .build(),
     );
+
+    let base_urls = download_base_urls();
     let mut last_error = String::new();
-    for attempt in 1..=3 {
-        let result = (|| -> Result<(), String> {
-            let mut response = agent
-                .get(&url)
-                .call()
-                .map_err(|error| format!("request failed: {error}"))?;
-            let mut reader = response
-                .body_mut()
-                .with_config()
-                .limit(MAX_DOWNLOAD_BYTES)
-                .reader();
-            let mut output = File::create(&temporary_path)
-                .map_err(|error| format!("failed to create download: {error}"))?;
-            let mut hasher = Sha256::new();
-            let mut buffer = [0_u8; 64 * 1024];
+    for base_url in &base_urls {
+        let url = format!("{base_url}/{}", asset.archive_name);
+        for attempt in 1..=3 {
+            let result = (|| -> Result<(), DownloadError> {
+                let mut response = agent.get(&url).call().map_err(|error| match error {
+                    ureq::Error::StatusCode(code) if (400..500).contains(&code) => {
+                        DownloadError::terminal(format!("request failed: {error}"))
+                    }
+                    other => DownloadError::transient(format!("request failed: {other}")),
+                })?;
+                let mut reader = response
+                    .body_mut()
+                    .with_config()
+                    .limit(MAX_DOWNLOAD_BYTES)
+                    .reader();
+                let mut output = File::create(&temporary_path).map_err(|error| {
+                    DownloadError::transient(format!("failed to create download: {error}"))
+                })?;
+                let mut hasher = Sha256::new();
+                let mut buffer = [0_u8; 64 * 1024];
 
-            loop {
-                let count = reader
-                    .read(&mut buffer)
-                    .map_err(|error| format!("failed while downloading: {error}"))?;
-                if count == 0 {
-                    break;
+                loop {
+                    let count = reader.read(&mut buffer).map_err(|error| {
+                        DownloadError::transient(format!("failed while downloading: {error}"))
+                    })?;
+                    if count == 0 {
+                        break;
+                    }
+                    output.write_all(&buffer[..count]).map_err(|error| {
+                        DownloadError::transient(format!("failed to write download: {error}"))
+                    })?;
+                    hasher.update(&buffer[..count]);
                 }
-                output
-                    .write_all(&buffer[..count])
-                    .map_err(|error| format!("failed to write download: {error}"))?;
-                hasher.update(&buffer[..count]);
-            }
-            output
-                .sync_all()
-                .map_err(|error| format!("failed to flush download: {error}"))?;
+                output.sync_all().map_err(|error| {
+                    DownloadError::transient(format!("failed to flush download: {error}"))
+                })?;
 
-            let actual = format!("{:x}", hasher.finalize());
-            if actual != asset.sha256 {
-                return Err(format!(
-                    "SHA-256 mismatch (expected {}, got {actual})",
-                    asset.sha256
-                ));
-            }
-            Ok(())
-        })();
+                let actual = format!("{:x}", hasher.finalize());
+                if actual != asset.sha256 {
+                    // A digest mismatch means this source served the wrong bytes,
+                    // which no retry against it will fix. Reject it and move on.
+                    return Err(DownloadError::terminal(format!(
+                        "SHA-256 mismatch (expected {}, got {actual})",
+                        asset.sha256
+                    )));
+                }
+                Ok(())
+            })();
 
-        match result {
-            Ok(()) => {
-                fs::rename(&temporary_path, archive_path).unwrap_or_else(|error| {
-                    panic!(
-                        "failed to store verified ONNX Runtime archive '{}': {error}",
-                        archive_path.display()
-                    )
-                });
-                return;
-            }
-            Err(error) => {
-                last_error = error;
-                let _ = fs::remove_file(&temporary_path);
-                if attempt < 3 {
+            match result {
+                Ok(()) => {
+                    fs::rename(&temporary_path, archive_path).unwrap_or_else(|error| {
+                        panic!(
+                            "failed to store verified ONNX Runtime archive '{}': {error}",
+                            archive_path.display()
+                        )
+                    });
+                    return;
+                }
+                Err(error) => {
+                    last_error = format!("{url}: {}", error.message);
+                    let _ = fs::remove_file(&temporary_path);
+                    if !error.retryable || attempt == 3 {
+                        break;
+                    }
                     thread::sleep(Duration::from_secs(attempt * 2));
                 }
             }
@@ -228,8 +261,43 @@ fn download_verified(asset: &RuntimeAsset, archive_path: &Path) {
     }
 
     panic!(
-        "failed to download verified ONNX Runtime archive from '{url}' after 3 attempts: {last_error}"
+        "failed to download verified ONNX Runtime archive '{}' after trying {base_urls:?}: {last_error}",
+        asset.archive_name
     );
+}
+
+/// Base URLs for the ONNX Runtime release archive, tried in order.
+///
+/// The upstream GitHub Releases asset is the primary source. It can disappear
+/// without notice: Microsoft made `microsoft/onnxruntime` and its sibling
+/// repositories private on 2026-11-17, which removed the repository, its tags and
+/// every release asset at once, so a build that only knew that one URL failed with
+/// a 404. The second entry is a byte-for-byte mirror of the same published
+/// archives. Every candidate is verified against the SHA-256 pinned in
+/// `runtime_asset`, so a mirror cannot substitute different bytes, it can only
+/// serve the file the pin already names or be rejected.
+///
+/// `MAUSVOICE_ORT_DOWNLOAD_BASE_URLS` overrides the list with a
+/// comma-separated set of bases, each used as `<base>/<archive_name>`. This is the
+/// escape hatch for an internal mirror or an air-gapped release build.
+fn download_base_urls() -> Vec<String> {
+    if let Some(override_urls) = env::var_os("MAUSVOICE_ORT_DOWNLOAD_BASE_URLS") {
+        let urls: Vec<String> = override_urls
+            .to_string_lossy()
+            .split(',')
+            .map(str::trim)
+            .filter(|base| !base.is_empty())
+            .map(|base| base.trim_end_matches('/').to_string())
+            .collect();
+        if !urls.is_empty() {
+            return urls;
+        }
+    }
+
+    vec![
+        format!("https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VERSION}"),
+        format!("https://registry.npmmirror.com/-/binary/onnxruntime/v{ORT_VERSION}"),
+    ]
 }
 
 fn extract_runtime(
