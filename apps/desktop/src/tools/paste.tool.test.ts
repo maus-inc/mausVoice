@@ -399,6 +399,9 @@ describe("PasteTool review", () => {
 
     finishSave?.(savedCard);
     await lateOpenSave;
+    // The timed-out Open must not leave a second card behind: the Insert path
+    // never re-saves, and the committed Open card is cancelled as unused.
+    expect(createPendingPasteReviewMock).toHaveBeenCalledOnce();
     expect(cancelPendingPasteReviewMock).toHaveBeenCalledWith(savedCard, "");
   });
 

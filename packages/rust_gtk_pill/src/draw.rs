@@ -1815,15 +1815,27 @@ fn draw_thinking_text(cr: &cairo::Context, x: f64, y: f64, alpha: f64, state: &P
 }
 
 /// Pango applies font fallback per run, unlike Cairo's toy `show_text` API.
-fn review_heading_layout(cr: &cairo::Context, label: &str) -> pango::Layout {
+///
+/// Every caption the pill draws for a review is localized, so every one of them
+/// goes through this layout. The toy API would render a CJK caption as tofu,
+/// because it resolves one font for the whole string and never falls back.
+fn review_pango_layout(cr: &cairo::Context, text: &str, bold: bool) -> pango::Layout {
     let layout = pangocairo::functions::create_layout(cr);
     let mut font = pango::FontDescription::new();
     font.set_family("Satoshi");
-    font.set_weight(pango::Weight::Bold);
+    font.set_weight(if bold {
+        pango::Weight::Bold
+    } else {
+        pango::Weight::Normal
+    });
     font.set_absolute_size(11.0 * pango::SCALE as f64);
     layout.set_font_description(Some(&font));
-    layout.set_text(label);
+    layout.set_text(text);
     layout
+}
+
+fn review_heading_layout(cr: &cairo::Context, label: &str) -> pango::Layout {
+    review_pango_layout(cr, label, true)
 }
 
 fn draw_review_heading(cr: &cairo::Context, label: &str, x: f64, baseline_y: f64) {
@@ -1834,13 +1846,7 @@ fn draw_review_heading(cr: &cairo::Context, label: &str, x: f64, baseline_y: f64
 }
 
 fn review_hint_layout(cr: &cairo::Context, hint: &str, max_width: f64) -> pango::Layout {
-    let layout = pangocairo::functions::create_layout(cr);
-    let mut font = pango::FontDescription::new();
-    font.set_family("Satoshi");
-    font.set_weight(pango::Weight::Normal);
-    font.set_absolute_size(11.0 * pango::SCALE as f64);
-    layout.set_font_description(Some(&font));
-    layout.set_text(hint);
+    let layout = review_pango_layout(cr, hint, false);
     layout.set_single_paragraph_mode(true);
     layout.set_width((max_width.max(0.0) * pango::SCALE as f64).round() as i32);
     layout.set_ellipsize(pango::EllipsizeMode::End);
@@ -1894,6 +1900,31 @@ mod review_heading_layout_tests {
 
         surface.flush();
         assert!(surface.data().unwrap().iter().any(|pixel| *pixel != 0));
+    }
+
+    #[test]
+    fn localized_review_button_caption_uses_the_pango_fallback_layout() {
+        let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 160, 32).unwrap();
+        let caption = "插入";
+        {
+            let cr = cairo::Context::new(&surface).unwrap();
+            let layout = review_pango_layout(&cr, caption, false);
+            assert_eq!(layout.text().as_str(), caption);
+            let (width, height) = layout.pixel_size();
+            assert!(
+                width > 0 && height > 0,
+                "localized button caption should have layout bounds"
+            );
+            cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+            cr.move_to(0.0, 20.0);
+            pangocairo::functions::show_layout(&cr, &layout);
+        }
+
+        surface.flush();
+        assert!(
+            surface.data().unwrap().iter().any(|pixel| *pixel != 0),
+            "the caption should paint to the surface rather than be dropped"
+        );
     }
 }
 
@@ -1988,19 +2019,14 @@ fn draw_review_actions(
     ];
 
     // The hint and buttons share this line, so reserve space for button captions
-    // before creating the width-constrained Pango hint layout. Button widths are
-    // measured at their 11px Satoshi rendering size to prevent overlap.
-    cr.select_font_face(
-        "Satoshi",
-        cairo::FontSlant::Normal,
-        cairo::FontWeight::Normal,
-    );
-    cr.set_font_size(11.0);
+    // before creating the width-constrained Pango hint layout. Measure each
+    // caption with the same Pango layout that draws it, so a localized caption
+    // whose fallback font is wider than Satoshi still reserves its real width.
     let btn_widths: Vec<f64> = buttons
         .iter()
         .map(|(label, _, _)| {
-            let text_width = cr.text_extents(label).map(|ext| ext.width()).unwrap_or(0.0);
-            (text_width + 20.0).max(PERM_BUTTON_WIDTH * 0.8)
+            let (text_width, _) = review_pango_layout(cr, label, false).pixel_size();
+            (text_width as f64 + 20.0).max(PERM_BUTTON_WIDTH * 0.8)
         })
         .collect();
     let row_width: f64 =
@@ -2043,23 +2069,15 @@ fn draw_review_actions(
         let _ = cr.stroke();
 
         cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-        cr.select_font_face(
-            "Satoshi",
-            cairo::FontSlant::Normal,
-            cairo::FontWeight::Normal,
+        // Draw the caption through the same Pango layout used to measure it, so
+        // a localized caption and its reserved width never disagree.
+        let label_layout = review_pango_layout(cr, label, false);
+        let (label_w, label_h) = label_layout.pixel_size();
+        cr.move_to(
+            btn_x + (btn_w - label_w as f64) / 2.0,
+            btn_y + (PERM_BUTTON_HEIGHT - label_h as f64) / 2.0,
         );
-        cr.set_font_size(11.0);
-        // Cairo only fails to measure when the font backend is in an error
-        // state. Draw the label at a sane offset rather than dropping it.
-        let (label_x, label_y) = match cr.text_extents(label) {
-            Ok(ext) => (
-                btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(),
-                btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing(),
-            ),
-            Err(_) => (btn_x + 8.0, btn_y + PERM_BUTTON_HEIGHT * 0.7),
-        };
-        cr.move_to(label_x, label_y);
-        let _ = cr.show_text(label);
+        pangocairo::functions::show_layout(cr, &label_layout);
 
         state.click_regions.borrow_mut().push(ClickRegion {
             x: btn_x,
