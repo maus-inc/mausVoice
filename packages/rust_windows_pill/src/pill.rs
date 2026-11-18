@@ -2188,6 +2188,12 @@ fn enumerate_displays(work_area: bool) -> Option<MonitorEnumeration> {
 /// Enumerate a complete monitor snapshot in virtual-screen pixel coordinates.
 /// Any callback or API failure marks the snapshot unknown; callers must not
 /// interpret a partial list as a monitor being unplugged.
+///
+/// `false` asks for `rcMonitor`, not `rcWork`, because these rects feed drag
+/// seam detection and a seam is the shared edge of two monitor extents. Two
+/// work areas can be separated by a taskbar and never touch, which would erase
+/// the seam. Restore and reconcile are the callers that need `rcWork`, and
+/// `enumerate_work_areas_with_identity` is theirs.
 fn enumerate_monitor_topology(current: MonitorRect) -> Option<Vec<MonitorRect>> {
     enumerate_displays(false)
         .filter(|snapshot| snapshot.monitors.contains(&current))
