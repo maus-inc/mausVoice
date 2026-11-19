@@ -1474,21 +1474,31 @@ mod cpal_impl {
         }
 
         pub fn close_warm(&self) {
-            self.cancel_linger();
+            self.close_matching_warm(None);
+        }
+
+        fn close_matching_warm(&self, expected: Option<&Arc<StreamSink>>) -> bool {
             let warm = {
-                let mut guard = match self.warm.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
+                let mut guard = self.warm.lock().unwrap_or_else(|err| err.into_inner());
+                if let Some(expected) = expected {
+                    if !guard
+                        .as_ref()
+                        .is_some_and(|warm| Arc::ptr_eq(&warm.sink, expected))
+                    {
+                        return false;
+                    }
+                }
+                self.cancel_linger();
+                if let Ok(mut ring) = self.preroll.lock() {
+                    ring.clear();
+                }
                 guard.take()
             };
             if let Some(warm) = warm {
                 log::info!("closing warm capture stream on '{}'", warm.device_label);
                 retire_stream(warm.stream);
             }
-            if let Ok(mut ring) = self.preroll.lock() {
-                ring.clear();
-            }
+            true
         }
 
         /// Arranges for the warm stream to be closed after `linger`, unless
@@ -1936,6 +1946,14 @@ mod cpal_impl {
         /// shows its microphone indicator while this runs, which is why the user
         /// has to ask for it.
         pub fn open_warm(&self, preroll: Duration) -> Result<(), RecordingError> {
+            self.open_warm_with_policy(preroll, false)
+        }
+
+        fn open_warm_with_policy(
+            &self,
+            preroll: Duration,
+            require_linger: bool,
+        ) -> Result<(), RecordingError> {
             // Lock order, and it is the only order: `warm_open_gate`, then
             // `warm`, then nothing. `inner` is never held alongside the gate.
             //
@@ -2021,6 +2039,10 @@ mod cpal_impl {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
+            // A refresh must not reopen a stream after an intervening release.
+            if require_linger && self.linger_millis() == 0 {
+                return Ok(());
+            }
             if warm_guard.is_some() {
                 log::debug!("warm stream already open; nothing to do");
                 return Ok(());
@@ -2072,6 +2094,24 @@ mod cpal_impl {
         /// indicator, because nothing captures. Doing them here primes the cache
         /// that `try_cached_device` reads, so the press skips the scoring.
         pub fn prepare_device(&self) -> Result<String, RecordingError> {
+            // A held stream already resolved the device, and its label is the
+            // one a press would use.
+            if let Some(label) = self
+                .warm
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|warm| warm.device_label.clone()))
+            {
+                return Ok(label);
+            }
+
+            let (label, host_id) = self.resolve_preferred_device()?;
+            self.cache_successful_device(host_id, label.clone());
+            log::debug!("prepared '{label}' for the next press");
+            Ok(label)
+        }
+
+        fn resolve_preferred_device(&self) -> Result<(String, HostId), RecordingError> {
             let preferred_label = {
                 let guard = match self.preferred_input_name.lock() {
                     Ok(guard) => guard,
@@ -2088,19 +2128,8 @@ mod cpal_impl {
                 .as_ref()
                 .map(|value| value.to_ascii_lowercase());
 
-            // A held stream already resolved the device, and its label is the
-            // one a press would use.
-            if let Some(label) = self
-                .warm
-                .lock()
-                .ok()
-                .and_then(|guard| guard.as_ref().map(|warm| warm.device_label.clone()))
-            {
-                return Ok(label);
-            }
-
             let hosts = ordered_host_ids();
-            let prepared = try_hosts(
+            try_hosts(
                 &hosts,
                 |id| {
                     cpal::host_from_id(id)
@@ -2131,15 +2160,7 @@ mod cpal_impl {
                         .map(|best| best.label)
                         .ok_or(RecordingError::InputDeviceUnavailable)
                 },
-            );
-            match prepared {
-                Ok((label, host_id)) => {
-                    self.cache_successful_device(host_id, label.clone());
-                    log::debug!("prepared '{label}' for the next press");
-                    Ok(label)
-                }
-                Err(err) => Err(err),
-            }
+            )
         }
 
         /// Reopens the held stream if the device set changed underneath it.
@@ -2164,19 +2185,16 @@ mod cpal_impl {
                 log::debug!("a recording owns the device; not refreshing it");
                 return;
             }
-            if !self.has_warm_stream() {
-                return;
-            }
-            let current = self
-                .warm
-                .lock()
-                .ok()
-                .and_then(|guard| guard.as_ref().map(|warm| warm.device_label.clone()));
-            let Some(current) = current else {
+            let current = self.warm.lock().ok().and_then(|guard| {
+                guard
+                    .as_ref()
+                    .map(|warm| (warm.device_label.clone(), Arc::clone(&warm.sink)))
+            });
+            let Some((current, sink)) = current else {
                 return;
             };
 
-            let best = self.prepare_device().ok();
+            let best = self.resolve_preferred_device().ok().map(|(label, _)| label);
             match best {
                 Some(best) if normalized_name(&best) == normalized_name(&current) => {
                     log::debug!("held device '{current}' is still the best; keeping it");
@@ -2186,27 +2204,21 @@ mod cpal_impl {
                         "held device '{current}' is no longer the best ('{best}'); reopening"
                     );
                     let preroll = Duration::from_micros(self.preroll_micros.load(Ordering::SeqCst));
-                    let policy = self.linger_millis();
-                    self.close_warm();
-                    // Reopening is only right when the policy holds a device. A
-                    // finite window that had already expired, or a policy that
-                    // was turned off between the check above and here, would
-                    // otherwise open a stream nothing is going to close.
-                    if policy == 0 {
-                        log::debug!("hold policy is off; not reopening after the device change");
+                    if !self.close_matching_warm(Some(&sink)) {
                         return;
                     }
-                    if let Err(err) = self.open_warm(preroll) {
+                    if let Err(err) = self.open_warm_with_policy(preroll, true) {
                         log::warn!("could not reopen the warm stream after a device change: {err}");
-                    } else if policy != WARM_FOREVER_MS {
-                        // A finite window restarts from this open, so the device
-                        // still closes when the policy said it would.
-                        self.linger_then_close(Duration::from_millis(policy));
+                    } else {
+                        let policy = self.linger_millis();
+                        if policy > 0 && policy != WARM_FOREVER_MS {
+                            self.linger_then_close(Duration::from_millis(policy));
+                        }
                     }
                 }
                 None => {
                     log::warn!("no usable device after a device change; releasing '{current}'");
-                    self.close_warm();
+                    self.close_matching_warm(Some(&sink));
                 }
             }
         }
