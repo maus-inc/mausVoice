@@ -22,7 +22,8 @@ export const LocateGestureSideEffects = () => {
 
     return useAppStore.subscribe((state) => {
       const selected = state.userPrefs?.pillLocateGestureModifier ?? "none";
-      if (state.hotkeyStrategy !== "listener" || selected === "none") {
+      const active = state.hotkeyStrategy === "listener" && selected !== "none";
+      if (!active) {
         detector.reset();
         previousKeys = state.keysHeld;
         return;

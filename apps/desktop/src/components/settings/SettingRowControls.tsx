@@ -5,7 +5,7 @@ import {
   TextField,
   type SelectChangeEvent,
 } from "@mui/material";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
   chromeSelectMenuItemSx,
   chromeSelectMenuProps,
@@ -23,6 +23,10 @@ import { settingAnchorId } from "./settings-routes";
 export type SettingSelectOption<Value extends string> = {
   value: Value;
   label: string;
+  /** Rendered in place of `label` inside the menu row. */
+  node?: ReactNode;
+  /** Accessible name for the menu row when `node` replaces the visible text. */
+  ariaLabel?: string;
 };
 
 export const SettingSelect = <Value extends string>({
@@ -30,17 +34,28 @@ export const SettingSelect = <Value extends string>({
   options,
   onChange,
   ariaLabel,
+  displayEmpty,
+  renderValue,
+  minWidth,
 }: {
   value: Value;
   options: SettingSelectOption<Value>[];
-  onChange: (value: Value) => void | Promise<unknown>;
+  onChange: (value: Value) => unknown;
   ariaLabel: string;
+  /** Keeps a placeholder value selectable when no option matches. */
+  displayEmpty?: boolean;
+  /** Replaces the trigger's text, for a value that reads better as a glyph. */
+  renderValue?: (value: Value) => ReactNode;
+  minWidth?: number | Record<string, number>;
 }) => (
   <Select<Value>
     size="small"
     fullWidth
     value={value}
     aria-label={ariaLabel}
+    displayEmpty={displayEmpty}
+    renderValue={renderValue}
+    sx={minWidth === undefined ? undefined : { minWidth }}
     onChange={(event: SelectChangeEvent) => {
       void Promise.resolve(onChange(event.target.value as Value)).catch(
         () => {},
@@ -52,9 +67,10 @@ export const SettingSelect = <Value extends string>({
       <MenuItem
         key={option.value}
         value={option.value}
+        aria-label={option.ariaLabel}
         sx={chromeSelectMenuItemSx}
       >
-        {option.label}
+        {option.node ?? option.label}
       </MenuItem>
     ))}
   </Select>

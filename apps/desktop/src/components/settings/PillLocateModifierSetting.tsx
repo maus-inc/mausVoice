@@ -1,16 +1,18 @@
-import { Box, MenuItem, Select, type SelectChangeEvent } from "@mui/material";
+import { Box } from "@mui/material";
 import type { PillLocateGestureModifier } from "@maus-inc/types";
 import { useIntl } from "react-intl";
 import { keycapDashboardSize } from "../../styles/keycap";
 import { getKeycapLegend } from "../../utils/keyboard.utils";
 import { Keycap3d } from "../common/Keycap3d";
-import {
-  chromeSelectMenuProps,
-  chromeSelectMenuItemSx,
-} from "../common/chromeMenu";
+import { SettingSelect, type SettingSelectOption } from "./SettingRowControls";
 
-const MODIFIERS = ["alt", "shift", "control"] as const;
-type Modifier = (typeof MODIFIERS)[number];
+type Modifier = Exclude<PillLocateGestureModifier, "none">;
+
+const MODIFIERS = [
+  "alt",
+  "shift",
+  "control",
+] as const satisfies readonly Modifier[];
 
 /** Key names the cap legend recognises. The cap renders the platform glyph. */
 const MODIFIER_KEY_NAMES: Record<Modifier, string> = {
@@ -58,7 +60,7 @@ export const PillLocateModifierSetting = ({
   ariaLabel,
 }: {
   value: PillLocateGestureModifier;
-  onChange: (value: PillLocateGestureModifier) => void | Promise<unknown>;
+  onChange: (value: PillLocateGestureModifier) => unknown;
   ariaLabel: string;
 }) => {
   const intl = useIntl();
@@ -70,19 +72,29 @@ export const PillLocateModifierSetting = ({
   const disabled = intl.formatMessage({ defaultMessage: "Disabled" });
   const valueLabel = value === "none" ? disabled : labels[value];
 
+  const options: SettingSelectOption<PillLocateGestureModifier>[] = [
+    { value: "none", label: disabled, ariaLabel: disabled },
+    ...MODIFIERS.map((modifier) => ({
+      value: modifier,
+      label: labels[modifier],
+      node: (
+        <Box component="span" sx={{ display: "inline-flex", gap: 1 }}>
+          <DoubleTap modifier={modifier} />
+          <Box component="span">{labels[modifier]}</Box>
+        </Box>
+      ),
+      ariaLabel: labels[modifier],
+    })),
+  ];
+
   return (
-    <Select<PillLocateGestureModifier>
-      size="small"
-      fullWidth
-      displayEmpty
+    <SettingSelect<PillLocateGestureModifier>
       value={value}
-      aria-label={`${ariaLabel}: ${valueLabel}`}
-      sx={{ minWidth: { xs: 168, sm: 192 } }}
-      onChange={(event: SelectChangeEvent) =>
-        void Promise.resolve(
-          onChange(event.target.value as PillLocateGestureModifier),
-        ).catch(() => {})
-      }
+      options={options}
+      onChange={onChange}
+      ariaLabel={`${ariaLabel}: ${valueLabel}`}
+      displayEmpty
+      minWidth={{ xs: 168, sm: 192 }}
       renderValue={(selected) =>
         selected === "none" ? (
           <Box component="span">{disabled}</Box>
@@ -90,28 +102,6 @@ export const PillLocateModifierSetting = ({
           <DoubleTap modifier={selected} />
         )
       }
-      MenuProps={chromeSelectMenuProps}
-    >
-      <MenuItem value="none" aria-label={disabled} sx={chromeSelectMenuItemSx}>
-        {disabled}
-      </MenuItem>
-      {MODIFIERS.map((modifier) => (
-        <MenuItem
-          key={modifier}
-          value={modifier}
-          aria-label={labels[modifier]}
-          // The pair and its word are one unit, and grouping them keeps the
-          // menu no wider than the trigger, so its edges line up with the field.
-          sx={{
-            ...chromeSelectMenuItemSx,
-            gap: 1,
-            justifyContent: "flex-start",
-          }}
-        >
-          <DoubleTap modifier={modifier} />
-          <Box component="span">{labels[modifier]}</Box>
-        </MenuItem>
-      ))}
-    </Select>
+    />
   );
 };

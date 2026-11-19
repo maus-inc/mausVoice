@@ -50,24 +50,19 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
 
   const release = (key: string, now: number): boolean => {
     if (!pressed.delete(key)) return false;
-    if (!tap || tap.key !== key) return false;
+    if (tap?.key !== key) return false;
 
-    const start = tap;
+    const { family, startedAt } = tap;
     tap = null;
-    if (now - start.startedAt > MAX_TAP_MS) {
+    if (now - startedAt > MAX_TAP_MS) {
       pending = null;
       return false;
     }
-    if (
-      pending &&
-      pending.family === start.family &&
-      start.startedAt - pending.releasedAt <= DOUBLE_TAP_WINDOW_MS
-    ) {
-      pending = null;
-      return true;
-    }
-    pending = { family: start.family, releasedAt: now };
-    return false;
+    const isSecondTap =
+      pending?.family === family &&
+      startedAt - pending.releasedAt <= DOUBLE_TAP_WINDOW_MS;
+    pending = isSecondTap ? null : { family, releasedAt: now };
+    return isSecondTap;
   };
 
   const press = (key: string, now: number, allowed: ModifierFamily | null) => {

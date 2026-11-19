@@ -611,6 +611,20 @@ fn clear_flash(state: &PillState) {
     );
 }
 
+/// Raises a banner with the standard non-error chrome. The Fireworks and Flame
+/// arms differ only in their duration and the sub-animation they start, so the
+/// six shared resets live here rather than twice in the message dispatch.
+fn begin_banner(state: &PillState, message: String, duration: f64) {
+    *state.flash_message.borrow_mut() = message;
+    state.flash_is_error.set(false);
+    *state.flash_action.borrow_mut() = None;
+    *state.flash_action_label.borrow_mut() = None;
+    *state.flash_reject_action.borrow_mut() = None;
+    *state.flash_reject_action_label.borrow_mut() = None;
+    state.flash_visible.set(true);
+    state.flash_timer.set(duration);
+}
+
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
@@ -693,29 +707,14 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             clear_flash(state);
         }
         InMessage::Fireworks { message } => {
-            *state.flash_message.borrow_mut() = message;
-            state.flash_is_error.set(false);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-            *state.flash_reject_action.borrow_mut() = None;
-            *state.flash_reject_action_label.borrow_mut() = None;
-            state.flash_visible.set(true);
-            state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
+            begin_banner(state, message, FIREWORKS_TOTAL_DURATION);
             state.fireworks_active.set(true);
             state.fireworks_elapsed.set(0.0);
             state.fireworks_next_launch.set(0);
             state.fireworks_rockets.borrow_mut().clear();
         }
         InMessage::Flame { message } => {
-            *state.flash_message.borrow_mut() = message;
-            state.flash_is_error.set(false);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-            *state.flash_reject_action.borrow_mut() = None;
-            *state.flash_reject_action_label.borrow_mut() = None;
-            state.flash_visible.set(true);
-            state.flash_timer.set(FLAME_TOTAL_DURATION);
-
+            begin_banner(state, message, FLAME_TOTAL_DURATION);
             state.flame_active.set(true);
             state.flame_elapsed.set(0.0);
             state.flame_tongues.borrow_mut().clear();

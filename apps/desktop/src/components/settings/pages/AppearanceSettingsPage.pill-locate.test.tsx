@@ -6,7 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  setPillLocateGestureModifier: vi.fn(async (_modifier: string) => {}),
+  setPillLocateGestureModifier: vi.fn((_modifier: string) => Promise.resolve()),
 }));
 
 vi.mock("@tauri-apps/plugin-os", () => ({ platform: () => "linux" }));
@@ -18,11 +18,11 @@ vi.mock("react-intl", async (importOriginal) => {
 });
 
 vi.mock("../../../actions/user.actions", () => ({
-  setDictationPillVisibility: vi.fn(async () => {}),
-  setMenuBarIconHidden: vi.fn(async () => {}),
+  setDictationPillVisibility: vi.fn(() => Promise.resolve()),
+  setMenuBarIconHidden: vi.fn(() => Promise.resolve()),
   setPillLocateGestureModifier: (modifier: string) =>
     mocks.setPillLocateGestureModifier(modifier),
-  setPillResetMonitorStrategy: vi.fn(async () => {}),
+  setPillResetMonitorStrategy: vi.fn(() => Promise.resolve()),
 }));
 
 import { INITIAL_APP_STATE } from "../../../state/app.state";
