@@ -21,6 +21,7 @@ pub struct PulseRecorder {
 }
 
 struct ActiveRecording {
+    started_at: Instant,
     stop_signal: Arc<Mutex<bool>>,
     thread: Option<std::thread::JoinHandle<RecordingResult>>,
     sample_rate: u32,
@@ -59,6 +60,7 @@ impl Recorder for PulseRecorder {
             return Err(Box::new(RecordingError::AlreadyRecording));
         }
 
+        let started_at = Instant::now();
         let preferred = {
             let pref_guard = self
                 .preferred_source
@@ -96,6 +98,7 @@ impl Recorder for PulseRecorder {
             .map_err(|err| RecordingError::StreamBuild(err.to_string()))?;
 
         *guard = Some(ActiveRecording {
+            started_at,
             stop_signal,
             thread: Some(thread),
             sample_rate: native_rate,
@@ -111,6 +114,8 @@ impl Recorder for PulseRecorder {
             .map_err(|_| RecordingError::NotRecording)?;
         let mut recording = guard.take().ok_or(RecordingError::NotRecording)?;
 
+        let expected_at_stop = recording.started_at.elapsed();
+
         // Signal the recording thread to stop
         if let Ok(mut flag) = recording.stop_signal.lock() {
             *flag = true;
@@ -120,9 +125,13 @@ impl Recorder for PulseRecorder {
             .thread
             .take()
             .ok_or(RecordingError::NotRecording)?;
-        let result = thread
+        let mut result = thread
             .join()
             .map_err(|_| RecordingError::StreamBuild("recording thread panicked".into()))?;
+
+        if result.metrics.capture_fault.is_some() {
+            result.metrics.expected_duration = expected_at_stop;
+        }
 
         Ok(result)
     }
@@ -426,7 +435,7 @@ fn record_loop(
     // flag here is what used to let a stop pressed after the failure discard it.
 
     let expected_duration = start.elapsed();
-    let duration = if !all_samples.is_empty() {
+    let duration = if read_fault.is_some() || !all_samples.is_empty() {
         Duration::from_secs_f64(all_samples.len() as f64 / f64::from(sample_rate))
     } else {
         expected_duration
@@ -737,6 +746,23 @@ mod emitter_tests {
             "the refused-open branch must return failed_open_result, or a dead \
              stream is reported as a clean stop"
         );
+    }
+
+    #[test]
+    fn stop_reports_time_held_after_a_fast_open_refusal() {
+        let recorder = PulseRecorder::new();
+        let attempt = Duration::from_millis(5);
+        *recorder.inner.lock().unwrap() = Some(ActiveRecording {
+            started_at: Instant::now() - Duration::from_secs(1),
+            stop_signal: Arc::new(Mutex::new(false)),
+            thread: Some(std::thread::spawn(move || failed_open_result(attempt))),
+            sample_rate: FALLBACK_SAMPLE_RATE,
+        });
+
+        let result = recorder.stop().unwrap();
+        assert!(result.metrics.expected_duration >= Duration::from_secs(1));
+        assert_eq!(result.metrics.duration, Duration::ZERO);
+        assert_eq!(result.metrics.capture_fault.as_deref(), Some(READ_FAULT_TOKEN));
     }
 
     /// Every batch must report the absolute index of its first sample, and the
