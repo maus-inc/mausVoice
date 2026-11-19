@@ -804,31 +804,13 @@ export const MicrophoneReadinessSideEffects = () => {
     );
   }, [enabled, isRecording, permissionGranted]);
 
-  // A clear is requested outside React state, so subscribe to the transition
-  // rather than reading the latch once. Reading it in an effect that depends
-  // only on the preference means a clear requested later never closes a device
-  // that is already held, which is exactly the case that matters: the clear
-  // deletes the audio, and a microphone still running through it is live for
-  // nothing.
   useEffect(() => {
+    if (!ownsDevice) {
+      return;
+    }
     return subscribeToLocalDataClearRequested(() => {
-      // The preference is *not* the right question. A stream can be open with
-      // keep-ready off, because the post-dictation linger window leaves one open
-      // for its duration, and that stream is capturing through the deletion just
-      // as much as a held one. Asking the preference skipped exactly that case:
-      // the audio is being deleted and the microphone is still running.
-      //
-      // So the question is whether there is anything to release, which only the
-      // backend can answer -- `microphoneHeld` is its report, not a guess.
-      const anythingOpen =
-        getAppState().userPrefs?.keepMicrophoneReady === true ||
-        getAppState().settings.microphoneHeld === true;
-      // A window that does not own the device must not close one: the stream is
-      // shared, so a floating window reacting to the same broadcast would release
-      // the main window's hold on a clear it did not start.
-      if (!anythingOpen || !ownsDevice) {
-        return;
-      }
+      // Readiness measures usable audio, not whether an idle stream is open.
+      // Native close is safe even if there is no stream to release.
       appliedRef.current = "closed";
       release();
     });

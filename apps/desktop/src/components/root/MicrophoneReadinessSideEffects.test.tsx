@@ -380,11 +380,29 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.closeMicrophone).toHaveBeenCalled();
   });
 
-  it("does nothing on a clear when no stream is open", async () => {
+  it("asks native to close on clear even when readiness is false", async () => {
     setState({
       userPrefs: { keepMicrophoneReady: false },
-      settings: { microphoneHeld: null },
+      settings: { microphoneHeld: false },
     });
+    await render();
+    mocks.closeMicrophone.mockClear();
+
+    await act(() => {
+      mocks.state.__clearing = true;
+      for (const listener of mocks.clearListeners) listener();
+    });
+
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not close the shared stream on a clear from a non-owner window", async () => {
+    setState({
+      userPrefs: { keepMicrophoneReady: false },
+      settings: { microphoneHeld: true },
+      __mainWindow: false,
+    });
+    mocks.microphoneReady.mockResolvedValue(true);
     await render();
     mocks.closeMicrophone.mockClear();
 
