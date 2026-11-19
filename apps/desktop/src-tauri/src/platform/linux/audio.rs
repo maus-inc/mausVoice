@@ -762,7 +762,10 @@ mod emitter_tests {
         let result = recorder.stop().unwrap();
         assert!(result.metrics.expected_duration >= Duration::from_secs(1));
         assert_eq!(result.metrics.duration, Duration::ZERO);
-        assert_eq!(result.metrics.capture_fault.as_deref(), Some(READ_FAULT_TOKEN));
+        assert_eq!(
+            result.metrics.capture_fault.as_deref(),
+            Some(READ_FAULT_TOKEN)
+        );
     }
 
     /// Every batch must report the absolute index of its first sample, and the
