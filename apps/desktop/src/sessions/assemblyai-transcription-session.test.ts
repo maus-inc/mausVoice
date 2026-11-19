@@ -282,7 +282,7 @@ describe("AssemblyAI streaming connection parameters", () => {
     // regression reports what it did (nothing) instead of timing out the file.
     closeInsteadOfOpen = true;
     const outcome = await Promise.race([
-      startAssemblyAIStreaming("test-key", 16000, [], undefined).then(
+      startAssemblyAIStreaming("test-key", 16000, []).then(
         () => "resolved",
         (error: Error) => `rejected: ${error.message}`,
       ),
@@ -294,15 +294,12 @@ describe("AssemblyAI streaming connection parameters", () => {
   it("stays pending through transport open until the provider sends Begin", async () => {
     sendBeginOnOpen = false;
     let ready = false;
-    const started = startAssemblyAIStreaming(
-      "test-key",
-      16000,
-      [],
-      undefined,
-    ).then((session) => {
-      ready = true;
-      return session;
-    });
+    const started = startAssemblyAIStreaming("test-key", 16000, []).then(
+      (session) => {
+        ready = true;
+        return session;
+      },
+    );
     const socket = createdSockets.at(-1);
     if (!socket) throw new Error("Expected a connecting socket");
     expect(socket.readyState).toBe(FakeWebSocket.CONNECTING);
@@ -361,12 +358,7 @@ describe("AssemblyAI streaming connection parameters", () => {
   it("still resolves normally when the socket closes after opening", async () => {
     // The other half of the same `onclose`: a close after a successful
     // handshake is the normal end of a session and must not reject.
-    const session = await startAssemblyAIStreaming(
-      "test-key",
-      16000,
-      [],
-      undefined,
-    );
+    const session = await startAssemblyAIStreaming("test-key", 16000, []);
     expect(session).toBeTruthy();
     const socket = createdSockets.at(-1);
     expect(() => socket?.close()).not.toThrow();
@@ -391,12 +383,7 @@ describe("AssemblyAI streaming connection parameters", () => {
   });
 
   it("omits keyterms_prompt when the dictionary is empty", async () => {
-    const session = await startAssemblyAIStreaming(
-      "test-key",
-      16000,
-      [],
-      undefined,
-    );
+    const session = await startAssemblyAIStreaming("test-key", 16000, []);
     const socket = createdSockets.at(-1);
     expect(socket?.url).toContain("speech_model=universal-3-5-pro");
     expect(socket?.url).not.toContain("keyterms_prompt");

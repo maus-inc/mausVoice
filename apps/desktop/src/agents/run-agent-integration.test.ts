@@ -143,15 +143,15 @@ describe("runAgent continues after a tool call when the desktop side effect reje
     setupAgentMocks();
 
     const saved: ChatMessage[] = [];
-    getChatMessageRepoCreateMock.mockImplementation(
-      async (message: ChatMessage) => {
-        if (message.metadata?.type === "tool-result") {
-          throw new Error("The resource id 'chat-msg-1' is invalid");
-        }
-        saved.push(message);
-        return message;
-      },
-    );
+    getChatMessageRepoCreateMock.mockImplementation((message: ChatMessage) => {
+      if (message.metadata?.type === "tool-result") {
+        return Promise.reject(
+          new Error("The resource id 'chat-msg-1' is invalid"),
+        );
+      }
+      saved.push(message);
+      return Promise.resolve(message);
+    });
 
     loopRunMock.mockImplementation(() =>
       agentLoopRun([

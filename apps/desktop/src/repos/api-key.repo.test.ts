@@ -175,13 +175,13 @@ describe("LocalApiKeyRepo - openRouterConfig wire key casing", () => {
       createdAt: 1000,
       openRouterConfig: null,
     };
-    invokeMock.mockImplementationOnce(async (command, { request }) => {
+    invokeMock.mockImplementationOnce((command, { request }) => {
       expect(command).toBe("api_key_update");
       expect(request.id).toBe(wire.id);
       expect(request).not.toHaveProperty("openrouterConfig");
       expect(JSON.parse(request.openRouterConfig)).toEqual(storedConfig);
       wire.openRouterConfig = request.openRouterConfig;
-      return wire;
+      return Promise.resolve(wire);
     });
     await repo.updateApiKey({ id: wire.id, openRouterConfig: storedConfig });
 
