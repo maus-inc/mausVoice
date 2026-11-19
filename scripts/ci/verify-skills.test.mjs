@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -62,6 +69,12 @@ describe("verify-skills", () => {
       "references/b.md": "b\n",
     });
     const first = computeSkillFolderHash(dir);
+    // Independent digest of "references/b.md" + "b\n" + "SKILL.md" + "# a\n".
+    // A lock generated here by the same helper would agree with a backslash on Windows.
+    assert.equal(
+      first,
+      "8c6bf94367772f191bf081d7fda78d2f6ba4cf46de075c10a44decef5430af5a",
+    );
     writeFileSync(join(dir, "references", "b.md"), "changed\n");
     assert.notEqual(computeSkillFolderHash(dir), first);
     writeFileSync(join(dir, "references", "b.md"), "b\n");
@@ -73,6 +86,24 @@ describe("verify-skills", () => {
       "an extra file changes the hash",
     );
     rmSync(dir, { recursive: true });
+  });
+
+  it("preserves the original locked bytes on an autocrlf checkout", (t) => {
+    const repo = mkdtempSync(join(tmpdir(), "skill-checkout-"));
+    t.after(() => rmSync(repo, { recursive: true, force: true }));
+    git(repo, "init", "-q");
+    copyFileSync(
+      new URL("../../.gitattributes", import.meta.url),
+      join(repo, ".gitattributes"),
+    );
+    const files = { "SKILL.md": "# LF\n", "asset.svg": "<svg/>\r\n" };
+    const skill = writeSkill(repo, "fixture", files);
+    git(repo, "-c", "core.autocrlf=false", "add", ".");
+    rmSync(skill, { recursive: true });
+    git(repo, "-c", "core.autocrlf=true", "checkout-index", "--all", "--force");
+    for (const [name, bytes] of Object.entries(files)) {
+      assert.equal(readFileSync(join(skill, name), "utf8"), bytes);
+    }
   });
 
   it("passes a tree that matches its lock entry and is not ignored", () => {
@@ -112,6 +143,7 @@ describe("verify-skills", () => {
     const result = run(root);
     assert.equal(result.ok, false);
     assert.match(result.err, /^ghost: MISSING/m);
+    assert.match(result.out, /^0 of 1 locked skills verified/m);
   });
 
   it("fails on a file a .gitignore rule would drop, and passes once it is negated", () => {
@@ -172,7 +204,10 @@ describe("verify-skills", () => {
     const strict = run(root, { strict: true });
     assert.equal(strict.ok, false);
     assert.match(strict.err, /^owned: unrecorded/m);
-    assert.match(strict.out, /\(strict\)/);
+    assert.match(
+      strict.out,
+      /^0 of 0 locked skills verified, 1 unrecorded \(strict\)$/m,
+    );
     rmSync(dir, { recursive: true });
   });
 

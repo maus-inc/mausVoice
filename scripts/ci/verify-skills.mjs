@@ -27,10 +27,13 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+// Lock entries and Git paths use slashes even on a Windows checkout.
+const gitRelative = (root, full) => relative(root, full).split(sep).join("/");
 
 function collectFiles(root, dir, out) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -39,7 +42,7 @@ function collectFiles(root, dir, out) {
       collectFiles(root, full, out);
     } else if (entry.isFile()) {
       out.push({
-        relativePath: relative(root, full),
+        relativePath: gitRelative(root, full),
         content: readFileSync(full),
       });
     }
@@ -102,7 +105,7 @@ export function verifySkills(
     : [];
 
   let drift = 0;
-  let checked = 0;
+  let verified = 0;
 
   for (const [name, entry] of locked) {
     const skillDir = join(skillsDir, name);
@@ -115,7 +118,6 @@ export function verifySkills(
     }
     const files = listSkillFiles(skillDir);
     const actual = hashSkillFiles(files);
-    checked++;
     let failed = false;
     if (actual !== entry.computedHash) {
       error(
@@ -130,7 +132,7 @@ export function verifySkills(
     }
     const ignored = findIgnoredFiles(
       root,
-      files.map((file) => join(relative(root, skillDir), file.relativePath)),
+      files.map((file) => gitRelative(root, join(skillDir, file.relativePath))),
     );
     if (ignored.length > 0) {
       error(
@@ -146,12 +148,13 @@ export function verifySkills(
       drift++;
       continue;
     }
+    verified++;
     log(`${name}: ok  ${entry.source}`);
   }
 
   const unrecorded = onDisk.filter((name) => !lock.skills?.[name]);
   if (unrecorded.length > 0) {
-    const message = `${unrecorded.join(", ")}: unrecorded  project-owned skills with no lock entry`;
+    const message = `${unrecorded.join(", ")}: unrecorded  no lock entry to verify`;
     if (strict) {
       error(message);
       drift++;
@@ -161,7 +164,7 @@ export function verifySkills(
   }
 
   log(
-    `${checked - drift} of ${locked.length} locked skills verified, ${unrecorded.length} unrecorded${
+    `${verified} of ${locked.length} locked skills verified, ${unrecorded.length} unrecorded${
       strict ? " (strict)" : ""
     }`,
   );
