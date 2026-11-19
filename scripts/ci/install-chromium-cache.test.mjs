@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -94,11 +95,17 @@ test("the sweep removes only marked partials whose process has exited", (t) => {
   const exitedPid = execFileSync("sh", ["-c", "echo $$"], {
     encoding: "utf8",
   }).trim();
-  const abandoned = join(dir, `chr.partial-${exitedPid}`);
-  const live = join(dir, `chr.partial-${process.pid}`);
-  const foreign = join(dir, "chr.partial-999999999");
-  for (const path of [abandoned, live, foreign]) mkdirSync(path);
-  for (const path of [abandoned, live])
+  const procStat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
+  const start = procStat.slice(procStat.lastIndexOf(")") + 2).split(" ")[19];
+  const abandoned = join(dir, `chr.partial-${exitedPid}-1-oldRun`);
+  const live = join(dir, `chr.partial-${process.pid}-${start}-liveXX`);
+  const recycled = join(
+    dir,
+    `chr.partial-${process.pid}-${BigInt(start) + 1n}-reuseX`,
+  );
+  const foreign = join(dir, "chr.partial-999999999-1-frgnXX");
+  for (const path of [abandoned, live, recycled, foreign]) mkdirSync(path);
+  for (const path of [abandoned, live, recycled])
     writeFileSync(join(path, marker), `${version}\n`);
   writeFileSync(join(foreign, "keep.txt"), "keep me");
 
@@ -106,6 +113,7 @@ test("the sweep removes only marked partials whose process has exited", (t) => {
 
   assert.equal(existsSync(abandoned), false);
   assert.equal(existsSync(live), true);
+  assert.equal(existsSync(recycled), false);
   assert.equal(existsSync(join(foreign, "keep.txt")), true);
 });
 

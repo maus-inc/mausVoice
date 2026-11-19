@@ -20,6 +20,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -89,18 +90,35 @@ const unpackTar = (archive, into) => {
 // launch. Rather than teach the guard what a complete tree contains -- a list
 // that goes stale whenever the package changes -- the tree is either whole or
 // absent.
-// Per-process, not shared. Two verifier scripts starting cold at the same time
-// both land here, and a shared staging path means each sees the other's
-// half-extracted tree: the first to notice reports it as foreign and throws, so
-// simultaneous cold runs failed for a reason that had nothing to do with either
-// of them. The rename onto `OUT` is still atomic, so the loser of that race
-// either finds a complete tree already there or replaces it wholesale.
-const STAGING = `${OUT}.partial-${process.pid}`;
-
-// Written into STAGING just before the rename, so a directory that carries it is
-// one this script produced. Its absence is what lets the guard below refuse to
-// delete something that is not ours.
+// Each attempt gets a unique staging path. A recycled PID must not reuse a
+// name another installer may have just decided to sweep.
+// Written before extraction so owned partials can be identified after a crash.
 const MARKER = ".mausvoice-chromium";
+
+// Linux reports when this particular process started. `comm` may contain
+// spaces or parentheses, so start parsing after its closing parenthesis.
+function processStart(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function ownerExited(pid, startedAt) {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    return error.code === "ESRCH";
+  }
+  const currentStart = processStart(pid);
+  return (
+    startedAt !== "unknown" &&
+    currentStart !== null &&
+    currentStart !== startedAt
+  );
+}
 
 if (hasBrowser(OUT)) {
   log(`Already extracted in ${OUT}. Delete it to force a fresh extraction.`);
@@ -119,46 +137,29 @@ if (hasBrowser(OUT)) {
     }
     rmSync(OUT, { recursive: true, force: true });
   }
-  // `STAGING` is `OUT.partial-<pid>`, and `OUT` is caller-supplied, so this is a
-  // recursive delete of a path the caller chose one suffix away from. A `--dir`
-  // of `/tmp/work` makes this `/tmp/work.partial`, which may well be somebody
-  // else's directory. The same rule the guard above applies to `OUT` applies
-  // here: only remove it if it is ours, meaning empty or carrying our marker.
-  //
-  // Active installs may have written the marker already. Sweep only when
-  // the PID no longer exists; permission errors do not prove it has exited.
+  // Only sweep marked, uniquely named attempts. A live PID alone is not
+  // evidence of ownership if Linux reports a different process start time.
   const parent = path.dirname(OUT);
   const prefix = `${path.basename(OUT)}.partial-`;
   mkdirSync(parent, { recursive: true });
   for (const sibling of readdirSync(parent)) {
     if (!sibling.startsWith(prefix)) continue;
-    const suffix = sibling.slice(prefix.length);
-    const pid = Number(suffix);
-    if (!/^[1-9]\d*$/.test(suffix) || pid > 0x7fffffff) continue;
+    const owner = /^([1-9]\d*)-(\d+|unknown)-[a-zA-Z0-9]{6}$/.exec(
+      sibling.slice(prefix.length),
+    );
+    if (!owner) continue;
+    const pid = Number(owner[1]);
+    if (pid > 0x7fffffff) continue;
     const stale = path.join(parent, sibling);
-    if (!existsSync(path.join(stale, MARKER))) continue;
-    try {
-      process.kill(pid, 0);
-    } catch (error) {
-      if (error.code !== "ESRCH") continue;
-      log(`  removing a partial extraction left by an earlier run: ${sibling}`);
-      rmSync(stale, { recursive: true, force: true });
-    }
+    if (!existsSync(path.join(stale, MARKER)) || !ownerExited(pid, owner[2]))
+      continue;
+    log(`  removing a partial extraction left by an earlier run: ${sibling}`);
+    rmSync(stale, { recursive: true, force: true });
   }
 
-  if (existsSync(STAGING)) {
-    const ours =
-      readdirSync(STAGING).length === 0 ||
-      existsSync(path.join(STAGING, MARKER));
-    if (!ours) {
-      throw new Error(
-        `${STAGING} is not empty and has no ${MARKER}, so it is not an extraction this script made. ` +
-          `Remove it yourself, or pass a different --dir.`,
-      );
-    }
-    rmSync(STAGING, { recursive: true, force: true });
-  }
-  mkdirSync(STAGING, { recursive: true });
+  const STAGING = mkdtempSync(
+    `${OUT}.partial-${process.pid}-${processStart(process.pid) ?? "unknown"}-`,
+  );
 
   // The cache is ours by construction: `PKG_DIR` lives inside `CHR_DIR`, which is
   // this script's own directory, not a caller-chosen one. Guarded anyway, and on
@@ -275,7 +276,7 @@ if (hasBrowser(OUT)) {
   writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n`);
   // A concurrent winner is a success, not a failure.
   //
-  // Two processes can both see `OUT` absent and both extract; the pid-suffixed
+  // Two processes can both see `OUT` absent and both extract; the unique
   // staging directory is what lets them get this far without colliding. The first
   // rename publishes its tree, and the second then fails with ENOTEMPTY, because
   // `rename` onto an existing non-empty directory is an error rather than a
