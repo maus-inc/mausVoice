@@ -13,7 +13,7 @@
     "apps/desktop/src/preview/tauri/webviewWindow.ts",
     "apps/desktop/src/preview/tauri/window.ts",
     "scripts/ci/check-gitleaks-config.test.mjs",
-    "apps/desktop/webdriver/specs/app.render.spec.ts",
+    "apps/desktop/webdriver/specs/**/*.spec.ts",
     "apps/docs/scripts/make-card-ascii.mjs",
     "docs/assets/badges/source/generate-badges.mjs"
   ],
