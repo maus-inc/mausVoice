@@ -21,6 +21,7 @@ import {
   shouldPrepareMicrophone,
 } from "../../utils/microphone-readiness.utils";
 import { isPermissionAuthorized } from "../../utils/permission.utils";
+import { getMyPreferredMicrophone } from "../../utils/user.utils";
 
 /**
  * Keeps the capture device in step with the "keep microphone ready" preference.
@@ -63,9 +64,7 @@ export const MicrophoneReadinessSideEffects = () => {
   // The device a press will ask for, read here so the hold opens the same one.
   // Passed down to `hold` by each caller rather than stashed in a ref: a ref
   // write during render is the one thing React may replay or throw away.
-  const preferredMicrophone = useAppStore(
-    (state) => state.onboarding.preferredMicrophone ?? null,
-  );
+  const preferredMicrophone = useAppStore(getMyPreferredMicrophone);
   const isRecording = useAppStore(
     (state) => state.activeRecordingMode !== null,
   );
@@ -737,7 +736,7 @@ export const MicrophoneReadinessSideEffects = () => {
       const state = getAppState();
       return {
         preroll: state.userPrefs?.microphonePrerollSeconds ?? 0.5,
-        device: state.onboarding.preferredMicrophone ?? null,
+        device: getMyPreferredMicrophone(state),
       };
     };
 

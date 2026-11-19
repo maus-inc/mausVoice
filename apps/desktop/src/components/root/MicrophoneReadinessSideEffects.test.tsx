@@ -128,11 +128,10 @@ const setState = (overrides: Record<string, unknown>) => {
       keepMicrophoneReady: true,
       microphonePrerollSeconds: 0.5,
       microphoneLingerMs: 0,
+      preferredMicrophone: null,
     },
     activeRecordingMode: null,
-    // Always present in the real store; `preferredMicrophone` is the device a
-    // press asks for, so it is also the one a hold has to open.
-    onboarding: { preferredMicrophone: null },
+    onboarding: { preferredMicrophone: "Stale onboarding microphone" },
     permissions: { microphone: { state: "authorized" } },
     settings: { microphoneHeld: null },
     ...overrides,
@@ -193,7 +192,10 @@ describe("MicrophoneReadinessSideEffects", () => {
     // the automatic device made that press pay the cold open the preference
     // exists to remove.
     setState({
-      onboarding: { preferredMicrophone: "Shure MV7" },
+      userPrefs: {
+        keepMicrophoneReady: true,
+        preferredMicrophone: "Shure MV7",
+      },
     });
     await render();
 
@@ -205,11 +207,21 @@ describe("MicrophoneReadinessSideEffects", () => {
     // A stream is bound to the device it was built on and cannot follow the
     // preference, so keeping the hold would serve the next press from the device
     // the user just moved away from.
-    setState({ onboarding: { preferredMicrophone: "Shure MV7" } });
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        preferredMicrophone: "Shure MV7",
+      },
+    });
     await render();
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
 
-    setState({ onboarding: { preferredMicrophone: "MacBook Pro Microphone" } });
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        preferredMicrophone: "MacBook Pro Microphone",
+      },
+    });
     await render();
 
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
