@@ -203,6 +203,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
         long_press_start_y: Cell::new(0.0),
+        locate_active: Cell::new(false),
+        locate_elapsed: Cell::new(0.0),
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
         inflate_t: Cell::new(0.0),
@@ -646,6 +648,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.flash_blue_active.set(true);
                     state_tick.flash_blue_elapsed.set(0.0);
                 }
+                InMessage::Locate => {
+                    start_locate(&state_tick);
+                }
                 InMessage::BroadcastTranscript { text } => {
                     *state_tick.transcript_text.borrow_mut() = text;
                     state_tick.transcript_time_since_update.set(0.0);
@@ -861,6 +866,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             state_tick.visibility.get().into(),
             state_tick.phase.get() != Phase::Idle,
             state_tick.owns_panel(),
+            state_tick.locate_active.get(),
         );
         if should_show {
             win_tick.show();
@@ -1411,6 +1417,7 @@ fn clear_flash(state: &PillState) {
 
 fn tick(state: &PillState, dt: f64) {
     tick_long_press(state, dt);
+    tick_locate(state, dt);
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
     let is_loading = phase == Phase::Loading;
@@ -1732,7 +1739,10 @@ fn tick_long_press(state: &PillState, dt: f64) {
 /// platform renderers cannot drift apart; this only marshals `Cell` state in
 /// and out of the shared struct.
 fn tick_ring(state: &PillState, dt: f64) {
-    let held = state.dragging.get()
+    let locating = state.locate_active.get();
+    let locate_elapsed = state.locate_elapsed.get();
+    let held = (locating && rust_pill_shared::locate_held(locate_elapsed))
+        || state.dragging.get()
         || (state.long_press_active.get()
             && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
 
@@ -1750,10 +1760,14 @@ fn tick_ring(state: &PillState, dt: f64) {
         rust_pill_shared::RingTick {
             held,
             dragging: state.dragging.get(),
-            progress: draw::long_press_progress(state.long_press_elapsed.get()),
+            progress: if locating {
+                rust_pill_shared::locate_progress(locate_elapsed)
+            } else {
+                draw::long_press_progress(state.long_press_elapsed.get())
+            },
             delta_seconds: dt,
         },
-        LONG_PRESS_HOLD_DELAY,
+        if locating { 0.0 } else { LONG_PRESS_HOLD_DELAY },
     );
 
     state.ring_alpha.set(anim.alpha);
@@ -1762,6 +1776,49 @@ fn tick_ring(state: &PillState, dt: f64) {
     state.release_elapsed.set(anim.release_elapsed);
     state.arm_t.set(anim.arm_t);
     state.arm_pulse.set(anim.arm_pulse);
+}
+
+/// Begins a locate replay from a clean ring state. A second trigger restarts
+/// the sweep instead of inheriting the previous fade. A live pointer gesture
+/// wins, so the replay never wipes an in-progress press.
+fn start_locate(state: &PillState) {
+    if state.pointer_down.get() || state.long_press_active.get() || state.dragging.get() {
+        return;
+    }
+    state.locate_active.set(true);
+    state.locate_elapsed.set(0.0);
+    reset_locate_ring(state);
+}
+
+fn reset_locate_ring(state: &PillState) {
+    let reset = rust_pill_shared::RingAnim::default();
+    state.ring_alpha.set(reset.alpha);
+    state.ring_release_progress.set(reset.release_progress);
+    state.press_elapsed.set(reset.press_elapsed);
+    state.release_elapsed.set(reset.release_elapsed);
+    state.arm_t.set(reset.arm_t);
+    state.arm_pulse.set(reset.arm_pulse);
+}
+
+/// Advances the locate replay and hands the ring back when it ends. A real
+/// pointer gesture wins and takes the ring over from a clean state.
+fn tick_locate(state: &PillState, dt: f64) {
+    let cancelled =
+        state.pointer_down.get() || state.long_press_active.get() || state.dragging.get();
+    let step = rust_pill_shared::advance_locate(
+        state.locate_active.get(),
+        state.locate_elapsed.get(),
+        dt,
+        cancelled,
+    );
+    if step.arm_pulse {
+        state.arm_pulse.set(rust_pill_shared::pulse_armed());
+    }
+    state.locate_active.set(step.active);
+    state.locate_elapsed.set(step.elapsed);
+    if cancelled {
+        reset_locate_ring(state);
+    }
 }
 
 fn tick_fireworks(state: &PillState) {

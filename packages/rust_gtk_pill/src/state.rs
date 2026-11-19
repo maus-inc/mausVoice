@@ -239,6 +239,10 @@ pub(crate) struct PillState {
     pub(crate) long_press_elapsed: Cell<f64>,
     pub(crate) long_press_start_x: Cell<f64>,
     pub(crate) long_press_start_y: Cell<f64>,
+    // Locate indication replay. Drives the shared ring driver from a timer,
+    // never from pointer, hover or drag state.
+    pub(crate) locate_active: Cell<bool>,
+    pub(crate) locate_elapsed: Cell<f64>,
     pub(crate) dragging: Cell<bool>,
     pub(crate) drag_cancelled: Cell<bool>,
     // Inflate animation — pill slightly expands when entering drag, contracts on release.

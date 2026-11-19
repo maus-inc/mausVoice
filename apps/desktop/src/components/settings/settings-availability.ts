@@ -44,6 +44,14 @@ export const useSettingsAvailability = (): SettingAvailability => {
       supportsCorrectionWatch: platform === "macos" || platform === "windows",
       isWindows: platform === "windows",
       pillPlacementAvailable: isPillPlacementAvailable(),
+      // Unknown until the native side reports its strategy. A Wayland session
+      // has no global key source, so the double-tap cannot be detected there
+      // and the row stays hidden instead of offering a switch that does
+      // nothing.
+      locateGestureAvailable:
+        state.hotkeyStrategy === null
+          ? undefined
+          : state.hotkeyStrategy === "listener",
       changePassword: loggedIn && getHasEmailProvider(state),
       signOut: loggedIn,
       deleteAccount: loggedIn,
@@ -61,6 +69,7 @@ export const useSettingsAvailability = (): SettingAvailability => {
     supportsCorrectionWatch,
     isWindows,
     pillPlacementAvailable,
+    locateGestureAvailable,
     changePassword,
     signOut,
     deleteAccount,
@@ -85,6 +94,7 @@ export const useSettingsAvailability = (): SettingAvailability => {
       learn_from_corrections: supportsCorrectionWatch,
       always_run_as_administrator: isWindows,
       pill_placement: pillPlacementAvailable,
+      show_pill_position_with_modifier_double_tap: locateGestureAvailable,
       elevenlabs_keyterms: apiKeysKnown
         ? transcriptionProvider === "elevenlabs"
         : undefined,
@@ -102,6 +112,7 @@ export const useSettingsAvailability = (): SettingAvailability => {
       supportsCorrectionWatch,
       isWindows,
       pillPlacementAvailable,
+      locateGestureAvailable,
       transcriptionProvider,
       audioDisclosureVisible,
       changePassword,

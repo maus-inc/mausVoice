@@ -152,6 +152,9 @@ pub enum InMessage {
         message: String,
     },
     FlashBlue,
+    /// Replay the long-press outline at the pill's current position. Visual
+    /// only: no pointer, drag or long-press state is touched.
+    Locate,
     BroadcastTranscript {
         text: String,
     },

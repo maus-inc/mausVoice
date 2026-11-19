@@ -179,6 +179,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   typingSpeedMs: null,
   handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
   inDictationStyleSwitchingEnabled: false,
+  pillLocateGestureModifier: "none",
   hallucinationFilterEnabled: true,
   fastStyleShortDictationsEnabled: true,
   reviewBeforeInsert: null,

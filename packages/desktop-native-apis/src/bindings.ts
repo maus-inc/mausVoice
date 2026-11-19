@@ -1527,7 +1527,12 @@ pillPlacement?: string;
  * Delay (ms) between a hands-free stop and the actual paste/type
  * action. NULL disables the delay (immediate paste on stop).
  */
-handsFreeDelayMs?: number | null; inDictationStyleSwitchingEnabled?: boolean; hallucinationFilterEnabled?: boolean; 
+handsFreeDelayMs?: number | null; inDictationStyleSwitchingEnabled?: boolean; 
+/**
+ * Which modifier double-tap replays the pill outline. Accepted values are
+ * "none", "alt", "shift" and "control"; the default disables the gesture.
+ */
+pillLocateGestureModifier?: string; hallucinationFilterEnabled?: boolean; 
 /**
  * Style short dictations with the deterministic local transforms instead
  * of the configured provider. Default on.

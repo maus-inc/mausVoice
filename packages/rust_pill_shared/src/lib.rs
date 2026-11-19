@@ -158,11 +158,20 @@ pub fn safety_notice_top(
 /// decision. Both put something on the pill that the user has to answer, so
 /// they override the preference: hiding the pill would leave the user with no
 /// way to respond and the desktop waiting forever.
+///
+/// `indication_active` is the locate replay. It overrides every preference for
+/// the length of the animation, then the pill returns to the preference state
+/// without writing it. That is the only way a hidden pill can answer a
+/// request to show where it is.
 pub const fn should_show_pill(
     preference: PillVisibility,
     is_active: bool,
     owns_surface: bool,
+    indication_active: bool,
 ) -> bool {
+    if indication_active {
+        return true;
+    }
     match preference {
         PillVisibility::Hidden => owns_surface,
         PillVisibility::WhileActive => is_active || owns_surface,
@@ -1327,6 +1336,79 @@ pub fn pulse_is_running(arm_pulse: f64) -> bool {
     arm_pulse >= 0.0
 }
 
+/// Time the locate outline takes to sweep the pill once. It is longer than the
+/// long-press fill because it starts without the press delay, and a deliberate
+/// double-tap is already a confirmed request.
+pub const LOCATE_FILL_SECONDS: f64 = 0.45;
+
+/// Whether a locate indication started `elapsed` seconds ago is still running.
+///
+/// The window covers the sweep plus the longer of the release fade and the
+/// confirmation pulse, so the shared visibility policy keeps a hidden pill on
+/// screen until every layer has finished.
+pub fn locate_active(elapsed: f64) -> bool {
+    let tail = if RING_PULSE_DURATION > LONG_PRESS_RING_FADE {
+        RING_PULSE_DURATION
+    } else {
+        LONG_PRESS_RING_FADE
+    };
+    (0.0..LOCATE_FILL_SECONDS + tail).contains(&elapsed)
+}
+
+/// Whether the locate ring is still sweeping rather than fading out.
+pub fn locate_held(elapsed: f64) -> bool {
+    elapsed < LOCATE_FILL_SECONDS
+}
+
+/// Fill progress for the locate indication, using the long-press ramp with no
+/// press delay. The renderer receives the same value shape a real hold sends.
+pub fn locate_progress(elapsed: f64) -> f64 {
+    hold_progress(elapsed, 0.0, LOCATE_FILL_SECONDS)
+}
+
+/// One frame of the locate replay, resolved from the current state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LocateStep {
+    pub active: bool,
+    pub elapsed: f64,
+    /// True on the frame the sweep completes and the confirmation pulse starts.
+    pub arm_pulse: bool,
+}
+
+/// Advances the locate replay. A pointer gesture cancels it before any ring
+/// state is written, so the three pill crates share one rule for the cancel,
+/// the fill crossing and the end of the window.
+pub fn advance_locate(
+    active: bool,
+    elapsed: f64,
+    delta_seconds: f64,
+    cancelled: bool,
+) -> LocateStep {
+    if !active || cancelled {
+        return LocateStep {
+            active: false,
+            elapsed: 0.0,
+            arm_pulse: false,
+        };
+    }
+
+    let next = elapsed + delta_seconds.max(0.0);
+    let arm_pulse = elapsed < LOCATE_FILL_SECONDS && next >= LOCATE_FILL_SECONDS;
+    if !locate_active(next) {
+        return LocateStep {
+            active: false,
+            elapsed: 0.0,
+            arm_pulse,
+        };
+    }
+
+    LocateStep {
+        active: true,
+        elapsed: next,
+        arm_pulse,
+    }
+}
+
 /// Advances one frame of ring animation.
 ///
 /// Call once per tick, before drawing. Starting a pulse is the caller's job
@@ -2450,7 +2532,7 @@ mod tests {
             let owns_attention = is_recording_stop_safety_notice(visible, false, action);
             assert_eq!(owns_attention, expected);
             assert_eq!(
-                should_show_pill(PillVisibility::Hidden, true, owns_attention),
+                should_show_pill(PillVisibility::Hidden, true, owns_attention, false),
                 expected
             );
         }
@@ -2480,27 +2562,187 @@ mod tests {
 
     #[test]
     fn hidden_pill_stays_hidden_while_recording() {
-        assert!(!should_show_pill(PillVisibility::Hidden, true, false));
-        assert!(!should_show_pill(PillVisibility::Hidden, false, false));
+        assert!(!should_show_pill(
+            PillVisibility::Hidden,
+            true,
+            false,
+            false
+        ));
+        assert!(!should_show_pill(
+            PillVisibility::Hidden,
+            false,
+            false,
+            false
+        ));
     }
 
     #[test]
     fn hidden_pill_still_shows_when_it_owns_the_surface() {
-        assert!(should_show_pill(PillVisibility::Hidden, false, true));
-        assert!(should_show_pill(PillVisibility::Hidden, true, true));
+        assert!(should_show_pill(PillVisibility::Hidden, false, true, false));
+        assert!(should_show_pill(PillVisibility::Hidden, true, true, false));
     }
 
     #[test]
     fn while_active_shows_only_when_busy() {
-        assert!(!should_show_pill(PillVisibility::WhileActive, false, false));
-        assert!(should_show_pill(PillVisibility::WhileActive, true, false));
-        assert!(should_show_pill(PillVisibility::WhileActive, false, true));
+        assert!(!should_show_pill(
+            PillVisibility::WhileActive,
+            false,
+            false,
+            false
+        ));
+        assert!(should_show_pill(
+            PillVisibility::WhileActive,
+            true,
+            false,
+            false
+        ));
+        assert!(should_show_pill(
+            PillVisibility::WhileActive,
+            false,
+            true,
+            false
+        ));
     }
 
     #[test]
     fn persistent_always_shows() {
-        assert!(should_show_pill(PillVisibility::Persistent, false, false));
-        assert!(should_show_pill(PillVisibility::Persistent, true, false));
+        assert!(should_show_pill(
+            PillVisibility::Persistent,
+            false,
+            false,
+            false
+        ));
+        assert!(should_show_pill(
+            PillVisibility::Persistent,
+            true,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn locate_indication_reveals_a_hidden_pill_without_changing_the_preference() {
+        for preference in [
+            PillVisibility::Hidden,
+            PillVisibility::WhileActive,
+            PillVisibility::Persistent,
+        ] {
+            assert!(should_show_pill(preference, false, false, true));
+            assert!(
+                !should_show_pill(preference, false, false, false)
+                    || preference == PillVisibility::Persistent
+            );
+        }
+    }
+
+    #[test]
+    fn locate_timeline_sweeps_then_fades_inside_its_pulse_window() {
+        let tail = if RING_PULSE_DURATION > LONG_PRESS_RING_FADE {
+            RING_PULSE_DURATION
+        } else {
+            LONG_PRESS_RING_FADE
+        };
+        assert!(locate_held(0.0));
+        assert!(locate_held(LOCATE_FILL_SECONDS - 0.01));
+        assert!(!locate_held(LOCATE_FILL_SECONDS));
+        assert!(locate_active(0.0));
+        assert!(locate_active(LOCATE_FILL_SECONDS));
+        assert!(locate_active(LOCATE_FILL_SECONDS + tail - 0.01));
+        assert!(!locate_active(LOCATE_FILL_SECONDS + tail));
+        assert!(!locate_active(-0.01));
+        assert!(!locate_active(f64::NAN));
+    }
+
+    #[test]
+    fn locate_progress_fills_monotonically_and_arrives_complete() {
+        assert_eq!(locate_progress(0.0), 0.0);
+        assert!(locate_progress(0.01) > 0.0);
+        assert_eq!(locate_progress(LOCATE_FILL_SECONDS), 1.0);
+        let mut previous = 0.0;
+        for step in 0..20 {
+            let progress = locate_progress(LOCATE_FILL_SECONDS * step as f64 / 19.0);
+            assert!(progress >= previous);
+            previous = progress;
+        }
+    }
+
+    #[test]
+    fn locate_step_cancels_before_writing_ring_state() {
+        let cancelled = advance_locate(true, LOCATE_FILL_SECONDS * 0.5, 0.016, true);
+        assert_eq!(
+            cancelled,
+            LocateStep {
+                active: false,
+                elapsed: 0.0,
+                arm_pulse: false
+            }
+        );
+        let inactive = advance_locate(false, 0.0, 0.016, false);
+        assert!(!inactive.active);
+        assert_eq!(inactive.elapsed, 0.0);
+    }
+
+    #[test]
+    fn locate_step_arms_the_pulse_at_the_fill_boundary_and_ends_cleanly() {
+        let before = advance_locate(true, 0.0, 0.01, false);
+        assert!(before.active);
+        assert!(!before.arm_pulse);
+        assert!((before.elapsed - 0.01).abs() < 1e-9);
+
+        let crossing = advance_locate(true, LOCATE_FILL_SECONDS - 0.01, 0.02, false);
+        assert!(crossing.active);
+        assert!(crossing.arm_pulse);
+
+        let end = advance_locate(
+            true,
+            LOCATE_FILL_SECONDS + RING_PULSE_DURATION,
+            0.016,
+            false,
+        );
+        assert!(!end.active);
+        assert_eq!(end.elapsed, 0.0);
+    }
+
+    #[test]
+    fn locate_step_is_stable_across_random_frame_times_and_cancels_cleanly() {
+        let mut seed: u64 = 0x335335;
+        let mut random = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 33) as f64 / (1u64 << 31) as f64
+        };
+        let tail = if RING_PULSE_DURATION > LONG_PRESS_RING_FADE {
+            RING_PULSE_DURATION
+        } else {
+            LONG_PRESS_RING_FADE
+        };
+
+        for _ in 0..2000 {
+            let mut active = true;
+            let mut elapsed = 0.0;
+            let mut pulses = 0;
+            for _ in 0..100 {
+                let dt = random() * 0.05;
+                let step = advance_locate(active, elapsed, dt, false);
+                if step.arm_pulse {
+                    pulses += 1;
+                }
+                if !step.active {
+                    assert_eq!(step.elapsed, 0.0);
+                    break;
+                }
+                assert!(step.elapsed >= elapsed);
+                assert!(step.elapsed < LOCATE_FILL_SECONDS + tail);
+                active = step.active;
+                elapsed = step.elapsed;
+            }
+            assert!(pulses <= 1);
+
+            let cancel_at = random() * (LOCATE_FILL_SECONDS + tail);
+            let cancelled = advance_locate(true, cancel_at, random() * 0.05, true);
+            assert!(!cancelled.active);
+            assert_eq!(cancelled.elapsed, 0.0);
+            assert!(!cancelled.arm_pulse);
+        }
     }
 
     #[test]

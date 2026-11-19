@@ -1,5 +1,6 @@
 import type {
   DictationPillVisibility,
+  PillLocateGestureModifier,
   PillResetMonitorStrategy,
 } from "@maus-inc/types";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -8,6 +9,7 @@ import { produceAppState, useAppStore } from "../../../store";
 import {
   setDictationPillVisibility,
   setMenuBarIconHidden,
+  setPillLocateGestureModifier,
   setPillResetMonitorStrategy,
 } from "../../../actions/user.actions";
 import { logOnRejection } from "../../../utils/promise.utils";
@@ -16,6 +18,7 @@ import {
   getMyUserPreferences,
 } from "../../../utils/user.utils";
 import { SegmentedControl } from "../../common/SegmentedControl";
+import { PillLocateModifierSetting } from "../PillLocateModifierSetting";
 import { PillPlacementSetting } from "../PillPlacementSetting";
 import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
 import { useSettingsAvailability } from "../settings-availability";
@@ -26,6 +29,7 @@ export default function AppearanceSettingsPage() {
   const [
     pillVisibility,
     pillResetMonitorStrategy,
+    pillLocateGestureModifier,
     menuBarIconHidden,
     disablePillRewards,
   ] = useAppStore((state) => {
@@ -33,6 +37,7 @@ export default function AppearanceSettingsPage() {
     return [
       getEffectivePillVisibility(preferences?.dictationPillVisibility),
       preferences?.pillResetMonitorStrategy ?? "current",
+      preferences?.pillLocateGestureModifier ?? "none",
       preferences?.menuBarIconHidden ?? false,
       state.local.disablePillRewards,
     ] as const;
@@ -56,6 +61,13 @@ export default function AppearanceSettingsPage() {
     logOnRejection(
       setMenuBarIconHidden(!event.target.checked),
       "settings page: setMenuBarIconHidden",
+    );
+  };
+
+  const handleTogglePillLocateGesture = (value: PillLocateGestureModifier) => {
+    logOnRejection(
+      setPillLocateGestureModifier(value),
+      "settings page: setPillLocateGestureModifier",
     );
   };
 
@@ -105,6 +117,26 @@ export default function AppearanceSettingsPage() {
           }
         />
         {availability.pill_placement && <PillPlacementSetting />}
+        {availability.show_pill_position_with_modifier_double_tap && (
+          <SettingRow
+            settingKey="show_pill_position_with_modifier_double_tap"
+            title={
+              <FormattedMessage defaultMessage="Show pill position with modifier double-tap" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Double-tap the chosen key to briefly highlight the current position of the mausVoice pill." />
+            }
+            control={
+              <PillLocateModifierSetting
+                value={pillLocateGestureModifier}
+                onChange={handleTogglePillLocateGesture}
+                ariaLabel={intl.formatMessage({
+                  defaultMessage: "Pill position modifier",
+                })}
+              />
+            }
+          />
+        )}
         <SettingRow
           settingKey="reset_pill_position"
           title={<FormattedMessage defaultMessage="Reset pill position" />}
