@@ -12,7 +12,7 @@ This document is the elaboration for the Proactive Problem Solving Protocol HARD
 
 The user's request authorizes the work it describes. Assess risk, plan, run the depth pass, implement, verify and report in the same task. Do not pause for discussion, plan approval or a separate `go` on a request to implement, refine or continue. Ask only about material ambiguity, proposed scope expansion or an action repository policy reserves for the human. Merging still requires the exact human confirmation in `AGENTS.md`.
 
-For a repository change that is not local-only, start with a draft PR as soon as the scope, acceptance criteria and base are clear. Push the first scoped commit after its pre-push checks and open or reuse the draft against the actual base. Keep subsequent verified checkpoints on that remote branch. A draft saves work; it does not declare the work ready for review or merge.
+Keep repository changes local unless the user authorizes remote work, directly or through a standing draft-first instruction. For authorized remote work, start with a draft PR as soon as the scope, acceptance criteria and base are clear. Push the first scoped commit after its pre-push checks and open or reuse the draft against the actual base. Keep subsequent verified checkpoints on that remote branch. A draft saves work; it does not declare the work ready for review or merge.
 
 Include one folded `Draft roadmap` from the first push. Give the next agent the authorized outcome, milestone status, next action and any blocker that changes it. Reconcile it with each push: replace stale scope or initiatives in place, prune finished detail and link to evidence instead of repeating history.
 
