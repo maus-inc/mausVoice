@@ -4,7 +4,9 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from queue import Empty, Queue
+from tempfile import TemporaryDirectory
 from threading import Thread
 from time import monotonic, sleep
 
@@ -47,12 +49,25 @@ def check(pill, screen):
         send("request_position")
         receive("position_changed")
 
-    def owns_focus():
-        window = screen.get_input_focus().focus
+    def belongs_to_pill(window):
         if not hasattr(window, "get_full_property"):
             return False
         pid = window.get_full_property(screen.intern_atom("_NET_WM_PID"), X.AnyPropertyType)
         return pid is not None and pid.value[0] == pill.pid
+
+    def owns_focus():
+        return belongs_to_pill(screen.get_input_focus().focus)
+
+    def wait_visible(expected):
+        deadline = monotonic() + 5
+        while monotonic() < deadline:
+            windows = screen.screen().root.query_tree().children
+            visible = any(belongs_to_pill(w) and w.get_attributes().map_state == X.IsViewable
+                          for w in windows)
+            if visible == expected:
+                return
+            sleep(0.02)
+        raise AssertionError(f"pill did not become {'visible' if expected else 'hidden'}")
 
     def key(name):
         assert owns_focus(), "GTK pill does not own keyboard focus"
@@ -62,15 +77,27 @@ def check(pill, screen):
         screen.sync()
 
     receive("ready")
+    send("request_position")
+    receive("position_changed")  # The IPC loop is running, past initial show_all.
+    # The default visibility is while_active. An accepted wire phase must change
+    # the actual window, not just pass the shared indicator's own unit tests.
+    wait_visible(False)
+    send("phase", phase="recording", seq=1)
+    wait_visible(True)
+    send("phase", phase="idle", seq=2)
+    wait_visible(False)
     send("visibility", visibility="persistent")
     set_review(None)
     deadline = monotonic() + 5
     while not owns_focus() and monotonic() < deadline:
         sleep(0.02)
-    key("Escape")
+    key("a")
+    key("b")
+    key("Escape")  # The test entry binds this to backspace.
     key("x")
     key("Return")
-    assert receive("typed_message") == {"type": "typed_message", "text": "x"}
+    typed = receive("typed_message")
+    assert typed == {"type": "typed_message", "text": "ax"}, typed
 
     set_review({"id": "edit", "text": ""})
     key("x")
@@ -90,17 +117,30 @@ def check(pill, screen):
     assert pill.wait(timeout=3) == 0
 
 
+def run_pill(binary, connection, config):
+    env = {**os.environ, "GDK_BACKEND": "x11", "XDG_CONFIG_HOME": config}
+    with subprocess.Popen(
+        [binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        text=True, encoding="utf-8", env=env,
+    ) as child:
+        try:
+            check(child, connection)
+        finally:
+            if child.poll() is None:
+                child.kill()
+
+
 if __name__ == "__main__":
     connection = display.Display()
     try:
-        with subprocess.Popen(
-            [sys.argv[1]], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            text=True, encoding="utf-8", env={**os.environ, "GDK_BACKEND": "x11"},
-        ) as child:
-            try:
-                check(child, connection)
-            finally:
-                if child.poll() is None:
-                    child.kill()
+        with TemporaryDirectory() as config:
+            # Give an unhandled Escape an observable native GtkEntry action.
+            # Only the tested child sees this binding; a swallowed key leaves "abx".
+            theme = Path(config, "gtk-3.0")
+            theme.mkdir()
+            (theme / "gtk.css").write_text(
+                '@binding-set probe { bind "Escape" { "backspace" () }; }\n'
+                'entry { -gtk-key-bindings: probe; }\n', encoding="utf-8")
+            run_pill(sys.argv[1], connection, config)
     finally:
         connection.close()

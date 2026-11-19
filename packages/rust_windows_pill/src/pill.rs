@@ -2412,6 +2412,17 @@ mod tests {
     }
 
     #[test]
+    fn a_recording_phase_message_dismisses_the_idle_banner() {
+        let state = initial_state();
+        state.flash_visible.set(true);
+        let message =
+            serde_json::from_str(r#"{"type":"phase","phase":"recording","seq":7}"#).unwrap();
+        process_message(message, &state, HWND::default());
+        assert_eq!(state.phase.get(), Phase::Recording);
+        assert!(!state.flash_visible.get());
+    }
+
+    #[test]
     fn capture_loss_consumes_the_drag_but_not_the_next_click() {
         let state = initial_state();
         let hwnd = HWND::default();
