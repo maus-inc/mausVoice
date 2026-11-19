@@ -1,4 +1,5 @@
 use rust_pill_shared::clock::monotonic_now as drag_now;
+use rust_pill_shared::review_key::{handle_review_key, ReviewKey};
 use std::cell::{Cell, RefCell};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -419,23 +420,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_KEYDOWN => {
-            if wparam.0 == VK_ESCAPE.0 as usize {
-                STATE.with(|s| {
-                    if let Some(ref state) = *s.borrow() {
-                        // Escape while a transcript is under review is a
-                        // cancel decision: the desktop is waiting for an answer.
-                        match state.pending_review_id() {
-                            Some(review_id) => {
-                                let _ = input::send_review_decision(&review_id, "cancel", None);
-                            }
-                            None => {
-                                if state.is_typing() {
-                                    ipc::send(&OutMessage::AssistantClose);
-                                }
-                            }
-                        }
-                    }
-                });
+            if handle_window_review_key(wparam.0) == ReviewKey::EscapeWithoutReview
+                && STATE.with(|s| s.borrow().as_ref().is_some_and(|state| state.is_typing()))
+            {
+                ipc::send(&OutMessage::AssistantClose);
             }
             LRESULT(0)
         }
@@ -2310,6 +2298,21 @@ unsafe extern "system" fn edit_container_proc(
     }
 }
 
+fn handle_window_review_key(key: usize) -> ReviewKey {
+    handle_review_key(
+        key,
+        VK_ESCAPE.0 as usize,
+        || {
+            STATE.with(|s| {
+                s.borrow()
+                    .as_ref()
+                    .and_then(|state| state.pending_review_id())
+            })
+        },
+        input::send_review_decision,
+    )
+}
+
 /// Intercepts messages for the Edit control before TranslateMessage/DispatchMessage.
 /// Returns true if the message was consumed and should not be dispatched.
 fn handle_edit_message(msg: &MSG) -> bool {
@@ -2337,24 +2340,16 @@ fn handle_edit_message(msg: &MSG) -> bool {
                     }
                 }
                 return true;
-            } else if msg.wParam.0 == VK_ESCAPE.0 as usize {
-                // Escape while a transcript is under review is a cancel
-                // decision: the desktop is waiting for an answer.
-                let review_id = STATE.with(|s| {
-                    s.borrow()
-                        .as_ref()
-                        .and_then(|state| state.pending_review_id())
-                });
-                match review_id {
-                    Some(review_id) => {
-                        let _ = input::send_review_decision(&review_id, "cancel", None);
-                    }
-                    None => {
-                        let _ = ipc::send(&OutMessage::AssistantClose);
-                    }
+            }
+            match handle_window_review_key(msg.wParam.0) {
+                ReviewKey::CancelRequested => return true,
+                ReviewKey::EscapeWithoutReview => {
+                    ipc::send(&OutMessage::AssistantClose);
+                    return true;
                 }
-                return true;
-            } else if ctrl && msg.wParam.0 == 'A' as usize {
+                ReviewKey::Other => {}
+            }
+            if ctrl && msg.wParam.0 == 'A' as usize {
                 // Select all
                 unsafe {
                     SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));

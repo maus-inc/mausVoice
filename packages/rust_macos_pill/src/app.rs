@@ -23,6 +23,7 @@ use crate::nsstring::with_ns_string;
 use rust_pill_shared::clock::monotonic_now as drag_now;
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
+use rust_pill_shared::review_key::{handle_review_key, ReviewKey};
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -489,10 +490,7 @@ extern "C" fn control_do_command(
     _text_view: id,
     command: Sel,
 ) -> BOOL {
-    if command != sel!(cancelOperation:) {
-        return NO;
-    }
-    if cancel_pending_review() {
+    if handle_review_command(command) == ReviewKey::CancelRequested {
         YES
     } else {
         NO
@@ -503,21 +501,17 @@ extern "C" fn control_do_command(
 ///
 /// The chain deliberately stops here: an Escape with no review to answer must
 /// not travel up to the panel, which would close the pill window.
-extern "C" fn cancel_operation(_this: &Object, _sel: Sel, _sender: id) {
-    cancel_pending_review();
+extern "C" fn cancel_operation(_this: &Object, command: Sel, _sender: id) {
+    handle_review_command(command);
 }
 
-/// Send a cancel decision for the transcript under review, if there is one.
-/// Returns whether a review was cancelled.
-fn cancel_pending_review() -> bool {
-    with_ctx(|ctx| match ctx.state.pending_review_id() {
-        Some(review_id) => {
-            input::send_review_decision(&review_id, "cancel", None);
-            true
-        }
-        None => false,
-    })
-    .unwrap_or(false)
+fn handle_review_command(command: Sel) -> ReviewKey {
+    handle_review_key(
+        command,
+        sel!(cancelOperation:),
+        || with_ctx(|ctx| ctx.state.pending_review_id()).flatten(),
+        input::send_review_decision,
+    )
 }
 
 /// Put `text` in the panel's text field. Used to load a transcript into the

@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 // `FcConfigAppFontAddFile` takes a NULLABLE config: NULL means "the current config", which
 // fontconfig creates on demand and which is the one Pango and Cairo actually resolve fonts
 // through. Nothing here owns a config, so there is nothing to free.
+#[link(name = "fontconfig")]
 extern "C" {
     fn FcConfigAppFontAddFile(config: *mut std::ffi::c_void, file: *const std::ffi::c_char) -> i32;
 }

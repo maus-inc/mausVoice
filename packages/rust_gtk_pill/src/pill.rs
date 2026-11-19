@@ -8,6 +8,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
 pub(crate) use rust_pill_shared::clock::monotonic_now as drag_clock_now;
+use rust_pill_shared::review_key::{handle_review_key, ReviewKey};
 
 use crate::constants::*;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
@@ -514,15 +515,16 @@ pub fn run(receiver: Receiver<InMessage>) {
         // same as on the Windows pill: the desktop is waiting for an answer.
         // The window sees the key before the focused entry does, so this works
         // whether or not the entry holds the keyboard.
-        if event.keyval() != gdk::keys::constants::Escape {
-            return glib::Propagation::Proceed;
-        }
-        match state_escape.pending_review_id() {
-            Some(review_id) => {
-                input::send_review_decision(&review_id, "cancel", None);
-                glib::Propagation::Stop
-            }
-            None => glib::Propagation::Proceed,
+        if handle_review_key(
+            event.keyval(),
+            gdk::keys::constants::Escape,
+            || state_escape.pending_review_id(),
+            input::send_review_decision,
+        ) == ReviewKey::CancelRequested
+        {
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
         }
     });
 
