@@ -275,149 +275,25 @@ pub fn run(receiver: Receiver<InMessage>) {
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_TIMER => {
-            let timer_id = wparam.0;
-            if timer_id == TIMER_CURSOR {
+            if wparam.0 == TIMER_CURSOR {
                 on_cursor_tick(hwnd);
             }
-            LRESULT(0)
         }
-        WM_MOUSEMOVE => {
-            let raw_x = (lparam.0 & 0xFFFF) as i16 as f64;
-            let raw_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    let (ox, oy) = state.content_offset();
-                    let x = raw_x - ox;
-                    let y = raw_y - oy;
-                    state.mouse_x.set(x);
-                    state.mouse_y.set(y);
-                    let regions = state.click_regions.borrow();
-                    let hit = regions.iter().rev().find(|r| r.contains(x, y));
-                    let cursor_id = match hit {
-                        Some(r) if matches!(r.action, ClickAction::InputField) => IDC_IBEAM,
-                        Some(_) => IDC_HAND,
-                        None => IDC_ARROW,
-                    };
-                    unsafe {
-                        SetCursor(LoadCursorW(None, cursor_id).ok());
-                    }
-                }
-            });
-            LRESULT(0)
-        }
-        WM_SETCURSOR => {
-            let hit_test = (lparam.0 & 0xFFFF) as i16;
-            if hit_test == 1 {
-                // HTCLIENT
-                LRESULT(1)
-            } else {
-                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-            }
-        }
+        WM_MOUSEMOVE => with_pill_state(|state| on_mouse_move(state, mouse_position(lparam))),
+        WM_SETCURSOR if (lparam.0 & 0xFFFF) == HTCLIENT as isize => return LRESULT(1),
         WM_LBUTTONDOWN => {
-            let x = (lparam.0 & 0xFFFF) as i16 as f64;
-            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    if state.is_typing() {
-                        focus_edit_control();
-                    }
-                    // A fresh press owns its release, including selector clicks.
-                    state.drag_cancelled.set(false);
-                    // Start long-press tracking if clicking on the pill body
-                    if input::is_on_pill_at(state, x, y) {
-                        if state.drag_motion.borrow_mut().interrupt_settle() {
-                            persist_drag_position(hwnd, state);
-                        }
-                        state.pointer_down.set(true);
-                        state.long_press_active.set(true);
-                        state.long_press_elapsed.set(0.0);
-                        state.long_press_start_x.set(x);
-                        state.long_press_start_y.set(y);
-                    }
-                }
-            });
-            LRESULT(0)
+            with_pill_state(|state| on_button_down(hwnd, state, mouse_position(lparam)))
         }
-        WM_LBUTTONUP => {
-            let x = (lparam.0 & 0xFFFF) as i16 as f64;
-            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    // End any drag: persists the drop position and releases the
-                    // pointer capture. Returns whether a drag was in progress so
-                    // we can suppress the click that would otherwise follow.
-                    let was_dragging = end_drag(hwnd, state, true);
-                    // Cancel any in-progress long press
-                    state.long_press_active.set(false);
-                    state.long_press_elapsed.set(0.0);
-                    // The button is up, so hover stops being pinned.
-                    state.pointer_down.set(false);
-                    // Only fire click if the user wasn't dragging
-                    if !was_dragging && !state.drag_cancelled.get() {
-                        input::handle_click(state, x, y);
-                    }
-                    // Hover was pinned for the duration of the gesture; settle
-                    // it now that the pointer is free rather than waiting for
-                    // the next cursor tick.
-                    check_hover(hwnd, state);
-                }
-            });
-            LRESULT(0)
-        }
-        WM_CAPTURECHANGED => {
-            // Another window took the capture (task switch, lock screen, ...).
-            // Treat it as the end of the gesture and keep the pill where it is,
-            // otherwise `dragging` would stay latched on.
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    state.long_press_active.set(false);
-                    state.long_press_elapsed.set(0.0);
-                    // The gesture is over, so hover stops being pinned.
-                    state.pointer_down.set(false);
-                    // The capture is already gone, so only persist the position.
-                    let _ = end_drag(hwnd, state, true);
-                    // Settle hover now rather than staying pinned-expanded for
-                    // up to a full cursor tick. check_hover only reads state
-                    // and Cells, so it is safe under this immutable borrow.
-                    check_hover(hwnd, state);
-                }
-            });
-            LRESULT(0)
-        }
+        WM_LBUTTONUP => with_pill_state(|state| on_button_up(hwnd, state, mouse_position(lparam))),
+        WM_CAPTURECHANGED => with_pill_state(|state| on_capture_changed(hwnd, state)),
         WM_MOUSEWHEEL => {
             let delta = ((wparam.0 >> 16) & 0xFFFF) as i16 as f64;
-            let scroll = -delta / 120.0 * 30.0;
-            STATE.with(|s| {
-                if let Some(ref state) = *s.borrow() {
-                    input::handle_scroll(state, scroll);
-                }
-            });
-            LRESULT(0)
+            with_pill_state(|state| input::handle_scroll(state, -delta / 120.0 * 30.0));
         }
         WM_CHAR => {
-            let ch = char::from_u32(wparam.0 as u32);
-            if let Some(ch) = ch {
-                STATE.with(|s| {
-                    if let Some(ref state) = *s.borrow() {
-                        if ch == '\r' || ch == '\n' {
-                            // Enter submits: an insert decision while a
-                            // transcript is under review, a message to the
-                            // assistant otherwise.
-                            if input::submit_entry(state) {
-                                set_edit_text("");
-                            }
-                        } else if ch == '\u{8}' {
-                            // Backspace
-                            let mut t = state.entry_text.borrow_mut();
-                            t.pop();
-                        } else if !ch.is_control() {
-                            state.entry_text.borrow_mut().push(ch);
-                        }
-                    }
-                });
+            if let Some(ch) = char::from_u32(wparam.0 as u32) {
+                with_pill_state(|state| on_character(state, ch));
             }
-            LRESULT(0)
         }
         WM_KEYDOWN => {
             if handle_window_review_key(wparam.0) == ReviewKey::EscapeWithoutReview
@@ -425,15 +301,115 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             {
                 ipc::send(&OutMessage::AssistantClose);
             }
-            LRESULT(0)
         }
-        WM_DESTROY => {
-            unsafe {
-                PostQuitMessage(0);
-            }
-            LRESULT(0)
+        WM_DESTROY => unsafe { PostQuitMessage(0) },
+        _ => return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
+    LRESULT(0)
+}
+
+fn with_pill_state(f: impl FnOnce(&PillState)) {
+    STATE.with(|slot| {
+        if let Some(state) = slot.borrow().as_ref() {
+            f(state);
         }
-        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    });
+}
+
+fn mouse_position(lparam: LPARAM) -> (f64, f64) {
+    (
+        (lparam.0 & 0xFFFF) as i16 as f64,
+        ((lparam.0 >> 16) & 0xFFFF) as i16 as f64,
+    )
+}
+
+fn on_mouse_move(state: &PillState, (raw_x, raw_y): (f64, f64)) {
+    let (ox, oy) = state.content_offset();
+    let x = raw_x - ox;
+    let y = raw_y - oy;
+    state.mouse_x.set(x);
+    state.mouse_y.set(y);
+    let regions = state.click_regions.borrow();
+    let hit = regions.iter().rev().find(|r| r.contains(x, y));
+    let cursor_id = match hit {
+        Some(r) if matches!(r.action, ClickAction::InputField) => IDC_IBEAM,
+        Some(_) => IDC_HAND,
+        None => IDC_ARROW,
+    };
+    unsafe {
+        SetCursor(LoadCursorW(None, cursor_id).ok());
+    }
+}
+
+fn on_button_down(hwnd: HWND, state: &PillState, (x, y): (f64, f64)) {
+    if state.is_typing() {
+        focus_edit_control();
+    }
+    // A fresh press owns its release, including selector clicks.
+    state.drag_cancelled.set(false);
+    // Start long-press tracking if clicking on the pill body
+    if input::is_on_pill_at(state, x, y) {
+        if state.drag_motion.borrow_mut().interrupt_settle() {
+            persist_drag_position(hwnd, state);
+        }
+        state.pointer_down.set(true);
+        state.long_press_active.set(true);
+        state.long_press_elapsed.set(0.0);
+        state.long_press_start_x.set(x);
+        state.long_press_start_y.set(y);
+    }
+}
+
+fn on_button_up(hwnd: HWND, state: &PillState, (x, y): (f64, f64)) {
+    // End any drag: persists the drop position and releases the
+    // pointer capture. Returns whether a drag was in progress so
+    // we can suppress the click that would otherwise follow.
+    let was_dragging = end_drag(hwnd, state, true);
+    // Cancel any in-progress long press
+    state.long_press_active.set(false);
+    state.long_press_elapsed.set(0.0);
+    // The button is up, so hover stops being pinned.
+    state.pointer_down.set(false);
+    // Only fire click if the user wasn't dragging
+    if !was_dragging && !state.drag_cancelled.get() {
+        input::handle_click(state, x, y);
+    }
+    // Hover was pinned for the duration of the gesture; settle
+    // it now that the pointer is free rather than waiting for
+    // the next cursor tick.
+    check_hover(hwnd, state);
+}
+
+fn on_capture_changed(hwnd: HWND, state: &PillState) {
+    // Another window took the capture (task switch, lock screen, ...).
+    // Treat it as the end of the gesture and keep the pill where it is,
+    // otherwise `dragging` would stay latched on.
+    state.long_press_active.set(false);
+    state.long_press_elapsed.set(0.0);
+    // The gesture is over, so hover stops being pinned.
+    state.pointer_down.set(false);
+    // The capture is already gone, so only persist the position.
+    let _ = end_drag(hwnd, state, true);
+    // Settle hover now rather than staying pinned-expanded for
+    // up to a full cursor tick. check_hover only reads state
+    // and Cells, so it is safe under this immutable borrow.
+    check_hover(hwnd, state);
+}
+
+fn on_character(state: &PillState, ch: char) {
+    if ch == '\r' || ch == '\n' {
+        // Enter submits: an insert decision while a
+        // transcript is under review, a message to the
+        // assistant otherwise.
+        if input::submit_entry(state) {
+            set_edit_text("");
+        }
+    } else if ch == '\u{8}' {
+        // Backspace
+        let mut t = state.entry_text.borrow_mut();
+        t.pop();
+    } else if !ch.is_control() {
+        state.entry_text.borrow_mut().push(ch);
     }
 }
 

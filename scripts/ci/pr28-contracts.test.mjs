@@ -2421,9 +2421,18 @@ describe("native pill loading animation behind stage text", () => {
       ["macos", source.macApp],
       ["windows", source.windowsPill],
     ]) {
-      const phaseArm = text
-        .split("InMessage::Phase { phase, seq } => {")[1]
-        .split("InMessage::Levels")[0];
+      if (label === "gtk") {
+        assert.match(
+          scope("gtkPill", "fn process_message("),
+          /InMessage::Phase \{ phase, seq \} => apply_phase\(state_tick, phase, seq\)/,
+        );
+      }
+      const phaseArm =
+        label === "gtk"
+          ? scope("gtkPill", "fn apply_phase(")
+          : text
+              .split("InMessage::Phase { phase, seq } => {")[1]
+              .split("InMessage::Levels")[0];
       assert.match(
         phaseArm,
         /if rust_pill_shared::should_clear_stage_text_on_phase\(\s*prev == Phase::Loading,\s*phase == Phase::Idle,\s*phase == Phase::Loading,\s*\) \{\s*\*[\w.]*stage_text\.borrow_mut\(\) = None;\s*\}/,
