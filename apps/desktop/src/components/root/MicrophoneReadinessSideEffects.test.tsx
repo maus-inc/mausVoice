@@ -1419,7 +1419,9 @@ describe("MicrophoneReadinessSideEffects", () => {
     };
     setState({ userPrefs: { ...prefs, preferredMicrophone: "Shure MV7" } });
     await rerender();
-    expect(mocks.prepareMicrophone).toHaveBeenCalledExactlyOnceWith("Shure MV7");
+    expect(mocks.prepareMicrophone).toHaveBeenCalledExactlyOnceWith(
+      "Shure MV7",
+    );
     await rerender();
     expect(mocks.prepareMicrophone).toHaveBeenCalledTimes(1);
 
