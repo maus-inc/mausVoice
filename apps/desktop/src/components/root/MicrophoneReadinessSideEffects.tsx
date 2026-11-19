@@ -255,17 +255,6 @@ export const MicrophoneReadinessSideEffects = () => {
   const requestRef = useRef(0);
 
   /**
-   * The stored post-recording window, readable from a callback.
-   *
-   * `release` is created once and must not carry a stale closure over the
-   * preference, so the value lives in a ref that every render keeps current. It
-   * is read when a release completes, to put back the policy `closeMicrophone`
-   * zeroed on its way out.
-   */
-  const lingerRef = useRef(0);
-  lingerRef.current = lingerMs;
-
-  /**
    * Whether this window is the one that owns the held device.
    *
    * There is one device and one backend for the whole process, but a floating
@@ -281,6 +270,19 @@ export const MicrophoneReadinessSideEffects = () => {
 
   const clearHoldFailure = useCallback(() => {
     holdFailedRef.current = null;
+  }, []);
+
+  const closeAndRestoreLinger = useCallback(async () => {
+    await commands.closeMicrophone();
+    // Closing resets the native policy. A newer hold must keep its policy.
+    const milliseconds = getAppState().userPrefs?.microphoneLingerMs ?? 0;
+    if (!heldRef.current && milliseconds > 0) {
+      try {
+        await commands.setMicrophoneLinger(milliseconds);
+      } catch (error) {
+        getLogger().warning(`Could not restore the linger window: ${error}`);
+      }
+    }
   }, []);
 
   /**
@@ -343,7 +345,7 @@ export const MicrophoneReadinessSideEffects = () => {
               // still re-read, because a close that failed leaves the stream open
               // and that is exactly the state the user needs to be shown.
               logOnRejection(
-                commands.closeMicrophone().then(
+                closeAndRestoreLinger().then(
                   () => publishHeld(),
                   (error: unknown) => {
                     getLogger().warning(
@@ -401,49 +403,16 @@ export const MicrophoneReadinessSideEffects = () => {
         "microphone warm open",
       );
     },
-    [clearHoldFailure, publishHeld, reportHoldFailure],
+    [clearHoldFailure, closeAndRestoreLinger, publishHeld, reportHoldFailure],
   );
-
-  /**
-   * Puts the post-recording window back after a release zeroed it.
-   *
-   * Read from a ref rather than a closure because `release` is created once and
-   * must not carry a staleness-prone copy of the preference.
-   */
-  const restoreLinger = useCallback((milliseconds: number) => {
-    logOnRejection(
-      commands.setMicrophoneLinger(milliseconds).catch((error: unknown) => {
-        getLogger().warning(`Could not restore the linger window: ${error}`);
-      }),
-      "linger restore after release",
-    );
-  }, []);
 
   const release = useCallback(() => {
     openedPrerollRef.current = null;
     heldRef.current = false;
-    // Invalidates every open still in flight: any answer from one of them is for
-    // a hold this window no longer wants, and `hold` closes it on arrival.
     requestRef.current += 1;
-    // `release_hold` zeroes the linger policy on its way out, and the
-    // post-recording window is a *separate* preference: closing the hold used to
-    // turn it off silently, so every later recording stopped and closed the
-    // device instead of leaving it open for the next press. Restoring it here is
-    // what makes that harmless. Not while something has opened since: the close
-    // and the hold are separately issued commands, so their continuations can
-    // interleave, and a restore landing after a new hold would overwrite the
-    // sentinel `warm_microphone` opened it with, closing the hold on a timer.
-    // Skipping the restore must not skip the read, because the dialog learns
-    // what the device is doing from that read.
     logOnRejection(
-      commands
-        .closeMicrophone()
-        .then(() => {
-          if (!heldRef.current && lingerRef.current > 0) {
-            restoreLinger(lingerRef.current);
-          }
-          publishHeld();
-        })
+      closeAndRestoreLinger()
+        .then(() => publishHeld())
         .catch((error: unknown) => {
           getLogger().warning(`Could not release the microphone: ${error}`);
           appliedRef.current = null;
@@ -451,7 +420,7 @@ export const MicrophoneReadinessSideEffects = () => {
         }),
       "microphone release",
     );
-  }, [publishHeld, restoreLinger]);
+  }, [closeAndRestoreLinger, publishHeld]);
 
   useEffect(() => {
     // A running recording adopts the held stream -- that is the entire point of

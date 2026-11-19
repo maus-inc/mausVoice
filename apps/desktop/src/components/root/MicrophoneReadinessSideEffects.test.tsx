@@ -899,6 +899,33 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.closeMicrophone.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("restores the linger window after closing a superseded open", async () => {
+    const prefs = {
+      keepMicrophoneReady: true,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 5_000,
+    };
+    setState({ userPrefs: prefs });
+    let finishOpen: (result: { status: "ok"; data: null }) => void = () =>
+      undefined;
+    mocks.warmMicrophone.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
+    await render();
+    setState({ userPrefs: { ...prefs, keepMicrophoneReady: false } });
+    await rerender();
+    expect(mocks.setMicrophoneLinger).toHaveBeenLastCalledWith(5_000);
+    mocks.setMicrophoneLinger.mockClear();
+
+    await act(() => finishOpen({ status: "ok", data: null }));
+
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(2);
+    expect(mocks.setMicrophoneLinger).toHaveBeenCalledWith(5_000);
+  });
+
   it("re-reads the device when the close of a superseded open fails", async () => {
     // The chain that undoes a late open used to have no failure path, unlike
     // every other close in the component. If `closeMicrophone` rejected there,
