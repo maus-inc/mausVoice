@@ -443,7 +443,8 @@ Use this workflow from the start of a repository change, including tests, tools,
 - Put deep detail in a dropdown block so the user can expand if needed, rather than forcing them to read a wall of jargon.
 - Keep review counts, polling logs, "still waiting" notes and CI wall text out of the description. The check run holds the logs.
 - Fold every record of a review round, a babysit poll, a fix batch, a triage disposition, a check run or a research pass into a collapsible block. No unfolded heading may carry one, and a round adds a row to the round log rather than a new section. That rule is what stops the description turning into an infinite scroll, and `pnpm run check:pr-body -- -` enforces it against the body on stdin. The check judges the authored body and stops at the footer line, because review bots append their own sections below that footer and the author does not control that text.
-- Attach in-session artifacts, plans and research notes, in full, inside a collapsible block, or link them by repository path. Do not paste a session transcript.
+- Open each draft with one folded `Draft roadmap` in the PR description. State the authorized outcome and the few milestones a successor needs. Mark what is done, what is active and what comes next. Include a blocker or decision only if it changes the next action.
+- After every push, reconcile that roadmap with the pushed head. Edit it in place when scope, initiatives or status change. Drop superseded steps and completed details that no longer affect the handoff. Link to the relevant test, issue or decision rather than copying a plan, log or transcript. A roadmap entry does not authorize new scope.
 
 End the description with the footer below.
 
@@ -521,7 +522,7 @@ A CI workflow that cannot be read from the sandbox can still be diagnosed. Pull 
 
 **Keeping Artifacts and updating Docs**
 
-- In-session artifacts like plans, or other text or markdowns needed/ used in a session's duration do not need to be in the PR, you can attatch them in full text to the PR description in a collapsable dropdown format.
+- Keep session notes out of the PR. If a successor needs a durable plan or decision, link it from the roadmap rather than pasting it.
 - When working on new features or changing pre existing components and new behaviors AST/RAG Style find relational acts and update `apps/docs` facts, also know when to prune/add new docs before finalizing a pr
 - A durable decision, a measurement or a recovered mistake belongs in `docs/decisions/` as a short record with the date, the evidence and what future work should reuse. Do not put a work log in the PR body and do not put session noise in `apps/docs`.
 

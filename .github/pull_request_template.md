@@ -4,6 +4,17 @@ Describe what this change does, why it is needed, and which part of the reposito
 
 Everything below this paragraph returns inside a collapsible block, except the verification gate, the checklist and the footer. A review round or a babysit poll adds a row to the round log, never a new section, and a raw log never goes in the body at all.
 
+<details>
+<summary>Draft roadmap</summary>
+
+Replace these prompts when the draft opens. After every push, revise the current scope and milestones in place. Link evidence and remove superseded steps; this is a handoff, not a log.
+
+- Outcome: <authorized scope and what counts as done>
+- Milestones: <short ordered steps; mark done, active or next>
+- Next action: <where the next agent should resume; include a blocker or decision only if needed>
+
+</details>
+
 ## Verification gate
 
 Head SHA: `0000000000000000000000000000000000000000`

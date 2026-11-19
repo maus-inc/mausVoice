@@ -14,6 +14,8 @@ The user's request authorizes the work it describes. Assess risk, plan, run the 
 
 For a repository change that is not local-only, start with a draft PR as soon as the scope, acceptance criteria and base are clear. Push the first scoped commit after its pre-push checks and open or reuse the draft against the actual base. Keep subsequent verified checkpoints on that remote branch. A draft saves work; it does not declare the work ready for review or merge.
 
+Include one folded `Draft roadmap` from the first push. Give the next agent the authorized outcome, milestone status, next action and any blocker that changes it. Reconcile it with each push: replace stale scope or initiatives in place, prune finished detail and link to evidence instead of repeating history.
+
 ## Queue discipline
 
 Process independent accepted tasks in FIFO order. Apply corrections and clarifications to the active task immediately. Queue newly discovered independent work for consideration; execute it only when authorized.
