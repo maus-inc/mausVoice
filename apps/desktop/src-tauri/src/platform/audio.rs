@@ -5330,7 +5330,7 @@ mod cpal_impl {
         fn the_first_press_preserves_a_cache_primed_for_its_preference() {
             use crate::platform::Recorder;
 
-            let manager = RecordingManager::new();
+            let manager = RecordingManager::default();
             manager.cache_successful_device(
                 cpal::default_host().id(),
                 "Shure MV7".to_string(),

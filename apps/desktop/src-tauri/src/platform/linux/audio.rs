@@ -783,7 +783,7 @@ mod emitter_tests {
 
     #[test]
     fn stop_reports_time_held_after_a_fast_open_refusal() {
-        let recorder = PulseRecorder::new();
+        let recorder = PulseRecorder::default();
         let attempt = Duration::from_millis(5);
         *recorder.inner.lock().unwrap() = Some(ActiveRecording {
             started_at: Instant::now() - Duration::from_secs(1),
