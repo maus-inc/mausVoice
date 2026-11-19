@@ -1486,7 +1486,7 @@ mod cpal_impl {
 
         fn close_matching_warm(&self, expected: Option<&Arc<StreamSink>>) -> bool {
             let warm = {
-                let mut guard = self.warm.lock().unwrap_or_else(|err| err.into_inner());
+                let mut guard = self.warm.lock().unwrap_or_else(PoisonError::into_inner);
                 if let Some(expected) = expected {
                     if !guard
                         .as_ref()
@@ -2187,7 +2187,7 @@ mod cpal_impl {
             let preferred = self
                 .preferred_input_name
                 .lock()
-                .unwrap_or_else(|err| err.into_inner())
+                .unwrap_or_else(PoisonError::into_inner)
                 .as_deref()
                 .map(str::to_ascii_lowercase);
             let best = self
@@ -2643,7 +2643,7 @@ mod cpal_impl {
                 let preferred = self
                     .preferred_input_name
                     .lock()
-                    .unwrap_or_else(|err| err.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .as_deref()
                     .map(str::to_ascii_lowercase);
                 if cache
