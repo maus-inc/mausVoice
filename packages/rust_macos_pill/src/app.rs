@@ -2435,7 +2435,6 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
                 .saved_display_id
                 .set(rust_pill_shared::layout::display_id_of(
                     &areas,
-                    (origin.x, origin.y),
                     (
                         x + footprint_offset.0 + footprint_size.0 / 2.0,
                         y + footprint_offset.1 + footprint_size.1 / 2.0,

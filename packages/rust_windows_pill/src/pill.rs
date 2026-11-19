@@ -1689,7 +1689,6 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                     .saved_display_id
                     .set(rust_pill_shared::layout::display_id_of(
                         &areas,
-                        (cur_x as f64, cur_y as f64),
                         (
                             cur_x as f64 + offset.0 + size.0 / 2.0,
                             cur_y as f64 + offset.1 + size.1 / 2.0,
@@ -1736,7 +1735,6 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                 .saved_display_id
                 .set(rust_pill_shared::layout::display_id_of(
                     &areas,
-                    (x as f64, y as f64),
                     (
                         x as f64 + offset.0 + size.0 / 2.0,
                         y as f64 + offset.1 + size.1 / 2.0,
@@ -2757,7 +2755,6 @@ fn store_recorded_drop(hwnd: HWND, state: &PillState) {
             let (offset, size) = live_pill_footprint(state);
             rust_pill_shared::layout::display_id_of(
                 &areas,
-                (origin.0 as f64, origin.1 as f64),
                 (
                     origin.0 as f64 + offset.0 + size.0 / 2.0,
                     origin.1 as f64 + offset.1 + size.1 / 2.0,

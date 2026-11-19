@@ -48,11 +48,6 @@ thread_local! {
 /// Draining here, rather than from a separate glib source, keeps message order and
 /// frame order the same: a phase that arrives mid-frame is applied on that frame,
 /// never after the tick that follows it.
-/// Apply every message waiting on the channel before the frame steps.
-///
-/// Draining here, rather than from a separate glib source, keeps message order and
-/// frame order the same: a phase that arrives mid-frame is applied on that frame,
-/// never after the tick that follows it.
 ///
 /// Dispatch only: each message has its own handler below. They used to be match
 /// arms in a single body, which made seventeen unrelated decisions into one
@@ -401,8 +396,6 @@ fn on_quit(quit: &Rc<Cell<bool>>) {
     quit.set(true);
 }
 
-/// Runs the GTK pill: picks the display backend, creates the frameless
-/// window, and drives the message/event loop until a quit message arrives.
 /// One frame of the 16 ms loop, as a free function.
 ///
 /// This was the body of a closure registered inside `run`, which is why `run`
@@ -1240,6 +1233,8 @@ fn start_display_poll(window: &gtk::Window, state: &Rc<PillState>, quit_flag: &R
     });
 }
 
+/// Runs the GTK pill: picks the display backend, creates the frameless
+/// window, and drives the message/event loop until a quit message arrives.
 pub fn run(receiver: Receiver<InMessage>, restored_position: Option<ParkedWindow>) {
     let backend = detect_backend();
 
@@ -1517,7 +1512,6 @@ fn reconcile_display_layout(window: &gtk::Window, state: &PillState) {
                 .saved_display_id
                 .set(rust_pill_shared::layout::display_id_of(
                     &areas,
-                    (x.round(), y.round()),
                     (
                         x.round() + footprint_offset.0 + footprint_size.0 / 2.0,
                         y.round() + footprint_offset.1 + footprint_size.1 / 2.0,

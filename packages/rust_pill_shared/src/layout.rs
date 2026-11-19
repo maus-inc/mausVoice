@@ -726,12 +726,7 @@ pub fn describe_parked(
 ///
 /// Called after a [`Relocation::Move`] is applied, so the record names the display
 /// the pill was actually moved onto rather than the one it left.
-pub fn display_id_of(
-    areas: &[MonitorRect],
-    origin: (f64, f64),
-    footprint_centre: (f64, f64),
-) -> Option<u64> {
-    let _ = origin;
+pub fn display_id_of(areas: &[MonitorRect], footprint_centre: (f64, f64)) -> Option<u64> {
     display_for_point(areas, footprint_centre.0, footprint_centre.1)
         .and_then(|index| areas[index].id)
 }
