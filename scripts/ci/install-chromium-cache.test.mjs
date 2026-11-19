@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import {
   existsSync,
@@ -12,6 +13,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { brotliCompressSync } from "node:zlib";
 
 /**
  * The installer must decide "already installed" from the *installed* package,
@@ -34,6 +37,41 @@ const SOURCE = new URL(
   "../../scripts/verify/install-chromium.mjs",
   import.meta.url,
 );
+
+test("the installer accepts a new nested output directory", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "mausvoice-chromium-nested-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const pkg = join(
+    dir,
+    "sparticuz-chromium",
+    "node_modules",
+    "@sparticuz",
+    "chromium",
+  );
+  mkdirSync(join(pkg, "bin"), { recursive: true });
+  writeFileSync(
+    join(dir, "sparticuz-chromium", ".mausvoice-chromium"),
+    "153.0.0\n",
+  );
+  writeFileSync(
+    join(pkg, "package.json"),
+    JSON.stringify({ version: "153.0.0" }),
+  );
+  writeFileSync(
+    join(pkg, "bin", "chromium.br"),
+    brotliCompressSync("#!/bin/sh\necho fixture-chromium\n"),
+  );
+
+  const out = join(dir, "new-parent", "chr");
+  execFileSync(process.execPath, [fileURLToPath(SOURCE), "--dir", out], {
+    env: { ...process.env, TMPDIR: dir },
+    stdio: "pipe",
+  });
+  assert.equal(
+    execFileSync(join(out, "chromium"), { encoding: "utf8" }).trim(),
+    "fixture-chromium",
+  );
+});
 
 const installedVersionFrom = (pkgDir) => {
   // The same expression the installer uses, so the test cannot drift from it.

@@ -136,9 +136,11 @@ if (existsSync(path.join(OUT, "chromium"))) {
   // the marker is written before extraction begins, so it means "this script
   // created this", not "this extraction finished", and an unmarked directory is
   // left alone exactly as the guard below leaves it.
-  for (const sibling of readdirSync(path.dirname(OUT))) {
+  const parent = path.dirname(OUT);
+  mkdirSync(parent, { recursive: true });
+  for (const sibling of readdirSync(parent)) {
     if (!sibling.startsWith(`${path.basename(OUT)}.partial-`)) continue;
-    const stale = path.join(path.dirname(OUT), sibling);
+    const stale = path.join(parent, sibling);
     if (stale === STAGING) continue;
     if (!existsSync(path.join(stale, MARKER))) continue;
     log(`  removing a partial extraction left by an earlier run: ${sibling}`);
