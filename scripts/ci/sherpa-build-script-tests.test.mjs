@@ -12,13 +12,15 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 import {
-  buildScriptBinaryName,
+  buildScriptBinaryNames,
+  cargoBuildScriptBinary,
   cargoOutputExcerpt,
   findBuildScriptInvocation,
   hasCachedCrates,
   parseEnvPrefix,
   replayedTestBinaryName,
   rewriteInvocation,
+  stageToolchainPin,
   tokenizeCargoCommand,
   tokenizeCargoCommandLoose,
 } from "./sherpa-build-script-tests.mjs";
@@ -588,19 +590,185 @@ describe("replayedTestBinaryName", () => {
   });
 });
 
-describe("buildScriptBinaryName", () => {
-  it("appends .exe on Windows and nothing elsewhere", () => {
-    assert.equal(buildScriptBinaryName("win32"), "build-script-build.exe");
-    assert.equal(buildScriptBinaryName("linux"), "build-script-build");
-    assert.equal(buildScriptBinaryName("darwin"), "build-script-build");
+describe("buildScriptBinaryNames", () => {
+  it("lists both cargo spellings, with .exe on Windows and nothing elsewhere", () => {
+    assert.deepEqual(buildScriptBinaryNames("win32"), [
+      "build-script-build.exe",
+      "build_script_build.exe",
+    ]);
+    assert.deepEqual(buildScriptBinaryNames("linux"), [
+      "build-script-build",
+      "build_script_build",
+    ]);
+    assert.deepEqual(buildScriptBinaryNames("darwin"), [
+      "build-script-build",
+      "build_script_build",
+    ]);
   });
 
   it("defaults to the host platform", () => {
-    assert.equal(
-      buildScriptBinaryName(),
-      process.platform === "win32"
-        ? "build-script-build.exe"
-        : "build-script-build",
-    );
+    const expected = process.platform === "win32" ? ".exe" : "";
+    assert.deepEqual(buildScriptBinaryNames(), [
+      `build-script-build${expected}`,
+      `build_script_build${expected}`,
+    ]);
+  });
+});
+
+describe("cargoBuildScriptBinary", () => {
+  // The failure this pins: cargo 1.100 moved the build-script binary from
+  // `build/<pkg>-<hash>/build-script-build` to `build/<pkg>/<hash>/out/build_script_build`
+  // and renamed it. The old lookup matched only the pre-1.100 shape, so it found 0 and
+  // the step refused to pass on 2026-11-18 when the runner's stable moved to 1.100.0.
+  // The pinned 1.88.0 that a real build uses still writes the old shape, which is why
+  // the failure only appeared after the toolchain drift.
+  const writeScript = (dir, name) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, name), "ELF");
+  };
+
+  it("finds the pre-1.100 layout", () => {
+    const target = mkdtempSync(join(tmpdir(), "sherpa-build-layout-old-"));
+    try {
+      writeScript(join(target, "debug", "build", `${SHERPA_PKG}-a1b2c3d4e5f60718`), "build-script-build");
+      assert.equal(
+        cargoBuildScriptBinary(target, "linux"),
+        join(target, "debug", "build", `${SHERPA_PKG}-a1b2c3d4e5f60718`, "build-script-build"),
+      );
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  it("finds the 1.100 layout", () => {
+    const target = mkdtempSync(join(tmpdir(), "sherpa-build-layout-new-"));
+    try {
+      writeScript(join(target, "debug", "build", SHERPA_PKG, "abc123", "out"), "build_script_build");
+      assert.equal(
+        cargoBuildScriptBinary(target, "linux"),
+        join(target, "debug", "build", SHERPA_PKG, "abc123", "out", "build_script_build"),
+      );
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  // The control: a dependency's build script is ALSO named `build_script_build`, so a
+  // lookup that walked the whole `build` tree would find many and refuse. Only the
+  // package's own subtree may be searched.
+  it("ignores another crate's build script", () => {
+    const target = mkdtempSync(join(tmpdir(), "sherpa-build-layout-other-"));
+    try {
+      writeScript(join(target, "debug", "build", "serde", "def456", "out"), "build_script_build");
+      writeScript(join(target, "debug", "build", SHERPA_PKG, "abc123", "out"), "build_script_build");
+      assert.equal(
+        cargoBuildScriptBinary(target, "linux"),
+        join(target, "debug", "build", SHERPA_PKG, "abc123", "out", "build_script_build"),
+      );
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  // A missing binary must refuse loudly, not return undefined and let the caller read
+  // `undefined` as a file. The whole premise of this harness is that it cannot pass
+  // without the artifact.
+  it("refuses when no build script is present", () => {
+    const target = mkdtempSync(join(tmpdir(), "sherpa-build-layout-empty-"));
+    try {
+      assert.throws(() => cargoBuildScriptBinary(target, "linux"), /expected exactly one/);
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  // A bare `startsWith(SHERPA_PKG_NAME)` match also accepts a different crate whose name
+  // merely starts with this one. `sherpa-onnx-sys-extra` is a valid crate name, and its
+  // build directory `sherpa-onnx-sys-extra-<hash>` starts with `sherpa-onnx-sys`, so a
+  // prefix match walked it too, found a second `build_script_build`, and refused a valid
+  // artifact. The match has to be the package name alone or the name plus a hex hash.
+  it("ignores a sibling crate whose name starts with the package name", () => {
+    const target = mkdtempSync(join(tmpdir(), "sherpa-build-layout-prefix-"));
+    try {
+      writeScript(join(target, "debug", "build", `${SHERPA_PKG}-a1b2c3d4e5f60718`), "build-script-build");
+      writeScript(
+        join(target, "debug", "build", `${SHERPA_PKG}-extra-def4567890abcdef`, "out"),
+        "build_script_build",
+      );
+      assert.equal(
+        cargoBuildScriptBinary(target, "linux"),
+        join(target, "debug", "build", `${SHERPA_PKG}-a1b2c3d4e5f60718`, "build-script-build"),
+      );
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  // The doc comment claims the walk accepts the artifact at any depth. A fixed depth
+  // bound would silently miss the artifact once cargo nests it one level deeper than the
+  // bound allows, which is the same class of failure as the original 1.100 move.
+  it("finds the artifact no matter how deep cargo nests it", () => {
+    const target = mkdtempSync(join(tmpdir(), "sherpa-build-layout-deep-"));
+    try {
+      writeScript(
+        join(target, "debug", "build", SHERPA_PKG, "abc123", "out", "deeper", "still", "here"),
+        "build_script_build",
+      );
+      assert.equal(
+        cargoBuildScriptBinary(target, "linux"),
+        join(
+          target,
+          "debug",
+          "build",
+          SHERPA_PKG,
+          "abc123",
+          "out",
+          "deeper",
+          "still",
+          "here",
+          "build_script_build",
+        ),
+      );
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("stageToolchainPin", () => {
+  // The probe crate is a temp copy, so without the pin it compiles with the runner's
+  // default toolchain. Dropping the copy kept every test green while the probe silently
+  // reverted, which is the exact regression the parent change exists to fix. A real probe
+  // build cannot observe the copy on a host that already has the pinned channel, so the
+  // helper is pinned directly instead.
+  it("copies the pin into the probe crate", () => {
+    const root = mkdtempSync(join(tmpdir(), "sherpa-toolchain-copy-"));
+    try {
+      const pin = join(root, "rust-toolchain.toml");
+      writeFileSync(pin, '[toolchain]\nchannel = "1.88.0"\n');
+      const crateDir = join(root, "crate");
+      mkdirSync(crateDir, { recursive: true });
+
+      const copied = stageToolchainPin(crateDir, pin);
+
+      assert.deepEqual(copied, [join(crateDir, "rust-toolchain.toml")]);
+      assert.equal(
+        readFileSync(join(crateDir, "rust-toolchain.toml"), "utf8"),
+        '[toolchain]\nchannel = "1.88.0"\n',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("copies nothing when there is no pin to copy", () => {
+    const root = mkdtempSync(join(tmpdir(), "sherpa-toolchain-absent-"));
+    try {
+      const crateDir = join(root, "crate");
+      mkdirSync(crateDir, { recursive: true });
+      assert.deepEqual(stageToolchainPin(crateDir, join(root, "missing.toml")), []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
