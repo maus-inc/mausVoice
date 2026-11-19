@@ -6,7 +6,7 @@ This document is the elaboration for the Proactive Problem Solving Protocol HARD
 
 - Write 1-2 sentence hypothesis of underlying goal before editing.
 - Treat initial message as evidence, not spec; consult repo context and `docs/decisions/`.
-- If intent is materially ambiguous, explain which decision changes the outcome and recommend a choice. Otherwise proceed within the stated scope.
+- If intent is materially ambiguous, explain which decision changes the outcome, recommend a choice and wait for confirmation before acting on either interpretation. Otherwise proceed within the stated scope.
 
 ## Autonomous execution
 
