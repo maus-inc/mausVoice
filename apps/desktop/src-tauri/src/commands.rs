@@ -3795,12 +3795,9 @@ pub async fn prepare_microphone(
     // Enumerating devices opens the capture host and asks it for its list, which
     // is a blocking call on every backend. Same reason as `warm_microphone`.
     let warm = warm.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        warm.set_preferred_device(preferred_input_device);
-        warm.prepare()
-    })
-    .await
-    .map_err(|err| err.to_string())?
+    tauri::async_runtime::spawn_blocking(move || warm.prepare(preferred_input_device.as_deref()))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 /// One readable line describing the capture path: whether a stream is held, the

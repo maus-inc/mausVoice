@@ -156,6 +156,7 @@ mod cpal_impl {
     #[derive(Clone)]
     struct CachedDeviceInfo {
         host_id: HostId,
+        preference: Option<String>,
         /// Disambiguated label, so the cache re-resolves the exact same device
         /// even when the host exposes several inputs under one name.
         device_label: String,
@@ -1306,10 +1307,16 @@ mod cpal_impl {
 
         /// Remembers the host and disambiguated label of a device that just
         /// started recording successfully, so the next start can try it first.
-        fn cache_successful_device(&self, host_id: HostId, device_label: String) {
+        fn cache_successful_device(
+            &self,
+            host_id: HostId,
+            device_label: String,
+            preference: Option<&str>,
+        ) {
             if let Ok(mut guard) = self.last_successful_device.lock() {
                 *guard = Some(CachedDeviceInfo {
                     host_id,
+                    preference: preference.map(str::to_owned),
                     device_label,
                 });
             }
@@ -1751,7 +1758,7 @@ mod cpal_impl {
                 hold_after_stop,
                 &mut trace,
             ) {
-                self.cache_successful_device(host_id, device_name);
+                self.cache_successful_device(host_id, device_name, preferred_normalized.as_deref());
                 self.record_startup(trace, active.sink.as_ref());
                 *guard = Some(active);
                 return Ok(());
@@ -1785,7 +1792,11 @@ mod cpal_impl {
                 },
             ) {
                 Ok(((active, device_name), host_id)) => {
-                    self.cache_successful_device(host_id, device_name);
+                    self.cache_successful_device(
+                        host_id,
+                        device_name,
+                        preferred_normalized.as_deref(),
+                    );
                     self.record_startup(trace, active.sink.as_ref());
                     *guard = Some(active);
                     Ok(())
@@ -2093,41 +2104,23 @@ mod cpal_impl {
         /// cost, and they can be done ahead of the press with no microphone
         /// indicator, because nothing captures. Doing them here primes the cache
         /// that `try_cached_device` reads, so the press skips the scoring.
-        pub fn prepare_device(&self) -> Result<String, RecordingError> {
-            // A held stream already resolved the device, and its label is the
-            // one a press would use.
-            if let Some(label) = self
-                .warm
-                .lock()
-                .ok()
-                .and_then(|guard| guard.as_ref().map(|warm| warm.device_label.clone()))
-            {
-                return Ok(label);
-            }
-
-            let (label, host_id) = self.resolve_preferred_device()?;
-            self.cache_successful_device(host_id, label.clone());
+        fn prepare_device(&self, preferred: Option<&str>) -> Result<String, RecordingError> {
+            let preferred = preferred
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_ascii_lowercase);
+            let (label, host_id) = self.resolve_preferred_device(preferred.as_deref())?;
+            // A delayed preparation cannot change the held stream or make a
+            // press with a different preference use this device.
+            self.cache_successful_device(host_id, label.clone(), preferred.as_deref());
             log::debug!("prepared '{label}' for the next press");
             Ok(label)
         }
 
-        fn resolve_preferred_device(&self) -> Result<(String, HostId), RecordingError> {
-            let preferred_label = {
-                let guard = match self.preferred_input_name.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                guard.clone()
-            };
-            let preferred_trimmed = preferred_label
-                .as_ref()
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
-            let preferred_normalized = preferred_trimmed
-                .as_ref()
-                .map(|value| value.to_ascii_lowercase());
-
+        fn resolve_preferred_device(
+            &self,
+            preferred: Option<&str>,
+        ) -> Result<(String, HostId), RecordingError> {
             let hosts = ordered_host_ids();
             try_hosts(
                 &hosts,
@@ -2139,11 +2132,8 @@ mod cpal_impl {
                     let default_output_name = host
                         .default_output_device()
                         .and_then(|device| device.name().ok());
-                    let mut candidates = device_candidates_for_host(
-                        host,
-                        default_output_name.as_deref(),
-                        preferred_normalized.as_deref(),
-                    );
+                    let mut candidates =
+                        device_candidates_for_host(host, default_output_name.as_deref(), preferred);
                     candidates.sort_by_key(|candidate| {
                         (
                             !candidate.matches_preferred,
@@ -2194,7 +2184,16 @@ mod cpal_impl {
                 return;
             };
 
-            let best = self.resolve_preferred_device().ok().map(|(label, _)| label);
+            let preferred = self
+                .preferred_input_name
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .as_deref()
+                .map(str::to_ascii_lowercase);
+            let best = self
+                .resolve_preferred_device(preferred.as_deref())
+                .ok()
+                .map(|(label, _)| label);
             match best {
                 Some(best) if normalized_name(&best) == normalized_name(&current) => {
                     log::debug!("held device '{current}' is still the best; keeping it");
@@ -2640,7 +2639,20 @@ mod cpal_impl {
                 return;
             }
 
-            self.clear_device_cache();
+            if let Ok(mut cache) = self.last_successful_device.lock() {
+                let preferred = self
+                    .preferred_input_name
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner())
+                    .as_deref()
+                    .map(str::to_ascii_lowercase);
+                if cache
+                    .as_ref()
+                    .is_some_and(|entry| entry.preference != preferred)
+                {
+                    *cache = None;
+                }
+            }
 
             // A held stream belongs to the device it was opened on, so a changed
             // preference must not leave it recording the old microphone. Closing
@@ -2665,9 +2677,8 @@ mod cpal_impl {
         }
 
         fn clear_device_cache(&self) {
-            if let Ok(mut guard) = self.last_successful_device.lock() {
-                *guard = None;
-                log::debug!("device cache cleared");
+            if let Ok(mut cache) = self.last_successful_device.lock() {
+                *cache = None;
             }
         }
 
@@ -2689,8 +2700,9 @@ mod cpal_impl {
             self.set_preroll(preroll);
         }
 
-        fn prepare(&self) -> Result<String, String> {
-            self.prepare_device().map_err(|err| err.to_string())
+        fn prepare(&self, preferred: Option<&str>) -> Result<String, String> {
+            self.prepare_device(preferred)
+                .map_err(|err| err.to_string())
         }
 
         fn set_preferred_device(&self, preferred: Option<String>) {
@@ -3554,10 +3566,13 @@ mod cpal_impl {
         let Some(cached) = cached else {
             return Some("nothing recorded yet");
         };
-        if let Some(preferred) = preferred_normalized {
-            if !device_matches_preferred(&cached.device_label, preferred) {
-                return Some("it is not the preferred device");
-            }
+        if cached.preference.as_deref() != preferred_normalized {
+            return Some("the preferred device changed");
+        }
+        if preferred_normalized
+            .is_some_and(|preferred| !device_matches_preferred(&cached.device_label, preferred))
+        {
+            return Some("it is not the preferred device");
         }
         if !still_present {
             return Some("the device is no longer listed");
@@ -4604,6 +4619,7 @@ mod cpal_impl {
         fn a_cached_device_that_is_no_longer_listed_falls_through_to_scoring() {
             let cached = CachedDeviceInfo {
                 host_id: cpal::default_host().id(),
+                preference: None,
                 device_label: "Samson Q2U".to_string(),
             };
 
@@ -4620,6 +4636,7 @@ mod cpal_impl {
         fn a_cached_device_that_is_still_listed_is_tried() {
             let cached = CachedDeviceInfo {
                 host_id: cpal::default_host().id(),
+                preference: None,
                 device_label: "Samson Q2U".to_string(),
             };
 
@@ -4630,6 +4647,7 @@ mod cpal_impl {
         fn a_cached_device_that_is_not_the_preference_is_not_tried() {
             let cached = CachedDeviceInfo {
                 host_id: cpal::default_host().id(),
+                preference: None,
                 device_label: "Samson Q2U".to_string(),
             };
 
@@ -4638,7 +4656,7 @@ mod cpal_impl {
             // ignored.
             assert_eq!(
                 cached_device_rejection(Some(&cached), Some("macbook pro microphone"), true),
-                Some("it is not the preferred device")
+                Some("the preferred device changed")
             );
         }
 
@@ -5272,7 +5290,11 @@ mod cpal_impl {
             let manager = RecordingManager::new();
             manager.set_linger(Duration::from_millis(u64::MAX));
             manager.set_preferred_input_device(Some("Shure MV7".to_string()));
-            manager.cache_successful_device(cpal::default_host().id(), "Shure MV7".to_string());
+            manager.cache_successful_device(
+                cpal::default_host().id(),
+                "Shure MV7".to_string(),
+                Some("shure mv7"),
+            );
             assert!(manager.last_successful_device.lock().unwrap().is_some());
 
             // The command layer sets the preference on every press. Treating an
@@ -5305,12 +5327,39 @@ mod cpal_impl {
         }
 
         #[test]
+        fn the_first_press_preserves_a_cache_primed_for_its_preference() {
+            use crate::platform::Recorder;
+
+            let manager = RecordingManager::new();
+            manager.cache_successful_device(
+                cpal::default_host().id(),
+                "Shure MV7".to_string(),
+                Some("shure mv7"),
+            );
+            manager.set_preferred_input_device(Some("Shure MV7".to_string()));
+
+            let cache = manager.last_successful_device.lock().unwrap();
+            assert_eq!(
+                cached_device_rejection(cache.as_ref(), Some("shure mv7"), true),
+                None
+            );
+            assert_eq!(
+                cached_device_rejection(cache.as_ref(), None, true),
+                Some("the preferred device changed")
+            );
+        }
+
+        #[test]
         fn a_changed_preference_clears_the_device_cache() {
             use crate::platform::Recorder;
 
             let manager = RecordingManager::new();
             manager.set_preferred_input_device(Some("Shure MV7".to_string()));
-            manager.cache_successful_device(cpal::default_host().id(), "Shure MV7".to_string());
+            manager.cache_successful_device(
+                cpal::default_host().id(),
+                "Shure MV7".to_string(),
+                Some("shure mv7"),
+            );
 
             // A real change has to drop the cache, or the next press tries the
             // device the user just moved off.

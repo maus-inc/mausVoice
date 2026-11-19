@@ -220,7 +220,7 @@ pub trait WarmCapture: Send + Sync {
     fn set_preroll(&self, preroll: std::time::Duration);
 
     /// Resolves the device a press would use, without opening it.
-    fn prepare(&self) -> Result<String, String>;
+    fn prepare(&self, preferred: Option<&str>) -> Result<String, String>;
 
     /// Tells the warm path which device the user prefers, before it opens one.
     ///
