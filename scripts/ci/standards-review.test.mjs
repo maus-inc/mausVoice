@@ -174,8 +174,8 @@ it("binds both gates to the full commit range, not the working directory or last
     run(["prepare", "stack/base"], "", join(repo, "nested"));
   const artifacts = join(repo, ".git", "standards-review");
   const draft = join(artifacts, "receipt.md");
-  const update = (sha, target = "topic") =>
-    `refs/heads/topic ${sha} refs/heads/${target} ${"0".repeat(40)}\n`;
+  const update = (sha, target = "topic", previous = "0".repeat(40)) =>
+    `refs/heads/topic ${sha} refs/heads/${target} ${previous}\n`;
   const push = (input = update(head)) => run(["pre-push", "origin"], input);
   const pr = (text, target = base, commit = head) => {
     writeFileSync(
@@ -234,6 +234,25 @@ it("binds both gates to the full commit range, not the working directory or last
   red(push(update(head) + deletion));
   ok(push());
   red(push()); // One receipt per push attempt.
+  ok(prepare());
+  writeFileSync(draft, filled);
+  // Both tips contain the base. The sibling even has the same tree as HEAD,
+  // but publishing HEAD would lose the other contributor's commit.
+  const sibling = git(
+    "commit-tree",
+    `${head}^{tree}`,
+    "-p",
+    intermediate,
+    "-m",
+    "other work",
+  );
+  for (const previous of [sibling, "d".repeat(40)]) {
+    const rejected = push(update(head, "topic", previous));
+    red(rejected);
+    assert.match(rejected.stderr, /fast-forward/);
+  }
+  assert.equal(readFileSync(draft, "utf8"), filled);
+  ok(push(update(head, "topic", intermediate)));
   ok(prepare());
   writeFileSync(draft, filled);
   git("update-ref", "refs/heads/stack/base", intermediate);

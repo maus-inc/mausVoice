@@ -271,6 +271,18 @@ function prepare(branch) {
   );
 }
 
+function requireFastForward(previous, head) {
+  if (previous === "0".repeat(40)) return; // First publication of this branch.
+  if (!validSha(previous)) fail("Invalid previous topic SHA.");
+  try {
+    git("merge-base", "--is-ancestor", previous, head);
+  } catch {
+    fail(
+      "Cannot verify a fast-forward from the remote topic tip. Fetch its history and merge it before pushing.",
+    );
+  }
+}
+
 function prePush(remote, updates) {
   // Git also invokes the hook for a no-op and for deleting a merged branch; neither submits a diff.
   const changes = updates
@@ -280,7 +292,7 @@ function prePush(remote, updates) {
     .map((line) => {
       const fields = line.split(" ");
       if (fields.length !== 4) fail("Invalid pre-push ref update.");
-      return { sha: fields[1], destination: fields[2] };
+      return { sha: fields[1], destination: fields[2], previous: fields[3] };
     });
   if (changes.every(({ sha }) => /^0{40}$/.test(sha))) return;
   const dir = reviewDir();
@@ -298,6 +310,7 @@ function prePush(remote, updates) {
     fail(
       "Push only the reviewed head to its own branch on origin, not to the PR base or another ref.",
     );
+  requireFastForward(changes[0].previous, head);
   git("check-ref-format", `refs/heads/${branch}`);
   const [base] = git(
     "ls-remote",
