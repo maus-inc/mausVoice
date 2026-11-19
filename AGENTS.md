@@ -44,9 +44,7 @@ Treat every rule here as if the user had asked for it directly. For each rule th
 
 ## Proactive problem solving, hard constraint
 
-This section is a hard constraint that overrides any tendency to do a minimal symptom fix. Every task MUST run through intent recognition, pattern matching, and proactive problem solving before editing. Skipping it is a defect, not a shortcut. It implements relentlessly proactive behavior: investigate before acting, verify by observation, and prevent recurrence across the entire class. This applies to every agent operating in this repository.
-
-`engineering/proactive-protocol.md` is the authoritative elaboration when this file is truncated by a tooling limit. This section governs.
+Before editing, establish intent, look for the same problem elsewhere and define what would verify the fix. This section governs. `engineering/proactive-protocol.md` carries the protocol when a tool truncates this file.
 
 ### 1. Intent recognition
 
@@ -54,8 +52,8 @@ ALWAYS infer the user's desired outcome beyond the literal request, even when no
 
 - Before any edit, write a 1 to 2 sentence intent hypothesis: what the user actually wants to achieve, not just what they typed. Include unstated acceptance criteria such as correctness, maintainability, and prevention of recurrence.
 - Treat the initial message as evidence, not a complete spec. Read it against the repository context, recent changes, and prior decisions in `docs/decisions/` before deciding scope.
-- When intent is ambiguous, offer a recommendation, not a menu. State the hypothesis and ask for confirmation in plain words: "I understand you want X to achieve Y. Confirm or correct before I change scope."
-- Classify the task before you touch anything, and say which class you chose: trivial, so do it directly; a question, so clarify it first; or plan-first, meaning it spans multiple files or systems and needs a written plan. Do not execute a plan-first task as a trivial edit. For the question path use the `grilling` and `interview-me` skills already indexed below.
+- When intent is materially ambiguous, offer a recommendation, not a menu. State the hypothesis and ask for confirmation in plain words: "I understand you want X to achieve Y. Confirm or correct before I change scope."
+- Classify the request. Do trivial work directly. Answer a clear question directly. For work spanning files or systems, write a plan and carry it out unless the user asked only for a plan. Use `grilling` and `interview-me` for decisions you cannot resolve from the request and evidence.
 
 ### 2. Pattern matching
 
@@ -84,7 +82,7 @@ Three limits keep the pass honest. It never authorises scope expansion, which st
 
 ### 3. Proactive problem solving
 
-ALWAYS propose a system-wide solution that prevents future bugs, and get explicit confirmation before expanding scope. Do not silently expand scope, and do not stop at a band-aid.
+Address the cause across the authorized scope. If fixing the broader class requires more than the user requested, propose that work and get explicit confirmation before expanding scope.
 
 - NEVER apply a symptom-only fix. Name the root cause, whether architectural or logical, and trace it through the 5 Whys until the deepest actionable cause is identified. Deleting broken code is often the right call.
 - NEVER silently invent follow-up tasks or expand file scope without confirmation. Propose the comprehensive fix as a confirmation prompt with concrete scope, blast radius, and cost. The proposal MUST state:
@@ -92,34 +90,34 @@ ALWAYS propose a system-wide solution that prevents future bugs, and get explici
   2. What the comprehensive fix changes across the system, enumerated file by file.
   3. What verification proves the class is fixed, not just the instance.
 - Offer at least two concrete options when scope expands: minimal fix constrained to the reported instance, and comprehensive fix that addresses the entire class. Include your recommendation and allow a custom answer. Use the Querying the user rules above: one question per turn, sorted by blast radius, with evidence carried in the question. If the human confirms the minimal option for a pattern that spans multiple instances, the remaining instances stay as a documented gap: file a follow-up issue or mark the class as intentionally not fully eliminated, and state why.
-- Proposals follow a closed-world scope contract: only what is explicitly confirmed is permitted. Enumerate permitted actions, do not rely on general purpose language. Runtime permission requests that bypass this are invalid.
+- Scope-expansion proposals follow a closed-world contract: only the additional actions explicitly confirmed are permitted. Enumerate permitted actions, do not rely on general purpose language. Runtime permission requests that bypass this are invalid.
 - After confirmation, implement the smallest correct change that eliminates the class. Prefer extracting shared logic over duplicating it. Avoid over-engineering and new dependencies unless the task requires them.
 
-### 4. Relentlessly proactive execution
+### Orchestrator autonomy
 
-This is the proactive loop applied to mausVoice work. Run it on every plan-first or ambiguous task:
+The request authorizes work within its stated scope. Assess risk, plan, research, implement, refine, verify and report in the same task. Do not wait for a separate `go`, plan approval or discussion after a request to implement, refine or continue. Ask only about material ambiguity, scope expansion or an action repository policy reserves for human approval. Autonomy never authorizes a merge.
 
-```
-0 classify -> 1 define done -> 2 evidence -> 3 decide -> 4 propose and confirm -> 5 act -> 6 verify -> 7 distill
-```
+### Task queue and execution
 
-- **0 classify.** Label the ask as trivial, question, or plan-first before touching anything.
-- **1 define done.** Define done with a named verification per task shape: tests, lint, typecheck, runtime observation, and for UI a capture where a harness exists, or an inspection of `apps/preview` where it does not. Use the Verification Gate as the floor, not the ceiling.
-- **2 evidence.** Gather evidence in parallel from primary sources: read the target file, its consumers, its tests, and analogous implementations. When the answer lives outside the repository and external standards are relevant, search the web when network access is authorized, fetch primary sources, and cite them; otherwise use repository evidence and document why external research was not needed or not authorized. Do not edit before evidence is collected.
-- **3 decide.** Commit to one recommendation. State what changed, why, and what it touches in plain language.
-- **4 propose and confirm.** If the fix expands beyond the reported instance, pause and present the comprehensive proposal with the 3-point structure above. Wait for explicit human confirmation. Do not proceed on implied authorization.
-- **5 act.** Make surgical edits with minimal impact. Do not break working functionality. Follow patterns already in the repo for dialogs, state, IPC, and settings.
-- **6 verify.** Verify by observation, not assertion. Tie every progress claim to a tool result from this session. Separate verification from execution: re-read the diff with fresh context as a verifier would, checking against the rubric, the defined done, and the pattern class. A green run from before the last edit proves nothing.
-- **7 distill.** Record the lesson: root cause, pattern class, decision trail, and what future work should reuse. Write it to `docs/decisions/` with versions, SHAs, paths, and sources so it can be re-verified. This is how the memory progression moves from fail to investigate to verify to distill.
+- Process independent accepted tasks in FIFO order. Apply corrections and clarifications to the active task immediately. Queue newly discovered independent work for consideration; do not start it without authorization.
+- For repository changes, start with a draft PR once the scope, acceptance criteria and base are clear. Push the first scoped commit that passes its pre-push checks and open or reuse the draft against the actual base. Push subsequent verified checkpoints to that branch. Do not wait for the whole implementation or open a PR for a question or local-only task.
+- Use the smallest correct implementation. Batch related reads and edits, not unrelated features. Run focused checks after meaningful changes and the complete Verification Gate on the final tree before handoff.
 
-Verification coverage target: aim for full class coverage, not just instance coverage. In controlled experiments, verifier subagents in fresh context caught about 73 percent of seeded issues versus 7 to 33 percent for self-critique. Apply that separation on every PR.
+### Repository evidence
 
-### 5. Hard boundaries
+Read the current source, callers, tests and analogous implementations before making a repository claim. Prior conversations, summaries and remembered paths are leads, not evidence. Cite exact `path:line` references and recheck them after edits. If inspection or verification is unavailable, say what is unknown. Never invent file contents, locations or results.
 
-- Proactive is not autonomous scope creep. You MUST ask before you expand beyond the confirmed scope. Silence is a deliberate action when no high-value proposal clears the interruption bar.
-- Proactive is not over-engineering. Build the simplest thing that meets the requirement and eliminates the class. Do not design for hypothetical future needs beyond the identified pattern.
-- Proactive is not adding outbound calls, telemetry, or new dependencies without explicit user request, and never invents `#` numbers, credentials, or co-authors. Network calls stay attributable, visible, and bounded.
-- Before a command that changes system state such as restarts, deletes, or config edits, check that the evidence actually supports that specific action. A signal that pattern-matches a known failure may have a different cause.
+### Delegation
+
+Delegate implementation or review only when a suitable agent is available and it helps. Otherwise do the work yourself. Report only delegation that occurred. The orchestrator integrates, reviews and verifies the result. Re-read the diff with fresh context against the acceptance criteria, even without a second agent.
+
+### Error and process improvement
+
+Trace failures to the root cause with the 5 Whys. Record recurring failures, the evidence and useful improvements in `docs/decisions/`. Change shared instructions for a repeatable systemic gap, not an isolated mistake. Check the evidence before any command that changes system state. Keep outbound calls attributable, visible and bounded; do not invent issue numbers, credentials or co-authors.
+
+### Communication
+
+Use concise, direct technical English. Prefer active voice and clear instructions. Cut filler, vague progress claims and repetition. Use gerunds when they improve clarity. Do not use the phrase `load-bearing`.
 
 ### 6. Enforcement
 
@@ -131,7 +129,7 @@ Verification coverage target: aim for full class coverage, not just instance cov
 - The PR description MUST include the proactive proposal and verification that the class is addressed; include human confirmation evidence only when scope expansion was proposed and confirmed, otherwise state that no expansion was needed with evidence that no broader class exists. For UI work, attach the observed capture artifact and name what it confirmed, or state why no capture could run.
 - The pre-push loop MUST re-review the diff up to three times against `REVIEW.md` and `FULL-REVIEW.md`, fixing every critical, major, minor, and UI concern on each pass. A pass that finds nothing is a reason to dig deeper.
 
-If any step in this protocol is skipped, the change is not ready to file. Fix the protocol violation before fixing the code.
+Do not mark the draft ready until the protocol is complete.
 
 ## Deep refinement, hard constraint
 
@@ -188,29 +186,29 @@ ALWAYS search for features that should be there but are not yet present. An impl
 This is the refinement loop. Run it after every initial success, and repeat until a pass finds no new detail gaps, edge cases, or missing features:
 
 ```
-implement -> detail audit -> edge case sweep -> missing feature search -> propose refinements and confirm -> implement refinements -> verify by observation -> repeat
+implement -> detail audit -> edge case sweep -> missing feature search -> confirm only scope expansions -> implement in-scope refinements -> verify by observation -> repeat
 ```
 
 - Bound each iteration to one clear improvement. Do not batch unrelated refinements into a single large change that hides review. One concern per branch still applies, but refinement iterations within that concern are mandatory.
 - Keep the loop honest: re-read your own diff with fresh context as a separate verifier would. In controlled experiments, fresh-context verifiers catch about three times more issues than self-critique. Apply that separation on every refinement pass.
 - Record each refinement iteration that produced a durable lesson in `docs/decisions/`: what was rough, what was missing, what verification caught it, and what future work should reuse. Skip iterations with no useful lesson rather than writing work logs.
-- Stop only when you can state with evidence that every detail gap has been checked against standards, every listed edge case has been handled and verified, and every must-have missing feature has been proposed and either implemented with confirmation or explicitly deferred with a reason. A shallow pass that finds nothing without evidence-backed thoroughness is a reason to dig deeper, but an evidence-backed pass that finds no new gaps after a thorough audit is sufficient to stop.
+- Stop only when you can state with evidence that every detail gap has been checked against standards, every listed edge case has been handled and verified, and every must-have missing feature has been proposed and either implemented within the authorized scope or explicitly deferred with a reason. A shallow pass that finds nothing without evidence-backed thoroughness is a reason to dig deeper, but an evidence-backed pass that finds no new gaps after a thorough audit is sufficient to stop.
 
 ### 6. Hard boundaries
 
 - Refinement is not gold-plating or endless polish beyond the intent. Once the intent is fully satisfied with detail, edge cases, and must-have features verified, stop. Do not invent new requirements to prolong work.
-- Refinement is not silent scope expansion. Proactive identification is mandatory, autonomous execution without confirmation is not. Follow the closed-world scope contract.
+- Refine within the authorized scope without pausing. Obtain explicit confirmation before acting on a proposed expansion.
 - Refinement is not skipping verification to save time. Every refinement claim MUST cite the tool output, test result, or observed capture that proves it. A claim without evidence is not refinement.
 - Refinement is not weakening tests or lowering thresholds to make a check pass. That is a defect. Fix the code, not the test.
 
 ### 7. Enforcement
 
-- After each refinement iteration, run focused verification relevant to the change and report the new head SHA. Run the full Verification Gate, including `pnpm install --frozen-lockfile`, lint, typecheck, build, tests, `pnpm run skills:verify`, and the Rust gates when relevant, on the final tree before filing and before every push. A result from before the last refinement proves nothing.
+- After each refinement iteration, run focused verification relevant to the change and report the new head SHA. Run the full Verification Gate, including `pnpm install --frozen-lockfile`, lint, typecheck, build, tests, `pnpm run skills:verify`, and the Rust gates when relevant, on each committed checkpoint before pushing, and on the final tree before handoff. A result from before the last refinement proves nothing.
 - The Diff web-research review MUST list detail gaps checked, edge cases enumerated and dispositioned, missing features researched with sources, and failed refinement attempts. A review that omits any of those is not run.
 - The PR description MUST include the refinement summary: what was rough, what was missing, what was improved, and what verification proves the refinement. For UI work, attach the current refined-state capture and name what it confirms, or state why no capture could run.
-- The pre-push loop MUST re-review the entire diff, original plus refinements, up to three times against `REVIEW.md` and `FULL-REVIEW.md`, verifying detail, edge cases, and missing features with evidence. A change that passes tests but still has rough edges is not ready to file.
+- The pre-push loop MUST re-review the entire diff, original plus refinements, up to three times against `REVIEW.md` and `FULL-REVIEW.md`, verifying detail, edge cases, and missing features with evidence. A change that passes tests but still has rough edges is not ready for handoff.
 
-If any step in this protocol is skipped, the change is not ready to file. Fix the protocol violation before fixing the code.
+Do not mark the draft ready until the protocol is complete.
 
 **Querying the user/ Human-in-the-loop**
 
@@ -219,8 +217,8 @@ If any step in this protocol is skipped, the change is not ready to file. Fix th
 `grilling`and `interview-me` full skill-reference  below
 
 - Ask one question per turn when the answer changes the design. Offer two or three concrete options with your recommendation, and allow a custom answer. Sort questions by blast radius, and carry the evidence in the question so the user can answer without reopening the code.
-- Questions about layout, hierarchy, density, copy and motion go to the human, with a screenshot or a preview page per option. The human owns those calls. Ask in plain words, and never soften a question into a suggestion they have to decode.
-- When the human answers a question with a different idea, that is a new intent, not a correction of the old one. Restate it and confirm before you build it.
+- Unresolved design choices about layout, hierarchy, density, copy and motion go to the human, with a screenshot or a preview page per option. The human owns those calls. Ask in plain words, and never soften a question into a suggestion they have to decode.
+- Apply a correction to the active task without asking the human to repeat it. If the answer proposes separate work, queue it; clarify only what remains materially ambiguous.
 
 **Writing style REPO-WIDE**
 
@@ -400,13 +398,13 @@ Procedure:
 3. Load `REVIEW.md` and `FULL-REVIEW.md` from the working tree of the branch under review, since neither file is guaranteed to be on `main` in the shape you need. Load the CodeRabbit profile in `.coderabbit.yaml`, which is the file the pre-push rule names.
 4. Before **every push**, read all of `CODING_STANDARDS.md` and apply every section to every file and hunk in the complete PR-base-to-head diff, not just the latest commit. Follow `engineering/standards-review.md` to prepare the full patch and record each disposition for this base, standards version and head; changes invalidate the review. Paste the accepted receipt into the PR verification gate. The local pre-push hook and PR check both validate it. Classify each finding as critical, major, minor, nitpick or UI concern, and fix it. Check touched TypeScript and JavaScript files against the analyzer rules that run outside `oxlint`, which are SonarCloud and DeepSource, configured in `sonar-project.properties`, `.sonarcloud.properties` and `.deepsource.toml`.
 5. Repeat steps 1 to 4 up to three times until a pass finds nothing new. A pass that finds nothing is a reason to dig deeper, not a reason to stop. Re-check the parts that the fixes touched, because a fix is the most likely source of the next defect.
-6. Finish every fix, regression test, visual re-check, secret check, and local gate completely before pushing. Never push partial commits while checks, reviews, or visual scenarios remain unfinished.
+6. Apply the pre-push checks to the entire diff at each draft checkpoint. Push a coherent, verified commit, not a half-applied fix. Finish all regression tests, visual checks, secret checks and review before marking the draft ready.
 
 Do not wait for bots to find what you can find. Fix the minor and nitpick findings before they are posted.
 
-## Before creating a PR
+## Before marking a draft ready
 
--Like the `pre-push` rule already states, in addition perform 3-5 independent unbiased repasses after, why? your first pass might surface issues and thenyou fix them, if you don't repass again even more deeply, your `fix` might be causing new problems a `FULL-REVIEW.md` repass would dig out. So you not finding any issues should be even more reason, why you should re-dig deeper.
+Before final review, do 3 to 5 independent repasses against `FULL-REVIEW.md`. Look for problems introduced by the fixes as well as problems in the original change.
 
 Each repass starts from the diff, not from memory of the last pass. Do not reuse a checklist result from before a fix. Name what each pass covered, and stop only when a pass produces no new finding and you can say why that is credible.
 
@@ -424,19 +422,17 @@ A pull request merges into the base branch as it is on the day it merges, not as
 
 ## Filing A Pull Request
 
-Use this workflow whenever a task ends in a pull request. It covers every change that writes code, tests, tooling, configuration, workflows, skills or documentation with an operational impact.
-
-The steps, in order:
+Use this workflow from the start of a repository change, including tests, tools, configuration, workflows, skills and operational documentation. Apply steps 1 to 5 to the first checkpoint, not just the final implementation:
 
 1. Confirm the base. Find the branch this work was cut from, merge its current tip into the working branch as the section above requires, and open the pull request against that branch, never against `main`. If the task does not name the base, ask the human before you open the pull request.
 2. Research before you edit. Apply the code research gate. Record the queries, sources, edge cases and failed attempts in a collapsible block in the pull request description.
 3. Apply the review protocol. Load `REVIEW.md`, which points to `FULL-REVIEW.md`, and apply Part I and the relevant Part II sections to your own diff. Fix every critical, major, minor, nitpick and UI finding, and repeat the pre-push loop until a pass finds nothing new.
 4. Capture or inspect the UI change. For any change a user sees, record it when the capture pipeline works, watch the recording, and attach it to the pull request. When the capture cannot run, inspect the changed surface in `apps/preview` and write down what that showed.
 5. Run the local gates before every push. Report each gate as passed, failed or not run, with the head SHA. A gate that cannot run in your sandbox is reported as not run, with the reason and the gap number from `engineering/sandbox-coverage-gaps.md`.
-6. Open the pull request. Fill the sections `.github/pull_request_template.md` requires. Request the review bots the rules below allow.
+6. After the first verified push, open the draft with `gh pr create --draft --base <base> --head <branch>`, or update the existing draft. Fill `.github/pull_request_template.md` for the current head. Check the remote SHA, share the draft link and continue the task. Request only the reviews the bot rules allow.
 7. Watch CI and review together. After each push or fix round, poll the checks and the review threads as the babysitting steps describe. Fix every failing job, thread and annotation on the same head in one batch, push, and poll again from the new head.
-8. Wait for quiet. A fix round is not finished while a check is pending or a review is still arriving. After the last push, keep polling through a quiet window of about ten minutes, and do not report to the human until it passes with no new review and no new failure.
-9. Report once. Return to the human with the pull request link only when all of these hold on the same head: every required check is green, all applicable reviews are complete, no review thread is unresolved, and the quiet window passed. Name every gate that was not run, and name every decision that only the human can make.
+8. Wait for quiet. A fix round is not finished while a check is pending or a review is still arriving. After the last push, keep polling through a quiet window of about ten minutes before reporting that the PR is ready. A draft checkpoint is not a readiness claim.
+9. Report readiness only when all of these hold on the same head: every required check is green, all applicable reviews are complete, no review thread is unresolved, and the quiet window passed. Name every gate that was not run, and name every decision that only the human can make.
 10. Delete the head branch once the merge the human confirmed has landed. Check with `gh api repos/<owner>/<repo>/branches/<head>`, which returns 404 when the repository deleted it on merge, and run `git push origin --delete <head>` when it still exists, then `git fetch --prune`. Tell the human it is gone. Never delete the base, a branch whose pull request is open, or a branch whose pull request closed without merging, because that branch is the only copy of its work.
 
 ## How to structure a Pull Request description
@@ -517,7 +513,7 @@ query($owner:String!, $name:String!, $number:Int!, $after:String) {
    - Zero unresolved review threads.
    - Sonar success with 0 New issues and empty annotations.
    - No new bot comments since the last poll that reopen work.
-7. Only then summarize status to the human. Until step 6, keep looping silently and fixing. The human gets the status in the conversation, and the pull request keeps only the folded round log, so neither channel repeats the other.
+7. Only then report readiness to the human. A request for a draft checkpoint gets the verified remote link and current status, not a claim that checks or review finished. The human gets the status in the conversation, and the pull request keeps only the folded round log, so neither channel repeats the other.
 
 Do not end a PR session early while build, lint, or review bots are still pending. Do not treat "Quality Gate passed" alone as clean if New issues or annotations remain. Do not resolve a review thread until its fix is on the targeted HEAD.
 
@@ -632,7 +628,7 @@ These preferences come from the user's standing instructions across many session
 - Put debug labels, cloud URLs, environment names or internal paths in shipped UI.
 - Add `console.log` on a happy path.
 - Write long comments that restate the code.
-- Open an unattended agent PR. The human reviews every PR before it merges.
+- Treat a draft checkpoint as approval to merge. The human reviews every PR before it merges.
 - Edit a generated file by hand, or commit a file larger than 5 MB outside `.agents/` without a reason the PR states.
 - Commit a `.cargo/config.toml` with the vendored source replacement, which would break a normal `cargo build` for every contributor.
 - Extract a vendored payload, set `CARGO_HOME`, `CARGO_TARGET_DIR` or `RUSTUP_HOME`, or write build output inside the workspace. Keep all of it in `/tmp`.
@@ -698,7 +694,7 @@ Phase 4. Add failing test first, fix root cause, verify suite passes. After 3 fa
 | skill | load when | one line rule |
 | --- | --- | --- |
 | be-ambitious | every plan-first or non-trivial task, before you act | Name the field, answer the four depth questions, run the fourth answer's check or label it unverified, then execute. Never offer depth to the human and never wait for a go ahead. |
-| brainstorming | feature, UI, or behavior change needs design before code | Explore context, ask one question at a time, propose 2 to 3 approaches, write spec, get approval, then plan. Do not code before design. |
+| brainstorming | feature, UI, or behavior change needs design before code | Explore the context and design before coding. Resolve clear decisions from the request and evidence. Ask about material ambiguity or scope expansion, not permission to start. |
 | plan | you need an actionable build plan, not execution | Write `.mausagent/plans/YYYY-MM-DD_HHMMSS-<slug>.md` with goal, approach, bite sized tasks, exact paths, commands, and verification. |
 | search-first | you are about to add a utility, dependency, or integration | Check repo, then npm and PyPI, then MCP and skills, then GitHub. Adopt, extend, or build based on what you find. Do not claim coverage you did not check. |
 | systematic-debugging | test failure, bug, or regression | Find root cause before any fix. Reproduce, trace data flow, form one hypothesis, test with smallest change, verify. Stop after 3 failed fixes and question architecture. |

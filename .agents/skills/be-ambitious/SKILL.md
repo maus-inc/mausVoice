@@ -45,9 +45,9 @@ gate is what keeps the faster path honest.
 
 Keep the user's goal and scope. Depth means a higher standard for the same outcome: better
 sources, sharper methods, real verification. Do not add deliverables, features or side quests.
-If a move would make the job larger rather than better, drop it. Scope that genuinely belongs to
-the task still goes through the confirmation rule in the proactive protocol. Depth never
-authorises expansion.
+Execute the requested work autonomously after completing the depth pass. Seek confirmation
+only for genuine ambiguity, scope expansion, or actions that repository policy explicitly
+reserves for human approval. Depth never authorises expansion.
 
 ## The four questions
 
