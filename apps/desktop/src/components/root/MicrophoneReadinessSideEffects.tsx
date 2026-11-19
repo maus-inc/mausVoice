@@ -811,7 +811,7 @@ export const MicrophoneReadinessSideEffects = () => {
 
   useEffect(() => {
     if (!ownsDevice) {
-      return;
+      return undefined;
     }
     return subscribeToLocalDataClearRequested(() => {
       // Readiness measures usable audio, not whether an idle stream is open.
