@@ -48,6 +48,11 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
   let tap: Tap | null = null;
   let pending: PendingTap | null = null;
 
+  /** True when this tap starts close enough behind the previous one to pair. */
+  const pairsWithPending = (family: ModifierFamily, startedAt: number) =>
+    pending?.family === family &&
+    startedAt - pending.releasedAt <= DOUBLE_TAP_WINDOW_MS;
+
   const release = (key: string, now: number): boolean => {
     if (!pressed.delete(key)) return false;
     if (tap?.key !== key) return false;
@@ -58,11 +63,19 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
       pending = null;
       return false;
     }
-    const isSecondTap =
-      pending?.family === family &&
-      startedAt - pending.releasedAt <= DOUBLE_TAP_WINDOW_MS;
-    pending = isSecondTap ? null : { family, releasedAt: now };
-    return isSecondTap;
+    const fired = pairsWithPending(family, startedAt);
+    pending = fired ? null : { family, releasedAt: now };
+    return fired;
+  };
+
+  /** Releases every held key absent from the new snapshot. */
+  const releaseMissing = (next: Set<string>, now: number) => {
+    let fired = false;
+    for (const key of Array.from(pressed)) {
+      if (next.has(key)) continue;
+      fired = release(key, now) || fired;
+    }
+    return fired;
   };
 
   const press = (key: string, now: number, allowed: ModifierFamily | null) => {
@@ -86,10 +99,7 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
         return false;
       }
       const next = new Set(keys.map(normalizeKey));
-      let fired = false;
-      for (const key of Array.from(pressed)) {
-        if (!next.has(key)) fired = release(key, now) || fired;
-      }
+      const fired = releaseMissing(next, now);
       for (const key of next) {
         press(key, now, allowed);
       }

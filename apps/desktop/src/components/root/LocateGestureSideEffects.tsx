@@ -35,6 +35,7 @@ export const LocateGestureSideEffects = () => {
       if (detector.update(state.keysHeld, performance.now(), selected)) {
         sendPillLocate();
       }
+      return undefined;
     });
   }, []);
 

@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { invoke } = vi.hoisted(() => ({
-  invoke: vi.fn().mockResolvedValue(undefined),
+  invoke: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
