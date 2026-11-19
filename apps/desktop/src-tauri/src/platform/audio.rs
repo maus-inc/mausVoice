@@ -961,6 +961,7 @@ mod cpal_impl {
         inner: Arc<Mutex<Option<ActiveRecording>>>,
         preferred_input_name: Arc<Mutex<Option<String>>>,
         last_successful_device: Arc<Mutex<Option<CachedDeviceInfo>>>,
+        selection_generation: AtomicU64,
         /// The running stream nobody is recording from, if one is held.
         warm: Arc<Mutex<Option<WarmStream>>>,
         /// Bumped by every request to close at a deadline. A linger thread only
@@ -1291,6 +1292,7 @@ mod cpal_impl {
                 inner: Arc::new(Mutex::new(None)),
                 preferred_input_name: Arc::new(Mutex::new(None)),
                 last_successful_device: Arc::new(Mutex::new(None)),
+                selection_generation: AtomicU64::new(0),
                 warm: Arc::new(Mutex::new(None)),
                 linger_generation: Arc::new(AtomicU64::new(0)),
                 // Zero: opening the device on every press is the only policy
@@ -1313,7 +1315,25 @@ mod cpal_impl {
             device_label: String,
             preference: Option<&str>,
         ) {
+            self.cache_device(host_id, device_label, preference, None);
+        }
+
+        fn cache_device(
+            &self,
+            host_id: HostId,
+            device_label: String,
+            preference: Option<&str>,
+            prepared_generation: Option<u64>,
+        ) {
             if let Ok(mut guard) = self.last_successful_device.lock() {
+                if let Some(generation) = prepared_generation {
+                    if self.selection_generation.load(Ordering::SeqCst) != generation {
+                        return;
+                    }
+                } else {
+                    // A successful start takes precedence over an in-flight probe.
+                    self.selection_generation.fetch_add(1, Ordering::SeqCst);
+                }
                 *guard = Some(CachedDeviceInfo {
                     host_id,
                     preference: preference.map(str::to_owned),
@@ -2109,10 +2129,16 @@ mod cpal_impl {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_ascii_lowercase);
+            let generation = self.selection_generation.fetch_add(1, Ordering::SeqCst) + 1;
             let (label, host_id) = self.resolve_preferred_device(preferred.as_deref())?;
             // A delayed preparation cannot change the held stream or make a
             // press with a different preference use this device.
-            self.cache_successful_device(host_id, label.clone(), preferred.as_deref());
+            self.cache_device(
+                host_id,
+                label.clone(),
+                preferred.as_deref(),
+                Some(generation),
+            );
             log::debug!("prepared '{label}' for the next press");
             Ok(label)
         }
@@ -2678,6 +2704,7 @@ mod cpal_impl {
 
         fn clear_device_cache(&self) {
             if let Ok(mut cache) = self.last_successful_device.lock() {
+                self.selection_generation.fetch_add(1, Ordering::SeqCst);
                 *cache = None;
             }
         }
@@ -5327,7 +5354,19 @@ mod cpal_impl {
         }
 
         #[test]
-        fn the_first_press_preserves_a_cache_primed_for_its_preference() {
+        fn a_late_preparation_cannot_replace_a_successful_selection() {
+            let manager = RecordingManager::default();
+            let host_id = cpal::default_host().id();
+            let in_flight = manager.selection_generation.load(Ordering::SeqCst);
+            manager.cache_successful_device(host_id, "New default".to_string(), None);
+            manager.cache_device(host_id, "Old default".to_string(), None, Some(in_flight));
+
+            let cache = manager.last_successful_device.lock().unwrap();
+            assert_eq!(cache.as_ref().unwrap().device_label, "New default");
+        }
+
+        #[test]
+        fn a_matching_preference_update_preserves_a_prepared_cache_entry() {
             use crate::platform::Recorder;
 
             let manager = RecordingManager::default();
