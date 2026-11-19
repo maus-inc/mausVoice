@@ -2269,13 +2269,17 @@ mod cpal_impl {
                     let Some(generation) = self.close_matching_warm(Some(&sink)) else {
                         return;
                     };
+                    // The next cold press must not reuse the device this refresh retired.
+                    self.clear_device_cache();
                     if let Err(err) = self.open_warm_with_policy(preroll, Some(generation)) {
                         log::warn!("could not reopen the warm stream after a device change: {err}");
                     }
                 }
                 None => {
                     log::warn!("no usable device after a device change; releasing '{current}'");
-                    self.close_matching_warm(Some(&sink));
+                    if self.close_matching_warm(Some(&sink)).is_some() {
+                        self.clear_device_cache();
+                    }
                 }
             }
         }
