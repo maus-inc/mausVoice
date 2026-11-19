@@ -167,33 +167,26 @@ describe("LocalApiKeyRepo - openRouterConfig wire key casing", () => {
     expect(key.openRouterConfig).toEqual(storedConfig);
   });
 
-  it("round-trips openRouterConfig so a read cannot lose what a write stored", async () => {
+  it("round-trips the serialized update through the native wire shape", async () => {
     const wire: ApiKeyViewWire = {
       id: "key-openrouter",
       name: "OpenRouter",
       provider: "openrouter",
       createdAt: 1000,
-      openRouterConfig: JSON.stringify(storedConfig),
+      openRouterConfig: null,
     };
-
-    // The update must send the camel-R key the Rust side deserializes.
-    invokeMock.mockResolvedValueOnce(wire);
-    await repo.updateApiKey({
-      id: "key-openrouter",
-      openRouterConfig: storedConfig,
+    invokeMock.mockImplementationOnce(async (command, { request }) => {
+      expect(command).toBe("api_key_update");
+      expect(request.id).toBe(wire.id);
+      expect(request).not.toHaveProperty("openrouterConfig");
+      expect(JSON.parse(request.openRouterConfig)).toEqual(storedConfig);
+      wire.openRouterConfig = request.openRouterConfig;
+      return wire;
     });
+    await repo.updateApiKey({ id: wire.id, openRouterConfig: storedConfig });
 
-    const [, args] = invokeMock.mock.calls.at(-1) as [
-      string,
-      { request: Record<string, unknown> },
-    ];
-    expect(args.request).toHaveProperty("openRouterConfig");
-    expect(args.request).not.toHaveProperty("openrouterConfig");
-
-    // And the record handed back must survive the same mapping, so a later
-    // toggle of the sibling field cannot silently drop this one.
     invokeMock.mockResolvedValueOnce([wire]);
-    const [key] = await repo.listApiKeys();
-    expect(key.openRouterConfig).toEqual(storedConfig);
+    const [reloaded] = await repo.listApiKeys();
+    expect(reloaded.openRouterConfig).toEqual(storedConfig);
   });
 });

@@ -52,6 +52,15 @@ vi.mock("../i18n/intl", async (importOriginal) => {
 const conversationStorage = new Map<string, Conversation>();
 const messageStorage = new Map<string, ChatMessage>();
 
+const createMessage = vi.fn((message: ChatMessage) => {
+  if (repoMocks.rejectNextCreate) {
+    repoMocks.rejectNextCreate = false;
+    return Promise.reject(new Error("persist rejected"));
+  }
+  messageStorage.set(message.id, message);
+  return Promise.resolve(message);
+});
+
 // Only the two repo methods sendChatMessage touches are faked, plus the
 // deleteConversation method deleteConversation touches. Everything else
 // stays out so an unexpected repo call fails loudly. Setting
@@ -75,18 +84,15 @@ vi.mock("../repos", () => ({
         return Promise.reject(new Error("delete rejected"));
       }
       conversationStorage.delete(id);
+      // Migration 063: deleting the parent cascades to its chat messages.
+      for (const [key, message] of messageStorage) {
+        if (message.conversationId === id) messageStorage.delete(key);
+      }
       return Promise.resolve();
     },
   }),
   getChatMessageRepo: () => ({
-    createChatMessage: (message: ChatMessage) => {
-      if (repoMocks.rejectNextCreate) {
-        repoMocks.rejectNextCreate = false;
-        return Promise.reject(new Error("persist rejected"));
-      }
-      messageStorage.set(message.id, message);
-      return Promise.resolve(message);
-    },
+    createChatMessage: createMessage,
     listChatMessages: (conversationId: string) => {
       if (repoMocks.rejectNextList) {
         repoMocks.rejectNextList = false;
@@ -307,14 +313,18 @@ describe("sendChatMessage", () => {
     // conversation is gone.
     seed();
     await sendChatMessage("conv-1", "Before delete");
+    expect(createMessage).toHaveBeenCalledOnce();
+    expect(messageStorage.size).toBe(1);
     await deleteConversation("conv-1");
     expect(getAppState().conversationById["conv-1"]).toBeUndefined();
+    expect(messageStorage.size).toBe(0);
 
     await sendChatMessage("conv-1", "After delete");
 
     // The second send must not have created a message, re-added the
     // conversation to the sidebar, or triggered the agent.
-    expect(messageStorage.size).toBe(1);
+    expect(createMessage).toHaveBeenCalledOnce();
+    expect(messageStorage.size).toBe(0);
     expect(getAppState().chat.conversationIds.includes("conv-1")).toBe(false);
     expect(runAgentMock).toHaveBeenCalledTimes(1);
   });
