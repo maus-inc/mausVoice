@@ -10,7 +10,9 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::System::LibraryLoader::*;
-use windows::Win32::UI::Accessibility::{CLSID_AccPropServices, IAccPropServices, PROPID_ACC_NAME};
+use windows::Win32::UI::Accessibility::{
+    CLSID_AccPropServices, IAccPropServices, NotifyWinEvent, PROPID_ACC_NAME,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -46,6 +48,10 @@ thread_local! {
     static EDIT_CONTAINER: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_LABEL_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
+    // Last MSAA name published on the EDIT control. The caption only changes on
+    // a transcript/message switch, so caching it keeps the accessibility event
+    // off every frame while still firing when the field's purpose changes.
+    static EDIT_ACCESSIBLE_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
     static EDIT_SURFACE_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
     // Cached reduced-motion probe (see reduced_motion()); re-read at most
     // every 2 s so the frame loop never pays for a settings call per tick.
@@ -2727,6 +2733,13 @@ fn set_edit_accessible_name(text: &str) {
     if edit.0.is_null() {
         return;
     }
+    // Only republish when the name actually changes. Screen readers cache the
+    // Name, so re-setting the same value each frame would spam NAMECHANGE
+    // events for no visible change; this fires once per transcript/message
+    // switch instead.
+    if EDIT_ACCESSIBLE_NAME.with(|last| last.borrow().as_deref() == Some(text)) {
+        return;
+    }
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         // Best effort: a COM failure only leaves the field unnamed, which is no
@@ -2736,14 +2749,28 @@ fn set_edit_accessible_name(text: &str) {
         else {
             return;
         };
-        let _ = service.SetHwndPropStr(
+        if service
+            .SetHwndPropStr(
+                edit,
+                OBJID_CLIENT.0 as u32,
+                CHILDID_SELF,
+                PROPID_ACC_NAME,
+                PCWSTR(wide.as_ptr()),
+            )
+            .is_err()
+        {
+            return;
+        }
+        // Tell assistive tech the Name changed; without this a screen reader
+        // that already read the control keeps announcing the old purpose.
+        NotifyWinEvent(
+            EVENT_OBJECT_NAMECHANGE,
             edit,
-            OBJID_CLIENT.0 as u32,
-            CHILDID_SELF,
-            PROPID_ACC_NAME,
-            PCWSTR(wide.as_ptr()),
+            OBJID_CLIENT.0,
+            CHILDID_SELF as i32,
         );
     }
+    EDIT_ACCESSIBLE_NAME.with(|last| *last.borrow_mut() = Some(text.to_string()));
 }
 
 pub(crate) fn clear_edit_control() {

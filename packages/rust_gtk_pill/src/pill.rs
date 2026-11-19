@@ -1296,6 +1296,21 @@ fn wire_entry_and_keys(wiring: Wiring) {
         *state_review_changed.entry_text.borrow_mut() = review_buffer_text(buffer);
     });
 
+    // `paste-clipboard` only fires for the paste action. Middle-click primary
+    // selection and drag-drop insert straight into the buffer, so the budget has
+    // to be enforced here, where every insertion route arrives. An insert that
+    // would push the buffer past the budget is dropped whole rather than
+    // truncated, so the draft the user already has stays intact.
+    review_buffer.connect_insert_text(|buffer, _location, text| {
+        if LOADING_REVIEW_TEXT.with(|loading| loading.get()) {
+            return;
+        }
+        if review_insert_exceeds_budget(buffer, text.chars().count()) {
+            eprintln!("Rejected a review edit that exceeded the editor budget");
+            buffer.stop_signal_emission_by_name("insert-text");
+        }
+    });
+
     let state_review_paste = state.clone();
     review_editor.connect_paste_clipboard(move |view| {
         // The GTK action signal also covers context-menu Paste. Stop its default
@@ -1614,6 +1629,27 @@ thread_local! {
     /// Multiline native editor shown only while a transcript awaits review.
     static REVIEW_EDITOR: std::cell::RefCell<Option<gtk::TextView>> =
         const { std::cell::RefCell::new(None) };
+    /// Set while a transcript is loaded programmatically. `set_text` emits
+    /// `insert-text`, and the transcript can be larger than the editing budget,
+    /// so the guard below has to stand down for that one call or the load would
+    /// be dropped and the editor would open empty.
+    static LOADING_REVIEW_TEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether appending `incoming` characters to `buffer` would exceed the review
+/// editor budget, accounting for the selection an insertion replaces.
+///
+/// Every insertion route has to answer this: the paste handler, typed text,
+/// middle-click primary selection and drag-drop all reach the buffer, and the
+/// budget only holds if each one is checked before the mutation.
+fn review_insert_exceeds_budget(buffer: &gtk::TextBuffer, incoming_chars: usize) -> bool {
+    let selected = buffer
+        .selection_bounds()
+        .map(|(start, end)| (end.offset() - start.offset()).max(0) as usize)
+        .unwrap_or(0);
+    let prospective =
+        (buffer.char_count().max(0) as usize + incoming_chars).saturating_sub(selected);
+    prospective > MAX_REVIEW_EDITOR_CHARS
 }
 
 fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
@@ -1636,13 +1672,7 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
         // unbounded insert would make editing expensive. Rejecting keeps the
         // user's draft rather than replacing it with something they cannot
         // work with.
-        let selected = buffer
-            .selection_bounds()
-            .map(|(start, end)| (end.offset() - start.offset()).max(0) as usize)
-            .unwrap_or(0);
-        let prospective =
-            (buffer.char_count().max(0) as usize + text.chars().count()).saturating_sub(selected);
-        if prospective > MAX_REVIEW_EDITOR_CHARS {
+        if review_insert_exceeds_budget(&buffer, text.chars().count()) {
             eprintln!("Rejected a review paste that exceeded the editor budget");
             return;
         }
@@ -1678,7 +1708,10 @@ fn review_editor_text(view: &gtk::TextView) -> String {
 fn set_review_editor_text(text: &str) {
     REVIEW_EDITOR.with(|slot| {
         if let Some(view) = slot.borrow().as_ref() {
-            view.buffer().expect("review editor buffer").set_text(text);
+            let buffer = view.buffer().expect("review editor buffer");
+            LOADING_REVIEW_TEXT.with(|loading| loading.set(true));
+            buffer.set_text(text);
+            LOADING_REVIEW_TEXT.with(|loading| loading.set(false));
         }
     });
 }
