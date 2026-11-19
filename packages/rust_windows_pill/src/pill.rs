@@ -625,6 +625,52 @@ fn begin_banner(state: &PillState, message: String, duration: f64) {
     state.flash_timer.set(duration);
 }
 
+/// One assistant sync, unpacked so the dispatch arm stays a single call.
+struct AssistantStateUpdate {
+    active: bool,
+    input_mode: String,
+    compact: bool,
+    conversation_id: Option<String>,
+    user_prompt: Option<String>,
+    messages: Vec<ipc::PillMessage>,
+    streaming: Option<ipc::PillStreaming>,
+    permissions: Vec<ipc::PillPermission>,
+    review: Option<Box<ipc::PillReview>>,
+}
+
+fn apply_assistant_state(state: &PillState, update: AssistantStateUpdate) {
+    let was_active = state.assistant_active.get();
+    let previous_review_id = state
+        .assistant_review
+        .borrow()
+        .as_ref()
+        .map(|r| r.id.clone());
+    let review_id = update.review.as_ref().map(|r| r.id.clone());
+    let review_text = update.review.as_ref().map(|r| r.text.clone());
+    *state.assistant_review.borrow_mut() = update.review.map(|review| *review);
+
+    // The entry is the review surface: a new transcript loads into it for
+    // editing, and answering the review empties it again. An unchanged id
+    // leaves the user's edits alone.
+    if review_id != previous_review_id {
+        let text = review_text.unwrap_or_default();
+        *state.entry_text.borrow_mut() = text.clone();
+        set_edit_text(&text);
+    }
+    state.assistant_active.set(update.active);
+    *state.assistant_input_mode.borrow_mut() = update.input_mode;
+    state.assistant_compact.set(update.compact);
+    *state.assistant_conversation_id.borrow_mut() = update.conversation_id;
+    *state.assistant_user_prompt.borrow_mut() = update.user_prompt;
+    *state.assistant_messages.borrow_mut() = update.messages;
+    *state.assistant_streaming.borrow_mut() = update.streaming;
+    *state.assistant_permissions.borrow_mut() = update.permissions;
+    if (update.active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+        state.should_stick.set(true);
+        state.scroll_offset.set(0.0);
+    }
+}
+
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
@@ -751,38 +797,20 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             streaming,
             permissions,
             review,
-        } => {
-            let was_active = state.assistant_active.get();
-            let previous_review_id = state
-                .assistant_review
-                .borrow()
-                .as_ref()
-                .map(|r| r.id.clone());
-            let review_id = review.as_ref().map(|r| r.id.clone());
-            let review_text = review.as_ref().map(|r| r.text.clone());
-            *state.assistant_review.borrow_mut() = review.map(|review| *review);
-
-            // The entry is the review surface: a new transcript loads into it
-            // for editing, and answering the review empties it again. An
-            // unchanged id leaves the user's edits alone.
-            if review_id != previous_review_id {
-                let text = review_text.unwrap_or_default();
-                *state.entry_text.borrow_mut() = text.clone();
-                set_edit_text(&text);
-            }
-            state.assistant_active.set(active);
-            *state.assistant_input_mode.borrow_mut() = input_mode;
-            state.assistant_compact.set(compact);
-            *state.assistant_conversation_id.borrow_mut() = conversation_id;
-            *state.assistant_user_prompt.borrow_mut() = user_prompt;
-            *state.assistant_messages.borrow_mut() = messages;
-            *state.assistant_streaming.borrow_mut() = streaming;
-            *state.assistant_permissions.borrow_mut() = permissions;
-            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
-                state.should_stick.set(true);
-                state.scroll_offset.set(0.0);
-            }
-        }
+        } => apply_assistant_state(
+            state,
+            AssistantStateUpdate {
+                active,
+                input_mode,
+                compact,
+                conversation_id,
+                user_prompt,
+                messages,
+                streaming,
+                permissions,
+                review,
+            },
+        ),
         InMessage::ResetPosition { strategy } => {
             let hwnd = HWND_CELL.with(|c| c.get());
             cancel_drag_gesture(hwnd, state);
