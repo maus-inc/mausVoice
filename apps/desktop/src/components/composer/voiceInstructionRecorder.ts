@@ -6,6 +6,7 @@ import {
 } from "../../utils/local-data-write-gate";
 import {
   ActiveRecordingError,
+  PendingRecordingReleaseError,
   beginNativeRecording,
   waitForRecordingRelease,
   type NativeRecordingHandle,
@@ -163,7 +164,10 @@ export class VoiceInstructionRecorder {
   ): "blocked" | "unavailable" {
     if (!this.isCurrent(gen)) return "blocked";
     this.providerHandle = null;
-    if (error instanceof ActiveRecordingError) {
+    if (
+      error instanceof ActiveRecordingError ||
+      error instanceof PendingRecordingReleaseError
+    ) {
       this.deps.onError(this.deps.recordingUnavailableMessage("start"));
       return "blocked";
     }

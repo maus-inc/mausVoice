@@ -79,3 +79,23 @@ it("reports a recording stop failure", async () => {
   );
   await expect(stopLocalDataSubsystems()).rejects.toBe(failure);
 });
+
+it("does not authorize a wipe on partial audio before device release", async () => {
+  await startRecording();
+  const payload = { samples: [0.25], sampleRate: 16_000, captureFailed: true };
+  invoke.mockImplementation((command: string) => {
+    if (command === "stop_recording") return Promise.resolve(payload);
+    if (command === "discard_recording")
+      return Promise.reject(new Error("device held"));
+    return Promise.resolve();
+  });
+  await expect(stopLocalDataSubsystems()).rejects.toThrow("device held");
+  invoke.mockResolvedValue(null);
+  await stopLocalDataSubsystems();
+  expect(
+    invoke.mock.calls.filter(([command]) => command === "stop_recording"),
+  ).toHaveLength(1);
+  expect(
+    invoke.mock.calls.filter(([command]) => command === "discard_recording"),
+  ).toHaveLength(2);
+});

@@ -9,12 +9,23 @@ import {
 import { decodeStopRecordingPayload } from "./recorded-audio.utils";
 import { withTimeout } from "./timeout.utils";
 
+/** A previous admission has not confirmed release; no new provider was tried. */
+export class PendingRecordingReleaseError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
+}
+
 // Match the native start command's two-second release wait. Only the waiter
 // expires; the owned command and local slot survive until native confirms.
 export const waitForRecordingRelease = async (
   pending: Promise<unknown>,
 ): Promise<void> => {
-  await withTimeout(pending, 2_000, "Recording release");
+  try {
+    await withTimeout(pending, 2_000, "Recording release");
+  } catch (cause) {
+    throw new PendingRecordingReleaseError(cause);
+  }
 };
 
 // `start_recording` returns Result<_, String>; Tauri rejects with this exact
@@ -135,12 +146,19 @@ class RecordingSession implements NativeRecordingHandle {
     });
   }
 
-  async pause(): Promise<void> {
-    await this.command("pause_recording");
+  private async liveCommand(
+    name: "pause_recording" | "resume_recording",
+  ): Promise<void> {
+    if (!this.isLive()) throw new Error("No native recording is active");
+    await this.command(name);
   }
 
-  async resume(): Promise<void> {
-    await this.command("resume_recording");
+  pause(): Promise<void> {
+    return this.liveCommand("pause_recording");
+  }
+
+  resume(): Promise<void> {
+    return this.liveCommand("resume_recording");
   }
 
   private released(): void {
@@ -154,13 +172,24 @@ class RecordingSession implements NativeRecordingHandle {
   ): Promise<StopRecordingResponse> {
     const payload = await this.command("stop_recording", transport);
     const audio = decodeStopRecordingPayload(payload);
-    this.released();
+    // Native may seal partial audio *before* it releases the device. Deliver
+    // the samples now, but only a scoped discard can confirm that terminal state.
+    if (audio.captureFailed) this.confirmPartialRelease();
+    else this.released();
     // An ack only retires native's recovery copy. A lost ack cannot reopen
     // capture and a stalled one must not block the next start.
     void this.command("acknowledge_recording", transport).catch(() => {
       getLogger().verbose("acknowledge_recording failed");
     });
     return audio;
+  }
+
+  private confirmPartialRelease(): void {
+    // Retry just this tuple; discard is idempotent and a no-op after retirement.
+    // A concurrent waiter joins the same command rather than opening the gate.
+    void this.discard().catch(() => {
+      setTimeout(() => this.confirmPartialRelease(), 1_000);
+    });
   }
 
   stop(transport = this.transport): Promise<StopRecordingResponse> {
@@ -194,7 +223,7 @@ class RecordingSession implements NativeRecordingHandle {
     if (this.stopping) {
       try {
         await this.stopping;
-        return; // Its successful stop already released this admission.
+        if (session !== this) return; // A clean stop confirmed release.
       } catch {
         // A failed stop leaves only this admission to discard.
       }
@@ -208,7 +237,12 @@ class RecordingSession implements NativeRecordingHandle {
       throw new ActiveRecordingError();
     // Do not hide a failed stop from a start that was waiting for it. The
     // next attempt can retry release using the same owner and generation.
-    await waitForRecordingRelease(this.stopping ?? this.discard());
+    await waitForRecordingRelease(this.completeRelease());
+  }
+
+  private async completeRelease(): Promise<void> {
+    if (this.stopping) await this.stopping;
+    if (session === this) await this.discard();
   }
 }
 
@@ -293,7 +327,7 @@ const beginNativeRecordingOwned = async (
   } catch (error) {
     // The start may have opened the device before it failed; a discard is the
     // only call that proves the recorder is released again.
-    await waitForRecordingRelease(handle.discard()).catch(() => undefined);
+    await waitForRecordingRelease(handle.discard());
     if (error === RECORDING_BUSY) throw new ActiveRecordingError();
     throw error;
   }
@@ -304,6 +338,14 @@ export const stopNativeRecording = (
   invokeFn?: RecordingInvoke,
 ): Promise<StopRecordingResponse> =>
   session?.stop(invokeFn) ?? Promise.resolve(EMPTY_RESULT());
+
+/** Destructive cleanup needs device release, not just a sealed audio reply. */
+export const stopNativeRecordingForTeardown = async (): Promise<void> => {
+  const owned = session;
+  if (!owned) return;
+  const audio = await owned.stop();
+  if (audio.captureFailed) await waitForRecordingRelease(owned.discard());
+};
 
 /** Best-effort teardown. A failed discard remains addressable for retry. */
 export const discardNativeRecording = async (): Promise<void> => {

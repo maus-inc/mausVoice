@@ -277,6 +277,54 @@ describe("beginNativeRecording", () => {
 });
 
 describe("stopping", () => {
+  it("a replacement already waiting on stop waits for partial capture release too", async () => {
+    let deliver!: (value: Uint8Array) => void;
+    let release!: () => void;
+    const stop = new Promise<Uint8Array>((resolve) => {
+      deliver = resolve;
+    });
+    const discard = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { invoke, calls } = recorderTransport({
+      stop_recording: () => stop,
+      discard_recording: () => discard,
+    });
+    const { handle } = await beginNativeRecording(null, {}, invoke);
+    const stopping = handle.stop();
+    const next = beginNativeRecording(null, { handleScoped: true }, invoke);
+    const partial = encodeRecordedAudio([0.25], 16_000);
+    new DataView(partial.buffer, partial.byteOffset).setUint32(
+      0,
+      0x80000000 + 16_000,
+      true,
+    );
+    deliver(partial);
+    try {
+      expect((await stopping).captureFailed).toBe(true);
+      await expect(handle.pause()).rejects.toThrow(
+        "No native recording is active",
+      );
+      await expect(handle.resume()).rejects.toThrow(
+        "No native recording is active",
+      );
+      expect(
+        calls.filter(([cmd]) => cmd === "recording_generation"),
+      ).toHaveLength(1);
+      expect(invoke).not.toHaveBeenCalledWith(
+        "pause_recording",
+        expect.anything(),
+      );
+    } finally {
+      release();
+      const replacement = await next;
+      await replacement.handle.discard();
+    }
+    expect(
+      calls.filter(([cmd]) => cmd === "recording_generation"),
+    ).toHaveLength(2);
+  });
+
   it("presents the admission and acknowledges the audio", async () => {
     const { invoke, calls } = recorderTransport();
     const { handle } = await beginNativeRecording(null, {}, invoke);

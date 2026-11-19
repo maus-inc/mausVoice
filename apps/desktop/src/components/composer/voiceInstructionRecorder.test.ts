@@ -410,6 +410,90 @@ describe("VoiceInstructionRecorder", () => {
     },
   );
 
+  it.each([false, true])(
+    "reports an unconfirmed release without browser fallback (browser supported: %s)",
+    async (speechRecognitionSupported) => {
+      vi.useFakeTimers();
+      const confirmation = deferred();
+      const invoke = nativeInvoke({
+        discard_recording: () => confirmation.promise,
+      });
+      const { handle } = await beginNativeRecording(null, {}, invoke);
+      const pending = handle.discard();
+      const deps = baseDeps({ invoke, speechRecognitionSupported });
+      const recorder = recorderFor(deps);
+      const click = recorder.toggle();
+      try {
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(deps.onError).toHaveBeenCalledExactlyOnceWith(
+          "recording unavailable",
+        );
+        expect(deps.logger.warning).not.toHaveBeenCalled();
+        expect(invoke.mock.calls.map(([name]) => name)).toEqual([
+          "recording_generation",
+          "start_recording",
+          "discard_recording",
+        ]);
+      } finally {
+        confirmation.resolve();
+        await Promise.all([click, pending]);
+        vi.useRealTimers();
+      }
+      await recorder.toggle();
+      expect(recorder.getState()).toBe("provider");
+    },
+  );
+
+  it("delivers partial audio without opening the pending start gate until scoped release succeeds", async () => {
+    vi.useFakeTimers();
+    const opened = deferred();
+    const reply = deferred<{ sampleRate: number }>();
+    const discard = vi
+      .fn(() => Promise.resolve())
+      .mockRejectedValueOnce(new Error("release pending"));
+    const invoke = nativeInvoke({
+      start_recording: vi
+        .fn(() => Promise.resolve({ sampleRate: 16_000 }))
+        .mockImplementationOnce(() => {
+          opened.resolve();
+          return reply.promise;
+        }),
+      stop_recording: () =>
+        Promise.resolve({
+          samples: [0.25],
+          sampleRate: 16_000,
+          captureFailed: true,
+        }),
+      discard_recording: discard,
+    });
+    const start = recorderFor(baseDeps({ invoke })).toggle();
+    try {
+      await opened.promise;
+      const first = activeAdmission();
+      const audio = await stopNativeRecording(invoke);
+      expect(audio).toEqual({
+        samples: Float32Array.of(0.25),
+        sampleRate: 16_000,
+        captureFailed: true,
+      });
+      expect(invoke).toHaveBeenCalledWith("acknowledge_recording", first);
+      expect(currentNativeRecording()).toBeNull();
+      expect(acquireLocalBrowserRecording(invoke, {})).toBe(false);
+      await expect(beginNativeRecording(null, {}, invoke)).rejects.toThrow(
+        "start is already in progress",
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(discard.mock.calls).toEqual([[first], [first]]);
+      const next = await beginNativeRecording(null, {}, invoke);
+      expect(next.handle.generation).toBe(2);
+      await next.handle.discard();
+    } finally {
+      reply.resolve({ sampleRate: 16_000 });
+      await start;
+      vi.useRealTimers();
+    }
+  });
+
   it("refuses browser recognition while a dictation holds the recorder", async () => {
     const deps = baseDeps({
       canUseProvider: () => false,
@@ -427,9 +511,8 @@ describe("VoiceInstructionRecorder", () => {
 
   it("contains a teardown rejection and retries the unconfirmed admission", async () => {
     const discard = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("device failed"))
-      .mockResolvedValue(undefined);
+      .fn(() => Promise.resolve())
+      .mockRejectedValueOnce(new Error("device failed"));
     const invoke = nativeInvoke({ discard_recording: discard });
     const warning = vi.fn(() => {
       throw new Error("logger unavailable");
