@@ -55,9 +55,9 @@ on:
       - "scripts/ci/warm-microphone-edge-cases.test.mjs"
       - "scripts/ci/verify-wait-for-truthy.test.mjs"
       - "scripts/verify/wait-for-truthy.mjs"
-      # The matrix itself: editing a row is editing the thing this suite
-      # asserts, so it has to start the job that checks it.
+      # The QA guard reads both documents.
       - "docs/qa/warm-microphone-edge-cases.md"
+      - "docs/qa/warm-microphone-measurements.md"
       - ".github/workflows/**"
 permissions: {}
 
