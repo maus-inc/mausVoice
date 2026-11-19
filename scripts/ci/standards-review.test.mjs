@@ -167,6 +167,14 @@ it("binds both gates to the full commit range, not the working directory or last
   red(pr(filled, intermediate));
   red(pr(filled, base, intermediate));
   writeFileSync(draft, filled);
+  const dirty = join(repo, "unfinished.txt");
+  writeFileSync(dirty, "in progress");
+  red(prepare());
+  assert.equal(readFileSync(draft, "utf8"), filled);
+  rmSync(dirty);
+  red(run(["prepare", "missing-base"]));
+  assert.equal(readFileSync(draft, "utf8"), filled);
+  assert.equal(readFileSync(join(artifacts, "changes.patch"), "utf8"), patch);
   red(push(update(head) + update(intermediate)));
   red(push(update(head, "stack/base")));
   red(push(update(head, "another-topic")));
@@ -197,4 +205,64 @@ it("binds both gates to the full commit range, not the working directory or last
   }
   writeFileSync(join(repo, "first.txt"), "uncommitted\n");
   red(prepare());
+});
+
+it("selects the immutable checker and fails closed on an incomplete base", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "standards-workflow-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const repo = join(dir, "repo");
+  mkdirSync(join(repo, "scripts/ci"), { recursive: true });
+  const git = (...args) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  git("init", "-q");
+  git("config", "core.hooksPath", join(dir, "no-hooks"));
+  git("config", "commit.gpgsign", "false");
+  const commit = () => {
+    git("add", "-A");
+    git(
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "--allow-empty",
+      "-qm",
+      "fixture",
+    );
+    return git("rev-parse", "HEAD");
+  };
+  const empty = commit();
+  writeFileSync(join(repo, "CODING_STANDARDS.md"), "## CS01. Ownership\n");
+  const policyOnly = commit();
+  const checker = join(repo, "scripts/ci/standards-review.mjs");
+  writeFileSync(checker, 'console.log("base checker");');
+  const installed = commit();
+  writeFileSync(checker, 'console.log("proposed checker");');
+  const workflow = readFileSync(
+    new URL(".github/workflows/pr-body.yml", root),
+    "utf8",
+  );
+  const step = workflow
+    .split("- name: Verify the receipt against the event commits")[1]
+    .split("      - name:")[0];
+  const run = (base) =>
+    spawnSync("bash", ["-c", step.split("run: |\n")[1]], {
+      cwd: repo,
+      encoding: "utf8",
+      env: { ...process.env, RUNNER_TEMP: dir, BASE_SHA: base },
+    });
+  const first = run(empty);
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /proposed checker/);
+  const complete = run(installed);
+  assert.equal(complete.status, 0, complete.stderr);
+  assert.match(complete.stdout, /^base checker$/m);
+  const partial = run(policyOnly);
+  assert.equal(partial.status, 1);
+  assert.match(
+    partial.stdout,
+    /has CODING_STANDARDS.md but no scripts\/ci\/standards-review.mjs/,
+  );
+  assert.doesNotMatch(partial.stdout, /proposed checker/);
+  assert.notEqual(run("missing-base").status, 0);
 });

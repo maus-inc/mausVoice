@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import {
   closeSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   renameSync,
@@ -190,27 +191,41 @@ function prepare(branch) {
       "Usage: node scripts/ci/standards-review.mjs prepare <PR-base-branch>",
     );
   git("check-ref-format", `refs/heads/${branch}`);
-  const dir = reviewDir();
-  mkdirSync(dir, { recursive: true });
-  rmSync(join(dir, "receipt.md"), { force: true });
   const head = cleanHead();
   git("fetch", "--no-tags", "origin", `refs/heads/${branch}`);
   const item = subject(branch, git("rev-parse", "FETCH_HEAD"), head);
-  saveGit(join(dir, "standards.md"), ["cat-file", "blob", item.blob]);
-  saveGit(join(dir, "changes.patch"), [
-    "diff",
-    "--binary",
-    "--full-index",
-    "--no-color",
-    "--no-textconv",
-    "--no-ext-diff",
-    "--no-renames",
-    "--ignore-submodules=none",
-    `${item.base}...${head}`,
-    "--",
-  ]);
-  writeFileSync(join(dir, "base-branch"), branch, { mode: 0o600 });
-  writeFileSync(join(dir, "receipt.md"), skeleton(item), { mode: 0o600 });
+  const dir = reviewDir();
+  mkdirSync(dir, { recursive: true });
+  const packet = mkdtempSync(join(dir, "prepare-"));
+  try {
+    saveGit(join(packet, "standards.md"), ["cat-file", "blob", item.blob]);
+    saveGit(join(packet, "changes.patch"), [
+      "diff",
+      "--binary",
+      "--full-index",
+      "--no-color",
+      "--no-textconv",
+      "--no-ext-diff",
+      "--no-renames",
+      "--ignore-submodules=none",
+      `${item.base}...${head}`,
+      "--",
+    ]);
+    writeFileSync(join(packet, "base-branch"), branch, { mode: 0o600 });
+    writeFileSync(join(packet, "receipt.md"), skeleton(item), { mode: 0o600 });
+    // Publish only after Git produced the complete packet. Replace the receipt
+    // last so a failed preparation does not destroy a reviewer's notes.
+    for (const file of [
+      "standards.md",
+      "changes.patch",
+      "base-branch",
+      "receipt.md",
+    ]) {
+      renameSync(join(packet, file), join(dir, file));
+    }
+  } finally {
+    rmSync(packet, { recursive: true, force: true });
+  }
   console.log(
     `Read ${dir}/standards.md and changes.patch in full. Fill each row in receipt.md only after review.`,
   );

@@ -88,12 +88,15 @@ jobs:
           file=scripts/ci/standards-review.mjs
           guard="$RUNNER_TEMP/standards-review.mjs"
           # A missing base commit is an error, not permission to use the head checker.
-          policy=$(git ls-tree "$BASE_SHA" -- "$file" CODING_STANDARDS.md)
+          policy=$(git ls-tree --name-only "$BASE_SHA" -- "$file" CODING_STANDARDS.md)
           if [[ -z "$policy" ]]; then
             echo "First introduction of the policy on this base; using the proposed checker."
             cp "$file" "$guard"
-          else
+          elif grep -Fxq "$file" <<< "$policy"; then
             git show "$BASE_SHA:$file" > "$guard"
+          else
+            echo "::error::Base $BASE_SHA has CODING_STANDARDS.md but no $file. Restore the base checker before verifying receipts."
+            exit 1
           fi
           node "$guard" check-pr
       - name: Test proposed checker with positive and negative fixtures
