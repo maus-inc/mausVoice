@@ -791,17 +791,26 @@ export const MicrophoneReadinessSideEffects = () => {
       permissionGranted,
       holdActive: enabled && !isRecording,
     });
-    if (!shouldPrepare) {
+    if (!ownsDevice || !prefsLoaded || !shouldPrepare) {
       return;
     }
     logOnRejection(
-      commands.prepareMicrophone().catch((error: unknown) => {
-        // A device that cannot be resolved now is resolved by the next press.
-        getLogger().warning(`Could not prepare the microphone: ${error}`);
-      }),
+      commands
+        .prepareMicrophone(preferredMicrophone)
+        .catch((error: unknown) => {
+          // A device that cannot be resolved now is resolved by the next press.
+          getLogger().warning(`Could not prepare the microphone: ${error}`);
+        }),
       "microphone preparation",
     );
-  }, [enabled, isRecording, permissionGranted]);
+  }, [
+    enabled,
+    isRecording,
+    ownsDevice,
+    permissionGranted,
+    preferredMicrophone,
+    prefsLoaded,
+  ]);
 
   useEffect(() => {
     if (!ownsDevice) {

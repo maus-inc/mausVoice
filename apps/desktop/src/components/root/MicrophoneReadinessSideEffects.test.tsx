@@ -1351,18 +1351,22 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
   });
 
-  it("prepares the device when nothing is held", async () => {
-    setState({
-      userPrefs: {
-        keepMicrophoneReady: false,
-        microphonePrerollSeconds: 0.5,
-        microphoneLingerMs: 0,
-      },
-    });
+  it("prepares the saved device once preferences load and again when it changes", async () => {
+    setState({ userPrefs: null });
     await render();
+    expect(mocks.prepareMicrophone).not.toHaveBeenCalled();
 
-    // Resolving the device ahead of the press costs nothing visible, so it runs
-    // even when the user did not opt into holding the device open.
-    expect(mocks.prepareMicrophone).toHaveBeenCalled();
+    const prefs = {
+      keepMicrophoneReady: false,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 0,
+    };
+    setState({ userPrefs: { ...prefs, preferredMicrophone: "Shure MV7" } });
+    await rerender();
+    expect(mocks.prepareMicrophone).toHaveBeenLastCalledWith("Shure MV7");
+
+    setState({ userPrefs: prefs });
+    await rerender();
+    expect(mocks.prepareMicrophone).toHaveBeenLastCalledWith(null);
   });
 });

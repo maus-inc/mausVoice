@@ -598,9 +598,9 @@ async purgeStaleTranscriptionAudio() : Promise<Result<string[], string>> {
  * Returns the device label it settled on, which the next start then tries
  * first. No microphone indicator appears, because nothing is capturing.
  */
-async prepareMicrophone() : Promise<Result<string, string>> {
+async prepareMicrophone(preferredInputDevice: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("prepare_microphone") };
+    return { status: "ok", data: await TAURI_INVOKE("prepare_microphone", { preferredInputDevice }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
