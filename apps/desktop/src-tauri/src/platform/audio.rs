@@ -1537,10 +1537,27 @@ mod cpal_impl {
         /// the policy only meant for the opt-out case: the preference stops
         /// calling this at all.
         pub fn linger_then_close(&self, linger: Duration) {
-            let generation = self
-                .linger_generation
-                .fetch_add(1, Ordering::SeqCst)
-                .wrapping_add(1);
+            self.schedule_linger_close(linger, self.advance_linger_generation());
+        }
+
+        fn reserve_refresh_linger(&self, opened_generation: u64) -> Option<(Duration, u64)> {
+            let millis = self.linger_millis();
+            if millis == 0 || millis == WARM_FOREVER_MS {
+                return None;
+            }
+            let generation = opened_generation.wrapping_add(1);
+            self.linger_generation
+                .compare_exchange(
+                    opened_generation,
+                    generation,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .ok()?;
+            Some((Duration::from_millis(millis), generation))
+        }
+
+        fn schedule_linger_close(&self, linger: Duration, generation: u64) {
             let generation_ref = Arc::clone(&self.linger_generation);
             let warm = Arc::clone(&self.warm);
 
@@ -1581,13 +1598,17 @@ mod cpal_impl {
                     }
                 });
             if let Err(err) = spawned {
-                // A hold that cannot be scheduled would keep the device open
-                // for the rest of the session with no policy behind it, so it
-                // is closed now instead of being silently leaked.
-                log::error!(
-                    "could not schedule the linger close; closing the warm stream now: {err}"
-                );
-                self.close_warm();
+                log::error!("could not schedule the linger close: {err}");
+                let warm = {
+                    let mut guard = self.warm.lock().unwrap_or_else(PoisonError::into_inner);
+                    if self.linger_generation.load(Ordering::SeqCst) != generation {
+                        return;
+                    }
+                    guard.take()
+                };
+                if let Some(warm) = warm {
+                    retire_stream(warm.stream);
+                }
             }
         }
 
@@ -2123,8 +2144,14 @@ mod cpal_impl {
             // and closed the stream it was armed for (there was one in the slot,
             // since this open returns early when there is), or it runs after this
             // and sees a stale generation.
-            self.cancel_linger();
+            let generation = self.advance_linger_generation();
             *warm_guard = Some(warm);
+            drop(warm_guard);
+            if refresh_generation.is_some() {
+                if let Some((linger, generation)) = self.reserve_refresh_linger(generation) {
+                    self.schedule_linger_close(linger, generation);
+                }
+            }
             Ok(())
         }
 
@@ -2244,11 +2271,6 @@ mod cpal_impl {
                     };
                     if let Err(err) = self.open_warm_with_policy(preroll, Some(generation)) {
                         log::warn!("could not reopen the warm stream after a device change: {err}");
-                    } else {
-                        let policy = self.linger_millis();
-                        if policy > 0 && policy != WARM_FOREVER_MS {
-                            self.linger_then_close(Duration::from_millis(policy));
-                        }
                     }
                 }
                 None => {
@@ -5153,6 +5175,19 @@ mod cpal_impl {
             manager.release_hold();
             manager.set_linger(Duration::from_millis(5_000));
             assert!(!manager.refresh_can_reopen(generation));
+        }
+
+        #[test]
+        fn refresh_reserves_expiry_only_for_its_own_finite_hold() {
+            let manager = RecordingManager::default();
+            manager.set_linger(Duration::from_millis(5_000));
+            let opened = manager.advance_linger_generation();
+            let (duration, reserved) = manager.reserve_refresh_linger(opened).unwrap();
+            assert_eq!(duration, Duration::from_secs(5));
+            assert!(manager.reserve_refresh_linger(opened).is_none());
+
+            manager.promote_to_hold();
+            assert!(manager.reserve_refresh_linger(reserved).is_none());
         }
 
         /// The built-in detector decides a device's priority, so a miss here
