@@ -26,6 +26,14 @@
 //     `download_prebuilt_libs` against a temp cache holding a small synthetic
 //     `.tar.bz2`, so they do not reach the network either.
 //
+//     The probe crate also carries a copy of `rust-toolchain.toml`, so rustup
+//     compiles the build script with the pinned channel rather than the runner's
+//     default. The `offline` attempt flag adds `cargo build --offline`, which governs
+//     cargo's registry, not rustup's toolchain install: if the pinned channel is not
+//     present, rustup fetches it on first use. CI installs it before this step runs,
+//     so there the copy is a no-op. A machine that has never built the repository pays
+//     that one-time install, which every cargo command in the repository pays too.
+//
 //   * It never silently passes. Every failure mode -- cargo failing, the
 //     invocation not being found, the replay failing to compile, a test failing,
 //     the wrong number of tests running -- exits non-zero with a message naming
@@ -73,6 +81,41 @@ const workspaceLock = join(
 // this file and the probe would fall back to the runner's default toolchain. It is
 // copied into the probe crate so the build script is compiled by the pinned channel.
 const toolchainFile = join(repoRoot, "rust-toolchain.toml");
+
+/**
+ * Copy the repository's toolchain pin into the probe crate, returning what was copied.
+ *
+ * The probe crate lives in a temp directory, so rustup resolves the toolchain from
+ * there and its ancestors and never sees the repository's `rust-toolchain.toml`. Left
+ * alone it compiles the build script with the runner's default stable, which is not the
+ * compiler a real build uses. On 2026-11-18 that divergence broke this step: the
+ * runner's stable moved to 1.100.0, which renames and relocates the build-script
+ * binary, while the pinned 1.88.0 a real build uses does not. Copying the file makes
+ * rustup resolve the same channel for the probe that it resolves for the rest of the
+ * repository.
+ *
+ * The copy means rustup may provision the pinned channel on first use. That provisioning
+ * is a network fetch the `offline` attempt flag does NOT govern, because the flag adds
+ * `cargo build --offline`, which restricts cargo's registry and not rustup's toolchain
+ * install. In CI the channel is already installed before this harness runs, because the
+ * repository's own `cargo test` step runs first under the same pin, so the copy is a
+ * no-op there. On a machine that has never built the repository, the first run pays the
+ * one-time install, which is the same cost any `cargo` command in the repository pays.
+ * Returns the copied paths, empty when there is no pin to copy, so the behaviour is
+ * observable to a test.
+ *
+ * Exported because nothing on Linux can observe the copy through a real probe build: the
+ * pin is identical to the host default on a machine that already has 1.88.0, so a test
+ * that ran the real probe would pass whether or not the copy happened. This is the
+ * helper the suite pins instead, so dropping the copy fails a named test rather than
+ * silently reverting the probe to the ambient toolchain.
+ */
+export function stageToolchainPin(crateDir, pinPath = toolchainFile) {
+  if (!existsSync(pinPath)) return [];
+  const destination = join(crateDir, "rust-toolchain.toml");
+  copyFileSync(pinPath, destination);
+  return [destination];
+}
 
 // Every build script cargo compiles is called this, which is why the unit is also
 // selected by `CARGO_PKG_NAME`: matching on the crate name alone would happily
@@ -469,15 +512,10 @@ function probeBuild(workDir) {
 
   // The probe crate lives in a temp directory, so rustup would not find the
   // repository's `rust-toolchain.toml` and would compile the build script with the
-  // runner's default toolchain instead of the pinned one. That is not the compiler a
-  // real build uses, and on 2026-11-18 it broke this step: the runner's stable moved
-  // to 1.100.0, which renames and relocates the build-script binary, while the pinned
-  // 1.88.0 a real build uses does not. Copying the file into the probe crate makes
-  // rustup resolve the same channel here that it resolves for the rest of the
-  // repository.
-  if (existsSync(toolchainFile)) {
-    copyFileSync(toolchainFile, join(crateDir, "rust-toolchain.toml"));
-  }
+  // runner's default toolchain instead of the pinned one. `stageToolchainPin` copies
+  // the pin in so rustup resolves the same channel here that it resolves for the rest
+  // of the repository.
+  stageToolchainPin(crateDir);
 
   // Ladder of attempts, most constrained first. Each rung differs in exactly one
   // thing, so the failure that survives all of them names a single cause.
@@ -709,17 +747,19 @@ export function replayedTestBinaryName(hostPlatform = process.platform) {
 }
 
 /**
- * Every file under `dir` whose basename is in `names`, descending `depth` levels.
+ * Every file under `dir` whose basename is in `names`, at any depth.
  *
  * A recursive walk rather than a fixed path because cargo moved the file into a
  * nested `out/` directory in 1.100, and a `readdirSync` one level deep only ever
- * matched the pre-1.100 layout. An unreadable directory is skipped rather than
- * thrown, so a transient permission error surfaces as "found 0" and a clear refusal
- * instead of an unhandled exception.
+ * matched the pre-1.100 layout. The walk is unbounded on purpose: a fixed depth bound
+ * would silently miss the artifact once cargo nests it one level deeper, which is the
+ * same class of failure as the original 1.100 move. It is confined to the package's own
+ * build directory by the caller, so it cannot reach the rest of the target tree. An
+ * unreadable directory is skipped rather than thrown, so a transient permission error
+ * surfaces as "found 0" and a clear refusal instead of an unhandled exception.
  */
-function findFilesNamed(dir, names, depth) {
+function findFilesNamed(dir, names) {
   const found = [];
-  if (depth < 0) return found;
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -731,7 +771,7 @@ function findFilesNamed(dir, names, depth) {
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      found.push(...findFilesNamed(full, names, depth - 1));
+      found.push(...findFilesNamed(full, names));
     } else if (names.includes(entry.name)) {
       found.push(full);
     }
@@ -740,12 +780,28 @@ function findFilesNamed(dir, names, depth) {
 }
 
 /**
+ * Whether a directory under `build/` is this package's own build directory.
+ *
+ * Cargo names it `<pkg>-<metadata-hash>` up to 1.99 and `<pkg>` from 1.100, where the
+ * hash moves to a subdirectory. The match has to be the exact name or the name plus a
+ * hex hash, because a bare prefix match also accepts a different crate whose name merely
+ * starts with this one. `sherpa-onnx-sys-extra` is a valid crate name, and its build
+ * directory `sherpa-onnx-sys-extra-<hash>` starts with `sherpa-onnx-sys`, so a prefix
+ * match would walk it too, find a second `build_script_build`, and refuse a valid
+ * artifact. The hash is at least eight hex characters, which is what a cargo metadata
+ * hash is, so an accidental short hex word in another crate's name cannot pass.
+ */
+const SHERPA_BUILD_DIR = new RegExp(`^${SHERPA_PKG_NAME}(-[0-9a-f]{8,})?$`);
+
+/**
  * The build script binary cargo actually produced, used for the marker check.
  *
  * Searched by name under the package's own build directory rather than by a
- * hard-coded path, because cargo 1.100 moved and renamed the file. Only the
- * `sherpa-onnx-sys` subtree is walked, so a dependency's build script (every one of
- * which is also called `build_script_build`) can never be mistaken for this one.
+ * hard-coded path, because cargo 1.100 moved and renamed the file. Only a directory
+ * whose name is `sherpa-onnx-sys` or `sherpa-onnx-sys-<hash>` is walked, so a
+ * dependency's build script (every one of which is also called `build_script_build`)
+ * can never be mistaken for this one, and neither can a different crate whose name
+ * merely starts with this one.
  */
 export function cargoBuildScriptBinary(targetDir, hostPlatform = process.platform) {
   const buildRoot = join(targetDir, "debug", "build");
@@ -754,11 +810,8 @@ export function cargoBuildScriptBinary(targetDir, hostPlatform = process.platfor
   if (existsSync(buildRoot)) {
     for (const entry of readdirSync(buildRoot, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      if (!entry.name.startsWith(SHERPA_PKG_NAME)) continue;
-      // `build/sherpa-onnx-sys/<hash>/out/build_script_build` sits two levels below
-      // the package directory; the bound leaves headroom for one more without
-      // letting the walk escape into unrelated parts of the target tree.
-      candidates.push(...findFilesNamed(join(buildRoot, entry.name), names, 4));
+      if (!SHERPA_BUILD_DIR.test(entry.name)) continue;
+      candidates.push(...findFilesNamed(join(buildRoot, entry.name), names));
     }
   }
   if (candidates.length !== 1) {

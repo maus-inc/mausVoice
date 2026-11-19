@@ -42,31 +42,41 @@ against different drifts.
 
 1. The probe crate gets a copy of `rust-toolchain.toml`, so rustup resolves the
    pinned channel for the probe exactly as it does for the rest of the repository.
-   This is the root cause: the probe was compiling with a compiler the project does
+   This is the root cause. The probe was compiling with a compiler the project does
    not build with.
 
 2. The build-script lookup walks the package's own subtree and accepts both cargo
    spellings, `build-script-build` and `build_script_build`, at any depth. It no
-   longer hard-codes the pre-1.100 path. The walk is bounded and confined to the
-   `sherpa-onnx-sys` directory, so a dependency's build script, which is also named
-   `build_script_build`, cannot be mistaken for this one. The "exactly one or
-   refuse" contract is unchanged.
+   longer hard-codes the pre-1.100 path. The walk is confined to a directory named
+   `sherpa-onnx-sys` or `sherpa-onnx-sys-<hash>`, so a dependency's build script,
+   which is also named `build_script_build`, cannot be mistaken for this one. A
+   different crate whose name merely starts with `sherpa-onnx-sys` cannot be
+   mistaken for it either. The "exactly one or refuse" contract is unchanged.
 
-Rejected: pinning the harness to a cargo version by string. The toolchain belongs in
+The harness does not pin a cargo version by string. The toolchain belongs in
 `rust-toolchain.toml`, which the repository already owns, and a second copy of the
-pin would drift from it. Rejected: making the lookup tolerant of zero matches. The
-harness exists to refuse when it cannot inspect the artifact, so a layout it does
-not recognise has to fail loudly rather than pass quietly.
+pin would drift from it. The harness also does not make the lookup tolerant of zero
+matches. It exists to refuse when it cannot inspect the artifact, so a layout it
+does not recognise has to fail loudly rather than pass quietly.
+
+The toolchain copy means rustup may install the pinned channel on first use. That
+install is a network fetch the harness's `offline` attempt flag does not govern,
+because the flag adds `cargo build --offline`, which restricts cargo's registry and
+not rustup's toolchain install. In CI the channel is already installed before the
+harness runs, so the copy is a no-op there. A machine that has never built the
+repository pays the one-time install, which every cargo command in the repository
+pays too.
 
 ## Consequences
 
 The step no longer breaks when the runner's default stable moves ahead of the
 pinned toolchain, which is what happened here. The cost is that the harness now
-carries two spellings of cargo's build-script name and a bounded recursive walk,
+carries two spellings of cargo's build-script name and an unbounded recursive walk,
 both documented against the layout each exists for. `scripts/ci/sherpa-build-script-tests.test.mjs`
-pins the new function: both layouts, the other-crate control, and the refuse-on-empty
-case, so a future cargo rename fails a unit test with a clear name instead of only
-the CI step.
+pins the lookup and the toolchain copy: both layouts, the other-crate control, the
+prefix-sibling control, the any-depth case, the refuse-on-empty case, and the copy
+itself, so a future cargo rename or a dropped copy fails a unit test with a clear
+name instead of only the CI step.
 
 The deeper lesson is the one the environment rule states: a measurement from one
 runner is not a property of the project. Here it ran the other way, a runner's
