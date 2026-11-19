@@ -284,6 +284,19 @@ export const MicrophoneReadinessSideEffects = () => {
     }
   }, []);
 
+  const closeSupersededOpen = useCallback(async () => {
+    try {
+      await closeAndRestoreLinger();
+    } catch (error) {
+      getLogger().warning(
+        `Could not close a superseded microphone open: ${error}`,
+      );
+    } finally {
+      // If closing failed, the dialog should still report the actual device state.
+      publishHeld();
+    }
+  }, [closeAndRestoreLinger, publishHeld]);
+
   /**
    * Opens or resizes the hold, depending on whether one is already applied.
    *
@@ -335,24 +348,8 @@ export const MicrophoneReadinessSideEffects = () => {
               getLogger().info(
                 "a microphone open finished after this window stopped asking for it; closing it",
               );
-              //
-              // This chain used to have no failure path at all, unlike every other
-              // close in this file. A `closeMicrophone` that rejects left the read
-              // below unrun, so the dialog went on displaying "held" for a stream
-              // this component had just given up on, and the rejection surfaced as
-              // an unhandled one. The close is still attempted and the state is
-              // still re-read, because a close that failed leaves the stream open
-              // and that is exactly the state the user needs to be shown.
               logOnRejection(
-                closeAndRestoreLinger().then(
-                  () => publishHeld(),
-                  (error: unknown) => {
-                    getLogger().warning(
-                      `Could not close the microphone opened after this window stopped asking for it: ${error}`,
-                    );
-                    publishHeld();
-                  },
-                ),
+                closeSupersededOpen(),
                 "close of a superseded microphone open",
               );
               return;
@@ -402,7 +399,7 @@ export const MicrophoneReadinessSideEffects = () => {
         "microphone warm open",
       );
     },
-    [clearHoldFailure, closeAndRestoreLinger, publishHeld, reportHoldFailure],
+    [clearHoldFailure, closeSupersededOpen, publishHeld, reportHoldFailure],
   );
 
   const release = useCallback(() => {
