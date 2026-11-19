@@ -34,10 +34,11 @@ describe("native pill message delivery", () => {
     (fn) => {
       const block = extractRustBlock(
         readRepoSource(MACOS_OVERLAY),
+        `pub async fn ${fn}(`,
         `pub fn ${fn}(`,
       );
 
-      expect(block).toContain("=> pill.send(");
+      expect(block).toMatch(/pill\s*\.\s*send\(/);
       // The old shape sent nothing and answered Ok anyway.
       expect(block).not.toMatch(/pill\.send\([^;]*\);\s*Ok\(\(\)\)/);
     },
@@ -48,6 +49,7 @@ describe("native pill message delivery", () => {
     (fn) => {
       const block = extractRustBlock(
         readRepoSource(PILL_PROCESS),
+        `pub async fn ${fn}(`,
         `pub fn ${fn}(`,
       );
 

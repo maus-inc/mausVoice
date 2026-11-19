@@ -294,7 +294,7 @@ fn erase_is_undeclared() -> bool {
 /// when the record could not be cleared; a reset that reports success while the row
 /// survives moves the window and then restores the old spot next launch, so the
 /// caller has to be able to tell the difference.
-pub fn clear_saved_position(app: &tauri::AppHandle) -> Option<u64> {
+pub async fn clear_saved_position(app: &tauri::AppHandle) -> Option<u64> {
     // Set before the delete, not after: a publish queued behind this call has to
     // find the latch already closed when it runs.
     let declaration = mark_position_erased();
@@ -305,10 +305,14 @@ pub fn clear_saved_position(app: &tauri::AppHandle) -> Option<u64> {
         return None;
     };
     let pool = database.pool();
-    let cleared = tauri::async_runtime::block_on(async {
+    // Awaited rather than `block_on`, because the reset command runs on the main
+    // thread and the write gate is held for the whole of a local-data clear.
+    // Blocking there would freeze the UI for the length of the clear.
+    let cleared = async {
         let _guard = crate::db::local_data_write_gate::lock_local_data_write(None).await?;
         pill_position_queries::clear_pill_position(pool).await
-    });
+    }
+    .await;
     match cleared {
         Ok(()) => Some(declaration),
         Err(err) => {

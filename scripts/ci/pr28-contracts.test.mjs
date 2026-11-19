@@ -502,10 +502,11 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     // process and returns an error (not a panic) when no pill is managed.
     // `commands.rs` returns that `Result` straight out of a `#[tauri::command]`,
     // so the return type is part of the contract and is pinned with the
-    // parameters.
+    // parameters. The chain is `async` so the main thread does not wait on the
+    // local-data write gate, which a clear holds for its whole duration.
     assert.match(
       source.pillProcess,
-      /pub fn notify_reset_position\(app: &tauri::AppHandle, strategy: &str\) -> Result<\(\), String>/,
+      /pub async fn notify_reset_position\(app: &tauri::AppHandle, strategy: &str\) -> Result<\(\), String>/,
     );
     assert.match(source.pillProcess, /"type":"reset_position"/);
     assert.match(
@@ -756,7 +757,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
     // Every failure return from the clear has to withdraw.
     const clear = pos.slice(
-      pos.indexOf("pub fn clear_saved_position("),
+      pos.indexOf("pub async fn clear_saved_position("),
       pos.indexOf("pub fn saved_position_argument("),
     );
     const withdrawals = (clear.match(/withdraw_erase\(declaration\)/g) ?? [])
@@ -3183,16 +3184,16 @@ describe("native gesture adapter contracts", () => {
     // `let ... else` and bails on `None`.
     assert.match(
       source.pillPosition,
-      /pub fn clear_saved_position\(app: &tauri::AppHandle\) -> Option<u64>/,
+      /pub async fn clear_saved_position\(app: &tauri::AppHandle\) -> Option<u64>/,
     );
     // Matched through the brace to the `return`, not just to the call: an `if`
     // whose failure branch logged and carried on would satisfy a bare match while
     // the reset moved the pill anyway, which is the exact outcome the guard exists
     // to prevent. The branch has to leave the function.
     const bails =
-      /let Some\(declaration\) = crate::pill_position::clear_saved_position\(app\) else \{\s*return\b/;
+      /let Some\(declaration\) = crate::pill_position::clear_saved_position\(app\)\.await else \{\s*return\b/;
     for (const [name, marker] of [
-      ["pillProcess", "pub fn notify_reset_position"],
+      ["pillProcess", "pub async fn notify_reset_position"],
     ]) {
       const body = scope(name, marker);
       assert.match(
@@ -3419,7 +3420,7 @@ describe("native gesture adapter contracts", () => {
   it("gates the position delete in the clear path", () => {
     // Clearing the row is a local-data write like any other. Ungated, it can
     // race a save that is already queued and the row comes back after the wipe.
-    const clear = scope("pillPosition", "pub fn clear_saved_position(");
+    const clear = scope("pillPosition", "pub async fn clear_saved_position(");
     assert.match(clear, /lock_local_data_write\(None\)/);
     assert.match(clear, /clear_pill_position/);
   });
@@ -3843,7 +3844,7 @@ describe("pill position persistence gate", () => {
 
   it("forgets the stored position when the user resets it", () => {
     for (const name of ["pillProcess", "macOverlay"]) {
-      const reset = scope(name, "pub fn notify_reset_position(");
+      const reset = scope(name, "pub async fn notify_reset_position(");
       assert.match(
         reset,
         /clear_saved_position/,

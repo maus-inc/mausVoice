@@ -220,12 +220,12 @@ pub fn notify_forget_position(app: &tauri::AppHandle, ack: Option<u64>) -> Resul
     }
 }
 
-pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
+pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     // The stored record is what the next launch restores, so a reset has to
     // forget it before it tells the pill to re-home. A clear that failed would
     // leave that record to undo the reset on the next launch, so it is reported
     // rather than swallowed.
-    let Some(declaration) = crate::pill_position::clear_saved_position(app) else {
+    let Some(declaration) = crate::pill_position::clear_saved_position(app).await else {
         return Err("Could not clear the pill's stored position, so it was not reset".to_string());
     };
     let strategy = if strategy == "cursor" {
@@ -234,11 +234,23 @@ pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(
         ResetStrategy::Current
     };
     match app.try_state::<std::sync::Arc<MacosPill>>() {
-        Some(pill) => pill.send(InMessage::ResetPosition {
-            strategy,
-            ack: Some(declaration),
-        }),
-        None => Err("Reset position requested with no managed macOS pill".to_string()),
+        Some(pill) => pill
+            .send(InMessage::ResetPosition {
+                strategy,
+                ack: Some(declaration),
+            })
+            .map_err(|err| {
+                // `send` retires the pill when the channel is closed, so no
+                // report will ever answer this declaration. It has to go back
+                // now, or the latch stays closed and every later drag is
+                // dropped for the rest of the process.
+                crate::pill_position::withdraw_erase(declaration);
+                err
+            }),
+        None => {
+            crate::pill_position::withdraw_erase(declaration);
+            Err("Reset position requested with no managed macOS pill".to_string())
+        }
     }
 }
 

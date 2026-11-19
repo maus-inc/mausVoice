@@ -402,7 +402,7 @@ pub fn notify_forget_position(app: &tauri::AppHandle, ack: Option<u64>) -> Resul
     }
 }
 
-pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
+pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     // The stored record is what the next launch restores, so a reset has to
     // forget it before it tells the pill to re-home. Otherwise the pill moves
     // back to the default corner now and returns to the old spot next launch.
@@ -410,7 +410,7 @@ pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(
     // A reset that reports success while the row survives is the failure this
     // guards: the window moves, the user sees it move, and the next launch
     // undoes it. Failing leaves the pill where it is, which is recoverable.
-    let Some(declaration) = crate::pill_position::clear_saved_position(app) else {
+    let Some(declaration) = crate::pill_position::clear_saved_position(app).await else {
         return Err("Could not clear the pill's stored position, so it was not reset".to_string());
     };
     match app.try_state::<std::sync::Arc<PillProcess>>() {
@@ -418,10 +418,18 @@ pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(
             let msg = format!(
                 r#"{{"type":"reset_position","strategy":"{strategy}","ack":{declaration}}}"#
             );
-            pill.send(&msg)
-                .map_err(|err| format!("failed to reset pill position: {err}"))
+            pill.send(&msg).map_err(|err| {
+                // The pill will never answer this declaration, so it has to go
+                // back now. Left outstanding it closes the latch for the rest of
+                // the process and every later drag is dropped silently.
+                crate::pill_position::withdraw_erase(declaration);
+                format!("failed to reset pill position: {err}")
+            })
         }
-        None => Err("Reset position requested with no managed pill process".to_string()),
+        None => {
+            crate::pill_position::withdraw_erase(declaration);
+            Err("Reset position requested with no managed pill process".to_string())
+        }
     }
 }
 
