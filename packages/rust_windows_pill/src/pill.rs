@@ -57,64 +57,8 @@ thread_local! {
     static PILL_PLACEMENT: Cell<u8> = const { Cell::new(PILL_PLACEMENT_BOTTOM) };
 }
 
-/// Runs the Windows pill: registers the window class, creates the layered
-/// pill window, and drives the message/timer loop until a quit message
-/// arrives.
-pub fn run(receiver: Receiver<InMessage>) {
-    let t0 = Instant::now();
-    unsafe {
-        let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
-            windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
-        );
-    }
-
-    let class_name = w!("MausVoicePill");
-    let hinstance = unsafe { GetModuleHandleW(None).unwrap() };
-
-    let wc = WNDCLASSEXW {
-        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-        style: CS_HREDRAW | CS_VREDRAW,
-        lpfnWndProc: Some(wndproc),
-        hInstance: hinstance.into(),
-        lpszClassName: class_name,
-        hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() },
-        ..Default::default()
-    };
-    unsafe {
-        RegisterClassExW(&wc);
-    }
-
-    // The window keeps room for the below selector slot under the pill, so a
-    // side flip animates inside space that is already there. Content math
-    // stays on the typing constants, so the pill never moves for it.
-    let win_h =
-        WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
-    let (wx, wy) = initial_position(win_h);
-    let hwnd = unsafe {
-        CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            class_name,
-            w!("MausVoicePill"),
-            WS_POPUP,
-            wx,
-            wy,
-            WINDOW_W_TYPING,
-            win_h,
-            None,
-            None,
-            Some(hinstance.into()),
-            None,
-        )
-        .unwrap()
-    };
-
-    HWND_CELL.with(|c| c.set(hwnd));
-    eprintln!("[pill] window created in {:?}", t0.elapsed());
-
-    let gfx = Gfx::new(WINDOW_W_TYPING, win_h).expect("Failed to create D2D context");
-    eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
-
-    let state = PillState {
+fn initial_state() -> PillState {
+    PillState {
         phase: Cell::new(Phase::Idle),
         visibility: Cell::new(Visibility::WhileActive),
         expand_t: Cell::new(0.0),
@@ -216,7 +160,67 @@ pub fn run(receiver: Receiver<InMessage>) {
         pointer_down: Cell::new(false),
         ring_points: RefCell::new(Vec::new()),
         dirty: Cell::new(true),
+    }
+}
+
+/// Runs the Windows pill: registers the window class, creates the layered
+/// pill window, and drives the message/timer loop until a quit message
+/// arrives.
+pub fn run(receiver: Receiver<InMessage>) {
+    let t0 = Instant::now();
+    unsafe {
+        let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
+            windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        );
+    }
+
+    let class_name = w!("MausVoicePill");
+    let hinstance = unsafe { GetModuleHandleW(None).unwrap() };
+
+    let wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(wndproc),
+        hInstance: hinstance.into(),
+        lpszClassName: class_name,
+        hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() },
+        ..Default::default()
     };
+    unsafe {
+        RegisterClassExW(&wc);
+    }
+
+    // The window keeps room for the below selector slot under the pill, so a
+    // side flip animates inside space that is already there. Content math
+    // stays on the typing constants, so the pill never moves for it.
+    let win_h =
+        WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
+    let (wx, wy) = initial_position(win_h);
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            class_name,
+            w!("MausVoicePill"),
+            WS_POPUP,
+            wx,
+            wy,
+            WINDOW_W_TYPING,
+            win_h,
+            None,
+            None,
+            Some(hinstance.into()),
+            None,
+        )
+        .unwrap()
+    };
+
+    HWND_CELL.with(|c| c.set(hwnd));
+    eprintln!("[pill] window created in {:?}", t0.elapsed());
+
+    let gfx = Gfx::new(WINDOW_W_TYPING, win_h).expect("Failed to create D2D context");
+    eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
+
+    let state = initial_state();
 
     STATE.with(|s| *s.borrow_mut() = Some(state));
     GFX.with(|g| *g.borrow_mut() = Some(gfx));
@@ -2020,6 +2024,10 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
     let was_dragging = state.dragging.get();
 
     if was_dragging {
+        // Capture loss or a cursor tick can finish a drag before WM_LBUTTONUP.
+        // Remember that this press was consumed, even across ReleaseCapture's
+        // synchronous WM_CAPTURECHANGED. A fresh button-down resets the flag.
+        state.drag_cancelled.set(true);
         if persist_position {
             // The drop point persists when the release settle finishes (the
             // frame loop calls persist_drag_position on the settled frame),
@@ -2499,6 +2507,35 @@ pub(crate) fn focus_edit_control() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_loss_consumes_the_drag_but_not_the_next_click() {
+        let state = initial_state();
+        let hwnd = HWND::default();
+        let (ox, oy) = state.content_offset();
+        let point = (ox + 5.0, oy + 5.0);
+        state.flash_visible.set(true);
+        state
+            .click_regions
+            .borrow_mut()
+            .push(crate::state::ClickRegion {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+                action: ClickAction::FlashAction,
+            });
+        state.dragging.set(true);
+        on_capture_changed(hwnd, &state);
+        on_button_up(hwnd, &state, point);
+        assert!(state.flash_visible.get(), "late release clicked the toast");
+        on_button_down(hwnd, &state, point);
+        on_button_up(hwnd, &state, point);
+        assert!(
+            !state.flash_visible.get(),
+            "a fresh click must still dismiss the toast"
+        );
+    }
 
     #[test]
     fn clearing_crossing_deformation_requests_the_final_repaint() {
