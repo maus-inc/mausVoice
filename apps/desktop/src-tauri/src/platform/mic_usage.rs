@@ -763,7 +763,7 @@ mod linux_command_tests {
     use super::linux::current_usage;
     // The override variable's name, imported from the module that reads it so
     // the tests cannot set one variable while the app reads another.
-    use super::linux::{PACTL_OVERRIDE_ENV, PACTL_TIMEOUT};
+    use super::linux::PACTL_OVERRIDE_ENV;
     use super::CaptureUsage;
     use std::io::Write;
 
@@ -882,14 +882,11 @@ mod linux_command_tests {
         let _guard = serialize_env();
         let dir = std::env::temp_dir().join(format!("mausvoice-pactl-hang-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
-        // Longer than the timeout, short enough that a leaked process would still
-        // exit before the suite does.
-        let script = fake_pactl(&dir, "sleep 10 & wait");
+        // The child keeps stdout open. If the probe waits for it to exit
+        // naturally instead of killing the group, it leaves a marker.
+        let script = fake_pactl(&dir, r#"(sleep 10; touch "${0%/*}/completed") & wait"#);
         std::env::set_var(PACTL_OVERRIDE_ENV, &script);
-
-        let started = std::time::Instant::now();
         let usage = current_usage();
-        let elapsed = started.elapsed();
         std::env::remove_var(PACTL_OVERRIDE_ENV);
 
         match usage {
@@ -898,12 +895,9 @@ mod linux_command_tests {
             }
             other => panic!("expected Unavailable, got {other:?}"),
         }
-        // Deliberately generous on the upper bound: this asserts the probe
-        // *bounded* the wait, not that it hit the deadline precisely. A machine
-        // under load may overshoot by a poll interval or two.
         assert!(
-            elapsed < PACTL_TIMEOUT + std::time::Duration::from_secs(5),
-            "the probe waited {elapsed:?}, so it did not time out"
+            !dir.join("completed").exists(),
+            "the probe waited for the child to finish normally"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
