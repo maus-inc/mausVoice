@@ -1,3 +1,4 @@
+use rust_pill_shared::indicator::{DictationIndicator, RecordingPhase};
 use std::cell::{Cell, RefCell};
 
 use crate::ipc::{
@@ -138,22 +139,7 @@ impl WindowMode {
 }
 
 pub(crate) struct PillState {
-    pub(crate) phase: Cell<Phase>,
     pub(crate) visibility: Cell<Visibility>,
-    pub(crate) expand_t: Cell<f64>,
-    pub(crate) expand_velocity: Cell<f64>,
-    pub(crate) hovered: Cell<bool>,
-    pub(crate) wave_phase: Cell<f64>,
-    pub(crate) current_level: Cell<f64>,
-    pub(crate) target_level: Cell<f64>,
-    pub(crate) loading_offset: Cell<f64>,
-    pub(crate) pending_levels: RefCell<Vec<f32>>,
-    pub(crate) style_count: Cell<u32>,
-    pub(crate) style_name: RefCell<String>,
-    pub(crate) tooltip_t: Cell<f64>,
-    pub(crate) tooltip_velocity: Cell<f64>,
-    pub(crate) tooltip_width: Cell<f64>,
-    pub(crate) style_tooltip_gate: rust_pill_shared::StyleTooltipGate,
 
     // Window sizing
     pub(crate) window_mode: Cell<WindowMode>,
@@ -232,7 +218,6 @@ pub(crate) struct PillState {
     pub(crate) transcript_time_since_update: Cell<f64>,
     pub(crate) transcript_opacity: Cell<f64>,
     pub(crate) transcript_has_message: Cell<bool>,
-    pub(crate) stage_text: RefCell<Option<String>>,
 
     // Long-press drag state
     pub(crate) long_press_active: Cell<bool>,
@@ -333,6 +318,7 @@ pub(crate) struct PillState {
     pub(crate) alloc_width: Cell<f64>,
     pub(crate) alloc_height: Cell<f64>,
 
+    pub(crate) indicator: DictationIndicator<Phase>,
     // Active backend, so draw-side positioning can stay backend aware.
     pub(crate) backend: Cell<Backend>,
 }
@@ -425,6 +411,21 @@ fn content_origin(aw: f64, ah: f64, dw: f64, dh: f64, below_slot: f64) -> (f64, 
             (WINDOW_W_TYPING as f64 - dw) / 2.0,
             WINDOW_H_TYPING as f64 - dh,
         )
+    }
+}
+
+impl RecordingPhase for Phase {
+    const IDLE: Self = Self::Idle;
+    const RECORDING: Self = Self::Recording;
+    const LOADING: Self = Self::Loading;
+}
+
+// Native paint and input code read the same indicator that receives phase IPC.
+impl std::ops::Deref for PillState {
+    type Target = DictationIndicator<Phase>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.indicator
     }
 }
 

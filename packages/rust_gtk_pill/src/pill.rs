@@ -242,22 +242,8 @@ fn create_widgets(backend: Backend) -> (gtk::Window, gtk::DrawingArea, gtk::Entr
 
 fn initial_state(backend: Backend) -> PillState {
     PillState {
-        phase: Cell::new(Phase::Idle),
+        indicator: Default::default(),
         visibility: Cell::new(Visibility::WhileActive),
-        expand_t: Cell::new(0.0),
-        expand_velocity: Cell::new(0.0),
-        hovered: Cell::new(false),
-        wave_phase: Cell::new(0.0),
-        current_level: Cell::new(0.0),
-        target_level: Cell::new(0.0),
-        loading_offset: Cell::new(0.0),
-        pending_levels: RefCell::new(Vec::new()),
-        style_count: Cell::new(0),
-        style_name: RefCell::new(String::new()),
-        tooltip_t: Cell::new(0.0),
-        tooltip_velocity: Cell::new(0.0),
-        tooltip_width: Cell::new(0.0),
-        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
@@ -310,7 +296,6 @@ fn initial_state(backend: Backend) -> PillState {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
-        stage_text: RefCell::new(None),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
@@ -630,54 +615,6 @@ fn connect_entry(window: &gtk::Window, entry: &gtk::Entry, state: &Rc<PillState>
     });
 }
 
-fn apply_phase(state: &PillState, phase: Phase, seq: u64) {
-    // Phase message sequence guard: see ipc::InMessage::Phase.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
-    let stale = LAST_PHASE_SEQ.with(|last| {
-        let stale = seq < last.get();
-        if !stale {
-            last.set(seq);
-        }
-        stale
-    });
-    if stale {
-        return;
-    }
-    let prev = state.phase.get();
-    state.phase.set(phase);
-    state
-        .style_tooltip_gate
-        .set_take_running(phase == Phase::Recording);
-    // A new take sweeps any banner parked above the pill (for
-    // example the retranscribing toast) so it cannot sit on the
-    // style selector for the whole take. A resume from Paused
-    // keeps toasts raised during the take, such as the cancel
-    // confirm.
-    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-        clear_flash(state);
-    }
-    if rust_pill_shared::should_clear_stage_text_on_phase(
-        prev == Phase::Loading,
-        phase == Phase::Idle,
-        phase == Phase::Loading,
-    ) {
-        *state.stage_text.borrow_mut() = None;
-    }
-    if phase == Phase::Loading && prev != Phase::Loading {
-        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-        state.loading_offset.set(offset);
-    }
-    if phase == Phase::Idle && prev != Phase::Idle {
-        state.pending_levels.borrow_mut().clear();
-        state.target_level.set(0.0);
-        state.current_level.set(0.0);
-        state.wave_phase.set(0.0);
-        state.loading_offset.set(0.0);
-    }
-}
-
 fn process_message(
     msg: InMessage,
     state_tick: &PillState,
@@ -686,7 +623,11 @@ fn process_message(
     quit: &Cell<bool>,
 ) {
     match msg {
-        InMessage::Phase { phase, seq } => apply_phase(state_tick, phase, seq),
+        InMessage::Phase { phase, seq } => {
+            state_tick
+                .indicator
+                .apply_phase(phase, seq, reduced_motion, || clear_flash(state_tick))
+        }
         InMessage::Levels { levels } => {
             *state_tick.pending_levels.borrow_mut() = levels;
         }

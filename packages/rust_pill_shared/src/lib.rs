@@ -11,6 +11,7 @@ pub mod deform;
 pub mod drag;
 pub mod edge;
 pub mod hover;
+pub mod indicator;
 pub mod ipc;
 pub mod placement;
 pub mod review_key;

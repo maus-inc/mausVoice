@@ -2403,7 +2403,7 @@ describe("native pill loading animation behind stage text", () => {
     }
   });
 
-  it("clears stage_text via should_clear_stage_text_on_phase, advances loading_offset with reduced_motion, and normalizes StageText IPC", () => {
+  it("routes phase IPC to the shared indicator and preserves stage text and reduced-motion drawing", () => {
     const shared = read("packages/rust_pill_shared/src/lib.rs");
     assert.match(
       shared,
@@ -2421,32 +2421,23 @@ describe("native pill loading animation behind stage text", () => {
       ["macos", source.macApp],
       ["windows", source.windowsPill],
     ]) {
-      if (label === "gtk") {
-        assert.match(
-          scope("gtkPill", "fn process_message("),
-          /InMessage::Phase \{ phase, seq \} => apply_phase\(state_tick, phase, seq\)/,
-        );
-      }
-      const phaseArm =
-        label === "gtk"
-          ? scope("gtkPill", "fn apply_phase(")
-          : text
-              .split("InMessage::Phase { phase, seq } => {")[1]
-              .split("InMessage::Levels")[0];
-      assert.match(
-        phaseArm,
-        /if rust_pill_shared::should_clear_stage_text_on_phase\(\s*prev == Phase::Loading,\s*phase == Phase::Idle,\s*phase == Phase::Loading,\s*\) \{\s*\*[\w.]*stage_text\.borrow_mut\(\) = None;\s*\}/,
-        `${label}: InMessage::Phase must clear stage_text via should_clear_stage_text_on_phase`,
-      );
-      assert.match(
-        phaseArm,
-        /if phase == Phase::Loading && prev != Phase::Loading \{\s*let offset = if reduced_motion\(\) \{ 0\.5 \} else \{ 0\.0 \};\s*[\w.]*loading_offset\.set\(offset\);\s*\}/,
-        `${label}: InMessage::Phase must initialize loading_offset (respecting reduced_motion) when entering Phase::Loading`,
-      );
-      assert.match(
-        phaseArm,
-        /if phase == Phase::Idle && prev != Phase::Idle \{[^}]*loading_offset\.set\(0\.0\);/,
-        `${label}: InMessage::Phase must reset loading_offset when returning to Phase::Idle`,
+      // The shared Rust tests exercise ordering, stage text, reduced motion,
+      // and the idle reset. Here check that each actual Phase arm routes the
+      // wire sequence, OS preference and banner callback to that model.
+      const phaseArm = text
+        .split("InMessage::Phase { phase, seq } =>")[1]
+        .split("InMessage::Levels")[0];
+      const owner = { gtk: "state_tick", macos: "ctx.state", windows: "state" }[
+        label
+      ];
+      const bannerOwner = label === "macos" ? `&${owner}` : owner;
+      assert.ok(
+        phaseArm
+          .replace(/\s/g, "")
+          .includes(
+            `${owner}.indicator.apply_phase(phase,seq,reduced_motion,||clear_flash(${bannerOwner}))`,
+          ),
+        `${label}: phase IPC must update this window's indicator and banner`,
       );
       assert.match(
         text,
