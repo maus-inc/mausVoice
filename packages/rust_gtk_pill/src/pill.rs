@@ -1659,9 +1659,16 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
     let buffer = view.buffer().expect("review editor buffer");
     let state_clipboard = Rc::clone(state);
     let view_paste = view.clone();
+    // The request is asynchronous, so the selection can move before the text
+    // arrives. Capture where the user asked to paste and drop a response that
+    // would otherwise delete whatever they selected in the meantime.
+    let requested_selection = buffer.selection_bounds();
     gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
         if !clipboard_result_is_current(&review_id, state_clipboard.pending_review_id().as_deref())
         {
+            return;
+        }
+        if buffer.selection_bounds() != requested_selection {
             return;
         }
         let Some(text) = text else {

@@ -1621,10 +1621,19 @@ fn draw_transcript(
 
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
+    // The native editor and its heading are fixed, so conversation content that
+    // scrolls up must not paint over them. Clip the scrolling band below the
+    // review block and draw the heading outside that clip.
+    let mut band_y = area_y;
+    let mut band_h = area_h;
     if has_review {
-        // The native editor is fixed above the scrolling transcript. Keep its
-        // heading fixed too, and start conversation content below the editor.
-        y = draw_review_text(cr, state, area_x, area_y + top_pad, area_w, alpha) - scroll;
+        let review_bottom = draw_review_text(cr, state, area_x, area_y + top_pad, area_w, alpha);
+        y = review_bottom - scroll;
+        band_y = review_bottom;
+        band_h = (area_y + area_h - review_bottom).max(0.0);
+        cr.save().ok();
+        cr.rectangle(area_x, band_y, area_w, band_h);
+        cr.clip();
     }
 
     cr.select_font_face(
@@ -1716,18 +1725,23 @@ fn draw_transcript(
 
     // Trim the click targets to the part of the panel still on screen. A
     // button the user cannot see must not take their click, and a button that
-    // is half out must only answer on the half that shows.
+    // is half out must only answer on the half that shows. Under a review the
+    // band starts below the fixed editor, so a target scrolled behind it is
+    // dropped exactly where the paint was clipped.
     {
         let mut regions = state.click_regions.borrow_mut();
         let scrolled = regions.split_off(region_start);
         regions.extend(scrolled.into_iter().filter_map(|mut region| {
-            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, band_y, band_h)?;
             region.y = y;
             region.h = h;
             Some(region)
         }));
     }
 
+    if has_review {
+        cr.restore().ok();
+    }
     cr.restore().ok();
 }
 

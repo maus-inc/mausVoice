@@ -528,6 +528,13 @@ pub(crate) fn set_entry_text(text: &str) {
         with_ns_string(text, |ns| {
             let _: () = msg_send![ctx.entry, setString:ns];
         });
+        // Undo is enabled on this view, so loading a new transcript must start a
+        // fresh stack. Otherwise Cmd+Z replays an edit made to the previous
+        // transcript into this one, and Insert sends it under the new review id.
+        let undo_manager: id = msg_send![ctx.entry, undoManager];
+        if undo_manager != nil {
+            let _: () = msg_send![undo_manager, removeAllActions];
+        }
     });
 }
 
