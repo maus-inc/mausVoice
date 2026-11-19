@@ -6,6 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 import {
   beginNativeRecording,
   resetNativeRecordingSession,
+  currentNativeRecording,
 } from "./native-recording-session";
 import { stopLocalDataSubsystems } from "./stop-local-data-subsystems";
 
@@ -71,13 +72,31 @@ it("attempts recording stop even when the listener fails and reports failure", a
   ]);
 });
 
-it("reports a recording stop failure", async () => {
+it("discards the failed stop's admission and reports the original error", async () => {
   await startRecording();
-  const failure = new Error("recording failed");
-  invoke.mockImplementation((command: string) =>
-    command === "stop_recording" ? Promise.reject(failure) : Promise.resolve(),
-  );
-  await expect(stopLocalDataSubsystems()).rejects.toBe(failure);
+  const ownerId = currentNativeRecording()!.ownerId;
+  const stopError = new Error("audio worker failed");
+  const discard = vi
+    .fn(() => Promise.resolve())
+    .mockRejectedValueOnce(new Error("device held"));
+  invoke.mockImplementation((command: string) => {
+    if (command === "stop_recording") return Promise.reject(stopError);
+    if (command === "discard_recording") return discard();
+    return Promise.resolve();
+  });
+  await expect(stopLocalDataSubsystems()).rejects.toBe(stopError);
+  expect(invoke).toHaveBeenCalledWith("discard_recording", {
+    ownerId,
+    generation: 7,
+  });
+  await stopLocalDataSubsystems();
+  // A successful retry retired the tuple: a second teardown sends no recording IPC.
+  await stopLocalDataSubsystems();
+  expect(discard).toHaveBeenCalledTimes(2);
+  expect(
+    invoke.mock.calls.filter(([name]) => name === "stop_recording"),
+  ).toHaveLength(1);
+  expect(currentNativeRecording()).toBeNull();
 });
 
 it("does not authorize a wipe on partial audio before device release", async () => {

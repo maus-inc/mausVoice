@@ -139,6 +139,15 @@ class RecordingSession implements NativeRecordingHandle {
     return session === this && !this.stopping && !this.discardRequested;
   }
 
+  canRetryOpeningDiscard(owner: StartOwner | null): boolean {
+    return (
+      this.localOwner === owner &&
+      owner.handleScoped &&
+      this.discardRequested &&
+      !this.discarding
+    );
+  }
+
   private async command(name: string, transport = this.transport) {
     return transport(name, {
       ownerId: this.ownerId,
@@ -264,7 +273,14 @@ export const beginNativeRecording = async (
   options: NativeRecordingStartOptions = {},
   invokeFn: RecordingInvoke = invoke,
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> => {
-  if (openingOwner)
+  // Only the abandoned opening itself can yield. A replacement may already
+  // be opening while it waits for a *different* admission to release.
+  const abandoned = session?.canRetryOpeningDiscard(openingOwner)
+    ? session
+    : null;
+  if (abandoned) await waitForRecordingRelease(abandoned.discard());
+  // Do not supersede a successor that opened while this retry was waiting.
+  if (openingOwner || (abandoned && session))
     throw new ActiveRecordingError("A recording start is already in progress");
   const localOwner = { handleScoped: options.handleScoped === true };
   openingOwner = localOwner;
@@ -343,8 +359,21 @@ export const stopNativeRecording = (
 export const stopNativeRecordingForTeardown = async (): Promise<void> => {
   const owned = session;
   if (!owned) return;
-  const audio = await owned.stop();
-  if (audio.captureFailed) await waitForRecordingRelease(owned.discard());
+  if (!owned.discardRequested) {
+    try {
+      if (!(await owned.stop()).captureFailed) return;
+    } catch (stopError) {
+      // A failed capture can reject every subsequent stop on this tuple.
+      // Discard it before reporting the failure; retain it if discard fails.
+      await waitForRecordingRelease(owned.discard()).catch(() => {
+        getLogger().verbose(
+          "Recording discard unconfirmed after teardown stop failed",
+        );
+      });
+      throw stopError;
+    }
+  }
+  await waitForRecordingRelease(owned.discard());
 };
 
 /** Best-effort teardown. A failed discard remains addressable for retry. */

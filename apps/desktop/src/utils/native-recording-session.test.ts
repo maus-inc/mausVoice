@@ -180,42 +180,108 @@ describe("beginNativeRecording", () => {
     await handle.discard();
   });
 
-  it("does not admit a successor ahead of a legacy caller's late global cleanup", async () => {
-    let opened!: () => void;
-    const opening = new Promise<void>((resolve) => {
-      opened = resolve;
+  it("retries an abandoned scoped opening before admitting exactly one waiter", async () => {
+    let finishStart!: (reply: { sampleRate: number }) => void;
+    let confirm!: () => void;
+    const firstReply = new Promise<{ sampleRate: number }>((resolve) => {
+      finishStart = resolve;
     });
-    let startReply!: (reply: { sampleRate: number }) => void;
-    const { invoke } = recorderTransport({
-      start_recording: () =>
-        new Promise((resolve) => {
-          startReply = resolve;
-          opened();
-        }),
+    const release = new Promise<void>((resolve) => {
+      confirm = resolve;
     });
-    // MicCheckForm can stop on unmount, then discard globally when its old
-    // start returns. That caller does not promise handle-scoped cleanup.
-    const lateCleanup = beginNativeRecording(null, {}, invoke).then(() =>
-      discardNativeRecording(),
-    );
-    await opening;
-    const next = recorderTransport();
+    const discard = vi
+      .fn(() => Promise.resolve())
+      .mockRejectedValueOnce(new Error("device held"))
+      .mockImplementationOnce(() => release);
+    const { invoke, calls } = recorderTransport({
+      start_recording: vi
+        .fn(() => Promise.resolve({ sampleRate: 16_000 }))
+        .mockImplementationOnce(() => firstReply),
+      discard_recording: discard,
+    });
+    const first = beginNativeRecording(null, { handleScoped: true }, invoke);
     try {
-      await stopNativeRecording(invoke);
-      await expect(beginNativeRecording(null, {}, next.invoke)).rejects.toThrow(
-        "start is already in progress",
+      await vi.waitFor(() => expect(currentNativeRecording()).not.toBeNull());
+      const old = currentNativeRecording()!;
+      await expect(beginNativeRecording(null, {}, invoke)).rejects.toThrow(
+        "already in progress",
       );
+      expect(discard).not.toHaveBeenCalled();
+      await expect(old.discard()).rejects.toThrow("device held");
+      const waiters = Promise.allSettled([
+        beginNativeRecording(null, { handleScoped: true }, invoke),
+        beginNativeRecording(null, { handleScoped: true }, invoke),
+      ]);
+      expect(calls.filter(([name]) => name === "discard_recording")).toEqual([
+        ["discard_recording", { ownerId: old.ownerId, generation: 1 }],
+        ["discard_recording", { ownerId: old.ownerId, generation: 1 }],
+      ]);
+      expect(
+        calls.filter(([name]) => name === "recording_generation"),
+      ).toHaveLength(1);
+      confirm();
+      const results = await waiters;
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      expect(currentNativeRecording()?.generation).toBe(2);
+      finishStart({ sampleRate: 16_000 });
+      await (await first).handle.discard();
+      expect(currentNativeRecording()?.generation).toBe(2);
     } finally {
-      startReply({ sampleRate: 16_000 });
-      await lateCleanup;
+      confirm();
+      finishStart({ sampleRate: 16_000 });
+      await first;
+      await currentNativeRecording()?.discard();
     }
-    const { handle } = await beginNativeRecording(null, {}, next.invoke);
-    expect(
-      next.calls.filter(([cmd]) => cmd === "discard_recording"),
-    ).toHaveLength(0);
-    expect(handle.isLive()).toBe(true);
-    await handle.discard();
   });
+
+  it.each(["stop", "failed discard"])(
+    "keeps the legacy opening after %s until its late cleanup",
+    async (action) => {
+      let opened!: () => void;
+      const opening = new Promise<void>((resolve) => {
+        opened = resolve;
+      });
+      let startReply!: (reply: { sampleRate: number }) => void;
+      const discard = vi
+        .fn(() => Promise.resolve())
+        .mockRejectedValueOnce(new Error("device held"));
+      const { invoke } = recorderTransport({
+        discard_recording: discard,
+        start_recording: () =>
+          new Promise((resolve) => {
+            startReply = resolve;
+            opened();
+          }),
+      });
+      // MicCheckForm can stop on unmount, then discard globally when its old
+      // start returns. That caller does not promise handle-scoped cleanup.
+      const lateCleanup = beginNativeRecording(null, {}, invoke).then(() =>
+        discardNativeRecording(),
+      );
+      await opening;
+      const next = recorderTransport();
+      try {
+        if (action === "stop") await stopNativeRecording(invoke);
+        else
+          await expect(currentNativeRecording()!.discard()).rejects.toThrow(
+            "device held",
+          );
+        await expect(
+          beginNativeRecording(null, {}, next.invoke),
+        ).rejects.toThrow("start is already in progress");
+        expect(discard).toHaveBeenCalledTimes(action === "stop" ? 0 : 1);
+      } finally {
+        startReply({ sampleRate: 16_000 });
+        await lateCleanup;
+      }
+      const { handle } = await beginNativeRecording(null, {}, next.invoke);
+      expect(
+        next.calls.filter(([cmd]) => cmd === "discard_recording"),
+      ).toHaveLength(0);
+      expect(handle.isLive()).toBe(true);
+      await handle.discard();
+    },
+  );
 
   it("keeps the start guard through cleanup and releases it after failure", async () => {
     let rejectStart!: (error: Error) => void;
