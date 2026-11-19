@@ -46,6 +46,20 @@ function subject(branch, base, head) {
     base,
     head,
     blob,
+    paths: new Set(
+      git(
+        "diff",
+        "--no-renames",
+        "--ignore-submodules=none",
+        "--name-only",
+        "-z",
+        base,
+        head,
+        "--",
+      )
+        .split("\0")
+        .filter(Boolean),
+    ),
     ids: [
       ...new Set([...rules(text), ...(prior === null ? [] : rules(prior))]),
     ],
@@ -113,6 +127,38 @@ function authoredLines(body) {
   return lines;
 }
 
+// The path must be in this exact Git range. The note is still an attestation:
+// no parser can prove someone actually performed the check they describe.
+function evidenceNote(id, disposition, evidence, paths) {
+  let cited = false;
+  const note = evidence
+    .replace(/`([^`]+)`/gu, (span, path) => {
+      if (!paths.has(path)) return span;
+      cited = true;
+      return "";
+    })
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLowerCase();
+  if (paths.size ? !cited : disposition !== "not applicable")
+    fail(
+      `${id}: cite a changed repository path in backticks (use not applicable for an empty diff).`,
+    );
+  return note;
+}
+
+function checkEvidence(id, disposition, evidence, paths, notes) {
+  const note = evidenceNote(id, disposition, evidence, paths);
+  if (
+    note.length < 12 ||
+    /[<>]|\b(?:TODO|TBD|placeholder)\b|^diff-specific evidence/i.test(note)
+  )
+    fail(`Give diff-specific evidence or a reason for ${id}.`);
+  if (paths.size && notes.has(note))
+    fail(`Give ${id} its own evidence, not another rule's note.`);
+  notes.add(note);
+}
+
 export function checkReceipt(body, item) {
   const lines = authoredLines(body);
   const expected = header(item).filter(Boolean);
@@ -131,18 +177,12 @@ export function checkReceipt(body, item) {
   const end = lines.indexOf("</details>", from);
   if (end < 0) fail("Unclosed standards review.");
   const missing = new Set(item.ids);
+  const notes = new Set();
   for (const line of lines.slice(from, end)) {
     const row = /^- (CS\d+): (verified|not applicable): (\S.*)$/u.exec(line);
     if (!row || !missing.delete(row[1]))
       fail(`Missing, unknown or duplicate disposition: ${line.slice(0, 60)}`);
-    const evidence = row[3].trim();
-    if (
-      evidence.length < 12 ||
-      /[<>]|\b(?:TODO|TBD|placeholder)\b|^diff-specific evidence/i.test(
-        evidence,
-      )
-    )
-      fail(`Give diff-specific evidence or a reason for ${row[1]}.`);
+    checkEvidence(row[1], row[2], row[3], item.paths, notes);
   }
   if (missing.size) fail(`Missing review of ${[...missing].join(", ")}.`);
 }

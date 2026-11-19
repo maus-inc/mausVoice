@@ -39,7 +39,7 @@ I applied the entire CODING_STANDARDS.md to the entire base-to-head diff.
 
 </details>
 
-Replace the verification heading through this first fold with the accepted `last-review.md` from `engineering/standards-review.md`. The PR check rejects placeholders and stale base, head or standards revisions. Leave the command results below it.
+Replace the verification heading through this first fold with the accepted `last-review.md` from `engineering/standards-review.md`. Each row cites a changed repository-relative path in backticks and gives its own result or reason. The PR check rejects placeholders and stale base, head or standards revisions. Leave the command results below it.
 
 - `pnpm install --frozen-lockfile`: <passed, failed, or not run with reason>
 - `pnpm run lint`: <passed, failed, or not run with reason>

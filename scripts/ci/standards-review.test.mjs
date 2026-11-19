@@ -29,12 +29,24 @@ const expected = {
   head: "b".repeat(40),
   blob: "c".repeat(40),
   ids,
+  paths: new Set(["nested/last.bin"]),
+};
+const evidence = {
+  CS01: "the fixture opens no recording or device.",
+  CS02: "the migration fixture preserves the stored row.",
+  CS03: "the binary fixture contains no private content.",
+  CS04: "the fixture makes no provider requests.",
+  CS05: "the packet contains a Git binary patch.",
+  CS06: "the fixture changes no user-facing control.",
+  CS07: "the stale receipt fails after the base moves.",
+  CS08: "the hook checks both commits in the range.",
 };
 const completeRows = (s) =>
-  s.replaceAll(
-    "<verified or not applicable>: <diff-specific evidence or reason>",
-    "verified: fixture round-trip returned the stored row.",
+  s.replace(
+    /^- (CS\d+): <verified or not applicable>: <diff-specific evidence or reason>$/gm,
+    (_, id) => `- ${id}: verified: \`nested/last.bin\` ${evidence[id]}`,
   );
+const firstEvidence = `verified: \`nested/last.bin\` ${evidence.CS01}`;
 const body = completeRows(
   template
     .replace(/0{40}/, expected.head)
@@ -52,14 +64,8 @@ it("requires evidence for every section in the checked-in template", () => {
     body.replace(expected.branch, "main"),
     body.replace(/^- CS01:.*$/m, ""),
     body.replace("- CS02:", "- CS01:"),
-    body.replace(
-      "verified: fixture round-trip returned the stored row.",
-      "verified: TODO",
-    ),
-    body.replace(
-      "verified: fixture round-trip returned the stored row.",
-      "not applicable: <state why>",
-    ),
+    body.replace(firstEvidence, "verified: TODO"),
+    body.replace(firstEvidence, "not applicable: <state why>"),
     `~~~md\n${body}\n~~~`,
     `<!--\n${body}\n-->`,
     `<!-- closed --> <!-- open\n${body}\n-->`,
@@ -70,10 +76,46 @@ it("requires evidence for every section in the checked-in template", () => {
   }
   checkReceipt(
     body.replace(
-      "verified: fixture round-trip returned the stored row.",
-      "not applicable: the fixture changes no user-visible controls.",
+      firstEvidence,
+      "not applicable: `nested/last.bin` does not open any resource.",
     ),
     expected,
+  );
+});
+
+it("rejects boilerplate, unchanged paths and paths without an explanation", () => {
+  for (const text of [
+    "verified: reviewed carefully; no issues found",
+    "verified: `unchanged/file.ts` was inspected for leaks",
+    "not applicable: reviewed carefully; no issues found",
+    "verified: `nested/last.bin`",
+    "verified: `nested/last.bin` TODO: fill in this rule",
+    "not applicable: `nested/last.bin` <state the actual reason>",
+    `verified: \`nested/last.bin\` ${evidence.CS02}`,
+  ]) {
+    assert.throws(() =>
+      checkReceipt(body.replace(firstEvidence, text), expected),
+    );
+  }
+});
+
+it("does not treat a changed filename as placeholder prose", () => {
+  const path = "notes/TODO.md";
+  checkReceipt(body.replaceAll("nested/last.bin", path), {
+    ...expected,
+    paths: new Set([path]),
+  });
+});
+
+it("accepts only not-applicable dispositions for an empty diff", () => {
+  const empty = { ...expected, paths: new Set() };
+  const noChanges = body.replace(
+    /verified: `nested\/last.bin` .+$/gm,
+    "not applicable: base and head have identical trees.",
+  );
+  checkReceipt(noChanges, empty);
+  assert.throws(() =>
+    checkReceipt(noChanges.replace("not applicable:", "verified:"), empty),
   );
 });
 
@@ -163,6 +205,14 @@ it("binds both gates to the full commit range, not the working directory or last
   const filled = completeRows(blank);
   assert.match(filled, /CS02:/); // Removed in the head, but its removal still requires review.
   ok(pr(filled));
+  // The file exists on both sides, but the checked range did not change it.
+  const unrelated = filled.replace(
+    "`nested/last.bin`",
+    "`apps/desktop/src-tauri/src/db/migrations/001_fixture.sql`",
+  );
+  red(pr(unrelated));
+  writeFileSync(draft, unrelated);
+  red(push());
   red(pr(filled.replace(/^- CS02:.*$/m, "")));
   red(pr(filled, intermediate));
   red(pr(filled, base, intermediate));
