@@ -7,6 +7,7 @@ import {
 import {
   ActiveRecordingError,
   beginNativeRecording,
+  waitForRecordingRelease,
   type NativeRecordingHandle,
 } from "../../utils/native-recording-session";
 
@@ -125,26 +126,35 @@ export class VoiceInstructionRecorder {
   ): Promise<"started" | "blocked" | "unavailable"> {
     try {
       const { handle } = await beginNativeRecording(
-        this.deps.getPreferredMicrophone() ?? null,
+        this.deps.getPreferredMicrophone(),
         {
-          preserveLiveRecording: true,
+          handleScoped: true,
           onAdmission: (handle) => this.trackAdmission(gen, handle),
         },
         this.deps.invoke,
       );
-      // Mic init can finish after disposal or while another caller is
-      // stopping this admission. Neither case should publish "listening".
-      if (!this.isCurrent(gen) || !handle.isLive()) {
-        if (this.providerHandle === handle) this.providerHandle = null;
-        await this.discardProvider(handle);
-        return "blocked";
-      }
-      this.state = "provider";
-      this.deps.onListeningChange(true);
-      return "started";
+      return await this.finishProviderStart(gen, handle);
     } catch (error) {
       return this.providerStartFailure(gen, error);
     }
+  }
+
+  private async finishProviderStart(
+    gen: number,
+    handle: NativeRecordingHandle,
+  ): Promise<"started" | "blocked"> {
+    if (this.isCurrent(gen) && handle.isLive()) {
+      this.state = "provider";
+      this.deps.onListeningChange(true);
+      return "started";
+    }
+    // A stop may have overtaken the start reply. Do not publish listening or
+    // start a browser recognizer while native is winding down this admission.
+    if (this.providerHandle === handle) this.providerHandle = null;
+    await this.discardProvider(handle);
+    if (this.isCurrent(gen))
+      this.deps.onError(this.deps.recordingUnavailableMessage("start"));
+    return "blocked";
   }
 
   private providerStartFailure(
@@ -391,7 +401,9 @@ export class VoiceInstructionRecorder {
 
   private async discardProvider(handle: NativeRecordingHandle): Promise<void> {
     try {
-      await handle.discard();
+      // Only this UI waiter expires. Native still owns the admission until
+      // its stop or discard acknowledges release (including a late reply).
+      await waitForRecordingRelease(handle.discard());
     } catch {
       this.deps.logger.warning(
         "Voice Edit Mode: provider recording cleanup failed",
@@ -465,7 +477,11 @@ export class VoiceInstructionRecorder {
     }
     const handle = this.providerHandle;
     this.providerHandle = null;
-    if (handle) this.discardProvider(handle);
+    if (handle) {
+      // Discard reports its own failure. A logger shutting down must not turn
+      // that handled failure into a rejection after disposal.
+      this.discardProvider(handle).catch(() => undefined);
+    }
     if (this.state !== "idle") {
       this.setIdle();
     }

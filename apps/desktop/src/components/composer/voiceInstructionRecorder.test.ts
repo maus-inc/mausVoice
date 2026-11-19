@@ -1,5 +1,7 @@
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { StopRecordingResponse } from "../../types/transcription-session.types";
+import { acquireLocalBrowserRecording } from "../../utils/local-recording-activity";
 import {
   beginLocalDataClear,
   LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
@@ -382,6 +384,32 @@ describe("VoiceInstructionRecorder", () => {
     },
   );
 
+  it.each([true, false])(
+    "reports a busy microphone in another window as retryable (browser supported: %s)",
+    async (speechRecognitionSupported) => {
+      // Tauri passes Rust's Err(String) through without constructing an Error.
+      const invoke = nativeInvoke({
+        start_recording: vi
+          .fn()
+          .mockRejectedValueOnce("A recording is already in progress")
+          .mockResolvedValue({ sampleRate: 16_000 }),
+      });
+      const deps = baseDeps({ invoke, speechRecognitionSupported });
+      const recorder = recorderFor(deps);
+      await recorder.toggle();
+      expect(deps.onError).toHaveBeenCalledExactlyOnceWith(
+        "recording unavailable",
+      );
+      expect(invoke.mock.calls.map(([cmd]) => cmd)).toEqual([
+        "recording_generation",
+        "start_recording",
+        "discard_recording",
+      ]);
+      await recorder.toggle();
+      expect(recorder.getState()).toBe("provider");
+    },
+  );
+
   it("refuses browser recognition while a dictation holds the recorder", async () => {
     const deps = baseDeps({
       canUseProvider: () => false,
@@ -395,6 +423,37 @@ describe("VoiceInstructionRecorder", () => {
     expect(recorder.getState()).toBe("idle");
     expect(deps.onError).toHaveBeenCalledWith("recording unavailable");
     expect(deps.createSpeechRecognition).not.toHaveBeenCalled();
+  });
+
+  it("contains a teardown rejection and retries the unconfirmed admission", async () => {
+    const discard = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("device failed"))
+      .mockResolvedValue(undefined);
+    const invoke = nativeInvoke({ discard_recording: discard });
+    const warning = vi.fn(() => {
+      throw new Error("logger unavailable");
+    });
+    const recorder = recorderFor(baseDeps({ invoke, logger: { warning } }));
+    await recorder.toggle();
+    const admission = activeAdmission();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      recorder.dispose();
+      // Node reports unhandled rejections after the current microtask queue.
+      await nextTurn();
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        "Voice Edit Mode: provider recording cleanup failed",
+      );
+      expect(unhandled).not.toHaveBeenCalled();
+      const { handle } = await beginNativeRecording(null, {}, invoke);
+      expect(discard.mock.calls).toEqual([[admission], [admission]]);
+      expect(handle.generation).not.toBe(admission.generation);
+      await handle.discard();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 
   it("retries an abandoned native release before opening a browser-only successor", async () => {
@@ -700,6 +759,113 @@ describe("VoiceInstructionRecorder", () => {
     expect(deps.invoke).toHaveBeenCalledWith("discard_recording", owner);
     expect(currentNativeRecording()).toBeNull();
     expect(deps.onListeningChange).not.toHaveBeenCalled();
+  });
+
+  it("unblocks the microphone button without releasing a stalled native stop", async () => {
+    vi.useFakeTimers();
+    const opening = deferred();
+    const start = deferred<{ sampleRate: number }>();
+    const stop = deferred<StopRecordingResponse>();
+    const invoke = nativeInvoke({
+      start_recording: () => {
+        opening.resolve();
+        return start.promise;
+      },
+      stop_recording: () => stop.promise,
+    });
+    const deps = baseDeps({ invoke });
+    const recorder = recorderFor(deps);
+    const settled = vi.fn();
+    const starting = recorder.toggle().then(settled);
+    await opening.promise;
+    const stopping = stopNativeRecording(invoke);
+    start.resolve({ sampleRate: 16_000 });
+    try {
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toHaveBeenCalledOnce();
+      expect(invoke.mock.calls.map(([cmd]) => cmd)).toEqual([
+        "recording_generation",
+        "start_recording",
+        "stop_recording",
+      ]);
+      expect(deps.onListeningChange).not.toHaveBeenCalled();
+      expect(deps.onError).toHaveBeenCalledExactlyOnceWith(
+        "recording unavailable",
+      );
+      expect(acquireLocalBrowserRecording(invoke, {})).toBe(false);
+      expect(recorder.getState()).toBe("idle");
+    } finally {
+      stop.resolve({ samples: Float32Array.of(0.5), sampleRate: 16_000 });
+      vi.useRealTimers();
+      await starting;
+    }
+    expect((await stopping).samples).toEqual(Float32Array.of(0.5));
+    await recorder.toggle();
+    expect(recorder.getState()).toBe("provider");
+  });
+
+  it("starts a replacement after confirmed disposal, without an old start unlocking the next one", async () => {
+    const opened = deferred();
+    const replaced = deferred();
+    const oldReply = deferred<{ sampleRate: number }>();
+    const nextReply = deferred<{ sampleRate: number }>();
+    const release = deferred();
+    const invoke = nativeInvoke({
+      start_recording: vi
+        .fn()
+        .mockImplementationOnce(() => {
+          opened.resolve();
+          return oldReply.promise;
+        })
+        .mockImplementationOnce(() => {
+          replaced.resolve();
+          return nextReply.promise;
+        }),
+      discard_recording: () => release.promise,
+    });
+    const old = recorderFor(baseDeps({ invoke }));
+    const starting = old.toggle();
+    await opened.promise;
+    const admission = activeAdmission();
+    old.dispose();
+    const next = recorderFor(
+      baseDeps({ invoke, speechRecognitionSupported: false }),
+    );
+    let replacement: Promise<void> | undefined;
+    try {
+      expect(invoke).toHaveBeenCalledWith("discard_recording", admission);
+      await expect(beginNativeRecording(null, {}, invoke)).rejects.toThrow(
+        "start is already in progress",
+      );
+      release.resolve();
+      // Let the confirmed discard reply reach the session, without issuing
+      // another discard from the test. The old start is still unanswered.
+      await nextTurn();
+      replacement = next.toggle();
+      expect(
+        await Promise.race([
+          replaced.promise.then(() => "admitted"),
+          replacement.then(() => "refused"),
+        ]),
+      ).toBe("admitted");
+      oldReply.resolve({ sampleRate: 16_000 });
+      await starting;
+      await expect(beginNativeRecording(null, {}, invoke)).rejects.toThrow(
+        "start is already in progress",
+      );
+      expect(
+        invoke.mock.calls.filter(([cmd]) => cmd === "recording_generation"),
+      ).toHaveLength(2);
+    } finally {
+      release.resolve();
+      oldReply.resolve({ sampleRate: 16_000 });
+      nextReply.resolve({ sampleRate: 16_000 });
+      await Promise.all([starting, replacement]);
+    }
+    expect(next.getState()).toBe("provider");
+    expect(activeAdmission().generation).toBe(2);
   });
 
   it.each(["dispose", "clear"])(

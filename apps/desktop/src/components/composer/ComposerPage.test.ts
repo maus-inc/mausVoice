@@ -100,7 +100,7 @@ vi.mock("../../store", () => ({
 import { ComposerPage } from "./ComposerPage";
 import { transcribeAudio } from "../../actions/transcribe.actions";
 import { applyVoiceEditInstruction } from "../../actions/composer.actions";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -294,7 +294,7 @@ describe("ComposerPage review session", () => {
   };
 
   const enableProviderMic = (
-    stopReply: (generation: unknown) => Promise<unknown>,
+    stopReply: (args?: InvokeArgs) => Promise<unknown>,
   ) => {
     fakeState.settings.aiTranscription.enabled = true;
     let generation = 0;
@@ -303,8 +303,7 @@ describe("ComposerPage review session", () => {
         return Promise.resolve(++generation);
       if (command === "start_recording")
         return Promise.resolve({ sampleRate: 16_000 });
-      if (command === "stop_recording" && args && "generation" in args)
-        return stopReply(args.generation);
+      if (command === "stop_recording") return stopReply(args);
       return Promise.resolve(null);
     });
   };
@@ -319,7 +318,8 @@ describe("ComposerPage review session", () => {
   };
 
   it("puts the replacement recording's words in the instruction field after the old transcription rejects", async () => {
-    enableProviderMic((generation) => {
+    enableProviderMic((args = {}) => {
+      const generation = "generation" in args ? args.generation : undefined;
       expect([1, 2]).toContain(generation);
       return Promise.resolve(
         encodeRecordedAudio([generation === 1 ? 0.25 : 0.75], 16_000),
@@ -356,7 +356,15 @@ describe("ComposerPage review session", () => {
       "start_recording",
       expect.objectContaining({ generation: 2 }),
     );
+    const beforeRejection = mockInvoke.mock.calls.length;
     await act(() => rejectOld(new Error("old transcription failed")));
+    const staleCalls = mockInvoke.mock.calls.slice(beforeRejection);
+    for (const command of ["stop_recording", "discard_recording"]) {
+      expect(staleCalls).not.toContainEqual([
+        command,
+        expect.objectContaining({ generation: 2 }),
+      ]);
+    }
     await clickMic();
     expect(instructionField()?.value).toBe("new words");
     expect(transcribe).toHaveBeenCalledTimes(2);

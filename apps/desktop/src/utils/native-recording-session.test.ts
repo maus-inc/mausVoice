@@ -180,6 +180,43 @@ describe("beginNativeRecording", () => {
     await handle.discard();
   });
 
+  it("does not admit a successor ahead of a legacy caller's late global cleanup", async () => {
+    let opened!: () => void;
+    const opening = new Promise<void>((resolve) => {
+      opened = resolve;
+    });
+    let startReply!: (reply: { sampleRate: number }) => void;
+    const { invoke } = recorderTransport({
+      start_recording: () =>
+        new Promise((resolve) => {
+          startReply = resolve;
+          opened();
+        }),
+    });
+    // MicCheckForm can stop on unmount, then discard globally when its old
+    // start returns. That caller does not promise handle-scoped cleanup.
+    const lateCleanup = beginNativeRecording(null, {}, invoke).then(() =>
+      discardNativeRecording(),
+    );
+    await opening;
+    const next = recorderTransport();
+    try {
+      await stopNativeRecording(invoke);
+      await expect(beginNativeRecording(null, {}, next.invoke)).rejects.toThrow(
+        "start is already in progress",
+      );
+    } finally {
+      startReply({ sampleRate: 16_000 });
+      await lateCleanup;
+    }
+    const { handle } = await beginNativeRecording(null, {}, next.invoke);
+    expect(
+      next.calls.filter(([cmd]) => cmd === "discard_recording"),
+    ).toHaveLength(0);
+    expect(handle.isLive()).toBe(true);
+    await handle.discard();
+  });
+
   it("keeps the start guard through cleanup and releases it after failure", async () => {
     let rejectStart!: (error: Error) => void;
     let releaseDiscard!: () => void;
@@ -521,6 +558,8 @@ describe("stopping", () => {
       const cleanup = handle.discard();
       const browser = new BrowserRecordingLease(invoke);
       const failed = vi.fn();
+      // Clear and Delete Account stop the same webview through this entry point.
+      const clearWait = stopNativeRecording(invoke).catch(failed);
       const nativeWait = beginNativeRecording(null, {}, invoke).catch(failed);
       const browserWait = browser.acquire().catch(failed);
       await vi.advanceTimersByTimeAsync(1_999);
@@ -529,8 +568,9 @@ describe("stopping", () => {
       expect(failed.mock.calls.map(([error]) => error.message)).toEqual([
         "Recording release timed out after 2000ms",
         "Recording release timed out after 2000ms",
+        "Recording release timed out after 2000ms",
       ]);
-      await Promise.all([nativeWait, browserWait]);
+      await Promise.all([clearWait, nativeWait, browserWait]);
       expect(acquireLocalBrowserRecording(invoke, {})).toBe(false);
       expect(calls.filter(([cmd]) => cmd === "discard_recording")).toEqual([
         [

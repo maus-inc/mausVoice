@@ -11,15 +11,19 @@ import { withTimeout } from "./timeout.utils";
 
 // Match the native start command's two-second release wait. Only the waiter
 // expires; the owned command and local slot survive until native confirms.
-const waitForRecordingRelease = async (
+export const waitForRecordingRelease = async (
   pending: Promise<unknown>,
 ): Promise<void> => {
   await withTimeout(pending, 2_000, "Recording release");
 };
 
+// `start_recording` returns Result<_, String>; Tauri rejects with this exact
+// string when the owner is in another webview and not in our local session.
+const RECORDING_BUSY = "A recording is already in progress";
+
 export class ActiveRecordingError extends Error {
-  constructor() {
-    super("A recording is already in progress");
+  constructor(message = RECORDING_BUSY) {
+    super(message);
   }
 }
 
@@ -50,8 +54,12 @@ export type NativeRecordingHandle = {
 
 export type NativeRecordingStartOptions = {
   waitForRelease?: boolean;
-  /** Independent capture surfaces must not supersede a live dictation. */
-  preserveLiveRecording?: boolean;
+  /**
+   * Independent callers retain their admission and use only that handle for
+   * cleanup. They do not supersede live audio and can yield the start gate on
+   * confirmed release. Legacy callers may still clean up globally on return.
+   */
+  handleScoped?: boolean;
   /** Called after reserving an owner, before capture can emit its first chunk. */
   onAdmission?: (handle: NativeRecordingHandle) => void;
 };
@@ -68,7 +76,14 @@ const EMPTY_RESULT = (): StopRecordingResponse => ({
 // Keep the admission until a terminal command succeeds. A rejected IPC reply
 // cannot tell us that the device (or the local browser/native slot) is free.
 let session: RecordingSession | null = null;
-let beginInFlight = false;
+type StartOwner = { handleScoped: boolean };
+let openingOwner: StartOwner | null = null;
+
+// A confirmed release can precede the old start reply. Neither that late
+// reply nor cleanup for the previous session may unlock its successor.
+const finishOpening = (owner: StartOwner): void => {
+  if (openingOwner === owner) openingOwner = null;
+};
 
 /** The recorder available for live controls, not one already being stopped. */
 export const currentNativeRecording = (): NativeRecordingHandle | null =>
@@ -106,7 +121,7 @@ class RecordingSession implements NativeRecordingHandle {
     readonly ownerId: string,
     readonly generation: number,
     private readonly transport: RecordingInvoke,
-    private readonly localOwner: object,
+    private readonly localOwner: StartOwner,
   ) {}
 
   isLive(): boolean {
@@ -130,6 +145,7 @@ class RecordingSession implements NativeRecordingHandle {
 
   private released(): void {
     releaseLocalNativeRecording(this.transport, this.localOwner);
+    if (this.localOwner.handleScoped) finishOpening(this.localOwner);
     if (session === this) session = null;
   }
 
@@ -153,7 +169,8 @@ class RecordingSession implements NativeRecordingHandle {
         new Error("Recording is no longer owned by this session"),
       );
     }
-    if (this.discardRequested) return this.discard().then(EMPTY_RESULT);
+    if (this.discardRequested)
+      return waitForRecordingRelease(this.discard()).then(EMPTY_RESULT);
     // Publish before invoking the transport. Global and owned callers join
     // the same stop, even when the transport fails synchronously.
     this.stopping ??= Promise.resolve()
@@ -213,17 +230,19 @@ export const beginNativeRecording = async (
   options: NativeRecordingStartOptions = {},
   invokeFn: RecordingInvoke = invoke,
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> => {
-  if (beginInFlight)
-    throw new Error("A recording start is already in progress");
-  beginInFlight = true;
+  if (openingOwner)
+    throw new ActiveRecordingError("A recording start is already in progress");
+  const localOwner = { handleScoped: options.handleScoped === true };
+  openingOwner = localOwner;
   try {
     return await beginNativeRecordingOwned(
       preferredMicrophone,
       options,
       invokeFn,
+      localOwner,
     );
   } finally {
-    beginInFlight = false;
+    finishOpening(localOwner);
   }
 };
 
@@ -231,15 +250,14 @@ const beginNativeRecordingOwned = async (
   preferredMicrophone: string | null,
   options: NativeRecordingStartOptions,
   invokeFn: RecordingInvoke,
+  localOwner: StartOwner,
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> => {
-  if (session)
-    await session.releaseForReplacement(options.preserveLiveRecording);
+  if (session) await session.releaseForReplacement(localOwner.handleScoped);
 
   // The browser recognizer holds the same in-webview slot, so a dictation
   // started while it listens is refused here instead of opening a second
   // capture beside it.
   const ownerId = createId();
-  const localOwner = {};
   if (!acquireLocalNativeRecording(invokeFn, localOwner)) {
     throw new ActiveRecordingError();
   }
@@ -275,7 +293,8 @@ const beginNativeRecordingOwned = async (
   } catch (error) {
     // The start may have opened the device before it failed; a discard is the
     // only call that proves the recorder is released again.
-    await handle.discard().catch(() => undefined);
+    await waitForRecordingRelease(handle.discard()).catch(() => undefined);
+    if (error === RECORDING_BUSY) throw new ActiveRecordingError();
     throw error;
   }
 };
