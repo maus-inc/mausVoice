@@ -15,12 +15,12 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::Gfx;
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy};
 use crate::state;
 use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
-use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
+use rust_pill_shared::drag::{DragBounds, DragFrame};
 use rust_pill_shared::edge::MonitorRect;
-use rust_pill_shared::hover::{HoverFrame, HoverIntent};
+use rust_pill_shared::hover::HoverFrame;
 
 // Issue #7: Thread-local statics are an architectural requirement, not a smell.
 // Win32 HWNDs are thread-affine — they must only be accessed on the thread that
@@ -57,94 +57,21 @@ thread_local! {
     static PILL_PLACEMENT: Cell<u8> = const { Cell::new(PILL_PLACEMENT_BOTTOM) };
 }
 
+/// The live window starts with these dimensions, preferences and animation
+/// sentinels. Empty collections, idle effects and controllers use their defaults.
 fn initial_state() -> PillState {
     PillState {
-        indicator: Default::default(),
-        visibility: Cell::new(Visibility::WhileActive),
-        window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
-        draw_w_velocity: Cell::new(0.0),
-        draw_h_velocity: Cell::new(0.0),
-        assistant_active: Cell::new(false),
-        assistant_review: RefCell::new(None),
         assistant_input_mode: RefCell::new("voice".to_string()),
         assistant_compact: Cell::new(true),
-        assistant_conversation_id: RefCell::new(None),
-        assistant_user_prompt: RefCell::new(None),
-        assistant_messages: RefCell::new(Vec::new()),
-        assistant_streaming: RefCell::new(None),
-        assistant_permissions: RefCell::new(Vec::new()),
-        panel_open_t: Cell::new(0.0),
-        panel_open_velocity: Cell::new(0.0),
-        kb_button_t: Cell::new(0.0),
-        kb_button_velocity: Cell::new(0.0),
-        shimmer_phase: Cell::new(0.0),
-        scroll_offset: Cell::new(0.0),
-        content_height: Cell::new(0.0),
-        viewport_height: Cell::new(0.0),
         should_stick: Cell::new(true),
-        click_regions: RefCell::new(Vec::new()),
         mouse_x: Cell::new(-1000.0),
         mouse_y: Cell::new(-1000.0),
-        entry_text: RefCell::new(String::new()),
-        pause_t: Cell::new(0.0),
-        pause_velocity: Cell::new(0.0),
-        cancel_t: Cell::new(0.0),
-        cancel_velocity: Cell::new(0.0),
-        flash_message: RefCell::new(String::new()),
-        flash_visible: Cell::new(false),
-        flash_t: Cell::new(0.0),
-        flash_velocity: Cell::new(0.0),
-        flash_timer: Cell::new(0.0),
-        flash_is_error: Cell::new(false),
-        flash_action: RefCell::new(None),
-        flash_action_label: RefCell::new(None),
-        flash_reject_action: RefCell::new(None),
-        flash_reject_action_label: RefCell::new(None),
-        fireworks_active: Cell::new(false),
-        fireworks_elapsed: Cell::new(0.0),
-        fireworks_next_launch: Cell::new(0),
-        fireworks_rockets: RefCell::new(Vec::new()),
-        flame_active: Cell::new(false),
-        flame_elapsed: Cell::new(0.0),
-        flame_tongues: RefCell::new(Vec::new()),
-        flash_blue_active: Cell::new(false),
-        flash_blue_elapsed: Cell::new(0.0),
-        transcript_text: RefCell::new(String::new()),
-        transcript_time_since_update: Cell::new(0.0),
-        transcript_opacity: Cell::new(0.0),
-        transcript_has_message: Cell::new(false),
-        long_press_active: Cell::new(false),
-        long_press_elapsed: Cell::new(0.0),
-        long_press_start_x: Cell::new(0.0),
-        long_press_start_y: Cell::new(0.0),
-        dragging: Cell::new(false),
-        drag_cancelled: Cell::new(false),
-        drag_cursor_x: Cell::new(0.0),
-        drag_cursor_y: Cell::new(0.0),
-        drag_motion: RefCell::new(DragController::new()),
-        last_monitor_topology: RefCell::new(None),
-        hover_intent: RefCell::new(HoverIntent::new()),
-        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
-        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
-        has_saved_position: Cell::new(false),
-        reset_strategy: Cell::new(ResetStrategy::Current),
-        saved_x: Cell::new(0),
-        saved_y: Cell::new(0),
-        inflate_t: Cell::new(0.0),
-        inflate_velocity: Cell::new(0.0),
-        drag_label_t: Cell::new(0.0),
-        drag_label_velocity: Cell::new(0.0),
-        ring_alpha: Cell::new(0.0),
-        ring_release_progress: Cell::new(0.0),
-        press_elapsed: Cell::new(0.0),
         release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
-        arm_t: Cell::new(0.0),
         arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
-        pointer_down: Cell::new(false),
-        ring_points: RefCell::new(Vec::new()),
         dirty: Cell::new(true),
+        ..Default::default()
     }
 }
 
@@ -2451,6 +2378,38 @@ pub(crate) fn focus_edit_control() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_window_paints_dictation_once_then_rests_until_input() {
+        let state = initial_state();
+        assert_eq!(state.phase.get(), Phase::Idle);
+        assert_eq!(state.visibility.get(), ipc::Visibility::WhileActive);
+        assert_eq!(state.effective_window_mode(), WindowMode::Dictation);
+        assert_eq!(
+            (state.draw_width.get(), state.draw_height.get()),
+            (
+                DICTATION_WINDOW_WIDTH as f64,
+                DICTATION_WINDOW_HEIGHT as f64
+            )
+        );
+        assert_eq!(state.reset_strategy.get(), ResetStrategy::Current);
+        assert!(state.assistant_compact.get() && state.should_stick.get());
+        assert_eq!(state.assistant_input_mode.borrow().as_str(), "voice");
+        assert_eq!(
+            (state.mouse_x.get(), state.mouse_y.get()),
+            (-1000.0, -1000.0)
+        );
+        assert_eq!(
+            state.release_elapsed.get(),
+            rust_pill_shared::LONG_PRESS_RING_FADE
+        );
+        assert!(state.needs_redraw(), "the first frame must paint");
+        state.dirty.set(false);
+        assert!(
+            !state.needs_redraw(),
+            "idle effects must not request a second frame"
+        );
+    }
 
     #[test]
     fn capture_loss_consumes_the_drag_but_not_the_next_click() {

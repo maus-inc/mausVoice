@@ -78,8 +78,9 @@ impl ClickRegion {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum WindowMode {
+    #[default]
     Dictation,
     AssistantCompact,
     AssistantExpanded,
@@ -115,8 +116,7 @@ pub(crate) struct FlameTongue {
     pub(crate) speed: f64,
 }
 
-#[derive(Debug, Clone)]
-
+#[derive(Debug, Clone, Default)]
 pub(crate) struct PillState {
     pub(crate) visibility: Cell<Visibility>,
 
