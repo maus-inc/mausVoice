@@ -1419,10 +1419,13 @@ describe("MicrophoneReadinessSideEffects", () => {
     };
     setState({ userPrefs: { ...prefs, preferredMicrophone: "Shure MV7" } });
     await rerender();
-    expect(mocks.prepareMicrophone).toHaveBeenLastCalledWith("Shure MV7");
+    expect(mocks.prepareMicrophone).toHaveBeenCalledExactlyOnceWith("Shure MV7");
+    await rerender();
+    expect(mocks.prepareMicrophone).toHaveBeenCalledTimes(1);
 
     setState({ userPrefs: prefs });
     await rerender();
     expect(mocks.prepareMicrophone).toHaveBeenLastCalledWith(null);
+    expect(mocks.prepareMicrophone).toHaveBeenCalledTimes(2);
   });
 });
