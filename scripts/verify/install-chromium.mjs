@@ -24,6 +24,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -127,24 +128,25 @@ if (existsSync(path.join(OUT, "chromium"))) {
   // else's directory. The same rule the guard above applies to `OUT` applies
   // here: only remove it if it is ours, meaning empty or carrying our marker.
   //
-  // Stale partials from earlier runs are swept first.
-  //
-  // The pid suffix keeps two concurrent runs from colliding, but it also means a
-  // run that died leaves `${OUT}.partial-<its pid>`, which this run never touches
-  // and nothing ever removes. On a persistent `--dir` those accumulate, one full
-  // copy of the browser each. Only directories carrying the marker are removed:
-  // the marker is written before extraction begins, so it means "this script
-  // created this", not "this extraction finished", and an unmarked directory is
-  // left alone exactly as the guard below leaves it.
+  // Active installs may have written the marker already. Sweep only when
+  // the PID no longer exists; permission errors do not prove it has exited.
   const parent = path.dirname(OUT);
+  const prefix = `${path.basename(OUT)}.partial-`;
   mkdirSync(parent, { recursive: true });
   for (const sibling of readdirSync(parent)) {
-    if (!sibling.startsWith(`${path.basename(OUT)}.partial-`)) continue;
+    if (!sibling.startsWith(prefix)) continue;
+    const suffix = sibling.slice(prefix.length);
+    const pid = Number(suffix);
+    if (!/^[1-9]\d*$/.test(suffix) || pid > 0x7fffffff) continue;
     const stale = path.join(parent, sibling);
-    if (stale === STAGING) continue;
     if (!existsSync(path.join(stale, MARKER))) continue;
-    log(`  removing a partial extraction left by an earlier run: ${sibling}`);
-    rmSync(stale, { recursive: true, force: true });
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error.code !== "ESRCH") continue;
+      log(`  removing a partial extraction left by an earlier run: ${sibling}`);
+      rmSync(stale, { recursive: true, force: true });
+    }
   }
 
   if (existsSync(STAGING)) {
