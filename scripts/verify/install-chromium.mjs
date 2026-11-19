@@ -48,16 +48,13 @@ const PKG_DIR = path.join(tmpdir(), "sparticuz-chromium");
  * treating it as a win would send the caller to spawn a file that is not there.
  */
 function isPublishedInstall(dir) {
-  if (!existsSync(path.join(dir, MARKER))) {
-    return false;
-  }
-  const binary = path.join(dir, "chromium");
-  if (!existsSync(binary)) {
-    return false;
-  }
+  return existsSync(path.join(dir, MARKER)) && hasBrowser(dir);
+}
+
+function hasBrowser(dir) {
   try {
-    // Non-empty: a zero-byte file left by an interrupted write is not a browser.
-    return statSync(binary).size > 0;
+    const binary = statSync(path.join(dir, "chromium"));
+    return binary.isFile() && binary.size > 0;
   } catch {
     return false;
   }
@@ -105,7 +102,7 @@ const STAGING = `${OUT}.partial-${process.pid}`;
 // delete something that is not ours.
 const MARKER = ".mausvoice-chromium";
 
-if (existsSync(path.join(OUT, "chromium"))) {
+if (hasBrowser(OUT)) {
   log(`Already extracted in ${OUT}. Delete it to force a fresh extraction.`);
 } else {
   // Only an extraction of ours is safe to delete. `--dir` is caller-supplied, so

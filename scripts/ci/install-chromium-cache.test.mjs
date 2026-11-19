@@ -66,6 +66,16 @@ test("the installer accepts a new nested output directory", (t) => {
   assert.equal(browserVersion(out), "fixture-chromium");
 });
 
+test("the installer repairs a marked output with an empty browser", (t) => {
+  const { dir, run } = fixture(t);
+  const out = join(dir, "chr");
+  mkdirSync(out);
+  writeFileSync(join(out, marker), `${version}\n`);
+  writeFileSync(join(out, "chromium"), "");
+  run(out);
+  assert.equal(browserVersion(out), "fixture-chromium");
+});
+
 test("a stale installed version triggers installation despite the declaration", (t) => {
   const { dir, cache, pkg, run } = fixture(t);
   writeFileSync(
