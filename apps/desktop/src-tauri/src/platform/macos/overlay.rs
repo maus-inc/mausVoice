@@ -239,13 +239,12 @@ pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Re
                 strategy,
                 ack: Some(declaration),
             })
-            .map_err(|err| {
+            .inspect_err(|_err| {
                 // `send` retires the pill when the channel is closed, so no
                 // report will ever answer this declaration. It has to go back
                 // now, or the latch stays closed and every later drag is
                 // dropped for the rest of the process.
                 crate::pill_position::withdraw_erase(declaration);
-                err
             }),
         None => {
             crate::pill_position::withdraw_erase(declaration);
