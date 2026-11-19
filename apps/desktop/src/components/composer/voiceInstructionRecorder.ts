@@ -5,6 +5,7 @@ import {
   subscribeToLocalDataClearRequested,
 } from "../../utils/local-data-write-gate";
 import {
+  ActiveRecordingError,
   beginNativeRecording,
   type NativeRecordingHandle,
 } from "../../utils/native-recording-session";
@@ -87,11 +88,15 @@ export class VoiceInstructionRecorder {
   }
 
   private isCurrent(gen: number): boolean {
-    return gen === this.opGen && !this.disposed && !isLocalDataClearRequested();
+    return gen === this.opGen && this.acceptsRecording();
+  }
+
+  private acceptsRecording(): boolean {
+    return !this.disposed && !isLocalDataClearRequested();
   }
 
   async toggle(): Promise<void> {
-    if (this.busy || this.disposed || isLocalDataClearRequested()) return;
+    if (this.busy || !this.acceptsRecording()) return;
     this.busy = true;
     const gen = ++this.opGen;
     try {
@@ -108,36 +113,56 @@ export class VoiceInstructionRecorder {
     }
   }
 
+  private trackAdmission(gen: number, handle: NativeRecordingHandle): void {
+    // A reservation can outlive the component. Throwing here retires that
+    // tuple without dispatching start_recording.
+    if (!this.isCurrent(gen)) throw new Error("Recording start was cancelled");
+    this.providerHandle = handle;
+  }
+
   private async startProvider(
     gen: number,
   ): Promise<"started" | "blocked" | "unavailable"> {
     try {
       const { handle } = await beginNativeRecording(
         this.deps.getPreferredMicrophone() ?? null,
-        {},
+        {
+          preserveLiveRecording: true,
+          onAdmission: (handle) => this.trackAdmission(gen, handle),
+        },
         this.deps.invoke,
       );
       // Mic init can finish after disposal or while another caller is
       // stopping this admission. Neither case should publish "listening".
       if (!this.isCurrent(gen) || !handle.isLive()) {
+        if (this.providerHandle === handle) this.providerHandle = null;
         await this.discardProvider(handle);
         return "blocked";
       }
-      this.providerHandle = handle;
       this.state = "provider";
       this.deps.onListeningChange(true);
       return "started";
     } catch (error) {
-      if (
-        !this.isCurrent(gen) ||
-        extractErrorMessage(error).includes("Local data is being cleared")
-      ) {
-        return "blocked";
-      }
-      this.deps.logger.warning(
-        "Voice Edit Mode: configured provider recording unavailable, falling back to browser speech recognition",
-      );
+      return this.providerStartFailure(gen, error);
     }
+  }
+
+  private providerStartFailure(
+    gen: number,
+    error: unknown,
+  ): "blocked" | "unavailable" {
+    if (!this.isCurrent(gen)) return "blocked";
+    this.providerHandle = null;
+    if (error instanceof ActiveRecordingError) {
+      this.deps.onError(this.deps.recordingUnavailableMessage("start"));
+      return "blocked";
+    }
+    if (extractErrorMessage(error).includes("Local data is being cleared")) {
+      return "blocked";
+    }
+    this.deps.logger.warning(
+      "Voice Edit Mode: configured provider recording unavailable, falling back to browser speech recognition",
+    );
     return "unavailable";
   }
 
@@ -152,6 +177,10 @@ export class VoiceInstructionRecorder {
       return;
     }
 
+    await this.startBrowserOrReport(gen);
+  }
+
+  private async startBrowserOrReport(gen: number): Promise<void> {
     if (this.deps.speechRecognitionSupported) {
       await this.startBrowser(gen);
       return;
@@ -179,8 +208,7 @@ export class VoiceInstructionRecorder {
     try {
       await lease.acquire();
     } catch {
-      if (this.browserLease === lease) this.browserLease = null;
-      void lease.release().catch(() => undefined);
+      this.releaseBrowserLease(lease);
       if (this.isCurrent(gen)) {
         this.deps.onError(this.deps.recordingUnavailableMessage("start"));
       }
@@ -346,11 +374,11 @@ export class VoiceInstructionRecorder {
       if (this.isCurrent(gen)) this.setIdle();
       return;
     }
-    const audio = await this.stopProviderCapture(handle, gen);
-    if (!this.isCurrent(gen)) return;
-    const transcript = audio
-      ? await this.transcribeProviderResponse(gen, audio)
-      : null;
+    const transcript = await this.readProviderInstruction(handle, gen);
+    this.finishProviderStop(gen, transcript);
+  }
+
+  private finishProviderStop(gen: number, transcript: string | null): void {
     if (!this.isCurrent(gen)) return;
     if (transcript) {
       this.deps.onTranscript(transcript);
@@ -371,12 +399,13 @@ export class VoiceInstructionRecorder {
     }
   }
 
-  private async stopProviderCapture(
+  private async readProviderInstruction(
     handle: NativeRecordingHandle,
     gen: number,
-  ): Promise<StopRecordingResponse | null> {
+  ): Promise<string | null> {
+    let audio: StopRecordingResponse;
     try {
-      return await handle.stop();
+      audio = await handle.stop();
     } catch {
       // A rejected stop may leave this microphone open. Never start a
       // browser fallback or look up another recording to discard here.
@@ -389,6 +418,9 @@ export class VoiceInstructionRecorder {
       }
       return null;
     }
+    return this.isCurrent(gen)
+      ? this.transcribeProviderResponse(gen, audio)
+      : null;
   }
 
   private async transcribeProviderResponse(
@@ -406,11 +438,7 @@ export class VoiceInstructionRecorder {
       this.deps.logger.warning(
         "Voice Edit Mode: provider transcription failed",
       );
-      if (this.deps.speechRecognitionSupported) {
-        await this.startBrowser(gen);
-      } else {
-        this.deps.onError(this.deps.unsupportedMessage());
-      }
+      await this.startBrowserOrReport(gen);
       return null;
     }
   }
@@ -435,10 +463,9 @@ export class VoiceInstructionRecorder {
     if (recognition && this.state === "browser") {
       this.stopBrowserRecognition(recognition);
     }
-    if (this.providerHandle) {
-      void this.discardProvider(this.providerHandle);
-      this.providerHandle = null;
-    }
+    const handle = this.providerHandle;
+    this.providerHandle = null;
+    if (handle) this.discardProvider(handle);
     if (this.state !== "idle") {
       this.setIdle();
     }

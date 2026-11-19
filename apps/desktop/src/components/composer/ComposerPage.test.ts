@@ -293,14 +293,19 @@ describe("ComposerPage review session", () => {
     });
   };
 
-  const enableProviderMic = (stopReply: () => unknown) => {
+  const enableProviderMic = (
+    stopReply: (generation: unknown) => Promise<unknown>,
+  ) => {
     fakeState.settings.aiTranscription.enabled = true;
     let generation = 0;
-    mockInvoke.mockImplementation(async (command) => {
-      if (command === "recording_generation") return ++generation;
-      if (command === "start_recording") return { sampleRate: 16_000 };
-      if (command === "stop_recording") return stopReply();
-      return null;
+    mockInvoke.mockImplementation((command, args) => {
+      if (command === "recording_generation")
+        return Promise.resolve(++generation);
+      if (command === "start_recording")
+        return Promise.resolve({ sampleRate: 16_000 });
+      if (command === "stop_recording" && args && "generation" in args)
+        return stopReply(args.generation);
+      return Promise.resolve(null);
     });
   };
 
@@ -310,26 +315,40 @@ describe("ComposerPage review session", () => {
     );
     if (!mic || mic.disabled)
       throw new Error("Expected an enabled instruction microphone");
-    await act(async () => mic.click());
+    await act(() => mic.click());
   };
 
   it("puts the replacement recording's words in the instruction field after the old transcription rejects", async () => {
-    enableProviderMic(() => encodeRecordedAudio([0.75], 16_000));
+    enableProviderMic((generation) => {
+      expect([1, 2]).toContain(generation);
+      return Promise.resolve(
+        encodeRecordedAudio([generation === 1 ? 0.25 : 0.75], 16_000),
+      );
+    });
     let rejectOld!: (error: Error) => void;
     const old = new Promise<never>((_, reject) => {
       rejectOld = reject;
     });
     const transcribe = vi.mocked(transcribeAudio);
-    transcribe.mockClear().mockReturnValueOnce(old).mockResolvedValueOnce({
-      rawTranscript: "new words",
-      sanitizedTranscript: "new words",
-      warnings: [],
-      metadata: {},
+    transcribe.mockClear().mockImplementation(({ samples, sampleRate }) => {
+      expect(sampleRate).toBe(16_000);
+      if (!samples) throw new Error("Expected a recorded sample");
+      if (samples[0] === 0.25) return old;
+      expect(Array.from(samples)).toEqual([0.75]);
+      return Promise.resolve({
+        rawTranscript: "new words",
+        sanitizedTranscript: "new words",
+        warnings: [],
+        metadata: {},
+      });
     });
     root = await mountComposerPage(container);
     await clickMic();
     await clickMic();
-    expect(transcribe).toHaveBeenCalledTimes(1);
+    expect(transcribe).toHaveBeenCalledExactlyOnceWith({
+      samples: Float32Array.of(0.25),
+      sampleRate: 16_000,
+    });
     act(() => root?.unmount());
     root = await mountComposerPage(container);
     await clickMic();
@@ -337,16 +356,14 @@ describe("ComposerPage review session", () => {
       "start_recording",
       expect.objectContaining({ generation: 2 }),
     );
-    await act(async () => rejectOld(new Error("old transcription failed")));
+    await act(() => rejectOld(new Error("old transcription failed")));
     await clickMic();
     expect(instructionField()?.value).toBe("new words");
     expect(transcribe).toHaveBeenCalledTimes(2);
   });
 
   it("reports a native stop failure as a stop failure", async () => {
-    enableProviderMic(() => {
-      throw new Error("private device detail");
-    });
+    enableProviderMic(() => Promise.reject(new Error("private device detail")));
     root = await mountComposerPage(container);
     await clickMic();
     await clickMic();

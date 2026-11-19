@@ -7,6 +7,21 @@ import {
   releaseLocalNativeRecording,
 } from "./local-recording-activity";
 import { decodeStopRecordingPayload } from "./recorded-audio.utils";
+import { withTimeout } from "./timeout.utils";
+
+// Match the native start command's two-second release wait. Only the waiter
+// expires; the owned command and local slot survive until native confirms.
+const waitForRecordingRelease = async (
+  pending: Promise<unknown>,
+): Promise<void> => {
+  await withTimeout(pending, 2_000, "Recording release");
+};
+
+export class ActiveRecordingError extends Error {
+  constructor() {
+    super("A recording is already in progress");
+  }
+}
 
 export type RecordingInvoke = (
   command: string,
@@ -35,6 +50,8 @@ export type NativeRecordingHandle = {
 
 export type NativeRecordingStartOptions = {
   waitForRelease?: boolean;
+  /** Independent capture surfaces must not supersede a live dictation. */
+  preserveLiveRecording?: boolean;
   /** Called after reserving an owner, before capture can emit its first chunk. */
   onAdmission?: (handle: NativeRecordingHandle) => void;
 };
@@ -62,7 +79,7 @@ export const resetNativeRecordingSession = (): void => {
   session = null;
 };
 
-const isSafeGeneration = (value: unknown): value is number =>
+export const isSafeGeneration = (value: unknown): value is number =>
   typeof value === "number" &&
   Number.isInteger(value) &&
   value >= 0 &&
@@ -169,16 +186,20 @@ class RecordingSession implements NativeRecordingHandle {
     this.released();
   }
 
-  async releaseForReplacement(): Promise<void> {
+  async releaseForReplacement(preserveLiveRecording = false): Promise<void> {
+    if (preserveLiveRecording && this.isLive())
+      throw new ActiveRecordingError();
     // Do not hide a failed stop from a start that was waiting for it. The
     // next attempt can retry release using the same owner and generation.
-    await (this.stopping ?? this.discard());
+    await waitForRecordingRelease(this.stopping ?? this.discard());
   }
 }
 
 /** A browser-only retry may finish an abandoned release, never a live capture. */
 export const finishAbandonedNativeDiscard = (): Promise<void> | undefined =>
-  session?.discardRequested ? session.discard() : undefined;
+  session?.discardRequested
+    ? waitForRecordingRelease(session.discard())
+    : undefined;
 
 /**
  * Open the microphone under a fresh native admission.
@@ -211,7 +232,8 @@ const beginNativeRecordingOwned = async (
   options: NativeRecordingStartOptions,
   invokeFn: RecordingInvoke,
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> => {
-  if (session) await session.releaseForReplacement();
+  if (session)
+    await session.releaseForReplacement(options.preserveLiveRecording);
 
   // The browser recognizer holds the same in-webview slot, so a dictation
   // started while it listens is refused here instead of opening a second
@@ -219,7 +241,7 @@ const beginNativeRecordingOwned = async (
   const ownerId = createId();
   const localOwner = {};
   if (!acquireLocalNativeRecording(invokeFn, localOwner)) {
-    throw new Error("A recording is already in progress");
+    throw new ActiveRecordingError();
   }
   let generation: number;
   try {

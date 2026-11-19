@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BrowserRecordingLease } from "./browser-recording-lease";
 import { encodeRecordedAudio } from "./recorded-audio.utils";
 import {
   acquireLocalBrowserRecording,
@@ -504,6 +505,60 @@ describe("stopping", () => {
     const browserOwner = {};
     expect(acquireLocalBrowserRecording(invoke, browserOwner)).toBe(true);
     releaseLocalBrowserRecording(invoke, browserOwner);
+  });
+
+  it("times out replacement waiters without retiring the pending discard", async () => {
+    vi.useFakeTimers();
+    let confirm!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      confirm = resolve;
+    });
+    const { invoke, calls } = recorderTransport({
+      discard_recording: () => pending,
+    });
+    try {
+      const { handle } = await beginNativeRecording(null, {}, invoke);
+      const cleanup = handle.discard();
+      const browser = new BrowserRecordingLease(invoke);
+      const failed = vi.fn();
+      const nativeWait = beginNativeRecording(null, {}, invoke).catch(failed);
+      const browserWait = browser.acquire().catch(failed);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(failed).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(failed.mock.calls.map(([error]) => error.message)).toEqual([
+        "Recording release timed out after 2000ms",
+        "Recording release timed out after 2000ms",
+      ]);
+      await Promise.all([nativeWait, browserWait]);
+      expect(acquireLocalBrowserRecording(invoke, {})).toBe(false);
+      expect(calls.filter(([cmd]) => cmd === "discard_recording")).toEqual([
+        [
+          "discard_recording",
+          { ownerId: handle.ownerId, generation: handle.generation },
+        ],
+      ]);
+      expect(
+        calls.filter(([cmd]) => cmd === "recording_generation"),
+      ).toHaveLength(1);
+      expect(calls.some(([cmd]) => cmd === "claim_browser_recording")).toBe(
+        false,
+      );
+      confirm();
+      await cleanup;
+      await browser.acquire();
+      expect(invoke).toHaveBeenCalledWith("claim_browser_recording", {
+        ownerId: expect.any(String),
+        generation: 2,
+      });
+      await browser.release();
+      const { handle: next } = await beginNativeRecording(null, {}, invoke);
+      expect(next.generation).toBe(3);
+      await next.discard();
+    } finally {
+      confirm();
+      vi.useRealTimers();
+    }
   });
 
   it("joins a pending discard without returning abandoned audio or opening another stream early", async () => {
