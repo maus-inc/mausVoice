@@ -1504,28 +1504,28 @@ mod cpal_impl {
             self.close_matching_warm(None);
         }
 
-        fn close_matching_warm(&self, expected: Option<&Arc<StreamSink>>) -> bool {
-            let warm = {
+        fn close_matching_warm(&self, expected: Option<&Arc<StreamSink>>) -> Option<u64> {
+            let (warm, generation) = {
                 let mut guard = self.warm.lock().unwrap_or_else(PoisonError::into_inner);
                 if let Some(expected) = expected {
                     if !guard
                         .as_ref()
                         .is_some_and(|warm| Arc::ptr_eq(&warm.sink, expected))
                     {
-                        return false;
+                        return None;
                     }
                 }
-                self.cancel_linger();
+                let generation = self.advance_linger_generation();
                 if let Ok(mut ring) = self.preroll.lock() {
                     ring.clear();
                 }
-                guard.take()
+                (guard.take(), generation)
             };
             if let Some(warm) = warm {
                 log::info!("closing warm capture stream on '{}'", warm.device_label);
                 retire_stream(warm.stream);
             }
-            true
+            Some(generation)
         }
 
         /// Arranges for the warm stream to be closed after `linger`, unless
@@ -1594,7 +1594,17 @@ mod cpal_impl {
         /// Cancels a pending linger close, so the stream the user asked to keep
         /// stays open past it.
         pub fn cancel_linger(&self) {
-            self.linger_generation.fetch_add(1, Ordering::SeqCst);
+            self.advance_linger_generation();
+        }
+
+        fn advance_linger_generation(&self) -> u64 {
+            self.linger_generation
+                .fetch_add(1, Ordering::SeqCst)
+                .wrapping_add(1)
+        }
+
+        fn refresh_can_reopen(&self, generation: u64) -> bool {
+            self.linger_millis() > 0 && self.linger_generation.load(Ordering::SeqCst) == generation
         }
 
         /// Tries to start recording on the previously successful device.
@@ -1977,13 +1987,13 @@ mod cpal_impl {
         /// shows its microphone indicator while this runs, which is why the user
         /// has to ask for it.
         pub fn open_warm(&self, preroll: Duration) -> Result<(), RecordingError> {
-            self.open_warm_with_policy(preroll, false)
+            self.open_warm_with_policy(preroll, None)
         }
 
         fn open_warm_with_policy(
             &self,
             preroll: Duration,
-            require_linger: bool,
+            refresh_generation: Option<u64>,
         ) -> Result<(), RecordingError> {
             // Lock order, and it is the only order: `warm_open_gate`, then
             // `warm`, then nothing. `inner` is never held alongside the gate.
@@ -2071,7 +2081,7 @@ mod cpal_impl {
                 Err(poisoned) => poisoned.into_inner(),
             };
             // A refresh must not reopen a stream after an intervening release.
-            if require_linger && self.linger_millis() == 0 {
+            if refresh_generation.is_some_and(|generation| !self.refresh_can_reopen(generation)) {
                 return Ok(());
             }
             if warm_guard.is_some() {
@@ -2229,10 +2239,10 @@ mod cpal_impl {
                         "held device '{current}' is no longer the best ('{best}'); reopening"
                     );
                     let preroll = Duration::from_micros(self.preroll_micros.load(Ordering::SeqCst));
-                    if !self.close_matching_warm(Some(&sink)) {
+                    let Some(generation) = self.close_matching_warm(Some(&sink)) else {
                         return;
-                    }
-                    if let Err(err) = self.open_warm_with_policy(preroll, true) {
+                    };
+                    if let Err(err) = self.open_warm_with_policy(preroll, Some(generation)) {
                         log::warn!("could not reopen the warm stream after a device change: {err}");
                     } else {
                         let policy = self.linger_millis();
@@ -5131,6 +5141,18 @@ mod cpal_impl {
             // not have been a way for the app to turn off a preference.
             manager.set_linger(Duration::from_millis(5_000));
             assert_eq!(manager.linger_millis(), 5_000);
+        }
+
+        #[test]
+        fn restored_finite_linger_does_not_authorize_a_superseded_refresh() {
+            let manager = RecordingManager::default();
+            manager.set_linger(Duration::from_millis(5_000));
+            let generation = manager.close_matching_warm(None).unwrap();
+            assert!(manager.refresh_can_reopen(generation));
+
+            manager.release_hold();
+            manager.set_linger(Duration::from_millis(5_000));
+            assert!(!manager.refresh_can_reopen(generation));
         }
 
         /// The built-in detector decides a device's priority, so a miss here
