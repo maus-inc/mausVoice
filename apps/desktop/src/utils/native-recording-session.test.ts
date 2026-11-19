@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { encodeRecordedAudio } from "./recorded-audio.utils";
 import {
   acquireLocalBrowserRecording,
   releaseLocalBrowserRecording,
@@ -333,21 +334,34 @@ describe("stopping", () => {
     releaseLocalBrowserRecording(invoke, browserOwner);
   });
 
-  it("shares a pending stop instead of reporting an empty recording", async () => {
-    let resolveStop!: (payload: ArrayBuffer) => void;
-    const stop = new Promise<ArrayBuffer>((resolve) => {
-      resolveStop = resolve;
-    });
-    const { invoke, calls } = recorderTransport({ stop_recording: () => stop });
-    await beginNativeRecording(null, {}, invoke);
-    const first = stopNativeRecording(invoke);
-    const second = stopNativeRecording(invoke);
-    resolveStop(new ArrayBuffer(4));
-    expect(await first).toEqual(await second);
-    expect(
-      calls.filter(([command]) => command === "stop_recording"),
-    ).toHaveLength(1);
-  });
+  it.each(["global", "owned"])(
+    "shares the audio from a pending %s stop with global teardown",
+    async (kind) => {
+      let resolveStop!: (payload: Uint8Array) => void;
+      const stop = new Promise<Uint8Array>((resolve) => {
+        resolveStop = resolve;
+      });
+      const { invoke, calls } = recorderTransport({
+        stop_recording: () => stop,
+      });
+      const { handle } = await beginNativeRecording(null, {}, invoke);
+      const first =
+        kind === "owned" ? handle.stop() : stopNativeRecording(invoke);
+      const second = stopNativeRecording(invoke);
+      // An early empty result is not the captured sample, even if only one
+      // IPC stop was sent. Both waiters must receive the real response.
+      resolveStop(encodeRecordedAudio([0.75], 16_000));
+      const [original, joined] = await Promise.all([first, second]);
+      expect(original).toEqual({
+        samples: Float32Array.of(0.75),
+        sampleRate: 16_000,
+      });
+      expect(joined).toEqual(original);
+      expect(
+        calls.filter(([command]) => command === "stop_recording"),
+      ).toHaveLength(1);
+    },
+  );
 
   it("clears the in-flight stop when a transport throws synchronously", async () => {
     const { invoke } = recorderTransport();
@@ -365,30 +379,59 @@ describe("stopping", () => {
     releaseLocalBrowserRecording(invoke, browserOwner);
   });
 
-  it("does not orphan a failed stop when a successor begins", async () => {
-    let rejectStop!: (error: Error) => void;
-    const stop = new Promise<ArrayBuffer>((_, reject) => {
-      rejectStop = reject;
+  it.each(["global", "owned"])(
+    "does not orphan a failed %s stop when a successor begins",
+    async (kind) => {
+      let rejectStop!: (error: Error) => void;
+      const stop = new Promise<ArrayBuffer>((_, reject) => {
+        rejectStop = reject;
+      });
+      let stopCalls = 0;
+      const { invoke } = recorderTransport({
+        stop_recording: () =>
+          ++stopCalls === 1 ? stop : Promise.resolve(new ArrayBuffer(4)),
+      });
+      const { handle } = await beginNativeRecording(null, {}, invoke);
+      const stopping =
+        kind === "owned" ? handle.stop() : stopNativeRecording(invoke);
+      const stopFailure = expect(stopping).rejects.toThrow("transport down");
+      const successor = beginNativeRecording(null, {}, invoke);
+      const successorFailure =
+        expect(successor).rejects.toThrow("transport down");
+      rejectStop(new Error("transport down"));
+      await stopFailure;
+      await successorFailure;
+      expect(currentNativeRecording()).toBe(handle);
+      await stopNativeRecording(invoke);
+      const browserOwner = {};
+      expect(acquireLocalBrowserRecording(invoke, browserOwner)).toBe(true);
+      releaseLocalBrowserRecording(invoke, browserOwner);
+    },
+  );
+
+  it("a superseded handle cannot join its successor's pending stop", async () => {
+    let finish!: (payload: ArrayBuffer) => void;
+    const stop = new Promise<ArrayBuffer>((resolve) => {
+      finish = resolve;
     });
-    let stopCalls = 0;
-    const { invoke } = recorderTransport({
-      stop_recording: () =>
-        ++stopCalls === 1 ? stop : Promise.resolve(new ArrayBuffer(4)),
-    });
-    const { handle } = await beginNativeRecording(null, {}, invoke);
-    const stopping = stopNativeRecording(invoke);
-    const stopFailure = expect(stopping).rejects.toThrow("transport down");
-    const successor = beginNativeRecording(null, {}, invoke);
-    const successorFailure =
-      expect(successor).rejects.toThrow("transport down");
-    rejectStop(new Error("transport down"));
-    await stopFailure;
-    await successorFailure;
-    expect(currentNativeRecording()).toBe(handle);
-    await stopNativeRecording(invoke);
-    const browserOwner = {};
-    expect(acquireLocalBrowserRecording(invoke, browserOwner)).toBe(true);
-    releaseLocalBrowserRecording(invoke, browserOwner);
+    const { invoke, calls } = recorderTransport({ stop_recording: () => stop });
+    const first = await beginNativeRecording(null, {}, invoke);
+    const second = await beginNativeRecording(null, {}, invoke);
+    const current = second.handle.stop();
+    const stale = first.handle.stop();
+    const refused = expect(stale).rejects.toThrow("no longer owned");
+    finish(new Uint32Array([16_000]).buffer);
+    await refused;
+    expect((await current).sampleRate).toBe(16_000);
+    expect(calls.filter(([cmd]) => cmd === "stop_recording")).toEqual([
+      [
+        "stop_recording",
+        {
+          ownerId: second.handle.ownerId,
+          generation: second.handle.generation,
+        },
+      ],
+    ]);
   });
 
   it("discards the same admission if a pending stop fails during abort", async () => {
@@ -433,6 +476,74 @@ describe("stopping", () => {
     expect(
       calls.filter(([command]) => command === "discard_recording"),
     ).toHaveLength(0);
+    await successor.discard();
+  });
+
+  it("holds a failed discard's slot until release is confirmed", async () => {
+    let releaseWorks = false;
+    const { invoke, calls } = recorderTransport({
+      stop_recording: () => Promise.reject(new Error("stop failed")),
+      discard_recording: async () => {
+        if (!releaseWorks) throw new Error("release unconfirmed");
+      },
+    });
+    const { handle } = await beginNativeRecording(null, {}, invoke);
+    await expect(handle.stop()).rejects.toThrow("stop failed");
+    await expect(handle.discard()).rejects.toThrow("release unconfirmed");
+    expect(acquireLocalBrowserRecording(invoke, {})).toBe(false);
+    await expect(beginNativeRecording(null, {}, invoke)).rejects.toThrow(
+      "release unconfirmed",
+    );
+    expect(
+      calls.filter(([cmd]) => cmd === "recording_generation"),
+    ).toHaveLength(1);
+    releaseWorks = true;
+    const { handle: next } = await beginNativeRecording(null, {}, invoke);
+    expect(next.generation).toBe(2);
+    await next.discard();
+    const browserOwner = {};
+    expect(acquireLocalBrowserRecording(invoke, browserOwner)).toBe(true);
+    releaseLocalBrowserRecording(invoke, browserOwner);
+  });
+
+  it("joins a pending discard without returning abandoned audio or opening another stream early", async () => {
+    let confirm!: () => void;
+    const release = new Promise<void>((resolve) => {
+      confirm = resolve;
+    });
+    let confirmed = false;
+    const confirmedAtReservation: boolean[] = [];
+    const { invoke, calls } = recorderTransport({
+      recording_generation: async () => confirmedAtReservation.push(confirmed),
+      discard_recording: async () => {
+        await release;
+        confirmed = true;
+      },
+    });
+    const { handle } = await beginNativeRecording(null, {}, invoke);
+    const discarding = handle.discard();
+    const stopped = stopNativeRecording(invoke).then((audio) => ({
+      audio,
+      confirmed,
+    }));
+    const next = beginNativeRecording(null, {}, invoke);
+    setImmediate(confirm);
+    const [, observedStop, { handle: successor }] = await Promise.all([
+      discarding,
+      stopped,
+      next,
+    ]);
+    expect(confirmedAtReservation).toEqual([false, true]);
+    expect(observedStop.confirmed).toBe(true);
+    expect(observedStop.audio.samples).toHaveLength(0);
+    expect(calls.filter(([cmd]) => cmd === "stop_recording")).toHaveLength(0);
+    expect(calls.filter(([cmd]) => cmd === "discard_recording")).toEqual([
+      [
+        "discard_recording",
+        { ownerId: handle.ownerId, generation: handle.generation },
+      ],
+    ]);
+    expect(successor.isLive()).toBe(true);
     await successor.discard();
   });
 

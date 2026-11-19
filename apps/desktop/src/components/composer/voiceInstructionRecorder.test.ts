@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { StopRecordingResponse } from "../../types/transcription-session.types";
 import {
+  beginLocalDataClear,
+  LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
+} from "../../utils/local-data-write-gate";
+import {
   beginNativeRecording,
+  currentNativeRecording,
   resetNativeRecordingSession,
+  stopNativeRecording,
 } from "../../utils/native-recording-session";
 import {
   VoiceInstructionRecorder,
@@ -53,7 +59,7 @@ const deferred = <T>(): Deferred<T> => {
   return { promise, resolve, reject };
 };
 
-/** Answers the native recording handshake the way the Rust side does. */
+/** Supply IPC replies; assertions on the sent tuples check the caller's ownership. */
 const nativeInvoke = (
   overrides: Record<
     string,
@@ -94,7 +100,8 @@ const baseDeps = (
     canUseProvider: () => true,
     speechRecognitionSupported: true,
     unsupportedMessage: () => "unsupported",
-    recordingUnavailableMessage: () => "recording unavailable",
+    recordingUnavailableMessage: (operation) =>
+      operation === "stop" ? "stop failed" : "recording unavailable",
     onListeningChange: vi.fn(),
     onTranscript: vi.fn(),
     onError: vi.fn(),
@@ -108,10 +115,29 @@ const baseDeps = (
   };
 };
 
+const recorderFor = (deps: VoiceInstructionRecorderDeps) => {
+  const recorder = new VoiceInstructionRecorder(deps);
+  onTestFinished(() => recorder.dispose());
+  return recorder;
+};
+
+// Exercise the clear latch and its subscribers, not database deletion.
+const completeLocalClear = async () => {
+  const release = await beginLocalDataClear();
+  localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+  release();
+};
+
+const activeAdmission = () => {
+  const handle = currentNativeRecording();
+  if (!handle) throw new Error("Expected an active recording");
+  return { ownerId: handle.ownerId, generation: handle.generation };
+};
+
 describe("VoiceInstructionRecorder", () => {
   it("starts provider recording, transcribes on stop, and returns to idle", async () => {
     const deps = baseDeps();
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     await recorder.toggle();
     expect(recorder.getState()).toBe("provider");
@@ -136,7 +162,7 @@ describe("VoiceInstructionRecorder", () => {
         start_recording: () => Promise.reject(new Error("no mic")),
       }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     await recorder.toggle();
     expect(recorder.getState()).toBe("browser");
@@ -158,7 +184,7 @@ describe("VoiceInstructionRecorder", () => {
         stop_recording: () => Promise.reject(new Error("stop failed")),
       }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     const startPromise = recorder.toggle();
     startedRecording.resolve({ sampleRate: 16000 });
@@ -175,7 +201,7 @@ describe("VoiceInstructionRecorder", () => {
     expect(recorder.getState()).toBe("idle");
     expect(deps.onListeningChange).toHaveBeenLastCalledWith(false);
     expect(deps.onResetLevels).toHaveBeenCalled();
-    expect(deps.onError).toHaveBeenCalledWith("recording unavailable");
+    expect(deps.onError).toHaveBeenCalledWith("stop failed");
     expect(createSpeechRecognition).not.toHaveBeenCalled();
     expect(deps.invoke).toHaveBeenCalledWith(
       "discard_recording",
@@ -190,7 +216,7 @@ describe("VoiceInstructionRecorder", () => {
       canUseProvider: () => false,
       createSpeechRecognition: () => fake,
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     await recorder.toggle();
     expect(recorder.getState()).toBe("browser");
@@ -217,7 +243,7 @@ describe("VoiceInstructionRecorder", () => {
       canUseProvider: () => false,
       createSpeechRecognition: () => fake,
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     await recorder.toggle();
     expect(recorder.getState()).toBe("browser");
@@ -239,33 +265,111 @@ describe("VoiceInstructionRecorder", () => {
     });
   });
 
-  it("discards the native recorder when its stop fails after dispose", async () => {
-    const deps = baseDeps({
-      invoke: nativeInvoke({
-        stop_recording: () => Promise.reject(new Error("stop failed")),
-      }),
+  it.each(["dispose", "clear"])(
+    "after %s, discards only the failed stop's admission before a replacement can record",
+    async (invalidate) => {
+      const entered = deferred<void>();
+      const stop = deferred<StopRecordingResponse>();
+      const invoke = nativeInvoke({
+        stop_recording: async (args) => {
+          if (args?.generation !== 1)
+            return { samples: [0.75], sampleRate: 16_000 };
+          entered.resolve();
+          return stop.promise;
+        },
+      });
+      const deps = baseDeps({ invoke });
+      const recorder = recorderFor(deps);
+      await recorder.toggle();
+      const old = activeAdmission();
+      const stopping = recorder.toggle();
+      await entered.promise;
+      if (invalidate === "dispose") recorder.dispose();
+      else await completeLocalClear();
+
+      const queued = beginNativeRecording(null, {}, invoke);
+      const refused = expect(queued).rejects.toThrow("stop failed");
+      stop.reject(new Error("stop failed"));
+      await Promise.all([stopping, refused]);
+      expect(
+        invoke.mock.calls.filter(([cmd]) => cmd === "discard_recording"),
+      ).toEqual([["discard_recording", old]]);
+      expect(currentNativeRecording()).toBeNull();
+      expect(deps.transcribe).not.toHaveBeenCalled();
+      expect(deps.onTranscript).not.toHaveBeenCalled();
+      expect(deps.onError).not.toHaveBeenCalled();
+      expect(deps.onResetLevels).not.toHaveBeenCalled();
+
+      const { handle } = await beginNativeRecording(null, {}, invoke);
+      expect(handle.ownerId).not.toBe(old.ownerId);
+      expect(handle.generation).toBe(2);
+      expect((await handle.stop()).samples).toEqual(Float32Array.of(0.75));
+    },
+  );
+
+  it("cleans up its own admission when another stop of it is already pending", async () => {
+    const entered = deferred<void>();
+    const stop = deferred<StopRecordingResponse>();
+    const invoke = nativeInvoke({
+      stop_recording: () => {
+        entered.resolve();
+        return stop.promise;
+      },
     });
-    const recorder = new VoiceInstructionRecorder(deps);
-
+    const deps = baseDeps({ invoke });
+    const recorder = recorderFor(deps);
     await recorder.toggle();
-    expect(recorder.getState()).toBe("provider");
-
-    const stopping = recorder.toggle();
-    recorder.dispose();
-    await stopping;
-
-    expect(deps.invoke).toHaveBeenCalledWith(
-      "discard_recording",
-      expect.objectContaining({ ownerId: expect.any(String) }),
+    const owner = activeAdmission();
+    const external = expect(stopNativeRecording(invoke)).rejects.toThrow(
+      "stop failed",
     );
+    await entered.promise;
+    const composer = recorder.toggle();
+    stop.reject(new Error("stop failed"));
+    await Promise.all([external, composer]);
+    expect(
+      invoke.mock.calls.filter(([cmd]) => cmd === "stop_recording"),
+    ).toHaveLength(1);
+    expect(invoke).toHaveBeenCalledWith("discard_recording", owner);
+    expect(currentNativeRecording()).toBeNull();
+    expect(deps.transcribe).not.toHaveBeenCalled();
   });
+
+  it.each(["stop", "dispose"])(
+    "an old composer's %s cannot consume the replacement recording",
+    async (action) => {
+      const invoke = nativeInvoke();
+      const deps = baseDeps({ invoke });
+      const recorder = recorderFor(deps);
+      await recorder.toggle();
+      const original = activeAdmission();
+      const { handle } = await beginNativeRecording(null, {}, invoke);
+      const replacement = activeAdmission();
+
+      if (action === "stop") await recorder.toggle();
+      else recorder.dispose();
+
+      expect(deps.transcribe).not.toHaveBeenCalled();
+      expect(deps.onTranscript).not.toHaveBeenCalled();
+      expect(handle.isLive()).toBe(true);
+      expect((await handle.stop()).samples).toEqual(Float32Array.of(0, 1));
+      expect(
+        invoke.mock.calls.filter(
+          ([cmd]) => cmd === "discard_recording" || cmd === "stop_recording",
+        ),
+      ).toEqual([
+        ["discard_recording", original],
+        ["stop_recording", replacement],
+      ]);
+    },
+  );
 
   it("refuses browser recognition while a dictation holds the recorder", async () => {
     const deps = baseDeps({
       canUseProvider: () => false,
       createSpeechRecognition: vi.fn(() => null),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
     // A live native recording in this webview takes the same slot.
     await beginNativeRecording(null, {}, deps.invoke);
 
@@ -273,6 +377,42 @@ describe("VoiceInstructionRecorder", () => {
     expect(recorder.getState()).toBe("idle");
     expect(deps.onError).toHaveBeenCalledWith("recording unavailable");
     expect(deps.createSpeechRecognition).not.toHaveBeenCalled();
+  });
+
+  it("retries an abandoned native release before opening a browser-only successor", async () => {
+    let releaseWorks = false;
+    const invoke = nativeInvoke({
+      discard_recording: async () => {
+        if (!releaseWorks) throw new Error("release unconfirmed");
+      },
+    });
+    const { handle } = await beginNativeRecording(null, {}, invoke);
+    await expect(handle.discard()).rejects.toThrow("release unconfirmed");
+    const browser = new FakeRecognition();
+    const deps = baseDeps({
+      invoke,
+      canUseProvider: () => false,
+      createSpeechRecognition: vi.fn(() => browser),
+    });
+    const recorder = recorderFor(deps);
+    await recorder.toggle();
+    expect(deps.onError).toHaveBeenCalledWith("recording unavailable");
+    expect(deps.createSpeechRecognition).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "claim_browser_recording",
+      expect.anything(),
+    );
+
+    releaseWorks = true;
+    await recorder.toggle();
+    expect(invoke).toHaveBeenCalledWith("claim_browser_recording", {
+      ownerId: expect.any(String),
+      generation: 2,
+    });
+    browser.emitResult("new words");
+    expect(deps.onTranscript).toHaveBeenCalledExactlyOnceWith("new words");
+    await recorder.toggle();
+    expect(recorder.getState()).toBe("idle");
   });
 
   it("reports when the browser claim is refused by native", async () => {
@@ -284,7 +424,7 @@ describe("VoiceInstructionRecorder", () => {
           Promise.reject(new Error("A recording is already in progress")),
       }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     await recorder.toggle();
     expect(recorder.getState()).toBe("idle");
@@ -296,7 +436,7 @@ describe("VoiceInstructionRecorder", () => {
     const deps = baseDeps({
       invoke: nativeInvoke({ start_recording: () => startDeferred.promise }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     const first = recorder.toggle();
     const second = recorder.toggle();
@@ -315,7 +455,7 @@ describe("VoiceInstructionRecorder", () => {
 
   it("disposes provider recording on unmount and resets levels", () => {
     const deps = baseDeps();
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     return recorder.toggle().then(() => {
       expect(recorder.getState()).toBe("provider");
@@ -337,7 +477,7 @@ describe("VoiceInstructionRecorder", () => {
         start_recording: () => Promise.reject(new Error("no mic")),
       }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     await recorder.toggle();
     expect(recorder.getState()).toBe("browser");
@@ -354,7 +494,7 @@ describe("VoiceInstructionRecorder", () => {
       speechRecognitionSupported: false,
       createSpeechRecognition: () => null,
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     await recorder.toggle();
     expect(deps.onError).toHaveBeenCalledWith("unsupported");
@@ -370,7 +510,7 @@ describe("VoiceInstructionRecorder", () => {
         start_recording: () => Promise.reject(new Error("no mic")),
       }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     await recorder.toggle();
     fake.emitResult("make this shorter");
@@ -382,7 +522,7 @@ describe("VoiceInstructionRecorder", () => {
     const deps = baseDeps({
       invoke: nativeInvoke({ stop_recording: () => stopDeferred.promise }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     await recorder.toggle();
     const first = recorder.toggle();
@@ -397,89 +537,157 @@ describe("VoiceInstructionRecorder", () => {
     expect(recorder.getState()).toBe("idle");
   });
 
-  it("does not fire callbacks after dispose during pending transcription", async () => {
-    const stopDeferred = deferred<StopRecordingResponse>();
+  it("does not transcribe a native stop reply received after disposal", async () => {
+    const entered = deferred<void>();
+    const stop = deferred<StopRecordingResponse>();
     const deps = baseDeps({
-      invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return Promise.resolve();
-        if (cmd === "stop_recording") return stopDeferred.promise;
-        return Promise.resolve();
+      invoke: nativeInvoke({
+        stop_recording: () => {
+          entered.resolve();
+          return stop.promise;
+        },
       }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
-
+    const recorder = recorderFor(deps);
     await recorder.toggle();
-    const stopPromise = recorder.toggle();
+    const stopping = recorder.toggle();
+    await entered.promise;
     recorder.dispose();
-    stopDeferred.resolve({ samples: [0, 1], sampleRate: 16000 });
-    await stopPromise;
-
+    stop.resolve({ samples: [0, 1], sampleRate: 16_000 });
+    await stopping;
+    expect(deps.transcribe).not.toHaveBeenCalled();
     expect(deps.onTranscript).not.toHaveBeenCalled();
     expect(deps.onResetLevels).not.toHaveBeenCalled();
     expect(recorder.getState()).toBe("idle");
   });
 
-  it("does not fire onTranscript/onError after dispose while transcribe is pending", async () => {
-    const stopDeferred = deferred<StopRecordingResponse>();
-    const transcribeDeferred = deferred<string>();
+  it.each(["resolve", "reject"] as const)(
+    "ignores a late transcription %s after dispose and remount",
+    async (outcome) => {
+      const entered = deferred<void>();
+      const oldText = deferred<string>();
+      const invoke = nativeInvoke();
+      const deps = baseDeps({
+        invoke,
+        transcribe: () => {
+          entered.resolve();
+          return oldText.promise;
+        },
+      });
+      const old = recorderFor(deps);
+      await old.toggle();
+      const stopping = old.toggle();
+      await entered.promise;
+      old.dispose();
+
+      const fresh = baseDeps({
+        invoke,
+        transcribe: vi.fn().mockResolvedValue("new words"),
+      });
+      const next = recorderFor(fresh);
+      await next.toggle();
+      const replacement = activeAdmission();
+      if (outcome === "resolve") oldText.resolve("obsolete words");
+      else oldText.reject(new Error("old transcription failed"));
+      await stopping;
+
+      expect(deps.onTranscript).not.toHaveBeenCalled();
+      expect(deps.onError).not.toHaveBeenCalled();
+      expect(deps.onResetLevels).not.toHaveBeenCalled();
+      expect(deps.logger.warning).not.toHaveBeenCalled();
+      expect(invoke).not.toHaveBeenCalledWith("discard_recording", replacement);
+      await next.toggle();
+      expect(fresh.onTranscript).toHaveBeenCalledExactlyOnceWith("new words");
+    },
+  );
+
+  it.each(["resolve", "reject"])(
+    "stops a new recording after clear and ignores the old transcription's late %s",
+    async (outcome) => {
+      const entered = deferred<void>();
+      const oldText = deferred<string>();
+      const invoke = nativeInvoke({
+        stop_recording: async (args) => ({
+          samples: [args?.generation === 1 ? 0.25 : 0.75],
+          sampleRate: 16_000,
+        }),
+      });
+      const deps = baseDeps({
+        invoke,
+        transcribe: async ({ samples }) => {
+          if (samples[0] === 0.75) return "new words";
+          expect(samples[0]).toBe(0.25);
+          entered.resolve();
+          return oldText.promise;
+        },
+      });
+      const recorder = recorderFor(deps);
+      await recorder.toggle();
+      const stopping = recorder.toggle();
+      await entered.promise;
+      await completeLocalClear();
+      await recorder.toggle();
+      const replacement = activeAdmission();
+      await recorder.toggle();
+      if (outcome === "resolve") oldText.resolve("obsolete words");
+      else oldText.reject(new Error("obsolete failure"));
+      await stopping;
+
+      expect(invoke).toHaveBeenCalledWith("stop_recording", replacement);
+      expect(deps.onTranscript).toHaveBeenCalledExactlyOnceWith("new words");
+      expect(deps.onResetLevels).toHaveBeenCalledOnce();
+      expect(invoke).not.toHaveBeenCalledWith(
+        "claim_browser_recording",
+        expect.anything(),
+      );
+      expect(deps.onError).not.toHaveBeenCalled();
+      expect(deps.logger.warning).not.toHaveBeenCalled();
+      expect(recorder.getState()).toBe("idle");
+      expect(currentNativeRecording()).toBeNull();
+    },
+  );
+
+  it("does not strand an opening admission if another caller's stop fails before start returns", async () => {
+    const opening = deferred<void>();
+    const start = deferred<{ sampleRate: number }>();
+    const stop = deferred<StopRecordingResponse>();
+    const stopping = deferred<void>();
     const deps = baseDeps({
-      invoke: nativeInvoke({ stop_recording: () => stopDeferred.promise }),
-      transcribe: vi.fn().mockReturnValue(transcribeDeferred.promise),
+      invoke: nativeInvoke({
+        start_recording: () => {
+          opening.resolve();
+          return start.promise;
+        },
+        stop_recording: () => {
+          stopping.resolve();
+          return stop.promise;
+        },
+      }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
-
-    await recorder.toggle();
-    const stopPromise = recorder.toggle();
-    recorder.dispose();
-    // Stop resolves, transcribe is still in flight and resolves after dispose.
-    stopDeferred.resolve({ samples: [0, 1], sampleRate: 16000 });
-    transcribeDeferred.resolve("late transcript");
-    await stopPromise;
-    // Let any stray continuation settle.
-    await Promise.resolve();
-
-    expect(deps.onTranscript).not.toHaveBeenCalled();
-    expect(deps.onResetLevels).not.toHaveBeenCalled();
-    expect(deps.onError).not.toHaveBeenCalled();
+    const recorder = recorderFor(deps);
+    const starting = recorder.toggle();
+    await opening.promise;
+    const owner = activeAdmission();
+    const external = expect(stopNativeRecording(deps.invoke)).rejects.toThrow(
+      "stop failed",
+    );
+    await stopping.promise;
+    start.resolve({ sampleRate: 16_000 });
+    // Separate IPC tasks: the continuations of the successful start run
+    // before the failed stop reply, without guessing a timeout or tick count.
+    setImmediate(() => stop.reject(new Error("stop failed")));
+    await Promise.all([external, starting]);
+    expect(deps.invoke).toHaveBeenCalledWith("discard_recording", owner);
+    expect(currentNativeRecording()).toBeNull();
+    expect(deps.onListeningChange).not.toHaveBeenCalled();
   });
 
-  it("does not fall back to browser recognition after dispose when transcribe rejects", async () => {
-    const stopDeferred = deferred<StopRecordingResponse>();
-    const transcribeDeferred = deferred<string>();
-    const fake = new FakeRecognition();
-    const deps = baseDeps({
-      createSpeechRecognition: () => fake,
-      invoke: nativeInvoke({ stop_recording: () => stopDeferred.promise }),
-      transcribe: vi.fn().mockReturnValue(transcribeDeferred.promise),
-    });
-    const recorder = new VoiceInstructionRecorder(deps);
-
-    await recorder.toggle();
-    const stopPromise = recorder.toggle();
-    // Resolve stop_recording but do NOT dispose yet, so the recorder proceeds to
-    // invoke transcribe() and attach its await handler.
-    stopDeferred.resolve({ samples: [0, 1], sampleRate: 16000 });
-    // Wait until transcribe() is invoked (so its rejection is consumed by the
-    // recorder's await) before we dispose and reject. Disposing earlier would
-    // bail before transcribe, leaving the rejection unhandled.
-    await vi.waitFor(() => expect(deps.transcribe).toHaveBeenCalled());
-    recorder.dispose();
-    transcribeDeferred.reject(new Error("transcribe failed"));
-    await stopPromise;
-    // Let the rejection continuation settle.
-    await Promise.resolve();
-
-    expect(fake.started).toBe(false);
-    expect(deps.onError).not.toHaveBeenCalled();
-    expect(deps.logger.warning).not.toHaveBeenCalled();
-  });
-
-  it("issues stop_recording when disposed while start_recording is pending", async () => {
+  it("discards its admission when disposed while start_recording is pending", async () => {
     const startDeferred = deferred<unknown>();
     const deps = baseDeps({
       invoke: nativeInvoke({ start_recording: () => startDeferred.promise }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     const togglePromise = recorder.toggle();
     // Dispose before the mic-open await resolves.
@@ -506,7 +714,7 @@ describe("VoiceInstructionRecorder", () => {
     const deps = baseDeps({
       invoke: nativeInvoke({ start_recording: () => startDeferred.promise }),
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
 
     const togglePromise = recorder.toggle();
     recorder.dispose();
@@ -540,7 +748,7 @@ describe("VoiceInstructionRecorder", () => {
           throw new Error("private setup detail");
         };
       }
-      const recorder = new VoiceInstructionRecorder(deps);
+      const recorder = recorderFor(deps);
       await expect(recorder.toggle()).resolves.toBeUndefined();
       expect(recorder.getState()).toBe("idle");
       expect(deps.onError).toHaveBeenCalledWith("unsupported");
@@ -577,7 +785,7 @@ describe("VoiceInstructionRecorder", () => {
           throw error;
         };
       }
-      const recorder = new VoiceInstructionRecorder(deps);
+      const recorder = recorderFor(deps);
       await expect(recorder.toggle()).resolves.toBeUndefined();
       if (failure === "provider-transcribe")
         await expect(recorder.toggle()).resolves.toBeUndefined();
@@ -595,7 +803,7 @@ describe("VoiceInstructionRecorder", () => {
       canUseProvider: () => false,
       createSpeechRecognition: () => fake,
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
     await recorder.toggle();
     fake.stop = () => {
       throw new Error("private stop detail");
@@ -616,7 +824,7 @@ describe("VoiceInstructionRecorder", () => {
       canUseProvider: () => false,
       createSpeechRecognition: () => fake,
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
     await recorder.toggle();
     fake.stop = () => {
       throw new Error("private stop detail");
@@ -635,7 +843,7 @@ describe("VoiceInstructionRecorder", () => {
       canUseProvider: () => false,
       createSpeechRecognition: () => fake,
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
     await recorder.toggle();
     // The stop now waits for `onend`, so drive the end asynchronously and
     // deliver the final result while the stop is still pending.
@@ -658,7 +866,7 @@ describe("VoiceInstructionRecorder", () => {
       canUseProvider: () => false,
       createSpeechRecognition: () => old,
     });
-    const recorder = new VoiceInstructionRecorder(deps);
+    const recorder = recorderFor(deps);
     await recorder.toggle();
     const oldEnd = old.onend;
     const stopping = recorder.toggle();

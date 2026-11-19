@@ -16,12 +16,9 @@ export type RecordingInvoke = (
 /**
  * One recording the native recorder has admitted.
  *
- * Native hands out a `(ownerId, generation)` admission and refuses every
- * command that touches the recorder unless it presents that same pair. Holding
- * the pair on the handle means a component that stops late — after an abort, a
- * restart, or an unmount — can only ever address the stream it opened: native
- * answers a stale pair with a mismatch instead of cutting a newer recording's
- * stream.
+ * Native scopes commands to the window and the `(ownerId, generation)` it
+ * admitted. A late stop can never name the successor through this handle;
+ * discarding an already released admission is a no-op.
  */
 export type NativeRecordingHandle = {
   readonly ownerId: string;
@@ -32,7 +29,7 @@ export type NativeRecordingHandle = {
   discard: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
-  /** Whether this handle is still the one the recorder is owned by. */
+  /** True while available for live controls, not during stop or discard. */
   isLive: () => boolean;
 };
 
@@ -51,26 +48,18 @@ const EMPTY_RESULT = (): StopRecordingResponse => ({
   sampleRate: 0,
 });
 
-/** The recorder this module owns, if a recording is live. */
-let liveHandle: NativeRecordingHandle | null = null;
-
-/** The in-webview slot token and transport that live handle holds, if any. */
-let liveLocalOwner: { owner: object; transport: RecordingInvoke } | null = null;
-
+// Keep the admission until a terminal command succeeds. A rejected IPC reply
+// cannot tell us that the device (or the local browser/native slot) is free.
+let session: RecordingSession | null = null;
 let beginInFlight = false;
-let stopInFlight: Promise<StopRecordingResponse> | null = null;
-let stoppingHandle: NativeRecordingHandle | null = null;
 
-/** The recorder this module currently owns, if any. */
+/** The recorder available for live controls, not one already being stopped. */
 export const currentNativeRecording = (): NativeRecordingHandle | null =>
-  liveHandle;
+  session?.isLive() ? session : null;
 
 /** Test seam: forget the tracked recording without touching native. */
 export const resetNativeRecordingSession = (): void => {
-  liveHandle = null;
-  liveLocalOwner = null;
-  stopInFlight = null;
-  stoppingHandle = null;
+  session = null;
 };
 
 const isSafeGeneration = (value: unknown): value is number =>
@@ -89,6 +78,107 @@ const sampleRateFromStartResponse = (result: unknown): number => {
   }
   return sampleRate;
 };
+
+/** The two ways to end *this admission*: keep its audio, or abandon it. */
+class RecordingSession implements NativeRecordingHandle {
+  private stopping: Promise<StopRecordingResponse> | null = null;
+  private discarding: Promise<void> | null = null;
+  discardRequested = false;
+
+  constructor(
+    readonly ownerId: string,
+    readonly generation: number,
+    private readonly transport: RecordingInvoke,
+    private readonly localOwner: object,
+  ) {}
+
+  isLive(): boolean {
+    return session === this && !this.stopping && !this.discardRequested;
+  }
+
+  private async command(name: string, transport = this.transport) {
+    return transport(name, {
+      ownerId: this.ownerId,
+      generation: this.generation,
+    });
+  }
+
+  async pause(): Promise<void> {
+    await this.command("pause_recording");
+  }
+
+  async resume(): Promise<void> {
+    await this.command("resume_recording");
+  }
+
+  private released(): void {
+    releaseLocalNativeRecording(this.transport, this.localOwner);
+    if (session === this) session = null;
+  }
+
+  private async stopAndRead(
+    transport: RecordingInvoke,
+  ): Promise<StopRecordingResponse> {
+    const payload = await this.command("stop_recording", transport);
+    const audio = decodeStopRecordingPayload(payload);
+    this.released();
+    // An ack only retires native's recovery copy. A lost ack cannot reopen
+    // capture and a stalled one must not block the next start.
+    void this.command("acknowledge_recording", transport).catch(() => {
+      getLogger().verbose("acknowledge_recording failed");
+    });
+    return audio;
+  }
+
+  stop(transport = this.transport): Promise<StopRecordingResponse> {
+    if (session !== this) {
+      return Promise.reject(
+        new Error("Recording is no longer owned by this session"),
+      );
+    }
+    if (this.discardRequested) return this.discard().then(EMPTY_RESULT);
+    // Publish before invoking the transport. Global and owned callers join
+    // the same stop, even when the transport fails synchronously.
+    this.stopping ??= Promise.resolve()
+      .then(() => this.stopAndRead(transport))
+      .finally(() => {
+        this.stopping = null;
+      });
+    return this.stopping;
+  }
+
+  discard(): Promise<void> {
+    if (session !== this) return Promise.resolve();
+    this.discardRequested = true;
+    this.discarding ??= this.discardAfterStop().finally(() => {
+      this.discarding = null;
+    });
+    return this.discarding;
+  }
+
+  private async discardAfterStop(): Promise<void> {
+    if (this.stopping) {
+      try {
+        await this.stopping;
+        return; // Its successful stop already released this admission.
+      } catch {
+        // A failed stop leaves only this admission to discard.
+      }
+    }
+    await this.command("discard_recording");
+    this.released();
+  }
+
+  async releaseForReplacement(): Promise<void> {
+    // Do not hide a failed stop from a start that was waiting for it. The
+    // next attempt can retry release using the same owner and generation.
+    await (this.stopping ?? this.discard());
+  }
+}
+
+/** A browser-only retry may finish an abandoned release, never a live capture. */
+export const finishAbandonedNativeDiscard = (): Promise<void> | undefined =>
+  session?.discardRequested ? session.discard() : undefined;
 
 /**
  * Open the microphone under a fresh native admission.
@@ -121,94 +211,39 @@ const beginNativeRecordingOwned = async (
   options: NativeRecordingStartOptions,
   invokeFn: RecordingInvoke,
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> => {
-  // A stop may still fail after the native command was sent. Wait for its
-  // result before replacing the only handle that can retry that admission.
-  if (stopInFlight) await stopInFlight;
-  const superseded = liveHandle;
-  if (superseded) {
-    await superseded.discard().catch((error: unknown) => {
-      getLogger().warning(`Failed to discard a superseded recording: ${error}`);
-    });
-  }
+  if (session) await session.releaseForReplacement();
 
   // The browser recognizer holds the same in-webview slot, so a dictation
   // started while it listens is refused here instead of opening a second
   // capture beside it.
+  const ownerId = createId();
   const localOwner = {};
   if (!acquireLocalNativeRecording(invokeFn, localOwner)) {
     throw new Error("A recording is already in progress");
   }
-  const releaseLocal = () => {
-    releaseLocalNativeRecording(invokeFn, localOwner);
-    if (liveLocalOwner?.owner === localOwner) liveLocalOwner = null;
-  };
-  const ownerId = createId();
-  let reserved: unknown;
+  let generation: number;
   try {
-    reserved = await invokeFn("recording_generation", { ownerId });
+    const reserved = await invokeFn("recording_generation", { ownerId });
+    if (!isSafeGeneration(reserved))
+      throw new Error("Invalid recording generation");
+    generation = reserved;
   } catch (error) {
-    releaseLocal();
+    releaseLocalNativeRecording(invokeFn, localOwner);
     throw error;
   }
-  if (!isSafeGeneration(reserved)) {
-    releaseLocal();
-    throw new Error("Invalid recording generation");
-  }
 
-  let settled = false;
-  const handle: NativeRecordingHandle = {
+  const handle = new RecordingSession(
     ownerId,
-    generation: reserved,
-    isLive: () => liveHandle === handle && !settled,
-    stop: async () => {
-      const payload = await invokeFn("stop_recording", {
-        ownerId,
-        generation: reserved,
-      });
-      settled = true;
-      if (liveHandle === handle) liveHandle = null;
-      const decoded = decodeStopRecordingPayload(payload);
-      releaseLocal();
-      // Acknowledging only drops the recovery copy native kept for a lost
-      // reply; it never stops the recorder, so a failure here costs a retained
-      // buffer, not audio. Issue it detached: a stalled acknowledgement must
-      // not hold the local admission, and native expires an unacknowledged
-      // copy on its own.
-      void invokeFn("acknowledge_recording", {
-        ownerId,
-        generation: reserved,
-      }).catch((error: unknown) => {
-        getLogger().verbose(`acknowledge_recording failed: ${error}`);
-      });
-      return decoded;
-    },
-    discard: async () => {
-      settled = true;
-      if (liveHandle === handle) liveHandle = null;
-      try {
-        await invokeFn("discard_recording", { ownerId, generation: reserved });
-      } finally {
-        // Native answers a refused discard with a mismatch, so the slot is
-        // released here even when the call failed: a stale handle is exactly
-        // what a browser-recognition start must not be blocked by.
-        releaseLocal();
-      }
-    },
-    pause: async () => {
-      await invokeFn("pause_recording", { ownerId, generation: reserved });
-    },
-    resume: async () => {
-      await invokeFn("resume_recording", { ownerId, generation: reserved });
-    },
-  };
-
-  liveHandle = handle;
-  liveLocalOwner = { owner: localOwner, transport: invokeFn };
+    generation,
+    invokeFn,
+    localOwner,
+  );
+  session = handle;
   try {
     options.onAdmission?.(handle);
     const response = await invokeFn("start_recording", {
       ownerId,
-      generation: reserved,
+      generation,
       args: {
         preferredMicrophone,
         ...(options.waitForRelease ? { waitForRelease: true } : {}),
@@ -219,85 +254,20 @@ const beginNativeRecordingOwned = async (
     // The start may have opened the device before it failed; a discard is the
     // only call that proves the recorder is released again.
     await handle.discard().catch(() => undefined);
-    releaseLocal();
     throw error;
   }
 };
 
-/**
- * Stop the live recording and return its audio.
- *
- * These are the teardown paths that have no handle in scope (a clear request,
- * an unmount, a settings action). They deliberately address whatever recording
- * is live rather than a specific owner.
- */
+/** Stop this webview's current recording when the caller has no handle. */
 export const stopNativeRecording = (
-  invokeFn: RecordingInvoke = invoke,
-): Promise<StopRecordingResponse> => {
-  if (stopInFlight) return stopInFlight;
-  const handle = liveHandle;
-  if (!handle) return Promise.resolve(EMPTY_RESULT());
-  const localOwner = liveLocalOwner;
-  liveHandle = null;
-  // Defer invoking the transport until the in-flight promise is published,
-  // including when a test or preview transport throws synchronously.
-  const operation = Promise.resolve().then(async () => {
-    try {
-      const payload = await invokeFn("stop_recording", {
-        ownerId: handle.ownerId,
-        generation: handle.generation,
-      });
-      const decoded = decodeStopRecordingPayload(payload);
-      if (localOwner) {
-        releaseLocalNativeRecording(localOwner.transport, localOwner.owner);
-        if (liveLocalOwner === localOwner) liveLocalOwner = null;
-      }
-      // The acknowledgement only drops native's recovery copy, and native
-      // expires it on its own: a stalled ack must not keep stopInFlight set,
-      // or every later start would wait on it forever.
-      void invokeFn("acknowledge_recording", {
-        ownerId: handle.ownerId,
-        generation: handle.generation,
-      }).catch((error: unknown) => {
-        getLogger().verbose(`acknowledge_recording failed: ${error}`);
-      });
-      return decoded;
-    } catch (error) {
-      // Keep the handle addressable so a retry can still release the recorder.
-      liveHandle = liveHandle ?? handle;
-      throw error;
-    }
-  });
-  stopInFlight = operation;
-  stoppingHandle = handle;
-  return operation.finally(() => {
-    if (stopInFlight === operation) {
-      stopInFlight = null;
-      stoppingHandle = null;
-    }
-  });
-};
+  invokeFn?: RecordingInvoke,
+): Promise<StopRecordingResponse> =>
+  session?.stop(invokeFn) ?? Promise.resolve(EMPTY_RESULT());
 
-/** Stop the live recording and throw its audio away. */
+/** Best-effort teardown. A failed discard remains addressable for retry. */
 export const discardNativeRecording = async (): Promise<void> => {
-  const pendingStop = stopInFlight;
-  const stoppedHandle = stoppingHandle;
-  if (pendingStop) {
-    try {
-      await pendingStop;
-      // A successful stop has released this admission. Never discard a newer one.
-      return;
-    } catch {
-      // The failed stop restores its handle, but it must still be the same
-      // admission when this abort resumes.
-      if (!stoppedHandle || liveHandle !== stoppedHandle) return;
-    }
-  }
-  const handle = liveHandle;
-  if (!handle) return;
-  liveHandle = null;
-  await handle.discard().catch((error: unknown) => {
-    getLogger().verbose(`discard_recording failed: ${error}`);
+  await session?.discard().catch(() => {
+    getLogger().verbose("discard_recording failed");
   });
 };
 
@@ -313,7 +283,7 @@ export const invokeStopRecording = async (
     : stopNativeRecording();
 
 const controlLive = async (invokeFn: RecordingInvoke, command: string) => {
-  const handle = liveHandle;
+  const handle = currentNativeRecording();
   if (!handle) {
     throw new Error("No native recording is active");
   }

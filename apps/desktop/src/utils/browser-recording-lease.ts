@@ -1,3 +1,4 @@
+import { finishAbandonedNativeDiscard } from "./native-recording-session";
 import { createId } from "./id.utils";
 import {
   acquireLocalBrowserRecording,
@@ -22,6 +23,8 @@ export class BrowserRecordingLease {
   constructor(private readonly invokeFn: RecordingInvoke) {}
 
   async acquire(): Promise<void> {
+    const releasing = finishAbandonedNativeDiscard();
+    if (releasing) await releasing;
     if (this.stopped || !acquireLocalBrowserRecording(this.invokeFn, this)) {
       throw new Error("A recording is already in progress");
     }

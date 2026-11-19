@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode, createElement } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import type { VoiceInstructionRecorderDeps } from "./voiceInstructionRecorder";
+import { encodeRecordedAudio } from "../../utils/recorded-audio.utils";
 
 // Tracks VoiceInstructionRecorder construction/disposal so we can prove the
 // recorder is built inside an effect — exactly one live instance under
@@ -13,16 +15,23 @@ const logger = vi.hoisted(() => ({ warning: vi.fn(), error: vi.fn() }));
 let constructCount = 0;
 let disposeCount = 0;
 
-vi.mock("./voiceInstructionRecorder", () => ({
-  VoiceInstructionRecorder: class {
-    constructor() {
-      constructCount++;
-    }
-    dispose() {
-      disposeCount++;
-    }
-  },
-}));
+vi.mock("./voiceInstructionRecorder", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("./voiceInstructionRecorder")>();
+  return {
+    ...actual,
+    VoiceInstructionRecorder: class extends actual.VoiceInstructionRecorder {
+      constructor(deps: VoiceInstructionRecorderDeps) {
+        super(deps);
+        constructCount++;
+      }
+      override dispose() {
+        super.dispose();
+        disposeCount++;
+      }
+    },
+  };
+});
 
 vi.mock("react-intl", () => {
   // One stub for the file: useIntl() must return a stable reference, like the
@@ -89,6 +98,7 @@ vi.mock("../../store", () => ({
 }));
 
 import { ComposerPage } from "./ComposerPage";
+import { transcribeAudio } from "../../actions/transcribe.actions";
 import { applyVoiceEditInstruction } from "../../actions/composer.actions";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -282,6 +292,71 @@ describe("ComposerPage review session", () => {
       await Promise.resolve();
     });
   };
+
+  const enableProviderMic = (stopReply: () => unknown) => {
+    fakeState.settings.aiTranscription.enabled = true;
+    let generation = 0;
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === "recording_generation") return ++generation;
+      if (command === "start_recording") return { sampleRate: 16_000 };
+      if (command === "stop_recording") return stopReply();
+      return null;
+    });
+  };
+
+  const clickMic = async () => {
+    const mic = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Dictate edit instruction"]',
+    );
+    if (!mic || mic.disabled)
+      throw new Error("Expected an enabled instruction microphone");
+    await act(async () => mic.click());
+  };
+
+  it("puts the replacement recording's words in the instruction field after the old transcription rejects", async () => {
+    enableProviderMic(() => encodeRecordedAudio([0.75], 16_000));
+    let rejectOld!: (error: Error) => void;
+    const old = new Promise<never>((_, reject) => {
+      rejectOld = reject;
+    });
+    const transcribe = vi.mocked(transcribeAudio);
+    transcribe.mockClear().mockReturnValueOnce(old).mockResolvedValueOnce({
+      rawTranscript: "new words",
+      sanitizedTranscript: "new words",
+      warnings: [],
+      metadata: {},
+    });
+    root = await mountComposerPage(container);
+    await clickMic();
+    await clickMic();
+    expect(transcribe).toHaveBeenCalledTimes(1);
+    act(() => root?.unmount());
+    root = await mountComposerPage(container);
+    await clickMic();
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "start_recording",
+      expect.objectContaining({ generation: 2 }),
+    );
+    await act(async () => rejectOld(new Error("old transcription failed")));
+    await clickMic();
+    expect(instructionField()?.value).toBe("new words");
+    expect(transcribe).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a native stop failure as a stop failure", async () => {
+    enableProviderMic(() => {
+      throw new Error("private device detail");
+    });
+    root = await mountComposerPage(container);
+    await clickMic();
+    await clickMic();
+    expect(container.textContent).toContain("Failed to stop recording");
+    expect(container.textContent).not.toContain("private device detail");
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "discard_recording",
+      expect.objectContaining({ generation: 1 }),
+    );
+  });
 
   it("marks edited text dirty against the session original", async () => {
     await renderPage();
