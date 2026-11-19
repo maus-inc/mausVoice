@@ -224,7 +224,9 @@ describe("ClearLocalDataDialog", () => {
       );
       expect(window.location.reload).not.toHaveBeenCalled();
     } finally {
-      await act(async () => confirm());
+      await act(() => {
+        confirm();
+      });
     }
     expect(mocks.invoke).toHaveBeenCalledWith("complete_local_data_clear");
     expect(window.location.reload).toHaveBeenCalledOnce();
