@@ -7,6 +7,12 @@
     "url": "git+https://github.com/mausvoice/mausvoice.git",
     "directory": "packages/typescript-config"
   },
+  "exports": {
+    "./base.json": "./base.json",
+    "./package-config.json": "./package-config.json",
+    "./nextjs.json": "./nextjs.json",
+    "./react-library.json": "./react-library.json"
+  },
   "files": [
     "*.json"
   ],

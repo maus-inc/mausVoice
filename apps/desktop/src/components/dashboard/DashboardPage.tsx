@@ -1,9 +1,9 @@
-import { Box, Stack, Typography } from "@mui/material";
-import { getVersion } from "@tauri-apps/api/app";
+import { Box, Stack } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
-import { Outlet, useLocation } from "react-router-dom";
-import { useAsyncData } from "../../hooks/async.hooks";
+import { useLayoutEffect, useRef } from "react";
+import { Outlet, useLocation, useMatch } from "react-router-dom";
 import { easeOutQuint } from "../../styles/motion";
+import { TipToaster } from "../onboarding/TipToaster";
 import { TranscriptionDetailsDialog } from "../transcriptions/TranscriptionDetailsDialog";
 import { DashboardMenu } from "./DashboardMenu";
 import { FeatureReleaseDialog } from "./FeatureReleaseDialog";
@@ -12,18 +12,42 @@ import { PermissionsDialog } from "./PermissionsDialog";
 /**
  * Authenticated app shell: sidebar navigation, routed content area, and the
  * global dialogs (feature release, permissions, trial ended, transcription
- * details). Also reports the app version into the layout.
+ * details). The app version reads from the sidebar footer in `DashboardMenu`.
+ *
+ * The content area is deliberately flat. It carries no fill, border, radius or
+ * cast of its own, so the routed page reads as the window's canvas rather than
+ * as a card sitting on it. A panel treatment here cuts the window into
+ * compartments and turns a navigation change into a frame change. Chrome that
+ * does need its own material, such as the rail, paints it on the rail.
  */
 export default function DashboardPage() {
-  const data = useAsyncData(getVersion, []);
-  const location = useLocation();
+  const { pathname, hash } = useLocation();
+  const isSettingsRoute = Boolean(useMatch("/dashboard/settings/*"));
   const reduceMotion = useReducedMotion();
+  const contentRef = useRef<HTMLElement>(null);
+  const previousPath = useRef(pathname);
+
+  useLayoutEffect(() => {
+    // Previously a route change remounted this scrolling element, putting a
+    // new settings page at the top. Retaining the settings shell must preserve
+    // that behavior without interrupting a deep link's own anchor scroll.
+    if (
+      isSettingsRoute &&
+      previousPath.current !== pathname &&
+      !hash &&
+      contentRef.current
+    ) {
+      contentRef.current.scrollTop = 0;
+    }
+    previousPath.current = pathname;
+  }, [pathname, hash, isSettingsRoute]);
 
   return (
     <>
       <FeatureReleaseDialog />
       <PermissionsDialog />
       <TranscriptionDetailsDialog />
+      <TipToaster />
       <Stack
         direction="row"
         sx={{ height: "100%", width: "100%", overflow: "hidden" }}
@@ -36,7 +60,6 @@ export default function DashboardPage() {
             minWidth: 232,
             maxWidth: 232,
             overflowY: "auto",
-            py: 0.5,
           }}
         >
           <DashboardMenu />
@@ -53,17 +76,21 @@ export default function DashboardPage() {
             pt: { xs: 0.5, sm: 1 },
           }}
         >
+          {/* Enter only: retaining an outgoing Outlet during an exit animation
+              makes it follow the new route and run cleanup on the incoming page.
+              Key by pathname so query-only navigation keeps the page mounted.
+              Settings is one persistent shell with its own routed pages: keep
+              the shell and its focused rail mounted across section changes. */}
           <Box
-            component={motion.div}
-            key={location.pathname}
-            initial={
-              reduceMotion ? false : { opacity: 0, y: 8, filter: "blur(2px)" }
-            }
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            transition={{ duration: 0.22, ease: easeOutQuint }}
-            // Flat: the route content owns its own surfaces (cards, rows), so
-            // wrapping it in a second bordered panel stacked two tiers of
-            // elevation for one plane and boxed the page inside the page.
+            component={motion.main}
+            ref={contentRef}
+            key={isSettingsRoute ? "/dashboard/settings" : pathname}
+            initial={reduceMotion ? false : { opacity: 0, x: 8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{
+              duration: reduceMotion ? 0 : 0.24,
+              ease: easeOutQuint,
+            }}
             sx={{
               flexGrow: 1,
               minHeight: 0,
@@ -73,21 +100,6 @@ export default function DashboardPage() {
             <Outlet />
           </Box>
         </Box>
-        <Typography
-          variant="caption"
-          sx={{
-            position: "fixed",
-            bottom: 6,
-            left: 10,
-            fontSize: "0.55rem",
-            color: "text.secondary",
-            opacity: 0.35,
-            pointerEvents: "none",
-            zIndex: 5,
-          }}
-        >
-          {data.state === "success" ? `v${data.data}` : ""}
-        </Typography>
       </Stack>
     </>
   );

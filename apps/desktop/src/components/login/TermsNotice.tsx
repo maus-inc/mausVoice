@@ -24,7 +24,7 @@ export const TermsNotice = ({ align = "center" }: TermsNoticeProps) => {
         rel="noopener noreferrer"
         style={{ color: "inherit", textDecoration: "underline" }}
       >
-        <FormattedMessage defaultMessage="Terms & Conditions" />
+        <FormattedMessage defaultMessage="Terms & conditions" />
       </a>
     </Typography>
   );

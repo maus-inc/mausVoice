@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getAppState, produceAppState } from "../store";
 import { registerPairedRemoteDevices } from "../utils/app.utils";
 import { getPlatform } from "../utils/platform.utils";
+import { withLocalDataWrite } from "../utils/local-data-write-gate";
 import {
   setRemoteOutputEnabled,
   setRemoteTargetDeviceId,
@@ -103,27 +104,30 @@ export const pairWithRemoteInvite = async (
   inviteCode: string,
 ): Promise<PairedRemoteDevice> => {
   const invite = parseRemotePairingInvite(inviteCode);
-  const previousTargetId =
-    getAppState().userPrefs?.remoteTargetDeviceId ?? null;
-  const device = await invoke<PairedRemoteDevice>(
-    "remote_sender_pair_with_receiver",
-    {
-      args: {
-        receiverDeviceId: invite.receiverDeviceId,
-        receiverName: invite.receiverDeviceName,
-        receiverPlatform: invite.receiverPlatform,
-        receiverAddress: invite.receiverAddress,
-        pairingCode: invite.pairingCode,
-      },
-    },
-  );
 
-  produceAppState((draft) => {
-    registerPairedRemoteDevices(draft, [device]);
+  return withLocalDataWrite(async (lease) => {
+    const previousTargetId =
+      getAppState().userPrefs?.remoteTargetDeviceId ?? null;
+    const device = await invoke<PairedRemoteDevice>(
+      "remote_sender_pair_with_receiver",
+      {
+        args: {
+          receiverDeviceId: invite.receiverDeviceId,
+          receiverName: invite.receiverDeviceName,
+          receiverPlatform: invite.receiverPlatform,
+          receiverAddress: invite.receiverAddress,
+          pairingCode: invite.pairingCode,
+        },
+      },
+    );
+
+    produceAppState((draft) => {
+      registerPairedRemoteDevices(draft, [device]);
+    }, lease);
+    await setRemoteTargetDeviceId(device.id, lease);
+    if (previousTargetId === invite.receiverDeviceId) {
+      await setRemoteOutputEnabled(true, lease);
+    }
+    return device;
   });
-  await setRemoteTargetDeviceId(device.id);
-  if (previousTargetId === invite.receiverDeviceId) {
-    await setRemoteOutputEnabled(true);
-  }
-  return device;
 };

@@ -1,0 +1,65 @@
+name: PR Body Fold Check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+# trigger-manual: false
+
+# A pull request description only stays readable while the long records sit behind a fold.
+# Review rounds, babysit polls and CI logs are the three that grow without limit, and each
+# one is a row in a folded table rather than a new section. This workflow is hygiene, not
+# security: it keeps one screen of summary above the folds.
+#
+# The check runs the copy of the checker from the base branch, so a pull request cannot
+# weaken the guard that judges it. The head copy still runs its own tests, which catches a
+# change that breaks the checker without letting that change pass the body.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  body:
+    name: Folded Body Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # The job reads the tree and nothing else, so the token stays out of the clone.
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          # This job installs nothing, so it must not reach for a package-manager cache.
+          package-manager-cache: false
+      - name: Take the checker from the base branch
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          guard="$RUNNER_TEMP/check-pr-body.mjs"
+          if git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null &&
+             git cat-file -e "$BASE_SHA:scripts/ci/check-pr-body.mjs" 2>/dev/null; then
+            git show "$BASE_SHA:scripts/ci/check-pr-body.mjs" > "$guard"
+            echo "checker: the base branch copy at $BASE_SHA"
+          else
+            cp scripts/ci/check-pr-body.mjs "$guard"
+            echo "checker: the head copy, because the base branch has none yet"
+          fi
+          printf 'GUARD=%s\n' "$guard" >> "$GITHUB_ENV"
+      - name: Check the guard
+        # The head copy's own tests, so a change that breaks the checker fails here.
+        run: node --test scripts/ci/check-pr-body.test.mjs
+      - name: Check the body
+        # The body arrives through the environment, never spliced into the shell.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" | node "$GUARD" -

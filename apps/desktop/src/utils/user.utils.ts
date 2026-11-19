@@ -7,6 +7,7 @@ import {
   UserPreferences,
 } from "@maus-inc/types";
 import { countWords, getRec } from "@maus-inc/utilities";
+import { getFirstAndLastName } from "./string.utils";
 import type {
   AgentMode,
   PostProcessingMode,
@@ -76,6 +77,18 @@ export const getMyUser = (state: AppState): Nullable<User> => {
   return getRec(state.userById, getMyEffectiveUserId(state)) ?? null;
 };
 
+/**
+ * The custom profile photo for the current user, if they have set one.
+ *
+ * Read straight from the local slice rather than the account record: the photo
+ * is this device's copy and is not synced.
+ */
+export const getMyProfileImage = (state: AppState): Nullable<string> => {
+  return (
+    state.local.profileImageByUserId?.[getMyEffectiveUserId(state)] ?? null
+  );
+};
+
 export const getMyPreferredLocale = (state: AppState): Locale => {
   const user = getMyUser(state);
   return (
@@ -133,7 +146,6 @@ export const getActiveDictationLanguage = (state: AppState): string => {
 };
 
 export const getMyDictationLanguage = (state: AppState): string => {
-  // TODO: We should pass the dictation language into the processors instead of overriding
   const override = state.dictationLanguageOverride;
   if (override) {
     return override;
@@ -204,6 +216,13 @@ export const getMyUserName = (state: AppState): string => {
   return user?.name || "Guest";
 };
 
+export const getMyUserFirstName = (state: AppState): string => {
+  const user = getMyUser(state);
+  const fullName = user?.name || "";
+  const { firstName } = getFirstAndLastName(fullName);
+  return firstName || fullName || "Guest";
+};
+
 export const getIsSignedIn = (state: AppState): boolean => {
   return !!state.auth;
 };
@@ -216,8 +235,17 @@ export const setUserPreferences = (
   draft: AppState,
   value: UserPreferences,
 ): void => {
-  draft.userPrefs = value;
-  applyAiPreferences(draft, value);
+  // Invariant enforcement, one write-site wide: realtime output and
+  // review-before-insert cannot both be on (interim streaming always runs
+  // with skipReview, so dual-true would silently skip review). Setters keep
+  // the pair exclusive on write; this normalize also repairs legacy rows
+  // that predate that rule. Realtime wins to match the runtime preference.
+  const normalized =
+    value.realtimeOutputEnabled === true && value.reviewBeforeInsert === true
+      ? { ...value, reviewBeforeInsert: false }
+      : value;
+  draft.userPrefs = normalized;
+  applyAiPreferences(draft, normalized);
 };
 
 type BaseTranscriptionPrefs = {
@@ -246,26 +274,51 @@ export type TranscriptionPrefs =
  * Providers with an implemented batch transcription route — i.e. parity with
  * the `getTranscribeAudioRepo()` switch branches in `repos/index.ts` (mirrored
  * here to avoid a circular import). This is NOT the same as the
- * `supportsTranscriptionModels()` capability flags: Azure is always available
- * in the transcription UI (special-cased by region in `ApiKeyList`), so
- * `AzureModelProviderRepo.supportsTranscriptionModels()` returns `false` while
+ * `supportsTranscriptionModels` capability flags: Azure is always available
+ * in the transcription UI (special-cased by region in `ApiKeyList`), so the
+ * `AzureModelProviderRepo.supportsTranscriptionModels` flag is `false` while
  * `azure` still has a real dispatch branch and must stay in this set. A
  * selected key whose provider is not in this set cannot be transcribed and is
  * treated as stale.
  */
-const TRANSCRIPTION_CAPABLE_PROVIDERS: Set<ApiKeyProvider> = new Set([
+export const TRANSCRIPTION_CAPABLE_PROVIDERS: Set<ApiKeyProvider> = new Set([
   "groq",
   "openai",
   "aldea",
   "assemblyai",
   "elevenlabs",
   "deepgram",
+  "gladia",
   "openai-compatible",
   "azure",
   "gemini",
   "speaches",
   "xai",
+  "openrouter",
 ]);
+
+/**
+ * The transcription provider the user has selected, before any key is resolved.
+ *
+ * The audio-transmission disclosure needs this rather than a resolved
+ * `TranscriptionPrefs`, because onboarding shows the disclosure as soon as API
+ * mode is picked, while the key row is still empty. Returns null when nothing
+ * is selected or the selected key belongs to a provider this build cannot
+ * transcribe, which is the same staleness `getTranscriptionPrefs` falls back
+ * from.
+ */
+export const getSelectedTranscriptionProvider = (
+  state: AppState,
+): ApiKeyProvider | null => {
+  const selectedApiKey = getRec(
+    state.apiKeyById,
+    state.settings.aiTranscription.selectedApiKeyId,
+  );
+  const provider = selectedApiKey?.provider as ApiKeyProvider | undefined;
+  return provider && TRANSCRIPTION_CAPABLE_PROVIDERS.has(provider)
+    ? provider
+    : null;
+};
 
 export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {
   const config = state.settings.aiTranscription;
@@ -453,6 +506,7 @@ export const getDictationSpeed = (state: AppState): DictationSpeed | null => {
     const t = getRec(state.transcriptionById, id);
     if (
       !t ||
+      t.transcript === "[Transcription Failed]" ||
       !t.audio?.durationMs ||
       t.audio.durationMs <= 0 ||
       !t.transcript

@@ -1,15 +1,7 @@
 import { ArrowForward, OpenInNew } from "@mui/icons-material";
 import { LoadingButton } from "@mui/lab";
-import {
-  Alert,
-  Box,
-  Button,
-  Link,
-  Stack,
-  TextField,
-  Typography,
-} from "@mui/material";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { Alert, Box, Button, Link, Stack, TextField } from "@mui/material";
+import { openExternalUrl } from "../../utils/open-url.utils";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import remoteImage from "../../assets/2-remote.png";
@@ -19,9 +11,11 @@ import {
   savePersonalGroqApiKey,
 } from "../../actions/personal-use.actions";
 import { trackButtonClick } from "../../utils/analytics.utils";
+import { ConfirmDialog } from "../common/ConfirmDialog";
 import {
   BackButton,
   DualPaneLayout,
+  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
@@ -35,7 +29,7 @@ const ConsoleLink = ({
   <Link
     component="button"
     variant="body2"
-    onClick={() => openUrl(url)}
+    onClick={() => openExternalUrl(url, "the provider console")}
     sx={{ alignSelf: "flex-start" }}
   >
     <Stack
@@ -57,6 +51,7 @@ export const PersonalCredentialsForm = () => {
   const [deepgramKey, setDeepgramKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [skipConfirmationOpen, setSkipConfirmationOpen] = useState(false);
 
   const trimmedGroq = groqKey.trim();
   const trimmedDeepgram = deepgramKey.trim();
@@ -78,7 +73,7 @@ export const PersonalCredentialsForm = () => {
       if (trimmedDeepgram) {
         await savePersonalDeepgramApiKey(trimmedDeepgram);
       }
-      goToOnboardingPage("userDetails");
+      goToOnboardingPage("chooseTranscription");
     } catch (err) {
       setError(
         err instanceof Error
@@ -93,8 +88,19 @@ export const PersonalCredentialsForm = () => {
   };
 
   const handleSkip = () => {
+    trackButtonClick("onboarding_open_skip_api_key_confirmation");
+    setSkipConfirmationOpen(true);
+  };
+
+  const handleCancelSkip = () => {
+    trackButtonClick("onboarding_cancel_skip_api_key_confirmation");
+    setSkipConfirmationOpen(false);
+  };
+
+  const handleConfirmSkip = () => {
     trackButtonClick("onboarding_personal_credentials_skip");
-    goToOnboardingPage("userDetails");
+    setSkipConfirmationOpen(false);
+    goToOnboardingPage("chooseTranscription", "skip");
   };
 
   const form = (
@@ -117,28 +123,15 @@ export const PersonalCredentialsForm = () => {
         </Stack>
       }
     >
-      <Stack spacing={3}>
-        <Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-              pb: 1,
-            }}
-          >
-            <FormattedMessage defaultMessage="Connect your API keys" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
+      <Stack spacing={2}>
+        <OnboardingFormHeader
+          title={<FormattedMessage defaultMessage="Connect your API keys" />}
+          subtitle={
             <FormattedMessage defaultMessage="Add your Deepgram key for fast streaming transcription and your Groq key for AI post-processing. Keys are encrypted and stored locally, and you can change them any time in Settings." />
-          </Typography>
-        </Box>
+          }
+        />
 
-        <Stack spacing={2}>
+        <Stack spacing={1.5}>
           {error && <Alert severity="error">{error}</Alert>}
 
           <TextField
@@ -158,7 +151,7 @@ export const PersonalCredentialsForm = () => {
             }}
           />
           <ConsoleLink url="https://console.deepgram.com/">
-            <FormattedMessage defaultMessage="Open Deepgram API keys" />
+            <FormattedMessage defaultMessage="Grab your Deepgram API key" />
           </ConsoleLink>
 
           <TextField
@@ -178,7 +171,7 @@ export const PersonalCredentialsForm = () => {
             }}
           />
           <ConsoleLink url="https://console.groq.com/keys">
-            <FormattedMessage defaultMessage="Open Groq API keys" />
+            <FormattedMessage defaultMessage="Grab your Groq API key" />
           </ConsoleLink>
         </Stack>
       </Stack>
@@ -194,5 +187,25 @@ export const PersonalCredentialsForm = () => {
     />
   );
 
-  return <DualPaneLayout left={form} right={rightContent} />;
+  return (
+    <>
+      <ConfirmDialog
+        isOpen={skipConfirmationOpen}
+        title={<FormattedMessage defaultMessage="Skip API key setup?" />}
+        content={
+          <FormattedMessage defaultMessage="Local models use more system resources and run slower than API-based models. You can add your keys later in Settings." />
+        }
+        onCancel={handleCancelSkip}
+        onConfirm={handleConfirmSkip}
+        cancelLabel={<FormattedMessage defaultMessage="Go back" />}
+        confirmLabel={<FormattedMessage defaultMessage="Skip for now" />}
+        cancelButtonProps={{ autoFocus: true }}
+      />
+      <DualPaneLayout
+        left={form}
+        right={rightContent}
+        flex={[{ xs: 1.5, md: 1 }, 1]}
+      />
+    </>
+  );
 };

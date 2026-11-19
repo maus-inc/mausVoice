@@ -1,4 +1,4 @@
-import AddRoundedIcon from "@mui/icons-material/AddRounded";
+import { Plus } from "lucide-react";
 import { Button } from "@mui/material";
 import { Term } from "@maus-inc/types";
 import dayjs from "dayjs";
@@ -8,12 +8,62 @@ import { showErrorSnackbar } from "../../actions/app.actions";
 import { loadDictionary } from "../../actions/dictionary.actions";
 import { setLocalStorageValue } from "../../actions/local-storage.actions";
 import { useAsyncEffect } from "../../hooks/async.hooks";
-import { getTermRepo } from "../../repos";
-import { produceAppState, useAppStore } from "../../store";
+import { getAppState, produceAppState, useAppStore } from "../../store";
 import { createId } from "../../utils/id.utils";
+import { withLocalDataWrite } from "../../utils/local-data-write-gate";
+import { createDictionaryTerm } from "../../utils/term-mutation-queue";
 import { ScrollListPage } from "../common/ScrollListPage";
 import { AddTermDialog } from "./AddTermDialog";
 import { DictionaryRow } from "./DictionaryRow";
+
+// Module scope so the nested save callbacks stay shallow enough to read; the
+// term itself carries no component state.
+const addTerm = async (
+  sourceValue: string,
+  destinationValue: string,
+  replacement: boolean,
+): Promise<void> => {
+  const newTerm: Term = {
+    id: createId(),
+    createdAt: dayjs().toISOString(),
+    sourceValue,
+    destinationValue,
+    isReplacement: replacement,
+  };
+
+  try {
+    await withLocalDataWrite(async (lease) => {
+      produceAppState((draft) => {
+        draft.termById[newTerm.id] = newTerm;
+        draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
+      }, lease);
+
+      await createDictionaryTerm(
+        newTerm,
+        (created) => {
+          if (getAppState().termById[newTerm.id] === newTerm) {
+            produceAppState((draft) => {
+              draft.termById[created.id] = created;
+            }, lease);
+          }
+          setLocalStorageValue("mausvoice:checklist-dictionary", true, lease);
+        },
+        (error) => {
+          produceAppState((draft) => {
+            delete draft.termById[newTerm.id];
+            draft.dictionary.termIds = draft.dictionary.termIds.filter(
+              (termId) => termId !== newTerm.id,
+            );
+          }, lease);
+          showErrorSnackbar(error);
+        },
+        lease,
+      );
+    });
+  } catch (error) {
+    showErrorSnackbar(error);
+  }
+};
 
 export default function DictionaryPage() {
   const termIds = useAppStore((state) => state.dictionary.termIds);
@@ -23,58 +73,17 @@ export default function DictionaryPage() {
     await loadDictionary();
   }, []);
 
-  const addTerm = useCallback(
-    async (
-      sourceValue: string,
-      destinationValue: string,
-      replacement: boolean,
-    ) => {
-      const newTerm: Term = {
-        id: createId(),
-        createdAt: dayjs().toISOString(),
-        sourceValue,
-        destinationValue,
-        isReplacement: replacement,
-      };
-
-      produceAppState((draft) => {
-        draft.termById[newTerm.id] = newTerm;
-        draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
-      });
-
-      try {
-        const created = await getTermRepo().createTerm(newTerm);
-        produceAppState((draft) => {
-          draft.termById[created.id] = created;
-        });
-        setLocalStorageValue("mausvoice:checklist-dictionary", true);
-      } catch (error) {
-        produceAppState((draft) => {
-          delete draft.termById[newTerm.id];
-          draft.dictionary.termIds = draft.dictionary.termIds.filter(
-            (termId) => termId !== newTerm.id,
-          );
-        });
-        showErrorSnackbar(error);
-      }
-    },
-    [],
-  );
-
-  const handleAddGlossaryTerms = useCallback(
-    async (terms: string[]) => {
-      for (const term of terms) {
-        await addTerm(term, "", false);
-      }
-    },
-    [addTerm],
-  );
+  const handleAddGlossaryTerms = useCallback(async (terms: string[]) => {
+    for (const term of terms) {
+      await addTerm(term, "", false);
+    }
+  }, []);
 
   const handleAddReplacement = useCallback(
     async (source: string, destination: string) => {
       await addTerm(source, destination, true);
     },
-    [addTerm],
+    [],
   );
 
   return (
@@ -82,12 +91,13 @@ export default function DictionaryPage() {
       <ScrollListPage
         title={<FormattedMessage defaultMessage="Dictionary" />}
         subtitle={
-          <FormattedMessage defaultMessage="mausVoice may misunderstand you on occasion. If you see certain words being missed frequently, you can define a replacement rule here to fix the spelling automatically." />
+          <FormattedMessage defaultMessage="mausVoice may misunderstand you on occasion. Add glossary terms to bias recognition toward the names and words you use, or define a replacement rule to fix the spelling automatically." />
         }
         action={
           <Button
+            data-dictionary-add
             variant="text"
-            startIcon={<AddRoundedIcon />}
+            startIcon={<Plus size={16} strokeWidth={2} />}
             onClick={() => setIsAddDialogOpen(true)}
           >
             <FormattedMessage defaultMessage="Add" />

@@ -1,22 +1,27 @@
-import { retry, countWords } from "@maus-inc/utilities";
+import { HttpError, retry, countWords } from "@maus-inc/utilities";
+import type { CustomFetch } from "./types";
 
 export type ElevenLabsTestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const elevenlabsTestIntegration = async ({
   apiKey,
+  customFetch = fetch,
 }: ElevenLabsTestIntegrationArgs): Promise<boolean> => {
-  const response = await fetch("https://api.elevenlabs.io/v1/user", {
+  const response = await customFetch("https://api.elevenlabs.io/v1/user", {
     method: "GET",
     headers: { "xi-api-key": apiKey },
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(
+    throw new HttpError(
+      response.status,
       detail
         ? `ElevenLabs responded ${response.status}: ${detail}`
         : `ElevenLabs responded with status ${response.status}`,
+      { retryAfter: response.headers.get("retry-after") },
     );
   }
   return true;
@@ -27,6 +32,12 @@ export type ElevenLabsTranscriptionArgs = {
   blob: ArrayBuffer | Buffer;
   ext: string;
   language?: string;
+  /**
+   * Keyterms bias recognition toward these terms (scribe_v2 supports
+   * keyterm prompting). Repeated `keyterms` form fields.
+   */
+  keyterms?: string[];
+  customFetch?: CustomFetch;
 };
 
 export type ElevenLabsTranscribeAudioOutput = {
@@ -39,6 +50,8 @@ export const elevenlabsTranscribeAudio = async ({
   blob,
   ext,
   language,
+  keyterms,
+  customFetch = fetch,
 }: ElevenLabsTranscriptionArgs): Promise<ElevenLabsTranscribeAudioOutput> => {
   return retry({
     retries: 3,
@@ -48,12 +61,18 @@ export const elevenlabsTranscribeAudio = async ({
         blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
       const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
       formData.append("file", audioBlob, `audio.${ext}`);
-      formData.append("model_id", "scribe_v1");
+      formData.append("model_id", "scribe_v2");
       if (language && language !== "auto") {
         formData.append("language_code", language);
       }
+      for (const term of keyterms ?? []) {
+        const trimmed = term.trim();
+        if (trimmed) {
+          formData.append("keyterms", trimmed);
+        }
+      }
 
-      const response = await fetch(
+      const response = await customFetch(
         "https://api.elevenlabs.io/v1/speech-to-text",
         {
           method: "POST",
@@ -66,8 +85,10 @@ export const elevenlabsTranscribeAudio = async ({
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
+        throw new HttpError(
+          response.status,
           `ElevenLabs API request failed with status ${response.status}: ${errorText}`,
+          { retryAfter: response.headers.get("retry-after") },
         );
       }
 
@@ -85,25 +106,4 @@ export const elevenlabsTranscribeAudio = async ({
   });
 };
 
-export const convertFloat32ToBase64PCM16 = (
-  float32Array: Float32Array | number[],
-): string => {
-  const samples = Array.isArray(float32Array)
-    ? float32Array
-    : Array.from(float32Array);
-  const buffer = new ArrayBuffer(samples.length * 2);
-  const view = new DataView(buffer);
-
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]!));
-    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-  }
-
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]!);
-  }
-
-  return btoa(binary);
-};
+export { convertFloat32ToBase64PCM16 } from "./audio-convert.utils";

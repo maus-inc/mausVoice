@@ -20,10 +20,7 @@ mod parse_tests {
     #[test]
     fn default_is_shift_insert() {
         assert_eq!(parse_paste_keystroke(None), PasteKeystroke::ShiftInsert);
-        assert_eq!(
-            parse_paste_keystroke(Some("")),
-            PasteKeystroke::ShiftInsert
-        );
+        assert_eq!(parse_paste_keystroke(Some("")), PasteKeystroke::ShiftInsert);
         assert_eq!(
             parse_paste_keystroke(Some("unknown")),
             PasteKeystroke::ShiftInsert
@@ -32,10 +29,7 @@ mod parse_tests {
 
     #[test]
     fn ctrl_v_still_resolves_when_explicit() {
-        assert_eq!(
-            parse_paste_keystroke(Some("ctrl+v")),
-            PasteKeystroke::CtrlV
-        );
+        assert_eq!(parse_paste_keystroke(Some("ctrl+v")), PasteKeystroke::CtrlV);
     }
 
     #[test]
@@ -54,4 +48,3 @@ mod parse_tests {
         );
     }
 }
-

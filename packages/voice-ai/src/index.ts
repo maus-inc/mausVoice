@@ -1,4 +1,5 @@
 export * from "./types";
+export * from "./provider-error.utils";
 export * from "./claude.utils";
 export * from "./groq.utils";
 export * from "./openai.utils";
@@ -14,3 +15,6 @@ export * from "./gemini.utils";
 export * from "./cerebras.utils";
 export * from "./speaches.utils";
 export * from "./xai.utils";
+export * from "./gladia.utils";
+export * from "./query-params.utils";
+export * from "./reasoning.utils";

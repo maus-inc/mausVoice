@@ -8,29 +8,96 @@ import {
   Switch,
   Typography,
 } from "@mui/material";
-import { ChangeEvent, useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useId, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   setDictationAudioDim,
   setInteractionChimeEnabled,
+  setInteractionFeedbackVolume,
 } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { getMyUser } from "../../utils/user.utils";
 import { ElasticSlider } from "../common/ElasticSlider";
 import { SettingSection } from "../common/SettingSection";
 
+type ThockVolumeControlProps = {
+  enabled: boolean;
+  volume: number;
+  onCommit: (v: number) => void | Promise<void>;
+};
+
+/**
+ * Slider row for the interaction-feedback (thock) click volume. Its
+ * range mirrors the Rust sink's safe window.
+ */
+const ThockVolumeControl = ({
+  enabled,
+  volume,
+  onCommit,
+}: ThockVolumeControlProps) => {
+  const intl = useIntl();
+  const [display, setDisplay] = useState(volume);
+  useEffect(() => {
+    setDisplay(volume);
+  }, [volume]);
+  return (
+    <Box sx={{ mt: 2, pl: 1, opacity: enabled ? 1 : 0.4 }}>
+      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+        <FormattedMessage defaultMessage="Pill click volume" />
+      </Typography>
+      <Typography
+        variant="caption"
+        sx={{ color: "text.secondary", display: "block", mb: 1 }}
+      >
+        {/* Scoped to the pill's own click. The start and stop recording clips go
+            through `play_audio`, which plays the clip at full volume; only the
+            pill thock path reads `interactionFeedbackVolume`. Claiming the
+            slider covers recording feedback too promised a control that does
+            not change it. */}
+        <FormattedMessage defaultMessage="Lower the volume of the click the pill makes when you press it, or turn the click off entirely." />
+      </Typography>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <ElasticSlider
+          value={volume}
+          onChangeDisplay={setDisplay}
+          onCommit={onCommit}
+          // The effective range matches the Rust sink's safe window
+          // [0.05, 0.5]; showing a wider range would persist values
+          // the sink silently caps at 50%.
+          min={0.05}
+          max={0.5}
+          step={0.05}
+          valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
+          disabled={!enabled}
+          ariaLabel={intl.formatMessage({
+            defaultMessage: "Pill click volume",
+          })}
+        />
+        <Typography variant="body2" sx={{ minWidth: 40, textAlign: "right" }}>
+          {Math.round(display * 100)}%
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
+/** Audio settings dialog: interaction chime toggle, thock volume slider, and dictation dim. */
 export const AudioDialog = () => {
   const intl = useIntl();
-  const [open, playInteractionChime, dictationAudioDim] = useAppStore(
-    (state) => {
-      const user = getMyUser(state);
-      return [
-        state.settings.audioDialogOpen,
-        user?.playInteractionChime ?? true,
-        state.userPrefs?.dictationAudioDim ?? 1.0,
-      ] as const;
-    },
-  );
+  const feedbackId = useId();
+  const [
+    open,
+    playInteractionChime,
+    interactionFeedbackVolume,
+    dictationAudioDim,
+  ] = useAppStore((state) => {
+    const user = getMyUser(state);
+    return [
+      state.settings.audioDialogOpen,
+      user?.playInteractionChime ?? true,
+      user?.interactionFeedbackVolume ?? 0.35,
+      state.userPrefs?.dictationAudioDim ?? 1.0,
+    ] as const;
+  });
 
   const handleClose = () => {
     produceAppState((draft) => {
@@ -40,7 +107,7 @@ export const AudioDialog = () => {
 
   const handleToggle = (event: ChangeEvent<HTMLInputElement>) => {
     const enabled = event.target.checked;
-    void setInteractionChimeEnabled(enabled);
+    void setInteractionChimeEnabled(enabled).catch(() => {});
   };
 
   // Live display value while dragging; the persisted value updates on commit.
@@ -49,25 +116,41 @@ export const AudioDialog = () => {
   useEffect(() => {
     setDisplayDim(dictationAudioDim);
   }, [dictationAudioDim]);
-
   return (
     <Dialog open={open} onClose={handleClose}>
       <DialogTitle>
         <FormattedMessage defaultMessage="Audio" />
       </DialogTitle>
-      <DialogContent sx={{ minWidth: 360 }}>
+      <DialogContent sx={{ minWidth: "min(360px, 100%)" }}>
         <SettingSection
-          title={<FormattedMessage defaultMessage="Interaction chime" />}
+          title={
+            <span id={feedbackId}>
+              <FormattedMessage defaultMessage="Interaction feedback" />
+            </span>
+          }
           description={
-            <FormattedMessage defaultMessage="Play a sound when you start or stop recording." />
+            <span id={`${feedbackId}-description`}>
+              <FormattedMessage defaultMessage="Play a short haptic-style click when you press the pill or start and stop recording. No sound plays while a recording is processing." />
+            </span>
           }
           action={
             <Switch
               edge="end"
               checked={playInteractionChime}
               onChange={handleToggle}
+              slotProps={{
+                input: {
+                  "aria-labelledby": feedbackId,
+                  "aria-describedby": `${feedbackId}-description`,
+                },
+              }}
             />
           }
+        />
+        <ThockVolumeControl
+          enabled={playInteractionChime}
+          volume={interactionFeedbackVolume}
+          onCommit={setInteractionFeedbackVolume}
         />
         <Box sx={{ mt: 3 }}>
           <Typography variant="body1" sx={{ fontWeight: 600 }}>
@@ -85,13 +168,12 @@ export const AudioDialog = () => {
           <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
             <ElasticSlider
               value={dictationAudioDim}
-              onCommit={(v) => {
-                void setDictationAudioDim(v);
-              }}
+              onCommit={setDictationAudioDim}
               onChangeDisplay={setDisplayDim}
               min={0}
               max={1}
               step={0.05}
+              valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
               ariaLabel={intl.formatMessage({
                 defaultMessage: "Dictation audio dim level",
               })}

@@ -91,13 +91,17 @@ info "Checking for Node.js..."
 if command_exists node; then
   NODE_VERSION=$(node -v | sed 's/v//')
   NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d. -f1)
-  if [[ "$NODE_MAJOR" -ge 18 ]]; then
-    ok "Node.js v${NODE_VERSION} found."
+  if [[ "$NODE_MAJOR" -ge 20 ]]; then
+    if [[ "$NODE_MAJOR" -lt 24 ]]; then
+      warn "Node.js v${NODE_VERSION} meets engines (>=20). CI and .nvmrc pin v24."
+    else
+      ok "Node.js v${NODE_VERSION} found."
+    fi
   else
-    ERRORS+=("Node.js v${NODE_VERSION} found but v18+ is required. Update via https://nodejs.org or nvm.")
+    ERRORS+=("Node.js v${NODE_VERSION} found but v20+ is required (.nvmrc is v24). Use nvm/fnm.")
   fi
 else
-  ERRORS+=("Node.js is not installed. Install v18+ from https://nodejs.org or via nvm.")
+  ERRORS+=("Node.js is not installed. Install v24 from .nvmrc (nvm/fnm) or https://nodejs.org.")
 fi
 
 # --- pnpm ---

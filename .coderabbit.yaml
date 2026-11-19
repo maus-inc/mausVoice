@@ -1,0 +1,58 @@
+# https://docs.coderabbit.ai/getting-started/yaml-configuration
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  in_progress_fortune: false
+  review_status: true
+  review_details: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - ^main$
+  path_filters:
+    - "!**/Cargo.lock"
+    - "!pnpm-lock.yaml"
+    - "!packages/desktop-native-apis/src/bindings.ts"
+    - "!apps/docs/dist/**"
+    - "!**/*.tsbuildinfo"
+  path_instructions:
+    - path: "apps/desktop/src/**/*.{ts,tsx}"
+      instructions: |
+        mausVoice is a Tauri 2 desktop app with a React 19 and MUI renderer. Rust is the API, TypeScript is the brain.
+
+        State lives in Zustand with Immer. Do not add state outside it. Data flows from actions to repos to Tauri commands.
+        Style with the design tokens in apps/desktop/src/styles and apps/desktop/src/theme.ts. A hard-coded colour, radius, duration or font size is a defect.
+        Both light and dark modes ship. A surface that reads correctly in one mode only is a defect.
+        User-visible strings go through FormattedMessage or useIntl, never an id prop.
+        Flag unused exports, dead state, needless casts, duplicated conditionals, and comments that restate the code.
+    - path: "apps/desktop/src-tauri/**/*.rs"
+      instructions: |
+        Prefer small, tested command handlers inside commands.rs. Do not invent IPC outside the registered invoke_handler in app.rs.
+        Match the error types in src-tauri/src/errors.rs. Call out panics on request paths and unwraps on user input.
+        Database migrations are forward only and live in src-tauri/src/db/migrations. Never renumber an applied migration.
+    - path: "packages/rust_transcription/**/*.rs"
+      instructions: |
+        The transcription sidecar is safety critical. Bounded buffers, checked casts, and no retry that replays an aborted request.
+        Model downloads are pinned by sha256. Do not relax a pin or a checksum.
+    - path: "**/*.{md,mdx}"
+      instructions: |
+        mausVoice is a desktop dictation and voice app. Short, specific sentences. No em dashes, straight quotes, sentence case headings.
+        Prefer concrete paths, numbers and mechanisms over description.
+  slop_detection:
+    enabled: true
+    include_all_authors: true
+chat:
+  auto_reply: true
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "CONTRIBUTING.md"
+      - "COMMIT.md"
+      - "REVIEW.md"
+      - "FULL-REVIEW.md"

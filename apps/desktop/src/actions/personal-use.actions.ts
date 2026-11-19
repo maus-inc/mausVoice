@@ -6,30 +6,19 @@ import { getLogger } from "../utils/log.utils";
 import {
   PERSONAL_DEEPGRAM_API_KEY_ID,
   PERSONAL_DEEPGRAM_API_KEY_NAME,
+  PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
   PERSONAL_GROQ_API_KEY_ID,
   PERSONAL_GROQ_API_KEY_NAME,
   PERSONAL_GROQ_POST_PROCESSING_MODEL,
   PERSONAL_GROQ_TRANSCRIPTION_MODEL,
+  buildPersonalGroqKeyUpdate,
+  findPersonalApiKey,
   isPersonalUseEnabled,
   resolvePersonalTranscriptionTarget,
 } from "../utils/personal-use.utils";
 
-const PREVIOUS_PERSONAL_GROQ_TRANSCRIPTION_MODEL = "whisper-large-v3";
-
-const getPersonalGroqApiKey = (): ApiKey | null => {
-  const state = getAppState();
-  return (
-    state.settings.apiKeys.find(
-      (apiKey) => apiKey.id === PERSONAL_GROQ_API_KEY_ID,
-    ) ??
-    state.settings.apiKeys.find(
-      (apiKey) =>
-        apiKey.provider === "groq" &&
-        apiKey.name.trim() === PERSONAL_GROQ_API_KEY_NAME,
-    ) ??
-    null
-  );
-};
+const getPersonalGroqApiKey = (): ApiKey | null =>
+  findPersonalApiKey(getAppState().settings.apiKeys, "groq");
 
 const upsertPersonalGroqApiKey = async (
   configuredKey: string,
@@ -52,25 +41,10 @@ const upsertPersonalGroqApiKey = async (
     });
   }
 
-  const updatePayload: Parameters<typeof updateApiKey>[0] = {
-    id: existing.id,
-  };
-  if (existing.name !== PERSONAL_GROQ_API_KEY_NAME) {
-    updatePayload.name = PERSONAL_GROQ_API_KEY_NAME;
-  }
-  if (existing.keyFull !== configuredKey) {
-    updatePayload.key = configuredKey;
-  }
-  if (
-    !existing.transcriptionModel ||
-    existing.transcriptionModel === PREVIOUS_PERSONAL_GROQ_TRANSCRIPTION_MODEL
-  ) {
-    updatePayload.transcriptionModel = PERSONAL_GROQ_TRANSCRIPTION_MODEL;
-  }
-  if (!existing.postProcessingModel) {
-    updatePayload.postProcessingModel = PERSONAL_GROQ_POST_PROCESSING_MODEL;
-  }
+  const updatePayload = buildPersonalGroqKeyUpdate(existing, configuredKey);
 
+  // Only the id came back, so the stored key already matches what was
+  // configured and there is nothing to write.
   if (Object.keys(updatePayload).length === 1) {
     return existing;
   }
@@ -78,20 +52,8 @@ const upsertPersonalGroqApiKey = async (
   return updateApiKey(updatePayload);
 };
 
-const getPersonalDeepgramApiKey = (): ApiKey | null => {
-  const state = getAppState();
-  return (
-    state.settings.apiKeys.find(
-      (apiKey) => apiKey.id === PERSONAL_DEEPGRAM_API_KEY_ID,
-    ) ??
-    state.settings.apiKeys.find(
-      (apiKey) =>
-        apiKey.provider === "deepgram" &&
-        apiKey.name.trim() === PERSONAL_DEEPGRAM_API_KEY_NAME,
-    ) ??
-    null
-  );
-};
+const getPersonalDeepgramApiKey = (): ApiKey | null =>
+  findPersonalApiKey(getAppState().settings.apiKeys, "deepgram");
 
 const upsertPersonalDeepgramApiKey = async (
   configuredKey: string,
@@ -100,11 +62,16 @@ const upsertPersonalDeepgramApiKey = async (
   const existing = getPersonalDeepgramApiKey();
 
   if (!existing) {
-    return createApiKey({
+    const created = await createApiKey({
       id: PERSONAL_DEEPGRAM_API_KEY_ID,
       name: PERSONAL_DEEPGRAM_API_KEY_NAME,
       provider: "deepgram",
       key: configuredKey,
+    });
+
+    return updateApiKey({
+      id: created.id,
+      transcriptionModel: PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
     });
   }
 
@@ -116,6 +83,11 @@ const upsertPersonalDeepgramApiKey = async (
   }
   if (existing.keyFull !== configuredKey) {
     updatePayload.key = configuredKey;
+  }
+  // Backfills keys created before the preset existed, which left the model
+  // picker empty. A model the user picked themselves is left alone.
+  if (!existing.transcriptionModel) {
+    updatePayload.transcriptionModel = PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL;
   }
 
   if (Object.keys(updatePayload).length === 1) {
@@ -243,5 +215,16 @@ export const configurePersonalDefaults = async (): Promise<void> => {
 
   if (groqApiKey) {
     await applyPersonalGenerationDefaults(groqApiKey);
+  }
+
+  // Backfill here as well as on save. Keys created before the Deepgram preset
+  // existed carry no transcription model, and this is the only path that runs
+  // for an already-configured install, so without it those users keep an empty
+  // model picker until they manually re-enter the key.
+  if (deepgramApiKey && !deepgramApiKey.transcriptionModel) {
+    await updateApiKey({
+      id: deepgramApiKey.id,
+      transcriptionModel: PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
+    });
   }
 };

@@ -7,7 +7,10 @@ sidebar:
 
 The main window uses a left navigation rail. Its route labels are the most reliable landmarks when a guide tells you where to change something.
 
-- **Home** is the default dashboard and the quickest place to see the current dictation state.
+- **Home** is the default dashboard. It shows current streak, words this month, lifetime words, recent dictations, and a daily activity chart for the past 53 calendar weeks. Dictation speed appears when recent saved recordings include audio-duration data.
+
+The activity chart groups dictations by the device's local calendar date. The dashboard stores daily word totals locally without copying transcript text into the activity records.
+
 - **History** lists saved transcriptions and opens their details.
 - **Dictionary** manages glossary hints and replacement rules.
 - **Styles** manages the writing instructions applied during post-processing.

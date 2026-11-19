@@ -1,35 +1,118 @@
 import { LoadingButton } from "@mui/lab";
 import { Alert, Box, Button, Stack, useTheme } from "@mui/material";
 import { Nullable } from "@maus-inc/types";
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
-import { buildWaveFile, ensureFloat32Array } from "../../utils/audio.utils";
+import type { StopRecordingResponse } from "../../types/transcription-session.types";
+import {
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
+} from "../../utils/local-data-write-gate";
+import { invokeStopRecording } from "../../utils/native-recording-session";
 import { AudioWaveform } from "../common/AudioWaveform";
+import {
+  invokeGuardedRecordingStart,
+  subscribeRecordingAbortForClear,
+} from "../root/recording-start-gate";
+import {
+  createPreviewUrl,
+  usePreviewPlayback,
+} from "./microphone-test-preview";
 
-type StopRecordingResponse = {
-  samples: number[] | Float32Array;
-  sampleRate?: number;
+const MicrophoneTestControls = ({
+  buttonLayout,
+  justifyButtons,
+  isTestRunning,
+  isTestLoading,
+  isTestStopping,
+  disableStartButton,
+  disableStopButton,
+  disabled,
+  previewUrl,
+  isPreviewPlaying,
+  onStartTest,
+  onStopTest,
+  onTogglePreview,
+}: {
+  buttonLayout: "row" | "column";
+  justifyButtons: "flex-start" | "center" | "flex-end" | "space-between";
+  isTestRunning: boolean;
+  isTestLoading: boolean;
+  isTestStopping: boolean;
+  disableStartButton: boolean;
+  disableStopButton: boolean;
+  disabled: boolean;
+  previewUrl: string | null;
+  isPreviewPlaying: boolean;
+  onStartTest: () => void;
+  onStopTest: () => void;
+  onTogglePreview: () => void;
+}) => {
+  return (
+    <Stack
+      direction={buttonLayout}
+      spacing={1.5}
+      sx={{
+        alignItems: buttonLayout === "row" ? "center" : "stretch",
+        width: "100%",
+        justifyContent: justifyButtons,
+      }}
+    >
+      <LoadingButton
+        variant={isTestRunning ? "outlined" : "contained"}
+        color={isTestRunning ? "error" : "primary"}
+        onClick={isTestRunning ? onStopTest : onStartTest}
+        loading={isTestLoading || isTestStopping}
+        disabled={isTestRunning ? disableStopButton : disableStartButton}
+        fullWidth={buttonLayout === "column"}
+      >
+        {isTestRunning ? (
+          <FormattedMessage defaultMessage="Finish" />
+        ) : (
+          <FormattedMessage defaultMessage="Record" />
+        )}
+      </LoadingButton>
+      <Button
+        variant="outlined"
+        disabled={previewUrl == null || disabled}
+        onClick={onTogglePreview}
+        fullWidth={buttonLayout === "column"}
+      >
+        {isPreviewPlaying ? (
+          <FormattedMessage defaultMessage="Pause" />
+        ) : (
+          <FormattedMessage defaultMessage="Play" />
+        )}
+      </Button>
+    </Stack>
+  );
 };
 
-const createPreviewUrl = (
-  rawSamples: number[] | Float32Array,
-  sampleRate: number,
-): string | null => {
-  if (!sampleRate || !Number.isFinite(sampleRate) || sampleRate <= 0) {
-    return null;
-  }
+const MicrophoneTestAlerts = ({
+  isGlobalRecording,
+  testError,
+  onDismissError,
+}: {
+  isGlobalRecording: boolean;
+  testError: string | null;
+  onDismissError: () => void;
+}) => {
+  return (
+    <>
+      {isGlobalRecording && (
+        <Alert severity="info">
+          <FormattedMessage defaultMessage="You cannot start a microphone test while a transcription is in progress." />
+        </Alert>
+      )}
 
-  const samples = ensureFloat32Array(rawSamples ?? []);
-
-  if (!samples || samples.length === 0) {
-    return null;
-  }
-
-  const wavBuffer = buildWaveFile(samples, sampleRate);
-  const blob = new Blob([wavBuffer], { type: "audio/wav" });
-  return URL.createObjectURL(blob);
+      {testError && (
+        <Alert severity="warning" onClose={onDismissError}>
+          {testError}
+        </Alert>
+      )}
+    </>
+  );
 };
 
 export type MicrophoneTesterProps = {
@@ -71,6 +154,20 @@ export const MicrophoneTester = ({
   const isTestRunning = testState === "recording";
   const isTestLoading = testState === "starting";
   const isTestStopping = testState === "stopping";
+  const mountedRef = useRef(true);
+  const opIdRef = useRef(0);
+  const testStateRef = useRef(testState);
+  testStateRef.current = testState;
+
+  const setSyncedTestState = useCallback(
+    (next: "idle" | "starting" | "recording" | "stopping") => {
+      testStateRef.current = next;
+      if (mountedRef.current) {
+        setTestState(next);
+      }
+    },
+    [],
+  );
 
   const releasePreviewAudio = useCallback(() => {
     const audio = previewAudioRef.current;
@@ -105,106 +202,125 @@ export const MicrophoneTester = ({
 
   useEffect(() => () => clearPreviewUrl(), [clearPreviewUrl]);
 
-  useEffect(() => {
-    if (!previewUrl) {
-      setIsPreviewPlaying(false);
-      return;
-    }
-
-    const audio = new Audio(previewUrl);
-    audio.preload = "auto";
-
-    const handlePlay = () => setIsPreviewPlaying(true);
-    const handlePause = () => setIsPreviewPlaying(false);
-    const handleEnded = () => setIsPreviewPlaying(false);
-
-    audio.addEventListener("play", handlePlay);
-    audio.addEventListener("pause", handlePause);
-    audio.addEventListener("ended", handleEnded);
-
-    previewAudioRef.current = audio;
-
-    return () => {
-      audio.removeEventListener("play", handlePlay);
-      audio.removeEventListener("pause", handlePause);
-      audio.removeEventListener("ended", handleEnded);
-      audio.pause();
-      if (previewAudioRef.current === audio) {
-        previewAudioRef.current = null;
-      }
-    };
-  }, [previewUrl]);
+  usePreviewPlayback({
+    previewUrl,
+    previewAudioRef,
+    setIsPreviewPlaying,
+  });
 
   const handleStartTest = useCallback(async () => {
-    if (isTestRunning || isTestLoading || isGlobalRecording || disabled) {
+    if (
+      testStateRef.current !== "idle" ||
+      isGlobalRecording ||
+      disabled ||
+      isLocalDataClearRequested()
+    ) {
       return;
     }
 
+    const opId = ++opIdRef.current;
+    const clearGeneration = getLocalDataClearGeneration();
     setTestError(null);
     clearPreviewUrl();
-    setTestState("starting");
+    setSyncedTestState("starting");
 
     try {
-      await invoke<void>("start_recording", {
-        args: { preferredMicrophone: preferredMicrophone ?? null },
-      });
-      setTestState("recording");
+      await invokeGuardedRecordingStart(preferredMicrophone ?? null);
+      if (
+        !mountedRef.current ||
+        opId !== opIdRef.current ||
+        isLocalDataClearRequested() ||
+        clearGeneration !== getLocalDataClearGeneration()
+      ) {
+        await invokeStopRecording().catch(() => undefined);
+        if (opId === opIdRef.current) {
+          setSyncedTestState("idle");
+        }
+        return;
+      }
+      setSyncedTestState("recording");
     } catch (error) {
-      console.error("Failed to start microphone test", error);
-      setTestError("Unable to start microphone test. Please try again.");
-      setTestState("idle");
+      if (
+        !isLocalDataClearRequested() &&
+        clearGeneration === getLocalDataClearGeneration()
+      ) {
+        console.error("Failed to start microphone test", error);
+        if (mountedRef.current && opId === opIdRef.current) {
+          setTestError("Unable to start microphone test. Please try again.");
+        }
+      }
+      if (opId === opIdRef.current) {
+        setSyncedTestState("idle");
+      }
     }
   }, [
     clearPreviewUrl,
     disabled,
     isGlobalRecording,
-    isTestLoading,
-    isTestRunning,
     preferredMicrophone,
+    setSyncedTestState,
   ]);
+
+  /** Publish what the test captured, and say why when it is not a clean take.
+   *
+   * A device that stops delivering audio partway through still yields usable
+   * samples, so the preview plays them and the message explains the short
+   * result instead of reporting a clean test. */
+  const showPreviewOutcome = useCallback(
+    (response: StopRecordingResponse) => {
+      const url = createPreviewUrl(response.samples, response.sampleRate ?? 0);
+      if (response.captureFailed) {
+        updatePreviewUrl(url ?? null);
+        setTestError(
+          "The microphone stopped partway through. The preview is shorter than the test.",
+        );
+        return;
+      }
+      if (url) {
+        updatePreviewUrl(url);
+        return;
+      }
+      updatePreviewUrl(null);
+      setTestError(
+        "We didn't detect any audio. Try speaking while the test is running.",
+      );
+    },
+    [createPreviewUrl, setTestError, updatePreviewUrl],
+  );
 
   const handleStopTest = useCallback(
     async (opts?: { silent?: boolean }) => {
-      if (testState !== "recording" && testState !== "starting") {
+      const currentState = testStateRef.current;
+      if (currentState !== "recording" && currentState !== "starting") {
         return;
       }
 
-      setTestState("stopping");
+      opIdRef.current += 1;
+      setSyncedTestState("stopping");
 
       try {
-        const response = await invoke<StopRecordingResponse>("stop_recording");
-        const rate = response.sampleRate ?? 0;
-        const samplesArray =
-          response.samples instanceof Float32Array
-            ? Array.from(response.samples)
-            : response.samples;
+        const response = await invokeStopRecording();
 
-        if (!opts?.silent) {
-          const url = createPreviewUrl(samplesArray ?? [], rate);
-          if (url) {
-            updatePreviewUrl(url);
-          } else {
-            updatePreviewUrl(null);
-            setTestError(
-              "We didn't detect any audio. Try speaking while the test is running.",
-            );
-          }
+        if (!opts?.silent && !isLocalDataClearRequested()) {
+          showPreviewOutcome(response);
         } else {
           updatePreviewUrl(null);
         }
       } catch (error) {
         console.error("Failed to stop microphone test", error);
-        if (!opts?.silent) {
+        if (!opts?.silent && !isLocalDataClearRequested()) {
           setTestError("Unable to stop microphone test. Please try again.");
         }
       } finally {
-        setTestState("idle");
-        produceAppState((draft) => {
-          draft.audioLevels = [];
-        });
+        setSyncedTestState("idle");
+        if (!isLocalDataClearRequested()) {
+          produceAppState((draft) => {
+            draft.audioLevels = [];
+          });
+        }
       }
     },
-    [testState, updatePreviewUrl],
+    [setSyncedTestState, updatePreviewUrl],
   );
 
   const handleTogglePreview = useCallback(() => {
@@ -246,7 +362,20 @@ export const MicrophoneTester = ({
   }, [handleStopTest]);
 
   useEffect(() => {
+    mountedRef.current = true;
+    const unsubscribeClear = subscribeRecordingAbortForClear(
+      () =>
+        testStateRef.current === "starting" ||
+        testStateRef.current === "recording" ||
+        previewUrlRef.current !== null,
+      async () => {
+        clearPreviewUrl();
+        await handleStopTestRef.current({ silent: true });
+      },
+    );
     return () => {
+      mountedRef.current = false;
+      unsubscribeClear();
       void handleStopTestRef.current({ silent: true });
       clearPreviewUrl();
     };
@@ -284,56 +413,27 @@ export const MicrophoneTester = ({
         />
       </Box>
 
-      <Stack
-        direction={buttonLayout}
-        spacing={1.5}
-        sx={{
-          alignItems: buttonLayout === "row" ? "center" : "stretch",
-          width: "100%",
-          justifyContent: justifyButtons,
-        }}
-      >
-        <LoadingButton
-          variant={isTestRunning ? "outlined" : "contained"}
-          color={isTestRunning ? "error" : "primary"}
-          onClick={
-            isTestRunning ? () => void handleStopTest() : handleStartTest
-          }
-          loading={isTestLoading || isTestStopping}
-          disabled={isTestRunning ? disableStopButton : disableStartButton}
-          fullWidth={buttonLayout === "column"}
-        >
-          {isTestRunning ? (
-            <FormattedMessage defaultMessage="Finish" />
-          ) : (
-            <FormattedMessage defaultMessage="Record" />
-          )}
-        </LoadingButton>
-        <Button
-          variant="outlined"
-          disabled={previewUrl == null || disabled}
-          onClick={handleTogglePreview}
-          fullWidth={buttonLayout === "column"}
-        >
-          {isPreviewPlaying ? (
-            <FormattedMessage defaultMessage="Pause" />
-          ) : (
-            <FormattedMessage defaultMessage="Play" />
-          )}
-        </Button>
-      </Stack>
+      <MicrophoneTestControls
+        buttonLayout={buttonLayout}
+        justifyButtons={justifyButtons}
+        isTestRunning={isTestRunning}
+        isTestLoading={isTestLoading}
+        isTestStopping={isTestStopping}
+        disableStartButton={disableStartButton}
+        disableStopButton={disableStopButton}
+        disabled={disabled}
+        previewUrl={previewUrl}
+        isPreviewPlaying={isPreviewPlaying}
+        onStartTest={() => void handleStartTest()}
+        onStopTest={() => void handleStopTest()}
+        onTogglePreview={handleTogglePreview}
+      />
 
-      {isGlobalRecording && (
-        <Alert severity="info">
-          <FormattedMessage defaultMessage="You cannot start a microphone test while a transcription is in progress." />
-        </Alert>
-      )}
-
-      {testError && (
-        <Alert severity="warning" onClose={() => setTestError(null)}>
-          {testError}
-        </Alert>
-      )}
+      <MicrophoneTestAlerts
+        isGlobalRecording={isGlobalRecording}
+        testError={testError}
+        onDismissError={() => setTestError(null)}
+      />
     </Stack>
   );
 };

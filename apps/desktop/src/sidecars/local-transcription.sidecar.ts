@@ -1,4 +1,4 @@
-import { appDataDir, join } from "@tauri-apps/api/path";
+import { appDataDir, join, resolveResource } from "@tauri-apps/api/path";
 import {
   LOCAL_WHISPER_MODELS,
   type LocalWhisperModel,
@@ -34,11 +34,17 @@ type SidecarDownloadSnapshot = {
   error: string | null;
 };
 
+type SidecarSegment = {
+  text: string;
+  noSpeechProb: number;
+};
+
 type SidecarTranscriptionResponse = {
   text: string;
   model: LocalWhisperModel;
   inferenceDevice: string;
   durationMs: number;
+  segments: SidecarSegment[];
 };
 
 type SidecarCreateTranscriptionSessionResponse = {
@@ -77,11 +83,14 @@ export type LocalSidecarTranscribeInput = {
   initialPrompt?: string;
   preferGpu: boolean;
   deviceId?: string;
+  hallucinationFilterEnabled?: boolean;
+  /** Aborts the finalize request and releases the sidecar session. */
+  signal?: AbortSignal;
 };
 
 export type LocalSidecarStreamingSessionInput = Omit<
   LocalSidecarTranscribeInput,
-  "samples"
+  "samples" | "signal"
 >;
 
 export type LocalSidecarTranscribeOutput = {
@@ -90,11 +99,12 @@ export type LocalSidecarTranscribeOutput = {
   inferenceDevice: string;
   durationMs: number;
   mode: SidecarMode;
+  segments: SidecarSegment[];
 };
 
 export type LocalSidecarStreamingSession = {
   writeAudioChunk: (samples: number[] | Float32Array) => void;
-  finalize: () => Promise<LocalSidecarTranscribeOutput>;
+  finalize: (signal?: AbortSignal) => Promise<LocalSidecarTranscribeOutput>;
   cleanup: () => void;
 };
 
@@ -163,6 +173,24 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       RUST_TRANSCRIPTION_PORT: "0",
       RUST_TRANSCRIPTION_MODELS_DIR: modelsDir,
     };
+  }
+
+  protected async buildSpawnCwd(): Promise<string | undefined> {
+    // On Windows the sherpa-onnx shared DLLs are bundled under
+    // `binaries/onnxruntime/`. Windows searches the child's working directory
+    // for import-table DLLs, so launching the sidecar with that folder as cwd
+    // lets it locate onnxruntime.dll / sherpa-onnx-c-api.dll without modifying
+    // the system PATH. On other platforms this folder is also bundled and the
+    // change is harmless (the sidecar resolves its own runtime via rpath and
+    // uses absolute paths for model data).
+    try {
+      return await resolveResource("binaries/onnxruntime");
+    } catch (error) {
+      getLogger().warning(
+        `[${this.config.logPrefix}] could not resolve sherpa runtime dir: ${toErrorMessage(error)}`,
+      );
+      return undefined;
+    }
   }
 
   protected parsePortFromLine(line: string): number | null {
@@ -309,6 +337,8 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   async createStreamingSession(
     input: LocalSidecarStreamingSessionInput,
+    /** Stops pending chunk uploads; finalize takes its own signal. */
+    signal?: AbortSignal,
   ): Promise<LocalSidecarStreamingSession> {
     await this.ensureModelReady(input.model);
 
@@ -354,7 +384,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     };
 
     const queueChunkUpload = (samples: Float32Array): void => {
-      if (released || queuedError || samples.length === 0) {
+      if (released || queuedError || signal?.aborted || samples.length === 0) {
         return;
       }
 
@@ -368,6 +398,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
           if (released || queuedError) {
             return;
           }
+          signal?.throwIfAborted();
 
           await this.requestJson<SidecarAppendTranscriptionChunkResponse>(
             `${sessionPath}/chunks`,
@@ -375,12 +406,14 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
               method: "POST",
               headers: { "Content-Type": "application/octet-stream" },
               body,
+              signal,
             },
             { retries: 1 },
           );
         })
         .catch((error) => {
           queuedError = error;
+          if (signal?.aborted) return;
           getLogger().warning(
             `[${this.config.logPrefix}] failed to stream audio chunk (${toErrorMessage(error)})`,
           );
@@ -394,7 +427,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
         }
         queueChunkUpload(this.toFloat32Array(samples));
       },
-      finalize: async () => {
+      finalize: async (signal) => {
         if (finalizePromise) {
           return await finalizePromise;
         }
@@ -413,7 +446,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
           );
           const result = await this.requestJson<SidecarTranscriptionResponse>(
             `${sessionPath}/finalize`,
-            { method: "POST" },
+            { method: "POST", signal },
           );
           getLogger().info(
             `[${this.config.logPrefix}] finalize response received (${result.text.length} chars)`,
@@ -426,6 +459,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
             inferenceDevice: result.inferenceDevice,
             durationMs: result.durationMs,
             mode: this.mode,
+            segments: result.segments ?? [],
           };
         })();
 
@@ -458,7 +492,8 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   private async transcribeInternal(
     input: LocalSidecarTranscribeInput,
   ): Promise<LocalSidecarTranscribeOutput> {
-    const session = await this.createStreamingSession(input);
+    input.signal?.throwIfAborted();
+    const session = await this.createStreamingSession(input, input.signal);
     const floatSamples = this.toFloat32Array(input.samples);
 
     try {
@@ -474,7 +509,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
         session.writeAudioChunk(floatSamples.subarray(cursor, end));
       }
 
-      return await session.finalize();
+      return await session.finalize(input.signal);
     } catch (error) {
       session.cleanup();
       throw error;
@@ -487,6 +522,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     language?: string;
     initialPrompt?: string;
     deviceId?: string;
+    hallucinationFilterEnabled: boolean;
   } {
     const normalizedDeviceId = input.deviceId?.trim().toLowerCase();
     const deviceId =
@@ -504,6 +540,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       language: input.language === "auto" ? undefined : input.language,
       initialPrompt: input.initialPrompt,
       deviceId,
+      hallucinationFilterEnabled: input.hallucinationFilterEnabled !== false,
     };
   }
 
@@ -537,13 +574,15 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   ): Promise<void> {
     const currentStatus = await this.getModelStatus(model, true);
 
-    if (!currentStatus.downloaded || !currentStatus.valid) {
-      const download = await this.downloadModelInternal(model);
-      this.assertDownloadCompleted(model, download);
+    if (currentStatus.downloaded && currentStatus.valid) {
+      this.markModelReady(model);
+      return;
     }
 
-    const finalStatus = await this.getModelStatus(model, true);
+    const download = await this.downloadModelInternal(model);
+    this.assertDownloadCompleted(model, download);
 
+    const finalStatus = await this.getModelStatus(model, true);
     if (!finalStatus.downloaded || !finalStatus.valid) {
       throw new Error(
         finalStatus.validationError ||

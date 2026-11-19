@@ -1,22 +1,24 @@
-import CloseIcon from "@mui/icons-material/Close";
 import {
   Button,
   Dialog,
   DialogActions,
   DialogContent,
-  DialogTitle,
-  IconButton,
   Stack,
   Typography,
 } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
+import {
+  DialogTitleWithClose,
+  useDialogTitleId,
+} from "../common/DialogTitleWithClose";
 import { AIPostProcessingConfiguration } from "./AIPostProcessingConfiguration";
 
 export const AIPostProcessingDialog = () => {
   const open = useAppStore(
     (state) => state.settings.aiPostProcessingDialogOpen,
   );
+  const titleId = useDialogTitleId();
 
   const handleClose = () => {
     produceAppState((draft) => {
@@ -25,18 +27,16 @@ export const AIPostProcessingDialog = () => {
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ display: "flex", alignItems: "center" }}>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth="sm"
+      fullWidth
+      aria-labelledby={titleId}
+    >
+      <DialogTitleWithClose onClose={handleClose} titleId={titleId}>
         <FormattedMessage defaultMessage="AI post processing" />
-        <IconButton
-          onClick={handleClose}
-          size="small"
-          sx={{ ml: "auto" }}
-          aria-label="Close"
-        >
-          <CloseIcon fontSize="small" />
-        </IconButton>
-      </DialogTitle>
+      </DialogTitleWithClose>
       <DialogContent dividers>
         <Stack
           spacing={3}

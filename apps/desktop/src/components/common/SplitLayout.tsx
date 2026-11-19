@@ -34,22 +34,24 @@ export const SplitLayout = ({ weights, children }: SplitLayoutProps) => {
     >
       {childArr.map((child, i) => {
         const w = weights[i] ?? 0;
-        const pct = w > 0 ? (w / total) * 100 : 0;
+        const grow = w > 0 ? w / total : 0;
 
         return (
           <Box
             key={i}
             sx={{
-              width: `${pct}%`,
               minWidth: 0,
               overflow: "hidden",
               display: "flex",
               flexDirection: "column",
-              transition: "width 300ms ease",
+              flexGrow: grow,
+              flexShrink: 1,
+              flexBasis: 0,
+              transition: "flex-grow 180ms cubic-bezier(0.23, 1, 0.32, 1)",
             }}
             onTransitionEnd={(e) => {
               if (
-                e.propertyName === "width" &&
+                e.propertyName === "flex-grow" &&
                 w === 0 &&
                 (e.target as HTMLElement).getBoundingClientRect().width === 0
               ) {

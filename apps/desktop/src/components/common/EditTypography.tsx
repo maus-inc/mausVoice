@@ -175,7 +175,7 @@ export const EditTypography: React.FC<EditTypographyProps> = ({
           onChange={(e) => setDraft(e.target.value)}
           onBlur={tryCommit}
           onKeyDown={handleKeyDown}
-          type={mode === "number" ? "text" : "text"}
+          type="text"
           size="small"
           sx={{
             width: getTextWidth(),

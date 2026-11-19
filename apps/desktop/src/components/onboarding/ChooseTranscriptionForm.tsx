@@ -1,14 +1,15 @@
-import { ArrowForward } from "@mui/icons-material";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Stack } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
-import remoteImage from "../../assets/2-remote.png";
+import { isMacOS } from "../../utils/env.utils";
 import { AITranscriptionConfiguration } from "../settings/AITranscriptionConfiguration";
+import { AudioTransmissionDisclosure } from "../settings/AudioTransmissionDisclosure";
 import {
   BackButton,
-  DualPaneLayout,
+  OnboardingContinueButton,
+  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
@@ -16,62 +17,54 @@ export const ChooseTranscriptionForm = () => {
   const { mode, selectedApiKeyId } = useAppStore(
     (state) => state.settings.aiTranscription,
   );
-
   const canContinue = mode === "api" ? Boolean(selectedApiKeyId) : true;
 
   const handleContinue = () => {
     trackButtonClick("onboarding_transcription_continue");
-    goToOnboardingPage("chooseLlm");
+    goToOnboardingPage(isMacOS() ? "micPerms" : "keybindings");
   };
 
   const form = (
     <OnboardingFormLayout
       back={<BackButton />}
       actions={
-        <Button
-          variant="contained"
-          endIcon={<ArrowForward />}
+        <OnboardingContinueButton
           onClick={handleContinue}
           disabled={!canContinue}
-        >
-          <FormattedMessage defaultMessage="Continue" />
-        </Button>
+        />
       }
     >
       <Stack spacing={3}>
-        <Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-              pb: 1,
-            }}
-          >
-            <FormattedMessage defaultMessage="Set up transcription" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
+        <OnboardingFormHeader
+          title={<FormattedMessage defaultMessage="Set up transcription" />}
+          subtitle={
             <FormattedMessage defaultMessage="Decide how mausVoice should process your recordings. Locally or through an API." />
-          </Typography>
-        </Box>
+          }
+        />
 
-        <AITranscriptionConfiguration />
+        <AITranscriptionConfiguration compactCards />
+
+        <AudioTransmissionDisclosure />
       </Stack>
     </OnboardingFormLayout>
   );
 
-  const rightContent = (
+  return (
     <Box
-      component="img"
-      src={remoteImage}
-      alt="Illustration"
-      sx={{ maxWidth: 400, maxHeight: 400 }}
-    />
+      sx={{
+        height: "100%",
+        width: "100%",
+        maxWidth: 840,
+        mx: "auto",
+        px: { xs: 2, sm: 5 },
+        pt: 2,
+        pb: 5,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+      }}
+    >
+      {form}
+    </Box>
   );
-
-  return <DualPaneLayout left={form} right={rightContent} />;
 };

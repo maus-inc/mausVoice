@@ -1,7 +1,8 @@
 import { Term } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
-import { BaseRepo } from "./base.repo";
+import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
+import { BaseRepo, withLocalDataWrite } from "./base.repo";
 
 type LocalTerm = {
   id: string;
@@ -33,9 +34,12 @@ const fromLocalTerm = (term: LocalTerm): Term => ({
 
 export abstract class BaseTermRepo extends BaseRepo {
   abstract listTerms(): Promise<Term[]>;
-  abstract createTerm(term: Term): Promise<Term>;
-  abstract updateTerm(term: Term): Promise<Term>;
-  abstract deleteTerm(termId: string): Promise<void>;
+  abstract createTerm(term: Term, lease?: LocalDataWriteLease): Promise<Term>;
+  abstract updateTerm(term: Term, lease?: LocalDataWriteLease): Promise<Term>;
+  abstract deleteTerm(
+    termId: string,
+    lease?: LocalDataWriteLease,
+  ): Promise<void>;
 }
 
 export class LocalTermRepo extends BaseTermRepo {
@@ -44,21 +48,28 @@ export class LocalTermRepo extends BaseTermRepo {
     return terms.map(fromLocalTerm);
   }
 
-  async createTerm(term: Term): Promise<Term> {
-    const created = await invoke<LocalTerm>("term_create", {
-      term: toLocalTerm(term),
-    });
-    return fromLocalTerm(created);
+  createTerm(term: Term, lease?: LocalDataWriteLease): Promise<Term> {
+    return withLocalDataWrite(async () => {
+      const created = await invoke<LocalTerm>("term_create", {
+        term: toLocalTerm(term),
+      });
+      return fromLocalTerm(created);
+    }, lease);
   }
 
-  async updateTerm(term: Term): Promise<Term> {
-    const updated = await invoke<LocalTerm>("term_update", {
-      term: toLocalTerm(term),
-    });
-    return fromLocalTerm(updated);
+  updateTerm(term: Term, lease?: LocalDataWriteLease): Promise<Term> {
+    return withLocalDataWrite(async () => {
+      const updated = await invoke<LocalTerm>("term_update", {
+        term: toLocalTerm(term),
+      });
+      return fromLocalTerm(updated);
+    }, lease);
   }
 
-  async deleteTerm(termId: string): Promise<void> {
-    await invoke<void>("term_delete", { id: termId });
+  deleteTerm(termId: string, lease?: LocalDataWriteLease): Promise<void> {
+    return withLocalDataWrite(
+      () => invoke<void>("term_delete", { id: termId }),
+      lease,
+    );
   }
 }

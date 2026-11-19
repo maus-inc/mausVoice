@@ -11,6 +11,7 @@ import {
 } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
+import { AudioTransmissionDisclosure } from "./AudioTransmissionDisclosure";
 import { AITranscriptionConfiguration } from "./AITranscriptionConfiguration";
 
 export const AITranscriptionDialog = () => {
@@ -51,6 +52,7 @@ export const AITranscriptionDialog = () => {
             <FormattedMessage defaultMessage="Decide how mausVoice should transcribe your recordings, locally on your machine or through a connected provider." />
           </Typography>
           <AITranscriptionConfiguration />
+          <AudioTransmissionDisclosure />
         </Stack>
       </DialogContent>
       <DialogActions>

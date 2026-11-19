@@ -1,8 +1,11 @@
-import { ArrowForward, Check, OpenInNew } from "@mui/icons-material";
-import { Box, Button, Stack, Typography } from "@mui/material";
-import { useCallback, useState } from "react";
+import { Box, Button, Stack } from "@mui/material";
+import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { goToOnboardingPage } from "../../actions/onboarding.actions";
+import {
+  advanceResumedPermissionPage,
+  goToOnboardingPage,
+  markPrerequisite,
+} from "../../actions/onboarding.actions";
 import enableA11yVideo from "../../assets/enable-a11y.mp4";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
@@ -10,14 +13,18 @@ import {
   isPermissionAuthorized,
   requestAccessibilityPermission,
 } from "../../utils/permission.utils";
+import { PermissionAccessButton } from "./PermissionAccessButton";
 import {
   BackButton,
   DualPaneLayout,
+  OnboardingContinueButton,
+  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
 export const A11yPermsForm = () => {
   const [requesting, setRequesting] = useState(false);
+  const isResuming = useAppStore((state) => state.onboarding.isResuming);
   const a11yPermission = useAppStore(
     (state) => state.permissions.accessibility,
   );
@@ -44,12 +51,20 @@ export const A11yPermsForm = () => {
 
   const handleContinue = () => {
     trackButtonClick("onboarding_a11y_perms_continue");
+    markPrerequisite("accessibility");
     goToOnboardingPage("keybindings");
   };
 
+  // A restored flow may skip granted permissions; Back must still revisit them.
+  useEffect(() => {
+    if (isAuthorized && isResuming) {
+      advanceResumedPermissionPage("a11yPerms");
+    }
+  }, [isAuthorized, isResuming]);
+
   const handleSkip = () => {
     trackButtonClick("onboarding_a11y_perms_skip");
-    goToOnboardingPage("keybindings");
+    goToOnboardingPage("keybindings", "skip");
   };
 
   const form = (
@@ -74,58 +89,23 @@ export const A11yPermsForm = () => {
               <FormattedMessage defaultMessage="Skip for now" />
             </Button>
           )}
-          <Button
-            variant="contained"
-            endIcon={<ArrowForward />}
-            onClick={handleContinue}
-          >
-            <FormattedMessage defaultMessage="Continue" />
-          </Button>
+          <OnboardingContinueButton onClick={handleContinue} />
         </Stack>
       }
     >
       <Stack spacing={3}>
-        <Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-              pb: 1,
-            }}
-          >
-            <FormattedMessage defaultMessage="Enable accessibility" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
+        <OnboardingFormHeader
+          title={<FormattedMessage defaultMessage="Enable accessibility" />}
+          subtitle={
             <FormattedMessage defaultMessage="mausVoice needs accessibility permissions to paste transcriptions into focused text fields." />
-          </Typography>
-        </Box>
+          }
+        />
 
-        {isAuthorized ? (
-          <Button
-            variant="outlined"
-            color="success"
-            startIcon={<Check />}
-            disabled
-            sx={{ alignSelf: "flex-start" }}
-          >
-            <FormattedMessage defaultMessage="Access granted" />
-          </Button>
-        ) : (
-          <Button
-            variant="outlined"
-            onClick={() => void handleAllow()}
-            disabled={requesting}
-            endIcon={<OpenInNew />}
-            sx={{ alignSelf: "flex-start" }}
-          >
-            <FormattedMessage defaultMessage="Allow access" />
-          </Button>
-        )}
+        <PermissionAccessButton
+          isAuthorized={isAuthorized}
+          requesting={requesting}
+          onAllow={() => void handleAllow()}
+        />
       </Stack>
     </OnboardingFormLayout>
   );
@@ -133,7 +113,7 @@ export const A11yPermsForm = () => {
   const rightContent = (
     <Box
       sx={{
-        borderRadius: "12px",
+        borderRadius: 1,
         border: "1px solid gray",
         overflow: "hidden",
         maxHeight: "100%",

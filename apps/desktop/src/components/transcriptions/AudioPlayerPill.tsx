@@ -1,20 +1,55 @@
-import PauseRoundedIcon from "@mui/icons-material/PauseRounded";
-import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
-import { Box, IconButton, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
+import { useIntentWarmup } from "../../hooks/intent-warmup.hooks";
+import { subscribeToLocalDataClearRequested } from "../../utils/local-data-write-gate";
+import { transcriptionAudioCache } from "../../utils/transcription-audio-cache";
+import { AudioPlaybackButton } from "./AudioPlaybackButton";
+import { AudioWaveformBars } from "./AudioWaveformBars";
+import {
+  type AudioPillPlaybackAttempt,
+  type AudioPillPlaybackSession,
+  createAudioPillPlaybackSession,
+} from "./audio-pill-playback-session";
 import { showErrorSnackbar } from "../../actions/app.actions";
+
+const markAudioReadStart = () => {
+  if (!import.meta.env.DEV) return;
+  // Clear before marking: User Timing entries otherwise accumulate for the
+  // window's lifetime on every development playback. One live entry per name
+  // is all the DEV timing needs.
+  performance.clearMarks("mv-audio:read-start");
+  performance.clearMarks("mv-audio:read-end");
+  performance.clearMeasures("mv-audio:read");
+  performance.mark("mv-audio:read-start");
+};
+
+const markAudioReadEnd = () => {
+  if (!import.meta.env.DEV) return;
+  performance.mark("mv-audio:read-end");
+  performance.measure(
+    "mv-audio:read",
+    "mv-audio:read-start",
+    "mv-audio:read-end",
+  );
+};
+
+const isAbortError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "name" in error &&
+  (error as { name?: string }).name === "AbortError";
 import { getTranscriptionRepo } from "../../repos";
 import {
-  activePlayback,
   buildWaveformOutline,
   DEFAULT_WAVEFORM_BAR_COUNT,
   formatDuration,
   MAX_COMPUTED_BAR_COUNT,
   MIN_COMPUTED_BAR_COUNT,
   MIN_WAVEFORM_BAR_VALUE,
+  type PlaybackStopReason,
   playWebAudio,
-  stopActivePlayback,
+  seekPlayback,
   WAVEFORM_BAR_GAP,
   WAVEFORM_BAR_MAX_WIDTH,
   WAVEFORM_BAR_MIN_WIDTH,
@@ -34,23 +69,48 @@ export const AudioPlayerPill = ({
   actions,
 }: AudioPlayerPillProps) => {
   const intl = useIntl();
-
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  // Newest playback attempt started by this row (identity guard for stale
+  // exits below).
+  const latestAttemptRef = useRef<AudioPillPlaybackAttempt | null>(null);
+  const loadingRef = useRef(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [waveformWidth, setWaveformWidth] = useState(0);
   const waveformContainerRef = useRef<HTMLDivElement | null>(null);
-  const playbackNonceRef = useRef(0);
+  const pointerCleanupRef = useRef<(() => void) | null>(null);
+  const playbackSessionRef = useRef<AudioPillPlaybackSession | null>(null);
+  const getPlaybackSession = () => {
+    playbackSessionRef.current ??= createAudioPillPlaybackSession();
+    return playbackSessionRef.current;
+  };
   const isPlayingRef = useRef(false);
+  const playbackProgressRef = useRef(0);
   const transcriptionIdRef = useRef(transcriptionId);
-
+  const isDraggingRef = useRef(false);
+  const progressAtDragStartRef = useRef(0);
+  // One reset for every teardown path so the playing/loading flags cannot
+  // drift apart between call sites; only the sites that own the scrub bar
+  // ask for the progress reset.
+  const resetPlaybackState = useCallback(
+    ({ progress = false }: { progress?: boolean } = {}) => {
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      loadingRef.current = false;
+      setIsLoading(false);
+      if (progress) setPlaybackProgress(0);
+    },
+    [],
+  );
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
-
+  useEffect(() => {
+    playbackProgressRef.current = playbackProgress;
+  }, [playbackProgress]);
   useEffect(() => {
     transcriptionIdRef.current = transcriptionId;
   }, [transcriptionId]);
-
   const desiredWaveformBarCount = useMemo(() => {
     if (waveformWidth <= 0) {
       return DEFAULT_WAVEFORM_BAR_COUNT;
@@ -67,7 +127,6 @@ export const AudioPlayerPill = ({
       Math.min(MAX_COMPUTED_BAR_COUNT, approximateCount),
     );
   }, [waveformWidth]);
-
   const waveformValues = useMemo(
     () =>
       buildWaveformOutline(
@@ -77,7 +136,6 @@ export const AudioPlayerPill = ({
       ),
     [durationMs, desiredWaveformBarCount, transcriptionId],
   );
-
   const waveformBars = useMemo(() => {
     if (!waveformValues.length) {
       return Array.from(
@@ -88,7 +146,6 @@ export const AudioPlayerPill = ({
 
     return waveformValues;
   }, [desiredWaveformBarCount, waveformValues]);
-
   const computedBarWidth = useMemo(() => {
     if (waveformWidth <= 0 || waveformBars.length === 0) {
       return WAVEFORM_BAR_MIN_WIDTH;
@@ -103,18 +160,41 @@ export const AudioPlayerPill = ({
       Math.min(WAVEFORM_BAR_MAX_WIDTH, widthPerBar),
     );
   }, [waveformBars.length, waveformWidth]);
-
   const progressPercent = Math.min(Math.max(playbackProgress, 0), 1) * 100;
-
   useEffect(() => {
     return () => {
-      if (activePlayback?.transcriptionId === transcriptionIdRef.current) {
-        stopActivePlayback("stopped");
-      }
-      setPlaybackProgress(0);
+      pointerCleanupRef.current?.();
+      pointerCleanupRef.current = null;
+      getPlaybackSession().stopOwned();
     };
-  }, []);
-
+  }, [transcriptionId]);
+  // A row that re-renders with a new transcription id is a different clip:
+  // drop the old clip's playback/scrub state so the next click plays the new
+  // read and the scrub bar cannot commit a seek against the old session.
+  useEffect(() => {
+    resetPlaybackState({ progress: true });
+  }, [transcriptionId, resetPlaybackState]);
+  useEffect(() => {
+    if (!disabled || !getPlaybackSession().stopOwned()) return;
+    resetPlaybackState();
+  }, [disabled, resetPlaybackState]);
+  // A local-data wipe must drop in-flight and active audio with the rows it
+  // invalidates; the repo clears its cache through the same subscription.
+  useEffect(() => {
+    return subscribeToLocalDataClearRequested(() => {
+      getPlaybackSession().stopOwned();
+      resetPlaybackState({ progress: true });
+    });
+  }, [transcriptionId]);
+  // Hovering the pill warms the saved audio through the repository cache so
+  // the first click starts from a warm read (the cache is TTL-bounded and
+  // throttled; see transcription-audio-cache.ts).
+  const warmAudio = useCallback(async () => {
+    if (!disabled && transcriptionAudioCache.canWarm()) {
+      await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
+    }
+  }, [disabled, transcriptionId]);
+  const warmup = useIntentWarmup(warmAudio, transcriptionId);
   useEffect(() => {
     const element = waveformContainerRef.current;
     if (!element) {
@@ -145,57 +225,211 @@ export const AudioPlayerPill = ({
     observer.observe(element);
     return () => observer.disconnect();
   }, [transcriptionId]);
-
-  const handlePlaybackToggle = useCallback(async () => {
-    const currentNonce = playbackNonceRef.current + 1;
-    playbackNonceRef.current = currentNonce;
-
-    try {
-      if (isPlayingRef.current) {
-        stopActivePlayback("stopped");
+  const applyProgress = useCallback(
+    (progress: number, attempt: AudioPillPlaybackAttempt, id: string) => {
+      if (
+        transcriptionIdRef.current === id &&
+        attempt.isNonceCurrent() &&
+        !isDraggingRef.current
+      ) {
+        setPlaybackProgress(progress);
+      }
+    },
+    [],
+  );
+  const applyStop = useCallback(
+    (
+      reason: PlaybackStopReason,
+      attempt: AudioPillPlaybackAttempt,
+      id: string,
+    ) => {
+      if (
+        transcriptionIdRef.current !== id ||
+        !attempt.handleStopCallback(reason)
+      ) {
         return;
       }
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      if (reason === "ended") setPlaybackProgress(0);
+    },
+    [],
+  );
+  const reportPlaybackFailure = useCallback(
+    (error: unknown, stage: "read" | "play") => {
+      // Abandoned work (row torn down, read invalidated mid-flight) rejects
+      // with AbortError; the owner already reset the row, so stay silent.
+      if (isAbortError(error)) return;
+      console.error("Failed to toggle audio playback", error);
+      // Two literal message calls, one per failing stage (read vs play), so
+      // the extraction pipeline sees both messages.
+      showErrorSnackbar(
+        stage === "read"
+          ? intl.formatMessage({
+              defaultMessage: "The saved audio for this entry is unavailable.",
+            })
+          : intl.formatMessage({
+              defaultMessage: "Unable to play audio snippet.",
+            }),
+      );
+    },
+    [intl],
+  );
+  // A stale attempt may only clear loading flags that belong to itself,
+  // never a newer attempt's on the same row.
+  const clearStaleRowFlags = useCallback(
+    (attempt: AudioPillPlaybackAttempt) => {
+      if (latestAttemptRef.current === attempt) resetPlaybackState();
+    },
+    [],
+  );
+  const handlePlaybackToggle = useCallback(async () => {
+    const session = getPlaybackSession();
+    if (isPlayingRef.current) {
+      session.stopOwned();
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      return;
+    }
+    if (loadingRef.current) {
+      // The button reads "Cancel audio loading" while a read is pending;
+      // clicking it abandons that read instead of stacking another one.
+      session.stopOwned();
+      resetPlaybackState();
+      return;
+    }
 
+    const attempt = session.beginRequest();
+    // Identity of the newest attempt on this row: a stale attempt may only
+    // clear loading state that belongs to itself, never a newer attempt's.
+    latestAttemptRef.current = attempt;
+    loadingRef.current = true;
+    setIsLoading(true);
+    // The error state names the stage that failed: a read failure (missing or
+    // invalid file) is a different recovery than a decode/playback failure.
+    let stage: "read" | "play" = "read";
+    try {
+      markAudioReadStart();
       const audioData =
         await getTranscriptionRepo().loadTranscriptionAudio(transcriptionId);
+      markAudioReadEnd();
 
-      if (playbackNonceRef.current !== currentNonce) {
+      if (!attempt.isCurrent()) {
+        clearStaleRowFlags(attempt);
         return;
       }
+      stage = "play";
 
+      loadingRef.current = false;
+      setIsLoading(false);
+      isPlayingRef.current = true;
       setIsPlaying(true);
+      attempt.beginSetup();
       await playWebAudio(
         transcriptionId,
         audioData,
-        (progress) => {
-          if (transcriptionIdRef.current === transcriptionId) {
-            setPlaybackProgress(progress);
-          }
-        },
-        (reason) => {
-          if (transcriptionIdRef.current !== transcriptionId) {
-            return;
-          }
-          setIsPlaying(false);
-          if (reason === "ended") {
-            setPlaybackProgress(0);
-          }
-        },
+        (progress) => applyProgress(progress, attempt, transcriptionId),
+        (reason) => applyStop(reason, attempt, transcriptionId),
+        playbackProgressRef.current,
+        attempt.signal,
       );
+      attempt.completeSetup();
     } catch (error) {
-      console.error("Failed to toggle audio playback", error);
-      setIsPlaying(false);
-      setPlaybackProgress(0);
-      showErrorSnackbar(
-        intl.formatMessage({ defaultMessage: "Unable to play audio snippet." }),
-      );
+      if (!attempt.releaseOnError()) {
+        clearStaleRowFlags(attempt);
+        return;
+      }
+      resetPlaybackState({ progress: true });
+      reportPlaybackFailure(error, stage);
     }
-  }, [transcriptionId, intl]);
-
+  }, [
+    transcriptionId,
+    intl,
+    applyProgress,
+    applyStop,
+    reportPlaybackFailure,
+    clearStaleRowFlags,
+  ]);
   const durationLabel = formatDuration(durationMs);
 
+  /** Scrub mapping from client X (same idea as elevenlabs-ui scrub-bar). Bars are a seeded silhouette, not live PCM. */
+  const getProgressFromClientX = useCallback((clientX: number) => {
+    const track = waveformContainerRef.current;
+    if (!track) return null;
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return null;
+    const ratio = (clientX - rect.left) / rect.width;
+    return Math.min(Math.max(ratio, 0), 1);
+  }, []);
+  const previewSeek = useCallback((ratio: number) => {
+    playbackProgressRef.current = ratio;
+    setPlaybackProgress(ratio);
+  }, []);
+  const commitSeek = useCallback((ratio: number) => {
+    playbackProgressRef.current = ratio;
+    setPlaybackProgress(ratio);
+    if (isPlayingRef.current) {
+      seekPlayback(ratio);
+    }
+  }, []);
+  const handlePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (disabled) return;
+      event.preventDefault();
+      event.currentTarget.focus();
+      // Tear down any previous drag first: its endDrag clears the drag
+      // flags and running it after the new state is set would clobber it.
+      pointerCleanupRef.current?.();
+      isDraggingRef.current = true;
+      progressAtDragStartRef.current = playbackProgressRef.current;
+      const next = getProgressFromClientX(event.clientX);
+      if (next != null) previewSeek(next);
+
+      // Listener lifetime is scoped to one AbortController so every exit
+      // path (release, cancel, re-entrant drag, lifecycle cleanup) runs one
+      // teardown and `isDraggingRef` can never outlive its listeners: a
+      // stuck drag flag mutes playback progress for good.
+      const dragListeners = new AbortController();
+      const endDrag = () => {
+        dragListeners.abort();
+        pointerCleanupRef.current = null;
+        isDraggingRef.current = false;
+      };
+      const handleMove = (moveEvent: PointerEvent) => {
+        const ratio = getProgressFromClientX(moveEvent.clientX);
+        if (ratio != null) previewSeek(ratio);
+      };
+      const handleUp = (upEvent: PointerEvent) => {
+        endDrag();
+        const ratio = getProgressFromClientX(upEvent.clientX);
+        if (ratio != null) {
+          commitSeek(ratio);
+        } else {
+          commitSeek(playbackProgressRef.current);
+        }
+      };
+      const handleCancel = () => {
+        endDrag();
+        setPlaybackProgress(progressAtDragStartRef.current);
+      };
+      const listenerOptions = { signal: dragListeners.signal };
+      window.addEventListener("pointermove", handleMove, listenerOptions);
+      window.addEventListener("pointerup", handleUp, {
+        ...listenerOptions,
+        once: true,
+      });
+      window.addEventListener("pointercancel", handleCancel, {
+        ...listenerOptions,
+        once: true,
+      });
+      pointerCleanupRef.current = endDrag;
+    },
+    [disabled, getProgressFromClientX, previewSeek, commitSeek],
+  );
   return (
     <Box
+      {...warmup}
+      aria-busy={isLoading}
       sx={{
         display: "flex",
         alignItems: "center",
@@ -210,23 +444,12 @@ export const AudioPlayerPill = ({
         alignSelf: "flex-start",
       }}
     >
-      <IconButton
-        aria-label={
-          isPlaying
-            ? intl.formatMessage({ defaultMessage: "Pause audio" })
-            : intl.formatMessage({ defaultMessage: "Play audio" })
-        }
-        size="small"
-        onClick={handlePlaybackToggle}
+      <AudioPlaybackButton
+        isPlaying={isPlaying}
+        isLoading={isLoading}
         disabled={disabled}
-        sx={{ p: 0.5 }}
-      >
-        {isPlaying ? (
-          <PauseRoundedIcon fontSize="small" />
-        ) : (
-          <PlayArrowRoundedIcon fontSize="small" />
-        )}
-      </IconButton>
+        onClick={handlePlaybackToggle}
+      />
       <Typography
         variant="body2"
         sx={{
@@ -239,6 +462,30 @@ export const AudioPlayerPill = ({
       </Typography>
       <Box
         ref={waveformContainerRef}
+        role="slider"
+        tabIndex={disabled ? -1 : 0}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progressPercent)}
+        aria-disabled={disabled || undefined}
+        aria-label={intl.formatMessage({ defaultMessage: "Playback position" })}
+        onPointerDown={handlePointerDown}
+        onKeyDown={(event) => {
+          if (disabled) return;
+          if (event.key === " ") {
+            event.preventDefault();
+            void handlePlaybackToggle();
+          } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+            event.preventDefault();
+            commitSeek(Math.min(1, playbackProgressRef.current + 0.05));
+          } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+            event.preventDefault();
+            commitSeek(Math.max(0, playbackProgressRef.current - 0.05));
+          } else if (event.key === "Home" || event.key === "End") {
+            event.preventDefault();
+            commitSeek(event.key === "Home" ? 0 : 1);
+          }
+        }}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -248,42 +495,22 @@ export const AudioPlayerPill = ({
           mx: 0.5,
           position: "relative",
           overflow: "hidden",
+          cursor: "pointer",
+          touchAction: "none",
+          userSelect: "none",
+          borderRadius: 0.5,
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: 2,
+          },
         }}
       >
-        <Box
-          sx={{
-            position: "absolute",
-            inset: 0,
-            pointerEvents: "none",
-          }}
-        >
-          <Box
-            sx={(theme) => ({
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: `${progressPercent}%`,
-              right: 0,
-              backgroundColor:
-                theme.vars?.palette.level1 ?? theme.palette.background.paper,
-              opacity: 0.5,
-              transition: "left 140ms linear",
-            })}
-          />
-        </Box>
-        {waveformBars.map((value, index) => (
-          <Box
-            key={`wave-bar-${index}`}
-            sx={(theme) => ({
-              flex: "0 0 auto",
-              width: `${computedBarWidth}px`,
-              borderRadius: theme.spacing(0.25),
-              backgroundColor: theme.vars?.palette.primary.main,
-              height: `${Math.round(35 + value * 55)}%`,
-              transition: "opacity 140ms ease",
-            })}
-          />
-        ))}
+        <AudioWaveformBars
+          values={waveformBars}
+          barWidth={computedBarWidth}
+          progressPercent={progressPercent}
+        />
       </Box>
       {actions}
     </Box>

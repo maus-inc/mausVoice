@@ -22,7 +22,7 @@ The desktop frontend ships ten `react-intl` catalogs:
 
 At frontend startup, locale detection checks the browser/webview language candidates. It first matches a complete supported tag, converts underscores to hyphens, then falls back to the language portion. An unsupported locale falls back to the manifest default, English. This means `pt-BR` can retain its regional catalog while another Portuguese region resolves to `pt`.
 
-These catalogs do not define transcription coverage. **Settings → Processing → Dictation language** stores the user's primary spoken language and affects provider/local decoding and prompts; it is not currently wired to recreate the top-level interface `IntlProvider`. Changing that setting should therefore not be documented as a live interface-language switch.
+These catalogs do not define transcription coverage. **Settings → Dictation → Dictation language** stores the user's primary spoken language and affects provider/local decoding and prompts; it is not currently wired to recreate the top-level interface `IntlProvider`. Changing that setting should therefore not be documented as a live interface-language switch.
 
 For contributors, author visible copy with `FormattedMessage`/`useIntl` and a specific English `defaultMessage`, then run:
 

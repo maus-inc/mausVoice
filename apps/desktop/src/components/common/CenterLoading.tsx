@@ -1,6 +1,9 @@
-import { CircularProgress, Stack } from "@mui/material";
+import { Stack } from "@mui/material";
+import { useIntl } from "react-intl";
+import { DotMatrixLoader } from "./DotMatrixLoader";
 
 export const CenterLoading = () => {
+  const intl = useIntl();
   return (
     <Stack
       sx={{
@@ -11,7 +14,11 @@ export const CenterLoading = () => {
       }}
       spacing={2}
     >
-      <CircularProgress />
+      <DotMatrixLoader
+        size={28}
+        dotSize={3.5}
+        aria-label={intl.formatMessage({ defaultMessage: "Loading" })}
+      />
     </Stack>
   );
 };

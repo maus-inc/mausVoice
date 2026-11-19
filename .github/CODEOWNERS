@@ -1,0 +1,24 @@
+# CODEOWNERS for mausVoice
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+* @Owie6789
+
+# CI, release and packaging are critical, so they need the maintainer
+/.github/workflows/ @Owie6789
+/scripts/ci/ @Owie6789
+/.github/scripts/ @Owie6789
+/apps/desktop/src-tauri/tauri.conf.json @Owie6789
+/homebrew-mausvoice/ @Owie6789
+
+# Security-sensitive areas
+/apps/desktop/src-tauri/capabilities/ @Owie6789
+/apps/desktop/src-tauri/src/db/migrations/ @Owie6789
+/.gitleaksignore @Owie6789
+/gitleaks.toml @Owie6789
+
+# Agent instruction files are policy, not notes
+/AGENTS.md @Owie6789
+/REVIEW.md @Owie6789
+/FULL-REVIEW.md @Owie6789
+/COMMIT.md @Owie6789

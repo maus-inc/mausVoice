@@ -7,7 +7,7 @@ sidebar:
 
 Speaches is a self-hosted **transcription-only** route. It is separate from mausVoice's bundled Local mode: you install, expose, secure, and load models in the Speaches server yourself.
 
-Add it under **Settings → Processing → AI transcription → API**. The form defaults to `http://localhost:8000` and `Systran/faster-whisper-large-v3`; it does not ask for an API key. **Test** calls `/health`. During transcription, mausVoice posts multipart WAV audio to `/v1/audio/transcriptions` with the configured model plus language and dictionary-derived prompt when present.
+Add it under **Settings → AI and processing → AI transcription → API**. The form defaults to `http://localhost:8000` and `Systran/faster-whisper-large-v3`; it does not ask for an API key. **Test** calls `/health`. During transcription, mausVoice posts multipart WAV audio to `/v1/audio/transcriptions` with the configured model plus language and dictionary-derived prompt when present.
 
 Ordinary Speaches dictation uses retained-audio batch processing after release. Recordings longer than 60 seconds are divided into 60-second segments with five seconds of overlap, up to three requests run concurrently, and overlapping text is merged. It does not provide mausVoice's real-time committed-segment output.
 

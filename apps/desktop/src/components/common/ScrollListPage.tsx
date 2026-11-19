@@ -10,13 +10,26 @@ import {
 } from "@mui/material";
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { FormattedMessage } from "react-intl";
+import {
+  COLLAPSE_ANIM_ATTR,
+  COLLAPSING_ATTR,
+  INITIAL_HEADER_METRICS,
+  attachScrollListCollapse,
+  collapseSpacerExpr,
+  headerHeightExpr,
+  measureHeaderMetrics,
+  sameHeaderMetrics,
+  titleHeightExpr,
+  titleScaleRange,
+  type HeaderMetrics,
+  type ScrollListCollapseHandle,
+} from "./scrollListCollapse";
 
 export type ScrollListPageProps<Item> = {
   title: ReactNode;
@@ -54,16 +67,20 @@ export function ScrollListPage<Item>({
   const collapsedHeaderMeasureRef = useRef<HTMLDivElement>(null);
   const expandedTitleMeasureRef = useRef<HTMLSpanElement>(null);
   const collapsedTitleMeasureRef = useRef<HTMLSpanElement>(null);
-  const collapseDistanceRef = useRef(0);
-  const [headerMetrics, setHeaderMetrics] = useState({
-    collapsedHeight: 0,
-    collapseDistance: 0,
-    collapsedTitleHeight: 0,
-    titleHeightDelta: 0,
-    titleScale: 1,
-  });
+  const [headerMetrics, setHeaderMetrics] = useState<HeaderMetrics>(
+    INITIAL_HEADER_METRICS,
+  );
+  const collapseRef = useRef<ScrollListCollapseHandle | null>(null);
+  const lastMeasureGenerationRef = useRef(0);
+  const hasItems = items.length > 0;
+  const hasResizeObserver = typeof ResizeObserver !== "undefined";
 
   useLayoutEffect(() => {
+    if (!hasItems) {
+      collapseRef.current = null;
+      return;
+    }
+
     const scroller = scrollerRef.current;
     const expandedHeader = expandedHeaderMeasureRef.current;
     const collapsedHeader = collapsedHeaderMeasureRef.current;
@@ -79,140 +96,64 @@ export function ScrollListPage<Item>({
       return;
     }
 
-    let frameId: number | null = null;
-
-    const updateLayout = () => {
-      frameId = null;
-
-      const expandedHeaderHeight =
-        expandedHeader.getBoundingClientRect().height;
-      const collapsedHeaderHeight =
-        collapsedHeader.getBoundingClientRect().height;
-      const expandedTitleHeight = expandedTitle.getBoundingClientRect().height;
-      const collapsedTitleHeight =
-        collapsedTitle.getBoundingClientRect().height;
-      const collapseDistance = Math.max(
-        expandedHeaderHeight - collapsedHeaderHeight,
-        0,
-      );
-      const titleScale =
-        collapsedTitleHeight > 0
-          ? expandedTitleHeight / collapsedTitleHeight
-          : 1;
-      const titleHeightDelta = Math.max(
-        expandedTitleHeight - collapsedTitleHeight,
-        0,
-      );
-      const progress =
-        collapseDistance > 0
-          ? Math.min(scroller.scrollTop / collapseDistance, 1)
-          : 1;
-
-      collapseDistanceRef.current = collapseDistance;
-      scroller.style.setProperty("--p", `${progress}`);
-
-      setHeaderMetrics((current) => {
-        if (
-          current.collapsedHeight === collapsedHeaderHeight &&
-          current.collapseDistance === collapseDistance &&
-          current.collapsedTitleHeight === collapsedTitleHeight &&
-          current.titleHeightDelta === titleHeightDelta &&
-          current.titleScale === titleScale
-        ) {
-          return current;
-        }
-
-        return {
-          collapsedHeight: collapsedHeaderHeight,
-          collapseDistance,
-          collapsedTitleHeight,
-          titleHeightDelta,
-          titleScale,
-        };
-      });
-    };
-
-    const scheduleUpdate = () => {
-      if (frameId !== null) {
-        return;
+    const handle = attachScrollListCollapse({
+      scroller,
+      measureElements: [
+        expandedHeader,
+        collapsedHeader,
+        expandedTitle,
+        collapsedTitle,
+      ],
+      readMetrics: () =>
+        measureHeaderMetrics({
+          expandedHeader: expandedHeader.getBoundingClientRect().height,
+          collapsedHeader: collapsedHeader.getBoundingClientRect().height,
+          expandedTitle: expandedTitle.getBoundingClientRect().height,
+          collapsedTitle: collapsedTitle.getBoundingClientRect().height,
+        }),
+      onMetrics: (next) => {
+        setHeaderMetrics((current) =>
+          sameHeaderMetrics(current, next) ? current : next,
+        );
+      },
+    });
+    collapseRef.current = handle;
+    return () => {
+      handle.disconnect();
+      if (collapseRef.current === handle) {
+        collapseRef.current = null;
       }
-
-      frameId = requestAnimationFrame(updateLayout);
     };
+  }, [hasItems]);
 
-    scheduleUpdate();
-
-    if (typeof ResizeObserver === "undefined") {
-      return () => {
-        if (frameId !== null) {
-          cancelAnimationFrame(frameId);
-        }
-      };
+  // No ResizeObserver: re-measure after commits that attach did not already
+  // measure (prop/content changes). Skip if attach or a window-resize
+  // listener just ran measure — otherwise mount and resize double-read.
+  useLayoutEffect(() => {
+    if (hasResizeObserver) {
+      return;
     }
-
-    const observer = new ResizeObserver(scheduleUpdate);
-    observer.observe(scroller);
-    observer.observe(expandedHeader);
-    observer.observe(collapsedHeader);
-    observer.observe(expandedTitle);
-    observer.observe(collapsedTitle);
-
-    return () => {
-      observer.disconnect();
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId);
-      }
-    };
-  }, [action, headerMaxWidth, items.length, subtitle, title]);
-
-  useEffect(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-
-    let rafId: number | null = null;
-
-    const handleScroll = () => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(() => {
-        const collapseDistance = collapseDistanceRef.current;
-        const p =
-          collapseDistance > 0
-            ? Math.min(scroller.scrollTop / collapseDistance, 1)
-            : 1;
-        scroller.style.setProperty("--p", `${p}`);
-        rafId = null;
-      });
-    };
-
-    const collapseDistance = collapseDistanceRef.current;
-    const progress =
-      collapseDistance > 0
-        ? Math.min(scroller.scrollTop / collapseDistance, 1)
-        : 1;
-    scroller.style.setProperty("--p", `${progress}`);
-    scroller.addEventListener("scroll", handleScroll, { passive: true });
-
-    return () => {
-      scroller.removeEventListener("scroll", handleScroll);
-      if (rafId !== null) cancelAnimationFrame(rafId);
-    };
-  }, [items.length]);
+    const handle = collapseRef.current;
+    if (!handle) {
+      return;
+    }
+    if (handle.generation === lastMeasureGenerationRef.current) {
+      handle.refresh();
+    }
+    lastMeasureGenerationRef.current = handle.generation;
+  });
 
   const handleLoadMore = useCallback(() => {
     onLoadMore?.();
   }, [onLoadMore]);
-  const titleScaleRange = Math.max(headerMetrics.titleScale - 1, 0);
-  const headerHeight =
-    headerMetrics.collapseDistance > 0 || headerMetrics.collapsedHeight > 0
-      ? `calc(${headerMetrics.collapsedHeight}px + ${headerMetrics.collapseDistance}px * (1 - var(--p, 0)))`
-      : undefined;
-  const titleHeight =
-    headerMetrics.titleHeightDelta > 0 || headerMetrics.collapsedTitleHeight > 0
-      ? `calc(${headerMetrics.collapsedTitleHeight}px + ${headerMetrics.titleHeightDelta}px * (1 - var(--p, 0)))`
-      : undefined;
+  const scaleRange = titleScaleRange(headerMetrics.titleScale);
+  const headerHeight = headerHeightExpr(headerMetrics);
+  const titleHeight = titleHeightExpr(headerMetrics);
+  const collapseSpacer = collapseSpacerExpr(headerMetrics.collapseDistance);
 
   return (
     <Box
+      data-scroll-list-page=""
       sx={{
         position: "relative",
         flexGrow: 1,
@@ -249,6 +190,7 @@ export function ScrollListPage<Item>({
                 >
                   <Typography
                     variant="h4"
+                    component="h1"
                     sx={{
                       fontWeight: 700,
                     }}
@@ -260,6 +202,7 @@ export function ScrollListPage<Item>({
                 {subtitle ? (
                   <Typography
                     variant="subtitle1"
+                    component="div"
                     sx={{
                       color: "text.secondary",
                     }}
@@ -279,7 +222,8 @@ export function ScrollListPage<Item>({
               overflow: "auto",
             }}
           >
-            <Container maxWidth={contentMaxWidth} sx={{ pb: 8 }}>
+            {/* Auto margins center content when it fits and collapse to zero when it overflows. */}
+            <Container maxWidth={contentMaxWidth} sx={{ pb: 8, my: "auto" }}>
               {emptyState || (
                 <Stack
                   spacing={1}
@@ -289,6 +233,7 @@ export function ScrollListPage<Item>({
                 >
                   <Typography
                     variant="h6"
+                    component="h2"
                     sx={{
                       color: "text.secondary",
                     }}
@@ -313,10 +258,24 @@ export function ScrollListPage<Item>({
           ref={scrollerRef}
           sx={{
             "--p": 0,
+            // A tall expanded header can cover every focused row in a short
+            // window. In that case, let it scroll away instead of shrinking
+            // and sticking over the list.
+            "@media (max-height: 420px)": {
+              "--p": "0 !important",
+              // A fixed inset can exceed the scrollport when a tip is shown.
+              scrollPaddingBottom: "min(80px, 50%)",
+            },
             flex: 1,
             overflowY: "auto",
             overflowX: "hidden",
             overscrollBehavior: "contain",
+            [`&[${COLLAPSING_ATTR}]`]: {
+              overflowAnchor: "none",
+            },
+            [`&[${COLLAPSING_ATTR}] [${COLLAPSE_ANIM_ATTR}]`]: {
+              willChange: "transform, opacity",
+            },
           }}
         >
           <Box
@@ -325,10 +284,12 @@ export function ScrollListPage<Item>({
               backgroundColor:
                 theme.vars?.palette.level0 ?? theme.palette.background.default,
               position: "sticky",
+              "@media (max-height: 420px)": { position: "relative" },
               top: 0,
               zIndex: theme.zIndex.appBar,
               height: headerHeight,
               overflow: "hidden",
+              overflowAnchor: "none",
             })}
           >
             <Container maxWidth={headerMaxWidth} sx={{ pt: 1, pb: 4 }}>
@@ -343,14 +304,14 @@ export function ScrollListPage<Item>({
                 >
                   <Box sx={{ height: titleHeight, flex: 1, minWidth: 0 }}>
                     <Typography
-                      component="span"
+                      component="h1"
                       variant="h5"
+                      data-scroll-list-collapse-anim=""
                       sx={{
                         fontWeight: 700,
                         display: "block",
                         transformOrigin: "top left",
-                        transform: `scale(calc(1 + ${titleScaleRange} * (1 - var(--p, 0))))`,
-                        willChange: "transform",
+                        transform: `scale(calc(1 + ${scaleRange} * (1 - var(--p, 0))))`,
                       }}
                     >
                       {title}
@@ -361,15 +322,14 @@ export function ScrollListPage<Item>({
                 {subtitle ? (
                   <Typography
                     variant="subtitle1"
+                    component="div"
+                    data-scroll-list-collapse-anim=""
                     sx={{
                       color: "text.secondary",
                       opacity: "clamp(0, calc(1 - var(--p, 0) * 2), 1)",
                       transformOrigin: "top left",
-
                       transform:
                         "scale(calc(1 - 0.1 * var(--p, 0))) translateY(calc(-4px * var(--p, 0)))",
-
-                      willChange: "opacity, transform",
                     }}
                   >
                     {subtitle}
@@ -397,6 +357,20 @@ export function ScrollListPage<Item>({
             </Container>
           )}
           <Box sx={{ height: 32 }} />
+          {collapseSpacer ? (
+            <Box
+              aria-hidden
+              // Grows by the same amount the sticky header shrinks so
+              // scrollHeight stays constant. Without this, mid-collapse
+              // scrollTop is re-clamped and --p oscillates.
+              sx={{
+                height: collapseSpacer,
+                flexShrink: 0,
+                pointerEvents: "none",
+                overflowAnchor: "none",
+              }}
+            />
+          ) : null}
         </Box>
       )}
       {items.length > 0 ? (
@@ -442,6 +416,7 @@ export function ScrollListPage<Item>({
               {subtitle ? (
                 <Typography
                   variant="subtitle1"
+                  component="div"
                   sx={{
                     color: "text.secondary",
                   }}
