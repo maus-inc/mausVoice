@@ -196,6 +196,40 @@ describe("ClearLocalDataDialog", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
+  it("waits for discard, then completes the clear without retrying a failed capture", async () => {
+    await startLiveRecording();
+    let confirm!: () => void;
+    const discard = new Promise<void>((resolve) => {
+      confirm = resolve;
+    });
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "stop_recording")
+        return Promise.reject(new Error("capture failed"));
+      if (command === "discard_recording") return discard;
+      return Promise.resolve();
+    });
+    openDialog();
+    render();
+    typeConfirmation("clear");
+    act(() => confirmButton()?.click());
+    try {
+      await vi.waitFor(() =>
+        expect(mocks.invoke).toHaveBeenCalledWith(
+          "discard_recording",
+          expect.anything(),
+        ),
+      );
+      expect(mocks.invoke).not.toHaveBeenCalledWith(
+        "complete_local_data_clear",
+      );
+      expect(window.location.reload).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => confirm());
+    }
+    expect(mocks.invoke).toHaveBeenCalledWith("complete_local_data_clear");
+    expect(window.location.reload).toHaveBeenCalledOnce();
+  });
+
   it("asks for the phrase, so a stray click cannot wipe the device", () => {
     openDialog();
     render();

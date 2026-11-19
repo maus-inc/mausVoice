@@ -85,14 +85,13 @@ it("discards the failed stop's admission and reports the original error", async 
     return Promise.resolve();
   });
   await expect(stopLocalDataSubsystems()).rejects.toBe(stopError);
-  expect(invoke).toHaveBeenCalledWith("discard_recording", {
-    ownerId,
-    generation: 7,
-  });
   await stopLocalDataSubsystems();
   // A successful retry retired the tuple: a second teardown sends no recording IPC.
   await stopLocalDataSubsystems();
-  expect(discard).toHaveBeenCalledTimes(2);
+  const scopedDiscard = ["discard_recording", { ownerId, generation: 7 }];
+  expect(
+    invoke.mock.calls.filter(([name]) => name === "discard_recording"),
+  ).toEqual([scopedDiscard, scopedDiscard]);
   expect(
     invoke.mock.calls.filter(([name]) => name === "stop_recording"),
   ).toHaveLength(1);

@@ -365,12 +365,18 @@ export const stopNativeRecordingForTeardown = async (): Promise<void> => {
     } catch (stopError) {
       // A failed capture can reject every subsequent stop on this tuple.
       // Discard it before reporting the failure; retain it if discard fails.
-      await waitForRecordingRelease(owned.discard()).catch(() => {
+      try {
+        await waitForRecordingRelease(owned.discard());
+      } catch {
         getLogger().verbose(
           "Recording discard unconfirmed after teardown stop failed",
         );
-      });
-      throw stopError;
+        throw stopError;
+      }
+      // Destructive cleanup needs release, not the audio that stop could not
+      // return. Record the recovered failure without logging native payloads.
+      getLogger().warning("Recording stop failed; teardown confirmed discard");
+      return;
     }
   }
   await waitForRecordingRelease(owned.discard());

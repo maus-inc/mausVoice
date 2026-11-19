@@ -42,6 +42,14 @@ const recorderTransport = (
   return { invoke, calls };
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 beforeEach(() => resetNativeRecordingSession());
 
 describe("beginNativeRecording", () => {
@@ -180,59 +188,83 @@ describe("beginNativeRecording", () => {
     await handle.discard();
   });
 
-  it("retries an abandoned scoped opening before admitting exactly one waiter", async () => {
-    let finishStart!: (reply: { sampleRate: number }) => void;
-    let confirm!: () => void;
-    const firstReply = new Promise<{ sampleRate: number }>((resolve) => {
-      finishStart = resolve;
-    });
-    const release = new Promise<void>((resolve) => {
-      confirm = resolve;
-    });
-    const discard = vi
-      .fn(() => Promise.resolve())
-      .mockRejectedValueOnce(new Error("device held"))
-      .mockImplementationOnce(() => release);
-    const { invoke, calls } = recorderTransport({
-      start_recording: vi
-        .fn(() => Promise.resolve({ sampleRate: 16_000 }))
-        .mockImplementationOnce(() => firstReply),
-      discard_recording: discard,
-    });
-    const first = beginNativeRecording(null, { handleScoped: true }, invoke);
-    try {
-      await vi.waitFor(() => expect(currentNativeRecording()).not.toBeNull());
-      const old = currentNativeRecording()!;
-      await expect(beginNativeRecording(null, {}, invoke)).rejects.toThrow(
-        "already in progress",
-      );
-      expect(discard).not.toHaveBeenCalled();
-      await expect(old.discard()).rejects.toThrow("device held");
-      const waiters = Promise.allSettled([
-        beginNativeRecording(null, { handleScoped: true }, invoke),
-        beginNativeRecording(null, { handleScoped: true }, invoke),
-      ]);
-      expect(calls.filter(([name]) => name === "discard_recording")).toEqual([
-        ["discard_recording", { ownerId: old.ownerId, generation: 1 }],
-        ["discard_recording", { ownerId: old.ownerId, generation: 1 }],
-      ]);
-      expect(
-        calls.filter(([name]) => name === "recording_generation"),
-      ).toHaveLength(1);
-      confirm();
-      const results = await waiters;
-      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-      expect(currentNativeRecording()?.generation).toBe(2);
-      finishStart({ sampleRate: 16_000 });
-      await (await first).handle.discard();
-      expect(currentNativeRecording()?.generation).toBe(2);
-    } finally {
-      confirm();
-      finishStart({ sampleRate: 16_000 });
-      await first;
-      await currentNativeRecording()?.discard();
-    }
-  });
+  it.each(["during discard", "on release"])(
+    "admits only one successor when a competitor starts %s",
+    async (timing) => {
+      const opened = { sampleRate: 16_000 };
+      const firstReply = deferred<typeof opened>();
+      const release = deferred<void>();
+      const winnerReply = deferred<typeof opened>();
+      const discard = vi
+        .fn(() => Promise.resolve())
+        .mockRejectedValueOnce(new Error("device held"))
+        .mockImplementationOnce(() => release.promise);
+      const { invoke, calls } = recorderTransport({
+        start_recording: vi
+          .fn(() => Promise.resolve(opened))
+          .mockImplementationOnce(() => firstReply.promise)
+          .mockImplementationOnce(() => winnerReply.promise),
+        discard_recording: discard,
+      });
+      const first = beginNativeRecording(null, { handleScoped: true }, invoke);
+      try {
+        await vi.waitFor(() => expect(currentNativeRecording()).not.toBeNull());
+        const old = currentNativeRecording()!;
+        await expect(beginNativeRecording(null, {}, invoke)).rejects.toThrow(
+          "already in progress",
+        );
+        expect(discard).not.toHaveBeenCalled();
+        await expect(old.discard()).rejects.toThrow("device held");
+        // A legacy retry could supersede live audio if the post-wait check were lost.
+        const retry = beginNativeRecording("retry", {}, invoke);
+        const compete = () =>
+          beginNativeRecording("competitor", { handleScoped: true }, invoke);
+        // Joining the actual discard schedules the competitor at confirmation,
+        // before the bounded release waiter resumes. No timer chooses the winner.
+        const during = timing === "during discard";
+        const competitor = during ? compete() : old.discard().then(compete);
+        const waiters = Promise.allSettled([retry, competitor]);
+        expect(calls.filter(([name]) => name === "discard_recording")).toEqual([
+          ["discard_recording", { ownerId: old.ownerId, generation: 1 }],
+          ["discard_recording", { ownerId: old.ownerId, generation: 1 }],
+        ]);
+        expect(
+          calls.filter(([name]) => name === "recording_generation"),
+        ).toHaveLength(1);
+        release.resolve();
+        await expect(during ? competitor : retry).rejects.toThrow(
+          "start is already in progress",
+        );
+        await vi.waitFor(() =>
+          expect(
+            calls.filter(([cmd]) => cmd === "start_recording"),
+          ).toHaveLength(2),
+        );
+        const starts = calls.filter(([cmd]) => cmd === "start_recording");
+        expect(starts[1]?.[1]).toMatchObject({
+          generation: 2,
+          args: { preferredMicrophone: during ? "retry" : "competitor" },
+        });
+        expect(
+          calls.filter(([cmd]) => cmd === "recording_generation"),
+        ).toHaveLength(2);
+        winnerReply.resolve(opened);
+        expect(
+          (await waiters).filter((r) => r.status === "fulfilled"),
+        ).toHaveLength(1);
+        expect(currentNativeRecording()?.generation).toBe(2);
+        firstReply.resolve(opened);
+        await (await first).handle.discard();
+        expect(currentNativeRecording()?.generation).toBe(2);
+      } finally {
+        winnerReply.resolve(opened);
+        release.resolve();
+        firstReply.resolve(opened);
+        await first;
+        await currentNativeRecording()?.discard();
+      }
+    },
+  );
 
   it.each(["stop", "failed discard"])(
     "keeps the legacy opening after %s until its late cleanup",
