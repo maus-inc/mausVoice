@@ -271,18 +271,41 @@ export const MicrophoneReadinessSideEffects = () => {
     holdFailedRef.current = null;
   }, []);
 
-  const closeAndRestoreLinger = useCallback(async () => {
-    await commands.closeMicrophone();
-    // Closing resets the native policy. A newer hold must keep its policy.
-    const milliseconds = getAppState().userPrefs?.microphoneLingerMs ?? 0;
-    if (!heldRef.current && milliseconds > 0) {
-      try {
-        await commands.setMicrophoneLinger(milliseconds);
-      } catch (error) {
-        getLogger().warning(`Could not restore the linger window: ${error}`);
+  const pendingPolicyRef = useRef<Promise<void> | null>(null);
+  const queuePolicyChange = useCallback((change: () => Promise<void>) => {
+    const previous = pendingPolicyRef.current;
+    const pending = (async () => {
+      if (previous) {
+        // The previous caller reports its failure; do not block later changes.
+        await previous.catch(() => undefined);
       }
-    }
+      await change();
+    })();
+    pendingPolicyRef.current = pending;
+    return pending.finally(() => {
+      if (pendingPolicyRef.current === pending) {
+        pendingPolicyRef.current = null;
+      }
+    });
   }, []);
+
+  const closeAndRestoreLinger = useCallback(
+    () =>
+      queuePolicyChange(async () => {
+        await commands.closeMicrophone();
+        const milliseconds = getAppState().userPrefs?.microphoneLingerMs ?? 0;
+        if (!heldRef.current && milliseconds > 0) {
+          try {
+            await commands.setMicrophoneLinger(milliseconds);
+          } catch (error) {
+            getLogger().warning(
+              `Could not restore the linger window: ${error}`,
+            );
+          }
+        }
+      }),
+    [queuePolicyChange],
+  );
 
   const closeSupersededOpen = useCallback(async () => {
     try {
@@ -311,10 +334,28 @@ export const MicrophoneReadinessSideEffects = () => {
     (seconds: number, device: string | null) => {
       heldRef.current = true;
       const request = ++requestRef.current;
+      const open = async () => {
+        const pendingPolicy = pendingPolicyRef.current;
+        if (pendingPolicy) {
+          // A close or finite restore already across IPC must finish before a
+          // new hold can safely install its stream and permanent policy.
+          await pendingPolicy.catch(() => undefined);
+        }
+        if (requestRef.current !== request || !heldRef.current) {
+          return;
+        }
+        return commands.warmMicrophone(
+          seconds,
+          MICROPHONE_READY_FOREVER_MS,
+          device,
+        );
+      };
       logOnRejection(
-        commands
-          .warmMicrophone(seconds, MICROPHONE_READY_FOREVER_MS, device)
+        open()
           .then((result) => {
+            if (!result) {
+              return;
+            }
             if (requestRef.current !== request) {
               // The answer arrived for a request this window has already
               // superseded. The common case is the preference being turned off
@@ -525,16 +566,20 @@ export const MicrophoneReadinessSideEffects = () => {
   }, [prefsLoaded, prerollSeconds]);
 
   useEffect(() => {
-    if (enabled || !prefsLoaded) {
+    if (enabled || !prefsLoaded || !ownsDevice) {
       return;
     }
     logOnRejection(
-      commands.setMicrophoneLinger(lingerMs).catch((error: unknown) => {
+      queuePolicyChange(async () => {
+        if (!heldRef.current) {
+          await commands.setMicrophoneLinger(lingerMs);
+        }
+      }).catch((error: unknown) => {
         getLogger().warning(`Could not set the linger window: ${error}`);
       }),
       "linger window update",
     );
-  }, [enabled, prefsLoaded, lingerMs]);
+  }, [enabled, prefsLoaded, ownsDevice, lingerMs, queuePolicyChange]);
 
   // One read on mount, so the dialog shows the truth before anything is toggled.
   useEffect(() => {
