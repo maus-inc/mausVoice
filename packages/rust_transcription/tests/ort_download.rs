@@ -14,6 +14,8 @@ const PINNED_BYTES: &[u8] = b"pinned ONNX archive fixture";
 enum Reply {
     Http(u16, &'static [u8]),
     NoHeaders,
+    DripHeaders,
+    DelayBody,
 }
 
 fn server(replies: Vec<(&'static str, Reply)>) -> (String, thread::JoinHandle<()>) {
@@ -22,6 +24,7 @@ fn server(replies: Vec<(&'static str, Reply)>) -> (String, thread::JoinHandle<()
     let address = listener.local_addr().unwrap().to_string();
     let worker = thread::spawn(move || {
         let mut stalled = Vec::new();
+        let mut slow_replies = Vec::new();
         for (path, reply) in replies {
             let deadline = Instant::now() + Duration::from_secs(5);
             let mut socket = loop {
@@ -62,10 +65,34 @@ fn server(replies: Vec<(&'static str, Reply)>) -> (String, thread::JoinHandle<()
                     socket.write_all(body).unwrap();
                 }
                 Reply::NoHeaders => stalled.push(socket),
+                Reply::DripHeaders | Reply::DelayBody => {
+                    slow_replies.push(thread::spawn(move || {
+                        let _ = send_slow_reply(&mut socket, reply);
+                    }));
+                }
             }
+        }
+        for slow_reply in slow_replies {
+            slow_reply.join().unwrap();
         }
     });
     (address, worker)
+}
+
+fn send_slow_reply(socket: &mut std::net::TcpStream, reply: Reply) -> io::Result<()> {
+    socket.write_all(b"HTTP/1.1 200 Fixture\r\n")?;
+    if matches!(reply, Reply::DripHeaders) {
+        thread::sleep(Duration::from_millis(300));
+    }
+    write!(socket, "Content-Length: {}\r\n", PINNED_BYTES.len())?;
+    if matches!(reply, Reply::DripHeaders) {
+        thread::sleep(Duration::from_millis(300));
+    }
+    socket.write_all(b"Connection: close\r\n\r\n")?;
+    if matches!(reply, Reply::DelayBody) {
+        thread::sleep(Duration::from_millis(700));
+    }
+    socket.write_all(PINNED_BYTES)
 }
 
 fn agent(header_timeout: Duration) -> ureq::Agent {
@@ -154,4 +181,46 @@ fn corrupt_mirrors_leave_no_files_or_credentials_in_errors() {
     assert!(error.contains("source 1: SHA-256 mismatch"));
     assert!(!error.contains("fixture-user") && !error.contains("fixture-credential"));
     assert_eq!(dir.path().read_dir().unwrap().count(), 0);
+}
+
+#[test]
+fn partial_response_headers_cannot_extend_the_header_deadline() {
+    let (address, worker) = server(vec![
+        ("/drip", Reply::DripHeaders),
+        ("/drip", Reply::DripHeaders),
+        ("/drip", Reply::DripHeaders),
+        ("/mirror", Reply::Http(200, PINNED_BYTES)),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let archive = dir.path().join(ARCHIVE);
+    let digest = format!("{:x}", Sha256::digest(PINNED_BYTES));
+    let bases = ["drip", "mirror"].map(|source| format!("http://{address}/{source}"));
+    let result = ort_download::download_verified(
+        (ARCHIVE, &digest),
+        &archive,
+        &bases,
+        &agent(Duration::from_millis(450)),
+        |_| {},
+    );
+    worker.join().unwrap();
+    result.unwrap();
+    assert_eq!(std::fs::read(&archive).unwrap(), PINNED_BYTES);
+}
+
+#[test]
+fn body_can_arrive_after_the_header_deadline() {
+    let (address, worker) = server(vec![("/slow-body", Reply::DelayBody)]);
+    let dir = tempfile::tempdir().unwrap();
+    let archive = dir.path().join(ARCHIVE);
+    let digest = format!("{:x}", Sha256::digest(PINNED_BYTES));
+    let result = ort_download::download_verified(
+        (ARCHIVE, &digest),
+        &archive,
+        &[format!("http://{address}/slow-body")],
+        &agent(Duration::from_millis(450)),
+        |_| panic!("body reads must not inherit the header deadline"),
+    );
+    worker.join().unwrap();
+    result.unwrap();
+    assert_eq!(std::fs::read(&archive).unwrap(), PINNED_BYTES);
 }

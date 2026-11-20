@@ -45,7 +45,8 @@ contract test `scripts/ci/verify-ort-archives.test.mjs` pins the source order an
 mirror override. `cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --test ort_download`
 uses local HTTP responses to check retry limits, digest validation and fallback.
 
-Each attempt waits at most 30 seconds for response headers and keeps the existing
-300-second body timeout. The final error names sources by their position in the
+Each attempt waits at most 30 seconds for response headers after sending the GET,
+even when the server sends partial headers. Body reads keep their separate
+300-second timeout. The final error names sources by their position in the
 configured list. It includes HTTP status codes and digest failures without printing
 mirror URLs or credentials.

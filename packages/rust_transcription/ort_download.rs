@@ -37,7 +37,11 @@ pub(crate) fn download_config(
 ) -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
     ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(30)))
-        .timeout_recv_response(Some(header_timeout))
+        // ureq 3.4 records SendRequest when the GET headers have been sent.
+        // That timestamp bounds RecvResponse across partial reads, and RecvBody
+        // does not inherit it. A RecvResponse timeout instead restarts each
+        // header read and can then constrain the body.
+        .timeout_send_request(Some(header_timeout))
         .timeout_recv_body(Some(Duration::from_secs(300)))
 }
 
@@ -141,6 +145,9 @@ fn request_error(error: ureq::Error) -> DownloadError {
             DownloadError::terminal(format!("HTTP {code}"))
         }
         ureq::Error::StatusCode(code) => DownloadError::transient(format!("HTTP {code}")),
+        ureq::Error::Timeout(ureq::Timeout::SendRequest) => DownloadError::transient(
+            "timed out sending the request or waiting for response headers",
+        ),
         ureq::Error::Timeout(phase) => {
             DownloadError::transient(format!("request timed out: {phase:?}"))
         }
