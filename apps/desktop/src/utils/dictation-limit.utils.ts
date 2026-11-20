@@ -79,8 +79,30 @@ export const getProviderRecordingTimerDurations = (
   };
 };
 
+export class ActiveRecordingClock {
+  private startedAt: number | null = null;
+  private elapsedMs = 0;
+
+  resume(now = performance.now()): number {
+    this.startedAt ??= now;
+    return this.elapsedMs + now - this.startedAt;
+  }
+
+  pause(now = performance.now()): void {
+    if (this.startedAt === null) return;
+    this.elapsedMs += now - this.startedAt;
+    this.startedAt = null;
+  }
+
+  reset(): void {
+    this.startedAt = null;
+    this.elapsedMs = 0;
+  }
+}
+
 export const getDictationRecordingTimerDurations = (
   limitMinutes: number,
+  elapsedActiveMs = 0,
 ): DictationRecordingTimerDurations => {
   const normalizedLimitMinutes = normalizeDictationLimitMinutes(limitMinutes);
 
@@ -91,11 +113,10 @@ export const getDictationRecordingTimerDurations = (
     };
   }
 
+  const remainingMs =
+    minutesToMilliseconds(normalizedLimitMinutes) - elapsedActiveMs;
   return {
-    warningDurationMs:
-      normalizedLimitMinutes > 1
-        ? minutesToMilliseconds(normalizedLimitMinutes - 1)
-        : null,
-    autoStopDurationMs: minutesToMilliseconds(normalizedLimitMinutes),
+    warningDurationMs: remainingMs > 60_000 ? remainingMs - 60_000 : null,
+    autoStopDurationMs: Math.max(0, remainingMs),
   };
 };

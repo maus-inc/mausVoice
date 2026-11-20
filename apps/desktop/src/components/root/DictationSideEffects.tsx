@@ -110,6 +110,7 @@ import {
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
 import { playAlertSound, tryPlayAudioChime } from "../../utils/audio.utils";
 import {
+  ActiveRecordingClock,
   DEFAULT_DICTATION_LIMIT_MINUTES,
   getDictationRecordingTimerDurations,
   getEffectiveDictationLimitMinutes,
@@ -1274,6 +1275,8 @@ export const DictationSideEffects = () => {
     [],
   );
 
+  const activeRecordingClock = useMemo(() => new ActiveRecordingClock(), []);
+
   const clearUserRecordingTimers = useCallback(() => {
     if (recordingWarningTimerRef.current) {
       clearTimeout(recordingWarningTimerRef.current);
@@ -1297,9 +1300,14 @@ export const DictationSideEffects = () => {
   }, []);
 
   const clearRecordingTimers = useCallback(() => {
+    activeRecordingClock.reset();
     clearUserRecordingTimers();
     clearProviderRecordingTimers();
-  }, [clearProviderRecordingTimers, clearUserRecordingTimers]);
+  }, [
+    activeRecordingClock,
+    clearProviderRecordingTimers,
+    clearUserRecordingTimers,
+  ]);
 
   useEffect(() => () => clearRecordingTimers(), [clearRecordingTimers]);
 
@@ -2038,7 +2046,10 @@ export const DictationSideEffects = () => {
       ? getEffectiveDictationLimitMinutes(preferences)
       : DEFAULT_DICTATION_LIMIT_MINUTES;
     const { warningDurationMs, autoStopDurationMs } =
-      getDictationRecordingTimerDurations(dictationLimitMinutes);
+      getDictationRecordingTimerDurations(
+        dictationLimitMinutes,
+        activeRecordingClock.resume(),
+      );
 
     if (warningDurationMs !== null) {
       recordingWarningTimerRef.current = setTimeout(() => {
@@ -2074,7 +2085,7 @@ export const DictationSideEffects = () => {
         void stopRecording();
       }, autoStopDurationMs);
     }
-  }, [clearUserRecordingTimers, intl, stopRecording]);
+  }, [activeRecordingClock, clearUserRecordingTimers, intl, stopRecording]);
 
   const startProviderRecordingTimers = useCallback(() => {
     clearProviderRecordingTimers();
@@ -2898,6 +2909,7 @@ export const DictationSideEffects = () => {
         async () => {
           isPausedRef.current = true;
           // User timers measure active audio; provider hard limits are wall-clock.
+          activeRecordingClock.pause();
           clearUserRecordingTimers();
           await target.strategy.setPhase("paused");
           if (!target.isCurrent()) return;
@@ -2915,7 +2927,12 @@ export const DictationSideEffects = () => {
     } catch (error) {
       getLogger().error(`Failed to pause dictation: ${error}`);
     }
-  }, [clearUserRecordingTimers, getRecordingControlTarget, intl]);
+  }, [
+    activeRecordingClock,
+    clearUserRecordingTimers,
+    getRecordingControlTarget,
+    intl,
+  ]);
 
   const resumeDictation = useCallback(async () => {
     const target = getRecordingControlTarget();
@@ -2927,8 +2944,8 @@ export const DictationSideEffects = () => {
         target.isCurrent,
         async () => {
           isPausedRef.current = false;
+          startUserRecordingTimers();
           await target.strategy.setPhase("recording");
-          if (target.isCurrent()) startUserRecordingTimers();
         },
       );
     } catch (error) {
