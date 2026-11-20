@@ -19,10 +19,12 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   statSync,
@@ -106,6 +108,34 @@ function processStart(pid) {
   }
 }
 
+// PID liveness is meaningful only in the same boot and PID namespace. The
+// time namespace must also match before comparing Linux process start ticks.
+// Reject a /proc mount that sees us from an ancestor PID namespace.
+function localOwnerScope() {
+  if (process.platform !== "linux") return null;
+  try {
+    const status = readFileSync("/proc/self/status", "utf8");
+    if (!new RegExp(`^NSpid:[ \t]+${process.pid}$`, "m").test(status))
+      return null;
+    const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    const pidNamespace = readlinkSync("/proc/self/ns/pid");
+    const timeNamespace = readlinkSync("/proc/self/ns/time");
+    if (!boot || !pidNamespace || !timeNamespace) return null;
+    return `${boot} ${pidNamespace} ${timeNamespace}`;
+  } catch {
+    return null;
+  }
+}
+
+function recordedOwnerScope(markerPath) {
+  try {
+    if (!lstatSync(markerPath).isFile()) return null;
+    return readFileSync(markerPath, "utf8").split("\n")[1] || null;
+  } catch {
+    return null;
+  }
+}
+
 function ownerExited(pid, startedAt) {
   try {
     process.kill(pid, 0);
@@ -126,8 +156,7 @@ if (hasBrowser(OUT)) {
   // Only an extraction of ours is safe to delete. `--dir` is caller-supplied, so
   // `rmSync(OUT, { recursive: true })` on a mistyped or shared path destroys
   // whatever is there: a directory with no `chromium` in it is not evidence that
-  // it is ours to remove. The marker is written only after a successful rename,
-  // and STAGING is always ours.
+  // it is ours to remove. The marker is written into staging before publication.
   if (existsSync(OUT) && readdirSync(OUT).length > 0) {
     if (!existsSync(path.join(OUT, MARKER))) {
       throw new Error(
@@ -142,11 +171,13 @@ if (hasBrowser(OUT)) {
   const parent = path.dirname(OUT);
   const prefix = `${path.basename(OUT)}.partial-`;
   mkdirSync(parent, { recursive: true });
+  const scope = localOwnerScope();
   for (const sibling of readdirSync(parent)) {
     if (!sibling.startsWith(prefix)) continue;
     const suffix = sibling.slice(prefix.length);
     const stale = path.join(parent, sibling);
-    if (!existsSync(path.join(stale, MARKER))) continue;
+    const markerPath = path.join(stale, MARKER);
+    if (!existsSync(markerPath)) continue;
     if (/^[1-9]\d*$/.test(suffix)) {
       // The old format cannot establish the owner’s host or PID namespace.
       // In a shared --dir, ESRCH is not evidence that this owner stopped.
@@ -157,6 +188,12 @@ if (hasBrowser(OUT)) {
     }
     const owner = /^([1-9]\d*)-(\d+|unknown)-[a-zA-Z0-9]{6}$/.exec(suffix);
     if (!owner) continue;
+    if (!scope || recordedOwnerScope(markerPath) !== scope) {
+      log(
+        `  leaving staging directory ${stale}; owner scope is unverified, remove it only when no installer is using it`,
+      );
+      continue;
+    }
     const pid = Number(owner[1]);
     if (pid > 0x7fffffff || !ownerExited(pid, owner[2])) continue;
     log(`  removing a partial extraction left by an earlier run: ${sibling}`);
@@ -166,6 +203,8 @@ if (hasBrowser(OUT)) {
   const STAGING = mkdtempSync(
     `${OUT}.partial-${process.pid}-${processStart(process.pid) ?? "unknown"}-`,
   );
+  // Claim staging before package installation or extraction can fail.
+  writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n${scope ?? ""}\n`);
 
   // The cache is ours by construction: `PKG_DIR` lives inside `CHR_DIR`, which is
   // this script's own directory, not a caller-chosen one. Guarded anyway, and on
@@ -239,14 +278,6 @@ if (hasBrowser(OUT)) {
   const libDir = path.join(STAGING, "lib");
   mkdirSync(libDir, { recursive: true });
 
-  // Claimed before anything is extracted, not after. `unpackTar` and the
-  // decompressions below can fail part-way, and a failure leaves `STAGING` with
-  // files in it; the guard at the top of this file refuses to delete a non-empty
-  // staging directory that carries no marker, so the *next* run would refuse the
-  // wrecks of its own last attempt and demand manual cleanup. Claiming first
-  // means a failed run leaves something the next run is allowed to remove.
-  writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n`);
-
   log("Extracting the browser …");
   const browserBytes = decompress(
     path.join(binDir, "chromium.br"),
@@ -276,10 +307,7 @@ if (hasBrowser(OUT)) {
   }
   log(`  ${readdirSync(libDir).length} shared libraries`);
 
-  // Whole or absent: the rename is the only thing that makes this a success.
-  // The marker is already there -- it was written above, before the extraction --
-  // so this only refreshes the version it records.
-  writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n`);
+  // The rename publishes the complete tree and its existing ownership marker.
   // A concurrent winner is a success, not a failure.
   //
   // Two processes can both see `OUT` absent and both extract; the unique

@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -105,16 +106,37 @@ test("the sweep removes only marked partials whose process has exited", (t) => {
   );
   const foreign = join(dir, "chr.partial-999999999-1-frgnXX");
   for (const path of [abandoned, live, recycled, foreign]) mkdirSync(path);
+  const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+  const pidNamespace = readlinkSync("/proc/self/ns/pid");
+  const timeNamespace = readlinkSync("/proc/self/ns/time");
+  const owner = `${boot} ${pidNamespace} ${timeNamespace}`;
   for (const path of [abandoned, live, recycled])
-    writeFileSync(join(path, marker), `${version}\n`);
+    writeFileSync(join(path, marker), `${version}\n${owner}\n`);
+  // Use an absent PID so a sweep without provenance would delete all of these.
+  const otherOwners = [
+    "",
+    `${boot} pid:[1] ${timeNamespace}`,
+    `${boot} ${pidNamespace} time:[1]`,
+    `00000000-0000-0000-0000-000000000000 ${pidNamespace} ${timeNamespace}`,
+  ].map((owner, index) => {
+    const path = join(dir, `chr.partial-${exitedPid}-1-fixt0${index}`);
+    mkdirSync(path);
+    writeFileSync(join(path, marker), `${version}\n${owner}\n`);
+    return path;
+  });
   writeFileSync(join(foreign, "keep.txt"), "keep me");
 
   run(join(dir, "chr"));
 
+  assert.equal(
+    readFileSync(join(dir, "chr", marker), "utf8"),
+    `${version}\n${owner}\n`,
+  );
   assert.equal(existsSync(abandoned), false);
   assert.equal(existsSync(live), true);
   assert.equal(existsSync(recycled), false);
   assert.equal(existsSync(join(foreign, "keep.txt")), true);
+  for (const path of otherOwners) assert.equal(existsSync(path), true, path);
 });
 
 test("legacy staging without host provenance is left for manual cleanup", (t) => {
