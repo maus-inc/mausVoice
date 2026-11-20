@@ -74,7 +74,7 @@ import {
   attachSessionAudioIntake as attachStrictSessionAudioIntake,
   createCurrentSegmentGuard,
   forwardAudioChunk,
-  hasLiveAudioDiscontinuity,
+  sealAndCheckLiveAudioDiscontinuity,
   isRecordingStartCurrent,
   releaseRecordingResources,
   requiresLiveIntakeRecovery,
@@ -204,25 +204,39 @@ describe("requiresLiveIntakeRecovery", () => {
   });
 });
 
-describe("hasLiveAudioDiscontinuity", () => {
+describe("sealAndCheckLiveAudioDiscontinuity", () => {
   it("only seals live sessions and treats missing live intake as discontinuous", () => {
     const audio = { samples: new Float32Array([0.25]), sampleRate: 16_000 };
     const sealLiveAudio = vi.fn().mockReturnValue(true);
     expect(
-      hasLiveAudioDiscontinuity("after-stop", { sealLiveAudio }, audio),
+      sealAndCheckLiveAudioDiscontinuity(
+        "after-stop",
+        { sealLiveAudio },
+        audio,
+      ),
     ).toBe(false);
-    expect(hasLiveAudioDiscontinuity("local", { sealLiveAudio }, audio)).toBe(
-      false,
-    );
-    expect(sealLiveAudio).not.toHaveBeenCalled();
-    expect(hasLiveAudioDiscontinuity("live-streaming", null, audio)).toBe(true);
     expect(
-      hasLiveAudioDiscontinuity("live-streaming", { sealLiveAudio }, audio),
+      sealAndCheckLiveAudioDiscontinuity("local", { sealLiveAudio }, audio),
+    ).toBe(false);
+    expect(sealLiveAudio).not.toHaveBeenCalled();
+    expect(
+      sealAndCheckLiveAudioDiscontinuity("live-streaming", null, audio),
+    ).toBe(true);
+    expect(
+      sealAndCheckLiveAudioDiscontinuity(
+        "live-streaming",
+        { sealLiveAudio },
+        audio,
+      ),
     ).toBe(false);
     expect(sealLiveAudio).toHaveBeenCalledWith(audio.samples, audio.sampleRate);
     sealLiveAudio.mockReturnValue(false);
     expect(
-      hasLiveAudioDiscontinuity("live-streaming", { sealLiveAudio }, audio),
+      sealAndCheckLiveAudioDiscontinuity(
+        "live-streaming",
+        { sealLiveAudio },
+        audio,
+      ),
     ).toBe(true);
   });
 });

@@ -5,7 +5,7 @@ import { AppTarget } from "@maus-inc/types";
 import { delayed } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useIntl } from "react-intl";
+import { type IntlShape, useIntl } from "react-intl";
 import {
   loadManualStyleForCurrentApp,
   saveManualStyleForApp,
@@ -69,7 +69,7 @@ import type {
 import {
   attachSessionAudioIntake,
   createCurrentSegmentGuard,
-  hasLiveAudioDiscontinuity,
+  sealAndCheckLiveAudioDiscontinuity,
   isRecordingStartCurrent,
   releaseRecordingResources,
   requiresLiveIntakeRecovery,
@@ -1087,6 +1087,36 @@ const logResumeFailure = (resuming: Promise<void>): void => {
   });
 };
 
+// Surface capture failure even if transcription subsequently fails.
+function warnOfShortCapture(intl: IntlShape, audio: StopRecordingResponse) {
+  const faultNotice = captureFaultNotice(audio);
+  if (faultNotice) {
+    getLogger().warning(`stopRecordingRaw: ${faultNotice.logMessage}`);
+    runToast(
+      showToast({
+        message:
+          faultNotice.kind === "capture_faulted"
+            ? intl.formatMessage(
+                {
+                  defaultMessage:
+                    "The microphone stopped recording after {captured} of {expected} seconds. Check that it is still connected.",
+                },
+                faultNotice.values,
+              )
+            : intl.formatMessage(
+                {
+                  defaultMessage:
+                    "The recording ended early. Check that the microphone is still connected.",
+                },
+                {},
+              ),
+        toastType: "error",
+        duration: 8_000,
+      }),
+    );
+  }
+}
+
 export const DictationSideEffects = () => {
   const intl = useIntl();
 
@@ -1844,42 +1874,11 @@ export const DictationSideEffects = () => {
           abortMessage: "No audio data received",
         };
       }
-      // A capture that stopped early is not a quiet dictation: the device was
-      // unplugged, or the host invalidated the stream, and the audio handed to
-      // transcription is short. Saying so is the difference between the user
-      // blaming their microphone and blaming the app. The warning is logged
-      // before transcription because it describes the recording, not its
-      // result, and it must survive a transcription that fails.
-      const faultNotice = captureFaultNotice(audio);
-      if (faultNotice) {
-        getLogger().warning(`stopRecordingRaw: ${faultNotice.logMessage}`);
-        runToast(
-          showToast({
-            message:
-              faultNotice.kind === "capture_faulted"
-                ? intl.formatMessage(
-                    {
-                      defaultMessage:
-                        "The microphone stopped recording after {captured} of {expected} seconds. Check that it is still connected.",
-                    },
-                    faultNotice.values,
-                  )
-                : intl.formatMessage(
-                    {
-                      defaultMessage:
-                        "The recording ended early. Check that the microphone is still connected.",
-                    },
-                    {},
-                  ),
-            toastType: "error",
-            duration: 8_000,
-          }),
-        );
-      }
+      warnOfShortCapture(intl, audio);
       if (pendingProviderStartup) {
         await pendingProviderStartup.promise;
       }
-      const audioIntakeDiscontinuous = hasLiveAudioDiscontinuity(
+      const audioIntakeDiscontinuous = sealAndCheckLiveAudioDiscontinuity(
         recordingSessionKind,
         ownedAudioIntake,
         audio,

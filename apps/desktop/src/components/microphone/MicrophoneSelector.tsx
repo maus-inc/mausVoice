@@ -54,13 +54,7 @@ export type MicrophoneSelectorProps = {
   onDevicesKnown?: (devices: MicrophoneOption[]) => void;
 };
 
-export const MicrophoneSelector = ({
-  value,
-  onChange,
-  microphones,
-  disabled = false,
-  onDevicesKnown,
-}: MicrophoneSelectorProps) => {
+function useMicrophoneOptions(microphones: MicrophoneOption[] | undefined) {
   const [devices, setDevices] = useState<MicrophoneOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -112,6 +106,19 @@ export const MicrophoneSelector = ({
       unsubscribe?.();
     };
   }, [loadDevices, microphones]);
+
+  return { devices, loading, error, loadDevices };
+}
+
+export const MicrophoneSelector = ({
+  value,
+  onChange,
+  microphones,
+  disabled = false,
+  onDevicesKnown,
+}: MicrophoneSelectorProps) => {
+  const { devices, loading, error, loadDevices } =
+    useMicrophoneOptions(microphones);
 
   // Reported from an effect rather than from inside `loadDevices`, so the owner
   // hears about the `microphones` prop path too, and so the callback cannot fire

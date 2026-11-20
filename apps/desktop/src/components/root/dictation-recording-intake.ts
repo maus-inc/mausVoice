@@ -57,7 +57,7 @@ export const requiresLiveIntakeRecovery = (
 ): boolean => subscriptionFailed && sessionKind === "live-streaming";
 
 /** Seal only live providers, which cannot recover missed audio at finalize. */
-export const hasLiveAudioDiscontinuity = (
+export const sealAndCheckLiveAudioDiscontinuity = (
   sessionKind: TranscriptionSessionKind,
   intake: Pick<SessionAudioIntake, "sealLiveAudio"> | null,
   audio: StopRecordingResponse,
