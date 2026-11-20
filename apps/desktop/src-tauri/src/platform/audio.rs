@@ -1410,16 +1410,10 @@ mod cpal_impl {
         /// warm, reopened it, and paid the cold start the feature exists to
         /// remove, on the switch that asks for the opposite.
         pub fn promote_to_hold(&self) {
-            // The generation is bumped before the policy is stored, and the order
-            // is the point. Storing the policy first left a window where an
-            // expired timer could wake, see its own generation still current, and
-            // take a stream that had just been promoted to a hold. Bumping first
-            // fails only in the harmless direction: a timer that reads in between
-            // sees a stale generation and leaves the stream alone, which is what a
-            // hold wants.
-            //
-            // A pending linger would close this stream at its window, which is
-            // later than never but still wrong for a hold.
+            // Refresh publishes its generation under this lock. Do not let it
+            // publish between cancellation and the permanent policy store, or
+            // it can reserve a fresh finite timer that the promotion never cancels.
+            let _slot = self.warm.lock().unwrap_or_else(PoisonError::into_inner);
             self.cancel_linger();
             self.set_linger_policy(Duration::from_millis(WARM_FOREVER_MS));
         }
@@ -5195,6 +5189,41 @@ mod cpal_impl {
 
             manager.promote_to_hold();
             assert!(manager.reserve_refresh_linger(reserved).is_none());
+        }
+
+        #[test]
+        fn promotion_cannot_split_its_policy_update_across_refresh_publication() {
+            use std::sync::mpsc;
+
+            let manager = RecordingManager::default();
+            manager.set_linger(Duration::from_millis(5_000));
+            let slot = manager.warm.lock().unwrap();
+            let (started_tx, started_rx) = mpsc::channel();
+            let (done_tx, done_rx) = mpsc::channel();
+            let manager_ref = &manager;
+
+            std::thread::scope(|scope| {
+                scope.spawn(move || {
+                    started_tx.send(()).unwrap();
+                    manager_ref.promote_to_hold();
+                    done_tx.send(()).unwrap();
+                });
+                started_rx.recv().unwrap();
+                let completed_under_lock = done_rx.recv_timeout(Duration::from_millis(100));
+                // Simulate a refresh finishing its device open while still owning the slot.
+                let published = manager.advance_linger_generation();
+                let expiration = manager.reserve_refresh_linger(published);
+                drop(slot);
+
+                assert_eq!(completed_under_lock, Err(mpsc::RecvTimeoutError::Timeout));
+                let (_, scheduled_generation) = expiration.unwrap();
+                done_rx.recv().unwrap();
+                assert_eq!(manager.linger_millis(), WARM_FOREVER_MS);
+                assert_ne!(
+                    manager.linger_generation.load(Ordering::SeqCst),
+                    scheduled_generation
+                );
+            });
         }
 
         /// The built-in detector decides a device's priority, so a miss here
