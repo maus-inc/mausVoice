@@ -459,10 +459,11 @@ pub mod linux {
         Ok(None)
     }
 
-    fn run_with_timeout(command: &mut Command) -> io::Result<Option<(ExitStatus, Vec<u8>)>> {
+    fn run_with_timeout(command: &mut Command) -> Result<Option<(ExitStatus, Vec<u8>)>, String> {
         let deadline = Instant::now() + PACTL_TIMEOUT;
-        let (reader, writer) = UnixStream::pair()?;
-        reader.set_nonblocking(true)?;
+        let setup_error = |err| format!("could not set up pactl output: {err}");
+        let (reader, writer) = UnixStream::pair().map_err(setup_error)?;
+        reader.set_nonblocking(true).map_err(setup_error)?;
         let spawned = command
             .process_group(0)
             .stdout(Stdio::from(OwnedFd::from(writer)))
@@ -471,7 +472,7 @@ pub mod linux {
         // Command retains its configured stdout after spawn. Close our side so
         // EOF represents only the child and its descendants.
         command.stdout(Stdio::null());
-        let mut child = spawned?;
+        let mut child = spawned.map_err(|err| format!("pactl not runnable: {err}"))?;
         let result = collect_listing(&mut child, reader, deadline);
         if !matches!(result, Ok(Some(_))) {
             // SAFETY: process_group(0) put the unreaped child in its own group.
@@ -481,7 +482,7 @@ pub mod linux {
             }
             let _ = child.wait();
         }
-        result
+        result.map_err(|err| format!("could not collect pactl output: {err}"))
     }
 
     /// Asks PulseAudio or PipeWire who is recording, through `pactl`.
@@ -514,9 +515,7 @@ pub mod linux {
                         PACTL_TIMEOUT.as_secs()
                     ));
                 }
-                Err(err) => {
-                    return CaptureUsage::Unavailable(format!("pactl not runnable: {err}"));
-                }
+                Err(reason) => return CaptureUsage::Unavailable(reason),
             };
         if !status.success() {
             return CaptureUsage::Unavailable(format!(
@@ -873,7 +872,7 @@ mod linux_command_tests {
         std::env::remove_var(PACTL_OVERRIDE_ENV);
         std::fs::remove_dir_all(dir).expect("remove probe fixture");
         assert!(
-            matches!(usage, CaptureUsage::Unavailable(reason) if reason.contains("exceeded 1 MiB"))
+            matches!(usage, CaptureUsage::Unavailable(reason) if reason.starts_with("could not collect pactl output:") && reason.contains("exceeded 1 MiB"))
         );
     }
 
