@@ -33,7 +33,10 @@ import {
   beginLocalDataClear,
   LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
 } from "../../utils/local-data-write-gate";
-import { resetNativeRecordingSession } from "../../utils/native-recording-session";
+import {
+  beginNativeRecording,
+  resetNativeRecordingSession,
+} from "../../utils/native-recording-session";
 import { VoiceInstructionRecorder } from "../composer/voiceInstructionRecorder";
 import { MicCheckForm } from "../onboarding/MicCheckForm";
 import { MicrophoneTester } from "./MicrophoneTester";
@@ -236,5 +239,65 @@ describe("non-dictation microphone local-data clear guards", () => {
       act(() => root.unmount());
       host.remove();
     }
+  });
+
+  it("stops its own admission, not the recording that superseded it", async () => {
+    let generation = 0;
+    const invoke = vi.fn((command: string, _args?: unknown) => {
+      if (command === "recording_generation") {
+        generation += 1;
+        return Promise.resolve(generation);
+      }
+      if (command === "start_recording")
+        return Promise.resolve({ sampleRate: 1 });
+      return Promise.resolve(undefined);
+    });
+    invokeMock.mockImplementation(invoke);
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(
+            IntlProvider,
+            { locale: "en", messages: en },
+            createElement(
+              ThemeProvider,
+              { theme },
+              createElement(MicCheckForm),
+            ),
+          ),
+        ),
+      );
+    });
+    await vi.waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("start_recording", {
+        ownerId: expect.any(String),
+        generation: 1,
+        args: { preferredMicrophone: null },
+      }),
+    );
+
+    // Another caller takes the recorder while the onboarding form still holds
+    // its now-superseded admission.
+    const { handle: successor } = await beginNativeRecording(null, {}, invoke);
+    expect(successor.generation).toBe(2);
+
+    act(() => root.unmount());
+    host.remove();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const reachedSuccessor = invoke.mock.calls.filter(
+      ([cmd, args]) =>
+        (cmd === "stop_recording" || cmd === "discard_recording") &&
+        (args as { generation?: number } | undefined)?.generation === 2,
+    );
+    expect(reachedSuccessor).toEqual([]);
   });
 });
