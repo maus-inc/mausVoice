@@ -150,33 +150,33 @@ ${install}`,
   assert.equal(readdirSync(out).includes("npm-package"), false);
 });
 
+function readLocalProcOwner() {
+  if (process.platform !== "linux")
+    throw new Error("fixture requires Linux /proc");
+  const status = readFileSync("/proc/self/status", "utf8");
+  const namespacePids = status.match(/^NSpid:[ \t]+(.+)$/m)?.[1].trim();
+  if (namespacePids !== String(process.pid)) {
+    throw new Error("/proc does not expose the local PID namespace");
+  }
+  const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+  const pidNamespace = readlinkSync("/proc/self/ns/pid");
+  const timeNamespace = readlinkSync("/proc/self/ns/time");
+  if (!boot) throw new Error("/proc did not supply a boot identifier");
+  const stat = readFileSync("/proc/self/stat", "utf8");
+  const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+  return { boot, pidNamespace, timeNamespace, start };
+}
+
 test("the sweep removes only marked partials whose process has exited", (t) => {
-  if (process.platform !== "linux") {
-    return t.skip("local staging cleanup requires Linux /proc");
-  }
   let owner;
-  let start;
   try {
-    const status = readFileSync("/proc/self/status", "utf8");
-    const nsPids = status.match(/^NSpid:[ \t]+(.+)$/m)?.[1].trim();
-    if (nsPids !== String(process.pid)) {
-      return t.skip(
-        "/proc does not expose this process in its local PID namespace",
-      );
-    }
-    const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-    const pidNamespace = readlinkSync("/proc/self/ns/pid");
-    const timeNamespace = readlinkSync("/proc/self/ns/time");
-    if (!boot || !pidNamespace || !timeNamespace) {
-      return t.skip("/proc did not supply boot and namespace identifiers");
-    }
-    owner = { boot, pidNamespace, timeNamespace };
-    const procStat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
-    start = procStat.slice(procStat.lastIndexOf(")") + 2).split(" ")[19];
+    owner = readLocalProcOwner();
   } catch (error) {
-    return t.skip(`local staging ownership cannot be verified: ${error.code}`);
+    return t.skip(
+      `local staging ownership cannot be verified: ${error.message}`,
+    );
   }
-  const { boot, pidNamespace, timeNamespace } = owner;
+  const { boot, pidNamespace, timeNamespace, start } = owner;
   const { dir, run } = fixture(t);
   const exitedPid = execFileSync("sh", ["-c", "echo $$"], {
     encoding: "utf8",

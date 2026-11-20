@@ -6,17 +6,12 @@
 // empty renders, horizontal overflow and text that clips its own box.
 //
 //   node scripts/verify/sweep-preview.mjs [baseUrl]
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { createReportDirectory } from "./browser-config.mjs";
 import { launch, newPage, sleep, waitForTruthy } from "./cdp.mjs";
 
-// Repository-relative, resolved from this file rather than from the shell's
-// working directory or a sandbox path: a committed file may not carry an
-// absolute path, and the screenshots belong beside the report that cites them.
-const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const OUT = process.env.OUT_DIR || join(REPO_ROOT, "reports/ui-verify");
-mkdirSync(OUT, { recursive: true });
+const OUT = createReportDirectory();
 const BASE =
   process.argv[2] || process.env.PREVIEW_URL || "http://127.0.0.1:5193";
 // A desktop window is the only thing this app promises, but the preview is a

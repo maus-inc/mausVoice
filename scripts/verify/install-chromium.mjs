@@ -15,6 +15,7 @@
  *
  *   node scripts/verify/install-chromium.mjs [--dir /tmp/chr]
  */
+import { CHROMIUM_LAUNCH_FLAGS } from "./browser-config.mjs";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
@@ -298,15 +299,6 @@ function extractBrowser(binDir, staging) {
   log(`  ${readdirSync(libDir).length} shared libraries`);
 }
 
-export const LAUNCH_FLAGS = [
-  "--headless=new",
-  "--no-sandbox",
-  "--disable-gpu",
-  "--no-zygote",
-  "--single-process",
-  "--disable-dev-shm-usage",
-];
-
 const version = execFileSync(path.join(OUT, "chromium"), ["--version"], {
   env: { ...process.env, LD_LIBRARY_PATH: `${path.join(OUT, "lib")}:${OUT}` },
   encoding: "utf8",
@@ -315,4 +307,4 @@ const version = execFileSync(path.join(OUT, "chromium"), ["--version"], {
 log(`\n${version}`);
 log(`CHROMIUM_PATH=${path.join(OUT, "chromium")}`);
 log(`LD_LIBRARY_PATH=${path.join(OUT, "lib")}:${OUT}`);
-log(`\nLaunch flags: ${LAUNCH_FLAGS.join(" ")}`);
+log(`\nLaunch flags: ${CHROMIUM_LAUNCH_FLAGS.join(" ")}`);
