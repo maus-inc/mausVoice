@@ -92,12 +92,36 @@ test("a stale installed version triggers installation despite the declaration", 
 });
 
 test("the sweep removes only marked partials whose process has exited", (t) => {
+  if (process.platform !== "linux") {
+    return t.skip("local staging cleanup requires Linux /proc");
+  }
+  let owner;
+  let start;
+  try {
+    const status = readFileSync("/proc/self/status", "utf8");
+    const nsPids = status.match(/^NSpid:[ \t]+(.+)$/m)?.[1].trim();
+    if (nsPids !== String(process.pid)) {
+      return t.skip(
+        "/proc does not expose this process in its local PID namespace",
+      );
+    }
+    const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    const pidNamespace = readlinkSync("/proc/self/ns/pid");
+    const timeNamespace = readlinkSync("/proc/self/ns/time");
+    if (!boot || !pidNamespace || !timeNamespace) {
+      return t.skip("/proc did not supply boot and namespace identifiers");
+    }
+    owner = { boot, pidNamespace, timeNamespace };
+    const procStat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
+    start = procStat.slice(procStat.lastIndexOf(")") + 2).split(" ")[19];
+  } catch (error) {
+    return t.skip(`local staging ownership cannot be verified: ${error.code}`);
+  }
+  const { boot, pidNamespace, timeNamespace } = owner;
   const { dir, run } = fixture(t);
   const exitedPid = execFileSync("sh", ["-c", "echo $$"], {
     encoding: "utf8",
   }).trim();
-  const procStat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
-  const start = procStat.slice(procStat.lastIndexOf(")") + 2).split(" ")[19];
   const abandoned = join(dir, `chr.partial-${exitedPid}-1-oldRun`);
   const live = join(dir, `chr.partial-${process.pid}-${start}-liveXX`);
   const recycled = join(
@@ -106,12 +130,9 @@ test("the sweep removes only marked partials whose process has exited", (t) => {
   );
   const foreign = join(dir, "chr.partial-999999999-1-frgnXX");
   for (const path of [abandoned, live, recycled, foreign]) mkdirSync(path);
-  const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-  const pidNamespace = readlinkSync("/proc/self/ns/pid");
-  const timeNamespace = readlinkSync("/proc/self/ns/time");
-  const owner = `${boot} ${pidNamespace} ${timeNamespace}`;
+  const scope = `${boot} ${pidNamespace} ${timeNamespace}`;
   for (const path of [abandoned, live, recycled])
-    writeFileSync(join(path, marker), `${version}\n${owner}\n`);
+    writeFileSync(join(path, marker), `${version}\n${scope}\n`);
   // Use an absent PID so a sweep without provenance would delete all of these.
   const otherOwners = [
     "",
@@ -130,7 +151,7 @@ test("the sweep removes only marked partials whose process has exited", (t) => {
 
   assert.equal(
     readFileSync(join(dir, "chr", marker), "utf8"),
-    `${version}\n${owner}\n`,
+    `${version}\n${scope}\n`,
   );
   assert.equal(existsSync(abandoned), false);
   assert.equal(existsSync(live), true);
@@ -139,15 +160,19 @@ test("the sweep removes only marked partials whose process has exited", (t) => {
   for (const path of otherOwners) assert.equal(existsSync(path), true, path);
 });
 
-test("legacy staging without host provenance is left for manual cleanup", (t) => {
+test("staging without host provenance is left for manual cleanup", (t) => {
   const { dir, run } = fixture(t);
-  const legacy = join(dir, "chr.partial-999999999");
-  mkdirSync(legacy);
-  writeFileSync(join(legacy, marker), `${version}\n`);
+  const paths = ["chr.partial-999999999", "chr.partial-999999999-1-noScop"].map(
+    (name) => join(dir, name),
+  );
+  for (const path of paths) {
+    mkdirSync(path);
+    writeFileSync(join(path, marker), `${version}\n`);
+  }
 
   run(join(dir, "chr"));
 
-  assert.equal(existsSync(join(legacy, marker)), true);
+  for (const path of paths) assert.equal(existsSync(join(path, marker)), true);
 });
 
 const stagePublication = ({ pkg, tool }, files) => {
