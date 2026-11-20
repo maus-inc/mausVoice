@@ -1302,7 +1302,7 @@ fn wire_entry_and_keys(wiring: Wiring) {
     // would push the buffer past the budget is dropped whole rather than
     // truncated, so the draft the user already has stays intact.
     review_buffer.connect_insert_text(|buffer, _location, text| {
-        if LOADING_REVIEW_TEXT.with(|loading| loading.get()) {
+        if LOADING_REVIEW_TEXT.with(std::cell::Cell::get) {
             return;
         }
         if review_insert_exceeds_budget(buffer, text.chars().count()) {

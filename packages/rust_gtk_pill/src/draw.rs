@@ -2,7 +2,7 @@ use std::f64::consts::PI;
 
 use gtk::cairo;
 
-use crate::ipc::{Phase, PillPermission, PillStreaming};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{rect_contains, ClickAction, ClickRegion, PillState, RocketPhase};
@@ -1647,13 +1647,7 @@ fn draw_transcript(
 
     for (i, msg) in messages.iter().enumerate() {
         if i > 0 {
-            y += 16.0;
-            cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
-            cr.set_line_width(1.0);
-            cr.move_to(area_x, y);
-            cr.line_to(area_x + 36.0, y);
-            let _ = cr.stroke();
-            y += 8.0;
+            y = draw_message_separator(cr, area_x, y, alpha);
         }
 
         if let Some(ref stream) = *streaming {
@@ -1662,57 +1656,7 @@ fn draw_transcript(
             }
         }
 
-        if msg.is_tool_result {
-            let tool_desc = msg
-                .tool_description
-                .as_deref()
-                .or(msg.tool_name.as_deref())
-                .unwrap_or("Tool");
-            let reason = msg.reason.as_deref().unwrap_or("");
-            let display = if reason.is_empty() {
-                tool_desc.to_string()
-            } else {
-                format!("{tool_desc} — {reason}")
-            };
-
-            cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-            cr.select_font_face(
-                "Satoshi",
-                cairo::FontSlant::Normal,
-                cairo::FontWeight::Normal,
-            );
-            cr.set_font_size(12.0);
-
-            draw_wrench_icon(cr, area_x, y + 2.0, 12.0, 0.5 * alpha);
-            let text_x = area_x + 18.0;
-            cr.move_to(text_x, y + 12.0);
-            let _ = cr.show_text(&display);
-            y += 18.0;
-        } else if let Some(ref content) = msg.content {
-            let color_alpha = if msg.is_error { 0.94 } else { 0.92 };
-            let (r, g, b) = if msg.is_error {
-                (1.0, 0.4, 0.4)
-            } else {
-                (1.0, 1.0, 1.0)
-            };
-
-            cr.set_source_rgba(r, g, b, color_alpha * alpha);
-            cr.select_font_face(
-                "Satoshi",
-                cairo::FontSlant::Normal,
-                cairo::FontWeight::Normal,
-            );
-            cr.set_font_size(14.0);
-
-            let lines = wrap_text(cr, content, area_w);
-            for line in &lines {
-                cr.move_to(area_x, y + line_height * 0.75);
-                let _ = cr.show_text(line);
-                y += line_height;
-            }
-        } else {
-            y = draw_thinking_text(cr, area_x, y, alpha, state);
-        }
+        y = draw_message(cr, state, msg, area_x, area_w, y, line_height, alpha);
     }
 
     for perm in permissions.iter() {
@@ -1728,21 +1672,129 @@ fn draw_transcript(
     // is half out must only answer on the half that shows. Under a review the
     // band starts below the fixed editor, so a target scrolled behind it is
     // dropped exactly where the paint was clipped.
-    {
-        let mut regions = state.click_regions.borrow_mut();
-        let scrolled = regions.split_off(region_start);
-        regions.extend(scrolled.into_iter().filter_map(|mut region| {
-            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, band_y, band_h)?;
-            region.y = y;
-            region.h = h;
-            Some(region)
-        }));
-    }
+    trim_click_regions_to_band(state, region_start, band_y, band_h);
 
     if has_review {
         cr.restore().ok();
     }
     cr.restore().ok();
+}
+
+/// Keep only the part of each click region that is inside the visible band.
+fn trim_click_regions_to_band(state: &PillState, region_start: usize, band_y: f64, band_h: f64) {
+    let mut regions = state.click_regions.borrow_mut();
+    let scrolled = regions.split_off(region_start);
+    regions.extend(scrolled.into_iter().filter_map(|mut region| {
+        let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, band_y, band_h)?;
+        region.y = y;
+        region.h = h;
+        Some(region)
+    }));
+}
+
+/// Draw the rule between two consecutive messages, returning the new cursor.
+fn draw_message_separator(cr: &cairo::Context, area_x: f64, mut y: f64, alpha: f64) -> f64 {
+    y += 16.0;
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
+    cr.set_line_width(1.0);
+    cr.move_to(area_x, y);
+    cr.line_to(area_x + 36.0, y);
+    let _ = cr.stroke();
+    y + 8.0
+}
+
+/// Draw one message body: a tool result, text content, or the thinking label.
+#[allow(clippy::too_many_arguments)]
+fn draw_message(
+    cr: &cairo::Context,
+    state: &PillState,
+    msg: &PillMessage,
+    area_x: f64,
+    area_w: f64,
+    y: f64,
+    line_height: f64,
+    alpha: f64,
+) -> f64 {
+    if msg.is_tool_result {
+        return draw_tool_result_message(cr, msg, area_x, y, alpha);
+    }
+    match msg.content.as_deref() {
+        Some(content) => draw_text_message(cr, msg, content, area_x, area_w, y, line_height, alpha),
+        None => draw_thinking_text(cr, area_x, y, alpha, state),
+    }
+}
+
+/// Draw a tool result line with its wrench icon, returning the new cursor.
+fn draw_tool_result_message(
+    cr: &cairo::Context,
+    msg: &PillMessage,
+    area_x: f64,
+    mut y: f64,
+    alpha: f64,
+) -> f64 {
+    let tool_desc = msg
+        .tool_description
+        .as_deref()
+        .or(msg.tool_name.as_deref())
+        .unwrap_or("Tool");
+    let reason = msg.reason.as_deref().unwrap_or("");
+    let display = if reason.is_empty() {
+        tool_desc.to_string()
+    } else {
+        format!("{tool_desc} — {reason}")
+    };
+
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
+    cr.set_font_size(12.0);
+
+    draw_wrench_icon(cr, area_x, y + 2.0, 12.0, 0.5 * alpha);
+    let text_x = area_x + 18.0;
+    cr.move_to(text_x, y + 12.0);
+    let _ = cr.show_text(&display);
+    y += 18.0;
+    y
+}
+
+/// Draw wrapped text content in the error or normal colour, returning the new
+/// cursor.
+#[allow(clippy::too_many_arguments)]
+fn draw_text_message(
+    cr: &cairo::Context,
+    msg: &PillMessage,
+    content: &str,
+    area_x: f64,
+    area_w: f64,
+    mut y: f64,
+    line_height: f64,
+    alpha: f64,
+) -> f64 {
+    let color_alpha = if msg.is_error { 0.94 } else { 0.92 };
+    let (r, g, b) = if msg.is_error {
+        (1.0, 0.4, 0.4)
+    } else {
+        (1.0, 1.0, 1.0)
+    };
+
+    cr.set_source_rgba(r, g, b, color_alpha * alpha);
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
+    cr.set_font_size(14.0);
+
+    let lines = wrap_text(cr, content, area_w);
+    for line in &lines {
+        cr.move_to(area_x, y + line_height * 0.75);
+        let _ = cr.show_text(line);
+        y += line_height;
+    }
+    y
 }
 
 fn draw_streaming_activity(
