@@ -188,7 +188,7 @@ fn download_verified(asset: &RuntimeAsset, archive_path: &Path) {
     );
 
     let base_urls = download_base_urls();
-    let mut last_error = String::new();
+    let mut last_error = String::default();
     for base_url in &base_urls {
         let url = format!("{base_url}/{}", asset.archive_name);
         for attempt in 1..=3 {

@@ -785,15 +785,19 @@ mod emitter_tests {
     fn stop_reports_time_held_after_a_fast_open_refusal() {
         let recorder = PulseRecorder::default();
         let attempt = Duration::from_millis(5);
+        let held_for = Duration::from_secs(1);
+        let started_at = Instant::now()
+            .checked_sub(held_for)
+            .expect("the test needs a representable earlier start time");
         *recorder.inner.lock().unwrap() = Some(ActiveRecording {
-            started_at: Instant::now() - Duration::from_secs(1),
+            started_at,
             stop_signal: Arc::new(Mutex::new(false)),
             thread: Some(std::thread::spawn(move || failed_open_result(attempt))),
             sample_rate: FALLBACK_SAMPLE_RATE,
         });
 
         let result = recorder.stop().unwrap();
-        assert!(result.metrics.expected_duration >= Duration::from_secs(1));
+        assert!(result.metrics.expected_duration >= held_for);
         assert_eq!(result.metrics.duration, Duration::ZERO);
         assert_eq!(
             result.metrics.capture_fault.as_deref(),

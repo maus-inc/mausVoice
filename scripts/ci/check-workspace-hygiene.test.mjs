@@ -220,11 +220,11 @@ function pathsEntries(text) {
         // quote when there is one.
         const raw = item[1];
         const quoted = /^["']/.test(raw);
-        const cut = quoted
-          ? raw.search(/(["'])\s+#/)
-          : raw.indexOf(" #");
+        const cut = quoted ? raw.search(/(["'])\s+#/) : raw.indexOf(" #");
         entries.push(
-          (cut >= 0 ? raw.slice(0, cut) : raw).trim().replace(/^["']|["']$/g, ""),
+          (cut >= 0 ? raw.slice(0, cut) : raw)
+            .trim()
+            .replace(/^["']|["']$/g, ""),
         );
         continue;
       }
@@ -405,6 +405,25 @@ describe("workspace hygiene contracts", () => {
     );
 
     rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("configures DeepSource to parse Node tooling as ES modules", () => {
+    const config = readFileSync(resolve(repoRoot, ".deepsource.toml"), "utf8");
+    // Only the top-level analyzer counts, not an override on selected paths.
+    const topLevel = config.split(/^\[\[overrides\]\]$/m, 1)[0];
+    const javascript = topLevel
+      .split(/^\[\[analyzers\]\]$/m)
+      .slice(1)
+      .find((block) => /^name\s*=\s*"javascript"[ \t]*$/m.test(block));
+    assert.ok(javascript, "DeepSource must configure a JavaScript analyzer");
+    assert.match(javascript, /^enabled\s*=\s*true[ \t]*$/m);
+    const meta =
+      javascript.split(/^[ \t]*\[analyzers\.meta\][ \t]*$/m)[1] ?? "";
+    assert.match(
+      meta,
+      /^[ \t]*module_system\s*=\s*"es-modules"[ \t]*$/m,
+      "DeepSource must parse static imports in .mjs scripts as ES modules",
+    );
   });
 
   it("every DeepSource exclusion still excludes something", () => {
