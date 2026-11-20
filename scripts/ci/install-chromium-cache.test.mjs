@@ -117,6 +117,17 @@ test("the sweep removes only marked partials whose process has exited", (t) => {
   assert.equal(existsSync(join(foreign, "keep.txt")), true);
 });
 
+test("legacy staging without host provenance is left for manual cleanup", (t) => {
+  const { dir, run } = fixture(t);
+  const legacy = join(dir, "chr.partial-999999999");
+  mkdirSync(legacy);
+  writeFileSync(join(legacy, marker), `${version}\n`);
+
+  run(join(dir, "chr"));
+
+  assert.equal(existsSync(join(legacy, marker)), true);
+});
+
 const stagePublication = ({ pkg, tool }, files) => {
   writeFileSync(
     join(pkg, "bin", "fonts.tar.br"),

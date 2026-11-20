@@ -144,15 +144,21 @@ if (hasBrowser(OUT)) {
   mkdirSync(parent, { recursive: true });
   for (const sibling of readdirSync(parent)) {
     if (!sibling.startsWith(prefix)) continue;
-    const owner = /^([1-9]\d*)-(\d+|unknown)-[a-zA-Z0-9]{6}$/.exec(
-      sibling.slice(prefix.length),
-    );
+    const suffix = sibling.slice(prefix.length);
+    const stale = path.join(parent, sibling);
+    if (!existsSync(path.join(stale, MARKER))) continue;
+    if (/^[1-9]\d*$/.test(suffix)) {
+      // The old format cannot establish the owner’s host or PID namespace.
+      // In a shared --dir, ESRCH is not evidence that this owner stopped.
+      log(
+        `  leaving legacy staging directory ${stale}; remove it when no installer is using it`,
+      );
+      continue;
+    }
+    const owner = /^([1-9]\d*)-(\d+|unknown)-[a-zA-Z0-9]{6}$/.exec(suffix);
     if (!owner) continue;
     const pid = Number(owner[1]);
-    if (pid > 0x7fffffff) continue;
-    const stale = path.join(parent, sibling);
-    if (!existsSync(path.join(stale, MARKER)) || !ownerExited(pid, owner[2]))
-      continue;
+    if (pid > 0x7fffffff || !ownerExited(pid, owner[2])) continue;
     log(`  removing a partial extraction left by an earlier run: ${sibling}`);
     rmSync(stale, { recursive: true, force: true });
   }
