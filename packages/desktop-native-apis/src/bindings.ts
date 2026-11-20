@@ -1433,8 +1433,8 @@ export type FieldValueResult = { value: string | null; error: string | null }
 export type FloatingWindowInfo = { id: string; url: string; title: string }
 export type GpuAdapterInfo = { name: string; vendor: number; device: number; deviceType: string; backend: string }
 export type Hotkey = { id: string; actionName: string; keys: string[] }
-export type InputDeviceDescriptor = { label: string; isDefault: boolean; caution: boolean; bluetooth: boolean }
 export type HttpRedirectMode = "follow" | "manual" | "error"
+export type InputDeviceDescriptor = { label: string; isDefault: boolean; caution: boolean; bluetooth: boolean }
 /**
  * Canonical string identifier for a JAB element at one level of the tree.
  * JAB has no developer-assigned ID, so we combine `name` + `role` (English)
