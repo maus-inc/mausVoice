@@ -67,23 +67,17 @@ export const isLocalDataClearRequested = (): boolean => clearRequested;
 /** A monotonic token that invalidates remote work started before any clear. */
 export const getLocalDataClearGeneration = (): number => clearRequestGeneration;
 
-type LocalDataClearRequestedListener = () => void;
+type LocalDataClearRequestedListener = () => void | Promise<void>;
 const localDataClearRequestedListeners =
   new Set<LocalDataClearRequestedListener>();
 
-const notifyLocalDataClearRequestedListener = (
+const notifyLocalDataClearRequestedListener = async (
   listener: LocalDataClearRequestedListener,
-): void => {
+): Promise<void> => {
   try {
-    listener();
+    await listener();
   } catch (error) {
     getLogger().warning("Local-data clear listener failed", error);
-  }
-};
-
-const notifyLocalDataClearRequested = (): void => {
-  for (const listener of Array.from(localDataClearRequestedListeners)) {
-    notifyLocalDataClearRequestedListener(listener);
   }
 };
 
@@ -92,7 +86,7 @@ export const subscribeToLocalDataClearRequested = (
   listener: LocalDataClearRequestedListener,
 ): (() => void) => {
   localDataClearRequestedListeners.add(listener);
-  if (clearRequested) notifyLocalDataClearRequestedListener(listener);
+  if (clearRequested) void notifyLocalDataClearRequestedListener(listener);
   return () => {
     localDataClearRequestedListeners.delete(listener);
   };
@@ -288,7 +282,12 @@ export const beginLocalDataClear = async (): Promise<Release> => {
   clearRequested = true;
   activeClears += 1;
   clearRequestGeneration += 1;
-  notifyLocalDataClearRequested();
+  const stopping = Promise.all(
+    Array.from(
+      localDataClearRequestedListeners,
+      notifyLocalDataClearRequestedListener,
+    ),
+  );
 
   if (activeWrites > 0) {
     writesDrained ??= new Promise<void>((resolve) => {
@@ -296,6 +295,7 @@ export const beginLocalDataClear = async (): Promise<Release> => {
     });
     await writesDrained;
   }
+  await stopping;
 
   let active = true;
   return () => {

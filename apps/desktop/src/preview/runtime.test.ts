@@ -535,6 +535,29 @@ describe("browser preview transport", () => {
     );
   });
 
+  // The composer's browser fallback claims the recorder's one slot before it
+  // starts the webview's own speech recognition. The preview has no native
+  // recorder, so both halves of that claim have to answer instead of throwing.
+  it("answers the browser-recording claim the composer makes", async () => {
+    await expect(
+      invokePreviewCommand("recording_generation", {
+        ownerId: "preview-owner",
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      invokePreviewCommand("claim_browser_recording", {
+        ownerId: "preview-owner",
+        generation: 1,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      invokePreviewCommand("release_browser_recording", {
+        ownerId: "preview-owner",
+        generation: 1,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   // The settings page drives stop_key_listener, stop_recording and
   // clear_local_data, then reloads. Without a handler the wipe rejected and the
   // dialog reported an error, so "Clear local data" could not be exercised in
@@ -733,6 +756,78 @@ describe("browser preview transport", () => {
       "style-note",
     ]);
     expect(saved.find(({ id }) => id === "style-note")).toEqual(hotkey);
+  });
+
+  it("rejects a shortcut replacement computed from a stale group", async () => {
+    type Row = { id: string; actionName: string; keys: string[] };
+    const before = await invokePreviewCommand<Row[]>("hotkey_list");
+    const styleGroup = before.filter(({ actionName }) =>
+      actionName.startsWith("style-"),
+    );
+    await invokePreviewCommand("hotkey_save", {
+      hotkey: { id: "style-late", actionName: "style-late", keys: ["L"] },
+    });
+
+    await expect(
+      invokePreviewCommand("hotkey_replace_style_hotkeys", {
+        prefix: "style-",
+        hotkeys: [],
+        expected: styleGroup,
+      }),
+    ).rejects.toThrow(/STYLE_HOTKEYS_CHANGED/);
+    // The rejection left the shortcuts alone.
+    expect(
+      (await invokePreviewCommand<Row[]>("hotkey_list")).map(({ id }) => id),
+    ).toContain("style-late");
+  });
+
+  it("replaces the dictation group and keeps a second dictation binding", async () => {
+    type Row = { id: string; actionName: string; keys: string[] };
+    await invokePreviewCommand("hotkey_save", {
+      hotkey: { id: "dictate-2", actionName: "dictate", keys: ["Alt", "D"] },
+    });
+    const group = (await invokePreviewCommand<Row[]>("hotkey_list")).filter(
+      ({ actionName }) =>
+        actionName === "dictate" ||
+        actionName.startsWith("additional-language:"),
+    );
+    const second = group.find(({ id }) => id === "dictate-2");
+
+    await invokePreviewCommand("hotkey_replace_dictation_language_hotkeys", {
+      primary: { id: "dictate", actionName: "dictate", keys: ["F9"] },
+      additional: [
+        {
+          id: "lang-fr",
+          actionName: "additional-language:fr",
+          keys: ["Alt", "F"],
+        },
+        second,
+      ],
+      expected: group,
+    });
+
+    const saved = await invokePreviewCommand<Row[]>("hotkey_list");
+    expect(saved.map(({ id }) => id).sort()).toEqual([
+      "agent",
+      "dictate",
+      "dictate-2",
+      "lang-fr",
+      "style-email",
+    ]);
+    expect(saved.find(({ id }) => id === "dictate")).toEqual({
+      id: "dictate",
+      actionName: "dictate",
+      keys: ["F9"],
+    });
+
+    // The group it just replaced is no longer the group it would be replacing.
+    await expect(
+      invokePreviewCommand("hotkey_replace_dictation_language_hotkeys", {
+        primary: { id: "dictate", actionName: "dictate", keys: ["F8"] },
+        additional: [],
+        expected: group,
+      }),
+    ).rejects.toThrow(/DICTATION_HOTKEYS_CHANGED/);
   });
 
   it("routes remote commands independently of history and system commands", async () => {

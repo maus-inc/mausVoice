@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 
-const { createBrowserRouterMock } = vi.hoisted(() => ({
-  createBrowserRouterMock: vi.fn(() => ({})),
+const { createBrowserRouterMock, previewNavigateMock } = vi.hoisted(() => ({
+  previewNavigateMock: vi.fn().mockResolvedValue(undefined),
+  createBrowserRouterMock: vi.fn(),
 }));
+createBrowserRouterMock.mockReturnValue({ navigate: previewNavigateMock });
 
 vi.mock("react-router-dom", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-router-dom")>()),
@@ -13,6 +15,12 @@ vi.mock("react-router-dom", async (importOriginal) => ({
 describe("preview router", () => {
   it("does not initialize the unused desktop router alongside the preview router", async () => {
     await import("./PreviewApp");
+    expect(createBrowserRouterMock).toHaveBeenCalledTimes(1);
+    const { navigateApp } = await import("../utils/app-navigation");
+    await navigateApp("/dashboard/transcriptions");
+    expect(previewNavigateMock).toHaveBeenCalledWith(
+      "/dashboard/transcriptions",
+    );
     expect(createBrowserRouterMock).toHaveBeenCalledTimes(1);
 
     const { getBrowserRouter } = await import("../router");

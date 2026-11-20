@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import type { StopRecordingResponse } from "../types/transcription-session.types";
 
 const HEADER_BYTES = 4;
@@ -28,6 +27,18 @@ const CAPTURE_FAULT_BIT = 0b1;
  */
 // prettier-ignore
 const CAPTURE_TRAILER_MAGIC = 0x43_41_50_54;
+
+/**
+ * The top bit of the sample-rate header means the capture failed partway
+ * through and the samples are what was recorded before it did. Native sets it
+ * in `encode_recording_result`; the rate itself never reaches this bit.
+ */
+const CAPTURE_FAILED_FLAG = 0x80000000;
+const SAMPLE_RATE_MASK = 0x7fffffff;
+
+const readCaptureFailed = (value: unknown): boolean =>
+  value === true ||
+  (typeof value === "number" && (value & CAPTURE_FAILED_FLAG) !== 0);
 const IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 
 const EMPTY_RESULT = (): StopRecordingResponse => ({
@@ -47,11 +58,16 @@ const EMPTY_RESULT = (): StopRecordingResponse => ({
 export const encodeRecordedAudio = (
   samples: number[] | Float32Array,
   sampleRate: number,
+  captureFailed = false,
 ): Uint8Array => {
   const sampleCount = samples.length;
   const bytes = new Uint8Array(HEADER_BYTES + sampleCount * 4);
   const view = new DataView(bytes.buffer);
-  view.setUint32(0, sampleRate, true);
+  view.setUint32(
+    0,
+    captureFailed ? (sampleRate | CAPTURE_FAILED_FLAG) >>> 0 : sampleRate,
+    true,
+  );
   if (IS_LITTLE_ENDIAN) {
     // Aligned: the f32 view writes the platform's little-endian layout
     // directly, which is the wire layout. `set` copies rather than aliases,
@@ -100,7 +116,9 @@ const decodeBinary = (bytes: Uint8Array): StopRecordingResponse => {
     return EMPTY_RESULT();
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const sampleRate = view.getUint32(0, true);
+  const header = view.getUint32(0, true);
+  const sampleRate = header & SAMPLE_RATE_MASK;
+  const failure = readCaptureFailed(header) ? { captureFailed: true } : {};
   const trailer = readCaptureTrailer(view, bytes.byteLength);
   const audioBytes = trailer
     ? bytes.byteLength - TRAILER_BYTES
@@ -119,13 +137,14 @@ const decodeBinary = (bytes: Uint8Array): StopRecordingResponse => {
       samples: new Float32Array(bytes.buffer, samplesOffset, sampleCount),
       sampleRate,
       ...capture,
+      ...failure,
     };
   }
   const samples = new Float32Array(sampleCount);
   for (let index = 0; index < sampleCount; index += 1) {
     samples[index] = view.getFloat32(HEADER_BYTES + index * 4, true);
   }
-  return { samples, sampleRate, ...capture };
+  return { samples, sampleRate, ...capture, ...failure };
 };
 
 /**
@@ -172,11 +191,19 @@ const finiteOrZero = (value: unknown): number =>
 const decodeObjectPayload = (fields: {
   samples: unknown;
   sampleRate: unknown;
-  captureFault: unknown;
-  capturedMs: unknown;
-  expectedMs: unknown;
+  captureFault?: unknown;
+  capturedMs?: unknown;
+  expectedMs?: unknown;
+  captureFailed?: unknown;
 }): StopRecordingResponse => {
-  const { samples, sampleRate, captureFault, capturedMs, expectedMs } = fields;
+  const {
+    samples,
+    sampleRate,
+    captureFault,
+    capturedMs,
+    expectedMs,
+    captureFailed,
+  } = fields;
   if (!isSampleArray(samples)) {
     return EMPTY_RESULT();
   }
@@ -188,6 +215,7 @@ const decodeObjectPayload = (fields: {
         ? samples.slice()
         : Float32Array.from(samples),
     sampleRate: finiteOrZero(sampleRate),
+    ...(readCaptureFailed(captureFailed) ? { captureFailed: true } : {}),
     // Only a fatal fault is reported; anything else is silence, which is what
     // an older caller already assumed.
     ...(captureFault === "fatal" ? { captureFault: "fatal" as const } : {}),
@@ -215,26 +243,9 @@ export const decodeStopRecordingPayload = (
     return decodeBinary(Uint8Array.from(payload as number[]));
   }
   if (payload && typeof payload === "object" && "samples" in payload) {
-    const { samples, sampleRate, captureFault, capturedMs, expectedMs } =
-      payload as {
-        samples?: unknown;
-        sampleRate?: unknown;
-        captureFault?: unknown;
-        capturedMs?: unknown;
-        expectedMs?: unknown;
-      };
-    return decodeObjectPayload({
-      samples,
-      sampleRate,
-      captureFault,
-      capturedMs,
-      expectedMs,
-    });
+    return decodeObjectPayload(
+      payload as Parameters<typeof decodeObjectPayload>[0],
+    );
   }
   return EMPTY_RESULT();
 };
-
-export const invokeStopRecording = async (
-  invokeFn: (command: string) => Promise<unknown> = invoke,
-): Promise<StopRecordingResponse> =>
-  decodeStopRecordingPayload(await invokeFn("stop_recording"));

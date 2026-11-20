@@ -63,7 +63,10 @@ export const ComponentPage = () => {
   const badge = STATUS_BADGE[entry.status];
 
   return (
-    <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1200 }}>
+    <Box
+      data-preview-component={entry.id}
+      sx={{ p: { xs: 2, md: 4 }, maxWidth: 1200 }}
+    >
       <Button
         component={Link}
         to="/"

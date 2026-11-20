@@ -521,6 +521,7 @@ function buildNativePill(packageDir, binaryName) {
 
   const pillCargoArgs = [
     "build",
+    "--locked",
     "--manifest-path",
     pillManifestPath,
     "--bin",

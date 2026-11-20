@@ -1,16 +1,16 @@
 use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
 use crate::errors::RecordingError;
 use crate::platform::audio::{
-    compute_level_bins, label_has_low_quality_keyword, InputDeviceDescriptor,
+    compute_level_bins, label_has_low_quality_keyword, retain_finite_prefix, InputDeviceDescriptor,
     CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
 };
 use crate::platform::{ChunkCallback, LevelCallback, Recorder};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use libpulse_binding as pulse;
 use libpulse_binding::mainloop::standard::Mainloop;
-use libpulse_simple_binding as psimple;
 
 const FALLBACK_SAMPLE_RATE: u32 = 44_100;
 const READ_CHUNK_FRAMES: usize = 1024;
@@ -22,13 +22,10 @@ pub struct PulseRecorder {
 
 struct ActiveRecording {
     started_at: Instant,
-    stop_signal: Arc<Mutex<bool>>,
-    thread: Option<std::thread::JoinHandle<RecordingResult>>,
+    stop_signal: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<Result<RecordingResult, String>>>,
     sample_rate: u32,
 }
-
-unsafe impl Send for PulseRecorder {}
-unsafe impl Sync for PulseRecorder {}
 
 impl Default for PulseRecorder {
     fn default() -> Self {
@@ -60,12 +57,11 @@ impl Recorder for PulseRecorder {
             return Err(Box::new(RecordingError::AlreadyRecording));
         }
 
-        let started_at = Instant::now();
         let preferred = {
             let pref_guard = self
                 .preferred_source
                 .lock()
-                .unwrap_or_else(|p| p.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             pref_guard.clone()
         };
 
@@ -81,24 +77,44 @@ impl Recorder for PulseRecorder {
             native_rate,
         );
 
-        let stop_signal = Arc::new(Mutex::new(false));
+        let stop_signal = Arc::new(AtomicBool::new(false));
         let stop_signal_clone = Arc::clone(&stop_signal);
+        let (ready_tx, ready_rx) = mpsc::channel();
 
         let thread = std::thread::Builder::new()
             .name("pulse-recorder".into())
             .spawn(move || {
-                record_loop(
+                let result = record_loop(
                     source_name.as_deref(),
                     native_rate,
                     stop_signal_clone,
                     level_callback,
                     chunk_callback,
-                )
+                    &ready_tx,
+                );
+                if let Err(error) = &result {
+                    let _ = ready_tx.send(Err(error.clone()));
+                }
+                result
             })
             .map_err(|err| RecordingError::StreamBuild(err.to_string()))?;
 
+        match ready_rx.recv_timeout(Duration::from_secs(6)) {
+            Ok(Ok(())) => {}
+            result => {
+                stop_signal.store(true, Ordering::Release);
+                let _ = thread.join();
+                let error = match result {
+                    Ok(Err(error)) => error,
+                    Err(error) => format!("PulseAudio startup failed: {error}"),
+                    Ok(Ok(())) => unreachable!(),
+                };
+                return Err(Box::new(RecordingError::StreamBuild(error)));
+            }
+        }
+
         *guard = Some(ActiveRecording {
-            started_at,
+            started_at: Instant::now(),
             stop_signal,
             thread: Some(thread),
             sample_rate: native_rate,
@@ -111,15 +127,11 @@ impl Recorder for PulseRecorder {
         let mut guard = self
             .inner
             .lock()
-            .map_err(|_| RecordingError::NotRecording)?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut recording = guard.take().ok_or(RecordingError::NotRecording)?;
 
         let expected_at_stop = recording.started_at.elapsed();
-
-        // Signal the recording thread to stop
-        if let Ok(mut flag) = recording.stop_signal.lock() {
-            *flag = true;
-        }
+        recording.stop_signal.store(true, Ordering::Release);
 
         let thread = recording
             .thread
@@ -127,12 +139,10 @@ impl Recorder for PulseRecorder {
             .ok_or(RecordingError::NotRecording)?;
         let mut result = thread
             .join()
-            .map_err(|_| RecordingError::StreamBuild("recording thread panicked".into()))?;
+            .map_err(|_| RecordingError::StreamBuild("recording thread panicked".into()))?
+            .map_err(RecordingError::StreamBuild)?;
 
-        if result.metrics.capture_fault.is_some() {
-            result.metrics.expected_duration = expected_at_stop;
-        }
-
+        result.metrics.expected_duration = expected_at_stop;
         Ok(result)
     }
 
@@ -148,6 +158,10 @@ impl Recorder for PulseRecorder {
         // No caching needed — PulseAudio handles device routing
     }
 
+    fn is_recording(&self) -> bool {
+        self.current_sample_rate().is_some()
+    }
+
     fn current_sample_rate(&self) -> Option<u32> {
         let guard = match self.inner.lock() {
             Ok(g) => g,
@@ -157,8 +171,7 @@ impl Recorder for PulseRecorder {
     }
 
     fn pause(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // PulseAudio simple stream does not expose direct pause/resume.
-        // Returning unsupported keeps the trait contract while making the limitation explicit.
+        // The capture worker does not yet implement pause/resume.
         Err(Box::new(RecordingError::StreamPlay(
             "PulseAudio recorder does not support pause/resume".into(),
         )))
@@ -214,295 +227,297 @@ fn query_source_native_rate(source_name: Option<&str>) -> u32 {
     FALLBACK_SAMPLE_RATE
 }
 
-/// State the level emitter carries between blocks.
-///
-/// Pulled out of the loop so each emitter can be read, and tested, on its own:
-/// the loop was one function doing capture, conversion, accumulation, level
-/// dispatch, chunk dispatch and its own shutdown reasoning, which is more than a
-/// reader can hold at once.
-struct LevelEmitter {
-    callback: Option<LevelCallback>,
-    last_emit: Instant,
-}
-
-impl LevelEmitter {
-    fn new(callback: Option<LevelCallback>) -> Self {
-        Self {
-            callback,
-            last_emit: Instant::now(),
+fn pulse_iterate(mainloop: &mut Mainloop) -> Result<(), String> {
+    match mainloop.iterate(false) {
+        pulse::mainloop::standard::IterateResult::Success(_) => Ok(()),
+        pulse::mainloop::standard::IterateResult::Quit(_) => {
+            Err("PulseAudio mainloop stopped".into())
         }
-    }
-
-    /// Sends a level bin no more often than `LEVEL_DISPATCH_INTERVAL`.
-    fn dispatch(&mut self, samples: &[f32]) {
-        let Some(callback) = self.callback.as_ref() else {
-            return;
-        };
-        let now = Instant::now();
-        if now.duration_since(self.last_emit) < LEVEL_DISPATCH_INTERVAL {
-            return;
+        pulse::mainloop::standard::IterateResult::Err(error) => {
+            Err(format!("PulseAudio mainloop failed: {error}"))
         }
-        self.last_emit = now;
-        callback(compute_level_bins(samples));
     }
 }
 
-/// State the chunk emitter carries between blocks.
-struct ChunkEmitter {
-    callback: Option<ChunkCallback>,
-    last_emit: Instant,
-    buffer: Vec<f32>,
-    /// Samples already handed to the callback, so each batch reports the
-    /// absolute index of its first sample.
-    emitted: u64,
-}
-
-impl ChunkEmitter {
-    fn new(callback: Option<ChunkCallback>) -> Self {
-        Self {
-            callback,
-            last_emit: Instant::now(),
-            buffer: Vec::new(),
-            emitted: 0,
+fn wait_for_pulse(
+    mainloop: &mut Mainloop,
+    stop: &AtomicBool,
+    mut state: impl FnMut() -> Result<bool, String>,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return Err("Recording start was cancelled".into());
         }
-    }
-
-    /// Accumulates a block and sends whatever is buffered at the dispatch
-    /// interval. The flush at the end of the recording goes through
-    /// [`ChunkEmitter::flush`].
-    fn dispatch(&mut self, samples: &[f32]) {
-        if self.callback.is_none() {
-            return;
+        if state()? {
+            return Ok(());
         }
-        self.buffer.extend_from_slice(samples);
-        let now = Instant::now();
-        if now.duration_since(self.last_emit) < CHUNK_DISPATCH_INTERVAL {
-            return;
+        if Instant::now() >= deadline {
+            return Err("PulseAudio startup timed out".into());
         }
-        self.last_emit = now;
-        self.emit_buffered();
-    }
-
-    /// Sends anything still buffered. Called once, when the loop ends.
-    fn flush(&mut self) {
-        self.emit_buffered();
-    }
-
-    /// Takes the buffered samples and hands them over with the offset of the
-    /// first one.
-    ///
-    /// The callback is cloned out rather than borrowed from `self`, because
-    /// `emit_buffered` mutates `self` to advance the offset and clear the
-    /// buffer. `ChunkCallback` is a function pointer or an `Arc`, so the clone
-    /// is free.
-    fn emit_buffered(&mut self) {
-        let Some(callback) = self.callback.clone() else {
-            return;
-        };
-        if self.buffer.is_empty() {
-            return;
-        }
-        let offset = self.emitted;
-        let batch = std::mem::take(&mut self.buffer);
-        self.emitted += batch.len() as u64;
-        callback(batch, offset);
+        pulse_iterate(mainloop)?;
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
-/// The actual blocking recording loop. Runs on a dedicated thread.
+fn pulse_samples(fragment: pulse::stream::PeekResult<'_>) -> Result<Option<Vec<f32>>, String> {
+    match fragment {
+        pulse::stream::PeekResult::Empty => Ok(None),
+        pulse::stream::PeekResult::Hole(bytes) => {
+            if bytes % 4 != 0 {
+                return Err("Invalid PulseAudio sample alignment".into());
+            }
+            Ok(Some(vec![0.0; bytes / 4]))
+        }
+        pulse::stream::PeekResult::Data(bytes) => {
+            if bytes.len() % 4 != 0 {
+                return Err("Invalid PulseAudio sample alignment".into());
+            }
+            Ok(Some(
+                bytes
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect(),
+            ))
+        }
+    }
+}
+
 fn record_loop(
     source_name: Option<&str>,
     sample_rate: u32,
-    stop_signal: Arc<Mutex<bool>>,
+    stop_signal: Arc<AtomicBool>,
     level_callback: Option<LevelCallback>,
     chunk_callback: Option<ChunkCallback>,
-) -> RecordingResult {
+    ready: &mpsc::Sender<Result<(), String>>,
+) -> Result<RecordingResult, String> {
     let spec = pulse::sample::Spec {
         format: pulse::sample::Format::F32le,
         channels: 1,
         rate: sample_rate,
     };
-
     let attr = pulse::def::BufferAttr {
         maxlength: u32::MAX,
         tlength: u32::MAX,
         prebuf: u32::MAX,
         minreq: u32::MAX,
-        // Keep the fragment size small for low-latency level/chunk callbacks
         fragsize: (READ_CHUNK_FRAMES * std::mem::size_of::<f32>()) as u32,
     };
-
-    let source_cstr = source_name.and_then(|s| std::ffi::CString::new(s).ok());
-    let source_ref = source_cstr
-        .as_ref()
-        .map(|c| c.as_c_str().to_str().unwrap_or_default());
-
-    // Taken before the open, so a refusal can report how long the attempt was
-    // alive. Opening a PulseAudio stream is the step that hangs when the server
-    // is wedged, and "asked for two seconds, got nothing" is the difference
-    // between a dead device and a stop before any audio existed.
-    let start_of_open = Instant::now();
-
-    let simple = match psimple::Simple::new(
-        None,        // server (default)
-        "mausVoice", // app name
-        pulse::stream::Direction::Record,
-        source_ref,  // source (None = default)
-        "Recording", // stream description
-        &spec,
-        None, // channel map (default)
-        Some(&attr),
-    ) {
-        Ok(s) => s,
-        Err(err) => {
-            log::error!("failed to open PulseAudio recording stream: {err}");
-            // Not a zeroed, fault-free result. That shape means "a stop with
-            // nothing to record", which is exactly what a failed capture must
-            // not look like: with no fault token the front end treated the dead
-            // stream as a clean stop, so the user got an empty transcript with
-            // nothing explaining it. The token and the expected duration
-            // together say "this was open for some time and produced nothing",
-            // which is the report `reported_capture_fault` exists to carry.
-            return failed_open_result(start_of_open.elapsed());
+    let mut mainloop = Mainloop::new().ok_or("failed to create PulseAudio mainloop")?;
+    let mut context = pulse::context::Context::new(&mainloop, "mausVoice")
+        .ok_or("failed to create PulseAudio context")?;
+    context
+        .connect(None, pulse::context::FlagSet::NOFLAGS, None)
+        .map_err(|error| format!("failed to connect PulseAudio: {error}"))?;
+    wait_for_pulse(&mut mainloop, &stop_signal, || match context.get_state() {
+        pulse::context::State::Ready => Ok(true),
+        pulse::context::State::Failed | pulse::context::State::Terminated => {
+            Err("PulseAudio context failed".into())
         }
-    };
+        _ => Ok(false),
+    })?;
+    let mut stream = pulse::stream::Stream::new(&mut context, "Recording", &spec, None)
+        .ok_or("failed to create PulseAudio stream")?;
+    stream
+        .connect_record(source_name, Some(&attr), pulse::stream::FlagSet::NOFLAGS)
+        .map_err(|error| format!("failed to open PulseAudio stream: {error}"))?;
+    wait_for_pulse(&mut mainloop, &stop_signal, || match stream.get_state() {
+        pulse::stream::State::Ready => Ok(true),
+        pulse::stream::State::Failed | pulse::stream::State::Terminated => {
+            Err("PulseAudio stream failed".into())
+        }
+        _ => Ok(false),
+    })?;
+    if ready.send(Ok(())).is_err() {
+        return Err("Recording start was cancelled".into());
+    }
 
     log::info!(
         "PulseAudio recording started (source: {})",
         source_name.unwrap_or("default")
     );
 
-    read_recording(
+    Ok(capture_samples(
         sample_rate,
-        stop_signal,
+        &stop_signal,
         level_callback,
         chunk_callback,
-        |buffer| simple.read(buffer),
-    )
+        |stopping| {
+            if !stopping {
+                pulse_iterate(&mut mainloop)?;
+            }
+            match stream.get_state() {
+                pulse::stream::State::Failed | pulse::stream::State::Terminated => {
+                    return Err("PulseAudio recording stream failed".into())
+                }
+                _ => {}
+            }
+            let samples = pulse_samples(
+                stream
+                    .peek()
+                    .map_err(|error| format!("PulseAudio read failed: {error}"))?,
+            )?;
+            if samples.is_some() {
+                stream
+                    .discard()
+                    .map_err(|error| format!("PulseAudio discard failed: {error}"))?;
+            }
+            Ok(samples)
+        },
+    ))
 }
 
-#[allow(unknown_lints)]
-#[allow(clippy::chunks_exact_to_as_chunks)]
-fn read_recording(
+/// One step of the capture loop, so the loop body itself stays a flat match
+/// instead of nesting the buffer, callback, and shutdown cases together.
+enum CaptureStep {
+    Samples(Vec<f32>),
+    /// No samples were ready yet; the caller should poll again.
+    Idle,
+    /// The recorder is stopping and the source has nothing left to hand over.
+    Stopped,
+    Failed(String),
+}
+
+fn read_capture_step(
+    read: &mut impl FnMut(bool) -> Result<Option<Vec<f32>>, String>,
+    stopping: bool,
+) -> CaptureStep {
+    match read(stopping) {
+        Ok(Some(samples)) => CaptureStep::Samples(samples),
+        Ok(None) if stopping => CaptureStep::Stopped,
+        Ok(None) => {
+            std::thread::sleep(Duration::from_millis(5));
+            CaptureStep::Idle
+        }
+        Err(error) => CaptureStep::Failed(error),
+    }
+}
+
+fn emit_level_bins(callback: Option<&LevelCallback>, samples: &[f32], last_emit: &mut Instant) {
+    let Some(callback) = callback else {
+        return;
+    };
+    let now = Instant::now();
+    if now.duration_since(*last_emit) < LEVEL_DISPATCH_INTERVAL {
+        return;
+    }
+    *last_emit = now;
+    callback(compute_level_bins(samples));
+}
+
+fn emit_audio_chunks(
+    callback: Option<&ChunkCallback>,
+    chunk_buffer: &mut Vec<f32>,
+    emitted_samples: &mut u64,
+    last_emit: &mut Instant,
+    samples: &[f32],
+) {
+    let Some(callback) = callback else {
+        return;
+    };
+    chunk_buffer.extend_from_slice(samples);
+    let now = Instant::now();
+    if now.duration_since(*last_emit) < CHUNK_DISPATCH_INTERVAL {
+        return;
+    }
+    *last_emit = now;
+    if chunk_buffer.is_empty() {
+        return;
+    }
+    let offset = *emitted_samples;
+    let batch = std::mem::take(chunk_buffer);
+    *emitted_samples += batch.len() as u64;
+    callback(batch, offset);
+}
+
+fn flush_audio_chunks(
+    callback: Option<&ChunkCallback>,
+    chunk_buffer: &mut Vec<f32>,
+    emitted_samples: u64,
+) {
+    let Some(callback) = callback else {
+        return;
+    };
+    if chunk_buffer.is_empty() {
+        return;
+    }
+    callback(std::mem::take(chunk_buffer), emitted_samples);
+}
+
+fn capture_samples(
     sample_rate: u32,
-    stop_signal: Arc<Mutex<bool>>,
+    stop_signal: &AtomicBool,
     level_callback: Option<LevelCallback>,
     chunk_callback: Option<ChunkCallback>,
-    mut read: impl FnMut(&mut [u8]) -> Result<(), pulse::error::PAErr>,
+    mut read: impl FnMut(bool) -> Result<Option<Vec<f32>>, String>,
 ) -> RecordingResult {
     let start = Instant::now();
     let mut all_samples: Vec<f32> = Vec::new();
-    let mut levels = LevelEmitter::new(level_callback);
-    let mut chunks = ChunkEmitter::new(chunk_callback);
-
-    let mut read_buf = vec![0u8; READ_CHUNK_FRAMES * std::mem::size_of::<f32>()];
-    // Set when the read itself failed, cleared when the stop signal explains it.
-    let mut read_fault: Option<String> = None;
+    let mut last_level_emit = Instant::now();
+    let mut last_chunk_emit = Instant::now();
+    let mut chunk_buffer: Vec<f32> = Vec::new();
+    let mut emitted_samples: u64 = 0;
+    let mut capture_failed = false;
 
     loop {
-        // Check stop signal
-        if let Ok(flag) = stop_signal.lock() {
-            if *flag {
+        let stopping = stop_signal.load(Ordering::Acquire);
+        let mut samples = match read_capture_step(&mut read, stopping) {
+            CaptureStep::Samples(samples) => samples,
+            CaptureStep::Idle => continue,
+            CaptureStep::Stopped => break,
+            CaptureStep::Failed(error) => {
+                log::error!("PulseAudio read failed: {error}");
+                capture_failed = true;
                 break;
             }
-        }
+        };
 
-        // Read audio data (blocking)
-        if let Err(err) = read(&mut read_buf) {
-            log::error!("PulseAudio read error: {err}");
-            // Decide between a shutdown and a fault *here*, not after the loop.
-            //
-            // The stop flag used to be sampled once the loop had exited, which
-            // was several steps later: the chunk flush below, its callback, and
-            // whatever that callback did. A stop pressed during any of that
-            // found the flag set and cleared a fault that had already happened,
-            // so a device that died mid-dictation reported a clean, short
-            // recording. Sampling at the failure narrows the window to the two
-            // instructions after a failed read, where only a genuine
-            // simultaneous stop can be mistaken for a shutdown.
-            //
-            // Either way nothing is reported for a normal stop: a stop requested
-            // before the read is caught by the check at the top of the loop.
-            if stop_signal.lock().map(|flag| *flag).unwrap_or(false) {
-                break;
-            }
-            read_fault = Some(READ_FAULT_TOKEN.to_string());
-            break;
-        }
-
-        // Convert bytes to f32 samples (F32LE format)
-        let samples: Vec<f32> = read_buf
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|chunk| f32::from_le_bytes(*chunk))
-            .collect();
-
+        let finite = retain_finite_prefix(&mut samples);
+        capture_failed |= !finite;
         // Accumulate for final result
         all_samples.extend_from_slice(&samples);
-
-        levels.dispatch(&samples);
-        chunks.dispatch(&samples);
+        emit_level_bins(level_callback.as_ref(), &samples, &mut last_level_emit);
+        emit_audio_chunks(
+            chunk_callback.as_ref(),
+            &mut chunk_buffer,
+            &mut emitted_samples,
+            &mut last_chunk_emit,
+            &samples,
+        );
+        if !finite {
+            break;
+        }
     }
 
-    chunks.flush();
+    flush_audio_chunks(chunk_callback.as_ref(), &mut chunk_buffer, emitted_samples);
 
-    // `read_fault` was decided at the failing read, above. Re-sampling the stop
-    // flag here is what used to let a stop pressed after the failure discard it.
+    if capture_failed {
+        for sample in &mut all_samples {
+            if !sample.is_finite() {
+                *sample = 0.0;
+            }
+        }
+    }
 
-    let expected_duration = start.elapsed();
-    let duration = if read_fault.is_some() || !all_samples.is_empty() {
+    let duration = if capture_failed || !all_samples.is_empty() {
         Duration::from_secs_f64(all_samples.len() as f64 / f64::from(sample_rate))
     } else {
-        expected_duration
+        start.elapsed()
     };
     let size_bytes = all_samples.len() as u64 * std::mem::size_of::<f32>() as u64;
 
     RecordingResult {
         metrics: RecordingMetrics {
             duration,
-            expected_duration,
+            expected_duration: start.elapsed(),
             size_bytes,
-            // No host error callback exists on this backend, so the fault is the
-            // read failure classified above. Without it a stream that died mid
-            // dictation produced the same result as one that was stopped.
-            capture_fault: read_fault,
+            capture_fault: capture_failed.then(|| "fatal".to_owned()),
         },
         audio: RecordedAudio {
             samples: all_samples,
             sample_rate,
         },
-    }
-}
-
-/// The token recorded when the PulseAudio read fails without a stop request.
-///
-/// The same token the cpal path carries for a host-declared fatal error, so the
-/// front end's existing classification handles it without a second dialect.
-const READ_FAULT_TOKEN: &str = "fatal";
-
-/// The result of a capture that never opened.
-///
-/// The opposite of the zeroed, fault-free shape of a stop that had nothing to
-/// record. This one describes a stream that was asked for and refused, so it
-/// carries the fault token and the time the attempt was open -- otherwise the
-/// front end cannot tell it from a clean stop and reports a silently empty
-/// dictation.
-fn failed_open_result(elapsed: Duration) -> RecordingResult {
-    RecordingResult {
-        metrics: RecordingMetrics {
-            duration: Duration::ZERO,
-            // The attempt was open for this long and captured nothing. A
-            // non-zero expected duration is what makes the loss visible; the
-            // fault token is what names the cause.
-            expected_duration: elapsed,
-            size_bytes: 0,
-            capture_fault: Some(READ_FAULT_TOKEN.to_string()),
-        },
-        audio: RecordedAudio {
-            samples: Vec::new(),
-            sample_rate: FALLBACK_SAMPLE_RATE,
-        },
+        capture_failed,
     }
 }
 
@@ -517,82 +532,119 @@ struct PulseSource {
     sample_rate: u32,
 }
 
-fn enumerate_pulse_sources() -> Vec<PulseSource> {
-    let mut ml = match Mainloop::new() {
-        Some(ml) => ml,
-        None => {
-            log::error!("failed to create PulseAudio mainloop");
-            return Vec::new();
-        }
-    };
+fn poll_pulse_before(mainloop: &mut Mainloop, deadline: Instant) -> bool {
+    if Instant::now() >= deadline || pulse_iterate(mainloop).is_err() {
+        return false;
+    }
+    std::thread::sleep(Duration::from_millis(5));
+    true
+}
 
-    let mut ctx = match pulse::context::Context::new(&ml, "mausVoice Enumerate") {
-        Some(ctx) => ctx,
-        None => {
-            log::error!("failed to create PulseAudio context");
-            return Vec::new();
-        }
-    };
+fn read_flag(flag: &Mutex<bool>) -> bool {
+    flag.lock().map(|done| *done).unwrap_or(false)
+}
+
+fn set_flag(flag: &Mutex<bool>) {
+    if let Ok(mut done) = flag.lock() {
+        *done = true;
+    }
+}
+
+/// Pump the mainloop until `done` is set or the deadline passes. Both callers
+/// treat a timeout and a mainloop failure the same way: take whatever was
+/// collected and move on.
+fn wait_for_pulse_flag(mainloop: &mut Mainloop, done: &Mutex<bool>, deadline: Instant) {
+    while !read_flag(done) && poll_pulse_before(mainloop, deadline) {}
+}
+
+fn connect_pulse_context(
+    mainloop: &mut Mainloop,
+    deadline: Instant,
+) -> Option<pulse::context::Context> {
+    let mut ctx = pulse::context::Context::new(mainloop, "mausVoice Enumerate")?;
 
     if ctx
         .connect(None, pulse::context::FlagSet::NOFLAGS, None)
         .is_err()
     {
         log::error!("failed to connect PulseAudio context");
-        return Vec::new();
+        return None;
     }
 
-    // Wait for context to be ready
     loop {
-        match ml.iterate(true) {
-            pulse::mainloop::standard::IterateResult::Quit(_)
-            | pulse::mainloop::standard::IterateResult::Err(_) => {
-                log::error!("PulseAudio mainloop error during connect");
-                return Vec::new();
-            }
-            _ => {}
+        if !poll_pulse_before(mainloop, deadline) {
+            log::error!("PulseAudio mainloop failed or timed out during connect");
+            return None;
         }
         match ctx.get_state() {
-            pulse::context::State::Ready => break,
+            pulse::context::State::Ready => return Some(ctx),
             pulse::context::State::Failed | pulse::context::State::Terminated => {
                 log::error!("PulseAudio context failed to connect");
-                return Vec::new();
+                return None;
             }
             _ => {}
         }
     }
+}
 
-    // Get the default source name from server info
+fn pulse_source_from_info(
+    info: &pulse::context::introspect::SourceInfo<'_>,
+    default_name: &str,
+) -> PulseSource {
+    let name = info
+        .name
+        .as_ref()
+        .map(|n| n.to_string())
+        .unwrap_or_default();
+    let description = info
+        .description
+        .as_ref()
+        .map(|d| d.to_string())
+        .unwrap_or_else(|| name.clone());
+    PulseSource {
+        is_default: name == default_name,
+        name,
+        description,
+        is_monitor: info.monitor_of_sink.is_some(),
+        sample_rate: info.sample_spec.rate,
+    }
+}
+
+fn take_pulse_sources(sources: Arc<Mutex<Vec<PulseSource>>>) -> Vec<PulseSource> {
+    match Arc::try_unwrap(sources) {
+        Ok(mutex) => mutex.into_inner().unwrap_or_default(),
+        Err(arc) => arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone(),
+    }
+}
+
+fn enumerate_pulse_sources() -> Vec<PulseSource> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let Some(mut ml) = Mainloop::new() else {
+        log::error!("failed to create PulseAudio mainloop");
+        return Vec::new();
+    };
+    let Some(mut ctx) = connect_pulse_context(&mut ml, deadline) else {
+        return Vec::new();
+    };
+    let introspect = ctx.introspect();
+
+    // Get the default source name from server info.
     let default_source: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let default_source_clone = Arc::clone(&default_source);
     let server_done = Arc::new(Mutex::new(false));
     let server_done_clone = Arc::clone(&server_done);
-
-    let introspect = ctx.introspect();
     introspect.get_server_info(move |info| {
         if let Some(ref name) = info.default_source_name {
             if let Ok(mut guard) = default_source_clone.lock() {
                 *guard = Some(name.to_string());
             }
         }
-        if let Ok(mut done) = server_done_clone.lock() {
-            *done = true;
-        }
+        set_flag(&server_done_clone);
     });
-
-    // Wait for server info callback
-    loop {
-        if let Ok(done) = server_done.lock() {
-            if *done {
-                break;
-            }
-        }
-        match ml.iterate(true) {
-            pulse::mainloop::standard::IterateResult::Quit(_)
-            | pulse::mainloop::standard::IterateResult::Err(_) => break,
-            _ => {}
-        }
-    }
+    wait_for_pulse_flag(&mut ml, &server_done, deadline);
 
     let default_name = default_source
         .lock()
@@ -600,65 +652,27 @@ fn enumerate_pulse_sources() -> Vec<PulseSource> {
         .and_then(|g| g.clone())
         .unwrap_or_default();
 
-    // Enumerate sources
+    // Enumerate sources.
     let sources: Arc<Mutex<Vec<PulseSource>>> = Arc::new(Mutex::new(Vec::new()));
     let sources_clone = Arc::clone(&sources);
     let default_name_clone = default_name.clone();
     let list_done = Arc::new(Mutex::new(false));
     let list_done_clone = Arc::clone(&list_done);
-
     introspect.get_source_info_list(move |result| match result {
         pulse::callbacks::ListResult::Item(info) => {
-            let name = info
-                .name
-                .as_ref()
-                .map(|n| n.to_string())
-                .unwrap_or_default();
-            let description = info
-                .description
-                .as_ref()
-                .map(|d| d.to_string())
-                .unwrap_or_else(|| name.clone());
-            let is_monitor = info.monitor_of_sink.is_some();
-
-            let sample_rate = info.sample_spec.rate;
             if let Ok(mut guard) = sources_clone.lock() {
-                guard.push(PulseSource {
-                    is_default: name == default_name_clone,
-                    name,
-                    description,
-                    is_monitor,
-                    sample_rate,
-                });
+                guard.push(pulse_source_from_info(info, &default_name_clone));
             }
         }
         pulse::callbacks::ListResult::End | pulse::callbacks::ListResult::Error => {
-            if let Ok(mut done) = list_done_clone.lock() {
-                *done = true;
-            }
+            set_flag(&list_done_clone);
         }
     });
-
-    // Wait for source list callback
-    loop {
-        if let Ok(done) = list_done.lock() {
-            if *done {
-                break;
-            }
-        }
-        match ml.iterate(true) {
-            pulse::mainloop::standard::IterateResult::Quit(_)
-            | pulse::mainloop::standard::IterateResult::Err(_) => break,
-            _ => {}
-        }
-    }
+    wait_for_pulse_flag(&mut ml, &list_done, deadline);
 
     ctx.disconnect();
 
-    match Arc::try_unwrap(sources) {
-        Ok(mutex) => mutex.into_inner().unwrap_or_default(),
-        Err(arc) => arc.lock().unwrap_or_else(|p| p.into_inner()).clone(),
-    }
+    take_pulse_sources(sources)
 }
 
 /// List microphone sources via PulseAudio, filtering out monitors.
@@ -669,15 +683,11 @@ pub fn list_pulse_input_devices() -> Vec<InputDeviceDescriptor> {
     let mut devices: Vec<InputDeviceDescriptor> = sources
         .into_iter()
         .filter(|s| !s.is_monitor)
-        .map(|s| {
-            // Both flags were hard-coded to `false` here, so on the one platform
-            // where a Bluetooth headset is the common case, the selector offered
-            // it as an ordinary device and nothing downstream could tell the
-            // difference. The keyword test is the same one the cpal path uses.
-            let bluetooth = label_has_low_quality_keyword(&s.description);
+        .map(|source| {
+            let bluetooth = label_has_low_quality_keyword(&source.description);
             InputDeviceDescriptor {
-                label: s.description,
-                is_default: s.is_default,
+                label: source.description,
+                is_default: source.is_default,
                 caution: bluetooth,
                 bluetooth,
             }
@@ -697,201 +707,285 @@ pub fn list_pulse_input_devices() -> Vec<InputDeviceDescriptor> {
 }
 
 #[cfg(test)]
-mod emitter_tests {
+mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use crate::platform::recording_ownership::{RecordingOwnership, RecordingWindow, StartControl};
+    use std::collections::VecDeque;
+    use std::sync::mpsc;
 
-    /// Collects what a [`ChunkEmitter`] sends, so the offset bookkeeping can be
-    /// asserted without a real capture device.
-    /// One dispatched batch: its length and the offset it reported.
-    type Batches = Arc<Mutex<Vec<(usize, u64)>>>;
-
-    fn collector() -> (ChunkCallback, Batches) {
-        let seen: Arc<Mutex<Vec<(usize, u64)>>> = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&seen);
-        let callback: ChunkCallback = Arc::new(move |batch: Vec<f32>, offset: u64| {
-            sink.lock().unwrap().push((batch.len(), offset));
-        });
-        (callback, seen)
-    }
-
-    /// A stream that never opened must not look like a clean stop.
-    ///
-    /// A zeroed, fault-free result is "a stop with nothing to record", where
-    /// zeroed metrics are the truth. A refused open is the opposite: the
-    /// microphone was asked for and never produced a sample, and returning that
-    /// shape made the front end treat it as a clean stop -- no trailer, no
-    /// notice, an empty transcript with nothing behind it.
-    #[test]
-    fn a_refused_open_reports_a_fault_instead_of_looking_like_a_clean_stop() {
-        let refused = failed_open_result(Duration::from_millis(1_500));
-
-        assert_eq!(
-            refused.metrics.capture_fault.as_deref(),
-            Some(READ_FAULT_TOKEN),
-            "a refused open has to carry the token, or the front end cannot report it"
-        );
-        assert!(
-            refused.metrics.expected_duration > refused.metrics.duration,
-            "a refused open captured nothing, so any expected time at all is a loss"
-        );
-        assert_eq!(refused.metrics.duration, Duration::ZERO);
-        assert!(refused.audio.samples.is_empty());
-
-        // The call site is what actually decides, so the test reads it rather
-        // than trusting the helper exists. A helper nobody calls is the failure
-        // mode this guards: the first version of this test drove
-        // `failed_open_result` directly and passed with the call site still
-        // returning that shape.
-        let source = include_str!("audio.rs");
-        // Bounded to the branch itself. An unbounded slice ran to the end of the
-        // file, which includes *this test* -- and this test's own assertion text
-        // contains the very string being looked for, so it passed with the call
-        // site reverted. That is the same vacuity this whole class of test has
-        // to avoid.
-        let open_failure = source
-            .split("failed to open PulseAudio recording stream")
-            .nth(1)
-            .expect("the open-failure branch is what this test is about");
-        let open_failure = open_failure
-            .split("log::info!")
-            .next()
-            .expect("the success path follows the failure branch");
-        assert!(
-            open_failure.contains("failed_open_result("),
-            "the refused-open branch must return failed_open_result, or a dead \
-             stream is reported as a clean stop"
-        );
+    fn start_owned_recording(
+        ownership: &RecordingOwnership,
+        id: &str,
+        window: &Arc<RecordingWindow>,
+        cancelled: &AtomicBool,
+        recorder: &PulseRecorder,
+    ) {
+        let generation = ownership.reserve(id, window).unwrap();
+        let admission = ownership.claim_admission(id, window, generation).unwrap();
+        ownership
+            .start(
+                id,
+                window,
+                generation,
+                StartControl {
+                    cancelled,
+                    admission: Some(&admission),
+                    wait: Duration::ZERO,
+                },
+                || {
+                    recorder
+                        .start(None, None)
+                        .map_err(|error| error.to_string())
+                },
+                || false,
+            )
+            .unwrap();
+        ownership.finish_admission(&admission);
     }
 
     #[test]
-    fn first_read_failure_has_zero_captured_time() {
-        let result = read_recording(
-            FALLBACK_SAMPLE_RATE,
-            Arc::new(Mutex::new(false)),
-            None,
-            None,
-            |_| Err(pulse::error::PAErr(-1)),
-        );
-        assert_eq!(result.metrics.duration, Duration::ZERO);
-        assert!(result.audio.samples.is_empty());
-        assert_eq!(
-            result.metrics.capture_fault.as_deref(),
-            Some(READ_FAULT_TOKEN)
-        );
-    }
-
-    #[test]
-    fn stop_reports_time_held_after_a_fast_open_refusal() {
+    fn failure_before_first_read_reports_zero_capture_and_time_until_stop() {
         let recorder = PulseRecorder::default();
-        let attempt = Duration::from_millis(5);
-        let held_for = Duration::from_secs(1);
-        let started_at = Instant::now()
-            .checked_sub(held_for)
-            .expect("the test needs a representable earlier start time");
+        let stop_signal = Arc::new(AtomicBool::new(false));
+        let result = capture_samples(FALLBACK_SAMPLE_RATE, &stop_signal, None, None, |_| {
+            Err("read failed".into())
+        });
         *recorder.inner.lock().unwrap() = Some(ActiveRecording {
-            started_at,
-            stop_signal: Arc::new(Mutex::new(false)),
-            thread: Some(std::thread::spawn(move || failed_open_result(attempt))),
+            started_at: Instant::now() - Duration::from_secs(1),
+            stop_signal,
+            thread: Some(std::thread::spawn(move || Ok(result))),
             sample_rate: FALLBACK_SAMPLE_RATE,
         });
-
         let result = recorder.stop().unwrap();
-        assert!(result.metrics.expected_duration >= held_for);
+        assert!(result.capture_failed);
         assert_eq!(result.metrics.duration, Duration::ZERO);
+        assert!(result.metrics.expected_duration >= Duration::from_secs(1));
+    }
+
+    #[test]
+    fn pulse_fragments_preserve_float_samples_and_silence_holes() {
+        let bytes = [0.5f32.to_le_bytes(), (-0.25f32).to_le_bytes()].concat();
         assert_eq!(
-            result.metrics.capture_fault.as_deref(),
-            Some(READ_FAULT_TOKEN)
+            pulse_samples(pulse::stream::PeekResult::Data(&bytes)).unwrap(),
+            Some(vec![0.5, -0.25])
         );
+        assert_eq!(
+            pulse_samples(pulse::stream::PeekResult::Hole(8)).unwrap(),
+            Some(vec![0.0, 0.0])
+        );
+        assert_eq!(
+            pulse_samples(pulse::stream::PeekResult::Empty).unwrap(),
+            None
+        );
+        assert!(pulse_samples(pulse::stream::PeekResult::Data(&[1, 2, 3])).is_err());
+        assert!(pulse_samples(pulse::stream::PeekResult::Hole(3)).is_err());
     }
 
-    /// Every batch must report the absolute index of its first sample, and the
-    /// batches must concatenate back to the whole stream. This is the invariant
-    /// the emitters were extracted to keep, and a wrong `emitted` counter is
-    /// silent: it only shows up as a misaligned timeline far downstream.
     #[test]
-    fn chunk_offsets_are_absolute_and_contiguous() {
-        let (callback, seen) = collector();
-        let mut chunks = ChunkEmitter::new(Some(callback));
-
-        // Drive the buffer past the dispatch interval so at least one real
-        // dispatch happens rather than only the final flush.
-        let block = vec![0.25_f32; 4096];
-        for _ in 0..64 {
-            chunks.dispatch(&block);
-        }
-        chunks.flush();
-
-        let seen = seen.lock().unwrap();
-        assert!(!seen.is_empty(), "expected at least one dispatch");
-        let mut expected_offset = 0;
-        for (len, offset) in seen.iter() {
-            assert_eq!(*offset, expected_offset, "batch offset is not contiguous");
-            assert!(*len > 0, "an empty batch must not be emitted");
-            expected_offset += *len as u64;
-        }
-        assert_eq!(expected_offset, 64 * 4096);
-    }
-
-    /// A chunk callback that never fires must not accumulate: it is opted out
-    /// of, not merely throttled.
-    #[test]
-    fn no_chunk_callback_buffers_nothing() {
-        let mut chunks = ChunkEmitter::new(None);
-        let block = vec![0.25_f32; 4096];
-        for _ in 0..64 {
-            chunks.dispatch(&block);
-        }
-        chunks.flush();
-        assert!(chunks.buffer.is_empty());
-        assert_eq!(chunks.emitted, 0);
-    }
-
-    /// Flushing an already-empty buffer must not send an empty batch.
-    #[test]
-    fn flush_without_data_sends_nothing() {
-        let (callback, seen) = collector();
-        let mut chunks = ChunkEmitter::new(Some(callback));
-        chunks.flush();
-        chunks.flush();
-        assert!(seen.lock().unwrap().is_empty());
-    }
-
-    /// The level emitter throttles: a burst of blocks inside one dispatch
-    /// interval sends nothing, because the clock starts at construction rather
-    /// than at the first block. That matches the old inline
-    /// `last_level_emit = Instant::now()` before the loop, and it is why a
-    /// freshly opened microphone shows no bars for the first interval.
-    #[test]
-    fn level_dispatch_is_throttled_within_the_interval() {
-        let seen: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
-        let sink = Arc::clone(&seen);
-        let callback: LevelCallback = Arc::new(move |_bins: Vec<f32>| {
-            *sink.lock().unwrap() += 1;
+    fn stopping_drains_buffered_chunks_and_preserves_offsets() {
+        let stop = AtomicBool::new(true);
+        let mut batches = VecDeque::from([vec![0.25, 0.5], vec![-0.25]]);
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&chunks);
+        let callback: ChunkCallback =
+            Arc::new(move |samples, offset| recorded.lock().unwrap().push((samples, offset)));
+        let result = capture_samples(1_000, &stop, None, Some(callback), |_| {
+            Ok(batches.pop_front())
         });
-        let mut levels = LevelEmitter::new(Some(callback));
-        let block = vec![0.25_f32; 512];
-        for _ in 0..32 {
-            levels.dispatch(&block);
-        }
-        assert_eq!(
-            *seen.lock().unwrap(),
-            0,
-            "a burst inside one interval is silent"
-        );
-
-        // Once the interval has passed, the next block does emit, and only once.
-        std::thread::sleep(LEVEL_DISPATCH_INTERVAL);
-        levels.dispatch(&block);
-        levels.dispatch(&block);
-        assert_eq!(*seen.lock().unwrap(), 1);
+        assert_eq!(result.audio.samples, vec![0.25, 0.5, -0.25]);
+        assert_eq!(*chunks.lock().unwrap(), vec![(vec![0.25, 0.5, -0.25], 0)]);
+        assert_eq!(result.audio.sample_rate, 1_000);
     }
 
-    /// A level callback that is absent must not compute bins at all.
     #[test]
-    fn no_level_callback_is_a_no_op() {
-        let mut levels = LevelEmitter::new(None);
-        levels.dispatch(&vec![0.25_f32; 512]);
-        assert!(levels.callback.is_none());
+    fn non_finite_input_returns_and_emits_only_the_valid_prefix() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let stop = AtomicBool::new(false);
+            let mut batches = VecDeque::from([vec![0.25], vec![0.5, bad, -0.25]]);
+            let chunks = Arc::new(Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&chunks);
+            let callback: ChunkCallback = Arc::new(move |samples, offset| {
+                recorded.lock().unwrap().push((samples, offset));
+            });
+            let result = capture_samples(1_000, &stop, None, Some(callback), |_| {
+                Ok(Some(
+                    batches.pop_front().expect("must stop at invalid input"),
+                ))
+            });
+            assert!(result.capture_failed);
+            assert_eq!(result.audio.samples, vec![0.25, 0.5]);
+            assert_eq!(*chunks.lock().unwrap(), vec![(vec![0.25, 0.5], 0)]);
+        }
+    }
+
+    #[test]
+    fn stream_error_returns_and_emits_partial_recording() {
+        let stop = AtomicBool::new(false);
+        let mut calls = 0;
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&chunks);
+        let callback: ChunkCallback = Arc::new(move |samples, offset| {
+            recorded.lock().unwrap().push((samples, offset));
+        });
+        let result = capture_samples(1_000, &stop, None, Some(callback), |_| {
+            calls += 1;
+            if calls == 1 {
+                Ok(Some(vec![0.25, -0.5]))
+            } else {
+                Err("disconnected".into())
+            }
+        });
+        assert_eq!(result.audio.samples, vec![0.25, -0.5]);
+        assert_eq!(*chunks.lock().unwrap(), vec![(vec![0.25, -0.5], 0)]);
+    }
+
+    #[test]
+    fn silent_capture_stops_without_waiting_for_an_audio_fragment() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let (reading_tx, reading_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = capture_samples(1_000, &worker_stop, None, None, |_| {
+                let _ = reading_tx.send(());
+                Ok(None)
+            });
+            finished_tx.send(result).unwrap();
+        });
+        reading_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        stop.store(true, Ordering::Release);
+        let result = finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(result.audio.samples.is_empty());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn stopped_start_does_not_poll_pulse() {
+        let mut mainloop = Mainloop::new().unwrap();
+        let stop = AtomicBool::new(true);
+        assert!(
+            wait_for_pulse(&mut mainloop, &stop, || -> Result<bool, String> {
+                panic!("cancelled startup polled the server")
+            })
+            .is_err()
+        );
+    }
+
+    // Run explicitly against an isolated PulseAudio server with a null source,
+    // Set PULSE_SERVER to its socket and PULSE_SOURCE=maus_test before running.
+    #[test]
+    #[ignore = "requires an isolated PulseAudio server with a null source"]
+    fn pulse_null_source_capture() {
+        assert!(std::env::var("PULSE_SERVER")
+            .is_ok_and(|server| server.starts_with("unix:") && server.len() > 5));
+        assert_eq!(std::env::var("PULSE_SOURCE").as_deref(), Ok("maus_test"));
+        let recorder = PulseRecorder::new();
+        let (chunk_tx, chunk_rx) = mpsc::channel();
+        let callback: ChunkCallback = Arc::new(move |samples, offset| {
+            let _ = chunk_tx.send((samples, offset));
+        });
+        recorder.start(None, Some(callback)).unwrap();
+        assert!(recorder.is_recording());
+        let first = chunk_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(first.1, 0);
+        let started = Instant::now();
+        let result = recorder.stop().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!recorder.is_recording());
+        let mut samples = first.0;
+        for (chunk, offset) in chunk_rx.try_iter() {
+            assert_eq!(offset, samples.len() as u64);
+            samples.extend(chunk);
+        }
+        assert!(!samples.is_empty());
+        assert_eq!(samples, result.audio.samples);
+        assert!(result.audio.sample_rate > 0);
+
+        // A second recording must acquire the source after the first worker exits.
+        recorder.start(None, None).unwrap();
+        recorder.stop().unwrap();
+        assert!(!recorder.is_recording());
+
+        // Exercise ownership with an actual PulseAudio stream, not just a fake
+        // recorder: a competing owner cannot acquire it until release finishes.
+        let ownership = RecordingOwnership::default();
+        let window = ownership.window(1);
+        let cancelled = AtomicBool::new(false);
+        start_owned_recording(&ownership, "first", &window, &cancelled, &recorder);
+        let generation = ownership.reserve("second", &window).unwrap();
+        let admission = ownership
+            .claim_admission("second", &window, generation)
+            .unwrap();
+        assert!(ownership
+            .start(
+                "second",
+                &window,
+                generation,
+                StartControl {
+                    cancelled: &cancelled,
+                    admission: Some(&admission),
+                    wait: Duration::ZERO,
+                },
+                || -> Result<(), String> { panic!("a competing recording must not start") },
+                || false,
+            )
+            .is_err());
+        ownership.finish_admission(&admission);
+        assert!(recorder.is_recording());
+        ownership
+            .discard("second", || -> (Result<(), String>, bool) {
+                panic!("a different owner must not stop the recorder")
+            })
+            .unwrap();
+        ownership
+            .stop("first", || {
+                let result = recorder.stop().map_err(|error| error.to_string());
+                (result, recorder.is_recording())
+            })
+            .unwrap();
+        assert!(!recorder.is_recording());
+        start_owned_recording(&ownership, "successor", &window, &cancelled, &recorder);
+        ownership.begin_reset().unwrap();
+        assert!(ownership.reserve("during-reset", &window).is_err());
+        ownership
+            .force_stop(|| {
+                let result = recorder
+                    .stop()
+                    .map(|_| ())
+                    .map_err(|error| error.to_string());
+                (result, recorder.is_recording())
+            })
+            .unwrap();
+        assert!(!recorder.is_recording());
+        assert!(ownership.reserve("still-resetting", &window).is_err());
+        ownership.end_reset();
+        assert!(ownership.reserve("after-reset", &window).is_ok());
+        ownership.cancel_admission("after-reset");
+    }
+
+    #[test]
+    fn missing_pulse_server_rejects_start() {
+        const CHILD: &str = "MAUS_PULSE_FAILURE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let recorder = PulseRecorder::new();
+            assert!(recorder.start(None, None).is_err());
+            assert!(!recorder.is_recording());
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "platform::linux::audio::tests::missing_pulse_server_rejects_start",
+            ])
+            .env(CHILD, "1")
+            .env("PULSE_SERVER", "unix:/nonexistent/maus-pulse-socket")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
     }
 }

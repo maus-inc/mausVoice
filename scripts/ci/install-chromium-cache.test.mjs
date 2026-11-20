@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import {
   existsSync,
@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { brotliCompressSync } from "node:zlib";
 
@@ -25,12 +26,10 @@ const version = "153.0.0";
 const fixture = (t) => {
   const dir = mkdtempSync(join(tmpdir(), "mausvoice-chromium-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const cache = join(dir, "sparticuz-chromium");
-  const pkg = join(cache, "node_modules", "@sparticuz", "chromium");
+  const pkg = join(dir, "fixture-package");
   const tools = join(dir, "tools");
   mkdirSync(join(pkg, "bin"), { recursive: true });
   mkdirSync(tools);
-  writeFileSync(join(cache, marker), `${version}\n`);
   writeFileSync(join(pkg, "package.json"), JSON.stringify({ version }));
   writeFileSync(
     join(pkg, "bin", "chromium.br"),
@@ -38,23 +37,35 @@ const fixture = (t) => {
   );
   const tool = (name, body) =>
     writeFileSync(join(tools, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-  tool("npm", "echo fixture-npm-called >&2; exit 23");
+  const install =
+    'mkdir -p node_modules/@sparticuz && cp -R "$FIXTURE_PKG" node_modules/@sparticuz/chromium';
+  tool("npm", install);
+  const options = (out) => ({
+    env: {
+      ...process.env,
+      TMPDIR: dir,
+      PATH: `${tools}${delimiter}${process.env.PATH}`,
+      FIXTURE_OUT: out,
+      FIXTURE_PKG: pkg,
+    },
+    timeout: 5_000,
+  });
   return {
     dir,
-    cache,
     pkg,
     tool,
+    install,
     run: (out) =>
       execFileSync(process.execPath, [installer, "--dir", out], {
-        env: {
-          ...process.env,
-          TMPDIR: dir,
-          PATH: `${tools}${delimiter}${process.env.PATH}`,
-          FIXTURE_OUT: out,
-        },
+        ...options(out),
         stdio: "pipe",
-        timeout: 5_000,
       }),
+    runAsync: (out) =>
+      promisify(execFile)(
+        process.execPath,
+        [installer, "--dir", out],
+        options(out),
+      ),
   };
 };
 
@@ -89,17 +100,54 @@ test("the installer repairs a marked output with an empty browser", (t) => {
   assert.equal(browserVersion(out), "fixture-chromium");
 });
 
-test("a stale installed version triggers installation despite the declaration", (t) => {
-  const { dir, cache, pkg, run } = fixture(t);
-  writeFileSync(
-    join(cache, "package.json"),
-    JSON.stringify({ dependencies: { "@sparticuz/chromium": version } }),
-  );
+test("an unexpected installed version is not published", (t) => {
+  const { dir, pkg, run } = fixture(t);
   writeFileSync(
     join(pkg, "package.json"),
     JSON.stringify({ version: "141.0.0" }),
   );
-  assert.throws(() => run(join(dir, "chr")), /fixture-npm-called/);
+  const out = join(dir, "chr");
+  assert.throws(() => run(out), /installed chromium package is 141.0.0/);
+  assert.equal(existsSync(out), false);
+});
+
+test("an interrupted npm install leaves a clean retry", (t) => {
+  const { dir, install, tool, run } = fixture(t);
+  const out = join(dir, "chr");
+  tool(
+    "npm",
+    "mkdir partial-install; echo fixture-install-failed >&2; exit 23",
+  );
+  assert.throws(() => run(out), /fixture-install-failed/);
+  assert.equal(
+    readdirSync(dir).some((entry) => entry.startsWith("chr.partial-")),
+    false,
+  );
+  tool("npm", install);
+  run(out);
+  assert.equal(browserVersion(out), "fixture-chromium");
+});
+
+test("concurrent installers each retain their private package tree", async (t) => {
+  const { dir, install, tool, runAsync } = fixture(t);
+  const out = join(dir, "chr");
+  // Both npm children must still see their own partial install after the peer starts.
+  tool(
+    "npm",
+    `set -e
+mkdir partial-install
+pwd >> "$TMPDIR/installer-paths"
+while [ "$(wc -l < "$TMPDIR/installer-paths")" -lt 2 ]; do sleep 0.02; done
+test -d partial-install
+${install}`,
+  );
+  await Promise.all([runAsync(out), runAsync(out)]);
+  const paths = readFileSync(join(dir, "installer-paths"), "utf8")
+    .trim()
+    .split("\n");
+  assert.equal(new Set(paths).size, 2);
+  assert.equal(browserVersion(out), "fixture-chromium");
+  assert.equal(readdirSync(out).includes("npm-package"), false);
 });
 
 test("the sweep removes only marked partials whose process has exited", (t) => {

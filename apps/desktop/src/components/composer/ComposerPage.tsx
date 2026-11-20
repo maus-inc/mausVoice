@@ -142,6 +142,11 @@ export const ComposerPage = () => {
       defaultMessage: "Voice editing is not supported on this platform",
     }),
   );
+  const recordingUnavailableMessageRef = useRef(
+    intl.formatMessage({
+      defaultMessage: "Could not start recording. Please try again.",
+    }),
+  );
   useEffect(() => {
     transcriptRef.current?.focus();
   }, []);
@@ -149,6 +154,9 @@ export const ComposerPage = () => {
   useEffect(() => {
     unsupportedMessageRef.current = intl.formatMessage({
       defaultMessage: "Voice editing is not supported on this platform",
+    });
+    recordingUnavailableMessageRef.current = intl.formatMessage({
+      defaultMessage: "Could not start recording. Please try again.",
     });
   }, [intl]);
 
@@ -183,6 +191,7 @@ export const ComposerPage = () => {
       },
       speechRecognitionSupported,
       unsupportedMessage: () => unsupportedMessageRef.current,
+      recordingUnavailableMessage: () => recordingUnavailableMessageRef.current,
       onListeningChange: setIsListening,
       onTranscript: (spoken) =>
         setInstruction((current) => `${current} ${spoken}`.trim()),

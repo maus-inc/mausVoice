@@ -141,17 +141,21 @@ if (unnamed > 0) note("a11y", `${unnamed} switch(es) with no accessible name`);
 const shape = await page.evaluate(`(async () => {
   const res = await window.__TAURI_INTERNALS__.invoke('list_microphones', {});
   return JSON.stringify(res.map((d) => ({
-    keys: Object.keys(d).sort(),
-    bluetoothIsBoolean: typeof d.bluetooth === 'boolean',
+    label: typeof d.label === 'string' && d.label.trim().length > 0,
+    caution: typeof d.caution === 'boolean',
+    isDefault: typeof d.isDefault === 'boolean',
+    bluetooth: typeof d.bluetooth === 'boolean',
   })));
 })()`);
 const rows = JSON.parse(shape);
-for (const row of rows) {
-  if (!row.bluetoothIsBoolean)
+for (const [index, fields] of rows.entries()) {
+  const invalid = Object.entries(fields).filter(([, valid]) => !valid);
+  if (invalid.length) {
     note(
       "shape",
-      "a list_microphones descriptor is missing the bluetooth flag",
+      `list_microphones descriptor ${index} has invalid fields: ${invalid.map(([field]) => field).join(", ")}`,
     );
+  }
 }
 
 // ---- Screenshot: default (keep off, no pre-roll after zero) -----------------

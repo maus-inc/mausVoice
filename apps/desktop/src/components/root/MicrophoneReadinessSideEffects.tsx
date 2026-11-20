@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { commands } from "@maus-inc/desktop-native-apis";
 import { emit, listen } from "@tauri-apps/api/event";
 import { MICROPHONE_READINESS_EVENT } from "@maus-inc/desktop-utils";
+import { prepareMicrophone } from "../../actions/native.actions";
 import { refreshCurrentUser } from "../../actions/user-activity.actions";
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { showSnackbar } from "../../actions/app.actions";
@@ -272,18 +273,22 @@ export const MicrophoneReadinessSideEffects = () => {
   }, []);
 
   const pendingPolicyRef = useRef<Promise<void> | null>(null);
-  const queuePolicyChange = useCallback((change: () => Promise<void>) => {
+  const queuePolicyChange = useCallback(<T,>(change: () => Promise<T>) => {
     const previous = pendingPolicyRef.current;
     const pending = (async () => {
       if (previous) {
         // The previous caller reports its failure; do not block later changes.
         await previous.catch(() => undefined);
       }
-      await change();
+      return change();
     })();
-    pendingPolicyRef.current = pending;
+    const tail = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    pendingPolicyRef.current = tail;
     return pending.finally(() => {
-      if (pendingPolicyRef.current === pending) {
+      if (pendingPolicyRef.current === tail) {
         pendingPolicyRef.current = null;
       }
     });
@@ -312,19 +317,6 @@ export const MicrophoneReadinessSideEffects = () => {
     [queuePolicyChange, restoreFiniteLinger],
   );
 
-  const closeSupersededOpen = useCallback(async () => {
-    try {
-      await closeAndRestoreLinger();
-    } catch (error) {
-      getLogger().warning(
-        `Could not close a superseded microphone open: ${error}`,
-      );
-    } finally {
-      // If closing failed, the dialog should still report the actual device state.
-      publishHeld();
-    }
-  }, [closeAndRestoreLinger, publishHeld]);
-
   /**
    * Opens or resizes the hold, depending on whether one is already applied.
    *
@@ -339,14 +331,12 @@ export const MicrophoneReadinessSideEffects = () => {
     (seconds: number, device: string | null) => {
       heldRef.current = true;
       const request = ++requestRef.current;
-      const open = async () => {
-        const pendingPolicy = pendingPolicyRef.current;
-        if (pendingPolicy) {
-          // A close or finite restore already across IPC must finish before a
-          // new hold can safely install its stream and permanent policy.
-          await pendingPolicy.catch(() => undefined);
-        }
-        if (requestRef.current !== request || !heldRef.current) {
+      const open = queuePolicyChange(async () => {
+        if (
+          requestRef.current !== request ||
+          !heldRef.current ||
+          isLocalDataClearRequested()
+        ) {
           return null;
         }
         return commands.warmMicrophone(
@@ -354,52 +344,13 @@ export const MicrophoneReadinessSideEffects = () => {
           MICROPHONE_READY_FOREVER_MS,
           device,
         );
-      };
+      });
       logOnRejection(
-        open()
+        open
           .then((result) => {
-            if (!result) {
-              return;
-            }
-            if (requestRef.current !== request) {
-              // The answer arrived for a request this window has already
-              // superseded. The common case is the preference being turned off
-              // while the device was opening: `close_microphone` ran first and
-              // found nothing, because the stream did not exist yet, and this open
-              // then created one that nothing would close. Closing it here is what
-              // makes a late answer harmless rather than a leaked microphone.
-              //
-              // Not unconditional, though. This answer is stale, so it says
-              // nothing about what the shared device is doing now: a newer
-              // request may have opened a stream of its own in the meantime, and
-              // closing that one leaves keep-ready on with nothing held --
-              // the state this component exists to prevent. `heldRef` is this
-              // window's record of having opened something since the release, so
-              // it is what makes the close safe to issue.
-              if (heldRef.current) {
-                // Something opened after the release that invalidated this
-                // request: `heldRef` is set by the two places that open and
-                // cleared by that release, so it answers exactly this question.
-                // That newer stream is the one a press would use, and closing it
-                // would undo a hold that is still wanted -- the preference is on,
-                // the dialog says ready, and nothing is held. The device is
-                // re-read either way, so the dialog reports what is actually
-                // there rather than what this stale answer would have implied.
-                getLogger().info(
-                  "a microphone open finished after this window stopped asking for it, but a newer hold owns the device; leaving it open",
-                );
-                publishHeld();
-                return;
-              }
-              getLogger().info(
-                "a microphone open finished after this window stopped asking for it; closing it",
-              );
-              logOnRejection(
-                closeSupersededOpen(),
-                "close of a superseded microphone open",
-              );
-              return;
-            }
+            // A queued close or a newer open runs after this native mutation.
+            // Do not publish or act on an answer that no longer owns the UI.
+            if (!result || requestRef.current !== request) return;
             if (result.status === "error") {
               // A device that will not open is not a preference failure: the next
               // press opens it the normal way and reports the real problem. The
@@ -445,23 +396,20 @@ export const MicrophoneReadinessSideEffects = () => {
         "microphone warm open",
       );
     },
-    [clearHoldFailure, closeSupersededOpen, publishHeld, reportHoldFailure],
+    [clearHoldFailure, publishHeld, queuePolicyChange, reportHoldFailure],
   );
 
   const release = useCallback(() => {
     openedPrerollRef.current = null;
     heldRef.current = false;
     requestRef.current += 1;
-    logOnRejection(
-      closeAndRestoreLinger()
-        .then(() => publishHeld())
-        .catch((error: unknown) => {
-          getLogger().warning(`Could not release the microphone: ${error}`);
-          appliedRef.current = null;
-          publishHeld();
-        }),
-      "microphone release",
-    );
+    return closeAndRestoreLinger()
+      .then(() => publishHeld())
+      .catch((error: unknown) => {
+        getLogger().warning(`Could not release the microphone: ${error}`);
+        appliedRef.current = null;
+        publishHeld();
+      });
   }, [closeAndRestoreLinger, publishHeld]);
 
   useEffect(() => {
@@ -512,7 +460,7 @@ export const MicrophoneReadinessSideEffects = () => {
       // revoked permission must not leave a stream the OS no longer authorises
       // running, and the indicator would be a lie.
       appliedRef.current = "closed";
-      release();
+      void release();
       return;
     }
     // Open, or reopen on a changed pre-roll or device. The resize path has to be
@@ -559,16 +507,18 @@ export const MicrophoneReadinessSideEffects = () => {
   // the case pre-roll exists for, since a cold start is when the first word is
   // most likely to be clipped.
   useEffect(() => {
-    if (!prefsLoaded) {
+    if (!prefsLoaded || !ownsDevice) {
       return;
     }
     logOnRejection(
-      commands.setMicrophonePreroll(prerollSeconds).catch((error: unknown) => {
+      queuePolicyChange(() =>
+        commands.setMicrophonePreroll(prerollSeconds),
+      ).catch((error: unknown) => {
         getLogger().warning(`Could not set the microphone pre-roll: ${error}`);
       }),
       "microphone pre-roll update",
     );
-  }, [prefsLoaded, prerollSeconds]);
+  }, [ownsDevice, prefsLoaded, prerollSeconds, queuePolicyChange]);
 
   useEffect(() => {
     if (enabled || !prefsLoaded || !ownsDevice) {
@@ -843,14 +793,12 @@ export const MicrophoneReadinessSideEffects = () => {
     }
     const reportPreparationFailure = (error: unknown) => {
       // A device that cannot be resolved now is resolved by the next press.
-      getLogger().warning(`Could not prepare the microphone: ${error}`);
+      getLogger().warning(
+        `Could not prepare the microphone: ${error instanceof Error ? error.message : String(error)}`,
+      );
     };
     logOnRejection(
-      commands.prepareMicrophone(preferredMicrophone).then((result) => {
-        if (result.status === "error") {
-          reportPreparationFailure(result.error);
-        }
-      }, reportPreparationFailure),
+      prepareMicrophone(preferredMicrophone).catch(reportPreparationFailure),
       "microphone preparation",
     );
   }, [
@@ -870,7 +818,7 @@ export const MicrophoneReadinessSideEffects = () => {
       // Readiness measures usable audio, not whether an idle stream is open.
       // Native close is safe even if there is no stream to release.
       appliedRef.current = "closed";
-      release();
+      return release();
     });
   }, [release, ownsDevice]);
 

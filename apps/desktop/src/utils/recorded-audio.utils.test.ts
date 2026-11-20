@@ -1,11 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+import { describe, expect, it } from "vitest";
+import { invokeStopRecording } from "./native-recording-session";
 
 import {
   decodeStopRecordingPayload,
   encodeRecordedAudio,
-  invokeStopRecording,
 } from "./recorded-audio.utils";
 
 const encode = (sampleRate: number, samples: number[]): ArrayBuffer => {
@@ -137,15 +135,6 @@ describe("decodeStopRecordingPayload", () => {
   });
 });
 
-describe("invokeStopRecording", () => {
-  it("invokes stop_recording and decodes the response", async () => {
-    const invokeFn = vi.fn(() => Promise.resolve(encode(48_000, [0.5])));
-    const decoded = await invokeStopRecording(invokeFn);
-    expect(invokeFn).toHaveBeenCalledWith("stop_recording");
-    expect(Array.from(decoded.samples)).toEqual([0.5]);
-  });
-});
-
 describe("encodeRecordedAudio", () => {
   it("round-trips through the decoder used by stop_recording", () => {
     const decoded = decodeStopRecordingPayload(
@@ -169,6 +158,35 @@ describe("encodeRecordedAudio", () => {
     const decoded = decodeStopRecordingPayload(bytes);
     expect(decoded.sampleRate).toBe(16_000);
     expect(decoded.samples).toHaveLength(0);
+  });
+
+  it("round-trips the capture-failed flag native sets on a partial recording", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeRecordedAudio(new Float32Array([0.5]), 16_000, true),
+    );
+    // The flag lives in the top bit of the header, so the rate a caller reads
+    // stays the rate the device reported.
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(decoded.captureFailed).toBe(true);
+    expect(Array.from(decoded.samples)).toEqual(
+      Array.from(new Float32Array([0.5])),
+    );
+  });
+
+  it("leaves captureFailed unset for a complete recording", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeRecordedAudio(new Float32Array([0.5]), 16_000),
+    );
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(decoded.captureFailed).toBeUndefined();
+  });
+
+  it("masks the capture-failed bit out of the sample rate native sends", () => {
+    const bytes = encodeRecordedAudio(new Float32Array([0.25]), 48_000, true);
+    // Native frames the same header; a reader that ignored the flag would see
+    // 0x8000BB80 as the rate.
+    expect(new DataView(bytes.buffer).getUint32(0, true)).toBe(0x8000_bb80);
+    expect(decodeStopRecordingPayload(bytes).sampleRate).toBe(48_000);
   });
 
   it("does not write into the caller's samples", () => {
@@ -291,6 +309,20 @@ describe("a capture that faulted mid-recording", () => {
     expect(decoded.expectedMs).toBe(6_000);
   });
 
+  it("decodes both the partial flag and the timing trailer without losing audio", () => {
+    const bytes = encodeWithTrailer(16_000, [0.25, -0.5], 900, 3_000);
+    new DataView(bytes).setUint32(0, 0x8000_0000 | 16_000, true);
+    const decoded = decodeStopRecordingPayload(bytes);
+    expect(decoded).toMatchObject({
+      sampleRate: 16_000,
+      captureFailed: true,
+      captureFault: "fatal",
+      capturedMs: 900,
+      expectedMs: 3_000,
+    });
+    expect(Array.from(decoded.samples)).toEqual([0.25, -0.5]);
+  });
+
   it("never misreads a long healthy recording, whatever its last sample", () => {
     // The regression this pins: 103 of 200 ordinary recordings were read as
     // faulted when the flag bit alone decided, losing three samples and raising
@@ -339,12 +371,9 @@ describe("a capture that faulted mid-recording", () => {
   });
 
   it("carries the fault through the invoke wrapper", async () => {
-    const { invoke } = await import("@tauri-apps/api/core");
-    vi.mocked(invoke).mockResolvedValueOnce(
+    const decoded = await invokeStopRecording(async () =>
       encodeWithTrailer(16_000, [0.25], 900, 3_000),
     );
-
-    const decoded = await invokeStopRecording();
 
     expect(decoded.captureFault).toBe("fatal");
     expect(decoded.expectedMs).toBe(3_000);

@@ -50,10 +50,9 @@ const seconds = (valueMs: number): string => (valueMs / 1000).toFixed(1);
  *
  * A late error callback costs at most the buffer that was in flight when the
  * device went away, so anything this small is not audio the user lost. The
- * native side drops such a fault before it reaches the body
- * (`FAULT_GAP_TOLERANCE` in `platform/audio.rs`), and this is the same rule on
- * this side of the boundary: the body is a contract, not a trusted sender, and a
- * stale one must not be able to raise an alarm either.
+ * native side uses the same cutoff for the short-capture log, but preserves
+ * the timing in the body so an observed late fault does not trigger a generic
+ * partial-capture warning.
  */
 const MEANINGFUL_GAP_MS = 250;
 

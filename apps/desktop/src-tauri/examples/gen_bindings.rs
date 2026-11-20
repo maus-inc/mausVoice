@@ -4,6 +4,7 @@ use tauri_specta::{collect_commands, Builder};
 
 fn main() {
     let builder = Builder::<tauri::Wry>::new().commands(collect_commands![
+        acknowledge_recording,
         api_key_create,
         api_key_delete,
         api_key_list,
@@ -60,6 +61,7 @@ fn main() {
         hotkey_delete,
         hotkey_list,
         hotkey_replace_style_hotkeys,
+        hotkey_replace_dictation_language_hotkeys,
         hotkey_save,
         list_gpus,
         list_microphones,
@@ -73,6 +75,8 @@ fn main() {
         paste,
         private_http_request,
         openai_compatible_http_request,
+        discard_recording,
+        force_stop_recording,
         pause_recording,
         play_audio,
         purge_stale_transcription_audio,
@@ -113,6 +117,9 @@ fn main() {
         set_tray_visible,
         simulate_type,
         start_key_listener,
+        recording_generation,
+        claim_browser_recording,
+        release_browser_recording,
         start_recording,
         stop_key_listener,
         storage_get_download_url,

@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   chunkListener: null as
-    | ((event: { payload: { samples: number[]; offset?: number } }) => void)
+    | ((event: {
+        payload: {
+          samples: number[];
+          offset?: number;
+          ownerId?: string;
+          generation?: number;
+        };
+      }) => void)
     | null,
   unlisten: vi.fn(),
   deferListen: false,
@@ -24,7 +31,12 @@ vi.mock("@tauri-apps/api/event", () => ({
     async (
       event: string,
       listener: (event: {
-        payload: { samples: number[]; offset?: number };
+        payload: {
+          samples: number[];
+          offset?: number;
+          ownerId?: string;
+          generation?: number;
+        };
       }) => void,
     ) => {
       if (event !== "audio_chunk") throw new Error(`unexpected ${event}`);
@@ -54,15 +66,65 @@ vi.mock("../../utils/log.utils", () => ({
 import type { BaseStrategy } from "../../strategies/base.strategy";
 import type { TranscriptionSession } from "../../types/transcription-session.types";
 import {
-  attachSessionAudioIntake,
+  beginNativeRecording,
+  resetNativeRecordingSession,
+  type NativeRecordingHandle,
+} from "../../utils/native-recording-session";
+import {
+  attachSessionAudioIntake as attachStrictSessionAudioIntake,
   createCurrentSegmentGuard,
   forwardAudioChunk,
+  hasLiveAudioDiscontinuity,
   isRecordingStartCurrent,
   releaseRecordingResources,
   requiresLiveIntakeRecovery,
   stopNativeRecordingForAbort,
   stopOwnedNativeStart,
+  trackNativeStartHandle,
 } from "./dictation-recording-intake";
+
+beforeEach(() => {
+  resetNativeRecordingSession();
+  mocks.invoke.mockReset();
+  mocks.invoke.mockResolvedValue(undefined);
+});
+
+/** A native admission whose discard is observable through the invoke mock. */
+const fakeHandle = (generation: number): NativeRecordingHandle => ({
+  ownerId: `owner-${generation}`,
+  generation,
+  stop: vi.fn(async () => ({
+    samples: new Float32Array(0),
+    sampleRate: 16_000,
+  })),
+  discard: vi.fn(async () => {
+    await mocks.invoke("discard_recording", {
+      ownerId: `owner-${generation}`,
+      generation,
+    });
+  }),
+  pause: vi.fn(async () => undefined),
+  resume: vi.fn(async () => undefined),
+  isLive: () => true,
+});
+
+const discards = () =>
+  mocks.invoke.mock.calls.filter(
+    ([command]) => command === "discard_recording",
+  );
+
+/** Open a live recording so the module-level teardown paths have a target. */
+const startLiveRecording = async (): Promise<NativeRecordingHandle> => {
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "recording_generation") return Promise.resolve(1);
+    if (command === "start_recording") {
+      return Promise.resolve({ sampleRate: 16_000 });
+    }
+    return Promise.resolve(new ArrayBuffer(4));
+  });
+  const { handle } = await beginNativeRecording(null);
+  return handle;
+};
 
 const samples = (length: number, value = 0.25) =>
   Array.from({ length }, () => value);
@@ -83,11 +145,35 @@ const strategyStub = (): BaseStrategy =>
   ({ cleanup: vi.fn() }) as unknown as BaseStrategy;
 
 const noOverflow = () => undefined;
+const testAdmission = { ownerId: "test-owner", generation: 1 };
+const attachSessionAudioIntake = (
+  session: Parameters<typeof attachStrictSessionAudioIntake>[0],
+  isCurrent: Parameters<typeof attachStrictSessionAudioIntake>[1],
+  shouldForwardLive: Parameters<typeof attachStrictSessionAudioIntake>[2],
+  onOverflow: Parameters<typeof attachStrictSessionAudioIntake>[3],
+  getAdmission: Parameters<typeof attachStrictSessionAudioIntake>[4] = () =>
+    testAdmission,
+) =>
+  attachStrictSessionAudioIntake(
+    session,
+    isCurrent,
+    shouldForwardLive,
+    onOverflow,
+    getAdmission,
+  );
 
 /** Emits one `audio_chunk` Tauri event at the given recording index. */
-const emitChunk = (values: number[], offset: number | null) =>
+const emitChunk = (
+  values: number[],
+  offset: number | null,
+  admission: { ownerId: string; generation: number } | null = testAdmission,
+) =>
   mocks.chunkListener?.({
-    payload: { samples: values, ...(offset === null ? {} : { offset }) },
+    payload: {
+      samples: values,
+      ...(offset === null ? {} : { offset }),
+      ...admission,
+    },
   });
 
 beforeEach(() => {
@@ -118,7 +204,192 @@ describe("requiresLiveIntakeRecovery", () => {
   });
 });
 
+describe("hasLiveAudioDiscontinuity", () => {
+  it("only seals live sessions and treats missing live intake as discontinuous", () => {
+    const audio = { samples: new Float32Array([0.25]), sampleRate: 16_000 };
+    const sealLiveAudio = vi.fn().mockReturnValue(true);
+    expect(
+      hasLiveAudioDiscontinuity("after-stop", { sealLiveAudio }, audio),
+    ).toBe(false);
+    expect(hasLiveAudioDiscontinuity("local", { sealLiveAudio }, audio)).toBe(
+      false,
+    );
+    expect(sealLiveAudio).not.toHaveBeenCalled();
+    expect(hasLiveAudioDiscontinuity("live-streaming", null, audio)).toBe(true);
+    expect(
+      hasLiveAudioDiscontinuity("live-streaming", { sealLiveAudio }, audio),
+    ).toBe(false);
+    expect(sealLiveAudio).toHaveBeenCalledWith(audio.samples, audio.sampleRate);
+    sealLiveAudio.mockReturnValue(false);
+    expect(
+      hasLiveAudioDiscontinuity("live-streaming", { sealLiveAudio }, audio),
+    ).toBe(true);
+  });
+});
+
 describe("audio intake ownership", () => {
+  it("only forwards chunks for its admitted recording, including during startup", async () => {
+    const write = vi.fn();
+    let admission: { ownerId: string; generation: number } | null = null;
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+      () => admission,
+    );
+    emitChunk([0.8], 0, { ownerId: "old", generation: 1 });
+    emitChunk([0.8], null, null);
+    admission = { ownerId: "new", generation: 2 };
+    emitChunk([0.8], null, { ownerId: "old", generation: 1 });
+    emitChunk([0.8], 0, { ownerId: "old", generation: 1 });
+    emitChunk([0.7], 0, { ownerId: "new", generation: 1 });
+    emitChunk([0.25], 0, admission);
+    emitChunk([0.9], 1, { ownerId: "old", generation: 1 });
+    expect(write).toHaveBeenCalledOnce();
+    expect(Array.from(write.mock.calls[0]![0] as Float32Array)).toEqual([0.25]);
+    expect(intake.sealLiveAudio(new Float32Array([0.25]), 16_000)).toBe(true);
+  });
+
+  it("cannot seal a live recording before an admission exists", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+      () => null,
+    );
+    expect(intake.sealLiveAudio(new Float32Array([0.25]), 16_000)).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("rejects untagged audio once a recording is admitted", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+      () => ({ ownerId: "new", generation: 2 }),
+    );
+    emitChunk([0.25], 0, null);
+    expect(write).not.toHaveBeenCalled();
+    expect(intake.sealLiveAudio(new Float32Array([0.25]), 16_000)).toBe(false);
+  });
+
+  it("seals a contiguous live prefix with the captured tail and ignores late events", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    emitChunk([0.25, 0.5], 0);
+    expect(
+      intake.sealLiveAudio(new Float32Array([0.25, 0.5, 0.75]), 16_000),
+    ).toBe(true);
+    expect(
+      intake.sealLiveAudio(new Float32Array([0.25, 0.5, 0.75]), 16_000),
+    ).toBe(true);
+    emitChunk([0.75], 2);
+    emitChunk([0.75], null, null);
+    expect(intake.hasDiscontinuity()).toBe(false);
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(Array.from(write.mock.calls[1]![0] as Float32Array)).toEqual([0.75]);
+    expect(write.mock.calls[1]![1]).toBe(2);
+  });
+
+  it.each([
+    [[0, 3], "middle gap"],
+    [[1], "missing first chunk"],
+    [[0, null], "missing offset"],
+    [[0, 0], "overlap"],
+  ])("rejects %s when the live stream has a %s", async (offsets) => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    for (const offset of offsets) emitChunk([0.25], offset);
+    expect(intake.sealLiveAudio(new Float32Array(4))).toBe(false);
+  });
+
+  it("rejects dropped startup samples even after the startup buffer is reset", async () => {
+    const intake = await attachSessionAudioIntake(
+      sessionWith(vi.fn()),
+      () => true,
+      () => false,
+      noOverflow,
+    );
+    intake.buffer.setSampleRate(1);
+    emitChunk(samples(31), 0);
+    intake.buffer.reset();
+    expect(intake.sealLiveAudio(new Float32Array(31))).toBe(false);
+  });
+
+  it("rejects a live prefix longer than the retained recording", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    emitChunk([0.25, 0.5], 0);
+    expect(intake.sealLiveAudio(new Float32Array(1), 16_000)).toBe(false);
+    expect(intake.hasDiscontinuity()).toBe(true);
+  });
+
+  it("replays a short missing tail in bounded chunks", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    expect(intake.sealLiveAudio(new Float32Array(25), 100)).toBe(true);
+    expect(
+      write.mock.calls.map(([chunk, offset]) => [
+        (chunk as Float32Array).length,
+        offset,
+      ]),
+    ).toEqual([
+      [10, 0],
+      [10, 10],
+      [5, 20],
+    ]);
+  });
+
+  it("rejects a long undelivered suffix rather than flooding the provider", async () => {
+    const write = vi.fn();
+    const intake = await attachSessionAudioIntake(
+      sessionWith(write),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    expect(intake.sealLiveAudio(new Float32Array(33), 16)).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("rejects a failed live write", async () => {
+    const intake = await attachSessionAudioIntake(
+      sessionWith(() => {
+        throw new Error("write failed");
+      }),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    emitChunk([0.25], 0);
+    expect(intake.sealLiveAudio(new Float32Array([0.25]))).toBe(false);
+  });
+
   it("registers exactly one audio_chunk listener per recording", async () => {
     const session = sessionWith(vi.fn());
     await attachSessionAudioIntake(
@@ -406,8 +677,11 @@ describe("isRecordingStartCurrent", () => {
 describe("native capture ownership", () => {
   it("stops the stream for the start that still owns it", async () => {
     const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, handle);
     await stopOwnedNativeStart(ownerRef, 3);
-    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+    expect(discards()).toHaveLength(1);
+    expect(handle.discard).toHaveBeenCalledOnce();
     expect(ownerRef.current).toBeNull();
   });
 
@@ -421,75 +695,71 @@ describe("native capture ownership", () => {
   it("stops on abort even when a restart has already claimed ownership", async () => {
     // The P1. An abort landing while the microphone was still opening used to
     // release the claim, await the pill's idle phase, and only then skip its stop
-    // because a restart had claimed in the meantime. That restart had already
-    // called `start_recording` against the still-live stream, and native reports
-    // an already-active recorder as success, so it inherited the old capture
-    // instead of opening the microphone it asked for -- while the superseded
-    // start's own `stopOwnedNativeStart` also declined, because the ref no longer
-    // held its id. Nothing stopped the stream.
+    // because a restart had claimed in the meantime. With the admission on the
+    // handle, the abort stops the exact stream this start opened.
     const ownerRef = { current: 4 as number | null };
+    const handle = fakeHandle(4);
+    trackNativeStartHandle(ownerRef, 4, handle);
     await stopNativeRecordingForAbort(ownerRef);
-    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+    expect(handle.discard).toHaveBeenCalledOnce();
     expect(ownerRef.current).toBeNull();
   });
 
   it("stops on abort when the claim was already released", async () => {
     // The abort takes the claim itself, so the ref is normally null by the time
-    // the stop is issued. It must stop in that state too.
+    // the stop is issued. It must stop the live recording in that state too.
+    const handle = await startLiveRecording();
     const ownerRef = { current: null as number | null };
     await stopNativeRecordingForAbort(ownerRef);
-    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+    expect(discards()).toHaveLength(1);
+    expect(discards()[0]?.[1]).toEqual({
+      ownerId: handle.ownerId,
+      generation: handle.generation,
+    });
   });
 
   it("stops the stream a superseded start opened after the abort released its claim", async () => {
-    // An abort that lands while a start is still inside `start_recording` issues
-    // its stop against a recorder that has not opened yet, so the stop returns
-    // having done nothing. The abort also released the claim, so the superseded
-    // start's own `stopOwnedNativeStart` used to decline and the recorder came up
-    // live with no owner: nothing stopped it and the user recorded continuously
-    // from an input they did not choose.
+    // An abort that lands while a start is still inside `start_recording` stops
+    // that start's own admission, so the superseded start's report cannot let a
+    // recorder come up live with no owner.
     const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, handle);
     await stopNativeRecordingForAbort(ownerRef);
     await stopOwnedNativeStart(ownerRef, 3);
-    expect(
-      mocks.invoke.mock.calls.filter(
-        ([command]) => command === "stop_recording",
-      ),
-    ).toHaveLength(2);
+    expect(discards()).toHaveLength(1);
   });
 
   it("does not stop twice when a start that was still opening reports in after its own stop", async () => {
-    // The owed stop only covers the window where the abort's invoke could not
-    // have reached the recorder. Once this start has stopped its own stream, a
-    // second report must not stop a recorder a newer recording may now own.
     const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, handle);
     await stopOwnedNativeStart(ownerRef, 3);
     await stopOwnedNativeStart(ownerRef, 3);
-    expect(
-      mocks.invoke.mock.calls.filter(
-        ([command]) => command === "stop_recording",
-      ),
-    ).toHaveLength(1);
+    expect(discards()).toHaveLength(1);
   });
 
   it("leaves a newer recording's stream alone even when an abort is owed a stop", async () => {
     // The claim names the newer recording, so this stale start must not cut off
     // a live dictation to discharge a debt the abort left behind.
     const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, handle);
     await stopNativeRecordingForAbort(ownerRef);
     ownerRef.current = 4;
     await stopOwnedNativeStart(ownerRef, 3);
-    expect(
-      mocks.invoke.mock.calls.filter(
-        ([command]) => command === "stop_recording",
-      ),
-    ).toHaveLength(1);
+    expect(discards()).toHaveLength(1);
     expect(ownerRef.current).toBe(4);
   });
 
   it("swallows a stop failure so an abort cannot reject", async () => {
-    mocks.invoke.mockRejectedValueOnce(new Error("no recorder"));
-    const ownerRef = { current: 3 as number | null };
+    await startLiveRecording();
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "discard_recording"
+        ? Promise.reject(new Error("no recorder"))
+        : Promise.resolve(undefined),
+    );
+    const ownerRef = { current: null as number | null };
     await expect(
       stopNativeRecordingForAbort(ownerRef),
     ).resolves.toBeUndefined();
@@ -498,20 +768,22 @@ describe("native capture ownership", () => {
 
   it("stops the stream once when two starts report in for one owner", async () => {
     const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, handle);
     await Promise.all([
       stopOwnedNativeStart(ownerRef, 3),
       stopOwnedNativeStart(ownerRef, 3),
     ]);
-    expect(
-      mocks.invoke.mock.calls.filter(
-        ([command]) => command === "stop_recording",
-      ),
-    ).toHaveLength(1);
+    expect(discards()).toHaveLength(1);
   });
 
   it("does not throw when the native stop rejects", async () => {
-    mocks.invoke.mockRejectedValueOnce(new Error("no active stream"));
     const ownerRef = { current: 3 as number | null };
+    const handle = fakeHandle(3);
+    vi.mocked(handle.discard).mockRejectedValueOnce(
+      new Error("no active stream"),
+    );
+    trackNativeStartHandle(ownerRef, 3, handle);
     await expect(stopOwnedNativeStart(ownerRef, 3)).resolves.toBeUndefined();
     expect(mocks.verboseMock).toHaveBeenCalled();
   });
@@ -520,23 +792,17 @@ describe("native capture ownership", () => {
     const ownerRef = { current: null as number | null };
 
     ownerRef.current = 3;
+    const first = fakeHandle(3);
+    trackNativeStartHandle(ownerRef, 3, first);
     // A stop lands while start 3 is opening the mic: the stop path releases
     // capture, so the stale start must not issue a second stop.
     await stopOwnedNativeStart(ownerRef, 3);
-    expect(
-      mocks.invoke.mock.calls.filter(
-        ([command]) => command === "stop_recording",
-      ),
-    ).toHaveLength(1);
+    expect(discards()).toHaveLength(1);
 
     // A restart claims ownership again; the old start reports in afterwards.
     ownerRef.current = 4;
     await stopOwnedNativeStart(ownerRef, 3);
-    expect(
-      mocks.invoke.mock.calls.filter(
-        ([command]) => command === "stop_recording",
-      ),
-    ).toHaveLength(1);
+    expect(discards()).toHaveLength(1);
     expect(ownerRef.current).toBe(4);
   });
 });
@@ -558,7 +824,7 @@ describe("createCurrentSegmentGuard", () => {
 });
 
 describe("releaseRecordingResources", () => {
-  it("releases the listener, session, strategy, and native capture on unmount", () => {
+  it("releases the listener, session, strategy, and native capture on unmount", async () => {
     const unlisten = vi.fn();
     const cleanup = vi.fn();
     const strategyCleanup = vi.fn().mockResolvedValue(undefined);
@@ -576,13 +842,15 @@ describe("releaseRecordingResources", () => {
       cleanup,
     } as TranscriptionSession;
 
+    await startLiveRecording();
     releaseRecordingResources(refs);
 
     expect(unlisten).toHaveBeenCalledOnce();
     expect(refs.audioChunkUnlistenRef.current).toBeNull();
     expect(cleanup).toHaveBeenCalledOnce();
     expect(strategyCleanup).toHaveBeenCalledOnce();
-    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+    // Unmount is an explicit teardown, so the live recording is discarded.
+    await vi.waitFor(() => expect(discards()).toHaveLength(1));
   });
 
   it("still stops native capture when strategy cleanup rejects", async () => {
@@ -598,9 +866,9 @@ describe("releaseRecordingResources", () => {
       },
     };
 
+    await startLiveRecording();
     expect(() => releaseRecordingResources(refs)).not.toThrow();
-    await Promise.resolve();
-    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+    await vi.waitFor(() => expect(discards()).toHaveLength(1));
     expect(mocks.warningMock).toHaveBeenCalled();
   });
 });

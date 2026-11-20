@@ -197,6 +197,19 @@ describe("check-pr-body", () => {
     assert.equal(code, 0, out);
   });
 
+  it("reports both heading rules in order when a visible review heading violates both", () => {
+    const body = [
+      "## Summary",
+      "## Review rounds",
+      "## Verification gate",
+      "## Checklist",
+      footer,
+    ].join("\n");
+    const { code, out } = run(body);
+    assert.equal(code, 1);
+    assert.match(out, /R6 line 2[\s\S]*R3 line 2/);
+  });
+
   it("fails a visible heading outside the template sections", () => {
     const body = [
       "## Summary",

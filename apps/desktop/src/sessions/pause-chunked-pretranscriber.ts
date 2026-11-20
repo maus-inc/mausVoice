@@ -1,4 +1,4 @@
-import type { TranscribeAudioMetadata } from "../actions/transcribe.actions";
+import type { TranscribeAudioMetadata } from "../types/transcription-metadata.types";
 import type { StopRecordingResponse } from "../types/transcription-session.types";
 import { withTimeout } from "../utils/timeout.utils";
 
