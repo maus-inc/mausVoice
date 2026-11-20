@@ -884,7 +884,13 @@ mod linux_command_tests {
         std::fs::create_dir_all(&dir).expect("mkdir");
         // The child keeps stdout open. If the probe waits for it to exit
         // naturally instead of killing the group, it leaves a marker.
-        let script = fake_pactl(&dir, r#"(sleep 10; touch "${0%/*}/completed") & wait"#);
+        let script = fake_pactl(
+            &dir,
+            r#"sleep 10 &
+worker=$!
+printf '%s\n' "$worker" > "${0%/*}/worker.pid"
+wait "$worker" && touch "${0%/*}/completed""#,
+        );
         std::env::set_var(PACTL_OVERRIDE_ENV, &script);
         let usage = current_usage();
         std::env::remove_var(PACTL_OVERRIDE_ENV);
@@ -899,6 +905,33 @@ mod linux_command_tests {
             !dir.join("completed").exists(),
             "the probe waited for the child to finish normally"
         );
+        let worker: u32 = std::fs::read_to_string(dir.join("worker.pid"))
+            .expect("the descendant started")
+            .trim()
+            .parse()
+            .expect("numeric descendant PID");
+        let stat_path = format!("/proc/{worker}/stat");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            match std::fs::read_to_string(&stat_path) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+                Err(err) => panic!("cannot read descendant state: {err}"),
+                Ok(stat) => {
+                    // An orphan may not have been reaped yet, but a zombie has
+                    // stopped executing and no longer holds the output pipe.
+                    if let Some((_, state)) = stat.rsplit_once(") ") {
+                        if matches!(state.as_bytes().first(), Some(b'Z' | b'X')) {
+                            break;
+                        }
+                    }
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the timeout returned while descendant {worker} was still running"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
