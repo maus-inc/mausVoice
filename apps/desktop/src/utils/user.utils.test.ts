@@ -13,6 +13,7 @@ import {
   getMyDictationLanguage,
   getMyProfileImage,
   getTranscriptionPrefs,
+  getTranscriptionSupportsStreaming,
   LOCAL_USER_ID,
   setUserPreferences,
 } from "./user.utils";
@@ -187,6 +188,31 @@ describe("getMyDictationLanguage", () => {
 });
 
 describe("getTranscriptionPrefs stale-selection guard", () => {
+  it("reports streaming capability without importing session implementations", () => {
+    const supportsStreaming = (
+      provider: "assemblyai" | "deepgram" | "gladia" | "azure",
+    ) => {
+      const state = structuredClone(INITIAL_APP_STATE);
+      const id = `${provider}-key`;
+      state.settings.aiTranscription.mode = "api";
+      state.settings.aiTranscription.selectedApiKeyId = id;
+      state.apiKeyById[id] = {
+        id,
+        name: provider,
+        provider,
+        createdAt: "2026-06-03T00:00:00.000Z",
+        keyFull: "test-key",
+        transcriptionModel: null,
+      };
+      return getTranscriptionSupportsStreaming(state);
+    };
+
+    expect(supportsStreaming("assemblyai")).toBe(true);
+    expect(supportsStreaming("deepgram")).toBe(true);
+    expect(supportsStreaming("gladia")).toBe(true);
+    expect(supportsStreaming("azure")).toBe(false);
+  });
+
   it("does not resolve an inherited API key as a configured provider", () => {
     const state = structuredClone(INITIAL_APP_STATE);
     state.settings.aiTranscription.mode = "api";

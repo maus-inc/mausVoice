@@ -165,6 +165,7 @@ pub(crate) struct PillState {
     // Assistant state
     pub(crate) assistant_active: Cell<bool>,
     pub(crate) assistant_input_mode: RefCell<String>,
+    pub(crate) assistant_type_message: RefCell<String>,
     pub(crate) assistant_compact: Cell<bool>,
     pub(crate) assistant_conversation_id: RefCell<Option<String>>,
     pub(crate) assistant_user_prompt: RefCell<Option<String>>,
@@ -172,6 +173,10 @@ pub(crate) struct PillState {
     pub(crate) assistant_streaming: RefCell<Option<PillStreaming>>,
     pub(crate) assistant_permissions: RefCell<Vec<PillPermission>>,
     pub(crate) assistant_review: RefCell<Option<PillReview>>,
+    /// Keep backends from reacquiring focus after a review returns it to the app.
+    pub(crate) focus_released_after_review: Cell<bool>,
+    /// Prevent the frame loop from remapping a non-focusable window too soon.
+    pub(crate) focus_release_remap_pending: Cell<bool>,
 
     // Assistant UI animation
     pub(crate) panel_open_t: Cell<f64>,
@@ -408,6 +413,27 @@ impl PillState {
     }
 }
 
+pub(crate) fn should_grab_focus_on_focus_in(
+    is_typing: bool,
+    focus_released_after_review: bool,
+) -> bool {
+    is_typing && !focus_released_after_review
+}
+
+pub(crate) fn next_focus_released_after_review(
+    previous_review_active: bool,
+    review_active: bool,
+    was_released: bool,
+) -> bool {
+    if previous_review_active && !review_active {
+        true
+    } else if review_active {
+        false
+    } else {
+        was_released
+    }
+}
+
 /// The X11 selector tail is transparent reserve, not part of the panel canvas.
 /// Parking, drawing, native entry margins and input geometry share this height.
 pub(crate) fn content_canvas_height(allocation_height: f64, below_slot: f64) -> f64 {
@@ -431,6 +457,17 @@ fn content_origin(aw: f64, ah: f64, dw: f64, dh: f64, below_slot: f64) -> (f64, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_to_composer_releases_focus_for_every_backend() {
+        assert!(should_grab_focus_on_focus_in(true, false));
+        assert!(!should_grab_focus_on_focus_in(true, true));
+        assert!(!should_grab_focus_on_focus_in(false, false));
+        assert!(next_focus_released_after_review(true, false, false));
+        assert!(!next_focus_released_after_review(false, true, true));
+        assert!(next_focus_released_after_review(false, false, true));
+        assert!(!next_focus_released_after_review(false, false, false));
+    }
 
     #[test]
     fn x11_selector_reserve_does_not_move_parked_content_or_the_entry() {

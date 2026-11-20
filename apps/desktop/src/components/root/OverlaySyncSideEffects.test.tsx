@@ -79,14 +79,16 @@ describe("native pill review localization", () => {
   it("sends every caption the pill draws, in the active locale", async () => {
     await renderLocale("de");
     const de = getMessagesForLocale("de");
+    expect(lastPayload().type_message_label).toBe(de.type_a_message);
     expect(lastPayload().review).toEqual({
       id: "review-1",
       text: "Keep this transcript",
+      review_label: de.review_transcript,
       edit_label: de.edit,
       insert_label: de.insert,
       copy_label: de.copy,
       cancel_label: de.cancel,
-      hint: de.edit_below_then_press_enter_to_insert,
+      hint: de.enter_inserts_shift_enter_for_a_new_line,
     });
   });
 
@@ -99,11 +101,12 @@ describe("native pill review localization", () => {
     // as an English literal, the only place to catch it is this payload, so
     // assert each matches its translated catalog entry and differs from English.
     const captions = {
+      review_label: "review_transcript",
       edit_label: "edit",
       insert_label: "insert",
       copy_label: "copy",
       cancel_label: "cancel",
-      hint: "edit_below_then_press_enter_to_insert",
+      hint: "enter_inserts_shift_enter_for_a_new_line",
     } as const;
     for (const [field, catalogKey] of Object.entries(captions)) {
       const value = review[field];
@@ -118,6 +121,12 @@ describe("native pill review localization", () => {
     mocks.invoke.mockClear();
     await renderLocale("fr");
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(lastPayload().type_message_label).toBe(
+      getMessagesForLocale("fr").type_a_message,
+    );
+    expect(lastPayload().review.review_label).toBe(
+      getMessagesForLocale("fr").review_transcript,
+    );
     expect(lastPayload().review.edit_label).toBe(
       getMessagesForLocale("fr").edit,
     );
