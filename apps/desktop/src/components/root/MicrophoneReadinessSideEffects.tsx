@@ -24,6 +24,8 @@ import {
 import { isPermissionAuthorized } from "../../utils/permission.utils";
 import { getMyPreferredMicrophone } from "../../utils/user.utils";
 
+type AppliedHoldState = "open" | "closed" | null;
+
 function useHoldFailureNotice() {
   const holdFailedRef = useRef(false);
   /**
@@ -163,7 +165,7 @@ function useMicrophoneFocusRetry(
     preroll: number;
     device: string | null;
   } | null>,
-  appliedRef: RefObject<"open" | "closed" | null>,
+  appliedRef: RefObject<AppliedHoldState>,
 ) {
   // Whether a focus retry should reopen the device: the same conditions the hold
   // effect uses, asked of the live store rather than of React state.
@@ -299,7 +301,7 @@ function useWarmMicrophoneRequests(
     preroll: number;
     device: string | null;
   } | null>,
-  appliedRef: RefObject<"open" | "closed" | null>,
+  appliedRef: RefObject<AppliedHoldState>,
   publishHeld: () => void,
 ) {
   const { reportHoldFailure, clearHoldFailure } = useHoldFailureNotice();
@@ -587,7 +589,7 @@ function applyHoldDecision(
     prerollSeconds,
     preferredMicrophone,
   }: {
-    appliedRef: RefObject<"open" | "closed" | null>;
+    appliedRef: RefObject<AppliedHoldState>;
     openedPrerollRef: RefObject<{
       preroll: number;
       device: string | null;
@@ -758,7 +760,7 @@ function useMicrophoneInputs() {
 
 function useReleaseOnDataClear(
   ownsDevice: boolean,
-  appliedRef: RefObject<"open" | "closed" | null>,
+  appliedRef: RefObject<AppliedHoldState>,
   release: () => Promise<void>,
 ) {
   useEffect(() => {
@@ -808,7 +810,7 @@ export const MicrophoneReadinessSideEffects = () => {
 
   // What this component last told the backend, so a render that does not change
   // the answer costs nothing.
-  const appliedRef = useRef<"open" | "closed" | null>(null);
+  const appliedRef = useRef<AppliedHoldState>(null);
 
   // What the held stream was actually opened with: its pre-roll and the device
   // it is bound to. Changing the slider resizes the ring rather than reopening

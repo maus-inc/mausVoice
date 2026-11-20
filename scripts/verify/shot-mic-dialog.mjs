@@ -1,6 +1,5 @@
 // Screenshots and measures the microphone dialog across the states a user sees.
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { createReportDirectory } from "./browser-config.mjs";
 import { launch, newPage, sleep, waitForTruthy } from "./cdp.mjs";
 

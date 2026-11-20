@@ -4490,13 +4490,15 @@ pub async fn force_stop_recording(
     .map_err(|err| err.to_string())?
 }
 
+type RecorderControl = fn(&dyn crate::platform::Recorder) -> Result<(), Box<dyn std::error::Error>>;
+
 async fn control_scoped_recording(
     recorder: Arc<dyn crate::platform::Recorder>,
     ownership: RecordingOwnerState,
     window_key: usize,
     owner_id: String,
     generation: u64,
-    operation: fn(&dyn crate::platform::Recorder) -> Result<(), Box<dyn std::error::Error>>,
+    operation: RecorderControl,
 ) -> Result<(), String> {
     let scope = ownership.window(window_key);
     tauri::async_runtime::spawn_blocking(move || {

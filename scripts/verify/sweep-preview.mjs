@@ -7,7 +7,6 @@
 //
 //   node scripts/verify/sweep-preview.mjs [baseUrl]
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { createReportDirectory } from "./browser-config.mjs";
 import { launch, newPage, sleep, waitForTruthy } from "./cdp.mjs";
 

@@ -4,7 +4,6 @@
 // verification harness. This one navigates to the preview app's own index, so
 // the picture it writes shows the index.
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { createReportDirectory } from "./browser-config.mjs";
 import { launch, newPage, sleep } from "./cdp.mjs";
 
