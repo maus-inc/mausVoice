@@ -342,7 +342,7 @@ export const MicrophoneReadinessSideEffects = () => {
           await pendingPolicy.catch(() => undefined);
         }
         if (requestRef.current !== request || !heldRef.current) {
-          return;
+          return null;
         }
         return commands.warmMicrophone(
           seconds,
