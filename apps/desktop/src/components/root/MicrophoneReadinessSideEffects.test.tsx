@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { commands } from "@maus-inc/desktop-native-apis";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,9 +33,10 @@ const mocks = vi.hoisted(() => {
     >(() => Promise.resolve({ status: "ok", data: null })),
     closeMicrophone: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     microphoneReady: vi.fn(() => Promise.resolve(false)),
-    prepareMicrophone: vi.fn(() =>
+    prepareMicrophone: vi.fn<typeof commands.prepareMicrophone>(() =>
       Promise.resolve({ status: "ok", data: "mic" }),
     ),
+    warning: vi.fn(),
     setMicrophoneLinger: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     setMicrophonePreroll: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     showSnackbar: vi.fn(),
@@ -99,7 +101,7 @@ vi.mock("../../actions/app.actions", () => ({
 vi.mock("../../utils/log.utils", () => ({
   getLogger: () => ({
     info: vi.fn(),
-    warning: vi.fn(),
+    warning: mocks.warning,
     error: vi.fn(),
   }),
 }));
@@ -1310,7 +1312,7 @@ describe("MicrophoneReadinessSideEffects", () => {
       new Error("IPC unavailable"),
     );
 
-    await act(async () => {
+    await act(() => {
       mocks.state.__clearing = true;
       for (const listener of mocks.clearListeners) listener();
     });
@@ -1333,7 +1335,7 @@ describe("MicrophoneReadinessSideEffects", () => {
       return Promise.reject(new Error("IPC unavailable"));
     });
 
-    await act(async () => {
+    await act(() => {
       mocks.state.__clearing = true;
       for (const listener of mocks.clearListeners) listener();
     });
@@ -1449,6 +1451,21 @@ describe("MicrophoneReadinessSideEffects", () => {
 
     expect(mocks.closeMicrophone).toHaveBeenCalled();
     expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
+  });
+
+  it("logs a native preparation error returned as a result", async () => {
+    setState({ userPrefs: { keepMicrophoneReady: false } });
+    mocks.prepareMicrophone.mockResolvedValueOnce({
+      status: "error",
+      error: "no matching input device",
+    });
+
+    await render();
+
+    expect(mocks.warning).toHaveBeenCalledWith(
+      "Could not prepare the microphone: no matching input device",
+    );
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
   });
 
   it("prepares the saved device once preferences load and again when it changes", async () => {

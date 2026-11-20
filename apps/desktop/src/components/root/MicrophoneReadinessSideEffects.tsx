@@ -289,28 +289,27 @@ export const MicrophoneReadinessSideEffects = () => {
     });
   }, []);
 
+  const restoreFiniteLinger = useCallback(async () => {
+    const milliseconds = getAppState().userPrefs?.microphoneLingerMs ?? 0;
+    if (!heldRef.current && milliseconds > 0) {
+      await commands.setMicrophoneLinger(milliseconds);
+    }
+  }, []);
+
   const closeAndRestoreLinger = useCallback(
     () =>
       queuePolicyChange(async () => {
         await commands.closeMicrophone();
-        // Retry a transient IPC failure once. Re-read after a rejection so a
-        // newer hold or a changed preference wins over the old finite policy.
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          const milliseconds = getAppState().userPrefs?.microphoneLingerMs ?? 0;
-          if (heldRef.current || milliseconds <= 0) return;
-          try {
-            await commands.setMicrophoneLinger(milliseconds);
-            return;
-          } catch (error) {
-            if (attempt === 1) {
-              getLogger().warning(
-                `Could not restore the linger window: ${error}`,
-              );
-            }
-          }
-        }
+        // Retry once, checking live state again so a newer hold or preference wins.
+        await restoreFiniteLinger()
+          .catch(restoreFiniteLinger)
+          .catch((error: unknown) => {
+            getLogger().warning(
+              `Could not restore the linger window: ${error}`,
+            );
+          });
       }),
-    [queuePolicyChange],
+    [queuePolicyChange, restoreFiniteLinger],
   );
 
   const closeSupersededOpen = useCallback(async () => {
@@ -842,13 +841,16 @@ export const MicrophoneReadinessSideEffects = () => {
     if (!ownsDevice || !prefsLoaded || !shouldPrepare) {
       return;
     }
+    const reportPreparationFailure = (error: unknown) => {
+      // A device that cannot be resolved now is resolved by the next press.
+      getLogger().warning(`Could not prepare the microphone: ${error}`);
+    };
     logOnRejection(
-      commands
-        .prepareMicrophone(preferredMicrophone)
-        .catch((error: unknown) => {
-          // A device that cannot be resolved now is resolved by the next press.
-          getLogger().warning(`Could not prepare the microphone: ${error}`);
-        }),
+      commands.prepareMicrophone(preferredMicrophone).then((result) => {
+        if (result.status === "error") {
+          reportPreparationFailure(result.error);
+        }
+      }, reportPreparationFailure),
       "microphone preparation",
     );
   }, [
