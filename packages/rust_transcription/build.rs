@@ -1,6 +1,6 @@
 use std::env;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -10,7 +10,8 @@ use sha2::{Digest, Sha256};
 use tar::Archive;
 
 const ORT_VERSION: &str = "1.23.2";
-const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
+
+mod ort_download;
 
 struct RuntimeAsset {
     archive_name: &'static str,
@@ -29,6 +30,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=ORT_DYLIB_PATH");
     println!("cargo:rerun-if-env-changed=MAUSVOICE_ORT_DOWNLOAD_BASE_URLS");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=ort_download.rs");
 
     let target = env::var("TARGET").expect("Cargo did not provide TARGET");
     if target.contains("apple-darwin") {
@@ -145,125 +147,19 @@ fn verify_file_digest(path: &Path, expected_sha256: &str) -> bool {
     actual.eq_ignore_ascii_case(expected_sha256)
 }
 
-/// One download attempt's outcome, split so the caller can tell a definitive
-/// "this source does not have the file" apart from a transient network fault.
-/// A 404 must move straight to the next source rather than replay three times,
-/// while a timeout or a 5xx is worth retrying against the same source.
-struct DownloadError {
-    message: String,
-    retryable: bool,
-}
-
-impl DownloadError {
-    fn transient(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            retryable: true,
-        }
-    }
-
-    fn terminal(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            retryable: false,
-        }
-    }
-}
-
 fn download_verified(asset: &RuntimeAsset, archive_path: &Path) {
-    let temporary_path = archive_path.with_extension(format!(
-        "{}.{}.part",
-        archive_path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or("archive"),
-        std::process::id()
-    ));
-
     let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .timeout_connect(Some(Duration::from_secs(30)))
-            .timeout_recv_body(Some(Duration::from_secs(300)))
-            .build(),
+        ort_download::download_config(Duration::from_secs(30)).build(),
     );
-
-    let base_urls = download_base_urls();
-    let mut last_error = String::default();
-    for base_url in &base_urls {
-        let url = format!("{base_url}/{}", asset.archive_name);
-        for attempt in 1..=3 {
-            let result = (|| -> Result<(), DownloadError> {
-                let mut response = agent.get(&url).call().map_err(|error| match error {
-                    ureq::Error::StatusCode(code) if (400..500).contains(&code) => {
-                        DownloadError::terminal(format!("request failed: {error}"))
-                    }
-                    other => DownloadError::transient(format!("request failed: {other}")),
-                })?;
-                let mut reader = response
-                    .body_mut()
-                    .with_config()
-                    .limit(MAX_DOWNLOAD_BYTES)
-                    .reader();
-                let mut output = File::create(&temporary_path).map_err(|error| {
-                    DownloadError::transient(format!("failed to create download: {error}"))
-                })?;
-                let mut hasher = Sha256::new();
-                let mut buffer = [0_u8; 64 * 1024];
-
-                loop {
-                    let count = reader.read(&mut buffer).map_err(|error| {
-                        DownloadError::transient(format!("failed while downloading: {error}"))
-                    })?;
-                    if count == 0 {
-                        break;
-                    }
-                    output.write_all(&buffer[..count]).map_err(|error| {
-                        DownloadError::transient(format!("failed to write download: {error}"))
-                    })?;
-                    hasher.update(&buffer[..count]);
-                }
-                output.sync_all().map_err(|error| {
-                    DownloadError::transient(format!("failed to flush download: {error}"))
-                })?;
-
-                let actual = format!("{:x}", hasher.finalize());
-                if actual != asset.sha256 {
-                    // A digest mismatch means this source served the wrong bytes,
-                    // which no retry against it will fix. Reject it and move on.
-                    return Err(DownloadError::terminal(format!(
-                        "SHA-256 mismatch (expected {}, got {actual})",
-                        asset.sha256
-                    )));
-                }
-                Ok(())
-            })();
-
-            match result {
-                Ok(()) => {
-                    fs::rename(&temporary_path, archive_path).unwrap_or_else(|error| {
-                        panic!(
-                            "failed to store verified ONNX Runtime archive '{}': {error}",
-                            archive_path.display()
-                        )
-                    });
-                    return;
-                }
-                Err(error) => {
-                    last_error = format!("{url}: {}", error.message);
-                    let _ = fs::remove_file(&temporary_path);
-                    if !error.retryable || attempt == 3 {
-                        break;
-                    }
-                    thread::sleep(Duration::from_secs(attempt * 2));
-                }
-            }
-        }
+    if let Err(error) = ort_download::download_verified(
+        (asset.archive_name, asset.sha256),
+        archive_path,
+        &download_base_urls(),
+        &agent,
+        thread::sleep,
+    ) {
+        panic!("{error}");
     }
-
-    panic!(
-        "failed to download verified ONNX Runtime archive '{}' after trying {base_urls:?}: {last_error}",
-        asset.archive_name
-    );
 }
 
 /// Base URLs for the ONNX Runtime release archive, tried in order.
