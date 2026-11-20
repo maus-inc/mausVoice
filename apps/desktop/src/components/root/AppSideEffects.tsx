@@ -29,7 +29,10 @@ import {
   refreshRemoteReceiverStatus,
   startRemoteReceiver,
 } from "../../actions/remote-receiver.actions";
-import { handleRemoteFinalTextReceived } from "../../actions/remote-transcript.actions";
+import {
+  handleRemoteFinalTextReceived,
+  type RemoteFinalTextReceivedPayload,
+} from "../../actions/remote-transcript.actions";
 import {
   checkForAppUpdates,
   openUpdateDialog,
@@ -138,15 +141,6 @@ type RecordingLevelPayload = {
 
 type BridgeHotkeyTriggerPayload = {
   hotkey: string;
-};
-
-type RemoteFinalTextReceivedPayload = {
-  senderDeviceId: string;
-  eventId: string;
-  text: string;
-  mode: string;
-  createdAt: string;
-  receiptEvent?: string;
 };
 
 // Timeout for Firebase Auth initialization.
@@ -562,7 +556,7 @@ export const AppSideEffects = () => {
       });
   });
 
-  useTauriListen<RemoteFinalTextReceivedPayload>(
+  useTauriListen<RemoteFinalTextReceivedPayload & { receiptEvent?: string }>(
     "remote_final_text_received",
     async (payload) => {
       // Inserting the remote transcript is a window-global action; only the
