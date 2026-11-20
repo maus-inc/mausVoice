@@ -184,19 +184,69 @@ fn visible_fraction(footprint: MonitorRect, areas: &[MonitorRect]) -> f64 {
     if !area_usable(footprint) {
         return 0.0;
     }
-    // Summed per display and clamped, because overlapping work areas (a mirrored
-    // pair) would otherwise report more than the whole pill as visible.
-    let mut visible = 0.0;
-    for area in areas.iter().filter(|area| area_usable(**area)) {
-        let left = footprint.x.max(area.x);
-        let right = footprint.right().min(area.right());
-        let top = footprint.y.max(area.y);
-        let bottom = footprint.bottom().min(area.bottom());
-        if right > left && bottom > top {
-            visible += (right - left) * (bottom - top);
+    // Each area clipped to the footprint. Mirrored panels report the same work
+    // area twice, so these rectangles overlap, and the answer is the area of their
+    // union rather than their sum: adding the halves of a mirrored pair counted
+    // the shared part twice and reported a pill that was half off the screen as
+    // fully visible.
+    let clipped: Vec<(f64, f64, f64, f64)> = areas
+        .iter()
+        .filter(|area| area_usable(**area))
+        .filter_map(|area| intersect(footprint, *area))
+        .collect();
+    if clipped.is_empty() {
+        return 0.0;
+    }
+    let visible = union_area(&clipped);
+    (visible / (footprint.width * footprint.height)).min(1.0)
+}
+
+/// The overlap of two rects as `(x, y, width, height)`, or `None` when they do
+/// not overlap.
+fn intersect(a: MonitorRect, b: MonitorRect) -> Option<(f64, f64, f64, f64)> {
+    let left = a.x.max(b.x);
+    let right = a.right().min(b.right());
+    let top = a.y.max(b.y);
+    let bottom = a.bottom().min(b.bottom());
+    (right > left && bottom > top).then_some((left, top, right - left, bottom - top))
+}
+
+/// The area covered by at least one of the `(x, y, width, height)` rects.
+///
+/// Coordinate compression: the x and y edges split the plane into cells that are
+/// either wholly inside a rect or wholly outside every rect, so summing the
+/// covered cells counts each point once. The input is at most one rect per
+/// display, so the cell count stays small.
+fn union_area(rects: &[(f64, f64, f64, f64)]) -> f64 {
+    let mut xs: Vec<f64> = Vec::with_capacity(rects.len() * 2);
+    let mut ys: Vec<f64> = Vec::with_capacity(rects.len() * 2);
+    for &(x, y, width, height) in rects {
+        xs.push(x);
+        xs.push(x + width);
+        ys.push(y);
+        ys.push(y + height);
+    }
+    xs.sort_by(f64::total_cmp);
+    ys.sort_by(f64::total_cmp);
+    xs.dedup();
+    ys.dedup();
+
+    let mut area = 0.0;
+    for (xi, x0) in xs.iter().enumerate().take(xs.len().saturating_sub(1)) {
+        let x1 = xs[xi + 1];
+        for (yi, y0) in ys.iter().enumerate().take(ys.len().saturating_sub(1)) {
+            let y1 = ys[yi + 1];
+            let cx = (x0 + x1) / 2.0;
+            let cy = (y0 + y1) / 2.0;
+            let covered = rects.iter().any(|&(x, y, width, height)| {
+                cx > x && cx < x + width && cy > y && cy < y + height
+            });
+            if covered {
+                area += (x1 - x0) * (y1 - y0);
+            }
         }
     }
-    (visible / (footprint.width * footprint.height)).min(1.0)
+    area
 }
 
 /// The display whose work area contains a point, if any.
@@ -1654,5 +1704,41 @@ pub(crate) mod tests {
             let guard = poll.observe(now, 43) != PollOutcome::TooSoon;
             assert_eq!(due, guard, "is_due disagreed with observe at {now}");
         }
+    }
+
+    /// Two mirrored panels report the same work area twice. The pill is half
+    /// outside it, so it is not fully visible, and the union must say so. Summing
+    /// the two identical halves counted the same area twice and reported the whole
+    /// pill as visible, which kept it half off the screen.
+    #[test]
+    fn mirrored_work_areas_are_counted_once() {
+        let area = MonitorRect::without_id(0.0, 0.0, 1000.0, 1000.0);
+        let mirrored = [area, area];
+        let half_inside = MonitorRect::without_id(750.0, 100.0, 400.0, 48.0);
+        let fraction = visible_fraction(half_inside, &mirrored);
+        assert!(
+            (fraction - 0.625).abs() < 1e-9,
+            "half-overlapping pill under a mirrored pair reported {fraction}, \
+             which counts the shared area twice"
+        );
+        assert!(
+            visible_fraction(half_inside, &mirrored) < 1.0,
+            "a pill that is only partly on screen must not read as fully visible"
+        );
+    }
+
+    /// Adjacent panels that together cover the whole pill are a different case:
+    /// the parts do not overlap, so their union is the sum and the pill is fully
+    /// visible. The fix for the mirrored case must not regress this one.
+    #[test]
+    fn adjacent_work_areas_cover_the_whole_pill() {
+        let left = MonitorRect::without_id(0.0, 0.0, 1000.0, 1000.0);
+        let right = MonitorRect::without_id(1000.0, 0.0, 1000.0, 1000.0);
+        let straddling = MonitorRect::without_id(980.0, 100.0, 40.0, 48.0);
+        let fraction = visible_fraction(straddling, &[left, right]);
+        assert!(
+            (fraction - 1.0).abs() < 1e-9,
+            "a pill straddling two adjacent panels reported {fraction}, expected 1.0"
+        );
     }
 }
