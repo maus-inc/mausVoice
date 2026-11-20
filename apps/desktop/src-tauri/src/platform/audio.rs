@@ -3365,35 +3365,39 @@ mod cpal_impl {
         }
 
         fn refresh_device(&self) {
-            if let Err(error) = self.worker.call(|r| r.refresh_device()) {
+            if let Err(error) = self.worker.call(LocalRecordingManager::refresh_device) {
                 log::error!("{error}");
             }
         }
 
         fn promote_to_hold(&self) {
-            if let Err(error) = self.worker.call(|r| r.promote_to_hold()) {
+            if let Err(error) = self.worker.call(LocalRecordingManager::promote_to_hold) {
                 log::error!("{error}");
             }
         }
 
         fn release_hold(&self) {
-            if let Err(error) = self.worker.call(|r| r.release_hold()) {
+            if let Err(error) = self.worker.call(LocalRecordingManager::release_hold) {
                 log::error!("{error}");
             }
         }
 
         fn warm_close(&self) {
-            if let Err(error) = self.worker.call(|r| r.close_warm()) {
+            if let Err(error) = self.worker.call(LocalRecordingManager::close_warm) {
                 log::error!("{error}");
             }
         }
 
         fn is_ready(&self) -> bool {
-            self.worker.call(|r| r.is_ready()).unwrap_or(false)
+            self.worker
+                .call(LocalRecordingManager::is_ready)
+                .unwrap_or(false)
         }
 
         fn has_held_stream(&self) -> bool {
-            self.worker.call(|r| r.has_held_stream()).unwrap_or(false)
+            self.worker
+                .call(LocalRecordingManager::has_held_stream)
+                .unwrap_or(false)
         }
 
         fn set_linger(&self, linger_ms: u64) {
@@ -3407,12 +3411,14 @@ mod cpal_impl {
 
         fn status_line(&self) -> String {
             self.worker
-                .call(|r| r.status_line())
+                .call(LocalRecordingManager::status_line)
                 .unwrap_or_else(|error| error.to_string())
         }
 
         fn last_startup(&self) -> Option<Vec<(String, u64)>> {
-            self.worker.call(|r| r.last_startup()).unwrap_or_default()
+            self.worker
+                .call(LocalRecordingManager::last_startup)
+                .unwrap_or_default()
         }
     }
 
@@ -3608,40 +3614,6 @@ mod cpal_impl {
         Err(attempt_err.unwrap_or(RecordingError::InputDeviceUnavailable))
     }
 
-    /// One device, as the selection loop sees it.
-    ///
-    /// Deliberately plain data with no `Device` in it: the loop that consumes it
-    /// is then testable on a machine with no audio hardware, which is where all
-    /// of its interesting cases live.
-    #[derive(Clone, Debug)]
-    struct CandidateChoice {
-        label: String,
-        matches_preferred: bool,
-        avoid_reason: Option<String>,
-    }
-
-    /// What one attempt at one candidate on one host produced.
-    ///
-    /// The device-selection loops are generic over this instead of over cpal's
-    /// `Host`, so a test can drive them with a scripted host: a device that is
-    /// listed but refuses to open, a host that enumerates nothing, a list where
-    /// the first entry fails. Every branch of those loops is a case the user
-    /// meets only on a machine with odd hardware, which is exactly the code that
-    /// otherwise never gets exercised.
-    trait CandidateAttempt {
-        /// What a successful attempt yields.
-        type Recorded;
-        /// The devices to try, in preference order. Marking the trace is this
-        /// method's job because it is the only step every implementation shares
-        /// and it is the one that must happen before anything is opened.
-        fn candidates(&mut self) -> Vec<CandidateChoice>;
-        /// Tries one candidate.
-        fn try_candidate(
-            &mut self,
-            choice: &CandidateChoice,
-        ) -> Result<Self::Recorded, RecordingError>;
-    }
-
     /// Runs the candidate loop of one host and returns what recorded.
     ///
     /// Every candidate is tried in order and a failure is remembered rather than
@@ -3650,18 +3622,19 @@ mod cpal_impl {
     /// whose every device is busy reports that host's failure rather than the
     /// generic "no input device" the caller substitutes when there is no error
     /// to report.
-    fn first_working_candidate<A: CandidateAttempt>(
-        attempt: &mut A,
-    ) -> Result<(A::Recorded, CandidateChoice), RecordingError> {
+    fn first_working_candidate<T>(
+        candidates: Vec<DeviceCandidate>,
+        mut open: impl FnMut(&DeviceCandidate) -> Result<T, RecordingError>,
+    ) -> Result<(T, DeviceCandidate), RecordingError> {
         let mut last_err: Option<RecordingError> = None;
-        for choice in attempt.candidates() {
+        for choice in candidates {
             if let Some(reason) = &choice.avoid_reason {
                 log::debug!(
                     "deprioritising '{}' ({reason}); will try if others fail",
                     choice.label
                 );
             }
-            match attempt.try_candidate(&choice) {
+            match open(&choice) {
                 Ok(recorded) => return Ok((recorded, choice)),
                 Err(err) => {
                     if matches!(err, RecordingError::ReleaseUncertain(_)) {
@@ -3699,76 +3672,12 @@ mod cpal_impl {
         host: &cpal::Host,
         preferred: Option<&str>,
         trace: &mut AudioStartupTrace,
-    ) -> Vec<(CandidateChoice, Device)> {
+    ) -> Vec<DeviceCandidate> {
         let candidates = ranked_input_candidates(host, preferred);
         trace.mark(AudioStartupStage::DeviceResolved);
         candidates
-            .into_iter()
-            .map(|candidate| {
-                (
-                    CandidateChoice {
-                        label: candidate.label,
-                        matches_preferred: candidate.matches_preferred,
-                        avoid_reason: candidate.avoid_reason,
-                    },
-                    candidate.device,
-                )
-            })
-            .collect()
     }
 
-    /// The real attempt: one cpal host, its scored candidates, its devices.
-    struct HostAttempt<'a> {
-        host: &'a cpal::Host,
-        level_emitter: Option<Arc<LevelEmitter>>,
-        chunk_emitter: Option<Arc<ChunkEmitter>>,
-        preferred_normalized: Option<&'a str>,
-        hold: HoldPlan<'a>,
-        trace: &'a mut AudioStartupTrace,
-        /// The devices `candidates` resolved, kept so `try_candidate` does not
-        /// enumerate the host again for each of them.
-        resolved: Vec<(CandidateChoice, Device)>,
-    }
-
-    impl CandidateAttempt for HostAttempt<'_> {
-        type Recorded = ActiveRecording;
-
-        fn candidates(&mut self) -> Vec<CandidateChoice> {
-            self.resolved =
-                resolve_input_candidates(self.host, self.preferred_normalized, self.trace);
-            self.resolved
-                .iter()
-                .map(|(choice, _)| choice.clone())
-                .collect()
-        }
-
-        fn try_candidate(
-            &mut self,
-            choice: &CandidateChoice,
-        ) -> Result<Self::Recorded, RecordingError> {
-            let device = self
-                .resolved
-                .iter()
-                .find(|(resolved, _)| resolved.label == choice.label)
-                .map(|(_, device)| device)
-                .ok_or(RecordingError::InputDeviceUnavailable)?;
-            try_start_on_device(
-                device,
-                Some(&choice.label),
-                self.level_emitter.clone(),
-                self.chunk_emitter.clone(),
-                self.hold,
-                self.trace,
-            )
-        }
-    }
-
-    /// Builds a capture stream that feeds a sink rather than a recording.    /// Builds a capture stream that feeds a sink rather than a recording.
-    ///
-    /// The sink is what makes the pre-warm possible: the stream's lifetime is
-    /// independent of any recording, so it can be opened once and handed between
-    /// recordings. Frames are folded to mono here, before they reach the sink, so
-    /// every consumer sees one consistent channel count.
     fn classify_input_build_error(error: cpal::BuildStreamError) -> RecordingError {
         match error {
             cpal::BuildStreamError::CleanupUncertain { err } => {
@@ -3890,65 +3799,18 @@ mod cpal_impl {
         trace: &mut AudioStartupTrace,
         manager: &LocalRecordingManager,
     ) -> Result<WarmStream, RecordingError> {
-        // The same candidate loop as the cold path, so a device that refuses to
-        // open for a recording refuses for a hold too, and the hold does not
-        // inherit a second, subtly different ordering rule.
-        struct WarmAttempt<'a> {
-            host: &'a cpal::Host,
-            preferred_label: Option<&'a str>,
-            preferred_normalized: Option<&'a str>,
-            ring: Arc<Mutex<Preroll>>,
-            preroll: Duration,
-            trace: &'a mut AudioStartupTrace,
-            manager: &'a LocalRecordingManager,
-            resolved: Vec<(CandidateChoice, Device)>,
-        }
-
-        impl CandidateAttempt for WarmAttempt<'_> {
-            type Recorded = WarmStream;
-
-            fn candidates(&mut self) -> Vec<CandidateChoice> {
-                self.resolved =
-                    resolve_input_candidates(self.host, self.preferred_normalized, self.trace);
-                self.resolved
-                    .iter()
-                    .map(|(choice, _)| choice.clone())
-                    .collect()
-            }
-
-            fn try_candidate(
-                &mut self,
-                choice: &CandidateChoice,
-            ) -> Result<Self::Recorded, RecordingError> {
-                let device = self
-                    .resolved
-                    .iter()
-                    .find(|(resolved, _)| resolved.label == choice.label)
-                    .map(|(_, device)| device)
-                    .ok_or(RecordingError::InputDeviceUnavailable)?;
-                open_warm_on_device(
-                    device,
-                    &choice.label,
-                    self.preferred_label.map(str::to_string),
-                    self.preroll,
-                    Arc::clone(&self.ring),
-                    self.trace,
-                    self.manager,
-                )
-            }
-        }
-
-        let mut attempt = WarmAttempt {
-            host,
-            preferred_label,
-            preferred_normalized,
-            ring,
-            preroll,
-            trace,
-            manager,
-            resolved: Vec::new(),
-        };
-        let (warm, choice) = first_working_candidate(&mut attempt)?;
+        let candidates = resolve_input_candidates(host, preferred_normalized, trace);
+        let (warm, choice) = first_working_candidate(candidates, |choice| {
+            open_warm_on_device(
+                &choice.device,
+                &choice.label,
+                preferred_label.map(str::to_owned),
+                preroll,
+                Arc::clone(&ring),
+                trace,
+                manager,
+            )
+        })?;
         log::info!(
             "holding input device '{}' open via host {:?}",
             choice.label,
@@ -4053,16 +3915,17 @@ mod cpal_impl {
         trace: &mut AudioStartupTrace,
     ) -> Result<(ActiveRecording, String), RecordingError> {
         let fallback_preferred = preferred_label.or(preferred_normalized);
-        let mut attempt = HostAttempt {
-            host,
-            level_emitter,
-            chunk_emitter,
-            preferred_normalized,
-            hold,
-            trace,
-            resolved: Vec::new(),
-        };
-        let (active, choice) = first_working_candidate(&mut attempt)?;
+        let candidates = resolve_input_candidates(host, preferred_normalized, trace);
+        let (active, choice) = first_working_candidate(candidates, |choice| {
+            try_start_on_device(
+                &choice.device,
+                Some(&choice.label),
+                level_emitter.clone(),
+                chunk_emitter.clone(),
+                hold,
+                trace,
+            )
+        })?;
         let label = choice.label;
 
         if choice.matches_preferred {

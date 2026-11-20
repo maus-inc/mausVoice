@@ -1361,10 +1361,31 @@ fn cpal_alsa_pollerr_overrun_is_reported_and_prepared() {
     assert!(!manager.is_recording());
 }
 
-fn check_alsa_capture_disconnect(disconnected_state: bool) {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    use std::sync::mpsc;
+fn assert_alsa_disconnect(
+    stream: &cpal::Stream,
+    first_pcm: std::sync::mpsc::Receiver<()>,
+    errors: &std::sync::mpsc::Receiver<cpal::StreamError>,
+    arm: unsafe extern "C" fn(),
+    observations: unsafe extern "C" fn() -> libc::c_uint,
+) {
+    use cpal::traits::StreamTrait;
     use std::time::Duration;
+    stream.play().unwrap();
+    first_pcm.recv_timeout(Duration::from_secs(2)).unwrap();
+    unsafe { arm() };
+    let error = errors.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(
+        matches!(error, cpal::StreamError::DeviceNotAvailable),
+        "expected a device disconnect, got {error:?}"
+    );
+    std::thread::sleep(Duration::from_millis(30));
+    assert!(errors.try_recv().is_err());
+    assert_eq!(unsafe { observations() }, 1);
+}
+
+fn check_alsa_capture_disconnect(disconnected_state: bool) {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    use std::sync::mpsc;
     let arm = unsafe {
         libc::dlsym(
             libc::RTLD_DEFAULT,
@@ -1410,17 +1431,7 @@ fn check_alsa_capture_disconnect(disconnected_state: bool) {
             None,
         )
         .unwrap();
-    stream.play().unwrap();
-    data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    unsafe { arm() };
-    let error = error_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert!(
-        matches!(error, cpal::StreamError::DeviceNotAvailable),
-        "expected a device disconnect, got {error:?}"
-    );
-    std::thread::sleep(Duration::from_millis(30));
-    assert!(error_rx.try_recv().is_err());
-    assert_eq!(unsafe { observations() }, 1);
+    assert_alsa_disconnect(&stream, data_rx, &error_rx, arm, observations);
     #[allow(unreachable_patterns)]
     match stream.as_inner_mut() {
         cpal::platform::StreamInner::Alsa(inner) => {
@@ -1483,9 +1494,8 @@ fn cpal_alsa_disconnect_during_read_stops_worker() {
 }
 
 fn check_alsa_playback_disconnect() {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use cpal::traits::{DeviceTrait, HostTrait};
     use std::sync::mpsc;
-    use std::time::Duration;
 
     let arm = unsafe {
         libc::dlsym(
@@ -1525,17 +1535,7 @@ fn check_alsa_playback_disconnect() {
             None,
         )
         .unwrap();
-    stream.play().unwrap();
-    data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    unsafe { arm() };
-    let error = error_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert!(
-        matches!(error, cpal::StreamError::DeviceNotAvailable),
-        "expected a device disconnect, got {error:?}"
-    );
-    std::thread::sleep(Duration::from_millis(30));
-    assert!(error_rx.try_recv().is_err());
-    assert_eq!(unsafe { observations() }, 1);
+    assert_alsa_disconnect(&stream, data_rx, &error_rx, arm, observations);
     drop(stream);
 }
 

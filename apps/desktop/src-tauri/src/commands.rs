@@ -4490,6 +4490,24 @@ pub async fn force_stop_recording(
     .map_err(|err| err.to_string())?
 }
 
+async fn control_scoped_recording(
+    recorder: Arc<dyn crate::platform::Recorder>,
+    ownership: RecordingOwnerState,
+    window_key: usize,
+    owner_id: String,
+    generation: u64,
+    operation: fn(&dyn crate::platform::Recorder) -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), String> {
+    let scope = ownership.window(window_key);
+    tauri::async_runtime::spawn_blocking(move || {
+        ownership.use_recording_scoped(&owner_id, &scope, generation, || {
+            operation(recorder.as_ref()).map_err(|err| err.to_string())
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn pause_recording(
@@ -4499,16 +4517,15 @@ pub async fn pause_recording(
     owner_id: String,
     generation: u64,
 ) -> Result<(), String> {
-    let recorder = Arc::clone(&recorder);
-    let ownership = Arc::clone(&ownership);
-    let scope = ownership.window(recording_window_key(&window));
-    tauri::async_runtime::spawn_blocking(move || {
-        ownership.use_recording_scoped(&owner_id, &scope, generation, || {
-            recorder.pause().map_err(|err| err.to_string())
-        })
-    })
+    control_scoped_recording(
+        Arc::clone(&recorder),
+        Arc::clone(&ownership),
+        recording_window_key(&window),
+        owner_id,
+        generation,
+        |recorder| recorder.pause(),
+    )
     .await
-    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
@@ -4520,16 +4537,15 @@ pub async fn resume_recording(
     owner_id: String,
     generation: u64,
 ) -> Result<(), String> {
-    let recorder = Arc::clone(&recorder);
-    let ownership = Arc::clone(&ownership);
-    let scope = ownership.window(recording_window_key(&window));
-    tauri::async_runtime::spawn_blocking(move || {
-        ownership.use_recording_scoped(&owner_id, &scope, generation, || {
-            recorder.resume().map_err(|err| err.to_string())
-        })
-    })
+    control_scoped_recording(
+        Arc::clone(&recorder),
+        Arc::clone(&ownership),
+        recording_window_key(&window),
+        owner_id,
+        generation,
+        |recorder| recorder.resume(),
+    )
     .await
-    .map_err(|err| err.to_string())?
 }
 
 /// Raw-body command, so it is registered in `app.rs` but kept out of the
@@ -6515,14 +6531,14 @@ fn validate_initial_signature_url(url: &Url) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate a signature URL (scheme, host allow-list, accepted extension).
-/// Applied to every *redirect* hop, mirroring `validate_installer_url`.
-/// `trusted_namespace` is the `/owner/repo/` namespace of the originally
-/// requested release, captured from the initial URL so a redirect cannot
-/// bounce us into a different repository.
-fn validate_signature_url(url: &Url, trusted_namespace: &str) -> Result<(), String> {
+/// Validates the shared redirect policy and reports whether the CDN uses an opaque path.
+fn release_redirect_uses_opaque_path(
+    url: &Url,
+    trusted_namespace: &str,
+    artifact: &str,
+) -> Result<bool, String> {
     if url.scheme() != "https" {
-        return Err("Signature URL must use https".to_string());
+        return Err(format!("{artifact} URL must use https"));
     }
     let host = url.host_str().unwrap_or("");
     if !matches!(
@@ -6530,7 +6546,7 @@ fn validate_signature_url(url: &Url, trusted_namespace: &str) -> Result<(), Stri
         "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com"
     ) {
         return Err(format!(
-            "Signature URL host {host:?} is not in the trusted allow-list"
+            "{artifact} URL host {host:?} is not in the trusted allow-list"
         ));
     }
     // Every redirect hop must stay within the repository namespace that was
@@ -6547,11 +6563,15 @@ fn validate_signature_url(url: &Url, trusted_namespace: &str) -> Result<(), Stri
         && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX)
     {
         return Err(format!(
-            "Signature redirect must stay within the trusted repository namespace {trusted_namespace:?}, got {}",
+            "{artifact} redirect must stay within the trusted repository namespace {trusted_namespace:?}, got {}",
             url.path()
         ));
     }
-    if host != "release-assets.githubusercontent.com"
+    Ok(host == "release-assets.githubusercontent.com")
+}
+
+fn validate_signature_url(url: &Url, trusted_namespace: &str) -> Result<(), String> {
+    if !release_redirect_uses_opaque_path(url, trusted_namespace, "Signature")?
         && !ALLOWED_SIGNATURE_EXTENSIONS
             .iter()
             .any(|ext| url.path().ends_with(ext))
@@ -6758,49 +6778,8 @@ fn validate_initial_installer_url(url: &Url) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate an installer URL (scheme, host allow-list, accepted extension).
-/// Applied to every *redirect* hop, because the redirect chain is
-/// attacker-influenced: an allowed host could otherwise bounce us to an
-/// untrusted origin whose bytes we would write and execute. `trusted_namespace`
-/// is the `/owner/repo/` namespace of the originally requested release,
-/// captured from the initial URL so a redirect cannot bounce us into a
-/// different repository.
 fn validate_installer_url(url: &Url, trusted_namespace: &str) -> Result<(), String> {
-    if url.scheme() != "https" {
-        return Err("Installer URL must use https".to_string());
-    }
-    let host = url.host_str().unwrap_or("");
-    if !matches!(
-        host,
-        "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com"
-    ) {
-        return Err(format!(
-            "Installer URL host {host:?} is not in the trusted allow-list"
-        ));
-    }
-    // Every redirect hop must stay within the repository namespace that was
-    // originally requested. github.com hops already carry the full release
-    // path, and objects.githubusercontent.com may serve either the namespace
-    // path or the full release-download prefix. The release-assets CDN is the
-    // single intentional carve-out: it answers an opaque token path whose real
-    // target is encoded in signed query parameters, so it is exempt from both
-    // the namespace and extension checks. A hop escaping the namespace is
-    // rejected fail-closed — minisign verification is the backstop, not the
-    // only line of defense.
-    if host != "release-assets.githubusercontent.com"
-        && !url.path().starts_with(trusted_namespace)
-        && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX)
-    {
-        return Err(format!(
-            "Installer redirect must stay within the trusted repository namespace {trusted_namespace:?}, got {}",
-            url.path()
-        ));
-    }
-    // GitHub's release-asset CDN answers an opaque path whose real filename
-    // lives in the signed query parameters, so an extension check would reject
-    // every legitimate redirect. Every other allowed host keeps its
-    // path-based extension requirement.
-    if host != "release-assets.githubusercontent.com"
+    if !release_redirect_uses_opaque_path(url, trusted_namespace, "Installer")?
         && !ALLOWED_INSTALLER_EXTENSIONS
             .iter()
             .any(|ext| url.path().ends_with(ext))
