@@ -18,7 +18,11 @@ import {
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
-import { listenToAudioChunks } from "./audio-chunk-events";
+import {
+  listenToAudioChunks,
+  matchesAudioChunkAdmission,
+  type AudioChunkAdmission,
+} from "./audio-chunk-events";
 import {
   createAudioChunkStartupBuffer,
   type AudioChunkStartupBuffer,
@@ -82,6 +86,10 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       ASSUMED_STARTUP_SAMPLE_RATE,
     );
   private startupBufferOverflowed = false;
+
+  constructor(
+    private readonly getAdmission: () => AudioChunkAdmission | null,
+  ) {}
 
   // Capture emits chunks as soon as the microphone opens and Tauri does not
   // replay events, so subscribe before recording starts and buffer until the
@@ -280,9 +288,17 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   }
 
   private async startListening(): Promise<void> {
-    this.unlisten = await listenToAudioChunks((samples, offset) =>
-      this.handleAudioChunk(samples, offset),
-    );
+    this.unlisten = await listenToAudioChunks((samples, offset, admission) => {
+      const expected = this.getAdmission();
+      // The shared native delivery queue can still contain a prior recording.
+      if (
+        expected &&
+        admission &&
+        matchesAudioChunkAdmission(expected, admission)
+      ) {
+        this.handleAudioChunk(samples, offset);
+      }
+    });
   }
 
   /**

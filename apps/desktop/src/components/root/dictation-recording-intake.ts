@@ -1,6 +1,7 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   listenToAudioChunks,
+  matchesAudioChunkAdmission,
   type AudioChunkAdmission,
 } from "../../sessions/audio-chunk-events";
 import type { TranscriptionSessionKind } from "../../sessions";
@@ -209,10 +210,7 @@ export const attachSessionAudioIntake = async (
       discontinuity = true;
       return false;
     }
-    return (
-      chunkAdmission.ownerId === admitted.ownerId &&
-      chunkAdmission.generation === admitted.generation
-    );
+    return matchesAudioChunkAdmission(admitted, chunkAdmission);
   };
 
   const hasValidOffset = (offset: number | null): offset is number => {

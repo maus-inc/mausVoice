@@ -55,6 +55,7 @@ import {
   resolveTranscriptionSessionKind,
   type TranscriptionSessionKind,
 } from "../../sessions";
+import type { AudioChunkAdmission } from "../../sessions/audio-chunk-events";
 import { startLiveProviderSession } from "../../sessions/provider-startup.utils";
 import { RecordingMode } from "../../state/app.state";
 import { getAppState, produceAppState, useAppStore } from "../../store";
@@ -2254,15 +2255,18 @@ export const DictationSideEffects = () => {
       let activeSession: TranscriptionSession | null = null;
       try {
         getLogger().info(`Transcription prefs: mode=${transcriptPrefs.mode}`);
-        const session = createTranscriptionSession(transcriptPrefs);
+        let chunkAdmission: AudioChunkAdmission | null = null;
+        const getChunkAdmission = () => chunkAdmission;
+        const session = createTranscriptionSession(
+          transcriptPrefs,
+          getChunkAdmission,
+        );
         activeSession = session;
         getLogger().info(
           `Created transcription session: ${session.constructor.name}`,
         );
 
         let audioForwardingReady = false;
-        let chunkAdmission: { ownerId: string; generation: number } | null =
-          null;
         const isCurrentStart = () =>
           !isLocalDataClearRequested() &&
           clearGeneration === getLocalDataClearGeneration() &&
@@ -2286,7 +2290,7 @@ export const DictationSideEffects = () => {
               `[Dictation] Startup audio buffer overflowed; dropped ${droppedSamples} samples`,
             );
           },
-          () => chunkAdmission,
+          getChunkAdmission,
         );
         const startupAudioBuffer = intake.buffer;
         if (!intake.current) {
