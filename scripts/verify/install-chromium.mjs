@@ -201,7 +201,10 @@ if (hasBrowser(OUT)) {
   }
 
   const STAGING = mkdtempSync(
-    `${OUT}.partial-${process.pid}-${processStart(process.pid) ?? "unknown"}-`,
+    path.join(
+      parent,
+      `${prefix}${process.pid}-${processStart(process.pid) ?? "unknown"}-`,
+    ),
   );
   // Claim staging before package installation or extraction can fail.
   writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n${scope ?? ""}\n`);

@@ -68,6 +68,17 @@ test("the installer accepts a new nested output directory", (t) => {
   assert.equal(browserVersion(out), "fixture-chromium");
 });
 
+test("a trailing slash does not put staging inside the output directory", (t) => {
+  const { dir, run } = fixture(t);
+  const parent = join(dir, "new-parent");
+  const out = join(parent, "chr");
+
+  run(`${out}/`);
+
+  assert.equal(browserVersion(out), "fixture-chromium");
+  assert.deepEqual(readdirSync(parent), ["chr"]);
+});
+
 test("the installer repairs a marked output with an empty browser", (t) => {
   const { dir, run } = fixture(t);
   const out = join(dir, "chr");
