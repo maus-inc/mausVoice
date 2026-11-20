@@ -2097,56 +2097,59 @@ mod cpal_impl {
                 return Ok(());
             }
 
-            let mut warm_guard = match self.warm.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            // A refresh must not reopen a stream after an intervening release.
-            if refresh_generation.is_some_and(|generation| !self.refresh_can_reopen(generation)) {
-                return Ok(());
-            }
-            if warm_guard.is_some() {
-                log::debug!("warm stream already open; nothing to do");
-                return Ok(());
-            }
-
-            let preferred_label = {
-                let guard = match self.preferred_input_name.lock() {
+            let generation = {
+                let mut warm_guard = match self.warm.lock() {
                     Ok(guard) => guard,
                     Err(poisoned) => poisoned.into_inner(),
                 };
-                guard.clone()
-            };
-            let preferred_trimmed = preferred_label
-                .as_ref()
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
+                // A refresh must not reopen a stream after an intervening release.
+                if refresh_generation.is_some_and(|generation| !self.refresh_can_reopen(generation))
+                {
+                    return Ok(());
+                }
+                if warm_guard.is_some() {
+                    log::debug!("warm stream already open; nothing to do");
+                    return Ok(());
+                }
 
-            // Past every guard, so this counts real device opens rather than
-            // declined requests. See the field's own comment.
-            self.warm_open_attempts
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            // The ring is left empty until the successful stream tells us the
-            // real rate; `open_warm_stream` sizes it.
-            let warm = self.open_warm_stream(preferred_trimmed.clone(), preroll)?;
-            if let Ok(mut ring) = self.preroll.lock() {
-                ring.cap = preroll_capacity(preroll, warm.sample_rate);
-                ring.clear();
-            }
-            // Any timer armed before this stream existed is now stale, and it has
-            // to learn that before the stream becomes visible here. A linger
-            // armed for a previous stream wakes up, checks its generation and
-            // finds it current, and would take *this* stream: the user's hold
-            // disappears seconds after the switch that asked for it. The bump is
-            // inside the lock the timer takes, so the two orderings are the only
-            // two possible ones, and both are safe: either the timer ran first
-            // and closed the stream it was armed for (there was one in the slot,
-            // since this open returns early when there is), or it runs after this
-            // and sees a stale generation.
-            let generation = self.advance_linger_generation();
-            *warm_guard = Some(warm);
-            drop(warm_guard);
+                let preferred_label = {
+                    let guard = match self.preferred_input_name.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    guard.clone()
+                };
+                let preferred_trimmed = preferred_label
+                    .as_ref()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+
+                // Past every guard, so this counts real device opens rather than
+                // declined requests. See the field's own comment.
+                self.warm_open_attempts
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                // The ring is left empty until the successful stream tells us the
+                // real rate; `open_warm_stream` sizes it.
+                let warm = self.open_warm_stream(preferred_trimmed.clone(), preroll)?;
+                if let Ok(mut ring) = self.preroll.lock() {
+                    ring.cap = preroll_capacity(preroll, warm.sample_rate);
+                    ring.clear();
+                }
+                // Any timer armed before this stream existed is now stale, and it has
+                // to learn that before the stream becomes visible here. A linger
+                // armed for a previous stream wakes up, checks its generation and
+                // finds it current, and would take *this* stream: the user's hold
+                // disappears seconds after the switch that asked for it. The bump is
+                // inside the lock the timer takes, so the two orderings are the only
+                // two possible ones, and both are safe: either the timer ran first
+                // and closed the stream it was armed for (there was one in the slot,
+                // since this open returns early when there is), or it runs after this
+                // and sees a stale generation.
+                let generation = self.advance_linger_generation();
+                *warm_guard = Some(warm);
+                generation
+            };
             if refresh_generation.is_some() {
                 if let Some((linger, generation)) = self.reserve_refresh_linger(generation) {
                     self.schedule_linger_close(linger, generation);
