@@ -337,14 +337,18 @@ fn record_loop(
         source_name.unwrap_or("default")
     );
 
+    let mut stop_pumped = false;
     Ok(capture_samples(
         sample_rate,
         &stop_signal,
         level_callback,
         chunk_callback,
         |stopping| {
-            if !stopping {
+            if !stopping || !stop_pumped {
+                // Pull in socket data once at the stop boundary, then drain the
+                // buffered prefix without following an indefinitely live source.
                 pulse_iterate(&mut mainloop)?;
+                stop_pumped |= stopping;
             }
             match stream.get_state() {
                 pulse::stream::State::Failed | pulse::stream::State::Terminated => {

@@ -1,3 +1,67 @@
+fn start_alsa_manager_with_pcm() -> super::RecordingManager {
+    use crate::platform::Recorder;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let manager = super::RecordingManager::new();
+    let (captured_tx, captured_rx) = mpsc::sync_channel(1);
+    manager
+        .start(
+            Some(Arc::new(move |_| {
+                let _ = captured_tx.try_send(());
+            })),
+            None,
+        )
+        .unwrap();
+    captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    manager
+}
+
+fn alsa_capture_buffer(manager: &super::LocalRecordingManager) -> Arc<Mutex<Vec<f32>>> {
+    Arc::clone(
+        manager
+            .guard()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .buffer
+            .as_ref()
+            .unwrap(),
+    )
+}
+
+fn assert_alsa_fault_retains_prefix(inject: unsafe extern "C" fn()) {
+    use crate::platform::Recorder;
+    use std::time::{Duration, Instant};
+
+    let manager = start_alsa_manager_with_pcm();
+    unsafe { inject() };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !manager
+        .worker
+        .call(|recorder| {
+            recorder
+                .inner
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .sink
+                .as_ref()
+                .unwrap()
+                .fault_token()
+                .is_some()
+        })
+        .unwrap()
+    {
+        assert!(Instant::now() < deadline, "capture fault was not reported");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let recording = manager.stop_for_handoff().unwrap();
+    assert!(recording.capture_failed);
+    assert!(!recording.audio.samples.is_empty());
+    assert!(!manager.is_recording());
+}
+
 // ALSA fault-injection tests also run under scripts/ci/run-alsa-fault-tests.sh.
 // This file is included by audio::cpal_impl::tests to keep the fixture names stable.
 #[test]
@@ -89,16 +153,7 @@ fn cpal_alsa_pause_suppresses_samples_until_resume() {
     use std::time::Duration;
     let manager = LocalRecordingManager::new();
     manager.start_recording(None, None).unwrap();
-    let buffer = Arc::clone(
-        manager
-            .guard()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .buffer
-            .as_ref()
-            .unwrap(),
-    );
+    let buffer = alsa_capture_buffer(&manager);
     std::thread::sleep(Duration::from_millis(10));
     manager.pause_recording().unwrap();
     let paused_len = buffer.lock().unwrap().len();
@@ -274,16 +329,7 @@ fn exercise_alsa_pause_fault(mode: libc::c_int) {
     unsafe { arm(mode) };
     let manager = LocalRecordingManager::new();
     manager.start_recording(None, None).unwrap();
-    let buffer = Arc::clone(
-        manager
-            .guard()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .buffer
-            .as_ref()
-            .unwrap(),
-    );
+    let buffer = alsa_capture_buffer(&manager);
     std::thread::sleep(Duration::from_millis(10));
     if mode == 3 {
         manager.pause_recording().unwrap();
@@ -957,10 +1003,7 @@ fn cpal_alsa_uncertain_cached_build_close_blocks_successor_capture() {
 #[test]
 #[ignore = "requires ALSA null and the test-only close-failure preload"]
 fn cpal_alsa_failed_close_never_reuses_the_uncertain_handle() {
-    use super::RecordingManager;
     use crate::platform::Recorder;
-    use std::sync::mpsc;
-    use std::time::Duration;
 
     let arm = unsafe {
         libc::dlsym(
@@ -975,17 +1018,7 @@ fn cpal_alsa_failed_close_never_reuses_the_uncertain_handle() {
     );
     let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
     let calls: unsafe extern "C" fn() -> libc::c_int = unsafe { std::mem::transmute(calls) };
-    let manager = RecordingManager::new();
-    let (captured_tx, captured_rx) = mpsc::sync_channel(1);
-    manager
-        .start(
-            Some(Arc::new(move |_| {
-                let _ = captured_tx.try_send(());
-            })),
-            None,
-        )
-        .unwrap();
-    captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let manager = start_alsa_manager_with_pcm();
     unsafe { arm() };
     assert!(manager.stop_for_handoff().unwrap().capture_failed);
     assert_eq!(unsafe { calls() }, 1);
@@ -1006,10 +1039,7 @@ fn cpal_alsa_failed_close_never_reuses_the_uncertain_handle() {
 #[test]
 #[ignore = "requires ALSA null and the test-only stop-failure preload"]
 fn cpal_alsa_failed_stop_retains_ownership_until_retry_succeeds() {
-    use super::RecordingManager;
     use crate::platform::Recorder;
-    use std::sync::mpsc;
-    use std::time::Duration;
 
     let arm = unsafe {
         libc::dlsym(
@@ -1025,17 +1055,7 @@ fn cpal_alsa_failed_stop_retains_ownership_until_retry_succeeds() {
     );
     let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
     let failures: unsafe extern "C" fn() -> libc::c_int = unsafe { std::mem::transmute(failures) };
-    let manager = RecordingManager::new();
-    let (captured_tx, captured_rx) = mpsc::sync_channel(1);
-    manager
-        .start(
-            Some(Arc::new(move |_| {
-                let _ = captured_tx.try_send(());
-            })),
-            None,
-        )
-        .unwrap();
-    captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let manager = start_alsa_manager_with_pcm();
     unsafe { arm() };
     let result = manager.stop_for_handoff().unwrap();
     assert!(result.capture_failed);
@@ -1311,9 +1331,7 @@ fn cpal_alsa_delivers_only_frames_returned_by_a_short_read() {
 #[test]
 #[ignore = "requires ALSA null and the test-only POLLERR overrun preload"]
 fn cpal_alsa_pollerr_overrun_is_reported_and_prepared() {
-    use super::RecordingManager;
     use crate::platform::Recorder;
-    use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     let arm = unsafe {
@@ -1335,17 +1353,7 @@ fn cpal_alsa_pollerr_overrun_is_reported_and_prepared() {
     let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
     let preparations: unsafe extern "C" fn() -> libc::c_int =
         unsafe { std::mem::transmute(preparations) };
-    let manager = RecordingManager::new();
-    let (captured_tx, captured_rx) = mpsc::sync_channel(1);
-    manager
-        .start(
-            Some(Arc::new(move |_| {
-                let _ = captured_tx.try_send(());
-            })),
-            None,
-        )
-        .unwrap();
-    captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let manager = start_alsa_manager_with_pcm();
     unsafe { arm() };
     let deadline = Instant::now() + Duration::from_secs(2);
     while unsafe { preparations() } == 0 {
@@ -1554,11 +1562,6 @@ fn cpal_alsa_playback_disconnect_during_recovery_stops_worker() {
 #[test]
 #[ignore = "requires ALSA null and the test-only POLLHUP preload"]
 fn cpal_alsa_disconnect_preserves_incomplete_recording() {
-    use super::RecordingManager;
-    use crate::platform::Recorder;
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
-
     let arm = unsafe {
         libc::dlsym(
             libc::RTLD_DEFAULT,
@@ -1567,46 +1570,7 @@ fn cpal_alsa_disconnect_preserves_incomplete_recording() {
     };
     assert!(!arm.is_null(), "disconnect preload required");
     let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
-    let manager = RecordingManager::new();
-    let (captured_tx, captured_rx) = mpsc::sync_channel(1);
-    manager
-        .start(
-            Some(Arc::new(move |_| {
-                let _ = captured_tx.try_send(());
-            })),
-            None,
-        )
-        .unwrap();
-    captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    unsafe { arm() };
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        let failed = manager
-            .worker
-            .call(|recorder| {
-                recorder
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .unwrap()
-                    .sink
-                    .as_ref()
-                    .unwrap()
-                    .fault_token()
-                    .is_some()
-            })
-            .unwrap();
-        if failed {
-            break;
-        }
-        assert!(Instant::now() < deadline, "disconnect was not reported");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    let recording = manager.stop_for_handoff().unwrap();
-    assert!(recording.capture_failed);
-    assert!(!recording.audio.samples.is_empty());
-    assert!(!manager.is_recording());
+    assert_alsa_fault_retains_prefix(arm);
 }
 
 #[test]
@@ -1670,12 +1634,6 @@ fn cpal_alsa_read_overrun_restarts_and_reports_loss() {
 #[test]
 #[ignore = "requires ALSA null and the test-only overrun preload"]
 fn cpal_alsa_overrun_marks_the_captured_prefix_incomplete() {
-    use super::RecordingManager;
-    use crate::platform::Recorder;
-    use std::sync::mpsc;
-    use std::thread;
-    use std::time::{Duration, Instant};
-
     let symbol = unsafe {
         libc::dlsym(
             libc::RTLD_DEFAULT,
@@ -1684,44 +1642,5 @@ fn cpal_alsa_overrun_marks_the_captured_prefix_incomplete() {
     };
     assert!(!symbol.is_null(), "test-only ALSA preload is required");
     let inject: unsafe extern "C" fn() = unsafe { std::mem::transmute(symbol) };
-    let manager = RecordingManager::new();
-    let (captured_tx, captured_rx) = mpsc::sync_channel(1);
-    manager
-        .start(
-            Some(Arc::new(move |_| {
-                let _ = captured_tx.try_send(());
-            })),
-            None,
-        )
-        .unwrap();
-    captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    unsafe { inject() };
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        let failed = manager
-            .worker
-            .call(|recorder| {
-                recorder
-                    .inner
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .unwrap()
-                    .sink
-                    .as_ref()
-                    .unwrap()
-                    .fault_token()
-                    .is_some()
-            })
-            .unwrap();
-        if failed {
-            break;
-        }
-        assert!(Instant::now() < deadline, "overrun was not reported");
-        thread::sleep(Duration::from_millis(10));
-    }
-    let recording = manager.stop_for_handoff().unwrap();
-    assert!(recording.capture_failed);
-    assert!(!recording.audio.samples.is_empty());
-    assert!(!manager.is_recording());
+    assert_alsa_fault_retains_prefix(inject);
 }

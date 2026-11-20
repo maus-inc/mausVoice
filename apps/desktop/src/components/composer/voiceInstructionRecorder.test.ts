@@ -329,6 +329,30 @@ describe("VoiceInstructionRecorder", () => {
     });
   });
 
+  it("holds the native slot through asynchronous browser disposal", async () => {
+    const fake = new FakeRecognition();
+    fake.stop = vi.fn();
+    const deps = baseDeps({
+      canUseProvider: () => false,
+      createSpeechRecognition: () => fake,
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+    await recorder.toggle();
+    recorder.dispose();
+    expect(fake.stop).toHaveBeenCalledOnce();
+    expect(deps.invoke).not.toHaveBeenCalledWith(
+      "release_browser_recording",
+      expect.anything(),
+    );
+    fake.onend?.();
+    await vi.waitFor(() =>
+      expect(deps.invoke).toHaveBeenCalledWith("release_browser_recording", {
+        ownerId: expect.any(String),
+        generation: 1,
+      }),
+    );
+  });
+
   it("disposes browser recognition on unmount", async () => {
     const fake = new FakeRecognition();
     const deps = baseDeps({

@@ -8,13 +8,13 @@ use super::{ChunkCallback, LevelCallback};
 /// A blocked delivery consumes one thread and leaves at most `capacity` jobs
 /// queued; callers must independently bound the size of each job.
 pub struct EventDispatcher {
-    sender: Option<SyncSender<Box<dyn FnOnce() + Send>>>,
+    sender: SyncSender<Box<dyn FnOnce() + Send>>,
 }
 
 impl EventDispatcher {
-    pub fn new(name: &str, capacity: usize) -> Self {
+    pub fn new(name: &str, capacity: usize) -> std::io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel::<Box<dyn FnOnce() + Send>>(capacity);
-        let worker = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name(name.into())
             .spawn(move || {
                 while let Ok(job) = receiver.recv() {
@@ -22,17 +22,13 @@ impl EventDispatcher {
                         log::error!("audio event delivery panicked");
                     }
                 }
-            });
-        Self {
-            sender: worker.ok().map(|_| sender),
-        }
+            })?;
+        Ok(Self { sender })
     }
 
     /// Returns false when the worker is unavailable or its queue is full.
     pub fn try_dispatch(&self, job: Box<dyn FnOnce() + Send>) -> bool {
-        self.sender
-            .as_ref()
-            .is_some_and(|sender| sender.try_send(job).is_ok())
+        self.sender.try_send(job).is_ok()
     }
 }
 
@@ -89,7 +85,7 @@ mod tests {
 
     #[test]
     fn stalled_delivery_is_bounded_and_does_not_block_the_producer() {
-        let dispatcher = EventDispatcher::new("event-dispatch-test", 1);
+        let dispatcher = EventDispatcher::new("event-dispatch-test", 1).unwrap();
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let (delivered_tx, delivered_rx) = mpsc::channel();
@@ -112,7 +108,7 @@ mod tests {
 
     #[test]
     fn chunk_callback_never_blocks_and_preserves_offsets_on_overflow() {
-        let dispatcher = Arc::new(EventDispatcher::new("chunk-callback-test", 1));
+        let dispatcher = Arc::new(EventDispatcher::new("chunk-callback-test", 1).unwrap());
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let release_rx = std::sync::Mutex::new(release_rx);
@@ -151,7 +147,7 @@ mod tests {
         let window = coordinator.window(17);
         let generation = coordinator.reserve("old", &window).unwrap();
         let admission = start_idle_admission(&coordinator, "old", &window, generation);
-        let dispatcher = Arc::new(EventDispatcher::new("level-callback-test", 1));
+        let dispatcher = Arc::new(EventDispatcher::new("level-callback-test", 1).unwrap());
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let release_rx = std::sync::Mutex::new(release_rx);
@@ -221,7 +217,7 @@ mod tests {
 
     #[test]
     fn a_panicking_delivery_does_not_kill_the_worker() {
-        let dispatcher = EventDispatcher::new("event-panic-test", 1);
+        let dispatcher = EventDispatcher::new("event-panic-test", 1).unwrap();
         let (entered_tx, entered_rx) = mpsc::channel();
         assert!(dispatcher.try_dispatch(Box::new(move || {
             entered_tx.send(()).unwrap();

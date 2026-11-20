@@ -474,7 +474,7 @@ fn handle_window_event(window: &Window, event: &WindowEvent) {
         refresh_warm_device(window.app_handle());
     }
     match event {
-        WindowEvent::Destroyed => crate::commands::retire_recording_window(window),
+        WindowEvent::Destroyed => crate::commands::retire_recording_window(window, true),
         WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
             api.prevent_close();
             save_main_window_state(window.app_handle());
@@ -717,7 +717,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     native
                         .inner()
                         .connect_local("web-process-terminated", false, move |_| {
-                            crate::commands::retire_recording_window(&window);
+                            crate::commands::retire_recording_window(&window, true);
                             None
                         });
                 }) {
@@ -756,7 +756,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 // A reload replaces the JavaScript owner without destroying the
                 // native window. Retire its scope before the new page starts.
-                crate::commands::retire_recording_window(&webview.window());
+                crate::commands::retire_recording_window(&webview.window(), false);
             }
         })
         .on_window_event(handle_window_event)

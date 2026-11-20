@@ -3,23 +3,17 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use std::net::UdpSocket;
 use tauri::async_runtime;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, EventId, Listener};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
 use super::remote_channel::{ReceiverMessage, SenderMessage};
 use crate::state::{RemoteReceiverEventDetails, RemoteReceiverState, RemoteReceiverStatus};
 
 pub const EVT_REMOTE_FINAL_TEXT_RECEIVED: &str = "remote_final_text_received";
 
-/// The largest frame the receiver accepts, newline included.
-///
-/// A peer that never sends a newline would otherwise grow the read buffer until
-/// the process runs out of memory, and nothing has authenticated that peer yet:
-/// the frame is parsed before it is authorized. A dictation frame is a small
-/// JSON envelope, so four mebibytes is generous.
-const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+use super::remote_channel::MAX_FRAME_BYTES;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +23,17 @@ pub struct RemoteFinalTextReceivedPayload {
     pub text: String,
     pub mode: String,
     pub created_at: String,
+    pub receipt_event: String,
+}
+
+const RENDERER_RECEIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
+struct RendererReceipt<'a>(&'a AppHandle, EventId);
+
+impl Drop for RendererReceipt<'_> {
+    fn drop(&mut self) {
+        self.0.unlisten(self.1);
+    }
 }
 
 pub async fn start(
@@ -617,42 +622,10 @@ impl ConnectionMessageHandler<'_> {
             )
             .await;
         };
-        let session_check = self
-            .authenticated_sender
-            .as_ref()
-            .map(|session| (session.matches(&session_id), session.device_id.clone()));
-        if let Some((false, active_device)) = session_check {
-            let message = "Frame session id does not match the authenticated session.".to_string();
-            if !record_error_while_active(
-                self.state,
-                self.receiver_generation,
-                self.write_generation,
-                RemoteReceiverEventDetails {
-                    sender_device_id: Some(active_device),
-                    event_id: Some(event_id.clone()),
-                    ..RemoteReceiverEventDetails::default()
-                },
-                message.clone(),
-            )
-            .await
-            {
-                return Ok(false);
-            }
-            return write_message_while_active(
-                self.writer,
-                &ReceiverMessage::DeliveryError {
-                    session_id,
-                    event_id,
-                    sequence,
-                    code: "session_mismatch".to_string(),
-                    message,
-                },
-                self.shutdown,
-                self.state,
-                self.receiver_generation,
-                self.write_generation,
-            )
-            .await;
+        if let Some(active_device) = self.mismatched_session_device(&session_id) {
+            return self
+                .reject_session_mismatch(active_device, session_id, Some(event_id), sequence)
+                .await;
         }
 
         if mode == "test" {
@@ -679,15 +652,24 @@ impl ConnectionMessageHandler<'_> {
 
         let target_info = current_target_info();
         let target_editable = current_target_editable_status();
+        let (receipt_tx, receipt_rx) = oneshot::channel();
+        let receipt_event = format!("remote_delivery_{}", generate_shared_secret());
+        let receipt = RendererReceipt(
+            self.app,
+            self.app.once(receipt_event.clone(), move |event| {
+                let _ = receipt_tx.send(event.payload() == "true");
+            }),
+        );
         let payload = RemoteFinalTextReceivedPayload {
             sender_device_id: sender_device_id.clone(),
             event_id: event_id.clone(),
             text,
             mode,
             created_at,
+            receipt_event,
         };
 
-        let emit_result = {
+        let emission = {
             let Ok(_event_guard) = crate::db::local_data_write_gate::lock_local_data_write(Some(
                 self.write_generation,
             ))
@@ -698,8 +680,29 @@ impl ConnectionMessageHandler<'_> {
             if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
                 return Ok(false);
             }
-            self.app.emit(EVT_REMOTE_FINAL_TEXT_RECEIVED, payload)
+            // Revocation uses the same gate. Recheck here so a device revoked
+            // after the initial frame validation cannot hand text to a renderer.
+            if self.authorize_final_text().await?.is_none() {
+                Err("Sender authorization was revoked before delivery.".to_string())
+            } else {
+                self.app
+                    .emit(EVT_REMOTE_FINAL_TEXT_RECEIVED, payload)
+                    .map_err(|error| format!("Failed to emit remote transcript event: {error}"))
+            }
         };
+        let delivered = match emission {
+            Ok(()) => tokio::select! {
+                biased;
+                _ = wait_for_shutdown(self.shutdown) => return Ok(false),
+                result = tokio::time::timeout(RENDERER_RECEIPT_TIMEOUT, receipt_rx) => match result {
+                    Ok(Ok(true)) => Ok(()),
+                    Ok(Ok(false)) => Err("The receiving window did not insert the transcript.".to_string()),
+                    _ => Err("The receiving window did not confirm transcript delivery.".to_string()),
+                },
+            },
+            Err(message) => Err(message),
+        };
+        drop(receipt);
 
         let event_details = RemoteReceiverEventDetails {
             sender_device_id: Some(sender_device_id),
@@ -708,7 +711,7 @@ impl ConnectionMessageHandler<'_> {
             target_title: target_info.title.clone(),
             target_editable,
         };
-        match emit_result {
+        match delivered {
             Ok(()) => {
                 let delivered_at = chrono::Utc::now().to_rfc3339();
                 if !record_delivery_while_active(
@@ -725,8 +728,7 @@ impl ConnectionMessageHandler<'_> {
                 self.write_delivery_ack(session_id, event_id, sequence, delivered_at)
                     .await
             }
-            Err(error) => {
-                let message = format!("Failed to emit remote transcript event: {error}");
+            Err(message) => {
                 if !record_error_while_active(
                     self.state,
                     self.receiver_generation,
@@ -744,7 +746,7 @@ impl ConnectionMessageHandler<'_> {
                         session_id,
                         event_id,
                         sequence,
-                        code: "event_emit_failed".to_string(),
+                        code: "delivery_unconfirmed".to_string(),
                         message,
                     },
                     self.shutdown,
@@ -795,46 +797,62 @@ impl ConnectionMessageHandler<'_> {
         .await
     }
 
+    fn mismatched_session_device(&self, session_id: &str) -> Option<String> {
+        self.authenticated_sender
+            .as_ref()
+            .filter(|session| !session.matches(session_id))
+            .map(|session| session.device_id.clone())
+    }
+
+    async fn reject_session_mismatch(
+        &mut self,
+        active_device: String,
+        session_id: String,
+        event_id: Option<String>,
+        sequence: u64,
+    ) -> Result<bool, String> {
+        let message = "Frame session id does not match the authenticated session.".to_string();
+        if !record_error_while_active(
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+            RemoteReceiverEventDetails {
+                sender_device_id: Some(active_device),
+                event_id: event_id.clone(),
+                ..RemoteReceiverEventDetails::default()
+            },
+            message.clone(),
+        )
+        .await
+        {
+            return Ok(false);
+        }
+        write_message_while_active(
+            self.writer,
+            &ReceiverMessage::DeliveryError {
+                session_id,
+                event_id: event_id.unwrap_or_default(),
+                sequence,
+                code: "session_mismatch".to_string(),
+                message,
+            },
+            self.shutdown,
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+        )
+        .await
+    }
+
     async fn handle_heartbeat(
         &mut self,
         session_id: String,
         _sent_at: String,
     ) -> Result<bool, String> {
-        let session_check = self
-            .authenticated_sender
-            .as_ref()
-            .map(|session| (session.matches(&session_id), session.device_id.clone()));
-        if let Some((false, active_device)) = session_check {
-            let message = "Frame session id does not match the authenticated session.".to_string();
-            if !record_error_while_active(
-                self.state,
-                self.receiver_generation,
-                self.write_generation,
-                RemoteReceiverEventDetails {
-                    sender_device_id: Some(active_device),
-                    ..RemoteReceiverEventDetails::default()
-                },
-                message.clone(),
-            )
-            .await
-            {
-                return Ok(false);
-            }
-            return write_message_while_active(
-                self.writer,
-                &ReceiverMessage::DeliveryError {
-                    session_id,
-                    event_id: String::new(),
-                    sequence: 0,
-                    code: "session_mismatch".to_string(),
-                    message,
-                },
-                self.shutdown,
-                self.state,
-                self.receiver_generation,
-                self.write_generation,
-            )
-            .await;
+        if let Some(active_device) = self.mismatched_session_device(&session_id) {
+            return self
+                .reject_session_mismatch(active_device, session_id, None, 0)
+                .await;
         }
         self.write_session_ack(session_id).await
     }

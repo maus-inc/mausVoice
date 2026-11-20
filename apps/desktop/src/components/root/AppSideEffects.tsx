@@ -1,6 +1,7 @@
 import { latestVisibleTranscription } from "../../utils/latest-visible-transcription";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { commands } from "@maus-inc/desktop-native-apis";
 import { Member, Nullable, User } from "@maus-inc/types";
@@ -145,6 +146,7 @@ type RemoteFinalTextReceivedPayload = {
   text: string;
   mode: string;
   createdAt: string;
+  receiptEvent?: string;
 };
 
 // Timeout for Firebase Auth initialization.
@@ -568,7 +570,20 @@ export const AppSideEffects = () => {
       if (!isMainWindow) {
         return;
       }
-      await handleRemoteFinalTextReceived(payload);
+      let delivered = false;
+      try {
+        delivered = await handleRemoteFinalTextReceived(payload);
+      } finally {
+        if (payload.receiptEvent) {
+          await emit(payload.receiptEvent, delivered).catch(
+            (error: unknown) => {
+              getLogger().warning(
+                `Failed to confirm remote transcript delivery: ${error}`,
+              );
+            },
+          );
+        }
+      }
       if (isLocalDataClearRequested()) return;
       await refreshRemoteReceiverStatus().catch((error: unknown) => {
         if (!isLocalDataClearRequested()) {

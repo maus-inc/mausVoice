@@ -867,6 +867,27 @@ describe("releaseRecordingResources", () => {
     await vi.waitFor(() => expect(discards()).toHaveLength(1));
   });
 
+  it("still cleans up the strategy and native capture when the session throws", async () => {
+    const strategy = vi.fn();
+    const refs = {
+      audioChunkUnlistenRef: { current: null },
+      sessionRef: {
+        current: {
+          cleanup: () => {
+            throw new Error("session cleanup failed");
+          },
+        } as unknown as TranscriptionSession,
+      },
+      strategyRef: {
+        current: { cleanup: strategy } as unknown as BaseStrategy,
+      },
+    };
+    await startLiveRecording();
+    expect(() => releaseRecordingResources(refs)).not.toThrow();
+    expect(strategy).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(discards()).toHaveLength(1));
+  });
+
   it("still stops native capture when strategy cleanup rejects", async () => {
     const refs = {
       audioChunkUnlistenRef: { current: null as (() => void) | null },

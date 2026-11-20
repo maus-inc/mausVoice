@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Default)]
 pub struct RecordingWindow {
+    key: usize,
     closed: AtomicBool,
 }
 
@@ -325,7 +326,10 @@ impl RecordingOwnership {
         if let Some(window) = windows.get(&key).and_then(Weak::upgrade) {
             return window;
         }
-        let window = Arc::new(RecordingWindow::default());
+        let window = Arc::new(RecordingWindow {
+            key,
+            ..Default::default()
+        });
         windows.insert(key, Arc::downgrade(&window));
         window
     }
@@ -976,6 +980,7 @@ impl RecordingOwnership {
     }
 
     /// Release only after the browser's end event, or before it has started.
+    #[cfg(test)]
     fn release_external_matching(&self, id: &str, scope: Option<(&Arc<RecordingWindow>, u64)>) {
         self.cancel_matching_admission(id, scope);
         let mut owner = self
@@ -994,6 +999,37 @@ impl RecordingOwnership {
         }
     }
 
+    pub fn release_external_window(&self, id: &str, key: usize, token: u64) {
+        // onend may arrive after a reload retired the current scope. The token
+        // still identifies the exact capture within this native window.
+        let window = self.window(key);
+        self.cancel_matching_admission(id, Some((&window, token)));
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if owner.as_ref().is_some_and(|owner| {
+            owner.external && owner.window.key == key && owner.token == token && owner.id == id
+        }) {
+            *owner = None;
+            self.wake_starts();
+        }
+    }
+
+    pub fn confirm_external_window_capture_ended(&self, key: usize) {
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if owner.as_ref().is_some_and(|owner| {
+            owner.external && owner.window.key == key && owner.window.closed.load(Ordering::Acquire)
+        }) {
+            *owner = None;
+            self.wake_starts();
+        }
+    }
+
+    #[cfg(test)]
     pub fn release_external_scoped(&self, id: &str, window: &Arc<RecordingWindow>, token: u64) {
         self.release_external_matching(id, Some((window, token)));
     }
@@ -2771,7 +2807,27 @@ mod tests {
             .unwrap()
             .is_err());
         assert!(start(&ownership, "native").is_err());
-        ownership.release_external("browser");
+        ownership.release_external_window("browser", 34, generation);
+        assert!(start(&ownership, "native").is_err());
+        ownership.release_external_window("browser", 33, generation);
+        assert!(start(&ownership, "native").is_ok());
+    }
+
+    #[test]
+    fn confirmed_window_death_releases_only_that_retired_external_capture() {
+        let ownership = RecordingOwnership::default();
+        let window = ownership.window(33);
+        let token = ownership.reserve("browser", &window).unwrap();
+        let admission = ownership
+            .claim_admission("browser", &window, token)
+            .unwrap();
+        ownership.start_external(&admission).unwrap();
+        ownership.confirm_external_window_capture_ended(33);
+        assert!(start(&ownership, "native").is_err());
+        ownership.close_window(33).unwrap();
+        ownership.confirm_external_window_capture_ended(34);
+        assert!(start(&ownership, "native").is_err());
+        ownership.confirm_external_window_capture_ended(33);
         assert!(start(&ownership, "native").is_ok());
     }
 

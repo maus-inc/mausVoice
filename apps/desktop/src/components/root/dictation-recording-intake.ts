@@ -492,12 +492,20 @@ export const releaseRecordingResources = ({
   sessionRef,
   strategyRef,
 }: RecordingResourceRefs): void => {
-  audioChunkUnlistenRef.current?.();
+  const attempt = (label: string, cleanup: () => unknown) => {
+    const report = (error: unknown) => {
+      getLogger().warning(`${label} cleanup failed during unmount: ${error}`);
+    };
+    try {
+      void Promise.resolve(cleanup()).catch(report);
+    } catch (error) {
+      report(error);
+    }
+  };
+  const unlisten = audioChunkUnlistenRef.current;
   audioChunkUnlistenRef.current = null;
-  sessionRef.current?.cleanup();
-  const strategyCleanup = strategyRef.current?.cleanup();
-  void strategyCleanup?.catch((error) => {
-    getLogger().warning(`Strategy cleanup failed during unmount: ${error}`);
-  });
+  attempt("Audio listener", () => unlisten?.());
+  attempt("Session", () => sessionRef.current?.cleanup());
+  attempt("Strategy", () => strategyRef.current?.cleanup());
   void discardNativeRecording();
 };

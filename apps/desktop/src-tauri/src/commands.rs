@@ -76,22 +76,30 @@ async fn acquire_local_data_write_guard() -> Result<NativeLocalDataWriteGuard, S
 // recorder ownership. The FIFO is shared across recordings, bounded both in
 // item count and item size; an overflow is visible as an offset gap at the
 // receiver instead of being mistaken for complete live audio.
-static AUDIO_CHUNK_DISPATCH: std::sync::LazyLock<
-    Arc<crate::platform::event_dispatch::EventDispatcher>,
-> = std::sync::LazyLock::new(|| {
-    Arc::new(crate::platform::event_dispatch::EventDispatcher::new(
-        "audio-chunk-events",
-        16,
-    ))
-});
-static AUDIO_LEVEL_DISPATCH: std::sync::LazyLock<
-    Arc<crate::platform::event_dispatch::EventDispatcher>,
-> = std::sync::LazyLock::new(|| {
-    Arc::new(crate::platform::event_dispatch::EventDispatcher::new(
-        "audio-level-events",
-        1,
-    ))
-});
+type AudioDispatcher = crate::platform::event_dispatch::EventDispatcher;
+type AudioDispatchSlot = std::sync::Mutex<Option<Arc<AudioDispatcher>>>;
+static AUDIO_CHUNK_DISPATCH: AudioDispatchSlot = std::sync::Mutex::new(None);
+static AUDIO_LEVEL_DISPATCH: AudioDispatchSlot = std::sync::Mutex::new(None);
+
+fn audio_dispatcher(
+    slot: &AudioDispatchSlot,
+    name: &str,
+    capacity: usize,
+) -> Result<Arc<AudioDispatcher>, String> {
+    let mut slot = slot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(worker) = &*slot {
+        return Ok(Arc::clone(worker));
+    }
+    let worker = Arc::new(
+        AudioDispatcher::new(name, capacity)
+            .map_err(|error| format!("Failed to start {name} worker: {error}"))?,
+    );
+    *slot = Some(Arc::clone(&worker));
+    Ok(worker)
+}
+
 const MAX_CHUNK_EVENT_SAMPLES: usize = 256 * 1024;
 
 // Phase delivery is replaceable state. A stalled pill pipe and a stalled
@@ -3651,13 +3659,16 @@ fn recording_window_key(window: &tauri::Window) -> usize {
     std::ptr::from_ref(&*resources) as usize
 }
 
-pub(crate) fn retire_recording_window(window: &tauri::Window) {
+pub(crate) fn retire_recording_window(window: &tauri::Window, capture_ended: bool) {
     let Some(ownership) = window.try_state::<RecordingOwnerState>() else {
         return;
     };
-    let Some(scope) = ownership.close_window(recording_window_key(window)) else {
-        return;
-    };
+    let key = recording_window_key(window);
+    let scope = ownership.close_window(key);
+    if capture_ended {
+        ownership.confirm_external_window_capture_ended(key);
+    }
+    let Some(scope) = scope else { return };
     let Some(recorder) = window.try_state::<Arc<dyn crate::platform::Recorder>>() else {
         return;
     };
@@ -3987,9 +3998,9 @@ pub async fn release_browser_recording(
     generation: u64,
 ) -> Result<(), String> {
     let ownership = Arc::clone(&ownership);
-    let scope = ownership.window(recording_window_key(&window));
+    let key = recording_window_key(&window);
     tauri::async_runtime::spawn_blocking(move || {
-        ownership.release_external_scoped(&owner_id, &scope, generation)
+        ownership.release_external_window(&owner_id, key, generation)
     })
     .await
     .map_err(|error| error.to_string())
@@ -4008,6 +4019,8 @@ pub async fn start_recording(
 ) -> Result<StartRecordingResponse, String> {
     ensure_recording_allowed()?;
     let options = args.unwrap_or_default();
+    let chunk_dispatch = audio_dispatcher(&AUDIO_CHUNK_DISPATCH, "audio-chunk-events", 16)?;
+    let level_dispatch = audio_dispatcher(&AUDIO_LEVEL_DISPATCH, "audio-level-events", 1)?;
     let recorder = Arc::clone(&recorder);
     let ownership = Arc::clone(&ownership);
     let window_scope = ownership.window(recording_window_key(&window));
@@ -4026,7 +4039,7 @@ pub async fn start_recording(
     // Tauri event dispatch nor pill IPC runs while a capture callback owns the
     // admission gate.
     let level_emitter = crate::platform::event_dispatch::bounded_level_callback(
-        Arc::clone(&AUDIO_LEVEL_DISPATCH),
+        level_dispatch,
         Arc::clone(&admission),
         level_delivery,
     );
@@ -4044,7 +4057,7 @@ pub async fn start_recording(
         }
     });
     let chunk_emitter = crate::platform::event_dispatch::bounded_chunk_callback(
-        Arc::clone(&AUDIO_CHUNK_DISPATCH),
+        chunk_dispatch,
         chunk_delivery,
         MAX_CHUNK_EVENT_SAMPLES,
     );
