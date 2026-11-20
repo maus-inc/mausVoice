@@ -46,6 +46,7 @@ on:
       # of any desktop source change, and a guard that silently stops running is
       # the more expensive failure -- it is invisible until it matters.
       - "scripts/ci/check-workspace-hygiene.test.mjs"
+      - ".deepsource.toml"
       - "scripts/ci/dev-surface-contracts.test.mjs"
       - "scripts/ci/dev-surface-config.mjs"
       - "scripts/ci/package-exports.test.mjs"
@@ -55,9 +56,9 @@ on:
       - "scripts/ci/warm-microphone-edge-cases.test.mjs"
       - "scripts/ci/verify-wait-for-truthy.test.mjs"
       - "scripts/verify/wait-for-truthy.mjs"
-      # The matrix itself: editing a row is editing the thing this suite
-      # asserts, so it has to start the job that checks it.
+      # The QA guard reads both documents.
       - "docs/qa/warm-microphone-edge-cases.md"
+      - "docs/qa/warm-microphone-measurements.md"
       - ".github/workflows/**"
 permissions: {}
 
@@ -286,11 +287,9 @@ jobs:
           node --test scripts/ci/release-notes.test.mjs
           node --test scripts/ci/verify-sherpa-archives.test.mjs
       - name: Test workspace hygiene guards
-        # This suite reads the repository rather than a build output: it refuses
-        # a captured transcript in the tree, and it fails when a `.deepsource.toml`
-        # exclusion has rotted into matching nothing -- the one way an analyzer
-        # stops being skipped without anyone being told. A guard that no job runs
-        # is documentation, so it is run here like the others.
+        # This suite reads the repository rather than a build output. It rejects
+        # captured transcripts, stale DeepSource exclusions, and a JavaScript
+        # parser configuration that treats the Node tooling as classic scripts.
         run: node --test scripts/ci/check-workspace-hygiene.test.mjs
       - name: Test that the verify scripts can be loaded
         # The scripts under `scripts/verify` are only run by hand, so nothing in

@@ -3797,6 +3797,7 @@ dependencies = [
  "hound",
  "image",
  "jsonwebtoken",
+ "libc",
  "libpulse-binding",
  "libpulse-simple-binding",
  "log",

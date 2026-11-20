@@ -70,6 +70,7 @@ http-body-util = "0.1"
 tower = "0.5"
 hound = "3.5"
 tempfile = "3"
+ureq = "3.1"
 
 [patch.crates-io]
 sherpa-onnx-sys = { path = "../../patches/sherpa-onnx-sys-1.13.5" }

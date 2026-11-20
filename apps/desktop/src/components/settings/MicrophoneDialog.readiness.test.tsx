@@ -469,6 +469,27 @@ describe("MicrophoneDialog readiness settings", () => {
     expect(selected?.textContent).toContain("15 s");
   });
 
+  it("saves the nearest duration when the selected approximation is activated", async () => {
+    await renderDialog();
+    await act(() => {
+      produceAppState((draft) => {
+        draft.userPrefs = prefs({ microphoneLingerMs: 30_000 });
+      });
+    });
+    expect(setUserPreferences).not.toHaveBeenCalled();
+    const selected = document.body.querySelector<HTMLButtonElement>(
+      "[role=tab][aria-selected=true]",
+    );
+    expect(selected?.textContent).toContain("15 s");
+
+    await act(() => selected?.click());
+
+    expect(setUserPreferences).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ microphoneLingerMs: 15_000 }),
+      expect.objectContaining({}),
+    );
+  });
+
   it("does not show the duration choices while keeping ready owns the device", async () => {
     await renderDialog();
 

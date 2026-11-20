@@ -21,6 +21,7 @@ pub struct PulseRecorder {
 }
 
 struct ActiveRecording {
+    started_at: Instant,
     stop_signal: Arc<Mutex<bool>>,
     thread: Option<std::thread::JoinHandle<RecordingResult>>,
     sample_rate: u32,
@@ -59,6 +60,7 @@ impl Recorder for PulseRecorder {
             return Err(Box::new(RecordingError::AlreadyRecording));
         }
 
+        let started_at = Instant::now();
         let preferred = {
             let pref_guard = self
                 .preferred_source
@@ -96,6 +98,7 @@ impl Recorder for PulseRecorder {
             .map_err(|err| RecordingError::StreamBuild(err.to_string()))?;
 
         *guard = Some(ActiveRecording {
+            started_at,
             stop_signal,
             thread: Some(thread),
             sample_rate: native_rate,
@@ -111,6 +114,8 @@ impl Recorder for PulseRecorder {
             .map_err(|_| RecordingError::NotRecording)?;
         let mut recording = guard.take().ok_or(RecordingError::NotRecording)?;
 
+        let expected_at_stop = recording.started_at.elapsed();
+
         // Signal the recording thread to stop
         if let Ok(mut flag) = recording.stop_signal.lock() {
             *flag = true;
@@ -120,9 +125,13 @@ impl Recorder for PulseRecorder {
             .thread
             .take()
             .ok_or(RecordingError::NotRecording)?;
-        let result = thread
+        let mut result = thread
             .join()
             .map_err(|_| RecordingError::StreamBuild("recording thread panicked".into()))?;
+
+        if result.metrics.capture_fault.is_some() {
+            result.metrics.expected_duration = expected_at_stop;
+        }
 
         Ok(result)
     }
@@ -301,8 +310,6 @@ impl ChunkEmitter {
 }
 
 /// The actual blocking recording loop. Runs on a dedicated thread.
-#[allow(unknown_lints)]
-#[allow(clippy::chunks_exact_to_as_chunks)]
 fn record_loop(
     source_name: Option<&str>,
     sample_rate: u32,
@@ -365,6 +372,24 @@ fn record_loop(
         source_name.unwrap_or("default")
     );
 
+    read_recording(
+        sample_rate,
+        stop_signal,
+        level_callback,
+        chunk_callback,
+        |buffer| simple.read(buffer),
+    )
+}
+
+#[allow(unknown_lints)]
+#[allow(clippy::chunks_exact_to_as_chunks)]
+fn read_recording(
+    sample_rate: u32,
+    stop_signal: Arc<Mutex<bool>>,
+    level_callback: Option<LevelCallback>,
+    chunk_callback: Option<ChunkCallback>,
+    mut read: impl FnMut(&mut [u8]) -> Result<(), pulse::error::PAErr>,
+) -> RecordingResult {
     let start = Instant::now();
     let mut all_samples: Vec<f32> = Vec::new();
     let mut levels = LevelEmitter::new(level_callback);
@@ -383,7 +408,7 @@ fn record_loop(
         }
 
         // Read audio data (blocking)
-        if let Err(err) = simple.read(&mut read_buf) {
+        if let Err(err) = read(&mut read_buf) {
             log::error!("PulseAudio read error: {err}");
             // Decide between a shutdown and a fault *here*, not after the loop.
             //
@@ -426,7 +451,7 @@ fn record_loop(
     // flag here is what used to let a stop pressed after the failure discard it.
 
     let expected_duration = start.elapsed();
-    let duration = if !all_samples.is_empty() {
+    let duration = if read_fault.is_some() || !all_samples.is_empty() {
         Duration::from_secs_f64(all_samples.len() as f64 / f64::from(sample_rate))
     } else {
         expected_duration
@@ -736,6 +761,47 @@ mod emitter_tests {
             open_failure.contains("failed_open_result("),
             "the refused-open branch must return failed_open_result, or a dead \
              stream is reported as a clean stop"
+        );
+    }
+
+    #[test]
+    fn first_read_failure_has_zero_captured_time() {
+        let result = read_recording(
+            FALLBACK_SAMPLE_RATE,
+            Arc::new(Mutex::new(false)),
+            None,
+            None,
+            |_| Err(pulse::error::PAErr(-1)),
+        );
+        assert_eq!(result.metrics.duration, Duration::ZERO);
+        assert!(result.audio.samples.is_empty());
+        assert_eq!(
+            result.metrics.capture_fault.as_deref(),
+            Some(READ_FAULT_TOKEN)
+        );
+    }
+
+    #[test]
+    fn stop_reports_time_held_after_a_fast_open_refusal() {
+        let recorder = PulseRecorder::default();
+        let attempt = Duration::from_millis(5);
+        let held_for = Duration::from_secs(1);
+        let started_at = Instant::now()
+            .checked_sub(held_for)
+            .expect("the test needs a representable earlier start time");
+        *recorder.inner.lock().unwrap() = Some(ActiveRecording {
+            started_at,
+            stop_signal: Arc::new(Mutex::new(false)),
+            thread: Some(std::thread::spawn(move || failed_open_result(attempt))),
+            sample_rate: FALLBACK_SAMPLE_RATE,
+        });
+
+        let result = recorder.stop().unwrap();
+        assert!(result.metrics.expected_duration >= held_for);
+        assert_eq!(result.metrics.duration, Duration::ZERO);
+        assert_eq!(
+            result.metrics.capture_fault.as_deref(),
+            Some(READ_FAULT_TOKEN)
         );
     }
 

@@ -19,11 +19,15 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -47,16 +51,13 @@ const PKG_DIR = path.join(tmpdir(), "sparticuz-chromium");
  * treating it as a win would send the caller to spawn a file that is not there.
  */
 function isPublishedInstall(dir) {
-  if (!existsSync(path.join(dir, MARKER))) {
-    return false;
-  }
-  const binary = path.join(dir, "chromium");
-  if (!existsSync(binary)) {
-    return false;
-  }
+  return existsSync(path.join(dir, MARKER)) && hasBrowser(dir);
+}
+
+function hasBrowser(dir) {
   try {
-    // Non-empty: a zero-byte file left by an interrupted write is not a browser.
-    return statSync(binary).size > 0;
+    const binary = statSync(path.join(dir, "chromium"));
+    return binary.isFile() && binary.size > 0;
   } catch {
     return false;
   }
@@ -91,27 +92,71 @@ const unpackTar = (archive, into) => {
 // launch. Rather than teach the guard what a complete tree contains -- a list
 // that goes stale whenever the package changes -- the tree is either whole or
 // absent.
-// Per-process, not shared. Two verifier scripts starting cold at the same time
-// both land here, and a shared staging path means each sees the other's
-// half-extracted tree: the first to notice reports it as foreign and throws, so
-// simultaneous cold runs failed for a reason that had nothing to do with either
-// of them. The rename onto `OUT` is still atomic, so the loser of that race
-// either finds a complete tree already there or replaces it wholesale.
-const STAGING = `${OUT}.partial-${process.pid}`;
-
-// Written into STAGING just before the rename, so a directory that carries it is
-// one this script produced. Its absence is what lets the guard below refuse to
-// delete something that is not ours.
+// Each attempt gets a unique staging path. A recycled PID must not reuse a
+// name another installer may have just decided to sweep.
+// Written before extraction so owned partials can be identified after a crash.
 const MARKER = ".mausvoice-chromium";
 
-if (existsSync(path.join(OUT, "chromium"))) {
+// Linux reports when this particular process started. `comm` may contain
+// spaces or parentheses, so start parsing after its closing parenthesis.
+function processStart(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// PID liveness is meaningful only in the same boot and PID namespace. The
+// time namespace must also match before comparing Linux process start ticks.
+// Reject a /proc mount that sees us from an ancestor PID namespace.
+function localOwnerScope() {
+  if (process.platform !== "linux") return null;
+  try {
+    const status = readFileSync("/proc/self/status", "utf8");
+    if (!new RegExp(`^NSpid:[ \t]+${process.pid}$`, "m").test(status))
+      return null;
+    const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    const pidNamespace = readlinkSync("/proc/self/ns/pid");
+    const timeNamespace = readlinkSync("/proc/self/ns/time");
+    if (!boot || !pidNamespace || !timeNamespace) return null;
+    return `${boot} ${pidNamespace} ${timeNamespace}`;
+  } catch {
+    return null;
+  }
+}
+
+function recordedOwnerScope(markerPath) {
+  try {
+    if (!lstatSync(markerPath).isFile()) return null;
+    return readFileSync(markerPath, "utf8").split("\n")[1] || null;
+  } catch {
+    return null;
+  }
+}
+
+function ownerExited(pid, startedAt) {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    return error.code === "ESRCH";
+  }
+  const currentStart = processStart(pid);
+  return (
+    startedAt !== "unknown" &&
+    currentStart !== null &&
+    currentStart !== startedAt
+  );
+}
+
+if (hasBrowser(OUT)) {
   log(`Already extracted in ${OUT}. Delete it to force a fresh extraction.`);
 } else {
   // Only an extraction of ours is safe to delete. `--dir` is caller-supplied, so
   // `rmSync(OUT, { recursive: true })` on a mistyped or shared path destroys
   // whatever is there: a directory with no `chromium` in it is not evidence that
-  // it is ours to remove. The marker is written only after a successful rename,
-  // and STAGING is always ours.
+  // it is ours to remove. The marker is written into staging before publication.
   if (existsSync(OUT) && readdirSync(OUT).length > 0) {
     if (!existsSync(path.join(OUT, MARKER))) {
       throw new Error(
@@ -121,43 +166,48 @@ if (existsSync(path.join(OUT, "chromium"))) {
     }
     rmSync(OUT, { recursive: true, force: true });
   }
-  // `STAGING` is `OUT.partial-<pid>`, and `OUT` is caller-supplied, so this is a
-  // recursive delete of a path the caller chose one suffix away from. A `--dir`
-  // of `/tmp/work` makes this `/tmp/work.partial`, which may well be somebody
-  // else's directory. The same rule the guard above applies to `OUT` applies
-  // here: only remove it if it is ours, meaning empty or carrying our marker.
-  //
-  // Stale partials from earlier runs are swept first.
-  //
-  // The pid suffix keeps two concurrent runs from colliding, but it also means a
-  // run that died leaves `${OUT}.partial-<its pid>`, which this run never touches
-  // and nothing ever removes. On a persistent `--dir` those accumulate, one full
-  // copy of the browser each. Only directories carrying the marker are removed:
-  // the marker is written before extraction begins, so it means "this script
-  // created this", not "this extraction finished", and an unmarked directory is
-  // left alone exactly as the guard below leaves it.
-  for (const sibling of readdirSync(path.dirname(OUT))) {
-    if (!sibling.startsWith(`${path.basename(OUT)}.partial-`)) continue;
-    const stale = path.join(path.dirname(OUT), sibling);
-    if (stale === STAGING) continue;
-    if (!existsSync(path.join(stale, MARKER))) continue;
+  // Only sweep marked, uniquely named attempts. A live PID alone is not
+  // evidence of ownership if Linux reports a different process start time.
+  const parent = path.dirname(OUT);
+  const prefix = `${path.basename(OUT)}.partial-`;
+  mkdirSync(parent, { recursive: true });
+  const scope = localOwnerScope();
+  for (const sibling of readdirSync(parent)) {
+    if (!sibling.startsWith(prefix)) continue;
+    const suffix = sibling.slice(prefix.length);
+    const stale = path.join(parent, sibling);
+    const markerPath = path.join(stale, MARKER);
+    if (!existsSync(markerPath)) continue;
+    if (/^[1-9]\d*$/.test(suffix)) {
+      // The old format cannot establish the owner’s host or PID namespace.
+      // In a shared --dir, ESRCH is not evidence that this owner stopped.
+      log(
+        `  leaving legacy staging directory ${stale}; remove it when no installer is using it`,
+      );
+      continue;
+    }
+    const owner = /^([1-9]\d*)-(\d+|unknown)-[a-zA-Z0-9]{6}$/.exec(suffix);
+    if (!owner) continue;
+    if (!scope || recordedOwnerScope(markerPath) !== scope) {
+      log(
+        `  leaving staging directory ${stale}; owner scope is unverified, remove it only when no installer is using it`,
+      );
+      continue;
+    }
+    const pid = Number(owner[1]);
+    if (pid > 0x7fffffff || !ownerExited(pid, owner[2])) continue;
     log(`  removing a partial extraction left by an earlier run: ${sibling}`);
     rmSync(stale, { recursive: true, force: true });
   }
 
-  if (existsSync(STAGING)) {
-    const ours =
-      readdirSync(STAGING).length === 0 ||
-      existsSync(path.join(STAGING, MARKER));
-    if (!ours) {
-      throw new Error(
-        `${STAGING} is not empty and has no ${MARKER}, so it is not an extraction this script made. ` +
-          `Remove it yourself, or pass a different --dir.`,
-      );
-    }
-    rmSync(STAGING, { recursive: true, force: true });
-  }
-  mkdirSync(STAGING, { recursive: true });
+  const STAGING = mkdtempSync(
+    path.join(
+      parent,
+      `${prefix}${process.pid}-${processStart(process.pid) ?? "unknown"}-`,
+    ),
+  );
+  // Claim staging before package installation or extraction can fail.
+  writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n${scope ?? ""}\n`);
 
   // The cache is ours by construction: `PKG_DIR` lives inside `CHR_DIR`, which is
   // this script's own directory, not a caller-chosen one. Guarded anyway, and on
@@ -231,14 +281,6 @@ if (existsSync(path.join(OUT, "chromium"))) {
   const libDir = path.join(STAGING, "lib");
   mkdirSync(libDir, { recursive: true });
 
-  // Claimed before anything is extracted, not after. `unpackTar` and the
-  // decompressions below can fail part-way, and a failure leaves `STAGING` with
-  // files in it; the guard at the top of this file refuses to delete a non-empty
-  // staging directory that carries no marker, so the *next* run would refuse the
-  // wrecks of its own last attempt and demand manual cleanup. Claiming first
-  // means a failed run leaves something the next run is allowed to remove.
-  writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n`);
-
   log("Extracting the browser …");
   const browserBytes = decompress(
     path.join(binDir, "chromium.br"),
@@ -268,13 +310,10 @@ if (existsSync(path.join(OUT, "chromium"))) {
   }
   log(`  ${readdirSync(libDir).length} shared libraries`);
 
-  // Whole or absent: the rename is the only thing that makes this a success.
-  // The marker is already there -- it was written above, before the extraction --
-  // so this only refreshes the version it records.
-  writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n`);
+  // The rename publishes the complete tree and its existing ownership marker.
   // A concurrent winner is a success, not a failure.
   //
-  // Two processes can both see `OUT` absent and both extract; the pid-suffixed
+  // Two processes can both see `OUT` absent and both extract; the unique
   // staging directory is what lets them get this far without colliding. The first
   // rename publishes its tree, and the second then fails with ENOTEMPTY, because
   // `rename` onto an existing non-empty directory is an error rather than a

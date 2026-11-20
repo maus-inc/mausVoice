@@ -220,11 +220,11 @@ function pathsEntries(text) {
         // quote when there is one.
         const raw = item[1];
         const quoted = /^["']/.test(raw);
-        const cut = quoted
-          ? raw.search(/(["'])\s+#/)
-          : raw.indexOf(" #");
+        const cut = quoted ? raw.search(/(["'])\s+#/) : raw.search(/\s#/);
         entries.push(
-          (cut >= 0 ? raw.slice(0, cut) : raw).trim().replace(/^["']|["']$/g, ""),
+          (cut >= 0 ? raw.slice(0, cut) : raw)
+            .trim()
+            .replace(/^["']|["']$/g, ""),
         );
         continue;
       }
@@ -308,6 +308,34 @@ function missingFromTriggerFilter(text, repoRoot) {
   const decidesIncluded = (path) =>
     blocks.some((entries) => filterIncludes(entries, path));
   return [...executed].filter((path) => !decidesIncluded(path));
+}
+
+function assertDeepSourceModuleMode(config) {
+  // Only match settings in the top-level JavaScript analyzer and its metadata.
+  const javascript = config
+    .split(/^[ \t]*\[\[analyzers\]\][ \t]*(?:#[^\r\n]*)?\r?$/m)
+    .slice(1)
+    .find((block) => {
+      const [settings] = block.split(/^[ \t]*\[/m, 1);
+      return /^[ \t]*name[ \t]*=[ \t]*(["'])javascript\1[ \t]*(?:#[^\r\n]*)?\r?$/m.test(
+        settings,
+      );
+    });
+  assert.ok(javascript, "DeepSource must configure a JavaScript analyzer");
+  const [settings] = javascript.split(/^[ \t]*\[/m, 1);
+  assert.match(
+    settings,
+    /^[ \t]*enabled[ \t]*=[ \t]*true[ \t]*(?:#[^\r\n]*)?\r?$/m,
+  );
+  const [, afterMeta = ""] = javascript.split(
+    /^[ \t]*\[analyzers\.meta\][ \t]*(?:#[^\r\n]*)?\r?$/m,
+  );
+  const [meta] = afterMeta.split(/^[ \t]*\[/m, 1);
+  assert.match(
+    meta,
+    /^[ \t]*module_system[ \t]*=[ \t]*(["'])es-modules\1[ \t]*(?:#[^\r\n]*)?\r?$/m,
+    "DeepSource must parse static imports in .mjs scripts as ES modules",
+  );
 }
 
 describe("workspace hygiene contracts", () => {
@@ -405,6 +433,30 @@ describe("workspace hygiene contracts", () => {
     );
 
     rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("configures DeepSource to parse Node tooling as ES modules", () => {
+    assertDeepSourceModuleMode(
+      readFileSync(resolve(repoRoot, ".deepsource.toml"), "utf8"),
+    );
+  });
+
+  it("accepts TOML comments without accepting the wrong module mode", () => {
+    const config = [
+      "[[analyzers]] # active analyzers",
+      'name = "javascript" # Node tooling',
+      "enabled = true # enforce this analyzer",
+      "  [analyzers.meta] # parser settings",
+      '  module_system = "es-modules" # use static imports',
+    ].join("\n");
+    assert.doesNotThrow(() => assertDeepSourceModuleMode(config));
+    assert.throws(
+      () =>
+        assertDeepSourceModuleMode(
+          config.replace('"es-modules"', '"commonjs"'),
+        ),
+      /must parse static imports/,
+    );
   });
 
   it("every DeepSource exclusion still excludes something", () => {
@@ -1002,6 +1054,17 @@ describe("the trigger filter check compares executed paths to filter entries", (
         `flow style ${spelling}: must agree with the block spelling`,
       );
     }
+
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(
+        base(
+          "paths:\n      - scripts/ci/**\t# path with a tab-separated comment",
+        ),
+        scanRoot,
+      ),
+      [],
+      "a YAML comment after a tab is not part of the path",
+    );
 
     // And a flow filter that DOES cover the suite stays covered, so this is not
     // "report everything that mentions paths".

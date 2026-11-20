@@ -92,6 +92,7 @@ export const LingerSection = ({
           </Typography>
           <SegmentedControl
             value={String(nearest)}
+            allowReselect={storedMs !== null}
             options={lingerChoices().map((choice) => ({
               value: String(choice),
               label: secondsFormat(choice),

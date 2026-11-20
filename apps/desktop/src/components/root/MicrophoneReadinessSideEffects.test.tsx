@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { commands } from "@maus-inc/desktop-native-apis";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,9 +33,10 @@ const mocks = vi.hoisted(() => {
     >(() => Promise.resolve({ status: "ok", data: null })),
     closeMicrophone: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     microphoneReady: vi.fn(() => Promise.resolve(false)),
-    prepareMicrophone: vi.fn(() =>
+    prepareMicrophone: vi.fn<typeof commands.prepareMicrophone>(() =>
       Promise.resolve({ status: "ok", data: "mic" }),
     ),
+    warning: vi.fn(),
     setMicrophoneLinger: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     setMicrophonePreroll: vi.fn<() => Promise<void>>(() => Promise.resolve()),
     showSnackbar: vi.fn(),
@@ -99,7 +101,7 @@ vi.mock("../../actions/app.actions", () => ({
 vi.mock("../../utils/log.utils", () => ({
   getLogger: () => ({
     info: vi.fn(),
-    warning: vi.fn(),
+    warning: mocks.warning,
     error: vi.fn(),
   }),
 }));
@@ -128,11 +130,10 @@ const setState = (overrides: Record<string, unknown>) => {
       keepMicrophoneReady: true,
       microphonePrerollSeconds: 0.5,
       microphoneLingerMs: 0,
+      preferredMicrophone: null,
     },
     activeRecordingMode: null,
-    // Always present in the real store; `preferredMicrophone` is the device a
-    // press asks for, so it is also the one a hold has to open.
-    onboarding: { preferredMicrophone: null },
+    onboarding: { preferredMicrophone: "Stale onboarding microphone" },
     permissions: { microphone: { state: "authorized" } },
     settings: { microphoneHeld: null },
     ...overrides,
@@ -193,7 +194,10 @@ describe("MicrophoneReadinessSideEffects", () => {
     // the automatic device made that press pay the cold open the preference
     // exists to remove.
     setState({
-      onboarding: { preferredMicrophone: "Shure MV7" },
+      userPrefs: {
+        keepMicrophoneReady: true,
+        preferredMicrophone: "Shure MV7",
+      },
     });
     await render();
 
@@ -205,11 +209,21 @@ describe("MicrophoneReadinessSideEffects", () => {
     // A stream is bound to the device it was built on and cannot follow the
     // preference, so keeping the hold would serve the next press from the device
     // the user just moved away from.
-    setState({ onboarding: { preferredMicrophone: "Shure MV7" } });
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        preferredMicrophone: "Shure MV7",
+      },
+    });
     await render();
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
 
-    setState({ onboarding: { preferredMicrophone: "MacBook Pro Microphone" } });
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        preferredMicrophone: "MacBook Pro Microphone",
+      },
+    });
     await render();
 
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
@@ -380,11 +394,29 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.closeMicrophone).toHaveBeenCalled();
   });
 
-  it("does nothing on a clear when no stream is open", async () => {
+  it("asks native to close on clear even when readiness is false", async () => {
     setState({
       userPrefs: { keepMicrophoneReady: false },
-      settings: { microphoneHeld: null },
+      settings: { microphoneHeld: false },
     });
+    await render();
+    mocks.closeMicrophone.mockClear();
+
+    await act(() => {
+      mocks.state.__clearing = true;
+      for (const listener of mocks.clearListeners) listener();
+    });
+
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not close the shared stream on a clear from a non-owner window", async () => {
+    setState({
+      userPrefs: { keepMicrophoneReady: false },
+      settings: { microphoneHeld: true },
+      __mainWindow: false,
+    });
+    mocks.microphoneReady.mockResolvedValue(true);
     await render();
     mocks.closeMicrophone.mockClear();
 
@@ -899,6 +931,89 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.closeMicrophone.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("restores the linger window after closing a superseded open", async () => {
+    const prefs = {
+      keepMicrophoneReady: true,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 5_000,
+    };
+    setState({ userPrefs: prefs });
+    let finishOpen: (result: { status: "ok"; data: null }) => void = () =>
+      undefined;
+    mocks.warmMicrophone.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
+    await render();
+    setState({ userPrefs: { ...prefs, keepMicrophoneReady: false } });
+    await rerender();
+    expect(mocks.setMicrophoneLinger).toHaveBeenLastCalledWith(5_000);
+    mocks.setMicrophoneLinger.mockClear();
+
+    await act(() => finishOpen({ status: "ok", data: null }));
+
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(2);
+    expect(mocks.setMicrophoneLinger).toHaveBeenCalledWith(5_000);
+  });
+
+  it("waits for a pending native close before issuing a newer hold", async () => {
+    setState({});
+    let finishClose: () => void = () => undefined;
+    mocks.closeMicrophone.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishClose = resolve;
+        }),
+    );
+    await render();
+    const prefs = {
+      keepMicrophoneReady: false,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 5_000,
+    };
+    setState({ userPrefs: prefs });
+    await rerender();
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(1);
+    setState({ userPrefs: { ...prefs, keepMicrophoneReady: true } });
+    await rerender();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+    await act(() => finishClose());
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for a pending linger restore before issuing a newer hold", async () => {
+    let finishOpen: (value: unknown) => void = () => undefined;
+    mocks.warmMicrophone.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
+    await render();
+    const prefs = {
+      keepMicrophoneReady: false,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 5_000,
+    };
+    setState({ userPrefs: prefs });
+    await rerender();
+    let finishLinger: () => void = () => undefined;
+    mocks.setMicrophoneLinger.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishLinger = resolve;
+        }),
+    );
+    await act(() => finishOpen({ status: "ok", data: null }));
+    setState({ userPrefs: { ...prefs, keepMicrophoneReady: true } });
+    await rerender();
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+    await act(() => finishLinger());
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
+  });
+
   it("re-reads the device when the close of a superseded open fails", async () => {
     // The chain that undoes a late open used to have no failure path, unlike
     // every other close in the component. If `closeMicrophone` rejected there,
@@ -1184,6 +1299,50 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.setMicrophoneLinger).toHaveBeenCalledWith(5_000);
   });
 
+  it("retries a transient linger restore failure after local-data clear closes the device", async () => {
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 5_000,
+      },
+    });
+    await render();
+    mocks.setMicrophoneLinger.mockRejectedValueOnce(
+      new Error("IPC unavailable"),
+    );
+
+    await act(() => {
+      mocks.state.__clearing = true;
+      for (const listener of mocks.clearListeners) listener();
+    });
+
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(1);
+    expect(mocks.setMicrophoneLinger.mock.calls).toEqual([[5_000], [5_000]]);
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a stale linger value when the preference is reset", async () => {
+    const userPrefs = {
+      keepMicrophoneReady: true,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 5_000,
+    };
+    setState({ userPrefs });
+    await render();
+    mocks.setMicrophoneLinger.mockImplementationOnce(() => {
+      mocks.state.userPrefs = { ...userPrefs, microphoneLingerMs: 0 };
+      return Promise.reject(new Error("IPC unavailable"));
+    });
+
+    await act(() => {
+      mocks.state.__clearing = true;
+      for (const listener of mocks.clearListeners) listener();
+    });
+
+    expect(mocks.setMicrophoneLinger.mock.calls).toEqual([[5_000]]);
+  });
+
   it("does not restore the post-recording window on top of a hold that has already opened", async () => {
     // `release` restores the window from inside its `.then`, and the hold effect
     // can run *before* that continuation. Keeping ready on, a change to the
@@ -1227,8 +1386,8 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.closeMicrophone).toHaveBeenCalled();
     expect(finishClose).toBeTypeOf("function");
 
-    // The preference is back and the device is held again before the close
-    // finishes. `microphoneHeld` false is what makes the focus retry eligible.
+    // The preference returns before the close finishes. The new hold must not
+    // cross IPC until the earlier close and any linger update settle.
     mocks.microphoneReady.mockResolvedValue(false);
     setState({
       userPrefs: {
@@ -1247,8 +1406,7 @@ describe("MicrophoneReadinessSideEffects", () => {
     });
     await rerender();
 
-    // A hold is open (or opening) now.
-    expect(mocks.warmMicrophone.mock.calls.length).toBeGreaterThan(0);
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
 
     // Calls up to here come from the linger *effect*, which is legitimately
     // pushing the preference. The restore under test is any call caused by the
@@ -1262,8 +1420,9 @@ describe("MicrophoneReadinessSideEffects", () => {
       await Promise.resolve();
     });
 
-    // The restore must not have landed on top of the hold.
+    // No stale restore, and the new hold is allowed to open after the close.
     expect(mocks.setMicrophoneLinger.mock.calls.length).toBe(beforeStaleClose);
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
   });
 
   it("does not push a zero at the backend when the window is already zero", async () => {
@@ -1294,18 +1453,42 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
   });
 
-  it("prepares the device when nothing is held", async () => {
-    setState({
-      userPrefs: {
-        keepMicrophoneReady: false,
-        microphonePrerollSeconds: 0.5,
-        microphoneLingerMs: 0,
-      },
+  it("logs a native preparation error returned as a result", async () => {
+    setState({ userPrefs: { keepMicrophoneReady: false } });
+    mocks.prepareMicrophone.mockResolvedValueOnce({
+      status: "error",
+      error: "no matching input device",
     });
+
     await render();
 
-    // Resolving the device ahead of the press costs nothing visible, so it runs
-    // even when the user did not opt into holding the device open.
-    expect(mocks.prepareMicrophone).toHaveBeenCalled();
+    expect(mocks.warning).toHaveBeenCalledWith(
+      "Could not prepare the microphone: no matching input device",
+    );
+    expect(mocks.warmMicrophone).not.toHaveBeenCalled();
+  });
+
+  it("prepares the saved device once preferences load and again when it changes", async () => {
+    setState({ userPrefs: null });
+    await render();
+    expect(mocks.prepareMicrophone).not.toHaveBeenCalled();
+
+    const prefs = {
+      keepMicrophoneReady: false,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 0,
+    };
+    setState({ userPrefs: { ...prefs, preferredMicrophone: "Shure MV7" } });
+    await rerender();
+    expect(mocks.prepareMicrophone).toHaveBeenCalledExactlyOnceWith(
+      "Shure MV7",
+    );
+    await rerender();
+    expect(mocks.prepareMicrophone).toHaveBeenCalledTimes(1);
+
+    setState({ userPrefs: prefs });
+    await rerender();
+    expect(mocks.prepareMicrophone).toHaveBeenLastCalledWith(null);
+    expect(mocks.prepareMicrophone).toHaveBeenCalledTimes(2);
   });
 });

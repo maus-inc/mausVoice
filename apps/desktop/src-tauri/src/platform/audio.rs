@@ -156,6 +156,7 @@ mod cpal_impl {
     #[derive(Clone)]
     struct CachedDeviceInfo {
         host_id: HostId,
+        preference: Option<String>,
         /// Disambiguated label, so the cache re-resolves the exact same device
         /// even when the host exposes several inputs under one name.
         device_label: String,
@@ -960,6 +961,7 @@ mod cpal_impl {
         inner: Arc<Mutex<Option<ActiveRecording>>>,
         preferred_input_name: Arc<Mutex<Option<String>>>,
         last_successful_device: Arc<Mutex<Option<CachedDeviceInfo>>>,
+        selection_generation: AtomicU64,
         /// The running stream nobody is recording from, if one is held.
         warm: Arc<Mutex<Option<WarmStream>>>,
         /// Bumped by every request to close at a deadline. A linger thread only
@@ -1290,6 +1292,7 @@ mod cpal_impl {
                 inner: Arc::new(Mutex::new(None)),
                 preferred_input_name: Arc::new(Mutex::new(None)),
                 last_successful_device: Arc::new(Mutex::new(None)),
+                selection_generation: AtomicU64::new(0),
                 warm: Arc::new(Mutex::new(None)),
                 linger_generation: Arc::new(AtomicU64::new(0)),
                 // Zero: opening the device on every press is the only policy
@@ -1306,10 +1309,34 @@ mod cpal_impl {
 
         /// Remembers the host and disambiguated label of a device that just
         /// started recording successfully, so the next start can try it first.
-        fn cache_successful_device(&self, host_id: HostId, device_label: String) {
+        fn cache_successful_device(
+            &self,
+            host_id: HostId,
+            device_label: String,
+            preference: Option<&str>,
+        ) {
+            self.cache_device(host_id, device_label, preference, None);
+        }
+
+        fn cache_device(
+            &self,
+            host_id: HostId,
+            device_label: String,
+            preference: Option<&str>,
+            prepared_generation: Option<u64>,
+        ) {
             if let Ok(mut guard) = self.last_successful_device.lock() {
+                if let Some(generation) = prepared_generation {
+                    if self.selection_generation.load(Ordering::SeqCst) != generation {
+                        return;
+                    }
+                } else {
+                    // A successful start takes precedence over an in-flight probe.
+                    self.selection_generation.fetch_add(1, Ordering::SeqCst);
+                }
                 *guard = Some(CachedDeviceInfo {
                     host_id,
+                    preference: preference.map(str::to_owned),
                     device_label,
                 });
             }
@@ -1383,16 +1410,10 @@ mod cpal_impl {
         /// warm, reopened it, and paid the cold start the feature exists to
         /// remove, on the switch that asks for the opposite.
         pub fn promote_to_hold(&self) {
-            // The generation is bumped before the policy is stored, and the order
-            // is the point. Storing the policy first left a window where an
-            // expired timer could wake, see its own generation still current, and
-            // take a stream that had just been promoted to a hold. Bumping first
-            // fails only in the harmless direction: a timer that reads in between
-            // sees a stale generation and leaves the stream alone, which is what a
-            // hold wants.
-            //
-            // A pending linger would close this stream at its window, which is
-            // later than never but still wrong for a hold.
+            // Refresh publishes its generation under this lock. Do not let it
+            // publish between cancellation and the permanent policy store, or
+            // it can reserve a fresh finite timer that the promotion never cancels.
+            let _slot = self.warm.lock().unwrap_or_else(PoisonError::into_inner);
             self.cancel_linger();
             self.set_linger_policy(Duration::from_millis(WARM_FOREVER_MS));
         }
@@ -1474,21 +1495,31 @@ mod cpal_impl {
         }
 
         pub fn close_warm(&self) {
-            self.cancel_linger();
-            let warm = {
-                let mut guard = match self.warm.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                guard.take()
+            self.close_matching_warm(None);
+        }
+
+        fn close_matching_warm(&self, expected: Option<&Arc<StreamSink>>) -> Option<u64> {
+            let (warm, generation) = {
+                let mut guard = self.warm.lock().unwrap_or_else(PoisonError::into_inner);
+                if let Some(expected) = expected {
+                    if !guard
+                        .as_ref()
+                        .is_some_and(|warm| Arc::ptr_eq(&warm.sink, expected))
+                    {
+                        return None;
+                    }
+                }
+                let generation = self.advance_linger_generation();
+                if let Ok(mut ring) = self.preroll.lock() {
+                    ring.clear();
+                }
+                (guard.take(), generation)
             };
             if let Some(warm) = warm {
                 log::info!("closing warm capture stream on '{}'", warm.device_label);
                 retire_stream(warm.stream);
             }
-            if let Ok(mut ring) = self.preroll.lock() {
-                ring.clear();
-            }
+            Some(generation)
         }
 
         /// Arranges for the warm stream to be closed after `linger`, unless
@@ -1500,10 +1531,27 @@ mod cpal_impl {
         /// the policy only meant for the opt-out case: the preference stops
         /// calling this at all.
         pub fn linger_then_close(&self, linger: Duration) {
-            let generation = self
-                .linger_generation
-                .fetch_add(1, Ordering::SeqCst)
-                .wrapping_add(1);
+            self.schedule_linger_close(linger, self.advance_linger_generation());
+        }
+
+        fn reserve_refresh_linger(&self, opened_generation: u64) -> Option<(Duration, u64)> {
+            let millis = self.linger_millis();
+            if millis == 0 || millis == WARM_FOREVER_MS {
+                return None;
+            }
+            let generation = opened_generation.wrapping_add(1);
+            self.linger_generation
+                .compare_exchange(
+                    opened_generation,
+                    generation,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .ok()?;
+            Some((Duration::from_millis(millis), generation))
+        }
+
+        fn schedule_linger_close(&self, linger: Duration, generation: u64) {
             let generation_ref = Arc::clone(&self.linger_generation);
             let warm = Arc::clone(&self.warm);
 
@@ -1544,20 +1592,34 @@ mod cpal_impl {
                     }
                 });
             if let Err(err) = spawned {
-                // A hold that cannot be scheduled would keep the device open
-                // for the rest of the session with no policy behind it, so it
-                // is closed now instead of being silently leaked.
-                log::error!(
-                    "could not schedule the linger close; closing the warm stream now: {err}"
-                );
-                self.close_warm();
+                log::error!("could not schedule the linger close: {err}");
+                let warm = {
+                    let mut guard = self.warm.lock().unwrap_or_else(PoisonError::into_inner);
+                    if self.linger_generation.load(Ordering::SeqCst) != generation {
+                        return;
+                    }
+                    guard.take()
+                };
+                if let Some(warm) = warm {
+                    retire_stream(warm.stream);
+                }
             }
         }
 
         /// Cancels a pending linger close, so the stream the user asked to keep
         /// stays open past it.
         pub fn cancel_linger(&self) {
-            self.linger_generation.fetch_add(1, Ordering::SeqCst);
+            self.advance_linger_generation();
+        }
+
+        fn advance_linger_generation(&self) -> u64 {
+            self.linger_generation
+                .fetch_add(1, Ordering::SeqCst)
+                .wrapping_add(1)
+        }
+
+        fn refresh_can_reopen(&self, generation: u64) -> bool {
+            self.linger_millis() > 0 && self.linger_generation.load(Ordering::SeqCst) == generation
         }
 
         /// Tries to start recording on the previously successful device.
@@ -1741,7 +1803,7 @@ mod cpal_impl {
                 hold_after_stop,
                 &mut trace,
             ) {
-                self.cache_successful_device(host_id, device_name);
+                self.cache_successful_device(host_id, device_name, preferred_normalized.as_deref());
                 self.record_startup(trace, active.sink.as_ref());
                 *guard = Some(active);
                 return Ok(());
@@ -1775,7 +1837,11 @@ mod cpal_impl {
                 },
             ) {
                 Ok(((active, device_name), host_id)) => {
-                    self.cache_successful_device(host_id, device_name);
+                    self.cache_successful_device(
+                        host_id,
+                        device_name,
+                        preferred_normalized.as_deref(),
+                    );
                     self.record_startup(trace, active.sink.as_ref());
                     *guard = Some(active);
                     Ok(())
@@ -1936,6 +2002,14 @@ mod cpal_impl {
         /// shows its microphone indicator while this runs, which is why the user
         /// has to ask for it.
         pub fn open_warm(&self, preroll: Duration) -> Result<(), RecordingError> {
+            self.open_warm_with_policy(preroll, None)
+        }
+
+        fn open_warm_with_policy(
+            &self,
+            preroll: Duration,
+            refresh_generation: Option<u64>,
+        ) -> Result<(), RecordingError> {
             // Lock order, and it is the only order: `warm_open_gate`, then
             // `warm`, then nothing. `inner` is never held alongside the gate.
             //
@@ -2017,51 +2091,64 @@ mod cpal_impl {
                 return Ok(());
             }
 
-            let mut warm_guard = match self.warm.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            if warm_guard.is_some() {
-                log::debug!("warm stream already open; nothing to do");
-                return Ok(());
-            }
-
-            let preferred_label = {
-                let guard = match self.preferred_input_name.lock() {
+            let generation = {
+                let mut warm_guard = match self.warm.lock() {
                     Ok(guard) => guard,
                     Err(poisoned) => poisoned.into_inner(),
                 };
-                guard.clone()
-            };
-            let preferred_trimmed = preferred_label
-                .as_ref()
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
+                // A refresh must not reopen a stream after an intervening release.
+                if refresh_generation.is_some_and(|generation| !self.refresh_can_reopen(generation))
+                {
+                    return Ok(());
+                }
+                if warm_guard.is_some() {
+                    log::debug!("warm stream already open; nothing to do");
+                    return Ok(());
+                }
 
-            // Past every guard, so this counts real device opens rather than
-            // declined requests. See the field's own comment.
-            self.warm_open_attempts
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            // The ring is left empty until the successful stream tells us the
-            // real rate; `open_warm_stream` sizes it.
-            let warm = self.open_warm_stream(preferred_trimmed.clone(), preroll)?;
-            if let Ok(mut ring) = self.preroll.lock() {
-                ring.cap = preroll_capacity(preroll, warm.sample_rate);
-                ring.clear();
+                let preferred_label = {
+                    let guard = match self.preferred_input_name.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    guard.clone()
+                };
+                let preferred_trimmed = preferred_label
+                    .as_ref()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+
+                // Past every guard, so this counts real device opens rather than
+                // declined requests. See the field's own comment.
+                self.warm_open_attempts
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                // The ring is left empty until the successful stream tells us the
+                // real rate; `open_warm_stream` sizes it.
+                let warm = self.open_warm_stream(preferred_trimmed.clone(), preroll)?;
+                if let Ok(mut ring) = self.preroll.lock() {
+                    ring.cap = preroll_capacity(preroll, warm.sample_rate);
+                    ring.clear();
+                }
+                // Any timer armed before this stream existed is now stale, and it has
+                // to learn that before the stream becomes visible here. A linger
+                // armed for a previous stream wakes up, checks its generation and
+                // finds it current, and would take *this* stream: the user's hold
+                // disappears seconds after the switch that asked for it. The bump is
+                // inside the lock the timer takes, so the two orderings are the only
+                // two possible ones, and both are safe: either the timer ran first
+                // and closed the stream it was armed for (there was one in the slot,
+                // since this open returns early when there is), or it runs after this
+                // and sees a stale generation.
+                let generation = self.advance_linger_generation();
+                *warm_guard = Some(warm);
+                generation
+            };
+            if refresh_generation.is_some() {
+                if let Some((linger, generation)) = self.reserve_refresh_linger(generation) {
+                    self.schedule_linger_close(linger, generation);
+                }
             }
-            // Any timer armed before this stream existed is now stale, and it has
-            // to learn that before the stream becomes visible here. A linger
-            // armed for a previous stream wakes up, checks its generation and
-            // finds it current, and would take *this* stream: the user's hold
-            // disappears seconds after the switch that asked for it. The bump is
-            // inside the lock the timer takes, so the two orderings are the only
-            // two possible ones, and both are safe: either the timer ran first
-            // and closed the stream it was armed for (there was one in the slot,
-            // since this open returns early when there is), or it runs after this
-            // and sees a stale generation.
-            self.cancel_linger();
-            *warm_guard = Some(warm);
             Ok(())
         }
 
@@ -2071,36 +2158,31 @@ mod cpal_impl {
         /// cost, and they can be done ahead of the press with no microphone
         /// indicator, because nothing captures. Doing them here primes the cache
         /// that `try_cached_device` reads, so the press skips the scoring.
-        pub fn prepare_device(&self) -> Result<String, RecordingError> {
-            let preferred_label = {
-                let guard = match self.preferred_input_name.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                guard.clone()
-            };
-            let preferred_trimmed = preferred_label
-                .as_ref()
-                .map(|value| value.trim())
+        fn prepare_device(&self, preferred: Option<&str>) -> Result<String, RecordingError> {
+            let preferred = preferred
+                .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(str::to_string);
-            let preferred_normalized = preferred_trimmed
-                .as_ref()
-                .map(|value| value.to_ascii_lowercase());
+                .map(str::to_ascii_lowercase);
+            let generation = self.selection_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            let (label, host_id) = self.resolve_preferred_device(preferred.as_deref())?;
+            // A delayed preparation cannot change the held stream or make a
+            // press with a different preference use this device.
+            self.cache_device(
+                host_id,
+                label.clone(),
+                preferred.as_deref(),
+                Some(generation),
+            );
+            log::debug!("prepared '{label}' for the next press");
+            Ok(label)
+        }
 
-            // A held stream already resolved the device, and its label is the
-            // one a press would use.
-            if let Some(label) = self
-                .warm
-                .lock()
-                .ok()
-                .and_then(|guard| guard.as_ref().map(|warm| warm.device_label.clone()))
-            {
-                return Ok(label);
-            }
-
+        fn resolve_preferred_device(
+            &self,
+            preferred: Option<&str>,
+        ) -> Result<(String, HostId), RecordingError> {
             let hosts = ordered_host_ids();
-            let prepared = try_hosts(
+            try_hosts(
                 &hosts,
                 |id| {
                     cpal::host_from_id(id)
@@ -2110,11 +2192,8 @@ mod cpal_impl {
                     let default_output_name = host
                         .default_output_device()
                         .and_then(|device| device.name().ok());
-                    let mut candidates = device_candidates_for_host(
-                        host,
-                        default_output_name.as_deref(),
-                        preferred_normalized.as_deref(),
-                    );
+                    let mut candidates =
+                        device_candidates_for_host(host, default_output_name.as_deref(), preferred);
                     candidates.sort_by_key(|candidate| {
                         (
                             !candidate.matches_preferred,
@@ -2131,15 +2210,7 @@ mod cpal_impl {
                         .map(|best| best.label)
                         .ok_or(RecordingError::InputDeviceUnavailable)
                 },
-            );
-            match prepared {
-                Ok((label, host_id)) => {
-                    self.cache_successful_device(host_id, label.clone());
-                    log::debug!("prepared '{label}' for the next press");
-                    Ok(label)
-                }
-                Err(err) => Err(err),
-            }
+            )
         }
 
         /// Reopens the held stream if the device set changed underneath it.
@@ -2164,19 +2235,25 @@ mod cpal_impl {
                 log::debug!("a recording owns the device; not refreshing it");
                 return;
             }
-            if !self.has_warm_stream() {
-                return;
-            }
-            let current = self
-                .warm
-                .lock()
-                .ok()
-                .and_then(|guard| guard.as_ref().map(|warm| warm.device_label.clone()));
-            let Some(current) = current else {
+            let current = self.warm.lock().ok().and_then(|guard| {
+                guard
+                    .as_ref()
+                    .map(|warm| (warm.device_label.clone(), Arc::clone(&warm.sink)))
+            });
+            let Some((current, sink)) = current else {
                 return;
             };
 
-            let best = self.prepare_device().ok();
+            let preferred = self
+                .preferred_input_name
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_deref()
+                .map(str::to_ascii_lowercase);
+            let best = self
+                .resolve_preferred_device(preferred.as_deref())
+                .ok()
+                .map(|(label, _)| label);
             match best {
                 Some(best) if normalized_name(&best) == normalized_name(&current) => {
                     log::debug!("held device '{current}' is still the best; keeping it");
@@ -2186,27 +2263,20 @@ mod cpal_impl {
                         "held device '{current}' is no longer the best ('{best}'); reopening"
                     );
                     let preroll = Duration::from_micros(self.preroll_micros.load(Ordering::SeqCst));
-                    let policy = self.linger_millis();
-                    self.close_warm();
-                    // Reopening is only right when the policy holds a device. A
-                    // finite window that had already expired, or a policy that
-                    // was turned off between the check above and here, would
-                    // otherwise open a stream nothing is going to close.
-                    if policy == 0 {
-                        log::debug!("hold policy is off; not reopening after the device change");
+                    let Some(generation) = self.close_matching_warm(Some(&sink)) else {
                         return;
-                    }
-                    if let Err(err) = self.open_warm(preroll) {
+                    };
+                    // The next cold press must not reuse the device this refresh retired.
+                    self.clear_device_cache();
+                    if let Err(err) = self.open_warm_with_policy(preroll, Some(generation)) {
                         log::warn!("could not reopen the warm stream after a device change: {err}");
-                    } else if policy != WARM_FOREVER_MS {
-                        // A finite window restarts from this open, so the device
-                        // still closes when the policy said it would.
-                        self.linger_then_close(Duration::from_millis(policy));
                     }
                 }
                 None => {
                     log::warn!("no usable device after a device change; releasing '{current}'");
-                    self.close_warm();
+                    if self.close_matching_warm(Some(&sink)).is_some() {
+                        self.clear_device_cache();
+                    }
                 }
             }
         }
@@ -2628,7 +2698,20 @@ mod cpal_impl {
                 return;
             }
 
-            self.clear_device_cache();
+            if let Ok(mut cache) = self.last_successful_device.lock() {
+                let preferred = self
+                    .preferred_input_name
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .as_deref()
+                    .map(str::to_ascii_lowercase);
+                if cache
+                    .as_ref()
+                    .is_some_and(|entry| entry.preference != preferred)
+                {
+                    *cache = None;
+                }
+            }
 
             // A held stream belongs to the device it was opened on, so a changed
             // preference must not leave it recording the old microphone. Closing
@@ -2653,9 +2736,9 @@ mod cpal_impl {
         }
 
         fn clear_device_cache(&self) {
-            if let Ok(mut guard) = self.last_successful_device.lock() {
-                *guard = None;
-                log::debug!("device cache cleared");
+            if let Ok(mut cache) = self.last_successful_device.lock() {
+                self.selection_generation.fetch_add(1, Ordering::SeqCst);
+                *cache = None;
             }
         }
 
@@ -2677,8 +2760,9 @@ mod cpal_impl {
             self.set_preroll(preroll);
         }
 
-        fn prepare(&self) -> Result<String, String> {
-            self.prepare_device().map_err(|err| err.to_string())
+        fn prepare(&self, preferred: Option<&str>) -> Result<String, String> {
+            self.prepare_device(preferred)
+                .map_err(|err| err.to_string())
         }
 
         fn set_preferred_device(&self, preferred: Option<String>) {
@@ -3542,10 +3626,13 @@ mod cpal_impl {
         let Some(cached) = cached else {
             return Some("nothing recorded yet");
         };
-        if let Some(preferred) = preferred_normalized {
-            if !device_matches_preferred(&cached.device_label, preferred) {
-                return Some("it is not the preferred device");
-            }
+        if cached.preference.as_deref() != preferred_normalized {
+            return Some("the preferred device changed");
+        }
+        if preferred_normalized
+            .is_some_and(|preferred| !device_matches_preferred(&cached.device_label, preferred))
+        {
+            return Some("it is not the preferred device");
         }
         if !still_present {
             return Some("the device is no longer listed");
@@ -4592,6 +4679,7 @@ mod cpal_impl {
         fn a_cached_device_that_is_no_longer_listed_falls_through_to_scoring() {
             let cached = CachedDeviceInfo {
                 host_id: cpal::default_host().id(),
+                preference: None,
                 device_label: "Samson Q2U".to_string(),
             };
 
@@ -4608,6 +4696,7 @@ mod cpal_impl {
         fn a_cached_device_that_is_still_listed_is_tried() {
             let cached = CachedDeviceInfo {
                 host_id: cpal::default_host().id(),
+                preference: None,
                 device_label: "Samson Q2U".to_string(),
             };
 
@@ -4618,6 +4707,7 @@ mod cpal_impl {
         fn a_cached_device_that_is_not_the_preference_is_not_tried() {
             let cached = CachedDeviceInfo {
                 host_id: cpal::default_host().id(),
+                preference: None,
                 device_label: "Samson Q2U".to_string(),
             };
 
@@ -4626,7 +4716,7 @@ mod cpal_impl {
             // ignored.
             assert_eq!(
                 cached_device_rejection(Some(&cached), Some("macbook pro microphone"), true),
-                Some("it is not the preferred device")
+                Some("the preferred device changed")
             );
         }
 
@@ -5076,6 +5166,66 @@ mod cpal_impl {
             assert_eq!(manager.linger_millis(), 5_000);
         }
 
+        #[test]
+        fn restored_finite_linger_does_not_authorize_a_superseded_refresh() {
+            let manager = RecordingManager::default();
+            manager.set_linger(Duration::from_millis(5_000));
+            let generation = manager.close_matching_warm(None).unwrap();
+            assert!(manager.refresh_can_reopen(generation));
+
+            manager.release_hold();
+            manager.set_linger(Duration::from_millis(5_000));
+            assert!(!manager.refresh_can_reopen(generation));
+        }
+
+        #[test]
+        fn refresh_reserves_expiry_only_for_its_own_finite_hold() {
+            let manager = RecordingManager::default();
+            manager.set_linger(Duration::from_millis(5_000));
+            let opened = manager.advance_linger_generation();
+            let (duration, reserved) = manager.reserve_refresh_linger(opened).unwrap();
+            assert_eq!(duration, Duration::from_secs(5));
+            assert!(manager.reserve_refresh_linger(opened).is_none());
+
+            manager.promote_to_hold();
+            assert!(manager.reserve_refresh_linger(reserved).is_none());
+        }
+
+        #[test]
+        fn promotion_cannot_split_its_policy_update_across_refresh_publication() {
+            use std::sync::mpsc;
+
+            let manager = RecordingManager::default();
+            manager.set_linger(Duration::from_millis(5_000));
+            let slot = manager.warm.lock().unwrap();
+            let (started_tx, started_rx) = mpsc::channel();
+            let (done_tx, done_rx) = mpsc::channel();
+            let manager_ref = &manager;
+
+            std::thread::scope(|scope| {
+                scope.spawn(move || {
+                    started_tx.send(()).unwrap();
+                    manager_ref.promote_to_hold();
+                    done_tx.send(()).unwrap();
+                });
+                started_rx.recv().unwrap();
+                let completed_under_lock = done_rx.recv_timeout(Duration::from_millis(100));
+                // Simulate a refresh finishing its device open while still owning the slot.
+                let published = manager.advance_linger_generation();
+                let expiration = manager.reserve_refresh_linger(published);
+                drop(slot);
+
+                assert_eq!(completed_under_lock, Err(mpsc::RecvTimeoutError::Timeout));
+                let (_, scheduled_generation) = expiration.unwrap();
+                done_rx.recv().unwrap();
+                assert_eq!(manager.linger_millis(), WARM_FOREVER_MS);
+                assert_ne!(
+                    manager.linger_generation.load(Ordering::SeqCst),
+                    scheduled_generation
+                );
+            });
+        }
+
         /// The built-in detector decides a device's priority, so a miss here
         /// means the machine's own microphone loses to a virtual one and a
         /// press records from a device that never captures anything.
@@ -5260,7 +5410,11 @@ mod cpal_impl {
             let manager = RecordingManager::new();
             manager.set_linger(Duration::from_millis(u64::MAX));
             manager.set_preferred_input_device(Some("Shure MV7".to_string()));
-            manager.cache_successful_device(cpal::default_host().id(), "Shure MV7".to_string());
+            manager.cache_successful_device(
+                cpal::default_host().id(),
+                "Shure MV7".to_string(),
+                Some("shure mv7"),
+            );
             assert!(manager.last_successful_device.lock().unwrap().is_some());
 
             // The command layer sets the preference on every press. Treating an
@@ -5293,12 +5447,51 @@ mod cpal_impl {
         }
 
         #[test]
+        fn a_late_preparation_cannot_replace_a_successful_selection() {
+            let manager = RecordingManager::default();
+            let host_id = cpal::default_host().id();
+            let in_flight = manager.selection_generation.load(Ordering::SeqCst);
+            manager.cache_successful_device(host_id, "New default".to_string(), None);
+            manager.cache_device(host_id, "Old default".to_string(), None, Some(in_flight));
+
+            let cache = manager.last_successful_device.lock().unwrap();
+            assert_eq!(cache.as_ref().unwrap().device_label, "New default");
+        }
+
+        #[test]
+        fn a_matching_preference_update_preserves_a_prepared_cache_entry() {
+            use crate::platform::Recorder;
+
+            let manager = RecordingManager::default();
+            manager.cache_successful_device(
+                cpal::default_host().id(),
+                "Shure MV7".to_string(),
+                Some("shure mv7"),
+            );
+            manager.set_preferred_input_device(Some("Shure MV7".to_string()));
+
+            let cache = manager.last_successful_device.lock().unwrap();
+            assert_eq!(
+                cached_device_rejection(cache.as_ref(), Some("shure mv7"), true),
+                None
+            );
+            assert_eq!(
+                cached_device_rejection(cache.as_ref(), None, true),
+                Some("the preferred device changed")
+            );
+        }
+
+        #[test]
         fn a_changed_preference_clears_the_device_cache() {
             use crate::platform::Recorder;
 
             let manager = RecordingManager::new();
             manager.set_preferred_input_device(Some("Shure MV7".to_string()));
-            manager.cache_successful_device(cpal::default_host().id(), "Shure MV7".to_string());
+            manager.cache_successful_device(
+                cpal::default_host().id(),
+                "Shure MV7".to_string(),
+                Some("shure mv7"),
+            );
 
             // A real change has to drop the cache, or the next press tries the
             // device the user just moved off.

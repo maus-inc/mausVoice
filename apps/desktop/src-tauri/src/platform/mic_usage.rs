@@ -416,100 +416,73 @@ pub mod linux {
     pub(super) const PACTL_OVERRIDE_ENV: &str = "MAUSVOICE_PACTL";
 
     use super::CaptureUsage;
-    use std::io::Read;
-    use std::process::{Command, Stdio};
+    use std::io::{self, Read};
+    use std::os::fd::OwnedFd;
+    use std::os::unix::{net::UnixStream, process::CommandExt};
+    use std::process::{Child, Command, ExitStatus, Stdio};
     use std::time::{Duration, Instant};
 
-    /// How long `pactl` gets before it is killed.
-    ///
-    /// `Command::output()` has no timeout, so a `pactl` that is wedged against a
-    /// server that stopped answering never returns. This probe runs on a worker
-    /// thread reserved for blocking work, so a hang permanently occupies that
-    /// worker and every later usage query queues behind it -- the microphone
-    /// dialog's status line stops updating with no error anywhere. Three seconds
-    /// is far longer than a healthy `pactl list source-outputs` (tens of
-    /// milliseconds); anything slower is a fault worth reporting as one.
     pub(super) const PACTL_TIMEOUT: Duration = Duration::from_secs(3);
-
-    /// How often the child is checked while inside the timeout.
     const PACTL_POLL: Duration = Duration::from_millis(25);
+    const MAX_LISTING_BYTES: usize = 1024 * 1024;
 
-    /// The finished output of a child that was reaped, or why there is none.
-    enum Probe {
-        Finished(std::process::Output),
-        TimedOut,
-        SpawnFailed(std::io::Error),
+    fn collect_listing(
+        child: &mut Child,
+        mut reader: UnixStream,
+        deadline: Instant,
+    ) -> io::Result<Option<(ExitStatus, Vec<u8>)>> {
+        let mut stdout = Vec::new();
+        let mut block = [0; 8192];
+        let mut eof = false;
+        while Instant::now() < deadline {
+            if eof {
+                // Keep the group leader unreaped until its descendants close
+                // stdout, so the process group ID cannot be reused meanwhile.
+                if let Some(status) = child.try_wait()? {
+                    return Ok(Some((status, stdout)));
+                }
+            } else {
+                match reader.read(&mut block) {
+                    Ok(0) => eof = true,
+                    Ok(n) if stdout.len() + n <= MAX_LISTING_BYTES => {
+                        stdout.extend_from_slice(&block[..n]);
+                        continue;
+                    }
+                    Ok(_) => return Err(io::Error::other("pactl listing exceeded 1 MiB")),
+                    Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(err) => return Err(err),
+                }
+            }
+            std::thread::sleep(PACTL_POLL.min(deadline.saturating_duration_since(Instant::now())));
+        }
+        Ok(None)
     }
 
-    /// Runs a command, kills it if it outlives `PACTL_TIMEOUT`, and reaps it.
-    ///
-    /// Written out rather than using `Command::output()` because the timeout is
-    /// the whole point: `output()` waits forever, and a wedged `pactl` is exactly
-    /// the case this probe exists to survive. The child is killed *and* waited
-    /// on, since killing without reaping leaves a zombie.
-    ///
-    /// Stdout is drained on a second thread. A child that fills the pipe buffer
-    /// blocks on write, which reads as a hang, so reading after the wait would
-    /// deadlock on exactly the long listing this timeout is meant to bound.
-    fn run_with_timeout(command: &mut Command) -> Probe {
-        let mut child = match command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(err) => return Probe::SpawnFailed(err),
-        };
-        let mut stdout = child.stdout.take();
-        let mut stderr = child.stderr.take();
-
-        let stdout_reader = std::thread::spawn(move || {
-            let mut buffer = Vec::new();
-            if let Some(pipe) = stdout.as_mut() {
-                let _ = pipe.read_to_end(&mut buffer);
-            }
-            buffer
-        });
-        let stderr_reader = std::thread::spawn(move || {
-            let mut buffer = Vec::new();
-            if let Some(pipe) = stderr.as_mut() {
-                let _ = pipe.read_to_end(&mut buffer);
-            }
-            buffer
-        });
-
+    fn run_with_timeout(command: &mut Command) -> Result<Option<(ExitStatus, Vec<u8>)>, String> {
         let deadline = Instant::now() + PACTL_TIMEOUT;
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break Some(status),
-                Ok(None) => {
-                    if Instant::now() >= deadline {
-                        // Killed, then waited: without the wait the child stays a
-                        // zombie for the life of the process.
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        break None;
-                    }
-                    std::thread::sleep(PACTL_POLL);
-                }
-                Err(_) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break None;
-                }
+        let setup_error = |err| format!("could not set up pactl output: {err}");
+        let (reader, writer) = UnixStream::pair().map_err(setup_error)?;
+        reader.set_nonblocking(true).map_err(setup_error)?;
+        let spawned = command
+            .process_group(0)
+            .stdout(Stdio::from(OwnedFd::from(writer)))
+            .stderr(Stdio::null())
+            .spawn();
+        // Command retains its configured stdout after spawn. Close our side so
+        // EOF represents only the child and its descendants.
+        command.stdout(Stdio::null());
+        let mut child = spawned.map_err(|err| format!("pactl not runnable: {err}"))?;
+        let result = collect_listing(&mut child, reader, deadline);
+        if !matches!(result, Ok(Some(_))) {
+            // SAFETY: process_group(0) put the unreaped child in its own group.
+            // The negative PID targets that group, including shell children.
+            if unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) } == -1 {
+                let _ = child.kill();
             }
-        };
-        let stdout = stdout_reader.join().unwrap_or_default();
-        let stderr = stderr_reader.join().unwrap_or_default();
-
-        match status {
-            Some(status) => Probe::Finished(std::process::Output {
-                status,
-                stdout,
-                stderr,
-            }),
-            None => Probe::TimedOut,
+            let _ = child.wait();
         }
+        result.map_err(|err| format!("could not collect pactl output: {err}"))
     }
 
     /// Asks PulseAudio or PipeWire who is recording, through `pactl`.
@@ -533,26 +506,24 @@ pub mod linux {
         // be tested, and a wrong argument or a misread exit status would only
         // show up on a user's machine.
         let binary = std::env::var(PACTL_OVERRIDE_ENV).unwrap_or_else(|_| "pactl".to_string());
-        let output = match run_with_timeout(Command::new(&binary).arg("list").arg("source-outputs"))
-        {
-            Probe::Finished(output) => output,
-            Probe::TimedOut => {
-                return CaptureUsage::Unavailable(format!(
-                    "pactl did not answer within {}s",
-                    PACTL_TIMEOUT.as_secs()
-                ));
-            }
-            Probe::SpawnFailed(err) => {
-                return CaptureUsage::Unavailable(format!("pactl not runnable: {err}"));
-            }
-        };
-        if !output.status.success() {
+        let (status, stdout) =
+            match run_with_timeout(Command::new(&binary).arg("list").arg("source-outputs")) {
+                Ok(Some(output)) => output,
+                Ok(None) => {
+                    return CaptureUsage::Unavailable(format!(
+                        "pactl did not answer within {}s",
+                        PACTL_TIMEOUT.as_secs()
+                    ));
+                }
+                Err(reason) => return CaptureUsage::Unavailable(reason),
+            };
+        if !status.success() {
             return CaptureUsage::Unavailable(format!(
                 "pactl exited {}",
-                output.status.code().unwrap_or(-1)
+                status.code().unwrap_or(-1)
             ));
         }
-        let text = String::from_utf8_lossy(&output.stdout);
+        let text = String::from_utf8_lossy(&stdout);
         CaptureUsage::from_pactl_listing(&text)
     }
 
@@ -791,7 +762,7 @@ mod linux_command_tests {
     use super::linux::current_usage;
     // The override variable's name, imported from the module that reads it so
     // the tests cannot set one variable while the app reads another.
-    use super::linux::{PACTL_OVERRIDE_ENV, PACTL_TIMEOUT};
+    use super::linux::PACTL_OVERRIDE_ENV;
     use super::CaptureUsage;
     use std::io::Write;
 
@@ -889,26 +860,38 @@ mod linux_command_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A `pactl` that never answers must be killed, not waited on forever.
-    ///
-    /// The blocking worker this runs on is shared, so a probe that never returns
-    /// takes that worker out permanently and every later usage query queues
-    /// behind it. The script sleeps in a way that survives the shell: `exec`
-    /// replaces the shell with `sleep`, so the process that is killed is the one
-    /// holding the pipe rather than a parent whose child outlives it.
+    #[test]
+    fn a_probe_rejects_an_oversized_listing() {
+        let _guard = serialize_env();
+        let dir =
+            std::env::temp_dir().join(format!("mausvoice-pactl-large-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let script = fake_pactl(&dir, "head -c 1048577 /dev/zero");
+        std::env::set_var(PACTL_OVERRIDE_ENV, &script);
+        let usage = current_usage();
+        std::env::remove_var(PACTL_OVERRIDE_ENV);
+        std::fs::remove_dir_all(dir).expect("remove probe fixture");
+        assert!(
+            matches!(usage, CaptureUsage::Unavailable(reason) if reason.starts_with("could not collect pactl output:") && reason.contains("exceeded 1 MiB"))
+        );
+    }
+
     #[test]
     fn a_probe_that_hangs_is_killed_and_reported_as_a_timeout() {
         let _guard = serialize_env();
         let dir = std::env::temp_dir().join(format!("mausvoice-pactl-hang-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
-        // Longer than the timeout, short enough that a leaked process would still
-        // exit before the suite does.
-        let script = fake_pactl(&dir, "exec sleep 30");
+        // The child keeps stdout open. If the probe waits for it to exit
+        // naturally instead of killing the group, it leaves a marker.
+        let script = fake_pactl(
+            &dir,
+            r#"sleep 10 &
+worker=$!
+printf '%s\n' "$worker" > "${0%/*}/worker.pid"
+wait "$worker" && touch "${0%/*}/completed""#,
+        );
         std::env::set_var(PACTL_OVERRIDE_ENV, &script);
-
-        let started = std::time::Instant::now();
         let usage = current_usage();
-        let elapsed = started.elapsed();
         std::env::remove_var(PACTL_OVERRIDE_ENV);
 
         match usage {
@@ -917,13 +900,37 @@ mod linux_command_tests {
             }
             other => panic!("expected Unavailable, got {other:?}"),
         }
-        // Deliberately generous on the upper bound: this asserts the probe
-        // *bounded* the wait, not that it hit the deadline precisely. A machine
-        // under load may overshoot by a poll interval or two.
         assert!(
-            elapsed < PACTL_TIMEOUT + std::time::Duration::from_secs(5),
-            "the probe waited {elapsed:?}, so it did not time out"
+            !dir.join("completed").exists(),
+            "the probe waited for the child to finish normally"
         );
+        let worker: u32 = std::fs::read_to_string(dir.join("worker.pid"))
+            .expect("the descendant started")
+            .trim()
+            .parse()
+            .expect("numeric descendant PID");
+        let stat_path = format!("/proc/{worker}/stat");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            match std::fs::read_to_string(&stat_path) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+                Err(err) => panic!("cannot read descendant state: {err}"),
+                Ok(stat) => {
+                    // An orphan may not have been reaped yet, but a zombie has
+                    // stopped executing and no longer holds the output pipe.
+                    if let Some((_, state)) = stat.rsplit_once(") ") {
+                        if matches!(state.as_bytes().first(), Some(b'Z' | b'X')) {
+                            break;
+                        }
+                    }
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the timeout returned while descendant {worker} was still running"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
