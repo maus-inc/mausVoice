@@ -331,6 +331,7 @@ function useWarmMicrophoneRequests(
   const requestRef = useRef(0);
 
   const pendingPolicyRef = useRef<Promise<void> | null>(null);
+  // Queue failures do not block later work; callers await or report their own result.
   const queuePolicyChange = useCallback(<T,>(change: () => T | Promise<T>) => {
     const previous = pendingPolicyRef.current;
     const pending = (async () => {
@@ -687,6 +688,7 @@ function useIdleMicrophonePolicy({
     );
   }, [ownsDevice, prefsLoaded, prerollSeconds, queuePolicyChange]);
 
+  // Releases restore linger themselves; the ref is only an execution-time guard.
   useEffect(() => {
     if (enabled || !prefsLoaded || !ownsDevice) {
       return;

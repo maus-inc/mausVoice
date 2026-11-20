@@ -1118,6 +1118,19 @@ function warnOfShortCapture(intl: IntlShape, audio: StopRecordingResponse) {
   }
 }
 
+export async function runCurrentRecordingControl(
+  runNative: () => Promise<void>,
+  isCurrent: () => boolean,
+  apply: () => Promise<void>,
+): Promise<void> {
+  try {
+    await runNative();
+    if (isCurrent()) await apply();
+  } catch (error) {
+    if (isCurrent()) throw error;
+  }
+}
+
 export const DictationSideEffects = () => {
   const intl = useIntl();
 
@@ -2855,59 +2868,71 @@ export const DictationSideEffects = () => {
     },
   });
 
+  const getRecordingControlTarget = useCallback(() => {
+    const session = sessionRef.current;
+    const strategy = strategyRef.current;
+    if (!session || !strategy || isStoppingRef.current) return null;
+    const operation = recordingOperationRef.current;
+    const isCurrent = () =>
+      !isStoppingRef.current &&
+      operation === recordingOperationRef.current &&
+      session === sessionRef.current &&
+      strategy === strategyRef.current;
+    return { strategy, isCurrent };
+  }, []);
+
   const pauseDictation = useCallback(async () => {
-    if (isPausedRef.current || isStoppingRef.current) {
-      return;
-    }
-    if (!sessionRef.current || !strategyRef.current) {
-      return;
-    }
-    if (getAppState().activeRecordingMode === null) {
+    const target = getRecordingControlTarget();
+    if (
+      !target ||
+      isPausedRef.current ||
+      getAppState().activeRecordingMode === null
+    ) {
       return;
     }
     try {
       getLogger().info("Pausing dictation");
-      // Hold mic capture without finalizing the session so the user can resume.
-      await pauseNativeRecording();
-      isPausedRef.current = true;
-      // User-configured timers measure active audio. Provider hard limits are
-      // wall-clock limits and intentionally continue while paused.
-      clearUserRecordingTimers();
-      // Keep the voice field fully open and slide the style bar in via paused phase.
-      await strategyRef.current.setPhase("paused");
-      // Fire-and-forget: a toast that fails to render is not a failure to pause,
-      // and awaiting it here would report one as "Failed to pause dictation".
-      runToast(
-        showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Dictation paused",
-          }),
-          toastType: "info",
-          duration: 2_000,
-        }),
+      await runCurrentRecordingControl(
+        pauseNativeRecording,
+        target.isCurrent,
+        async () => {
+          isPausedRef.current = true;
+          // User timers measure active audio; provider hard limits are wall-clock.
+          clearUserRecordingTimers();
+          await target.strategy.setPhase("paused");
+          if (!target.isCurrent()) return;
+          runToast(
+            showToast({
+              message: intl.formatMessage({
+                defaultMessage: "Dictation paused",
+              }),
+              toastType: "info",
+              duration: 2_000,
+            }),
+          );
+        },
       );
     } catch (error) {
       getLogger().error(`Failed to pause dictation: ${error}`);
     }
-  }, [clearUserRecordingTimers, intl]);
+  }, [clearUserRecordingTimers, getRecordingControlTarget, intl]);
 
   const resumeDictation = useCallback(async () => {
-    if (!isPausedRef.current || isStoppingRef.current) {
-      return;
-    }
-    if (!sessionRef.current || !strategyRef.current) {
-      return;
-    }
+    const target = getRecordingControlTarget();
+    if (!target || !isPausedRef.current) return;
     try {
       getLogger().info("Resuming dictation");
-      await resumeNativeRecording();
-      isPausedRef.current = false;
-      await strategyRef.current.setPhase("recording");
-      startUserRecordingTimers();
+      await runCurrentRecordingControl(
+        resumeNativeRecording,
+        target.isCurrent,
+        async () => {
+          isPausedRef.current = false;
+          await target.strategy.setPhase("recording");
+          if (target.isCurrent()) startUserRecordingTimers();
+        },
+      );
     } catch (error) {
       getLogger().error(`Failed to resume dictation: ${error}`);
-      // Fire-and-forget, and deliberately not awaited inside the catch: a toast
-      // that cannot render must not turn into a second "failed to resume" error.
       runToast(
         showToast({
           message: intl.formatMessage({
@@ -2918,7 +2943,7 @@ export const DictationSideEffects = () => {
         }),
       );
     }
-  }, [intl, startUserRecordingTimers]);
+  }, [getRecordingControlTarget, intl, startUserRecordingTimers]);
 
   useTauriListen<void>("cancel-dictation", () => {
     if (!isMainWindow) return;

@@ -29,7 +29,7 @@ export type SessionAudioIntake = {
   subscriptionFailed: boolean;
   /** True once any part of the live stream is known to be invalid. */
   hasDiscontinuity: () => boolean;
-  /** Stop accepting events and complete a contiguous prefix from the native recording. */
+  /** Seal with this admission’s final waveform once; repeated calls return the first result. */
   sealLiveAudio: (
     samples: number[] | Float32Array,
     sampleRate?: number,

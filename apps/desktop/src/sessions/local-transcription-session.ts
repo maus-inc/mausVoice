@@ -290,7 +290,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   private async startListening(): Promise<void> {
     this.unlisten = await listenToAudioChunks((samples, offset, admission) => {
       const expected = this.getAdmission();
-      // The shared native delivery queue can still contain a prior recording.
+      // Admission is published before native start; earlier chunks belong to another recording.
       if (
         expected &&
         admission &&
