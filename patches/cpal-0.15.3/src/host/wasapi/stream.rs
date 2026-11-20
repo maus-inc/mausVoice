@@ -194,9 +194,7 @@ impl Drop for Stream {
         // has finished. Always join before reporting that the stream is gone.
         let _ = self.push_command(Command::Terminate);
         let worker = self.thread.take();
-        unsafe {
-            let _ = Foundation::CloseHandle(self.pending_scheduled_event);
-        }
+
         // A panicking worker already reported itself, and both checked
         // transitions return an error while it is dead, so a caller never
         // claims a successful release. Unwrapping the join here would panic
@@ -204,6 +202,9 @@ impl Drop for Stream {
         // unwind.
         if let Some(worker) = worker {
             let _ = worker.join();
+        }
+        unsafe {
+            let _ = Foundation::CloseHandle(self.pending_scheduled_event);
         }
     }
 }
@@ -344,8 +345,9 @@ fn run_input(
     // across packets so a silent period never allocates on the audio thread.
     let mut silence: Vec<u64> = Vec::new();
 
+    let mut capture_pending = false;
     loop {
-        match process_commands_and_await_signal(&mut run_ctxt, error_callback) {
+        match process_commands_and_await_signal(&mut run_ctxt, error_callback, capture_pending) {
             Some(CommandFlow::Break) => break,
             Some(CommandFlow::Continue) => continue,
             Some(CommandFlow::Pause(reply)) => {
@@ -356,6 +358,8 @@ fn run_input(
                     &mut silence,
                     reply,
                 );
+                // A failed stop may have left the stream and buffered packets live.
+                capture_pending = run_ctxt.stream.playing;
                 continue;
             }
             None => (),
@@ -377,8 +381,9 @@ fn run_input(
             error_callback,
             &mut silence,
         ) {
-            ControlFlow::Break => break,
-            ControlFlow::Continue => continue,
+            InputFlow::Failed => break,
+            InputFlow::Empty => capture_pending = false,
+            InputFlow::More => capture_pending = true,
         }
     }
 }
@@ -391,7 +396,7 @@ fn run_output(
     boost_current_thread_priority();
 
     loop {
-        match process_commands_and_await_signal(&mut run_ctxt, error_callback) {
+        match process_commands_and_await_signal(&mut run_ctxt, error_callback, false) {
             Some(CommandFlow::Break) => break,
             Some(CommandFlow::Continue) => continue,
             Some(CommandFlow::Pause(reply)) => {
@@ -427,6 +432,7 @@ enum ControlFlow {
 fn process_commands_and_await_signal(
     run_context: &mut RunContext,
     error_callback: &mut dyn FnMut(StreamError),
+    capture_pending: bool,
 ) -> Option<CommandFlow> {
     // Process queued commands.
     match process_commands(run_context) {
@@ -438,6 +444,11 @@ fn process_commands_and_await_signal(
             return Some(CommandFlow::Break);
         }
     };
+
+    if capture_pending && run_context.stream.playing {
+        // The prior batch may have left packets behind without another device event.
+        return None;
+    }
 
     // Wait for any of the handles to be signalled. While the stream is paused,
     // only the command event is interesting: the device handle can stay
@@ -683,6 +694,12 @@ fn pause_output(stream: &mut StreamInner, reply: Sender<Result<(), BackendSpecif
     }
 }
 
+enum InputFlow {
+    Empty,
+    More,
+    Failed,
+}
+
 // The loop for processing pending input data.
 fn process_input(
     stream: &StreamInner,
@@ -690,17 +707,18 @@ fn process_input(
     data_callback: &mut dyn FnMut(&Data, &InputCallbackInfo),
     error_callback: &mut dyn FnMut(StreamError),
     silence: &mut Vec<u64>,
-) -> ControlFlow {
-    loop {
+) -> InputFlow {
+    for _ in 0..32 {
         match capture_next_packet(stream, capture_client, data_callback, silence) {
             PacketFlow::Delivered => continue,
-            PacketFlow::Empty => return ControlFlow::Continue,
+            PacketFlow::Empty => return InputFlow::Empty,
             PacketFlow::Failed(error) => {
                 error_callback(error);
-                return ControlFlow::Break;
+                return InputFlow::Failed;
             }
         }
     }
+    InputFlow::More
 }
 
 // The loop for writing output data.

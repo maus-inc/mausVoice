@@ -159,7 +159,6 @@ fn main() -> Result<(), coreaudio::Error> {
             // Included to aid understanding, don't use println and other things
             // that may block for an unknown amount of time inside the callback
             // of a real application.
-            println!("frames: {}", num_frames);
             for i in 0..num_frames {
                 let sample_l = samples_l.next().unwrap();
                 let sample_r = samples_r.next().unwrap();

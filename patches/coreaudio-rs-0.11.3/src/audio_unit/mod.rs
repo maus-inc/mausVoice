@@ -108,6 +108,7 @@ pub enum Element {
 /// Find the original Audio Unit Programming Guide [here](https://developer.apple.com/library/mac/documentation/MusicAudio/Conceptual/AudioUnitProgrammingGuide/TheAudioUnit/TheAudioUnit.html).
 pub struct AudioUnit {
     instance: sys::AudioUnit,
+    initialized: bool,
     #[cfg(target_os = "macos")]
     checked_close: checked_close::CloseState,
     maybe_render_callback: Option<*mut render_callback::InputProcFnWrapper>,
@@ -159,6 +160,20 @@ impl AudioUnit {
     where
         T: Into<Type>,
     {
+        Self::create(ty, flags, mask, true)
+    }
+
+    /// Open a unit for configuration without initializing its render resources.
+    pub fn new_uninitialized<T: Into<Type>>(ty: T) -> Result<AudioUnit, Error> {
+        Self::create(ty, 0, 0, false)
+    }
+
+    fn create<T: Into<Type>>(
+        ty: T,
+        flags: u32,
+        mask: u32,
+        initialized: bool,
+    ) -> Result<AudioUnit, Error> {
         const MANUFACTURER_IDENTIFIER: u32 = sys::kAudioUnitManufacturer_Apple;
         let au_type: Type = ty.into();
         let sub_type_u32 = match au_type.as_subtype_u32() {
@@ -197,41 +212,44 @@ impl AudioUnit {
             ));
             let instance: sys::AudioUnit = instance_uninit.assume_init();
 
-            // A created instance must be disposed even if initialization fails.
-            checked_initialization::initialize(
-                || {
-                    let status = sys::AudioUnitInitialize(instance);
-                    if status == 0 {
-                        Ok(())
-                    } else {
-                        Err(status)
+            if initialized {
+                // A created instance must be disposed even if initialization fails.
+                checked_initialization::initialize(
+                    || {
+                        let status = sys::AudioUnitInitialize(instance);
+                        if status == 0 {
+                            Ok(())
+                        } else {
+                            Err(status)
+                        }
+                    },
+                    || {
+                        let status = sys::AudioComponentInstanceDispose(instance);
+                        if status == 0 {
+                            Ok(())
+                        } else {
+                            Err(status)
+                        }
+                    },
+                )
+                .map_err(|error| match error {
+                    checked_initialization::InitializationError::Initialize(status) => {
+                        Error::from_os_status(status)
+                            .err()
+                            .unwrap_or(Error::Unspecified)
                     }
-                },
-                || {
-                    let status = sys::AudioComponentInstanceDispose(instance);
-                    if status == 0 {
-                        Ok(())
-                    } else {
-                        Err(status)
-                    }
-                },
-            )
-            .map_err(|error| match error {
-                checked_initialization::InitializationError::Initialize(status) => {
-                    Error::from_os_status(status)
-                        .err()
-                        .unwrap_or(Error::Unspecified)
-                }
-                checked_initialization::InitializationError::Cleanup {
-                    initialize,
-                    dispose,
-                } => Error::InitializationCleanupUncertain {
-                    initialize,
-                    dispose,
-                },
-            })?;
+                    checked_initialization::InitializationError::Cleanup {
+                        initialize,
+                        dispose,
+                    } => Error::InitializationCleanupUncertain {
+                        initialize,
+                        dispose,
+                    },
+                })?;
+            }
             Ok(AudioUnit {
                 instance,
+                initialized,
                 #[cfg(target_os = "macos")]
                 checked_close: checked_close::CloseState::Open,
                 maybe_render_callback: None,
@@ -251,6 +269,7 @@ impl AudioUnit {
         unsafe {
             try_os_status!(sys::AudioUnitInitialize(self.instance));
         }
+        self.initialized = true;
         Ok(())
     }
 
@@ -264,6 +283,7 @@ impl AudioUnit {
         unsafe {
             try_os_status!(sys::AudioUnitUninitialize(self.instance));
         }
+        self.initialized = false;
         Ok(())
     }
 
@@ -289,9 +309,13 @@ impl AudioUnit {
             return Err("checked close requires externally managed callbacks".into());
         }
         let instance = self.instance;
+        let initialized = self.initialized;
         self.checked_close
             .close(
                 || {
+                    if !initialized {
+                        return Ok(());
+                    }
                     let status = unsafe { sys::AudioUnitUninitialize(instance) };
                     Error::from_os_status(status).map_err(|_| status)
                 },
@@ -465,8 +489,10 @@ impl Drop for AudioUnit {
             //
             // A user should explicitly terminate the `AudioUnit` if they want to handle errors (we
             // still need to provide a way to actually do that).
-            self.stop().ok();
-            error::Error::from_os_status(sys::AudioUnitUninitialize(self.instance)).ok();
+            if self.initialized {
+                self.stop().ok();
+                error::Error::from_os_status(sys::AudioUnitUninitialize(self.instance)).ok();
+            }
 
             self.free_render_callback();
             self.free_input_callback();

@@ -99,7 +99,7 @@ impl<'a> From<&'a [ChmapPosition]> for Chmap {
 
 impl<'a> From<&'a Chmap> for Vec<ChmapPosition> {
     fn from(a: &'a Chmap) -> Vec<ChmapPosition> {
-        a.as_slice().iter().map(|&v| ChmapPosition::from_c_int(v as libc::c_int, "").unwrap()).collect()
+        a.as_slice().iter().map(|&v| ChmapPosition::from_c_int((v & 0xffff) as libc::c_int, "snd_pcm_chmap").unwrap_or(ChmapPosition::Unknown)).collect()
     }
 }
 

@@ -149,19 +149,30 @@ impl DeviceTrait for Device {
     fn supported_input_configs(
         &self,
     ) -> Result<Self::SupportedInputConfigs, SupportedStreamConfigsError> {
-        Ok(self.supported_configs().into_iter())
+        Ok(self
+            .is_input()
+            .then(|| self.supported_configs())
+            .unwrap_or_default()
+            .into_iter())
     }
 
     fn supported_output_configs(
         &self,
     ) -> Result<Self::SupportedOutputConfigs, SupportedStreamConfigsError> {
-        Ok(self.supported_configs().into_iter())
+        Ok(self
+            .is_output()
+            .then(|| self.supported_configs())
+            .unwrap_or_default()
+            .into_iter())
     }
 
     /// Returns the default input config
     /// The sample format for JACK audio ports is always "32-bit float mono audio" unless using a custom type.
     /// The sample rate is set by the JACK server.
     fn default_input_config(&self) -> Result<SupportedStreamConfig, DefaultStreamConfigError> {
+        if !self.is_input() {
+            return Err(DefaultStreamConfigError::StreamTypeNotSupported);
+        }
         self.default_config()
     }
 
@@ -169,6 +180,9 @@ impl DeviceTrait for Device {
     /// The sample format for JACK audio ports is always "32-bit float mono audio" unless using a custom type.
     /// The sample rate is set by the JACK server.
     fn default_output_config(&self) -> Result<SupportedStreamConfig, DefaultStreamConfigError> {
+        if !self.is_output() {
+            return Err(DefaultStreamConfigError::StreamTypeNotSupported);
+        }
         self.default_config()
     }
 
@@ -202,7 +216,7 @@ impl DeviceTrait for Device {
                 })
             }
         };
-        let mut stream = Stream::new_input(client, conf.channels, data_callback, error_callback);
+        let mut stream = Stream::new_input(client, conf.channels, data_callback, error_callback)?;
 
         if self.connect_ports_automatically {
             stream.connect_to_system_inputs();
@@ -242,7 +256,7 @@ impl DeviceTrait for Device {
                 })
             }
         };
-        let mut stream = Stream::new_output(client, conf.channels, data_callback, error_callback);
+        let mut stream = Stream::new_output(client, conf.channels, data_callback, error_callback)?;
 
         if self.connect_ports_automatically {
             stream.connect_to_system_outputs();

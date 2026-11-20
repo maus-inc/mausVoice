@@ -611,8 +611,7 @@ where
                     // Stop admitting input renders before calling the native stop.
                     // Do not hold the stream mutex while callbacks drain.
                     let _ = retire_input_callback(&stream_inner_strong);
-                    let mut stream_inner = stream_inner_strong.lock().unwrap();
-                    let _ = stream_inner.pause();
+                    let _ = stream_inner_strong.lock().unwrap().pause();
                     (error_callback.lock().unwrap())(StreamError::DeviceNotAvailable);
                 }
             });
@@ -675,13 +674,13 @@ fn output_unit_from_device(device: &Device) -> Result<AudioUnit, coreaudio::Erro
     } else {
         coreaudio::audio_unit::IOType::HalOutput
     };
-    let mut audio_unit = AudioUnit::new(output_type)?;
+    let mut audio_unit = AudioUnit::new_uninitialized(output_type)?;
     configure_audio_unit(&mut audio_unit, device, false)?;
     Ok(audio_unit)
 }
 
 fn input_unit_for_build(device: &Device) -> Result<AudioUnit, BuildStreamError> {
-    let mut audio_unit = AudioUnit::new(coreaudio::audio_unit::IOType::HalOutput)?;
+    let mut audio_unit = AudioUnit::new_uninitialized(coreaudio::audio_unit::IOType::HalOutput)?;
     if let Err(error) = configure_audio_unit(&mut audio_unit, device, true) {
         return Err(fail_input_build(audio_unit, error.into(), |unit| {
             // The newly created input has not been started and has no callbacks.
@@ -885,6 +884,7 @@ impl Device {
                 Element::Output,
                 Some(&native_callback),
             )?;
+            audio_unit.initialize()?;
             Ok(error_callback_disconnect)
         })();
         let error_callback_disconnect = match setup {
@@ -1014,6 +1014,8 @@ impl Device {
             data_callback(&mut data, &info);
             Ok(())
         })?;
+
+        audio_unit.initialize()?;
 
         let mut stream = Stream::new(StreamInner {
             playing: true,
