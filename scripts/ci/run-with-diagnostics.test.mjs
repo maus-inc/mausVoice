@@ -44,7 +44,9 @@ function execute(block, status, { silent = false, teeStatus } = {}) {
 ${silent ? "" : 'printf "fixture output: 100%%\\rnext\\n"'}
 exit "${status}"
 `;
-  writeFileSync(join(cwd, "bin/cargo"), fixture, { mode: 0o755 });
+  for (const tool of ["cargo", "pnpm"]) {
+    writeFileSync(join(cwd, "bin", tool), fixture, { mode: 0o755 });
+  }
   writeFileSync(join(cwd, "scripts/check-bindings.sh"), fixture, {
     mode: 0o755,
   });
@@ -60,20 +62,30 @@ exit ${teeStatus}
   }
   if (existsSync(helper))
     copyFileSync(helper, join(cwd, "scripts/ci/run-with-diagnostics.sh"));
-  return spawnSync("bash", ["-eo", "pipefail", "-c", block], {
-    cwd,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      PATH: `${join(cwd, "bin")}:${process.env.PATH}`,
-      GITHUB_WORKSPACE: cwd,
-      RUNNER_TEMP: cwd,
-      FIXTURE_STATUS: String(status),
+  return spawnSync(
+    "bash",
+    [
+      "-eo",
+      "pipefail",
+      "-c",
+      block.replaceAll("${{ matrix.args }}", "--bundles deb"),
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${join(cwd, "bin")}:${process.env.PATH}`,
+        GITHUB_WORKSPACE: cwd,
+        RUNNER_TEMP: cwd,
+        FIXTURE_STATUS: String(status),
+      },
     },
-  });
+  );
 }
 
 const steps = [
+  [".github/workflows/build-desktop.yml", "Build Tauri app"],
   [
     ".github/workflows/test-package-rust-transcription.yml",
     "Run transcription unit tests",
