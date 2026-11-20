@@ -1703,13 +1703,14 @@ Manage the local JWT used to unlock continuous/cloud runtime monitoring. Single-
 
 ```bash
 fallow license activate --trial --email you@company.com
-fallow license activate eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...
 fallow license activate --from-file ./license.jwt
-cat ./license.jwt | fallow license activate --stdin
+fallow license activate --stdin < ./license.jwt
 fallow license status
 fallow license refresh
 fallow license deactivate
 ```
+
+Do not pass a real JWT as a positional argument: it can appear in shell history and process listings. Use a protected token file or stdin.
 
 ### Subcommands
 
