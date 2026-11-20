@@ -207,8 +207,6 @@ mod tests {
         let (barrier_tx, barrier_rx) = mpsc::channel();
         dispatcher
             .sender
-            .as_ref()
-            .unwrap()
             .send(Box::new(move || barrier_tx.send(()).unwrap()))
             .unwrap();
         barrier_rx.recv_timeout(Duration::from_secs(1)).unwrap();
