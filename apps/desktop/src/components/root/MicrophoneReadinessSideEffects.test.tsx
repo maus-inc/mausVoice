@@ -1297,6 +1297,50 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.setMicrophoneLinger).toHaveBeenCalledWith(5_000);
   });
 
+  it("retries a transient linger restore failure after local-data clear closes the device", async () => {
+    setState({
+      userPrefs: {
+        keepMicrophoneReady: true,
+        microphonePrerollSeconds: 0.5,
+        microphoneLingerMs: 5_000,
+      },
+    });
+    await render();
+    mocks.setMicrophoneLinger.mockRejectedValueOnce(
+      new Error("IPC unavailable"),
+    );
+
+    await act(async () => {
+      mocks.state.__clearing = true;
+      for (const listener of mocks.clearListeners) listener();
+    });
+
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(1);
+    expect(mocks.setMicrophoneLinger.mock.calls).toEqual([[5_000], [5_000]]);
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a stale linger value when the preference is reset", async () => {
+    const userPrefs = {
+      keepMicrophoneReady: true,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 5_000,
+    };
+    setState({ userPrefs });
+    await render();
+    mocks.setMicrophoneLinger.mockImplementationOnce(() => {
+      mocks.state.userPrefs = { ...userPrefs, microphoneLingerMs: 0 };
+      return Promise.reject(new Error("IPC unavailable"));
+    });
+
+    await act(async () => {
+      mocks.state.__clearing = true;
+      for (const listener of mocks.clearListeners) listener();
+    });
+
+    expect(mocks.setMicrophoneLinger.mock.calls).toEqual([[5_000]]);
+  });
+
   it("does not restore the post-recording window on top of a hold that has already opened", async () => {
     // `release` restores the window from inside its `.then`, and the hold effect
     // can run *before* that continuation. Keeping ready on, a change to the

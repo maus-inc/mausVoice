@@ -293,14 +293,20 @@ export const MicrophoneReadinessSideEffects = () => {
     () =>
       queuePolicyChange(async () => {
         await commands.closeMicrophone();
-        const milliseconds = getAppState().userPrefs?.microphoneLingerMs ?? 0;
-        if (!heldRef.current && milliseconds > 0) {
+        // Retry a transient IPC failure once. Re-read after a rejection so a
+        // newer hold or a changed preference wins over the old finite policy.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const milliseconds = getAppState().userPrefs?.microphoneLingerMs ?? 0;
+          if (heldRef.current || milliseconds <= 0) return;
           try {
             await commands.setMicrophoneLinger(milliseconds);
+            return;
           } catch (error) {
-            getLogger().warning(
-              `Could not restore the linger window: ${error}`,
-            );
+            if (attempt === 1) {
+              getLogger().warning(
+                `Could not restore the linger window: ${error}`,
+              );
+            }
           }
         }
       }),
