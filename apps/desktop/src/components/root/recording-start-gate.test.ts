@@ -16,6 +16,7 @@ import { resetNativeRecordingSession } from "../../utils/native-recording-sessio
 import {
   admittedStartOptions,
   attemptStillOwns,
+  attemptSurvivedNoClear,
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
@@ -201,6 +202,18 @@ it("rejects an attempt that a newer start or stop has superseded", () => {
 it("rejects an attempt whose component unmounted while it opened", () => {
   const generation = getLocalDataClearGeneration();
   expect(attemptStillOwns(ownershipOf(false, 3), 3, generation)).toBe(false);
+});
+
+it("keeps the failure path out of a cleared session", async () => {
+  const admittedGeneration = getLocalDataClearGeneration();
+  expect(attemptSurvivedNoClear(admittedGeneration)).toBe(true);
+  const release = await beginLocalDataClear();
+  localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+  release();
+  // The failure path logs only while the attempt's own session still stands, so
+  // a clear that began after admission silences it even once the clear ends.
+  expect(attemptSurvivedNoClear(admittedGeneration)).toBe(false);
+  expect(attemptSurvivedNoClear(getLocalDataClearGeneration())).toBe(true);
 });
 
 it("rejects an attempt admitted before a local-data clear began", async () => {

@@ -80,6 +80,7 @@ import {
 } from "./dictation-recording-intake";
 import { createSystemVolumeDim } from "./dictation-volume-dim";
 import {
+  attemptSurvivedNoClear,
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
@@ -2228,8 +2229,7 @@ export const DictationSideEffects = () => {
         let chunkAdmission: { ownerId: string; generation: number } | null =
           null;
         const isCurrentStart = () =>
-          !isLocalDataClearRequested() &&
-          clearGeneration === getLocalDataClearGeneration() &&
+          attemptSurvivedNoClear(clearGeneration) &&
           isRecordingStartCurrent(
             operationId,
             recordingOperationRef.current,

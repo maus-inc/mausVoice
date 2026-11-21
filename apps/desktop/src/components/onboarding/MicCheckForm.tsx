@@ -17,6 +17,7 @@ import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import {
   admittedStartOptions,
   attemptStillOwns,
+  attemptSurvivedNoClear,
   invokeGuardedRecordingStart,
   subscribeRecordingAbortForClear,
 } from "../root/recording-start-gate";
@@ -116,10 +117,7 @@ export const MicCheckForm = () => {
       }
       setSyncedRecordingState("recording");
     } catch (error) {
-      if (
-        !isLocalDataClearRequested() &&
-        clearGeneration === getLocalDataClearGeneration()
-      ) {
+      if (attemptSurvivedNoClear(clearGeneration)) {
         console.error("Failed to start recording", error);
       }
       if (opId === opIdRef.current) {

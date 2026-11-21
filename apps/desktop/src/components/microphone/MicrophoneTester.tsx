@@ -13,6 +13,8 @@ import { type NativeRecordingHandle } from "../../utils/native-recording-session
 import { AudioWaveform } from "../common/AudioWaveform";
 import {
   admittedStartOptions,
+  attemptStillOwns,
+  attemptSurvivedNoClear,
   invokeGuardedRecordingStart,
   subscribeRecordingAbortForClear,
 } from "../root/recording-start-gate";
@@ -218,10 +220,14 @@ export const MicrophoneTester = ({
    * once here rather than restated at each branch. */
   const attemptIsCurrent = useCallback(
     (opId: number, clearGeneration: number) =>
-      mountedRef.current &&
-      opId === opIdRef.current &&
-      !isLocalDataClearRequested() &&
-      clearGeneration === getLocalDataClearGeneration(),
+      attemptStillOwns(
+        {
+          isMounted: () => mountedRef.current,
+          currentOpId: () => opIdRef.current,
+        },
+        opId,
+        clearGeneration,
+      ),
     [],
   );
 
@@ -267,10 +273,7 @@ export const MicrophoneTester = ({
       }
       setSyncedTestState("recording");
     } catch (error) {
-      if (
-        !isLocalDataClearRequested() &&
-        clearGeneration === getLocalDataClearGeneration()
-      ) {
+      if (attemptSurvivedNoClear(clearGeneration)) {
         console.error("Failed to start microphone test", error);
         if (attemptIsCurrent(opId, clearGeneration)) {
           setTestError("Unable to start microphone test. Please try again.");

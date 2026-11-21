@@ -93,5 +93,15 @@ export const attemptStillOwns = (
 ): boolean =>
   ownership.isMounted() &&
   opId === ownership.currentOpId() &&
+  attemptSurvivedNoClear(clearGeneration);
+
+/**
+ * Whether no local-data clear began after an attempt was admitted.
+ *
+ * A start or stop admitted before a clear must not log, publish or retry into
+ * the cleared session, so the same two facts answer both the publish path and
+ * the failure path. Both microphone surfaces need it, so it is written once.
+ */
+export const attemptSurvivedNoClear = (clearGeneration: number): boolean =>
   !isLocalDataClearRequested() &&
   clearGeneration === getLocalDataClearGeneration();
