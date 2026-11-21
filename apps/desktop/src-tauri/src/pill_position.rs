@@ -222,6 +222,27 @@ fn mark_position_erased() -> u64 {
     id
 }
 
+/// The order clears reach the pill in.
+///
+/// Declaring and delivering are two steps, and a clear that took the write gate
+/// second can reach the pill first. The pill applies clears in arrival order, so
+/// that inversion is what makes an acknowledged id an unreliable statement about
+/// the ids below it: the lower clear can still be in the desktop when the higher
+/// one is answered. Holding this for the whole declare-and-deliver pair makes
+/// arrival order match declaration order, which is the premise that makes an
+/// answered id a statement about every id below it.
+///
+/// A `std::sync::Mutex` would deadlock the main thread that awaits
+/// `clear_saved_position`, so this is the async one.
+static CLEAR_DELIVERY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Hold the delivery order for one clear. The guard is released when the caller
+/// has either handed the message to the pill or withdrawn the declaration, so a
+/// failed clear cannot wedge every later one.
+pub(crate) async fn lock_clear_delivery() -> tokio::sync::MutexGuard<'static, ()> {
+    CLEAR_DELIVERY.lock().await
+}
+
 /// Withdraw a declaration whose clear failed, and only that one.
 ///
 /// Without this the declaration outlives the clear that never happened. The reset
@@ -245,6 +266,22 @@ pub(crate) fn withdraw_erase(generation: u64) {
     }
 }
 
+/// Withdraw every declaration, for the case where no report can ever arrive.
+///
+/// A `send` that succeeds proves the bytes reached the pipe, not that the pill
+/// applied them: the process can exit before it reads the frame, and a
+/// replacement pill in the same desktop process sends reports that answer no
+/// earlier declaration. Every outstanding declaration is therefore unspendable
+/// once that reader stops, and each one left behind closes the latch for the rest
+/// of the process and drops every later drag. Called from the reader loop, which
+/// is the one place that observes the pill going away on every platform whose
+/// pill is a child process.
+pub(crate) fn withdraw_all_erases() {
+    let mut state = erase_state();
+    state.outstanding.clear();
+    ERASE_DECLARED.store(false, Ordering::Release);
+}
+
 /// Account for a report the pill published, returning whether it describes a
 /// record that should be stored.
 ///
@@ -265,6 +302,11 @@ pub(crate) fn withdraw_erase(generation: u64) {
 pub(crate) fn note_report(has_saved_position: bool, ack: Option<u64>) -> bool {
     if let Some(ack) = ack {
         let mut state = erase_state();
+        // An id at or below this answer is applied, because delivery is ordered by
+        // [`lock_clear_delivery`] and the pill applies clears in arrival order.
+        // That ordering is the whole proof: without it, a clear declared second
+        // can reach the pill first, and its answer would retire a declaration
+        // whose clear the pill has not seen.
         state.outstanding.retain(|id| *id > ack);
         if state.outstanding.is_empty() {
             ERASE_DECLARED.store(false, Ordering::Release);
@@ -382,7 +424,11 @@ pub fn saved_position_argument(app: &tauri::AppHandle) -> Option<String> {
 /// Returns the declaration id when the pill was told, so its answer can retire
 /// exactly this declaration; `None` when there is no running pill to answer, and
 /// the declaration is withdrawn here rather than left to close the latch forever.
-pub fn forget_running_pill_position(app: &tauri::AppHandle) -> Option<u64> {
+pub async fn forget_running_pill_position(app: &tauri::AppHandle) -> Option<u64> {
+    // The same ordering the reset paths hold: this declares and delivers too, and
+    // a forget that overtook an earlier reset would make the reset's acknowledged
+    // id a claim about a clear the pill has not seen.
+    let _delivery = lock_clear_delivery().await;
     let declaration = mark_position_erased();
     match crate::platform::overlay::notify_forget_position(app, Some(declaration)) {
         Ok(()) => Some(declaration),
@@ -575,6 +621,57 @@ mod tests {
         assert!(!note_report(false, Some(clear)));
         assert!(!erase_is_undeclared());
         assert!(note_report(true, None), "the next drop stores");
+    }
+
+    /// The inversion a reviewer found, and the guarantee that closes it.
+    ///
+    /// Reset A declares id 1 and pauses before the write gate. Reset B declares
+    /// id 2 and reaches the pill first. B's answer names 2, and A's clear has not
+    /// reached the pill at all, so retiring every id at or below 2 would open the
+    /// latch to a save the pill published before A's clear. Ordering the delivery
+    /// is what prevents that inversion, so the property asserted here is the lock
+    /// itself: a second clear cannot deliver until the first has.
+    #[tokio::test]
+    async fn clear_delivery_is_serialised_in_declaration_order() {
+        let first = lock_clear_delivery().await;
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = order.clone();
+        let second = tokio::spawn(async move {
+            let _held = lock_clear_delivery().await;
+            recorded.lock().unwrap().push(2u8);
+        });
+        order.lock().unwrap().push(1);
+        // The second clear cannot reach the pill while the first holds the lock.
+        tokio::task::yield_now().await;
+        assert_eq!(
+            *order.lock().unwrap(),
+            vec![1u8],
+            "the second clear delivered before the first, so its answer can \
+             retire a declaration the pill has not applied"
+        );
+        drop(first);
+        second.await.unwrap();
+        assert_eq!(*order.lock().unwrap(), vec![1u8, 2u8]);
+    }
+
+    /// A report from a replacement pill answers no declaration the old one was
+    /// handed, so a retired id must not open the latch for a new declaration.
+    #[test]
+    fn a_report_after_the_reader_stopped_does_not_spend_a_new_declaration() {
+        let _turn = latch();
+        let old = mark_position_erased();
+        withdraw_all_erases();
+        assert!(!erase_is_undeclared());
+        let fresh = mark_position_erased();
+        assert!(fresh > old, "ids only move forward");
+        // A report carrying the retired id answers nothing that is outstanding.
+        assert!(!note_report(false, Some(old)));
+        assert!(
+            erase_is_undeclared(),
+            "a retired id opened the latch for a declaration it never answered"
+        );
+        assert!(!note_report(false, Some(fresh)));
+        assert!(!erase_is_undeclared());
     }
 
     /// An ordinary reset -- one that was not asked for by a clear -- reports no

@@ -410,14 +410,26 @@ pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Re
     // A reset that reports success while the row survives is the failure this
     // guards: the window moves, the user sees it move, and the next launch
     // undoes it. Failing leaves the pill where it is, which is recoverable.
+
+    // Held across the clear and the send, so arrival order at the pill matches
+    // declaration order. Released on every path, including the failures.
+    let _delivery = crate::pill_position::lock_clear_delivery().await;
     let Some(declaration) = crate::pill_position::clear_saved_position(app).await else {
         return Err("Could not clear the pill's stored position, so it was not reset".to_string());
     };
     match app.try_state::<std::sync::Arc<PillProcess>>() {
         Some(pill) => {
-            let msg = format!(
-                r#"{{"type":"reset_position","strategy":"{strategy}","ack":{declaration}}}"#
-            );
+            // Serialised rather than interpolated: the strategy reaches this
+            // function as a string, and the pill deserialises it into an enum
+            // that accepts only `current` and `cursor`. Building the record by
+            // hand meant any other value produced a message the pill rejected
+            // after the row was already gone.
+            let msg = serde_json::json!({
+                "type": "reset_position",
+                "strategy": strategy,
+                "ack": declaration,
+            })
+            .to_string();
             pill.send(&msg).map_err(|err| {
                 // The pill will never answer this declaration, so it has to go
                 // back now. Left outstanding it closes the latch for the rest of
@@ -534,6 +546,9 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                 }
             }
         }
+        // The pill is gone, so no report can answer a declaration still waiting
+        // on it. `send` returning Ok only proved the frame reached the pipe.
+        crate::pill_position::withdraw_all_erases();
         log::info!("Pill overlay process stdout closed");
     });
 }

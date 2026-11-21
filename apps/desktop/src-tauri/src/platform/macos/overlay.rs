@@ -225,6 +225,7 @@ pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Re
     // forget it before it tells the pill to re-home. A clear that failed would
     // leave that record to undo the reset on the next launch, so it is reported
     // rather than swallowed.
+    let _delivery = crate::pill_position::lock_clear_delivery().await;
     let Some(declaration) = crate::pill_position::clear_saved_position(app).await else {
         return Err("Could not clear the pill's stored position, so it was not reset".to_string());
     };

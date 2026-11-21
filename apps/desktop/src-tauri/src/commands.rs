@@ -3489,7 +3489,7 @@ pub async fn clear_local_data(
     // The pill still holds the pre-clear position in memory. Tell it to forget
     // before writes reopen, so the window reload that follows cannot publish the
     // cleared position back into the table.
-    crate::pill_position::forget_running_pill_position(&app);
+    crate::pill_position::forget_running_pill_position(&app).await;
 
     native_clear_guard.mark_ready_for_frontend_completion();
     Ok(())
@@ -5262,7 +5262,15 @@ pub fn request_pill_position(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn reset_pill_position(app: AppHandle, strategy: Option<String>) -> Result<(), String> {
+    // Validate before the clear, not after. The clear deletes the stored row and
+    // returns a declaration, and only then is the message sent. A strategy the
+    // pill cannot deserialize makes that send fail on GTK, which leaves the user
+    // with a deleted record and a pill that never moved, and the failure is
+    // reported as a delivery error rather than as the bad argument it was.
     let strategy = strategy.unwrap_or_else(|| "current".to_string());
+    if strategy != "current" && strategy != "cursor" {
+        return Err(format!("unknown pill reset strategy: {strategy}"));
+    }
     crate::platform::overlay::notify_reset_position(&app, &strategy).await
 }
 
