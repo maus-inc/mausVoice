@@ -664,9 +664,17 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Debug)]
+enum MainFrameProbe {
+    Reachable,
+    Missing,
+    Indeterminate(gtk::glib::Error),
+}
+
+#[cfg(target_os = "linux")]
 fn probe_linux_recording_document(
     view: &webkit2gtk::WebView,
-    complete: impl FnOnce(bool) + 'static,
+    complete: impl FnOnce(MainFrameProbe) + 'static,
 ) {
     use webkit2gtk::WebViewExt;
 
@@ -680,9 +688,13 @@ fn probe_linux_recording_document(
         "maus-recording-lifecycle",
         None::<&gtk::gio::Cancellable>,
         move |reply| {
-            complete(
-                reply.is_err_and(|err| err.matches(webkit2gtk::JavascriptError::InvalidResult)),
-            );
+            complete(match reply {
+                Ok(_) => MainFrameProbe::Reachable,
+                Err(error) if error.matches(webkit2gtk::JavascriptError::InvalidResult) => {
+                    MainFrameProbe::Missing
+                }
+                Err(error) => MainFrameProbe::Indeterminate(error),
+            });
         },
     );
 }
@@ -700,10 +712,12 @@ fn recording_lifecycle_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
                         if let Some(cleanup) =
                             crate::commands::prepare_recording_crash_cleanup(&window)
                         {
-                            probe_linux_recording_document(view, move |main_frame_missing| {
-                                if main_frame_missing {
-                                    cleanup();
+                            probe_linux_recording_document(view, move |probe| match probe {
+                                MainFrameProbe::Missing => cleanup(),
+                                MainFrameProbe::Indeterminate(error) => {
+                                    log::debug!("Recording crash probe was inconclusive: {error}");
                                 }
+                                MainFrameProbe::Reachable => {}
                             });
                         }
                     });
@@ -716,9 +730,13 @@ fn recording_lifecycle_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 
 #[cfg(all(test, target_os = "linux"))]
 mod recording_lifecycle_tests {
-    use super::probe_linux_recording_document;
-    use gtk::glib;
-    use std::{cell::Cell, rc::Rc, time::Duration};
+    use super::{probe_linux_recording_document, MainFrameProbe};
+    use gtk::{glib, prelude::*};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+        time::Duration,
+    };
     use webkit2gtk::{LoadEvent, WebView, WebViewExt};
 
     #[test]
@@ -726,9 +744,12 @@ mod recording_lifecycle_tests {
     fn webkit_main_frame_probe_distinguishes_live_page_and_process_exit() {
         gtk::init().unwrap();
         let view = WebView::new();
+        let window = gtk::Window::new(gtk::WindowType::Toplevel);
+        window.add(&view);
+        window.show_all();
         let event_loop = glib::MainLoop::new(None, false);
-        let living = Rc::new(Cell::new(None));
-        let exited = Rc::new(Cell::new(None));
+        let living = Rc::new(RefCell::new(None));
+        let exited = Rc::new(RefCell::new(None));
 
         let on_load = view.connect_load_changed({
             let living = Rc::clone(&living);
@@ -739,7 +760,7 @@ mod recording_lifecycle_tests {
                 let living = Rc::clone(&living);
                 let active_view = view.clone();
                 probe_linux_recording_document(view, move |missing| {
-                    living.set(Some(missing));
+                    living.replace(Some(missing));
                     active_view.terminate_web_process();
                 });
             }
@@ -751,7 +772,7 @@ mod recording_lifecycle_tests {
                 let exited = Rc::clone(&exited);
                 let event_loop = event_loop.clone();
                 probe_linux_recording_document(view, move |missing| {
-                    exited.set(Some(missing));
+                    exited.replace(Some(missing));
                     event_loop.quit();
                 });
             }
@@ -770,12 +791,23 @@ mod recording_lifecycle_tests {
         if !timed_out.get() {
             timeout.remove();
         }
-        use gtk::prelude::ObjectExt;
         view.disconnect(on_load);
         view.disconnect(on_exit);
-        assert!(!timed_out.get(), "no WebKit termination probe reply");
-        assert_eq!(living.get(), Some(false));
-        assert_eq!(exited.get(), Some(true));
+        assert!(
+            !timed_out.get(),
+            "no WebKit termination probe reply; live probe was {:?}",
+            living.borrow()
+        );
+        let living = living.take();
+        let exited = exited.take();
+        assert!(
+            matches!(living, Some(MainFrameProbe::Reachable)),
+            "live main frame: {living:?}"
+        );
+        assert!(
+            matches!(exited, Some(MainFrameProbe::Missing)),
+            "terminated main frame: {exited:?}"
+        );
     }
 }
 

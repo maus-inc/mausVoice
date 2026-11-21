@@ -254,8 +254,9 @@ jobs:
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
         run: >-
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" webkit-recording
           xvfb-run -a cargo test --locked --lib
-          webkit_main_frame_probe_distinguishes_live_page_and_process_exit -- --ignored
+          webkit_main_frame_probe_distinguishes_live_page_and_process_exit -- --ignored --nocapture
       - name: Run ALSA fault-injection tests
         # The `#[ignore]`d half of the recorder suite. It needs a null ALSA PCM
         # and an `LD_PRELOAD` shim per test, which `cargo test --lib` gives it
