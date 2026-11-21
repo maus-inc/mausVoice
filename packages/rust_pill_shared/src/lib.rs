@@ -1318,6 +1318,260 @@ pub trait RingSink {
     fn set_arm_pulse(&self, value: f64);
 }
 
+/// Total hold time before the drag gesture arms. Tuned to the 350-600ms band so
+/// the gesture feels deliberate without making the user wait.
+pub const LONG_PRESS_DURATION: f64 = 0.45;
+
+/// Grace period before any long-press affordance is drawn. A normal click is
+/// far shorter than this, so quick taps never flash the progress outline.
+pub const LONG_PRESS_HOLD_DELAY: f64 = 0.12;
+
+/// The pointer and long-press flags the ring driver reads, passed in by each
+/// crate so the shared driver never reaches into platform state.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RingGesture {
+    pub pointer_down: bool,
+    pub long_press_active: bool,
+    pub long_press_elapsed: f64,
+    pub dragging: bool,
+}
+
+/// What a [`RingState::tick`] frame did that the platform may need to act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingFrame {
+    /// The ring finished fading or its pulse just ended. A platform that only
+    /// repaints on demand must invalidate once more, or the last painted frame
+    /// lingers as a ghost.
+    pub cleared: bool,
+}
+
+/// The long-press ring and the locate replay, as one shared record.
+///
+/// Each pill crate used to hold these eight `Cell`s itself and drive them from
+/// its own copy of the tick, so the field list, the cancel rule and the locate
+/// lifecycle existed three times. Owning them here means a new ring field or a
+/// change to the replay reaches every platform at once.
+#[derive(Debug, Clone)]
+pub struct RingState {
+    alpha: Cell<f64>,
+    release_progress: Cell<f64>,
+    press_elapsed: Cell<f64>,
+    release_elapsed: Cell<f64>,
+    arm_t: Cell<f64>,
+    arm_pulse: Cell<f64>,
+    locate_active: Cell<bool>,
+    locate_elapsed: Cell<f64>,
+}
+
+impl Default for RingState {
+    fn default() -> Self {
+        let seed = RingAnim::default();
+        Self {
+            alpha: Cell::new(seed.alpha),
+            release_progress: Cell::new(seed.release_progress),
+            press_elapsed: Cell::new(seed.press_elapsed),
+            release_elapsed: Cell::new(seed.release_elapsed),
+            arm_t: Cell::new(seed.arm_t),
+            arm_pulse: Cell::new(seed.arm_pulse),
+            locate_active: Cell::new(false),
+            locate_elapsed: Cell::new(0.0),
+        }
+    }
+}
+
+impl RingState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn alpha(&self) -> f64 {
+        self.alpha.get()
+    }
+
+    pub fn release_progress(&self) -> f64 {
+        self.release_progress.get()
+    }
+
+    pub fn release_elapsed(&self) -> f64 {
+        self.release_elapsed.get()
+    }
+
+    pub fn arm_t(&self) -> f64 {
+        self.arm_t.get()
+    }
+
+    pub fn arm_pulse(&self) -> f64 {
+        self.arm_pulse.get()
+    }
+
+    /// True while a locate replay is in flight, so the pill stays on screen.
+    pub fn locate_active(&self) -> bool {
+        self.locate_active.get()
+    }
+
+    /// Starts the arm-confirmation pulse from outside the tick.
+    pub fn arm(&self) {
+        self.arm_pulse.set(pulse_armed());
+    }
+
+    /// Drops every ring field back to its idle frame without touching the
+    /// locate timer.
+    fn reset_ring(&self) {
+        RingAnim::default().apply_to(self);
+    }
+
+    /// Begins a locate replay from a clean ring. A second trigger restarts the
+    /// sweep instead of inheriting the previous fade, and a live pointer
+    /// gesture wins so the replay never wipes an in-progress press.
+    pub fn start_locate(&self, gesture: RingGesture) {
+        if locate_yields_to_pointer(
+            gesture.pointer_down,
+            gesture.long_press_active,
+            gesture.dragging,
+        ) {
+            return;
+        }
+        self.locate_active.set(true);
+        self.locate_elapsed.set(0.0);
+        self.reset_ring();
+    }
+
+    /// Advances the locate replay and the ring by one frame.
+    pub fn tick(&self, gesture: RingGesture, delta_seconds: f64) -> RingFrame {
+        let previous_alpha = self.alpha.get();
+        let was_pulsing = pulse_is_running(self.arm_pulse.get());
+
+        let cancelled = locate_yields_to_pointer(
+            gesture.pointer_down,
+            gesture.long_press_active,
+            gesture.dragging,
+        );
+        let step = advance_locate(
+            self.locate_active.get(),
+            self.locate_elapsed.get(),
+            delta_seconds,
+            cancelled,
+        );
+        if step.arm_pulse {
+            self.arm_pulse.set(pulse_armed());
+        }
+        self.locate_active.set(step.active);
+        self.locate_elapsed.set(step.elapsed);
+        if cancelled {
+            self.reset_ring();
+        }
+
+        let locating = step.active;
+        let held = (locating && locate_held(step.elapsed))
+            || gesture.dragging
+            || (gesture.long_press_active && gesture.long_press_elapsed > LONG_PRESS_HOLD_DELAY);
+
+        let mut anim = RingAnim {
+            alpha: self.alpha.get(),
+            release_progress: self.release_progress.get(),
+            press_elapsed: self.press_elapsed.get(),
+            release_elapsed: self.release_elapsed.get(),
+            arm_t: self.arm_t.get(),
+            arm_pulse: self.arm_pulse.get(),
+        };
+
+        advance_ring(
+            &mut anim,
+            RingTick {
+                held,
+                dragging: gesture.dragging,
+                progress: if locating {
+                    locate_progress(step.elapsed)
+                } else {
+                    hold_progress(
+                        gesture.long_press_elapsed,
+                        LONG_PRESS_HOLD_DELAY,
+                        LONG_PRESS_DURATION,
+                    )
+                },
+                delta_seconds,
+            },
+            if locating { 0.0 } else { LONG_PRESS_HOLD_DELAY },
+        );
+
+        anim.apply_to(self);
+
+        RingFrame {
+            cleared: (previous_alpha > 0.0 && anim.alpha == 0.0)
+                || (was_pulsing && !pulse_is_running(anim.arm_pulse)),
+        }
+    }
+}
+
+impl RingSink for RingState {
+    fn set_alpha(&self, value: f64) {
+        self.alpha.set(value);
+    }
+    fn set_release_progress(&self, value: f64) {
+        self.release_progress.set(value);
+    }
+    fn set_press_elapsed(&self, value: f64) {
+        self.press_elapsed.set(value);
+    }
+    fn set_release_elapsed(&self, value: f64) {
+        self.release_elapsed.set(value);
+    }
+    fn set_arm_t(&self, value: f64) {
+        self.arm_t.set(value);
+    }
+    fn set_arm_pulse(&self, value: f64) {
+        self.arm_pulse.set(value);
+    }
+}
+
+/// A pill state that owns a [`RingState`] and can describe the pointer gesture
+/// around it.
+///
+/// Each crate's state has the ring in a different shape (extra `Cell`s, a
+/// `dirty` flag, a `RefCell`-wrapped controller), so the tick cannot be a free
+/// function over one struct. The trait carries the two-line bodies that would
+/// otherwise be copied into every crate, and each platform supplies only the
+/// accessors it already has.
+pub trait RingHost {
+    fn ring(&self) -> &RingState;
+    fn ring_gesture(&self) -> RingGesture;
+
+    /// Advances the ring and the locate replay for one frame.
+    fn tick_ring(&self, delta_seconds: f64) -> RingFrame {
+        self.ring().tick(self.ring_gesture(), delta_seconds)
+    }
+
+    /// Begins a locate replay from a clean ring.
+    fn begin_locate(&self) {
+        self.ring().start_locate(self.ring_gesture());
+    }
+}
+
+/// Implements [`RingHost`] for a pill state whose gesture fields carry the
+/// same names in every crate.
+///
+/// The three `PillState` structs are platform-specific, but the four fields the
+/// ring needs are not, so the impl is generated instead of copied.
+#[macro_export]
+macro_rules! impl_ring_host {
+    ($ty:ty) => {
+        impl $crate::RingHost for $ty {
+            fn ring(&self) -> &$crate::RingState {
+                &self.ring
+            }
+
+            fn ring_gesture(&self) -> $crate::RingGesture {
+                $crate::RingGesture {
+                    pointer_down: self.pointer_down.get(),
+                    long_press_active: self.long_press_active.get(),
+                    long_press_elapsed: self.long_press_elapsed.get(),
+                    dragging: self.dragging.get(),
+                }
+            }
+        }
+    };
+}
+
 impl Default for RingAnim {
     fn default() -> Self {
         Self {
@@ -3590,5 +3844,98 @@ mod tests {
             let restores = body.matches(".restore()").count();
             assert_eq!(saves, restores);
         }
+    }
+
+    fn idle_gesture() -> RingGesture {
+        RingGesture::default()
+    }
+
+    #[test]
+    fn a_locate_replay_runs_to_completion_and_arms_the_pulse() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        assert!(ring.locate_active());
+
+        let mut frames = 0;
+        let mut cleared = false;
+        // The ring finishes fading a frame or two after the replay stops being
+        // active, so keep ticking until the clearing frame is reported.
+        while !cleared && frames < 600 {
+            cleared = ring.tick(idle_gesture(), 1.0 / 60.0).cleared;
+            frames += 1;
+        }
+
+        assert!(!ring.locate_active(), "replay should end on its own");
+        assert!(frames > 1, "replay should span more than one frame");
+        assert!(cleared, "the frame that clears the ring must be reported");
+        assert_eq!(ring.alpha(), 0.0);
+        assert!(!pulse_is_running(ring.arm_pulse()));
+    }
+
+    #[test]
+    fn a_pointer_gesture_takes_the_ring_from_a_running_replay() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        ring.tick(idle_gesture(), 1.0 / 60.0);
+        assert!(ring.locate_active());
+
+        let pointer = RingGesture {
+            pointer_down: true,
+            ..RingGesture::default()
+        };
+        ring.tick(pointer, 1.0 / 60.0);
+
+        assert!(!ring.locate_active(), "a live pointer cancels the replay");
+        assert_eq!(ring.alpha(), 0.0, "and the ring restarts from clean");
+    }
+
+    #[test]
+    fn a_replay_never_starts_over_an_active_pointer_gesture() {
+        let ring = RingState::new();
+        ring.start_locate(RingGesture {
+            long_press_active: true,
+            ..RingGesture::default()
+        });
+        assert!(!ring.locate_active());
+    }
+
+    #[test]
+    fn a_second_locate_restarts_the_sweep_instead_of_inheriting_the_fade() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        for _ in 0..40 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        assert!(ring.alpha() > 0.0, "mid-replay the ring is visible");
+
+        ring.start_locate(idle_gesture());
+        assert_eq!(ring.alpha(), 0.0, "a fresh trigger clears the old fade");
+        assert!(ring.locate_active());
+    }
+
+    #[test]
+    fn a_held_long_press_lifts_the_ring_and_release_fades_it_out() {
+        let ring = RingState::new();
+        let held = RingGesture {
+            pointer_down: true,
+            long_press_active: true,
+            long_press_elapsed: LONG_PRESS_HOLD_DELAY + 0.2,
+            ..RingGesture::default()
+        };
+        for _ in 0..30 {
+            ring.tick(held, 1.0 / 60.0);
+        }
+        assert!(ring.alpha() > 0.0, "a held press shows the ring");
+
+        let released = RingGesture::default();
+        let mut cleared = false;
+        for _ in 0..600 {
+            if ring.tick(released, 1.0 / 60.0).cleared {
+                cleared = true;
+                break;
+            }
+        }
+        assert!(cleared, "release must fade the ring back out");
+        assert_eq!(ring.alpha(), 0.0);
     }
 }

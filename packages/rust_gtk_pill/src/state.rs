@@ -239,10 +239,6 @@ pub(crate) struct PillState {
     pub(crate) long_press_elapsed: Cell<f64>,
     pub(crate) long_press_start_x: Cell<f64>,
     pub(crate) long_press_start_y: Cell<f64>,
-    // Locate indication replay. Drives the shared ring driver from a timer,
-    // never from pointer, hover or drag state.
-    pub(crate) locate_active: Cell<bool>,
-    pub(crate) locate_elapsed: Cell<f64>,
     pub(crate) dragging: Cell<bool>,
     pub(crate) drag_cancelled: Cell<bool>,
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
@@ -250,27 +246,9 @@ pub(crate) struct PillState {
     pub(crate) inflate_velocity: Cell<f64>,
     pub(crate) drag_label_t: Cell<f64>,
     pub(crate) drag_label_velocity: Cell<f64>,
-    // Master alpha for the long-press outline. Pinned at 1 while the gesture is
-    // held, eased to 0 over LONG_PRESS_RING_FADE after release, so the outline
-    // never fades under an active press.
-    pub(crate) ring_alpha: Cell<f64>,
-
-    // Ring fill level captured at release; the post-release fade animates from
-    // this level rather than snapping to a complete outline.
-    pub(crate) ring_release_progress: Cell<f64>,
-
-    // Time since the current press began / since the last release, driving the
-    // ring's eased fade-in and fade-out.
-    pub(crate) press_elapsed: Cell<f64>,
-    pub(crate) release_elapsed: Cell<f64>,
-
-    // 0..1 arm state, ramped after the long press completes. Lifts the ring's
-    // brightness and retires the comet head.
-    pub(crate) arm_t: Cell<f64>,
-
-    // Seconds since the gesture armed, or -1 when no pulse is running. Drives
-    // the expanding confirmation halo.
-    pub(crate) arm_pulse: Cell<f64>,
+    // The long-press outline and the locate replay. Owned by the shared crate so
+    // the field list and the tick exist once for all three platforms.
+    pub(crate) ring: rust_pill_shared::RingState,
 
     // True from press until release, regardless of whether the long press or
     // drag survived. The move threshold cancels `long_press_active` before
@@ -432,26 +410,7 @@ fn content_origin(aw: f64, ah: f64, dw: f64, dh: f64, below_slot: f64) -> (f64, 
     }
 }
 
-impl rust_pill_shared::RingSink for PillState {
-    fn set_alpha(&self, value: f64) {
-        self.ring_alpha.set(value);
-    }
-    fn set_release_progress(&self, value: f64) {
-        self.ring_release_progress.set(value);
-    }
-    fn set_press_elapsed(&self, value: f64) {
-        self.press_elapsed.set(value);
-    }
-    fn set_release_elapsed(&self, value: f64) {
-        self.release_elapsed.set(value);
-    }
-    fn set_arm_t(&self, value: f64) {
-        self.arm_t.set(value);
-    }
-    fn set_arm_pulse(&self, value: f64) {
-        self.arm_pulse.set(value);
-    }
-}
+rust_pill_shared::impl_ring_host!(PillState);
 
 #[cfg(test)]
 mod tests {

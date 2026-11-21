@@ -669,7 +669,7 @@ fn perform_tick() {
                     ctx.state.flash_blue_elapsed.set(0.0);
                 }
                 InMessage::Locate => {
-                    start_locate(&ctx.state);
+                    rust_pill_shared::RingHost::begin_locate(&*ctx.state);
                 }
                 InMessage::BroadcastTranscript { text } => {
                     *ctx.state.transcript_text.borrow_mut() = text;
@@ -818,7 +818,7 @@ fn perform_tick() {
             ctx.state.visibility.get().into(),
             ctx.state.phase.get() != Phase::Idle,
             ctx.state.owns_panel(),
-            ctx.state.locate_active.get(),
+            ctx.state.ring.locate_active(),
         );
         unsafe {
             if should_show {
@@ -1344,8 +1344,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
         dt,
     );
 
-    tick_locate(state, dt);
-    tick_ring(state, dt);
+    rust_pill_shared::RingHost::tick_ring(state, dt);
 
     // Auto-scroll to bottom
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
@@ -1577,7 +1576,7 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         state.dragging.set(true);
         state.drag_cancelled.set(false);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
-        state.arm_pulse.set(rust_pill_shared::pulse_armed());
+        state.ring.arm();
 
         // Anchor the drag to the point the user grabbed so the pill tracks the
         // cursor 1:1 instead of jumping to centre itself under the pointer.
@@ -1599,90 +1598,6 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
                 .borrow_mut()
                 .push_sample(mouse.x, mouse.y, now);
         }
-    }
-}
-
-/// Advances the long-press ring for one frame.
-///
-/// All the policy lives in `rust_pill_shared::advance_ring` so the three
-/// platform renderers cannot drift apart; this only marshals `Cell` state in
-/// and out of the shared struct.
-fn tick_ring(state: &PillState, dt: f64) {
-    let locating = state.locate_active.get();
-    let locate_elapsed = state.locate_elapsed.get();
-    let held = (locating && rust_pill_shared::locate_held(locate_elapsed))
-        || state.dragging.get()
-        || (state.long_press_active.get()
-            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
-
-    let mut anim = rust_pill_shared::RingAnim {
-        alpha: state.ring_alpha.get(),
-        release_progress: state.ring_release_progress.get(),
-        press_elapsed: state.press_elapsed.get(),
-        release_elapsed: state.release_elapsed.get(),
-        arm_t: state.arm_t.get(),
-        arm_pulse: state.arm_pulse.get(),
-    };
-
-    rust_pill_shared::advance_ring(
-        &mut anim,
-        rust_pill_shared::RingTick {
-            held,
-            dragging: state.dragging.get(),
-            progress: if locating {
-                rust_pill_shared::locate_progress(locate_elapsed)
-            } else {
-                draw::long_press_progress(state.long_press_elapsed.get())
-            },
-            delta_seconds: dt,
-        },
-        if locating { 0.0 } else { LONG_PRESS_HOLD_DELAY },
-    );
-
-    anim.apply_to(state);
-}
-
-/// Begins a locate replay from a clean ring state. A second trigger restarts
-/// the sweep instead of inheriting the previous fade. A live pointer gesture
-/// wins, so the replay never wipes an in-progress press.
-fn start_locate(state: &PillState) {
-    if rust_pill_shared::locate_yields_to_pointer(
-        state.pointer_down.get(),
-        state.long_press_active.get(),
-        state.dragging.get(),
-    ) {
-        return;
-    }
-    state.locate_active.set(true);
-    state.locate_elapsed.set(0.0);
-    reset_locate_ring(state);
-}
-
-fn reset_locate_ring(state: &PillState) {
-    rust_pill_shared::RingAnim::default().apply_to(state);
-}
-
-/// Advances the locate replay and hands the ring back when it ends. A real
-/// pointer gesture wins and takes the ring over from a clean state.
-fn tick_locate(state: &PillState, dt: f64) {
-    let cancelled = rust_pill_shared::locate_yields_to_pointer(
-        state.pointer_down.get(),
-        state.long_press_active.get(),
-        state.dragging.get(),
-    );
-    let step = rust_pill_shared::advance_locate(
-        state.locate_active.get(),
-        state.locate_elapsed.get(),
-        dt,
-        cancelled,
-    );
-    if step.arm_pulse {
-        state.arm_pulse.set(rust_pill_shared::pulse_armed());
-    }
-    state.locate_active.set(step.active);
-    state.locate_elapsed.set(step.elapsed);
-    if cancelled {
-        reset_locate_ring(state);
     }
 }
 
@@ -2099,8 +2014,6 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
         long_press_start_y: Cell::new(0.0),
-        locate_active: Cell::new(false),
-        locate_elapsed: Cell::new(0.0),
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
         drag_motion: RefCell::new(DragController::new()),
@@ -2116,12 +2029,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         inflate_velocity: Cell::new(0.0),
         drag_label_t: Cell::new(0.0),
         drag_label_velocity: Cell::new(0.0),
-        ring_alpha: Cell::new(0.0),
-        ring_release_progress: Cell::new(0.0),
-        press_elapsed: Cell::new(0.0),
-        release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
-        arm_t: Cell::new(0.0),
-        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
+        ring: rust_pill_shared::RingState::new(),
         pointer_down: Cell::new(false),
         ring_points: RefCell::new(Vec::new()),
     });

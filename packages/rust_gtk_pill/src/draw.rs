@@ -236,7 +236,7 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
 /// Draws the long-press progress ring around the pill, kept at full
 /// completion while dragging so the outline reads as a drag affordance.
-/// Opacity is owned by `state.ring_alpha` (pinned while held, eased out after
+/// Opacity is owned by the ring state (pinned while held, eased out after
 /// release), never by the press-progress ramp.
 fn draw_long_press_ring(
     cr: &cairo::Context,
@@ -246,8 +246,8 @@ fn draw_long_press_ring(
     pill_h: f64,
     state: &PillState,
 ) {
-    let alpha = state.ring_alpha.get();
-    let pulsing = rust_pill_shared::pulse_is_running(state.arm_pulse.get());
+    let alpha = state.ring.alpha();
+    let pulsing = rust_pill_shared::pulse_is_running(state.ring.arm_pulse());
     if alpha <= 0.0 && !pulsing {
         return;
     }
@@ -260,7 +260,7 @@ fn draw_long_press_ring(
     } else if state.long_press_active.get() {
         long_press_progress(state.long_press_elapsed.get())
     } else {
-        state.ring_release_progress.get()
+        state.ring.release_progress()
     };
     let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
@@ -269,7 +269,7 @@ fn draw_long_press_ring(
     let drift = if state.dragging.get() || state.long_press_active.get() {
         0.0
     } else {
-        rust_pill_shared::ring_release_drift(state.release_elapsed.get())
+        rust_pill_shared::ring_release_drift(state.ring.release_elapsed())
     };
     let inset = 2.0 + drift;
     let ox = rx - inset;
@@ -284,7 +284,7 @@ fn draw_long_press_ring(
     let (distances, total_len) = path_distances(&path);
     let head_len = total_len * progress.clamp(0.0, 1.0);
     let wave_phase = state.wave_phase.get();
-    let arm_t = state.arm_t.get();
+    let arm_t = state.ring.arm_t();
 
     cr.save().ok();
     cr.set_line_cap(cairo::LineCap::Round);
@@ -408,7 +408,7 @@ fn draw_long_press_ring(
     // Confirmation layer: an expanding halo the moment the gesture arms, with a
     // trailing echo.
     if pulsing {
-        let t = rust_pill_shared::pulse_progress(state.arm_pulse.get());
+        let t = rust_pill_shared::pulse_progress(state.ring.arm_pulse());
         for delay in [0.0, rust_pill_shared::RING_PULSE_ECHO_DELAY] {
             let tt = ((t - delay) / (1.0 - delay)).clamp(0.0, 1.0);
             if tt <= 0.0 {
