@@ -435,6 +435,7 @@ impl PillState {
 
 rust_pill_shared::impl_ring_host!(
     PillState,
+    SPRING_STIFFNESS,
     /// The surface only repaints when something reports motion, so the frame
     /// that clears the ring has to be dirtied by hand or the last painted
     /// state lingers as a ghost.

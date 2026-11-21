@@ -331,4 +331,4 @@ impl PillState {
     }
 }
 
-rust_pill_shared::impl_ring_host!(PillState);
+rust_pill_shared::impl_ring_host!(PillState, SPRING_STIFFNESS);

@@ -20,6 +20,8 @@ pub mod text_fit;
 use std::cell::{Cell, RefCell};
 use std::f64::consts::FRAC_PI_2;
 
+use messages::Phase;
+
 /// Build the perimeter of an axis-aligned rounded rectangle as an ordered
 /// list of `(x, y)` points. The path traces clockwise starting from the
 /// left end of the top edge, goes through four quarter-circle corners,
@@ -1105,98 +1107,123 @@ pub fn paint_ring<P: RingPainter>(
     outline: (f64, f64, f64),
 ) {
     if plan.alpha > 0.0 {
-        let rgba = [outline.0, outline.1, outline.2, 0.085 * plan.alpha];
-        painter.begin_stroke(rgba, 1.0);
-        if let Some(first) = plan.path.first() {
-            painter.move_to(first.0, first.1);
-            for p in plan.path.iter().skip(1) {
-                painter.line_to(p.0, p.1);
-            }
-            painter.stroke();
-        }
+        paint_outline(painter, &plan.path, outline, 0.085 * plan.alpha, 1.0);
     }
 
     if plan.alpha > 0.0 && plan.head_len > 0.0 {
-        resample_perimeter(
-            &plan.path,
-            &plan.distances,
-            plan.total_len,
-            RING_SEGMENT_PX,
-            points,
-        );
-
-        if let Some(layers) = RingLayers::new(
-            points,
-            plan.head_len,
-            plan.total_len,
-            plan.progress,
-            plan.arm_t,
-            plan.alpha,
-        ) {
-            for (width, layer_alpha) in layers.shadow_passes() {
-                painter.begin_stroke([0.0, 0.0, 0.0, layer_alpha], width);
-                painter.move_to(points[0].0, points[0].1);
-                for p in &points[1..=layers.head_index] {
-                    painter.line_to(p.0, p.1);
-                }
-                painter.stroke();
-            }
-
-            for disc in layers.underlay_discs() {
-                painter.fill_circle(disc.cx, disc.cy, disc.radius, [0.0, 0.0, 0.0, disc.alpha]);
-            }
-
-            let lift = 1.0 + RING_ARM_LIFT * plan.arm_t;
-            let mut segments = Vec::with_capacity(points.len());
-            for w in points.windows(2) {
-                let (x1, y1, _) = w[0];
-                let (x2, y2, d) = w[1];
-                if d > plan.head_len {
-                    break;
-                }
-                let env = ring_envelope(d, plan.head_len, plan.progress, plan.total_len);
-                let glim = ring_glimmer(d, plan.total_len, plan.wave_phase, plan.progress);
-                let a = (env * glim * lift).clamp(0.0, 1.0) * plan.alpha;
-                if a < RING_SEGMENT_ALPHA_CUTOFF {
-                    continue;
-                }
-                segments.push(RingSegment {
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    rgba: [outline.0, outline.1, outline.2, a],
-                    width: RING_CORE_WIDTH + RING_WIDTH_SWELL * env * (1.0 - 0.35 * plan.arm_t),
-                });
-            }
-            painter.shaded_segments(&segments);
-
-            for disc in layers.head_discs() {
-                painter.fill_circle(
-                    disc.cx,
-                    disc.cy,
-                    disc.radius,
-                    [outline.0, outline.1, outline.2, disc.alpha],
-                );
-            }
-        }
+        paint_comet(painter, plan, points, outline);
     }
 
     if plan.pulsing > 0.0 {
         for delay in [0.0, RING_PULSE_ECHO_DELAY] {
-            let Some(halo) = plan.pulse_halo(delay) else {
-                continue;
-            };
-            painter.begin_stroke([outline.0, outline.1, outline.2, halo.alpha], halo.width);
-            if let Some(first) = halo.path.first() {
-                painter.move_to(first.0, first.1);
-                for p in halo.path.iter().skip(1) {
-                    painter.line_to(p.0, p.1);
-                }
-                painter.stroke();
+            if let Some(halo) = plan.pulse_halo(delay) {
+                paint_outline(painter, &halo.path, outline, halo.alpha, halo.width);
             }
         }
     }
+}
+
+/// Strokes a whole path once in `rgba` at `width`.
+fn paint_outline<P: RingPainter>(
+    painter: &mut P,
+    path: &[(f64, f64)],
+    outline: (f64, f64, f64),
+    alpha: f64,
+    width: f64,
+) {
+    let Some(first) = path.first() else {
+        return;
+    };
+    painter.begin_stroke([outline.0, outline.1, outline.2, alpha], width);
+    painter.move_to(first.0, first.1);
+    for p in &path[1..] {
+        painter.line_to(p.0, p.1);
+    }
+    painter.stroke();
+}
+
+/// Paints the travelling comet: shadow halos, dark underlay discs, the shaded
+/// core segments, and the silver head.
+fn paint_comet<P: RingPainter>(
+    painter: &mut P,
+    plan: &RingPaint,
+    points: &mut Vec<(f64, f64, f64)>,
+    outline: (f64, f64, f64),
+) {
+    resample_perimeter(
+        &plan.path,
+        &plan.distances,
+        plan.total_len,
+        RING_SEGMENT_PX,
+        points,
+    );
+    let Some(layers) = RingLayers::new(
+        points,
+        plan.head_len,
+        plan.total_len,
+        plan.progress,
+        plan.arm_t,
+        plan.alpha,
+    ) else {
+        return;
+    };
+
+    for (width, layer_alpha) in layers.shadow_passes() {
+        painter.begin_stroke([0.0, 0.0, 0.0, layer_alpha], width);
+        painter.move_to(points[0].0, points[0].1);
+        for p in &points[1..=layers.head_index] {
+            painter.line_to(p.0, p.1);
+        }
+        painter.stroke();
+    }
+
+    for disc in layers.underlay_discs() {
+        painter.fill_circle(disc.cx, disc.cy, disc.radius, [0.0, 0.0, 0.0, disc.alpha]);
+    }
+
+    painter.shaded_segments(&shade_segments(points, plan, outline));
+
+    for disc in layers.head_discs() {
+        painter.fill_circle(
+            disc.cx,
+            disc.cy,
+            disc.radius,
+            [outline.0, outline.1, outline.2, disc.alpha],
+        );
+    }
+}
+
+/// Shades each resampled point up to the comet head, dropping segments too
+/// faint to see.
+fn shade_segments(
+    points: &[(f64, f64, f64)],
+    plan: &RingPaint,
+    outline: (f64, f64, f64),
+) -> Vec<RingSegment> {
+    let lift = 1.0 + RING_ARM_LIFT * plan.arm_t;
+    let mut segments = Vec::with_capacity(points.len());
+    for w in points.windows(2) {
+        let (x1, y1, _) = w[0];
+        let (x2, y2, d) = w[1];
+        if d > plan.head_len {
+            break;
+        }
+        let env = ring_envelope(d, plan.head_len, plan.progress, plan.total_len);
+        let glim = ring_glimmer(d, plan.total_len, plan.wave_phase, plan.progress);
+        let a = (env * glim * lift).clamp(0.0, 1.0) * plan.alpha;
+        if a < RING_SEGMENT_ALPHA_CUTOFF {
+            continue;
+        }
+        segments.push(RingSegment {
+            x1,
+            y1,
+            x2,
+            y2,
+            rgba: [outline.0, outline.1, outline.2, a],
+            width: RING_CORE_WIDTH + RING_WIDTH_SWELL * env * (1.0 - 0.35 * plan.arm_t),
+        });
+    }
+    segments
 }
 
 /// Resolve and paint one frame of the ring in a single call.
@@ -1545,6 +1572,52 @@ pub fn flash_banner_target(flash_visible: bool, has_action: bool, tooltip_reveal
     } else {
         0.0
     }
+}
+
+/// The banner state every pill advances each frame: the dismiss timer that
+/// clears it, and the spring that fades it in and out.
+pub struct FlashTick<'a> {
+    pub visible: &'a Cell<bool>,
+    pub timer: &'a Cell<f64>,
+    pub t: &'a Cell<f64>,
+    pub velocity: &'a Cell<f64>,
+    pub action: &'a RefCell<Option<String>>,
+    pub action_label: &'a RefCell<Option<String>>,
+    pub reject_action: &'a RefCell<Option<String>>,
+    pub reject_action_label: &'a RefCell<Option<String>>,
+    pub tooltip_revealed: bool,
+    pub stiffness: f64,
+}
+
+/// Advances the banner timer and its fade spring for one frame.
+pub fn tick_flash(flash: &FlashTick<'_>, delta_seconds: f64) {
+    if flash.visible.get() {
+        let remaining = flash.timer.get() - delta_seconds;
+        if remaining <= 0.0 {
+            clear_flash_state(
+                flash.visible,
+                flash.timer,
+                flash.action,
+                flash.action_label,
+                flash.reject_action,
+                flash.reject_action_label,
+            );
+        } else {
+            flash.timer.set(remaining);
+        }
+    }
+    let target = flash_banner_target(
+        flash.visible.get(),
+        flash.action.borrow().is_some() || flash.reject_action.borrow().is_some(),
+        flash.tooltip_revealed,
+    );
+    spring::spring_01(
+        flash.t,
+        flash.velocity,
+        target,
+        flash.stiffness,
+        delta_seconds,
+    );
 }
 
 /// Whether a toast's buttons should take clicks at the given banner opacity.
@@ -1906,6 +1979,113 @@ impl RingSink for RingState {
     }
 }
 
+/// The per-frame drag affordances every pill animates: the inflate that grows
+/// the pill while a hold arms, the drag label that fades in with it, and the
+/// ring tick that owns the long-press and locate replay.
+///
+/// The three ports animated these in three separate `tick` bodies that had
+/// drifted apart only in comment text, so the sequence lives here once.
+pub struct DragTick<'a> {
+    pub inflate_t: &'a Cell<f64>,
+    pub inflate_velocity: &'a Cell<f64>,
+    pub drag_label_t: &'a Cell<f64>,
+    pub drag_label_velocity: &'a Cell<f64>,
+    pub long_press_active: bool,
+    pub long_press_elapsed: f64,
+    pub dragging: bool,
+}
+
+/// The pause/cancel affordances and the transcript auto-scroll that follow the
+/// drag tick. Identical in all three ports, so it lives here once.
+pub struct HoldTail<'a> {
+    pub phase: Phase,
+    pub hovered: bool,
+    pub assistant_active: bool,
+    pub assistant_compact: bool,
+    pub pause_t: &'a Cell<f64>,
+    pub pause_velocity: &'a Cell<f64>,
+    pub cancel_t: &'a Cell<f64>,
+    pub cancel_velocity: &'a Cell<f64>,
+    pub scroll_offset: &'a Cell<f64>,
+    pub content_height: f64,
+    pub viewport_height: f64,
+    pub should_stick: bool,
+    pub stiffness: f64,
+}
+
+/// Advances the pause crossfade, the cancel/pause controls and the transcript
+/// auto-scroll for one frame.
+pub fn tick_hold_tail(tail: &HoldTail<'_>, delta_seconds: f64) {
+    let pause = if tail.phase == Phase::Paused {
+        1.0
+    } else {
+        0.0
+    };
+    spring::spring_01(
+        tail.pause_t,
+        tail.pause_velocity,
+        pause,
+        tail.stiffness,
+        delta_seconds,
+    );
+
+    let show_controls = !tail.assistant_active
+        && match tail.phase {
+            // Hover-revealed while recording, pinned open while paused.
+            Phase::Recording => tail.hovered,
+            Phase::Paused => true,
+            // Post-recording processing: neither control can act on the take.
+            Phase::Idle | Phase::Loading => false,
+        };
+    spring::spring_01(
+        tail.cancel_t,
+        tail.cancel_velocity,
+        if show_controls { 1.0 } else { 0.0 },
+        tail.stiffness * 2.0,
+        delta_seconds,
+    );
+
+    if tail.should_stick && tail.assistant_active && !tail.assistant_compact {
+        tail.scroll_offset
+            .set((tail.content_height - tail.viewport_height).max(0.0));
+    }
+}
+
+/// Advances the drag affordances for one frame.
+pub fn tick_drag(tick: &DragTick<'_>, delta_seconds: f64) {
+    // The target ramps up partway through the hold, not at the arm moment, so
+    // the pill is already growing while the ring fills.
+    let inflate = inflate_target(
+        hold_progress(
+            tick.long_press_elapsed,
+            LONG_PRESS_HOLD_DELAY,
+            LONG_PRESS_DURATION,
+        ),
+        tick.long_press_active,
+        tick.dragging,
+    );
+    spring::spring_01(
+        tick.inflate_t,
+        tick.inflate_velocity,
+        inflate,
+        DRAG_INFLATE_STIFFNESS,
+        delta_seconds,
+    );
+
+    let label = if tick.dragging || tick.long_press_active {
+        1.0
+    } else {
+        0.0
+    };
+    spring::spring_01(
+        tick.drag_label_t,
+        tick.drag_label_velocity,
+        label,
+        LABEL_SPRING_STIFFNESS,
+        delta_seconds,
+    );
+}
+
 /// A pill state that owns a [`RingState`] and can describe the pointer gesture
 /// around it.
 ///
@@ -1940,6 +2120,27 @@ pub trait RingHost {
         self.ring().start_locate(self.ring_gesture());
     }
 
+    /// Advances the drag affordances and the ring for one frame.
+    fn tick_hold_and_ring(&self, delta_seconds: f64) {
+        tick_drag(&self.drag_tick(), delta_seconds);
+        self.tick_ring(delta_seconds);
+        tick_hold_tail(&self.hold_tail(), delta_seconds);
+    }
+
+    /// The drag affordance state this host animates each frame.
+    fn drag_tick(&self) -> DragTick<'_>;
+
+    /// The pause/cancel and scroll state this host animates each frame.
+    fn hold_tail(&self) -> HoldTail<'_>;
+
+    /// Advances the banner timer and its fade spring for one frame.
+    fn tick_flash(&self, tooltip_revealed: bool, delta_seconds: f64) {
+        tick_flash(&self.flash_tick(tooltip_revealed), delta_seconds);
+    }
+
+    /// The banner state this host animates each frame.
+    fn flash_tick(&self, tooltip_revealed: bool) -> FlashTick<'_>;
+
     /// Current drag-inflate amount, which scales the pill's corner radius.
     fn inflate(&self) -> f64;
 
@@ -1966,7 +2167,7 @@ pub trait RingHost {
 /// ring needs are not, so the impl is generated instead of copied.
 #[macro_export]
 macro_rules! impl_ring_host {
-    ($ty:ty $(, $extra:item)*) => {
+    ($ty:ty, $stiffness:expr $(, $extra:item)*) => {
         impl $crate::RingHost for $ty {
             $($extra)*
 
@@ -1985,6 +2186,51 @@ macro_rules! impl_ring_host {
 
             fn inflate(&self) -> f64 {
                 self.inflate_t.get()
+            }
+
+            fn drag_tick(&self) -> $crate::DragTick<'_> {
+                $crate::DragTick {
+                    inflate_t: &self.inflate_t,
+                    inflate_velocity: &self.inflate_velocity,
+                    drag_label_t: &self.drag_label_t,
+                    drag_label_velocity: &self.drag_label_velocity,
+                    long_press_active: self.long_press_active.get(),
+                    long_press_elapsed: self.long_press_elapsed.get(),
+                    dragging: self.dragging.get(),
+                }
+            }
+
+            fn hold_tail(&self) -> $crate::HoldTail<'_> {
+                $crate::HoldTail {
+                    phase: self.phase.get(),
+                    hovered: self.hovered.get(),
+                    assistant_active: self.assistant_active.get(),
+                    assistant_compact: self.assistant_compact.get(),
+                    pause_t: &self.pause_t,
+                    pause_velocity: &self.pause_velocity,
+                    cancel_t: &self.cancel_t,
+                    cancel_velocity: &self.cancel_velocity,
+                    scroll_offset: &self.scroll_offset,
+                    content_height: self.content_height.get(),
+                    viewport_height: self.viewport_height.get(),
+                    should_stick: self.should_stick.get(),
+                    stiffness: $stiffness,
+                }
+            }
+
+            fn flash_tick(&self, tooltip_revealed: bool) -> $crate::FlashTick<'_> {
+                $crate::FlashTick {
+                    visible: &self.flash_visible,
+                    timer: &self.flash_timer,
+                    t: &self.flash_t,
+                    velocity: &self.flash_velocity,
+                    action: &self.flash_action,
+                    action_label: &self.flash_action_label,
+                    reject_action: &self.flash_reject_action,
+                    reject_action_label: &self.flash_reject_action_label,
+                    tooltip_revealed,
+                    stiffness: $stiffness,
+                }
             }
 
             fn ring_points(&self) -> &std::cell::RefCell<Vec<(f64, f64, f64)>> {

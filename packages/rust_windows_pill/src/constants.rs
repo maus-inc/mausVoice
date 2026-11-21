@@ -279,7 +279,6 @@ pub(crate) const TRANSCRIPT_MAX_WIDTH: f64 = 440.0;
 pub(crate) const LONG_PRESS_DURATION: f64 = 0.45;
 /// Grace period before any long-press affordance is drawn. A normal click is
 /// far shorter than this, so quick taps never flash the progress outline.
-pub(crate) const LONG_PRESS_HOLD_DELAY: f64 = 0.12;
 pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
 // Silver-white with a very slight cool tint — reads as a neutral "grab" affordance
 // and stays distinct from the blue commit flash (`FLASH_BLUE_COLOR`).
@@ -289,6 +288,6 @@ pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 
 // Ring + drag tuning constants live in `rust_pill_shared` so every platform
 // draws the long-press ring from one source of truth.
-pub(crate) use rust_pill_shared::{DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS};
+pub(crate) use rust_pill_shared::DRAG_INFLATE_SCALE;
 
 // Particle physics constants

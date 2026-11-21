@@ -410,7 +410,7 @@ fn content_origin(aw: f64, ah: f64, dw: f64, dh: f64, below_slot: f64) -> (f64, 
     }
 }
 
-rust_pill_shared::impl_ring_host!(PillState);
+rust_pill_shared::impl_ring_host!(PillState, SPRING_STIFFNESS);
 
 #[cfg(test)]
 mod tests {

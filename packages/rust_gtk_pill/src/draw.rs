@@ -2405,50 +2405,6 @@ fn draw_broadcast_transcript(cr: &cairo::Context, state: &PillState, ww: f64, wh
     let _ = cr.show_text(&text);
 }
 
-/// Progress of the long-press gesture, in `0.0..=1.0`.
-///
-/// The ramp only starts once `LONG_PRESS_HOLD_DELAY` has elapsed, so a quick
-/// click never renders a partially-filled outline, and reaches 1.0 exactly when
-/// the gesture arms at `LONG_PRESS_DURATION`.
-pub(crate) fn long_press_progress(elapsed: f64) -> f64 {
-    rust_pill_shared::hold_progress(elapsed, LONG_PRESS_HOLD_DELAY, LONG_PRESS_DURATION)
-}
-
-#[cfg(test)]
-mod long_press_tests {
-    use super::*;
-
-    #[test]
-    fn no_progress_before_hold_delay() {
-        assert_eq!(long_press_progress(0.0), 0.0);
-        assert_eq!(long_press_progress(LONG_PRESS_HOLD_DELAY), 0.0);
-    }
-
-    #[test]
-    fn quick_click_never_shows_progress() {
-        // A typical click is well under the hold delay.
-        assert_eq!(long_press_progress(0.05), 0.0);
-    }
-
-    #[test]
-    fn completes_exactly_at_duration() {
-        assert_eq!(long_press_progress(LONG_PRESS_DURATION), 1.0);
-    }
-
-    #[test]
-    fn saturates_after_duration() {
-        assert_eq!(long_press_progress(LONG_PRESS_DURATION * 4.0), 1.0);
-    }
-
-    #[test]
-    fn ramps_monotonically_between_delay_and_duration() {
-        let mid = (LONG_PRESS_HOLD_DELAY + LONG_PRESS_DURATION) / 2.0;
-        let p = long_press_progress(mid);
-        assert!(p > 0.0 && p < 1.0, "expected partial progress, got {p}");
-        assert!(long_press_progress(mid) <= long_press_progress(mid + 0.01));
-    }
-}
-
 /// Horizontal gap between the pill edge and its side controls.
 ///
 /// The controls must sit fully outside the pill body: any overlap would let a
