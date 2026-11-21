@@ -12,6 +12,7 @@ import {
 } from "../../utils/local-data-write-gate";
 import { resetNativeRecordingSession } from "../../utils/native-recording-session";
 import {
+  admittedStartOptions,
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
@@ -19,6 +20,7 @@ import {
 
 beforeEach(() => {
   resetNativeRecordingSession();
+  invoke.mockReset();
   localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
 });
 
@@ -121,4 +123,56 @@ it("stops a late microphone start after a parallel startup step has failed", asy
   await expect(tracked).resolves.toBe("started");
   expect(stop).toHaveBeenCalledOnce();
   expect(started).not.toHaveBeenCalled();
+});
+
+it("retains the handle at admission, before the start reply lands", async () => {
+  let finishStart!: (value: { sampleRate: number }) => void;
+  invoke.mockImplementation((command: string) => {
+    if (command === "recording_generation") return Promise.resolve(1);
+    if (command === "start_recording") {
+      return new Promise((resolve) => {
+        finishStart = resolve;
+      });
+    }
+    return Promise.resolve(undefined);
+  });
+  const retained: unknown[] = [];
+  const start = invokeGuardedRecordingStart(
+    null,
+    admittedStartOptions(
+      () => true,
+      (handle) => retained.push(handle),
+    ),
+  );
+  // The handle arrives while `start_recording` is still unanswered, so a caller
+  // can stop the device during the opening window.
+  await vi.waitFor(() => expect(retained).toHaveLength(1));
+  expect(
+    invoke.mock.calls.filter(([command]) => command === "start_recording"),
+  ).toHaveLength(1);
+  finishStart({ sampleRate: 16000 });
+  const { handle } = await start;
+  expect(retained[0]).toBe(handle);
+});
+
+it("retires the reservation instead of dispatching a stale start", async () => {
+  invoke.mockImplementation((command: string) => {
+    if (command === "recording_generation") return Promise.resolve(1);
+    return Promise.resolve({ sampleRate: 16000 });
+  });
+  const retained: unknown[] = [];
+  await expect(
+    invokeGuardedRecordingStart(
+      null,
+      admittedStartOptions(
+        () => false,
+        (handle) => retained.push(handle),
+      ),
+    ),
+  ).rejects.toThrow("Recording start was cancelled");
+  // The cancelled attempt never retained a handle and never opened the device.
+  expect(retained).toHaveLength(0);
+  expect(
+    invoke.mock.calls.filter(([command]) => command === "start_recording"),
+  ).toHaveLength(0);
 });

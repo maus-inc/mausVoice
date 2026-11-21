@@ -46,3 +46,25 @@ export const invokeGuardedRecordingStart = (
   options: NativeRecordingStartOptions = {},
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> =>
   withLocalDataWrite(() => beginNativeRecording(preferredMicrophone, options));
+
+/**
+ * Start options for a caller that must be able to stop the recording while the
+ * start reply is still pending.
+ *
+ * The handle arrives at admission, before capture can emit its first chunk, so a
+ * stop during the opening window reaches the device instead of leaving it open
+ * until the reply lands. `handleScoped` keeps that release from unlocking a
+ * successor's gate. A stale attempt throws here, which retires its reservation
+ * without dispatching `start_recording`, so a late reply never overwrites a newer
+ * handle.
+ */
+export const admittedStartOptions = (
+  isCurrent: () => boolean,
+  retain: (handle: NativeRecordingHandle) => void,
+): NativeRecordingStartOptions => ({
+  handleScoped: true,
+  onAdmission: (handle) => {
+    if (!isCurrent()) throw new Error("Recording start was cancelled");
+    retain(handle);
+  },
+});

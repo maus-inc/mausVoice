@@ -12,6 +12,7 @@ import {
 import { type NativeRecordingHandle } from "../../utils/native-recording-session";
 import { AudioWaveform } from "../common/AudioWaveform";
 import {
+  admittedStartOptions,
   invokeGuardedRecordingStart,
   subscribeRecordingAbortForClear,
 } from "../root/recording-start-gate";
@@ -243,8 +244,16 @@ export const MicrophoneTester = ({
     try {
       const { handle } = await invokeGuardedRecordingStart(
         preferredMicrophone ?? null,
+        admittedStartOptions(
+          () => attemptIsCurrent(opId, clearGeneration),
+          (admitted) => {
+            handleRef.current = admitted;
+          },
+        ),
       );
-      handleRef.current = handle;
+      // A stop during the opening window already took this handle and is tearing
+      // it down, so only an untouched admission publishes the recording state.
+      if (handleRef.current !== handle) return;
       if (!attemptIsCurrent(opId, clearGeneration)) {
         // Stop only the recording this attempt opened. The global helper stops
         // whatever session is current, which may belong to a later start that
@@ -318,9 +327,10 @@ export const MicrophoneTester = ({
       setSyncedTestState("stopping");
 
       // Stop the recording this tester admitted. A global stop would reach
-      // whatever session is current, which a later start may own. While the
-      // admission is still opening there is no handle yet, so the bumped op id
-      // makes the pending start stop its own handle when it resolves.
+      // whatever session is current, which a later start may own. The admission
+      // is retained before capture starts, so this reaches the device even while
+      // the start reply is still pending; the bumped op id keeps a late reply
+      // from publishing over the stop.
       const handle = handleRef.current;
       handleRef.current = null;
       try {

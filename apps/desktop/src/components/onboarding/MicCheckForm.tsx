@@ -15,6 +15,7 @@ import {
 import { AudioWaveform } from "../common/AudioWaveform";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import {
+  admittedStartOptions,
   invokeGuardedRecordingStart,
   subscribeRecordingAbortForClear,
 } from "../root/recording-start-gate";
@@ -78,8 +79,20 @@ export const MicCheckForm = () => {
     try {
       const { handle } = await invokeGuardedRecordingStart(
         preferredMicrophone ?? null,
+        admittedStartOptions(
+          () =>
+            mountedRef.current &&
+            opId === opIdRef.current &&
+            !isLocalDataClearRequested() &&
+            clearGeneration === getLocalDataClearGeneration(),
+          (admitted) => {
+            handleRef.current = admitted;
+          },
+        ),
       );
-      handleRef.current = handle;
+      // A stop during the opening window already took this handle and is tearing
+      // it down, so only an untouched admission publishes the recording state.
+      if (handleRef.current !== handle) return;
       if (
         !mountedRef.current ||
         opId !== opIdRef.current ||
@@ -120,9 +133,10 @@ export const MicCheckForm = () => {
     setSyncedRecordingState("stopping");
 
     // Stop the recording this form admitted. A global stop would reach whatever
-    // session is current, which a later start may own. While the admission is
-    // still opening there is no handle yet, so the bumped op id makes the
-    // pending start discard its own handle when it resolves.
+    // session is current, which a later start may own. The admission is retained
+    // before capture starts, so this reaches the device even while the start reply
+    // is still pending; the bumped op id keeps a late reply from publishing over
+    // the stop.
     const handle = handleRef.current;
     handleRef.current = null;
     try {
