@@ -9,6 +9,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 import {
   beginLocalDataClear,
   getLocalDataClearGeneration,
+  isLocalDataClearRequested,
   LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
 } from "../../utils/local-data-write-gate";
 import { resetNativeRecordingSession } from "../../utils/native-recording-session";
@@ -208,11 +209,16 @@ it("rejects an attempt admitted before a local-data clear began", async () => {
     true,
   );
   const release = await beginLocalDataClear();
-  // A clear invalidates every attempt, so the generation it was admitted under
-  // no longer matches even though the op id is unchanged.
+  localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+  release();
+  // The clear has finished, so the marker no longer rejects anything. The op id
+  // and the mount state still match, which leaves the moved generation as the
+  // only reason this attempt must not publish into the cleared session.
+  expect(isLocalDataClearRequested()).toBe(false);
   expect(attemptStillOwns(ownershipOf(true, 1), 1, admittedGeneration)).toBe(
     false,
   );
-  localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
-  release();
+  expect(
+    attemptStillOwns(ownershipOf(true, 1), 1, getLocalDataClearGeneration()),
+  ).toBe(true);
 });
