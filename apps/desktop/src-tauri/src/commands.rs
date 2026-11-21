@@ -4466,7 +4466,10 @@ fn saved_capture_linger_only_keeps_ready_indefinitely_when_enabled() {
     assert_eq!(saved_capture_linger(false, 0), Duration::ZERO);
     assert_eq!(saved_capture_linger(false, 5000), Duration::from_secs(5));
     // A stored value above the settings maximum is bounded, not honored.
-    assert_eq!(saved_capture_linger(false, 900_000), Duration::from_secs(30));
+    assert_eq!(
+        saved_capture_linger(false, 900_000),
+        Duration::from_secs(30)
+    );
     assert_eq!(saved_capture_linger(false, i64::MAX), Duration::ZERO);
     assert_eq!(
         saved_capture_linger(true, 0),
