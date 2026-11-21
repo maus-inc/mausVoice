@@ -80,6 +80,12 @@ jobs:
           # fetches every unrelated branch, including the multi-GB vendor payload.
           fetch-depth: 2147483647
           persist-credentials: false
+      - name: Select the Node version
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          # This job installs nothing, so it must not reach for a package-manager cache.
+          package-manager-cache: false
       - name: Verify the receipt against the event commits
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
