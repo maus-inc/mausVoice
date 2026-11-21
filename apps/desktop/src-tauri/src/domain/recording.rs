@@ -21,9 +21,11 @@ pub struct RecordingMetrics {
     /// and any reported fault distinguish those cases. Audio captured before the
     /// press is never credited toward the measured duration.
     pub duration: Duration,
+    /// Whether `duration` measures live PCM rather than the elapsed fallback.
+    pub has_live_samples: bool,
     /// How long the recorder believed it was recording.
     ///
-    /// Equal to `duration` on a healthy capture. A large gap means the stream
+    /// Equal to `live_duration()` on a healthy capture. A large gap means the stream
     /// stopped delivering partway through, which is the case that otherwise
     /// produces a silently short dictation with no indication that anything went
     /// wrong.
@@ -34,6 +36,17 @@ pub struct RecordingMetrics {
     /// the same as "everything was fine": a stream can also go quiet without
     /// saying so, and `expected_duration` covers that.
     pub capture_fault: Option<String>,
+}
+
+impl RecordingMetrics {
+    /// Live PCM duration, without the elapsed fallback used in diagnostics.
+    pub fn live_duration(&self) -> Duration {
+        if self.has_live_samples {
+            self.duration
+        } else {
+            Duration::ZERO
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

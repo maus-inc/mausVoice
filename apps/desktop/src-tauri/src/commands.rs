@@ -3775,7 +3775,7 @@ fn encode_recording_result(
                 header,
                 result
                     .metrics
-                    .duration
+                    .live_duration()
                     .as_millis()
                     .min(u128::from(u32::MAX)) as u32,
                 result
@@ -7918,6 +7918,7 @@ mod tests {
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
                         duration: std::time::Duration::ZERO,
+                        has_live_samples: false,
                         expected_duration: std::time::Duration::ZERO,
                         capture_fault: None,
                         size_bytes: 8,
@@ -8039,6 +8040,7 @@ mod tests {
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
                         duration: std::time::Duration::ZERO,
+                        has_live_samples: false,
                         expected_duration: std::time::Duration::ZERO,
                         capture_fault: None,
                         size_bytes: 4,
@@ -8220,6 +8222,7 @@ mod tests {
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
                         duration: std::time::Duration::ZERO,
+                        has_live_samples: false,
                         expected_duration: std::time::Duration::ZERO,
                         capture_fault: None,
                         size_bytes: 4,
@@ -8270,6 +8273,7 @@ mod tests {
         let result = crate::domain::RecordingResult {
             metrics: crate::domain::RecordingMetrics {
                 duration: std::time::Duration::ZERO,
+                has_live_samples: false,
                 expected_duration: std::time::Duration::ZERO,
                 capture_fault: None,
                 size_bytes: 4,
@@ -8391,6 +8395,40 @@ mod tests {
             decode_recorded_audio(&bytes),
             Ok((44_100, vec![0.5, -0.5, 0.25]))
         );
+    }
+
+    #[test]
+    fn capture_fault_trailer_does_not_count_elapsed_fallback_as_live_pcm() {
+        use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
+        use std::time::Duration;
+
+        for (samples, has_live_samples, captured_ms) in [
+            (vec![], false, 0),
+            (vec![0.25], false, 0), // pre-roll only
+            (vec![0.25; 8_000], true, 500),
+        ] {
+            let duration = Duration::from_millis(if has_live_samples { 500 } else { 1000 });
+            let size_bytes = (samples.len() * std::mem::size_of::<f32>()) as u64;
+            let response = encode_recording_result(Some(RecordingResult {
+                metrics: RecordingMetrics {
+                    duration,
+                    has_live_samples,
+                    expected_duration: Duration::from_secs(1),
+                    size_bytes,
+                    capture_fault: Some("fatal".to_owned()),
+                },
+                capture_failed: true,
+                audio: RecordedAudio {
+                    samples,
+                    sample_rate: 16_000,
+                },
+            }))
+            .unwrap();
+            assert_eq!(
+                decode_capture_trailer(&response),
+                Some((4 + size_bytes as usize, captured_ms, 1000))
+            );
+        }
     }
 
     #[test]
@@ -12425,6 +12463,7 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
                         duration: std::time::Duration::ZERO,
+                        has_live_samples: false,
                         expected_duration: std::time::Duration::ZERO,
                         size_bytes: 0,
                         capture_fault: None,

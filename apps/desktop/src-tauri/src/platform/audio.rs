@@ -2722,6 +2722,8 @@ mod cpal_impl {
             {
                 let mut samples = ring.lock().unwrap_or_else(PoisonError::into_inner);
                 if !already_collecting {
+                    // Stop may enable hold after a cold start. No ring was
+                    // collected by this take; do not hand old PCM to its successor.
                     samples.clear();
                 }
                 samples.resize(preroll_capacity(self.preroll_requested(), rate));
@@ -2942,6 +2944,7 @@ mod cpal_impl {
             capture_failed,
             metrics: RecordingMetrics {
                 duration: live_duration.unwrap_or(expected_duration),
+                has_live_samples: live_duration.is_some(),
                 expected_duration,
                 size_bytes,
                 capture_fault: drained,
@@ -2967,6 +2970,7 @@ mod cpal_impl {
                     },
                     metrics: RecordingMetrics {
                         duration: Duration::ZERO,
+                        has_live_samples: false,
                         expected_duration: Duration::ZERO,
                         size_bytes: 0,
                         capture_fault: None,
@@ -4732,6 +4736,7 @@ mod cpal_impl {
                 let fault = (recording.seed_samples == 0).then(|| "fatal".to_owned());
                 let sealed = seal_capture_audio(&recording, fault.clone(), expected);
                 assert_eq!(sealed.metrics.duration, expected);
+                assert_eq!(sealed.metrics.live_duration(), Duration::ZERO);
                 assert_eq!(sealed.metrics.capture_fault, fault);
                 assert!(sealed.capture_failed);
             }
