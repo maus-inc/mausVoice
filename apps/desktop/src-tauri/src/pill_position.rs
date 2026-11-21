@@ -453,6 +453,17 @@ pub async fn forget_running_pill_position(app: &tauri::AppHandle) -> ForgetOutco
     match crate::platform::overlay::notify_forget_position(app, Some(declaration)) {
         Ok(()) => ForgetOutcome::Delivered(declaration),
         Err(err) => {
+            // The send can fail because the reader exited between the check above
+            // and this write. That pill is gone, and its exit withdrew every
+            // declaration, so there is no report left to guard against and the
+            // wipe is complete. Only a reader that is still draining is unsafe.
+            if !crate::platform::overlay::pill_is_running(app) {
+                log::warn!(
+                    "The pill exited before it could be told to forget the cleared \
+                     position: {err}"
+                );
+                return ForgetOutcome::NoPill;
+            }
             // The declaration stays outstanding on purpose. A pill that is still
             // running may have a saved-position report buffered on its stdout
             // that describes the position this clear just deleted, and the latch

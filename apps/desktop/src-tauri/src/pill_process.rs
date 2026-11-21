@@ -20,6 +20,10 @@ pub struct PillProcess {
     // A failed nonblocking write or flag restoration can invalidate framing.
     // Closing the pipe prevents a later control message following a partial line.
     stdin: Mutex<Option<ChildStdin>>,
+    // Set when the stdout reader returns. The managed state outlives the child --
+    // nothing removes it -- so this flag, not the presence of the state, is what
+    // tells a caller whether a report can still arrive.
+    reader_running: std::sync::atomic::AtomicBool,
 }
 
 /// Monotonic sequence number for phase messages. A rapid loading -> idle
@@ -270,6 +274,7 @@ pub fn try_spawn_pill(app: &tauri::AppHandle, pill_path: &std::path::Path) -> bo
     let process = std::sync::Arc::new(PillProcess {
         _child: Mutex::new(child),
         stdin: Mutex::new(Some(stdin)),
+        reader_running: std::sync::atomic::AtomicBool::new(true),
     });
 
     if !publish_pill_process(app, process) {
@@ -366,14 +371,20 @@ pub fn notify_pill_window_size(app: &tauri::AppHandle, size: &PillWindowSize) {
     }
 }
 
-/// Whether a pill process is managed right now.
+/// Whether a report from the pill can still arrive.
 ///
 /// True covers a pill whose stdin has already failed, because its stdout reader
 /// can still be draining lines it read before the failure, and one of those can
-/// be a saved-position report. That is exactly the window a local-data clear has
-/// to treat as unsafe.
+/// be a saved-position report. That is the window a local-data clear has to treat
+/// as unsafe.
+///
+/// False once that reader has returned. The managed state is never removed, so
+/// the presence of `PillProcess` says only that one was spawned at some point; a
+/// pill that crashed earlier would otherwise read as live forever and block every
+/// later clear.
 pub fn pill_is_running(app: &tauri::AppHandle) -> bool {
-    app.try_state::<std::sync::Arc<PillProcess>>().is_some()
+    app.try_state::<std::sync::Arc<PillProcess>>()
+        .is_some_and(|pill| pill.reader_running.load(Ordering::Acquire))
 }
 
 pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
@@ -555,6 +566,13 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                     }
                 }
             }
+        }
+        // Clear the liveness flag before withdrawing, so a clear that reads the
+        // flag while this reader is finishing sees a dead pill rather than one
+        // that will never answer. Both orders leave the latch consistent: the
+        // withdrawal below opens it either way.
+        if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
+            pill.reader_running.store(false, Ordering::Release);
         }
         // The pill is gone, so no report can answer a declaration still waiting
         // on it. `send` returning Ok only proved the frame reached the pipe.
@@ -1872,7 +1890,35 @@ mod pill_publish_tests {
         ReapOnDrop(Arc::new(PillProcess {
             _child: Mutex::new(child),
             stdin: Mutex::new(Some(stdin)),
+            reader_running: std::sync::atomic::AtomicBool::new(true),
         }))
+    }
+
+    /// The managed state outlives the child, so the presence of `PillProcess`
+    /// cannot be what tells a clear whether a report can still arrive. A pill that
+    /// crashed before the clear would otherwise read as live forever and reject
+    /// every later attempt.
+    #[test]
+    fn a_finished_reader_reads_as_not_running() {
+        let process = pill_process();
+        assert!(
+            process
+                .0
+                .reader_running
+                .load(std::sync::atomic::Ordering::Acquire),
+            "a freshly spawned pill must read as live, because its reader is draining"
+        );
+        process
+            .0
+            .reader_running
+            .store(false, std::sync::atomic::Ordering::Release);
+        assert!(
+            !process
+                .0
+                .reader_running
+                .load(std::sync::atomic::Ordering::Acquire),
+            "a reader that returned must read as dead, or every later clear is blocked"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -1989,6 +2035,7 @@ mod pill_publish_tests {
         let process = ReapOnDrop(Arc::new(PillProcess {
             _child: Mutex::new(child),
             stdin: Mutex::new(Some(stdin)),
+            reader_running: std::sync::atomic::AtomicBool::new(true),
         }));
         let level = r#"{"type":"levels","levels":[0.5]}"#;
         let phase = r#"{"type":"phase","phase":"idle"}"#;

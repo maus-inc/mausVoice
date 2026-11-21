@@ -2670,6 +2670,15 @@ describe("native gesture adapter contracts", () => {
       /if let Some\(\(\(x, y\), display_id, work_area\)\) = restored \{[\s\S]{0,400}?state\.saved_work_area\.set\(work_area\);/,
       "gtkX11: the retained work area is not taken from the restore",
     );
+    // The macOS retained area lives in Cocoa space, while `restore` answers in
+    // the published top-down one. Retaining the answer unflipped means every
+    // later reader flips an already top-down rect, and the first relaunch after a
+    // display change measures the pill against a rectangle it never had.
+    assert.match(
+      source.macApp,
+      /restored_work_area = Some\(flip_primary_basis\(work_area, primary_top\)\)/,
+      "macApp: the restored work area is retained in the frame it is read in",
+    );
     assert.match(source.gtkX11, /state\.x11_drag_applied\.set\(target\)/);
     assert.match(
       source.gtkX11,

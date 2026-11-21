@@ -2816,7 +2816,12 @@ unsafe fn setup(
                 // it only agreed while the primary display's top happened to be
                 // unchanged. A primary that moved converted the origin against
                 // the old top and named the wrong panel.
-                restored_work_area = Some(work_area);
+                // `work_area` arrives in the published top-down space. The cell
+                // holds Cocoa space, so the restore has to convert before
+                // retaining it: every later reader flips this cell again, and an
+                // already top-down rect flipped a second time measures the pill
+                // against a rectangle the display never had.
+                restored_work_area = Some(flip_primary_basis(work_area, primary_top));
                 Some(NSRect::new(
                     NSPoint::new(x, primary_top - (y + window_h)),
                     NSSize::new(window_w, window_h),
