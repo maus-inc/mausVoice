@@ -90,6 +90,7 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
         WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
     // `None` means the window was created at the default corner, so the state
     // must not claim a saved position it does not have.
+    let restored_work_area = saved_position.map(|parked| parked.display);
     let restored: Option<((i32, i32), Option<u64>)> =
         saved_position.and_then(|parked| restore_position(parked, win_h));
     // A record that has been restored is a record whose display was named, so the
@@ -130,7 +131,11 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     let gfx = Gfx::new(WINDOW_W_TYPING, win_h).expect("Failed to create D2D context");
     eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
 
-    let state = initial_state(restored.map(|(origin, _)| origin), restored_display_id);
+    let state = initial_state(
+        restored.map(|(origin, _)| origin),
+        restored_display_id,
+        restored_work_area,
+    );
     // Record the arrangement the window was just placed against, before the first
     // poll. A fresh poll treats its first observation as the baseline and
     // reconciles nothing, so an output removed between this placement and that
@@ -889,6 +894,11 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             cancel_drag_gesture(hwnd, state);
             state.has_saved_position.set(false);
             state.saved_display_id.set(None);
+            state
+                .saved_work_area
+                .set(rust_pill_shared::edge::MonitorRect::without_id(
+                    0.0, 0.0, 0.0, 0.0,
+                ));
             // The reset deletes the stored row, so any save still owed from the
             // previous gesture would recreate it on the next tick -- with the
             // position the reset just replaced.
@@ -929,6 +939,11 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             // republishes this flag, so leaving it set would write the row back.
             state.has_saved_position.set(false);
             state.saved_display_id.set(None);
+            state
+                .saved_work_area
+                .set(rust_pill_shared::edge::MonitorRect::without_id(
+                    0.0, 0.0, 0.0, 0.0,
+                ));
             // A pending final position is a save the user did not ask for and the
             // clear has just made wrong, so it must not survive into the destroy.
             state.pending_drag_position.set(false);
@@ -1647,6 +1662,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
         (win_w as f64, win_h as f64),
         footprint_centre,
         state.saved_display_id.get(),
+        Some(state.saved_work_area.get()),
     ) else {
         return;
     };
@@ -1685,15 +1701,19 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                 // display the pill just left, and the next launch would restore it
                 // against the wrong panel. Resolved from the pill's own footprint
                 // centre, the same way the `Move` branch below names its display.
+                let adopted_centre = (
+                    cur_x as f64 + offset.0 + size.0 / 2.0,
+                    cur_y as f64 + offset.1 + size.1 / 2.0,
+                );
                 state
                     .saved_display_id
                     .set(rust_pill_shared::layout::display_id_of(
                         &areas,
-                        (
-                            cur_x as f64 + offset.0 + size.0 / 2.0,
-                            cur_y as f64 + offset.1 + size.1 / 2.0,
-                        ),
+                        adopted_centre,
                     ));
+                if let Some(area) = rust_pill_shared::layout::work_area_of(&areas, adopted_centre) {
+                    state.saved_work_area.set(area);
+                }
                 // The desktop holds the record, and the record is now wrong: it
                 // still names the origin from before the system moved the window.
                 // Adopting the move in this process only would leave a restart
@@ -1731,15 +1751,19 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             state.has_saved_position.set(true);
             // Nearest when containment fails, so a pill moved to a shared edge keeps
             // naming the display it is on instead of losing the token.
+            let moved_centre = (
+                x as f64 + offset.0 + size.0 / 2.0,
+                y as f64 + offset.1 + size.1 / 2.0,
+            );
             state
                 .saved_display_id
                 .set(rust_pill_shared::layout::display_id_of(
                     &areas,
-                    (
-                        x as f64 + offset.0 + size.0 / 2.0,
-                        y as f64 + offset.1 + size.1 / 2.0,
-                    ),
+                    moved_centre,
                 ));
+            if let Some(area) = rust_pill_shared::layout::work_area_of(&areas, moved_centre) {
+                state.saved_work_area.set(area);
+            }
             let (published, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
                 report: rust_pill_shared::restore::PositionReport::new(
@@ -1944,7 +1968,11 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
 ///
 /// This is also the state the clamp tests mean by "at rest": an initial
 /// `PillState` is the one whose bounds the first cursor tick must not move.
-fn initial_state(restored: Option<(i32, i32)>, restored_display_id: Option<u64>) -> PillState {
+fn initial_state(
+    restored: Option<(i32, i32)>,
+    restored_display_id: Option<u64>,
+    restored_work_area: Option<rust_pill_shared::edge::MonitorRect>,
+) -> PillState {
     PillState {
         phase: Cell::new(Phase::Idle),
         visibility: Cell::new(Visibility::WhileActive),
@@ -2041,6 +2069,9 @@ fn initial_state(restored: Option<(i32, i32)>, restored_display_id: Option<u64>)
         saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
         saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
         saved_display_id: Cell::new(restored_display_id),
+        saved_work_area: Cell::new(restored_work_area.unwrap_or_else(|| {
+            rust_pill_shared::edge::MonitorRect::without_id(0.0, 0.0, 0.0, 0.0)
+        })),
         drag_started_at: Cell::new(None),
         save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),
         layout_poll: RefCell::new(rust_pill_shared::layout::LayoutPoll::new()),
@@ -2620,18 +2651,31 @@ fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
 /// display on the next launch. `MONITOR_DEFAULTTONEAREST` rather than `NULL`
 /// because this is asked about a place the pill genuinely is, and a point on a
 /// shared edge rounds to one side or the other.
-fn monitor_work_area_at(x: f64, y: f64) -> Option<Rect> {
-    if !x.is_finite() || !y.is_finite() {
+/// The monitor that owns a point, or the nearest one.
+///
+/// The single resolution a report reads, so its work area and its display token
+/// cannot come from two different panels.
+fn monitor_for_point(point: (f64, f64)) -> Option<HMONITOR> {
+    if !point.0.is_finite() || !point.1.is_finite() {
         return None;
     }
-    unsafe {
-        let monitor = MonitorFromPoint(
+    let monitor = unsafe {
+        MonitorFromPoint(
             POINT {
-                x: x.round() as i32,
-                y: y.round() as i32,
+                x: point.0.round() as i32,
+                y: point.1.round() as i32,
             },
             MONITOR_DEFAULTTONEAREST,
-        );
+        )
+    };
+    // The same null test `query_monitor_info` uses, so the two cannot disagree
+    // about what "no monitor" is.
+    (monitor != HMONITOR::default()).then_some(monitor)
+}
+
+fn monitor_work_area_at(x: f64, y: f64) -> Option<Rect> {
+    let monitor = monitor_for_point((x, y))?;
+    unsafe {
         query_monitor_info(monitor).map(|info| Rect {
             x: info.rcWork.left as f64,
             y: info.rcWork.top as f64,
@@ -2744,28 +2788,6 @@ fn store_recorded_drop(hwnd: HWND, state: &PillState) {
     state.has_saved_position.set(true);
     // The pending drop has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
-    // Name the display in the same breath as the origin, so the stored record can
-    // recognise this panel after it is unplugged and replugged. Resolved from the
-    // drop point rather than from the window, because the window is not necessarily
-    // there any more -- that is the whole reason this origin is remembered. A
-    // failed enumeration is not evidence of anything, so the window is the
-    // fallback rather than a reason to store no name at all.
-    let display_id = enumerate_work_areas_with_identity()
-        .and_then(|areas| {
-            let (offset, size) = live_pill_footprint(state);
-            rust_pill_shared::layout::display_id_of(
-                &areas,
-                (
-                    origin.0 as f64 + offset.0 + size.0 / 2.0,
-                    origin.1 as f64 + offset.1 + size.1 / 2.0,
-                ),
-            )
-        })
-        .or_else(|| {
-            let monitor_handle = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
-            monitor_display_id(monitor_handle)
-        });
-    state.saved_display_id.set(display_id);
     // The whole report is resolved from the drop, not from the live window.
     // Restoration pairs the rectangle with the work area it is clamped into, so a
     // rectangle from one display and a work area from another is worse than either
@@ -2775,6 +2797,37 @@ fn store_recorded_drop(hwnd: HWND, state: &PillState) {
     // so the origin, its size, its work area and its display are all answered from
     // the one point that the user actually chose.
     let (offset, size) = live_pill_footprint(state);
+    let drop_centre = (
+        origin.0 as f64 + offset.0 + size.0 / 2.0,
+        origin.1 as f64 + offset.1 + size.1 / 2.0,
+    );
+    // One monitor answers both fields. Resolving them separately let a shrunk work
+    // area fall out of the enumerated list while `MonitorFromPoint` still found the
+    // display by its full bounds, so the report could name panel A and store panel
+    // B's work area. The token wins on the next launch, and the pill would land on
+    // a panel it was never on. `monitor_for_point` is the single resolution both
+    // fields read.
+    let monitor_handle = monitor_for_point(drop_centre);
+    let display_id = monitor_handle.and_then(monitor_display_id);
+    state.saved_display_id.set(display_id);
+    let monitor = monitor_handle
+        .and_then(|handle| query_monitor_info(handle))
+        .map(|info| Rect {
+            x: info.rcWork.left as f64,
+            y: info.rcWork.top as f64,
+            width: (info.rcWork.right - info.rcWork.left) as f64,
+            height: (info.rcWork.bottom - info.rcWork.top) as f64,
+        });
+    if let Some(area) = monitor {
+        state
+            .saved_work_area
+            .set(rust_pill_shared::edge::MonitorRect::without_id(
+                area.x,
+                area.y,
+                area.width,
+                area.height,
+            ));
+    }
     // Only the size comes from the live window: the pill's canvas does not change
     // when the layout moves it, and the size has to match the rectangle the
     // renderer will actually draw on the next launch.
@@ -2785,16 +2838,12 @@ fn store_recorded_drop(hwnd: HWND, state: &PillState) {
         width: live_rect.width,
         height: live_rect.height,
     };
-    let monitor = monitor_work_area_at(
-        origin.0 as f64 + offset.0 + size.0 / 2.0,
-        origin.1 as f64 + offset.1 + size.1 / 2.0,
-    );
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
             true,
             Some(reported),
             monitor,
-            state.saved_display_id.get(),
+            display_id,
         ),
     });
 }
@@ -3253,7 +3302,7 @@ mod tests {
     /// restart but not the following 60 ms.
     #[test]
     fn both_clamps_agree_for_a_pill_at_rest() {
-        let state = initial_state(None, None);
+        let state = initial_state(None, None, None);
         let work = MonitorRect::without_id(0.0, 0.0, 1920.0, 1080.0);
         let win_w = WINDOW_W_TYPING;
         let win_h =

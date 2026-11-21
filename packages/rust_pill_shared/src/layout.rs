@@ -474,15 +474,24 @@ impl SaveGuard {
     /// window to pass. A drag that never ended has no settled frame to record
     /// and is refused outright.
     pub fn allows_save(&self, now: f64) -> bool {
-        if !self.layout_settled(now) {
+        self.layout_settled(now) && !self.drag_hold_active(now)
+    }
+
+    /// Whether a drag, or the hold that follows one, still owns the window.
+    ///
+    /// A caller that adopts a window origin has to know this separately from
+    /// [`Self::layout_settled`]: reconciliation marks the layout changed on entry,
+    /// so the settle is never expired at that point. A drag in flight has no
+    /// completed drop, and the hold after one belongs to that drop, so a frame
+    /// taken then is the system's placement rather than the user's.
+    pub fn drag_hold_active(&self, now: f64) -> bool {
+        if !self.drag_spans_layout_change {
             return false;
         }
-        if !self.drag_spans_layout_change {
-            return true;
-        }
         match self.last_drag_end {
-            Some(ended) => elapsed_at_least(now, ended, DRAG_HOLD_SECONDS),
-            None => false,
+            Some(ended) => !elapsed_at_least(now, ended, DRAG_HOLD_SECONDS),
+            // A drag that never ended has no settled frame to record at all.
+            None => true,
         }
     }
 
@@ -730,13 +739,53 @@ pub fn nearest_display(areas: &[MonitorRect], x: f64, y: f64) -> Option<usize> {
 /// with that token is connected, because a token for a display that is gone must
 /// not outlive it; otherwise the display is the one containing the pill's
 /// footprint centre, else the nearest one.
+///
+/// `retained_display` is the work area the position was saved against, and it
+/// answers only when the pill belongs to no live display at all. It exists so a
+/// pill whose panel was unplugged remaps from the geometry it was saved on rather
+/// than from the nearest survivor, which would turn a relative place into a
+/// clamped edge.
 pub fn describe_parked(
     areas: &[MonitorRect],
     origin: (f64, f64),
     window: (f64, f64),
     footprint_centre: (f64, f64),
     named_id: Option<u64>,
+    retained_display: Option<MonitorRect>,
 ) -> Option<ParkedWindow> {
+    // A pill whose display was unplugged has no live area containing it, and the
+    // nearest live area is the wrong source geometry to remap from: it is the
+    // survivor, so `restore` finds an exact geometry match and clamps the old
+    // absolute origin to the survivor's edge instead of preserving the pill's
+    // left-relative place on the panel that went away. The retained area is the
+    // one the position was saved against, so it is the honest source. A pill that
+    // is still contained by a live area keeps using that area, and a pill that is
+    // still fully visible never reaches this function's caller's remap at all.
+    // Ordered before the live lookups, not appended to them: `display_for_point`
+    // answers with the *nearest* area when nothing contains the point, and that
+    // nearest area is the survivor this branch exists to avoid.
+    let stranded = retained_display.filter(|retained| {
+        area_usable(*retained)
+            && display_containing(areas, footprint_centre.0, footprint_centre.1).is_none()
+            && named_id.is_none_or(|id| !areas.iter().any(|area| area.id == Some(id)))
+    });
+    if let Some(retained) = stranded {
+        // The retained panel may itself still be connected, in which case it is
+        // still the right panel to name and dropping its token would downgrade
+        // every later match to geometry. A token for a panel that is gone is not
+        // recorded, because it would outlive the panel it describes.
+        let retained_id = retained
+            .id
+            .filter(|id| areas.iter().any(|area| area.id == Some(*id)));
+        return ParkedWindow::new_named(
+            origin.0,
+            origin.1,
+            window.0,
+            window.1,
+            retained,
+            retained_id,
+        );
+    }
     let display = named_id
         .and_then(|id| {
             // A token need not be unique: two panels of the same make and model
@@ -770,6 +819,16 @@ pub fn describe_parked(
     // store a rectangle and a name that disagree, and the next launch would look
     // for a display that is not the one the geometry describes.
     ParkedWindow::new_named(origin.0, origin.1, window.0, window.1, display, display.id)
+}
+
+/// The live work area that owns a point, for a caller that has to remember which
+/// geometry a saved position was clamped into.
+///
+/// Answers the containing area, else the nearest one, which is the same rule
+/// [`display_for_point`] uses, so the remembered area and the remembered token
+/// always describe the same panel.
+pub fn work_area_of(areas: &[MonitorRect], footprint_centre: (f64, f64)) -> Option<MonitorRect> {
+    display_for_point(areas, footprint_centre.0, footprint_centre.1).map(|index| areas[index])
 }
 
 /// The display a reconciled origin now belongs to.
@@ -892,6 +951,19 @@ impl LayoutPoll {
     /// this sees exactly the ticks `observe` would not have called `TooSoon`.
     pub fn is_due(self, now: f64) -> bool {
         elapsed_at_least(now, self.polled_at, LAYOUT_POLL_SECONDS)
+    }
+
+    /// Put the signature back after a change the caller could not act on.
+    ///
+    /// `observe` commits the signature it read, which is right only when the
+    /// caller reconciled against that same snapshot. When reconciliation cannot
+    /// proceed (a failed enumeration, an unsized toplevel), committing it makes
+    /// the next poll compare equal and the change is never looked at again, so a
+    /// pill on a display that is gone stays off-screen until the desktop
+    /// restarts. Deferring keeps the change pending while still respecting the
+    /// poll interval, because `polled_at` has already advanced.
+    pub fn defer(&mut self, previous: Option<u64>) {
+        self.signature = previous;
     }
 
     /// Read `signature` at `now`, storing both values, and report what changed.
@@ -1704,6 +1776,156 @@ pub(crate) mod tests {
             let guard = poll.observe(now, 43) != PollOutcome::TooSoon;
             assert_eq!(due, guard, "is_due disagreed with observe at {now}");
         }
+    }
+
+    /// A pill whose panel was unplugged must remap from the panel it was saved
+    /// against, not from the survivor it happens to be nearest to.
+    ///
+    /// Without the retained area the survivor becomes the record's source
+    /// geometry, `restore` finds an exact match and clamps the old absolute origin
+    /// to the survivor's edge, so a pill near the left edge of a right-hand panel
+    /// comes back jammed against the right edge of the remaining one.
+    #[test]
+    fn an_unplugged_panel_remaps_from_the_retained_work_area() {
+        let survivor = MonitorRect::without_id(0.0, 0.0, 1920.0, 1080.0);
+        let unplugged = MonitorRect::without_id(1920.0, 0.0, 1920.0, 1080.0);
+        // Parked 60px inside the left edge of the panel that is about to go.
+        let origin = (1980.0, 900.0);
+        let window = (200.0, 120.0);
+        let centre = (origin.0 + window.0 / 2.0, origin.1 + window.1 / 2.0);
+
+        let parked = describe_parked(
+            &[survivor],
+            origin,
+            window,
+            centre,
+            Some(7),
+            Some(unplugged),
+        )
+        .expect("a stranded pill still has a record");
+        assert_eq!(
+            parked.display.x, unplugged.x,
+            "the survivor was recorded as the source panel, so the relative place is lost"
+        );
+        assert_eq!(parked.display.width, unplugged.width);
+
+        // A pill the survivor still contains keeps the survivor: the retained
+        // area only answers for a pill that belongs to no live display.
+        let live_centre = (100.0, 100.0);
+        let parked = describe_parked(
+            &[survivor],
+            (60.0, 40.0),
+            window,
+            live_centre,
+            Some(3),
+            Some(unplugged),
+        )
+        .expect("a live pill has a record");
+        assert_eq!(
+            parked.display.x, survivor.x,
+            "a contained pill was described against a panel that is gone"
+        );
+    }
+
+    /// A retained panel that is still connected keeps its token.
+    ///
+    /// The retained branch answers when no live area contains the pill, which
+    /// includes a pill in the gap between two panels that are both connected. The
+    /// panel it was saved against is still there, so its token is still the truth;
+    /// dropping it would downgrade every later match to geometry.
+    #[test]
+    fn a_retained_panel_still_connected_keeps_its_token() {
+        let left = display(0.0, 0.0, 1920.0, 1080.0, Some(11));
+        let right = display(2000.0, 0.0, 1920.0, 800.0, Some(12));
+        let areas = [left, right];
+        // In the 80px dead strip between the panels, above the shorter one.
+        let centre = (1960.0, 1000.0);
+
+        let parked = describe_parked(
+            &areas,
+            (1900.0, 960.0),
+            (200.0, 120.0),
+            centre,
+            None,
+            Some(left),
+        )
+        .expect("a pill between panels still has a record");
+
+        assert_eq!(
+            parked.display_id,
+            Some(11),
+            "a connected retained panel lost its token"
+        );
+
+        // The same record with the panel gone carries no token, because a token
+        // for a panel that is gone must not outlive it.
+        let parked = describe_parked(
+            &[right],
+            (1900.0, 960.0),
+            (200.0, 120.0),
+            centre,
+            None,
+            Some(left),
+        )
+        .expect("a stranded pill still has a record");
+        assert_eq!(
+            parked.display_id, None,
+            "a token survived the panel it describes"
+        );
+    }
+
+    /// A gesture owns the window from its start until its hold expires.
+    ///
+    /// Reconciliation marks the layout changed on entry, so `layout_settled` is
+    /// false for the whole function and cannot answer this. A caller that adopts a
+    /// window origin needs the drag half on its own, or it publishes the frame the
+    /// system forced as if the user had dropped there.
+    #[test]
+    fn a_drag_holds_the_window_until_its_hold_expires() {
+        let mut guard = SaveGuard::new();
+        assert!(!guard.drag_hold_active(0.0), "no drag has started yet");
+
+        // A drag that has seen no layout change is not holding the window: the
+        // drop still owns the frame, and nothing has replaced it.
+        guard.drag_started();
+        assert!(!guard.drag_hold_active(0.0));
+
+        guard.layout_changed_during_drag(100.0);
+        guard.drag_ended(101.0);
+        assert!(
+            guard.drag_hold_active(101.0 + crate::layout::DRAG_HOLD_SECONDS / 2.0),
+            "the hold after an interrupted drop still owns the window"
+        );
+        assert!(!guard.drag_hold_active(101.0 + crate::layout::DRAG_HOLD_SECONDS));
+
+        // A fresh drag clears the previous drop's hold, and holds only once its
+        // own layout change lands.
+        guard.drag_started();
+        assert!(!guard.drag_hold_active(102.0));
+        guard.layout_changed_during_drag(102.0);
+        assert!(guard.drag_hold_active(102.0));
+    }
+
+    /// A change the caller could not act on must stay pending.
+    ///
+    /// `observe` commits the signature it read, which is only correct when the
+    /// caller reconciled against that same snapshot. GTK cannot reconcile before
+    /// its toplevel has a size, and a committed signature would make every later
+    /// poll compare equal, so a pill left on a display that is gone would stay
+    /// off-screen until the desktop restarted. `defer` is what keeps it pending.
+    #[test]
+    fn a_deferred_change_is_still_pending_on_the_next_poll() {
+        let mut poll = LayoutPoll::new();
+        poll.seed(0.0, 11);
+        let previous = poll.signature();
+        assert_eq!(poll.observe(1.0, 22), PollOutcome::Changed);
+        // The caller could not act on 22, so it puts the previous signature back.
+        poll.defer(previous);
+        assert_eq!(poll.signature(), Some(11));
+        // The interval has already advanced, so the retry is not gated by it and
+        // the same change is reported again rather than read as unchanged.
+        assert!(poll.is_due(1.6));
+        assert_eq!(poll.observe(1.6, 22), PollOutcome::Changed);
     }
 
     /// Two mirrored panels report the same work area twice. The pill is half

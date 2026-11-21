@@ -905,6 +905,11 @@ fn perform_tick() {
                     ctx.state.drag_cancelled.set(true);
                     ctx.state.has_saved_position.set(false);
                     ctx.state.saved_display_id.set(None);
+                    ctx.state
+                        .saved_work_area
+                        .set(rust_pill_shared::edge::MonitorRect::without_id(
+                            0.0, 0.0, 0.0, 0.0,
+                        ));
                     // A save still owed from the cancelled gesture would publish the
                     // pre-reset origin once the guard expires, recreating the row the
                     // reset just dropped -- the same hazard the other two pills clear
@@ -953,6 +958,11 @@ fn perform_tick() {
                     // republishes this flag, so leaving it set would write the row back.
                     ctx.state.has_saved_position.set(false);
                     ctx.state.saved_display_id.set(None);
+                    ctx.state
+                        .saved_work_area
+                        .set(rust_pill_shared::edge::MonitorRect::without_id(
+                            0.0, 0.0, 0.0, 0.0,
+                        ));
                     // A clear drops the record without moving the window, and it also
                     // cancels any placement still owed: a pill the user has been
                     // looking at must not follow the pointer because a database was
@@ -1206,6 +1216,18 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
     // The pending drop has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
     state.saved_display_id.set(display_id);
+    // The same top-down rect this report publishes as the monitor, so the retained
+    // source geometry is the one the record was stored against.
+    if let Some(area) = monitor {
+        state
+            .saved_work_area
+            .set(rust_pill_shared::edge::MonitorRect::without_id(
+                area.x,
+                area.y,
+                area.width,
+                area.height,
+            ));
+    }
     // The report carries the drop too. `pill_geometry` reads the live window, so
     // using it here would store a rectangle from a different place than
     // `saved_x`/`saved_y` in the same call -- and the desktop keeps the rectangle.
@@ -2296,6 +2318,42 @@ unsafe fn display_areas() -> Option<(Vec<rust_pill_shared::edge::MonitorRect>, f
     Some((areas, primary_top))
 }
 
+/// The pill's visible footprint inside the window at the current animation frame.
+///
+/// Reconciling against the collapsed footprint while the pill is expanded lets a
+/// shrunken work area pass the visibility test that the drawn pill fails, so the
+/// pill stays partly off-screen. Startup is the exception and keeps the collapsed
+/// footprint, because nothing has been drawn yet.
+fn current_footprint(state: &PillState, window_w: f64, window_h: f64) -> ((f64, f64), (f64, f64)) {
+    let (pill_x, pill_y, pill_w, pill_h) = draw::pill_position(state, window_w, window_h);
+    let usable = pill_w.is_finite()
+        && pill_h.is_finite()
+        && pill_w > 0.0
+        && pill_h > 0.0
+        && pill_w <= window_w
+        && pill_h <= window_h;
+    if !usable {
+        // A frame that has not drawn yet has no footprint to measure. The
+        // collapsed one is the only answer that keeps reconciliation running
+        // during startup.
+        return rust_pill_shared::restore::centered_bottom_footprint(
+            (window_w, window_h),
+            (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
+            COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+        );
+    }
+    ((pill_x, pill_y), (pill_w, pill_h))
+}
+
+/// Whether a gesture still owns the window, so its frame is not a saved position.
+///
+/// A drag in flight has no completed drop, and the settle window right after one
+/// belongs to that drop. Publishing a relocation inside either replaces the last
+/// position the user actually chose with a frame the system forced.
+fn gesture_owns_window(state: &PillState, now: f64) -> bool {
+    state.dragging.get() || state.save_guard.borrow().drag_hold_active(now)
+}
+
 /// Reconcile the pill's window against the displays connected right now.
 ///
 /// macOS moves and re-clamps windows itself when a display sleeps, disconnects
@@ -2339,11 +2397,14 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
     // The display the pill is on: named when possible, else the one containing the
     // footprint centre, else the nearest. The shared helper owns all three so no
     // platform can pick a different fallback.
-    let (footprint_offset, footprint_size) = rust_pill_shared::restore::centered_bottom_footprint(
-        (window_w, window_h),
-        (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
-        COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
-    );
+    //
+    // The footprint is the one drawn right now, not the collapsed one. Startup
+    // uses the collapsed footprint because the pill has not expanded yet, but a
+    // work area that shrinks while the pill is expanded can still fit the
+    // collapsed footprint, and reconciling on it returns `Keep` while the visible
+    // pill crosses the edge. That matters after a local-data clear, when idle
+    // parking deliberately stops correcting the position.
+    let (footprint_offset, footprint_size) = current_footprint(state, window_w, window_h);
     let Some(parked) = rust_pill_shared::layout::describe_parked(
         &areas,
         (top_down.x, top_down.y),
@@ -2353,6 +2414,7 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             top_down.y + footprint_offset.1 + footprint_size.1 / 2.0,
         ),
         current_id,
+        Some(state.saved_work_area.get()),
     ) else {
         return;
     };
@@ -2361,14 +2423,7 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
         parked,
         &areas,
         (window_w, window_h),
-        |_work, window| {
-            rust_pill_shared::restore::centered_bottom_footprint(
-                window,
-                (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
-                COLLAPSED_BOTTOM_INSET
-                    + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
-            )
-        },
+        |_work, window| current_footprint(state, window.0, window.1),
         |work, _window| {
             // The same footprint clamp `reposition_window` applies when idle, so
             // a reconciled origin is a fixed point of the idle tick.
@@ -2383,7 +2438,7 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             // undoing a placement the user can see. This is the system's move, not
             // a drag, so it is adopted without going through the save guard -- and
             // only when there is a position to keep.
-            if state.has_saved_position.get() {
+            if state.has_saved_position.get() && !gesture_owns_window(state, now) {
                 let frame = window_frame(window);
                 if frame.origin.x != state.saved_x.get() || frame.origin.y != state.saved_y.get() {
                     state.saved_x.set(frame.origin.x);
@@ -2425,7 +2480,14 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             // still has to happen, but it must not write the row back.
             // A stored position has to exist to be kept: a relocation is not a
             // save, and after a reset or a clear there is nothing to record.
-            if !state.has_saved_position.get() {
+            //
+            // Nor is a mid-gesture frame a saved position. The move itself is
+            // still applied, because a pill left off-screen is worse than one
+            // that moves under the pointer, but the origin it lands on is the
+            // frame the system forced, not a drop the user made. Publishing it
+            // would replace the last completed drop before release, and the
+            // completed drop writes through the guarded writer below.
+            if !state.has_saved_position.get() || gesture_owns_window(state, now) {
                 return;
             }
             state.saved_x.set(origin.x);
@@ -2498,6 +2560,19 @@ unsafe fn seed_layout_baseline(state: &PillState) {
 /// under it.
 unsafe fn persist_reconciled_position(state: &PillState, window: id) {
     let (rect, monitor) = pill_geometry(window);
+    // The retained area is what a later unplug remaps from, so a reconcile that
+    // moves the pill onto another panel has to record that panel's geometry. Left
+    // stale, the next unplug would remap from the panel the pill already left.
+    if let Some(area) = monitor {
+        state
+            .saved_work_area
+            .set(rust_pill_shared::edge::MonitorRect::without_id(
+                area.x,
+                area.y,
+                area.width,
+                area.height,
+            ));
+    }
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
             true,
@@ -2607,6 +2682,10 @@ unsafe fn setup(
     // gone the frame is remapped onto one that remains, and the state must name
     // the display it actually landed on.
     let mut restored_display_id: Option<u64> = None;
+    // Filled in by the placement below, from the work area it actually chose.
+    // Copying `saved_position.display` here would retain the geometry of the panel
+    // that went away, which is the panel this restore exists to move off.
+    let mut restored_work_area: Option<rust_pill_shared::edge::MonitorRect> = None;
     let restored = saved_position.and_then(|parked| {
         let screen_list = screens();
         let count: usize = unsafe { msg_send![screen_list, count] };
@@ -2667,6 +2746,20 @@ unsafe fn setup(
         match placement {
             rust_pill_shared::restore::Placement::Restore { x, y, display_id } => {
                 restored_display_id = display_id;
+                // The area the placement actually landed on, resolved from the
+                // same footprint centre the restore clamped against. Taking the
+                // record's own `display` instead would retain the panel that went
+                // away, and the next unplug would remap from it again.
+                let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
+                    (window_w, window_h),
+                    (resting_pill_w, resting_pill_h),
+                    COLLAPSED_BOTTOM_INSET
+                        + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+                );
+                restored_work_area = rust_pill_shared::layout::work_area_of(
+                    &display_rects,
+                    (x + offset.0 + size.0 / 2.0, y + offset.1 + size.1 / 2.0),
+                );
                 Some(NSRect::new(
                     NSPoint::new(x, primary_top - (y + window_h)),
                     NSSize::new(window_w, window_h),
@@ -2780,6 +2873,9 @@ unsafe fn setup(
         // With no placement at all there is nothing to name either: the record's
         // token describes a display this process never went to.
         saved_display_id: Cell::new(restored.and(restored_display_id)),
+        saved_work_area: Cell::new(restored_work_area.unwrap_or_else(|| {
+            rust_pill_shared::edge::MonitorRect::without_id(0.0, 0.0, 0.0, 0.0)
+        })),
         drag_save_due: Cell::new(None),
         drop_frame: Cell::new(None),
         save_guard: RefCell::new(rust_pill_shared::layout::SaveGuard::new()),

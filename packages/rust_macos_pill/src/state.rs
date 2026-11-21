@@ -229,6 +229,10 @@ pub(crate) struct PillState {
     /// it could not be named. Published with the position so the stored record
     /// can name the display rather than only its rectangle.
     pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// The work area the saved position was clamped into, kept so a pill whose
+    /// panel is unplugged remaps from the geometry it was saved against rather
+    /// than from the survivor it happens to be nearest to.
+    pub(crate) saved_work_area: Cell<rust_pill_shared::edge::MonitorRect>,
     /// When a drop that the display-change hold refused may be written, or `None`
     /// when no save is owed. The drag controller reports `settled` exactly once,
     /// so a refused save has to be retried from here or the drop is lost.

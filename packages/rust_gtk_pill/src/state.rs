@@ -278,6 +278,11 @@ pub(crate) struct PillState {
     /// GDK could not name it. Published with the position so the stored record
     /// can name the display rather than only its rectangle.
     pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// The work area the saved position was clamped into, kept so a pill whose
+    /// panel is unplugged remaps from the geometry it was saved against instead
+    /// of from the survivor it happens to be nearest to. Written beside
+    /// `saved_display_id`; both describe the same drop.
+    pub(crate) saved_work_area: Cell<rust_pill_shared::edge::MonitorRect>,
     /// Holds position saves until the display layout has been steady, so a frame
     /// the X server or the window manager forced during a RandR change is never
     /// stored as the user's position. See rust_pill_shared::layout::SaveGuard.

@@ -223,6 +223,10 @@ pub(crate) struct PillState {
     /// the display could not be named. Published with the position so the stored
     /// record can name the display rather than only its rectangle.
     pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// The work area the saved position was clamped into, kept so a pill whose
+    /// panel is unplugged remaps from the geometry it was saved against rather
+    /// than from the survivor it happens to be nearest to.
+    pub(crate) saved_work_area: Cell<rust_pill_shared::edge::MonitorRect>,
     /// When the current drag started, and which layout was in effect. A layout
     /// change while a drag is held has to be remembered as interrupting it, so
     /// the settle that follows is not saved as the user's choice.
