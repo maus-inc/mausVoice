@@ -889,7 +889,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(
       helper,
       /visible_pill_centre\(\(published\.x, published\.y\), footprint\)/,
-      "windowsPill: the work area is probed from the window's origin, not the pill's centre",
+      "windowsPill: the work area is probed from the pill's centre via visible_pill_centre",
     );
     // The arithmetic lives in the helper, so it is asserted there. A centre taken
     // from the window corner would put a straddling window on the wrong panel.
@@ -897,12 +897,12 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(
       centre,
       /origin\.0 \+ offset\.0 \+ size\.0 \/ 2\.0/,
-      "windowsPill: the centre ignores the pill's horizontal offset and width",
+      "windowsPill: the centre adds the pill's horizontal offset and half its width",
     );
     assert.match(
       centre,
       /origin\.1 \+ offset\.1 \+ size\.1 \/ 2\.0/,
-      "windowsPill: the centre ignores the pill's vertical offset and height",
+      "windowsPill: the centre adds the pill's vertical offset and half its height",
     );
   });
 
