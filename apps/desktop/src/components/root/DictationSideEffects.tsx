@@ -69,6 +69,7 @@ import type {
 } from "../../types/strategy.types";
 import {
   abortRecordingIntake,
+  commitNativeStart,
   attachSessionAudioIntake,
   createCurrentSegmentGuard,
   sealAndCheckLiveAudioDiscontinuity,
@@ -2414,7 +2415,7 @@ export const DictationSideEffects = () => {
           await stopOwnedNativeStart(nativeStartOwnerRef, operationId);
           return;
         }
-        nativeStartOwnerRef.current = null;
+        commitNativeStart(nativeStartOwnerRef, operationId);
         const startedSession = session;
         const sessionKind = resolveTranscriptionSessionKind({
           mode: transcriptPrefs.mode,

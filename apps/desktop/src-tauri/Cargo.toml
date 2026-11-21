@@ -116,6 +116,7 @@ rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 arboard = "3"
 enigo = "0.1"
 gtk = "0.18"
+webkit2gtk = { version = "=2.0.2", features = ["v2_34"] }
 libpulse-binding = "2"
 libc = "0.2"
 x11 = { version = "2", features = ["xlib"] }

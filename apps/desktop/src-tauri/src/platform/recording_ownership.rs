@@ -7,6 +7,13 @@ use std::time::{Duration, Instant};
 pub struct RecordingWindow {
     key: usize,
     closed: AtomicBool,
+    native_process_exited: AtomicBool,
+}
+
+impl RecordingWindow {
+    fn native_start_unavailable(&self) -> bool {
+        self.closed.load(Ordering::SeqCst) || self.native_process_exited.load(Ordering::SeqCst)
+    }
 }
 
 pub struct StartControl<'a> {
@@ -36,7 +43,7 @@ impl RecordingAdmission {
     }
 
     pub fn may_recover_audio(&self) -> bool {
-        !self.cancelled.load(Ordering::SeqCst) && !self.window.closed.load(Ordering::SeqCst)
+        !self.cancelled.load(Ordering::SeqCst) && !self.window.native_start_unavailable()
     }
 
     pub fn mark_recovery_failed(&self) {
@@ -371,6 +378,42 @@ impl RecordingOwnership {
             });
         self.wake_starts();
         Some(window)
+    }
+
+    /// Snapshot the document associated with the webview at signal ingress.
+    #[cfg(any(target_os = "linux", test))]
+    pub fn recording_document_for_probe(&self, key: usize) -> Option<Arc<RecordingWindow>> {
+        self.windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+            .and_then(Weak::upgrade)
+    }
+
+    /// Reject native starts queued by the departed document and return its
+    /// exact installed admission, if any. A browser lease is not retired here.
+    #[cfg(any(target_os = "linux", test))]
+    pub fn confirm_native_process_exit(
+        &self,
+        document: &Arc<RecordingWindow>,
+    ) -> Option<Arc<RecordingAdmission>> {
+        let owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if document.closed.load(Ordering::SeqCst)
+            || document.native_process_exited.swap(true, Ordering::SeqCst)
+        {
+            return None;
+        }
+        self.wake_starts();
+        let owner = owner.as_ref()?;
+        if owner.external || !Arc::ptr_eq(&owner.window, document) {
+            return None;
+        }
+        let admission = owner.admission.as_ref()?;
+        admission.cancel();
+        Some(Arc::clone(admission))
     }
 
     pub fn stop_window<T>(
@@ -839,7 +882,7 @@ impl RecordingOwnership {
                 || control
                     .admission
                     .is_some_and(|admission| admission.cancelled.load(Ordering::SeqCst))
-                || window.closed.load(Ordering::SeqCst)
+                || window.native_start_unavailable()
             {
                 return Err("Recording start was cancelled".into());
             }
@@ -930,7 +973,7 @@ impl RecordingOwnership {
             || control
                 .admission
                 .is_some_and(|admission| admission.cancelled.load(Ordering::SeqCst))
-            || window.closed.load(Ordering::SeqCst)
+            || window.native_start_unavailable()
         {
             owner
                 .as_mut()
@@ -1630,6 +1673,74 @@ mod tests {
             || Ok(()),
             || false,
         )
+    }
+
+    #[test]
+    fn a_delayed_crash_cleanup_does_not_touch_a_replacement_document() {
+        let coordinator = RecordingOwnership::default();
+        let window = coordinator.window(201);
+        let token = coordinator.reserve("reused-owner", &window).unwrap();
+        let first = start_idle_admission(&coordinator, "reused-owner", &window, token);
+        assert!(coordinator.recording_document_for_probe(202).is_none());
+        let document = coordinator.recording_document_for_probe(201).unwrap();
+        assert!(Arc::ptr_eq(&document, &window));
+        let crash = coordinator.confirm_native_process_exit(&document).unwrap();
+        assert!(Arc::ptr_eq(&crash, &first));
+        coordinator
+            .stop_admission(&crash, || (Ok(()), false))
+            .unwrap()
+            .unwrap();
+
+        coordinator.retire_document(201).unwrap();
+        let replacement = coordinator.window(201);
+        let token = coordinator.reserve("reused-owner", &replacement).unwrap();
+        let successor = start_idle_admission(&coordinator, "reused-owner", &replacement, token);
+        assert!(coordinator.confirm_native_process_exit(&document).is_none());
+        assert!(coordinator
+            .stop_admission(&crash, || -> (Result<(), String>, bool) {
+                panic!("the delayed crash must not touch the successor's driver");
+            })
+            .is_none());
+        assert!(successor.may_recover_audio());
+    }
+
+    #[test]
+    fn a_confirmed_crash_blocks_a_native_start_queued_before_owner_installation() {
+        let coordinator = RecordingOwnership::default();
+        let document = coordinator.window(201);
+        let token = coordinator.reserve("opening", &document).unwrap();
+        let admission = coordinator
+            .claim_admission("opening", &document, token)
+            .unwrap();
+        assert!(coordinator.confirm_native_process_exit(&document).is_none());
+        let error = coordinator.start(
+            "opening",
+            &document,
+            token,
+            StartControl {
+                admission: Some(&admission),
+                cancelled: &AtomicBool::new(false),
+                wait: Duration::ZERO,
+            },
+            || -> Result<(), String> { panic!("dead renderer's capture opened") },
+            || false,
+        );
+        assert_eq!(error.unwrap_err(), "Recording start was cancelled");
+    }
+
+    #[test]
+    fn a_crash_snapshot_does_not_include_the_browser_lease() {
+        let coordinator = RecordingOwnership::default();
+        let window = coordinator.window(201);
+        let token = coordinator.reserve("browser", &window).unwrap();
+        let admission = coordinator
+            .claim_admission("browser", &window, token)
+            .unwrap();
+        coordinator.start_external(&admission).unwrap();
+        assert!(coordinator.confirm_native_process_exit(&window).is_none());
+        assert!(start(&coordinator, "competing-native").is_err());
+        coordinator.retire_document(201).unwrap();
+        assert!(start(&coordinator, "competing-native").is_ok());
     }
 
     #[test]

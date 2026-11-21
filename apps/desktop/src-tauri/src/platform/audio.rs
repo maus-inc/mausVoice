@@ -317,6 +317,12 @@ mod cpal_impl {
             self.samples.drain(..).collect()
         }
 
+        fn resize(&mut self, capacity: usize) {
+            self.cap = capacity;
+            let excess = self.len().saturating_sub(capacity);
+            self.samples.drain(..excess);
+        }
+
         fn clear(&mut self) {
             self.samples.clear();
         }
@@ -1614,30 +1620,18 @@ mod cpal_impl {
         pub fn set_preroll(&self, preroll: Duration) {
             let micros = preroll.as_micros().min(u128::from(u64::MAX)) as u64;
             self.preroll_micros.store(micros, Ordering::SeqCst);
-            let capacity = {
-                let warm_rate = self
-                    .warm
-                    .lock()
-                    .ok()
-                    .and_then(|guard| guard.as_ref().map(|warm| warm.sample_rate));
-                match warm_rate {
-                    Some(rate) => preroll_capacity(preroll, rate),
-                    // No stream yet, so no rate to size against; the next open
-                    // sizes it. Clearing keeps the old length from surviving.
-                    None => {
-                        if let Ok(mut ring) = self.preroll.lock() {
-                            ring.cap = 0;
-                            ring.clear();
-                        }
-                        return;
-                    }
-                }
-            };
+            let warm_rate = self
+                .warm
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|warm| warm.sample_rate));
+            // A recording collects into the same ring while the warm slot is
+            // empty. Preserve that tail when the setting changes mid-take.
+            let capacity = warm_rate
+                .or_else(|| self.current_sample_rate())
+                .map_or(0, |rate| preroll_capacity(preroll, rate));
             if let Ok(mut ring) = self.preroll.lock() {
-                ring.cap = capacity;
-                while ring.len() > capacity {
-                    ring.samples.pop_front();
-                }
+                ring.resize(capacity);
             }
         }
 
@@ -2705,12 +2699,16 @@ mod cpal_impl {
             if !allow_hold || !self.hold_after_stop() {
                 return None;
             }
-            Some(collected.unwrap_or_else(|| {
-                let mut ring = self.preroll.lock().unwrap_or_else(PoisonError::into_inner);
-                ring.clear();
-                ring.cap = preroll_capacity(self.preroll_requested(), rate);
-                Arc::clone(&self.preroll)
-            }))
+            let already_collecting = collected.is_some();
+            let ring = collected.unwrap_or_else(|| Arc::clone(&self.preroll));
+            {
+                let mut samples = ring.lock().unwrap_or_else(PoisonError::into_inner);
+                if !already_collecting {
+                    samples.clear();
+                }
+                samples.resize(preroll_capacity(self.preroll_requested(), rate));
+            }
+            Some(ring)
         }
 
         fn stop_with_handoff(
@@ -4629,6 +4627,50 @@ mod cpal_impl {
             assert!(manager.ring_for_handoff(16_000, false, None).is_none());
             manager.set_linger_policy(Duration::ZERO);
             assert!(manager.ring_for_handoff(16_000, true, Some(ring)).is_none());
+        }
+
+        #[test]
+        fn handoff_resizes_an_existing_ring_and_preserves_its_newest_samples() {
+            let manager = LocalRecordingManager::default();
+            manager.set_linger_policy(Duration::from_secs(1));
+            let collected = Arc::clone(&manager.preroll);
+            manager.set_preroll(Duration::from_millis(4));
+            assert_eq!(collected.lock().unwrap().cap, 0);
+
+            let held = manager
+                .ring_for_handoff(1000, true, Some(Arc::clone(&collected)))
+                .unwrap();
+            assert!(Arc::ptr_eq(&held, &collected));
+            assert_eq!(held.lock().unwrap().cap, 4);
+            held.lock().unwrap().push(&[1.0, 2.0, 3.0, 4.0]);
+            manager
+                .preroll_micros
+                .store(2000, std::sync::atomic::Ordering::SeqCst);
+            let held = manager.ring_for_handoff(1000, true, Some(held)).unwrap();
+            let held = manager.ring_for_handoff(1000, true, Some(held)).unwrap();
+            assert_eq!(held.lock().unwrap().cap, 2);
+            assert_eq!(held.lock().unwrap().drain(), vec![3.0, 4.0]);
+        }
+
+        #[test]
+        fn changing_preroll_while_recording_keeps_the_recent_samples() {
+            let manager = LocalRecordingManager::default();
+            *manager.inner.lock().unwrap() = Some(ActiveRecording {
+                stream: None,
+                sink: None,
+                preroll_after_stop: Some(Arc::clone(&manager.preroll)),
+                seed_samples: 0,
+                start: Instant::now(),
+                buffer: None,
+                sample_rate: 1000,
+                device_label: String::new(),
+                preferred: None,
+                channels: 1,
+            });
+            manager.set_preroll(Duration::from_millis(4));
+            manager.preroll.lock().unwrap().push(&[1.0, 2.0, 3.0, 4.0]);
+            manager.set_preroll(Duration::from_millis(2));
+            assert_eq!(manager.preroll.lock().unwrap().drain(), vec![3.0, 4.0]);
         }
 
         #[test]

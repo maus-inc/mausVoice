@@ -3683,6 +3683,35 @@ pub(crate) fn retire_recording_window(window: &tauri::Window) {
     });
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn prepare_recording_crash_cleanup(window: &tauri::Window) -> Option<impl FnOnce()> {
+    use crate::platform::recording_ownership::RecoveryStop;
+
+    let ownership = window.try_state::<RecordingOwnerState>()?;
+    let document = ownership.recording_document_for_probe(recording_window_key(window))?;
+    let recorder = window.try_state::<Arc<dyn crate::platform::Recorder>>()?;
+    let ownership = Arc::clone(&ownership);
+    let recorder = Arc::clone(&recorder);
+    Some(move || {
+        // Never resolve the window key again after the async probe. Only the
+        // confirmed scope can be marked dead, and its stop carries an admission.
+        let Some(admission) = ownership.confirm_native_process_exit(&document) else {
+            return;
+        };
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Some(Err(error)) = ownership.stop_admission_with_recovery(&admission, || {
+                let (result, active) = discard_native_recording(recorder.as_ref());
+                RecoveryStop::unsealed(result, active)
+            }) {
+                log::warn!("Could not release crashed renderer's native recording: {error}");
+                if let Some(token) = ownership.begin_release_retry_admission(&admission) {
+                    retry_recording_release(ownership, recorder, token);
+                }
+            }
+        });
+    })
+}
+
 fn take_native_recording(
     recorder: &dyn crate::platform::Recorder,
 ) -> (Result<Option<crate::domain::RecordingResult>, String>, bool) {
