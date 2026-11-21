@@ -209,6 +209,21 @@ export const MicrophoneTester = ({
     setIsPreviewPlaying,
   });
 
+  /** Whether an admitted attempt still owns the tester.
+   *
+   * A start or stop is only allowed to publish state while it is the newest
+   * attempt, the component is mounted, and no local-data clear has begun since
+   * it was admitted. Every caller needs the same four facts, so they are read
+   * once here rather than restated at each branch. */
+  const attemptIsCurrent = useCallback(
+    (opId: number, clearGeneration: number) =>
+      mountedRef.current &&
+      opId === opIdRef.current &&
+      !isLocalDataClearRequested() &&
+      clearGeneration === getLocalDataClearGeneration(),
+    [],
+  );
+
   const handleStartTest = useCallback(async () => {
     if (
       testStateRef.current !== "idle" ||
@@ -230,12 +245,7 @@ export const MicrophoneTester = ({
         preferredMicrophone ?? null,
       );
       handleRef.current = handle;
-      if (
-        !mountedRef.current ||
-        opId !== opIdRef.current ||
-        isLocalDataClearRequested() ||
-        clearGeneration !== getLocalDataClearGeneration()
-      ) {
+      if (!attemptIsCurrent(opId, clearGeneration)) {
         // Stop only the recording this attempt opened. The global helper stops
         // whatever session is current, which may belong to a later start that
         // superseded this one.
@@ -253,7 +263,7 @@ export const MicrophoneTester = ({
         clearGeneration === getLocalDataClearGeneration()
       ) {
         console.error("Failed to start microphone test", error);
-        if (mountedRef.current && opId === opIdRef.current) {
+        if (attemptIsCurrent(opId, clearGeneration)) {
           setTestError("Unable to start microphone test. Please try again.");
         }
       }
@@ -262,6 +272,7 @@ export const MicrophoneTester = ({
       }
     }
   }, [
+    attemptIsCurrent,
     clearPreviewUrl,
     disabled,
     isGlobalRecording,
