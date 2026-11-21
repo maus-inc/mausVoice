@@ -1,30 +1,31 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
-import { getAppState, useAppStore } from "../../store";
+import { locatePill } from "../../actions/native.actions";
+import { useAppStore } from "../../store";
 import type { AppState } from "../../state/app.state";
 import {
   createLocateGestureDetector,
   type LocateGestureDetector,
 } from "../../utils/locate-gesture.utils";
-import { sendPillLocate } from "../../utils/overlay.utils";
 
-/** Applies one held-key snapshot to the detector and reports whether it fired. */
-const applyKeysHeld = (
+/**
+ * Applies one store snapshot to the detector and reports whether it fired.
+ *
+ * Every snapshot is fed, not just the ones where the held keys changed: the
+ * preference can move to another modifier while one is still held, and no key
+ * event arrives to notice it. The detector drops the sequence when the family
+ * it is watching stops being the selected one.
+ */
+const applyState = (
   state: AppState,
   detector: LocateGestureDetector,
-  previousKeys: string[],
-): { fired: boolean; keys: string[] } => {
+): boolean => {
   const selected = state.userPrefs?.pillLocateGestureModifier ?? "none";
-  const active = state.hotkeyStrategy === "listener" && selected !== "none";
-  if (!active) {
+  if (state.hotkeyStrategy !== "listener" || selected === "none") {
     detector.reset();
-    return { fired: false, keys: state.keysHeld };
+    return false;
   }
-  if (state.keysHeld === previousKeys) {
-    return { fired: false, keys: previousKeys };
-  }
-  const fired = detector.update(state.keysHeld, performance.now(), selected);
-  return { fired, keys: state.keysHeld };
+  return detector.update(state.keysHeld, performance.now(), selected);
 };
 
 /**
@@ -41,13 +42,10 @@ export const LocateGestureSideEffects = () => {
     }
 
     const detector = createLocateGestureDetector();
-    let previousKeys = getAppState().keysHeld;
 
     const unsubscribe = useAppStore.subscribe((state) => {
-      const next = applyKeysHeld(state, detector, previousKeys);
-      previousKeys = next.keys;
-      if (next.fired) {
-        sendPillLocate();
+      if (applyState(state, detector)) {
+        locatePill();
       }
     });
 

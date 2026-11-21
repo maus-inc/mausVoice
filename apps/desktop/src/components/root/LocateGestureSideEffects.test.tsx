@@ -89,6 +89,28 @@ describe("LocateGestureSideEffects", () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
+  it("drops the sequence when the modifier changes while the key is held", () => {
+    // Alt pressed, released, pressed again; the preference then moves to shift
+    // before Alt comes up. The release must not complete the stored Alt pair.
+    const spy = vi.spyOn(performance, "now");
+    // One reading per store update, in order: select alt, press, release,
+    // press, switch to shift, release. Every reading must sit inside the
+    // double-tap window, or the release would be dropped as a long hold and
+    // the test would pass for the wrong reason.
+    for (const value of [0, 10, 80, 200, 280, 290]) {
+      spy.mockReturnValueOnce(value);
+    }
+    setModifier("alt");
+    setKeys(["Alt"]);
+    setKeys([]);
+    setKeys(["Alt"]);
+    setModifier("shift");
+    setKeys([]);
+
+    spy.mockRestore();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("does not send on the Wayland bridge strategy", () => {
     setModifier("alt");
     act(() => {

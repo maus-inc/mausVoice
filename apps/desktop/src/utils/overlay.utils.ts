@@ -33,12 +33,6 @@ export const sendPillFlashBlue = (): void => {
   }).catch(console.error);
 };
 
-export const sendPillLocate = (): void => {
-  invoke("sync_native_pill_assistant", {
-    payload: JSON.stringify({ type: "locate" }),
-  }).catch(console.error);
-};
-
 export const sendPillStageText = (text: string | null): void => {
   invoke("sync_native_pill_assistant", {
     payload: JSON.stringify({ type: "stage_text", text }),

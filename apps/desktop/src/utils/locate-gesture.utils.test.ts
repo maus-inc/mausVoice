@@ -87,6 +87,16 @@ describe("locate gesture detector", () => {
     expect(tap(detector, "Alt", 200, "alt")).toBe(false);
   });
 
+  it("drops a sequence when the family changes while the key is held", () => {
+    const detector = createLocateGestureDetector();
+    detector.update(["Alt"], 0, "alt");
+    detector.update([], 80, "alt");
+    // Alt goes down again, then the preference moves to shift with Alt still
+    // held, so no key snapshot arrives to notice the change.
+    detector.update(["Alt"], 200, "alt");
+    expect(detector.update([], 280, "shift")).toBe(false);
+  });
+
   it("never reports a fire outside a clean pair of the configured family", () => {
     let seed = 0x335335;
     const random = () => {

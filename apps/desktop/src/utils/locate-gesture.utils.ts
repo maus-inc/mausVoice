@@ -47,10 +47,12 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
   const pressed = new Set<string>();
   let tap: Tap | null = null;
   let pending: PendingTap | null = null;
+  let activeFamily: ModifierFamily | null = null;
 
   /** True when this tap starts close enough behind the previous one to pair. */
   const pairsWithPending = (family: ModifierFamily, startedAt: number) =>
     pending?.family === family &&
+    family === activeFamily &&
     startedAt - pending.releasedAt <= DOUBLE_TAP_WINDOW_MS;
 
   const isLongHold = (startedAt: number, now: number) =>
@@ -67,6 +69,13 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
     if (tap?.key !== key) return false;
 
     const { family, startedAt } = tap;
+    // The preference can change while a modifier is still held, and no key
+    // snapshot arrives to notice it. Dropping the sequence here stops a
+    // release from completing a pair for a family that is no longer selected.
+    if (family !== activeFamily) {
+      pending = null;
+      return false;
+    }
     tap = null;
     if (isLongHold(startedAt, now)) {
       pending = null;
@@ -101,9 +110,12 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
 
   return {
     update(keys, now, allowed) {
-      if (allowed === null) {
+      if (allowed !== activeFamily) {
+        // A different family (or disabling the gesture) invalidates any
+        // sequence in flight, even when the held keys have not changed.
+        activeFamily = allowed;
         clear();
-        return false;
+        if (allowed === null) return false;
       }
       const next = new Set(keys.map(normalizeKey));
       const fired = releaseMissing(next, now);
