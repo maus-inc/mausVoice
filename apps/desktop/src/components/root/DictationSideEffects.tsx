@@ -68,13 +68,14 @@ import type {
   ReviewedTranscriptPersistenceInput,
 } from "../../types/strategy.types";
 import {
+  abortRecordingIntake,
   attachSessionAudioIntake,
   createCurrentSegmentGuard,
   sealAndCheckLiveAudioDiscontinuity,
   isRecordingStartCurrent,
+  releaseAudioIntake,
   releaseRecordingResources,
   requiresLiveIntakeRecovery,
-  stopNativeRecordingForAbort,
   stopOwnedNativeStart,
   trackNativeStartHandle,
   type SessionAudioIntake,
@@ -1432,21 +1433,6 @@ export const DictationSideEffects = () => {
     return () => clearInterval(interval);
   }, [isMainWindow, isActiveSession]);
 
-  // Single owner for the shared audio_chunk subscription. Every terminal path
-  // that ends a recording must call this, otherwise the Tauri listener outlives
-  // the session it was created for and keeps forwarding into a stale closure.
-  const releaseAudioIntake = useCallback((owned?: UnlistenFn | null) => {
-    if (owned === undefined) {
-      audioChunkUnlistenRef.current?.();
-      audioChunkUnlistenRef.current = null;
-      return;
-    }
-    if (audioChunkUnlistenRef.current === owned) {
-      owned?.();
-      audioChunkUnlistenRef.current = null;
-    }
-  }, []);
-
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
       const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
@@ -1468,7 +1454,6 @@ export const DictationSideEffects = () => {
       clearRecordingTimers();
       clearCancelPromptTimer();
       hardResetHotkeyState();
-      releaseAudioIntake(ownedAudioChunkUnlisten);
       // Before the `sendPhaseToPill` await, and with no await of its own between
       // taking the claim and releasing the stream. See
       // `stopNativeRecordingForAbort` for the race that ordering closes: an abort
@@ -1478,7 +1463,11 @@ export const DictationSideEffects = () => {
       //
       // A second `stop_recording` can still arrive from the superseded start's own
       // cleanup. That is already tolerated: the invoke is caught and logged.
-      const stopNative = stopNativeRecordingForAbort(nativeStartOwnerRef);
+      const stopNative = abortRecordingIntake(
+        audioChunkUnlistenRef,
+        ownedAudioChunkUnlisten,
+        nativeStartOwnerRef,
+      );
       // Detach the old session before any IPC can suspend. A later recording
       // must never be cleaned up by the tail of this abort.
       const session = sessionRef.current;
@@ -1522,7 +1511,6 @@ export const DictationSideEffects = () => {
       clearRecordingTimers,
       clearUtteranceToneSnapshots,
       hardResetHotkeyState,
-      releaseAudioIntake,
       sendPhaseToPill,
       systemVolumeDim,
       intl,
@@ -1924,10 +1912,7 @@ export const DictationSideEffects = () => {
         abortMessage: String(error),
       };
     } finally {
-      if (audioChunkUnlistenRef.current === ownedAudioChunkUnlisten) {
-        ownedAudioChunkUnlisten?.();
-        audioChunkUnlistenRef.current = null;
-      }
+      releaseAudioIntake(audioChunkUnlistenRef, ownedAudioChunkUnlisten);
       if (audioIntakeRef.current === ownedAudioIntake) {
         audioIntakeRef.current = null;
       }
@@ -2332,7 +2317,7 @@ export const DictationSideEffects = () => {
           provider:
             transcriptPrefs.mode === "api" ? transcriptPrefs.provider : null,
         });
-        audioChunkUnlistenRef.current?.();
+        releaseAudioIntake(audioChunkUnlistenRef);
         audioChunkUnlistenRef.current = intake.unlisten;
 
         tryPlayAudioChime("start_recording_clip");
@@ -2807,7 +2792,7 @@ export const DictationSideEffects = () => {
     systemVolumeDim.endRecording();
     clearRecordingTimers();
     hardResetHotkeyState();
-    releaseAudioIntake();
+    releaseAudioIntake(audioChunkUnlistenRef);
     void sendPhaseToPill("idle");
     void discardNativeRecording().catch((e: unknown) =>
       getLogger().verbose(

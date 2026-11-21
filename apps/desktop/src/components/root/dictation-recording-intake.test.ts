@@ -71,6 +71,7 @@ import {
   type NativeRecordingHandle,
 } from "../../utils/native-recording-session";
 import {
+  abortRecordingIntake,
   attachSessionAudioIntake as attachStrictSessionAudioIntake,
   createCurrentSegmentGuard,
   forwardAudioChunk,
@@ -719,6 +720,28 @@ describe("native capture ownership", () => {
     expect(ownerRef.current).toBeNull();
   });
 
+  it("discards the owning native capture on abort when unlisten throws", async () => {
+    const ownerRef = { current: 4 as number | null };
+    const handle = fakeHandle(4);
+    trackNativeStartHandle(ownerRef, 4, handle);
+    const unlisten = vi.fn(() => {
+      throw new Error("listener already gone");
+    });
+    const listenerRef = { current: unlisten };
+
+    await abortRecordingIntake(listenerRef, unlisten, ownerRef);
+
+    expect(unlisten).toHaveBeenCalledOnce();
+    expect(listenerRef.current).toBeNull();
+    expect(ownerRef.current).toBeNull();
+    expect(discards()).toEqual([
+      [
+        "discard_recording",
+        { ownerId: handle.ownerId, generation: handle.generation },
+      ],
+    ]);
+  });
+
   it("stops on abort when the claim was already released", async () => {
     // The abort takes the claim itself, so the ref is normally null by the time
     // the stop is issued. It must stop the live recording in that state too.
@@ -873,7 +896,6 @@ describe("releaseRecordingResources", () => {
     });
     const session = sessionWith();
     const strategy = strategyStub();
-    vi.mocked(strategy.cleanup).mockResolvedValue(undefined);
     const refs = {
       audioChunkUnlistenRef: { current: unlisten },
       sessionRef: { current: session },

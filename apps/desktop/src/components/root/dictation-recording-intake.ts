@@ -475,8 +475,32 @@ export const createCurrentSegmentGuard =
     }
   };
 
+type AudioChunkUnlistenRef = { current: UnlistenFn | null };
+
+export const releaseAudioIntake = (
+  ref: AudioChunkUnlistenRef,
+  owned = ref.current,
+): void => {
+  if (ref.current !== owned) return;
+  ref.current = null;
+  try {
+    owned?.();
+  } catch (error) {
+    getLogger().warning(`Audio listener cleanup failed: ${error}`);
+  }
+};
+
+export const abortRecordingIntake = (
+  ref: AudioChunkUnlistenRef,
+  owned: UnlistenFn | null,
+  ownerRef: NativeStartOwnerRef,
+): Promise<void> => {
+  releaseAudioIntake(ref, owned);
+  return stopNativeRecordingForAbort(ownerRef);
+};
+
 export type RecordingResourceRefs = {
-  audioChunkUnlistenRef: { current: UnlistenFn | null };
+  audioChunkUnlistenRef: AudioChunkUnlistenRef;
   sessionRef: { current: TranscriptionSession | null };
   strategyRef: { current: BaseStrategy | null };
 };
@@ -502,9 +526,7 @@ export const releaseRecordingResources = ({
       report(error);
     }
   };
-  const unlisten = audioChunkUnlistenRef.current;
-  audioChunkUnlistenRef.current = null;
-  attempt("Audio listener", () => unlisten?.());
+  releaseAudioIntake(audioChunkUnlistenRef);
   attempt("Session", () => sessionRef.current?.cleanup());
   attempt("Strategy", () => strategyRef.current?.cleanup());
   void discardNativeRecording();
