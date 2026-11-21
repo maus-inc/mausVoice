@@ -1825,10 +1825,7 @@ mod cpal_impl {
                         if self.release_blocked.get() && !capture_cleanup_uncertain() {
                             let _ = self.discard_unreleased_stream();
                             if self.release_blocked.get() && !capture_cleanup_uncertain() {
-                                self.linger_deadline.set(Some((
-                                    Instant::now() + Duration::from_secs(1),
-                                    generation,
-                                )));
+                                self.schedule_linger_close(Duration::from_secs(1), generation);
                             }
                         }
                     }
@@ -2957,11 +2954,9 @@ mod cpal_impl {
         // capture: the PCM is preserved, but the renderer must warn that most
         // of the dictation is missing. Ordinary jitter stays below the gap
         // check and produces no warning.
-        let capture_failed = poisoned
-            || nonfinite
-            || drained.is_some()
-            || seed_only
-            || elapsed_gap_is_suspicious(captured, expected_duration);
+        let suspicious_gap = elapsed_gap_is_suspicious(captured, expected_duration);
+        let capture_failed =
+            poisoned || nonfinite || drained.is_some() || seed_only || suspicious_gap;
 
         // A capture that stopped early is logged with both figures. The
         // numbers are the whole value here: "the recording is 1.4 s long and

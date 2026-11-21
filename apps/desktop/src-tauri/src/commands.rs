@@ -4553,10 +4553,7 @@ pub async fn stop_recording(
         })
     });
 
-    let (bytes_res, linger) = tokio::join!(
-        take_task,
-        read_capture_linger(database.pool()),
-    );
+    let (bytes_res, linger) = tokio::join!(take_task, read_capture_linger(database.pool()));
     let bytes = bytes_res.map_err(|err| err.to_string())??;
 
     // Apply the persisted preference to the released stream without having
