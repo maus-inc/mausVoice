@@ -100,8 +100,6 @@ fn audio_dispatcher(
     Ok(worker)
 }
 
-const MAX_CHUNK_EVENT_SAMPLES: usize = 256 * 1024;
-
 // Phase delivery is replaceable state. A stalled pill pipe and a stalled
 // webview event use separate bounded workers, so neither can hold audio stop.
 static PHASE_UPDATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -4090,7 +4088,7 @@ pub async fn start_recording(
     let chunk_emitter = crate::platform::event_dispatch::bounded_chunk_callback(
         chunk_dispatch,
         chunk_delivery,
-        MAX_CHUNK_EVENT_SAMPLES,
+        crate::platform::MAX_CHUNK_EVENT_SAMPLES,
     );
     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut guard = StartRecordingGuard {

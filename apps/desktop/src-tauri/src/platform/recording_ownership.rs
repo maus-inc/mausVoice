@@ -7,12 +7,12 @@ use std::time::{Duration, Instant};
 pub struct RecordingWindow {
     key: usize,
     closed: AtomicBool,
-    native_process_exited: AtomicBool,
+    process_exited: AtomicBool,
 }
 
 impl RecordingWindow {
-    fn native_start_unavailable(&self) -> bool {
-        self.closed.load(Ordering::SeqCst) || self.native_process_exited.load(Ordering::SeqCst)
+    fn start_unavailable(&self) -> bool {
+        self.closed.load(Ordering::SeqCst) || self.process_exited.load(Ordering::SeqCst)
     }
 }
 
@@ -43,7 +43,7 @@ impl RecordingAdmission {
     }
 
     pub fn may_recover_audio(&self) -> bool {
-        !self.cancelled.load(Ordering::SeqCst) && !self.window.native_start_unavailable()
+        !self.cancelled.load(Ordering::SeqCst) && !self.window.start_unavailable()
     }
 
     pub fn mark_recovery_failed(&self) {
@@ -390,7 +390,7 @@ impl RecordingOwnership {
             .and_then(Weak::upgrade)
     }
 
-    /// Reject native starts queued by the departed document and return its
+    /// Reject recording starts queued by the departed document and return its
     /// exact installed admission, if any. A browser lease is not retired here.
     #[cfg(any(target_os = "linux", test))]
     pub fn confirm_native_process_exit(
@@ -402,7 +402,7 @@ impl RecordingOwnership {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if document.closed.load(Ordering::SeqCst)
-            || document.native_process_exited.swap(true, Ordering::SeqCst)
+            || document.process_exited.swap(true, Ordering::SeqCst)
         {
             return None;
         }
@@ -882,7 +882,7 @@ impl RecordingOwnership {
                 || control
                     .admission
                     .is_some_and(|admission| admission.cancelled.load(Ordering::SeqCst))
-                || window.native_start_unavailable()
+                || window.start_unavailable()
             {
                 return Err("Recording start was cancelled".into());
             }
@@ -973,7 +973,7 @@ impl RecordingOwnership {
             || control
                 .admission
                 .is_some_and(|admission| admission.cancelled.load(Ordering::SeqCst))
-            || window.native_start_unavailable()
+            || window.start_unavailable()
         {
             owner
                 .as_mut()
@@ -998,7 +998,7 @@ impl RecordingOwnership {
                 || admission.generation != self.generation()
                 || admission.cancelled.load(Ordering::SeqCst)
                 || !admission.claimed.load(Ordering::SeqCst)
-                || admission.window.closed.load(Ordering::SeqCst)
+                || admission.window.start_unavailable()
         };
         if cancelled() {
             return Err("Recording start was cancelled".into());
@@ -1726,6 +1726,22 @@ mod tests {
             || false,
         );
         assert_eq!(error.unwrap_err(), "Recording start was cancelled");
+    }
+
+    #[test]
+    fn a_confirmed_exit_rejects_a_queued_browser_claim() {
+        let coordinator = RecordingOwnership::default();
+        let document = coordinator.window(201);
+        let token = coordinator.reserve("browser", &document).unwrap();
+        let admission = coordinator
+            .claim_admission("browser", &document, token)
+            .unwrap();
+        assert!(coordinator.confirm_native_process_exit(&document).is_none());
+        assert_eq!(
+            coordinator.start_external(&admission).unwrap_err(),
+            "Recording start was cancelled"
+        );
+        assert!(start(&coordinator, "other-window").is_ok());
     }
 
     #[test]

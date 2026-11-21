@@ -199,6 +199,9 @@ impl SavedClipboard {
 }
 
 pub type LevelCallback = Arc<dyn Fn(Vec<f32>) + Send + Sync>;
+/// Maximum PCM batch accepted by the live-audio event dispatcher.
+pub(crate) const MAX_CHUNK_EVENT_SAMPLES: usize = 256 * 1024;
+
 /// Receives a batch of samples plus the absolute index of the batch's first
 /// sample in the recording, so consumers can place audio on an absolute
 /// timeline instead of assuming every batch is contiguous.

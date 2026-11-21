@@ -1350,7 +1350,14 @@ mod cpal_impl {
                     .fetch_add(chunk.len() as u64, Ordering::Relaxed);
                 (chunk, offset)
             };
-            (self.callback)(chunk, offset);
+            const LIMIT: usize = crate::platform::MAX_CHUNK_EVENT_SAMPLES;
+            if chunk.len() <= LIMIT {
+                (self.callback)(chunk, offset);
+            } else {
+                for (index, part) in chunk.chunks(LIMIT).enumerate() {
+                    (self.callback)(part.to_vec(), offset + (index * LIMIT) as u64);
+                }
+            }
         }
 
         fn flush(&self) {
@@ -1387,6 +1394,14 @@ mod cpal_impl {
     const WARM_READY_GRACE: Duration = Duration::from_millis(250);
 
     impl WarmStream {
+        fn matches_preference(&self, preferred: Option<&str>) -> bool {
+            preferred.is_none_or(|wanted| {
+                self.preferred
+                    .as_deref()
+                    .is_some_and(|opened| wanted.eq_ignore_ascii_case(opened))
+            })
+        }
+
         /// Whether this stream has stopped delivering audio.
         ///
         /// A running stream that delivers nothing is the failure this catches:
@@ -1543,8 +1558,8 @@ mod cpal_impl {
         ///
         /// `None` means no timer: either the user asked for an always-ready
         /// microphone, or nothing is keeping the device open at all.
-        fn pending_linger(&self) -> Option<Duration> {
-            match self.linger_ms.load(Ordering::SeqCst) {
+        fn finite_linger(millis: u64) -> Option<Duration> {
+            match millis {
                 0 | WARM_FOREVER_MS => None,
                 millis => Some(Duration::from_millis(millis)),
             }
@@ -2081,6 +2096,9 @@ mod cpal_impl {
                 Err(poisoned) => poisoned.into_inner(),
             };
             let warm = warm_guard.take()?;
+            // This deadline belonged to the idle slot, not to the ring now
+            // attached to the active take or to a later handoff.
+            self.cancel_linger();
 
             // A stream can be running and delivering nothing: the device was
             // unplugged, the host stopped calling the callback after a sleep, or
@@ -2093,25 +2111,17 @@ mod cpal_impl {
                     "warm stream on '{}' cannot serve a press ({reason}); reopening cold",
                     warm.device_label
                 );
-                warm.sink.stop_recording(None);
-                self.retire_stream(warm.stream);
+                self.retire_unusable_warm(warm);
                 return None;
             }
 
-            let matches_preference = match (preferred_normalized, warm.preferred.as_deref()) {
-                (None, _) => true,
-                (Some(wanted), Some(opened)) => wanted == opened.to_ascii_lowercase().as_str(),
-                (Some(_), None) => false,
-            };
-
-            if !matches_preference {
+            if !warm.matches_preference(preferred_normalized) {
                 log::info!(
                     "warm stream was opened for {:?} but {:?} is now preferred; reopening",
                     warm.preferred,
                     preferred_normalized
                 );
-                warm.sink.stop_recording(None);
-                self.retire_stream(warm.stream);
+                self.retire_unusable_warm(warm);
                 return None;
             }
 
@@ -2143,6 +2153,17 @@ mod cpal_impl {
                 preferred: warm.preferred,
                 channels: warm.channels,
             })
+        }
+
+        fn retire_unusable_warm(&self, warm: WarmStream) {
+            // The old expiry no longer owns the slot, so discard the rejected
+            // stream's seed here even if the cold device fails to open.
+            warm.sink.stop_recording(None);
+            self.preroll
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
+            self.retire_stream(warm.stream);
         }
 
         /// Publishes the startup stages and retains a timing-only signal for
@@ -2362,11 +2383,8 @@ mod cpal_impl {
                 let prepared = self.warm.lock().ok().and_then(|warm| {
                     warm.as_ref()
                         .filter(|warm| {
-                            preferred.as_deref().is_none_or(|wanted| {
-                                warm.preferred
-                                    .as_deref()
-                                    .is_some_and(|opened| wanted.eq_ignore_ascii_case(opened))
-                            })
+                            warm.matches_preference(preferred.as_deref())
+                                && warm.unusable_reason(WARM_READY_GRACE).is_none()
                         })
                         .map(|warm| warm.device_label.clone())
                 });
@@ -2693,10 +2711,10 @@ mod cpal_impl {
         fn ring_for_handoff(
             &self,
             rate: u32,
-            allow_hold: bool,
+            linger_ms: u64,
             collected: Option<Arc<Mutex<Preroll>>>,
         ) -> Option<Arc<Mutex<Preroll>>> {
-            if !allow_hold || !self.hold_after_stop() {
+            if linger_ms == 0 {
                 return None;
             }
             let already_collecting = collected.is_some();
@@ -2713,9 +2731,15 @@ mod cpal_impl {
 
         fn stop_with_handoff(
             &self,
-            allow_hold: bool,
+            linger_override: Option<Duration>,
             publish: impl FnOnce(RecordingResult),
         ) -> Result<bool, RecordingError> {
+            // A stop (including abandoned-capture recovery) can override
+            // this handoff without changing the policy for future starts.
+            let linger_ms = linger_override.map_or_else(
+                || self.linger_millis(),
+                |linger| linger.as_millis().min(u128::from(u64::MAX)) as u64,
+            );
             self.check_release()?;
             let mut guard = self
                 .inner
@@ -2746,7 +2770,7 @@ mod cpal_impl {
             // writing a sample into a recording that already returned.
             let resumed_preroll = self.ring_for_handoff(
                 recording.sample_rate,
-                allow_hold,
+                linger_ms,
                 recording.preroll_after_stop.take(),
             );
             let stop_outcome = recording
@@ -2793,7 +2817,7 @@ mod cpal_impl {
             let result = seal_capture_audio(&recording, capture_fault, expected_duration);
             // Even a complete take can end on a faulted device; never offer
             // that stream to the next press.
-            let hold = resumed_preroll.is_some() && !result.capture_failed;
+            let hold = (resumed_preroll.is_some() && !result.capture_failed).then_some(linger_ms);
             publish(result);
             Ok(self.finish_stopped_stream(recording, hold, was_paused) || self.release_pending())
         }
@@ -2801,7 +2825,7 @@ mod cpal_impl {
         fn finish_stopped_stream(
             &self,
             recording: ActiveRecording,
-            hold: bool,
+            hold: Option<u64>,
             was_paused: bool,
         ) -> bool {
             let ActiveRecording {
@@ -2817,10 +2841,10 @@ mod cpal_impl {
             let Some(sink) = sink else {
                 return self.retire_stream(stream);
             };
-            if !hold {
+            let Some(linger_ms) = hold else {
                 sink.stop_recording(None);
                 return self.retire_stream(stream);
-            }
+            };
             // Stop already closed the pause interval, but the hardware must resume
             // before it can collect pre-roll for another press.
             if let Some(error) = was_paused.then(|| stream.play().err()).flatten() {
@@ -2845,7 +2869,7 @@ mod cpal_impl {
                 prior.sink.stop_recording(None);
                 self.retire_stream(prior.stream)
             });
-            match self.pending_linger() {
+            match Self::finite_linger(linger_ms) {
                 Some(linger) => self.linger_then_close(linger),
                 None => self.cancel_linger(),
             }
@@ -2874,8 +2898,8 @@ mod cpal_impl {
         // pre-roll, so counting every sample would credit the recording with
         // up to two seconds of audio from before it began, and that credit is
         // indistinguishable from a stream that died for the same span.
-        let captured =
-            captured_duration(samples.len(), seed_samples, sample_rate).unwrap_or_default();
+        let live_duration = captured_duration(samples.len(), seed_samples, sample_rate);
+        let captured = live_duration.unwrap_or_default();
         let size_bytes = samples.len() as u64 * std::mem::size_of::<f32>() as u64;
 
         // The token was read before the sink stopped and again after it, but
@@ -2917,7 +2941,7 @@ mod cpal_impl {
         RecordingResult {
             capture_failed,
             metrics: RecordingMetrics {
-                duration: captured,
+                duration: live_duration.unwrap_or(expected_duration),
                 expected_duration,
                 size_bytes,
                 capture_fault: drained,
@@ -2951,7 +2975,8 @@ mod cpal_impl {
                 });
             }
             let mut result = None;
-            let release_failed = self.stop_with_handoff(false, |audio| result = Some(audio))?;
+            let release_failed =
+                self.stop_with_handoff(Some(Duration::ZERO), |audio| result = Some(audio))?;
             self.check_release()?;
             let mut result = result.ok_or(RecordingError::NotRecording)?;
             result.capture_failed |= release_failed;
@@ -3226,10 +3251,7 @@ mod cpal_impl {
             let (released_tx, released_rx) = std::sync::mpsc::sync_channel(1);
             let activity = Arc::clone(&self.activity);
             self.worker.send(move |recorder| {
-                if let Some(linger) = linger {
-                    recorder.set_linger_policy(linger);
-                }
-                let capture_failed = match recorder.stop_with_handoff(true, |result| {
+                let capture_failed = match recorder.stop_with_handoff(linger, |result| {
                     let _ = result_tx.send(Ok(result));
                 }) {
                     Ok(failed) => failed,
@@ -4620,13 +4642,19 @@ mod cpal_impl {
         fn a_cold_recording_uses_the_current_handoff_policy() {
             let manager = LocalRecordingManager::default();
             manager.set_preroll(Duration::from_millis(500));
-            assert!(manager.ring_for_handoff(16_000, true, None).is_none());
+            assert!(manager
+                .ring_for_handoff(16_000, manager.linger_millis(), None)
+                .is_none());
             manager.promote_to_hold();
-            let ring = manager.ring_for_handoff(16_000, true, None).unwrap();
+            let ring = manager
+                .ring_for_handoff(16_000, manager.linger_millis(), None)
+                .unwrap();
             assert_eq!(ring.lock().unwrap().cap, 8000);
-            assert!(manager.ring_for_handoff(16_000, false, None).is_none());
+            assert!(manager.ring_for_handoff(16_000, 0, None).is_none());
             manager.set_linger_policy(Duration::ZERO);
-            assert!(manager.ring_for_handoff(16_000, true, Some(ring)).is_none());
+            assert!(manager
+                .ring_for_handoff(16_000, manager.linger_millis(), Some(ring))
+                .is_none());
         }
 
         #[test]
@@ -4638,7 +4666,7 @@ mod cpal_impl {
             assert_eq!(collected.lock().unwrap().cap, 0);
 
             let held = manager
-                .ring_for_handoff(1000, true, Some(Arc::clone(&collected)))
+                .ring_for_handoff(1000, manager.linger_millis(), Some(Arc::clone(&collected)))
                 .unwrap();
             assert!(Arc::ptr_eq(&held, &collected));
             assert_eq!(held.lock().unwrap().cap, 4);
@@ -4646,8 +4674,12 @@ mod cpal_impl {
             manager
                 .preroll_micros
                 .store(2000, std::sync::atomic::Ordering::SeqCst);
-            let held = manager.ring_for_handoff(1000, true, Some(held)).unwrap();
-            let held = manager.ring_for_handoff(1000, true, Some(held)).unwrap();
+            let held = manager
+                .ring_for_handoff(1000, manager.linger_millis(), Some(held))
+                .unwrap();
+            let held = manager
+                .ring_for_handoff(1000, manager.linger_millis(), Some(held))
+                .unwrap();
             assert_eq!(held.lock().unwrap().cap, 2);
             assert_eq!(held.lock().unwrap().drain(), vec![3.0, 4.0]);
         }
@@ -4679,6 +4711,64 @@ mod cpal_impl {
             assert!(!seed_only_capture(8001, 8000, Duration::from_secs(3)));
             assert!(!seed_only_capture(8000, 8000, Duration::from_millis(20)));
             assert!(!seed_only_capture(0, 0, Duration::from_secs(3)));
+        }
+
+        #[test]
+        fn sealing_without_live_pcm_reports_elapsed_time_without_hiding_failure() {
+            let expected = Duration::from_secs(1);
+            for seed in [vec![], vec![0.1, 0.2]] {
+                let recording = ActiveRecording {
+                    stream: None,
+                    sink: None,
+                    preroll_after_stop: None,
+                    seed_samples: seed.len(),
+                    start: Instant::now(),
+                    buffer: Some(Arc::new(Mutex::new(seed))),
+                    sample_rate: 1000,
+                    device_label: String::new(),
+                    preferred: None,
+                    channels: 1,
+                };
+                let fault = (recording.seed_samples == 0).then(|| "fatal".to_owned());
+                let sealed = seal_capture_audio(&recording, fault.clone(), expected);
+                assert_eq!(sealed.metrics.duration, expected);
+                assert_eq!(sealed.metrics.capture_fault, fault);
+                assert!(sealed.capture_failed);
+            }
+        }
+
+        #[test]
+        fn a_recovery_stop_leaves_the_next_take_warm_policy_intact() {
+            let manager = LocalRecordingManager::default();
+            manager.set_linger(Duration::from_secs(5));
+            let sink = StreamSink::new(SinkMode::Discard);
+            let (pcm, _) = sink.start_recording(None, None, None);
+            sink.deliver(&[0.1, 0.2]);
+            *manager.inner.lock().unwrap() = Some(ActiveRecording {
+                stream: None,
+                sink: Some(Arc::clone(&sink)),
+                preroll_after_stop: None,
+                seed_samples: 0,
+                start: Instant::now(),
+                buffer: Some(pcm),
+                sample_rate: 1000,
+                device_label: String::new(),
+                preferred: None,
+                channels: 1,
+            });
+
+            manager
+                .stop_with_handoff(Some(Duration::ZERO), |sealed| {
+                    assert_eq!(sealed.audio.samples.len(), 2);
+                })
+                .unwrap();
+            assert!(!manager.has_warm_stream());
+            assert!(manager.current_linger_deadline().is_none());
+            assert_eq!(manager.linger_millis(), 5000);
+            assert!(manager.hold_after_stop());
+            assert!(manager
+                .ring_for_handoff(1000, manager.linger_millis(), None)
+                .is_some());
         }
 
         #[test]
@@ -5673,7 +5763,10 @@ mod cpal_impl {
             manager.set_linger(Duration::ZERO);
 
             assert!(!manager.hold_after_stop());
-            assert_eq!(manager.pending_linger(), None);
+            assert_eq!(
+                LocalRecordingManager::finite_linger(manager.linger_millis()),
+                None
+            );
         }
 
         #[test]
@@ -5683,7 +5776,10 @@ mod cpal_impl {
             manager.set_linger(Duration::from_millis(5_000));
 
             assert!(manager.hold_after_stop());
-            assert_eq!(manager.pending_linger(), Some(Duration::from_millis(5_000)));
+            assert_eq!(
+                LocalRecordingManager::finite_linger(manager.linger_millis()),
+                Some(Duration::from_millis(5_000))
+            );
         }
 
         #[test]
@@ -5695,7 +5791,10 @@ mod cpal_impl {
             manager.set_linger(Duration::from_millis(u64::MAX));
 
             assert!(manager.hold_after_stop());
-            assert_eq!(manager.pending_linger(), None);
+            assert_eq!(
+                LocalRecordingManager::finite_linger(manager.linger_millis()),
+                None
+            );
             assert_eq!(manager.linger_ms.load(Ordering::SeqCst), WARM_FOREVER_MS);
         }
 
@@ -6144,6 +6243,37 @@ mod cpal_impl {
                 *chunks.lock().unwrap(),
                 vec![(vec![0.1f32, 0.2f32], 0), (vec![0.3f32], 2)]
             );
+        }
+
+        #[test]
+        fn high_rate_preroll_and_live_pcm_fit_in_contiguous_events() {
+            use crate::platform::MAX_CHUNK_EVENT_SAMPLES as LIMIT;
+            const SEED: usize = 192_000 * 1350 / 1000;
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&seen);
+            let emitter = ChunkEmitter::new(Arc::new(move |chunk, offset| {
+                assert!(chunk.len() <= LIMIT);
+                recorded.lock().unwrap().push((chunk, offset));
+            }));
+            emitter.buffer_samples(&vec![0.25; SEED]);
+            emitter.buffer_samples(&[0.5; 4096]);
+            emitter.flush();
+            emitter.emit(&[0.75]);
+            emitter.flush();
+
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), 3);
+            assert_eq!((seen[0].0.len(), seen[0].1), (LIMIT, 0));
+            assert_eq!(
+                (seen[1].0.len(), seen[1].1),
+                (SEED + 4096 - LIMIT, LIMIT as u64)
+            );
+            assert_eq!(seen[2], (vec![0.75], (SEED + 4096) as u64));
+            assert!(seen[0].0[..SEED].iter().all(|&sample| sample == 0.25));
+            assert!(seen[0].0[SEED..]
+                .iter()
+                .chain(&seen[1].0)
+                .all(|&sample| sample == 0.5));
         }
 
         #[test]
