@@ -5,6 +5,8 @@
 //! by hand. `PillPlacement` is Windows-only (only the Win32 pill anchors to a
 //! screen edge), so it stays in that crate's own enum extension point.
 
+use std::io::Write;
+
 use serde::{Deserialize, Serialize};
 
 /// Axis-aligned screen rectangle, top-left origin, y-down.
@@ -274,10 +276,10 @@ pub fn write_message(msg: &OutMessage) -> bool {
     if serde_json::to_writer(&mut stdout, msg).is_err() {
         return false;
     }
-    if std::io::Write::write_all(&mut stdout, b"\n").is_err() {
+    if stdout.write_all(b"\n").is_err() {
         return false;
     }
-    std::io::Write::flush(&mut stdout).is_ok()
+    stdout.flush().is_ok()
 }
 
 /// Reads newline-delimited JSON from stdin on a background thread, handing
