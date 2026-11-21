@@ -867,6 +867,36 @@ describe("releaseRecordingResources", () => {
     await vi.waitFor(() => expect(discards()).toHaveLength(1));
   });
 
+  it("still discards the owning native capture when removing the listener throws", async () => {
+    const unlisten = vi.fn(() => {
+      throw new Error("listener already gone");
+    });
+    const session = sessionWith();
+    const strategy = strategyStub();
+    vi.mocked(strategy.cleanup).mockResolvedValue(undefined);
+    const refs = {
+      audioChunkUnlistenRef: { current: unlisten },
+      sessionRef: { current: session },
+      strategyRef: { current: strategy },
+    };
+    const handle = await startLiveRecording();
+
+    expect(() => releaseRecordingResources(refs)).not.toThrow();
+
+    expect(unlisten).toHaveBeenCalledOnce();
+    expect(refs.audioChunkUnlistenRef.current).toBeNull();
+    expect(session.cleanup).toHaveBeenCalledOnce();
+    expect(strategy.cleanup).toHaveBeenCalledOnce();
+    await vi.waitFor(() =>
+      expect(discards()).toEqual([
+        [
+          "discard_recording",
+          { ownerId: handle.ownerId, generation: handle.generation },
+        ],
+      ]),
+    );
+  });
+
   it("still cleans up the strategy and native capture when the session throws", async () => {
     const strategy = vi.fn();
     const refs = {
