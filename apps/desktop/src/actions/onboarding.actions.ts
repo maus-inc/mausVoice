@@ -15,6 +15,7 @@ import { CURRENT_COHORT } from "../utils/analytics.utils";
 import { DEFAULT_DICTATION_LIMIT_MINUTES } from "../utils/dictation-limit.utils";
 import { DEFAULT_HANDS_FREE_DELAY_MS } from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
+import { DEFAULT_MICROPHONE_PREROLL_SECONDS } from "../utils/microphone-readiness.utils";
 import {
   EMAIL_TONE_ID,
   POLISHED_TONE_ID,
@@ -360,6 +361,15 @@ const createOnboardingPreferences = (
   lastSeenFeature: null,
   activeDictationLanguage: PRIMARY_LANGUAGE_SENTINEL,
   preferredMicrophone,
+  // Onboarding never turns the hold on: it costs a microphone indicator the
+  // user has not been asked about yet. The dialog that offers it is where it
+  // gets enabled, and the pre-roll starts at its default so a later toggle has
+  // a real value to use.
+  keepMicrophoneReady: false,
+  microphonePrerollSeconds: DEFAULT_MICROPHONE_PREROLL_SECONDS,
+  // No post-recording window either: it costs the microphone indicator for a
+  // few seconds after every dictation, which is a trade the user has to choose.
+  microphoneLingerMs: 0,
   ignoreUpdateDialog: false,
   incognitoModeEnabled: false,
   incognitoModeIncludeInStats: false,

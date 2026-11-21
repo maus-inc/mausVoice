@@ -408,6 +408,26 @@ export const theme = createTheme({
           "& .MuiSwitch-switchBase": {
             transition: `transform 160ms ${theme.transitions.easing.easeOut}`,
           },
+          // A switch can be inert without being `disabled`. The settings use
+          // `aria-disabled` where the control has to stay reachable -- a native
+          // `disabled` leaves the tab order and takes the explanation of *why*
+          // it is unavailable with it -- so the dimming that `disabled` used to
+          // supply has to be restored here or the control reads as operable.
+          //
+          // Plain descendant and adjacent-sibling selectors on purpose:
+          // `:has()` is not available in the WebKitGTK the Ubuntu build links
+          // against, and a style that silently does nothing on one platform is
+          // worse than a slightly longer selector.
+          "& .MuiSwitch-switchBase[aria-disabled='true']": {
+            cursor: "not-allowed",
+            opacity: 0.5,
+          },
+          // The track is a sibling, so it is dimmed by the same rule rather
+          // than by reaching down from the input. The thumb sits inside the
+          // dimmed `switchBase`, which is why it fades with it.
+          "& .MuiSwitch-switchBase[aria-disabled='true'] + .MuiSwitch-track": {
+            opacity: 0.5,
+          },
         }),
         thumb: ({ theme }) => ({
           borderRadius: 4,

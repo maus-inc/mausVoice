@@ -1,6 +1,7 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   listenToAudioChunks,
+  matchesAudioChunkAdmission,
   type AudioChunkAdmission,
 } from "../../sessions/audio-chunk-events";
 import type { TranscriptionSessionKind } from "../../sessions";
@@ -28,7 +29,7 @@ export type SessionAudioIntake = {
   subscriptionFailed: boolean;
   /** True once any part of the live stream is known to be invalid. */
   hasDiscontinuity: () => boolean;
-  /** Stop accepting events and complete a contiguous prefix from the native recording. */
+  /** Seal with this admission’s final waveform once; repeated calls return the first result. */
   sealLiveAudio: (
     samples: number[] | Float32Array,
     sampleRate?: number,
@@ -57,7 +58,7 @@ export const requiresLiveIntakeRecovery = (
 ): boolean => subscriptionFailed && sessionKind === "live-streaming";
 
 /** Seal only live providers, which cannot recover missed audio at finalize. */
-export const hasLiveAudioDiscontinuity = (
+export const sealAndCheckLiveAudioDiscontinuity = (
   sessionKind: TranscriptionSessionKind,
   intake: Pick<SessionAudioIntake, "sealLiveAudio"> | null,
   audio: StopRecordingResponse,
@@ -209,10 +210,7 @@ export const attachSessionAudioIntake = async (
       discontinuity = true;
       return false;
     }
-    return (
-      chunkAdmission.ownerId === admitted.ownerId &&
-      chunkAdmission.generation === admitted.generation
-    );
+    return matchesAudioChunkAdmission(admitted, chunkAdmission);
   };
 
   const hasValidOffset = (offset: number | null): offset is number => {
@@ -477,8 +475,32 @@ export const createCurrentSegmentGuard =
     }
   };
 
+type AudioChunkUnlistenRef = { current: UnlistenFn | null };
+
+export const releaseAudioIntake = (
+  ref: AudioChunkUnlistenRef,
+  owned = ref.current,
+): void => {
+  if (ref.current !== owned) return;
+  ref.current = null;
+  try {
+    owned?.();
+  } catch (error) {
+    getLogger().warning(`Audio listener cleanup failed: ${error}`);
+  }
+};
+
+export const abortRecordingIntake = (
+  ref: AudioChunkUnlistenRef,
+  owned: UnlistenFn | null,
+  ownerRef: NativeStartOwnerRef,
+): Promise<void> => {
+  releaseAudioIntake(ref, owned);
+  return stopNativeRecordingForAbort(ownerRef);
+};
+
 export type RecordingResourceRefs = {
-  audioChunkUnlistenRef: { current: UnlistenFn | null };
+  audioChunkUnlistenRef: AudioChunkUnlistenRef;
   sessionRef: { current: TranscriptionSession | null };
   strategyRef: { current: BaseStrategy | null };
 };
@@ -494,12 +516,18 @@ export const releaseRecordingResources = ({
   sessionRef,
   strategyRef,
 }: RecordingResourceRefs): void => {
-  audioChunkUnlistenRef.current?.();
-  audioChunkUnlistenRef.current = null;
-  sessionRef.current?.cleanup();
-  const strategyCleanup = strategyRef.current?.cleanup();
-  void strategyCleanup?.catch((error) => {
-    getLogger().warning(`Strategy cleanup failed during unmount: ${error}`);
-  });
+  const attempt = (label: string, cleanup: () => unknown) => {
+    const report = (error: unknown) => {
+      getLogger().warning(`${label} cleanup failed during unmount: ${error}`);
+    };
+    try {
+      void Promise.resolve(cleanup()).catch(report);
+    } catch (error) {
+      report(error);
+    }
+  };
+  releaseAudioIntake(audioChunkUnlistenRef);
+  attempt("Session", () => sessionRef.current?.cleanup());
+  attempt("Strategy", () => strategyRef.current?.cleanup());
   void discardNativeRecording();
 };

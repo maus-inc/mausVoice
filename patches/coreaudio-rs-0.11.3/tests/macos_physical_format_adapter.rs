@@ -21,10 +21,17 @@ pub mod listener_sys {
     use std::ffi::c_void;
     use std::sync::Mutex;
     pub type AudioDeviceID = u32;
+    pub type AudioStreamID = u32;
+    pub const kAudioDevicePropertyStreams: u32 = 5;
+    const DEVICE: u32 = 1;
+    const STREAM: u32 = 42;
+    const SECOND_STREAM: u32 = 43;
     pub const kAudioStreamPropertyPhysicalFormat: u32 = 1;
     pub const kAudioStreamPropertyAvailablePhysicalFormats: u32 = 2;
     pub const kAudioObjectPropertyElementMaster: u32 = 3;
     pub const kAudioObjectPropertyScopeGlobal: u32 = 4;
+    pub const kAudioObjectPropertyScopeInput: u32 = 6;
+    pub const kAudioObjectPropertyScopeOutput: u32 = 7;
     #[derive(Clone, Copy, Default, Debug)]
     pub struct AudioStreamBasicDescription {
         pub mSampleRate: f64,
@@ -65,6 +72,7 @@ pub mod listener_sys {
         pub sets: usize,
         pub set_size: u32,
         pub update: bool,
+        pub second_stream: bool,
     }
     pub static FIXTURE: Mutex<Fixture> = Mutex::new(Fixture {
         current: AudioStreamBasicDescription {
@@ -89,20 +97,40 @@ pub mod listener_sys {
         sets: 0,
         set_size: 0,
         update: true,
+        second_stream: false,
     });
+    pub unsafe fn AudioObjectHasProperty(
+        object: u32,
+        addr: *const AudioObjectPropertyAddress,
+    ) -> u8 {
+        assert_eq!(object, DEVICE);
+        assert_eq!((*addr).mSelector, kAudioDevicePropertyStreams);
+        match (*addr).mScope {
+            kAudioObjectPropertyScopeInput => FIXTURE.lock().unwrap().second_stream as u8,
+            kAudioObjectPropertyScopeOutput => 1,
+            _ => panic!("device streams need a direction"),
+        }
+    }
     pub unsafe fn AudioObjectGetPropertyDataSize(
-        _: u32,
-        _: *const AudioObjectPropertyAddress,
+        object: u32,
+        addr: *const AudioObjectPropertyAddress,
         _: u32,
         _: *const c_void,
         size: *mut u32,
     ) -> i32 {
         let f = FIXTURE.lock().unwrap();
+        if (*addr).mSelector == kAudioDevicePropertyStreams {
+            assert_eq!(object, DEVICE);
+            *size = std::mem::size_of::<AudioStreamID>() as u32;
+            return 0;
+        }
+        assert!(object == STREAM || object == SECOND_STREAM);
+        assert_eq!((*addr).mScope, kAudioObjectPropertyScopeGlobal);
         *size = f.queried;
         f.query_status
     }
     pub unsafe fn AudioObjectGetPropertyData(
-        _: u32,
+        object: u32,
         addr: *const AudioObjectPropertyAddress,
         _: u32,
         _: *const c_void,
@@ -110,6 +138,17 @@ pub mod listener_sys {
         out: *mut c_void,
     ) -> i32 {
         let f = FIXTURE.lock().unwrap();
+        if (*addr).mSelector == kAudioDevicePropertyStreams {
+            assert_eq!(object, DEVICE);
+            *(out as *mut AudioStreamID) = if (*addr).mScope == kAudioObjectPropertyScopeInput {
+                SECOND_STREAM
+            } else {
+                STREAM
+            };
+            return 0;
+        }
+        assert!(object == STREAM || object == SECOND_STREAM);
+        assert_eq!((*addr).mScope, kAudioObjectPropertyScopeGlobal);
         if f.get_status != 0 {
             return f.get_status;
         }
@@ -126,7 +165,7 @@ pub mod listener_sys {
         0
     }
     pub unsafe fn AudioObjectSetPropertyData(
-        _: u32,
+        object: u32,
         addr: *const AudioObjectPropertyAddress,
         _: u32,
         _: *const c_void,
@@ -134,6 +173,8 @@ pub mod listener_sys {
         data: *const c_void,
     ) -> i32 {
         let mut f = FIXTURE.lock().unwrap();
+        assert!(object == STREAM || object == SECOND_STREAM);
+        assert_eq!((*addr).mScope, kAudioObjectPropertyScopeGlobal);
         f.sets += 1;
         f.set_size = size;
         if (*addr).mSelector != kAudioStreamPropertyPhysicalFormat
@@ -206,7 +247,21 @@ mod tests {
         f.sets = 0;
         f.set_size = 0;
         f.update = true;
+        f.second_stream = false;
     }
+    #[test]
+    fn two_matching_streams_are_reported_as_ambiguous() {
+        let _guard = LOCK.lock().unwrap();
+        reset();
+        sys::FIXTURE.lock().unwrap().second_stream = true;
+        assert_eq!(get_supported_physical_stream_formats(1).unwrap().len(), 4);
+        assert_eq!(
+            set_device_physical_stream_format(1, format(48_000.0)),
+            Err(ListenerError::UnsupportedStreamFormat)
+        );
+        assert_eq!(sys::FIXTURE.lock().unwrap().sets, 0);
+    }
+
     #[test]
     fn source_uses_mutable_initialized_storage() {
         let source = include_str!("../src/audio_unit/macos_physical_format.rs");

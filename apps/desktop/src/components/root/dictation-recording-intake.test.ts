@@ -71,10 +71,11 @@ import {
   type NativeRecordingHandle,
 } from "../../utils/native-recording-session";
 import {
+  abortRecordingIntake,
   attachSessionAudioIntake as attachStrictSessionAudioIntake,
   createCurrentSegmentGuard,
   forwardAudioChunk,
-  hasLiveAudioDiscontinuity,
+  sealAndCheckLiveAudioDiscontinuity,
   isRecordingStartCurrent,
   releaseRecordingResources,
   requiresLiveIntakeRecovery,
@@ -204,25 +205,39 @@ describe("requiresLiveIntakeRecovery", () => {
   });
 });
 
-describe("hasLiveAudioDiscontinuity", () => {
+describe("sealAndCheckLiveAudioDiscontinuity", () => {
   it("only seals live sessions and treats missing live intake as discontinuous", () => {
     const audio = { samples: new Float32Array([0.25]), sampleRate: 16_000 };
     const sealLiveAudio = vi.fn().mockReturnValue(true);
     expect(
-      hasLiveAudioDiscontinuity("after-stop", { sealLiveAudio }, audio),
+      sealAndCheckLiveAudioDiscontinuity(
+        "after-stop",
+        { sealLiveAudio },
+        audio,
+      ),
     ).toBe(false);
-    expect(hasLiveAudioDiscontinuity("local", { sealLiveAudio }, audio)).toBe(
-      false,
-    );
-    expect(sealLiveAudio).not.toHaveBeenCalled();
-    expect(hasLiveAudioDiscontinuity("live-streaming", null, audio)).toBe(true);
     expect(
-      hasLiveAudioDiscontinuity("live-streaming", { sealLiveAudio }, audio),
+      sealAndCheckLiveAudioDiscontinuity("local", { sealLiveAudio }, audio),
+    ).toBe(false);
+    expect(sealLiveAudio).not.toHaveBeenCalled();
+    expect(
+      sealAndCheckLiveAudioDiscontinuity("live-streaming", null, audio),
+    ).toBe(true);
+    expect(
+      sealAndCheckLiveAudioDiscontinuity(
+        "live-streaming",
+        { sealLiveAudio },
+        audio,
+      ),
     ).toBe(false);
     expect(sealLiveAudio).toHaveBeenCalledWith(audio.samples, audio.sampleRate);
     sealLiveAudio.mockReturnValue(false);
     expect(
-      hasLiveAudioDiscontinuity("live-streaming", { sealLiveAudio }, audio),
+      sealAndCheckLiveAudioDiscontinuity(
+        "live-streaming",
+        { sealLiveAudio },
+        audio,
+      ),
     ).toBe(true);
   });
 });
@@ -705,6 +720,28 @@ describe("native capture ownership", () => {
     expect(ownerRef.current).toBeNull();
   });
 
+  it("discards the owning native capture on abort when unlisten throws", async () => {
+    const ownerRef = { current: 4 as number | null };
+    const handle = fakeHandle(4);
+    trackNativeStartHandle(ownerRef, 4, handle);
+    const unlisten = vi.fn(() => {
+      throw new Error("listener already gone");
+    });
+    const listenerRef = { current: unlisten };
+
+    await abortRecordingIntake(listenerRef, unlisten, ownerRef);
+
+    expect(unlisten).toHaveBeenCalledOnce();
+    expect(listenerRef.current).toBeNull();
+    expect(ownerRef.current).toBeNull();
+    expect(discards()).toEqual([
+      [
+        "discard_recording",
+        { ownerId: handle.ownerId, generation: handle.generation },
+      ],
+    ]);
+  });
+
   it("stops on abort when the claim was already released", async () => {
     // The abort takes the claim itself, so the ref is normally null by the time
     // the stop is issued. It must stop the live recording in that state too.
@@ -850,6 +887,56 @@ describe("releaseRecordingResources", () => {
     expect(cleanup).toHaveBeenCalledOnce();
     expect(strategyCleanup).toHaveBeenCalledOnce();
     // Unmount is an explicit teardown, so the live recording is discarded.
+    await vi.waitFor(() => expect(discards()).toHaveLength(1));
+  });
+
+  it("still discards the owning native capture when removing the listener throws", async () => {
+    const unlisten = vi.fn(() => {
+      throw new Error("listener already gone");
+    });
+    const session = sessionWith();
+    const strategy = strategyStub();
+    const refs = {
+      audioChunkUnlistenRef: { current: unlisten },
+      sessionRef: { current: session },
+      strategyRef: { current: strategy },
+    };
+    const handle = await startLiveRecording();
+
+    expect(() => releaseRecordingResources(refs)).not.toThrow();
+
+    expect(unlisten).toHaveBeenCalledOnce();
+    expect(refs.audioChunkUnlistenRef.current).toBeNull();
+    expect(session.cleanup).toHaveBeenCalledOnce();
+    expect(strategy.cleanup).toHaveBeenCalledOnce();
+    await vi.waitFor(() =>
+      expect(discards()).toEqual([
+        [
+          "discard_recording",
+          { ownerId: handle.ownerId, generation: handle.generation },
+        ],
+      ]),
+    );
+  });
+
+  it("still cleans up the strategy and native capture when the session throws", async () => {
+    const strategy = vi.fn();
+    const refs = {
+      audioChunkUnlistenRef: { current: null },
+      sessionRef: {
+        current: {
+          cleanup: () => {
+            throw new Error("session cleanup failed");
+          },
+        } as unknown as TranscriptionSession,
+      },
+      strategyRef: {
+        current: { cleanup: strategy } as unknown as BaseStrategy,
+      },
+    };
+    await startLiveRecording();
+    expect(() => releaseRecordingResources(refs)).not.toThrow();
+    expect(strategy).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(discards()).toHaveLength(1));
   });
 

@@ -21,5 +21,10 @@
     },
     "types": ["vite/client"]
   },
-  "include": ["src", "../desktop/src/theme.ts", "../desktop/src/mui.d.ts"]
+  "include": [
+    "src",
+    "verify-harness",
+    "../desktop/src/theme.ts",
+    "../desktop/src/mui.d.ts"
+  ]
 }

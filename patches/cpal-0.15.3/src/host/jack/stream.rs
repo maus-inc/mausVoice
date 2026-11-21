@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    BackendSpecificError, Data, InputCallbackInfo, OutputCallbackInfo, PauseStreamError,
-    PlayStreamError, SampleRate, StreamError,
+    BackendSpecificError, BuildStreamError, Data, InputCallbackInfo, OutputCallbackInfo,
+    PauseStreamError, PlayStreamError, SampleRate, StreamError,
 };
 
 use super::JACK_SAMPLE_FORMAT;
@@ -22,13 +22,12 @@ pub struct Stream {
 }
 
 impl Stream {
-    // TODO: Return error messages
     pub fn new_input<D, E>(
         client: jack::Client,
         channels: ChannelCount,
         data_callback: D,
         mut error_callback: E,
-    ) -> Stream
+    ) -> Result<Stream, BuildStreamError>
     where
         D: FnMut(&Data, &InputCallbackInfo) + Send + 'static,
         E: FnMut(StreamError) + Send + 'static,
@@ -78,14 +77,16 @@ impl Stream {
 
         let async_client = client
             .activate_async(notification_handler, input_process_handler)
-            .unwrap();
+            .map_err(|error| BackendSpecificError {
+                description: error.to_string(),
+            })?;
 
-        Stream {
+        Ok(Stream {
             playing,
             async_client,
             input_port_names: port_names,
             output_port_names: vec![],
-        }
+        })
     }
 
     pub fn new_output<D, E>(
@@ -93,7 +94,7 @@ impl Stream {
         channels: ChannelCount,
         data_callback: D,
         mut error_callback: E,
-    ) -> Stream
+    ) -> Result<Stream, BuildStreamError>
     where
         D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
         E: FnMut(StreamError) + Send + 'static,
@@ -143,14 +144,16 @@ impl Stream {
 
         let async_client = client
             .activate_async(notification_handler, output_process_handler)
-            .unwrap();
+            .map_err(|error| BackendSpecificError {
+                description: error.to_string(),
+            })?;
 
-        Stream {
+        Ok(Stream {
             playing,
             async_client,
             input_port_names: vec![],
             output_port_names: port_names,
-        }
+        })
     }
 
     /// Connect to the standard system outputs in jack, system:playback_1 and system:playback_2

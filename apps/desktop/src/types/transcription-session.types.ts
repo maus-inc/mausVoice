@@ -7,10 +7,22 @@ export type StopRecordingResponse = {
   samples: number[] | Float32Array;
   sampleRate?: number;
   /**
-   * The capture failed partway through, so `samples` is what was recorded
-   * before it did. Native reports this in the top bit of the sample-rate
-   * header, which `decodeStopRecordingPayload` reads and clears.
+   * Set when the native capture reported that the stream was gone before the
+   * recording was stopped — the device was unplugged, or the host invalidated
+   * the stream.
+   *
+   * Absent on every ordinary recording, including the object-payload form a
+   * browser or test double produces. Code that branches on this must treat
+   * `undefined` as "nothing was reported", which is not the same as "the
+   * capture was healthy": a stream that goes quiet without saying so is
+   * invisible here and is only visible in the native log.
    */
+  captureFault?: "fatal";
+  /** Audio actually captured, in milliseconds. Only present with `captureFault`. */
+  capturedMs?: number;
+  /** How long the recorder believed it was recording. Only with `captureFault`. */
+  expectedMs?: number;
+  /** Capture or physical release could not be confirmed. */
   captureFailed?: boolean;
 };
 

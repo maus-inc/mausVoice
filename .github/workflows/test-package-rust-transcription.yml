@@ -93,10 +93,8 @@ jobs:
 
       - name: Test the ONNX Runtime download contracts
         # Node-only and it reads `build.rs` from the checkout, so it runs before
-        # the toolchain like the two steps above. It pins the fallback source, the
-        # digest-before-store ordering and the terminal-4xx rule that keep a build
-        # from failing when the upstream release disappears, which is what happened
-        # on 2026-11-17.
+        # the toolchain like the two steps above. It pins the default source
+        # order and mirror override. The later Rust tests exercise HTTP failures.
         shell: bash
         run: node --test scripts/ci/verify-ort-archives.test.mjs
 
@@ -142,6 +140,10 @@ jobs:
         shell: bash
         run: |
           bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" transcription-unit cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --lib
+      - name: Test the ONNX Runtime downloader against local HTTP responses
+        shell: bash
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" ort-download cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --test ort_download
       - name: Test the sherpa-onnx-sys build script
         shell: bash
         # Cargo builds a build script as a plain binary and runs it, so the tests in

@@ -162,7 +162,11 @@ export const createStreamingResampler = (
   }
 
   const ratio = inputRate / outputRate;
-  let buffer = new Float32Array(0);
+  // Annotated deliberately. Left to inference the buffer is typed as backed by
+  // a plain ArrayBuffer, while `input.slice()` and `Float32Array.from` are not,
+  // so the assignments below fail to type-check under TypeScript 5.9's
+  // parameterised TypedArray types.
+  let buffer: Float32Array = new Float32Array(0);
   let bufferStartSample = 0;
   let totalInputSamples = 0;
   let nextOutputSample = 0;

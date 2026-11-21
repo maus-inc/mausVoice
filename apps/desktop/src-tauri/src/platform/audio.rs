@@ -11,11 +11,79 @@ pub struct InputDeviceDescriptor {
     pub label: String,
     pub is_default: bool,
     pub caution: bool,
+    // Whether this looks like a Bluetooth headset.
+    //
+    // Deliberately a plain comment rather than a doc comment: specta exports
+    // `///` on a field into `bindings.ts`, which would inline all of this into
+    // the middle of a one-line TypeScript type. The full rationale lives in
+    // `docs/decisions/warm-microphone-policy.md`.
+    //
+    // A separate flag from `caution`, because the two answer different
+    // questions. `caution` is a *ranking* verdict -- this device will sound
+    // worse than an alternative, so prefer another -- and the selector shows it
+    // as "May provide lower audio quality". This one is a *cost* verdict about
+    // the device the user has already picked: holding it open on behalf of
+    // keep-ready moves the link to its hands-free profile, which degrades output
+    // audio and drains the headset for as long as the hold lasts. A device can
+    // be worth choosing and still carry that cost, which is why one flag could
+    // not carry it.
+    //
+    // Still a name heuristic: cpal exposes no transport and CoreAudio/ALSA/
+    // WASAPI each spell it differently. It is used only to add a sentence of
+    // copy, never to change behaviour, so a false positive costs wording and a
+    // false negative costs an unexplained battery drain.
+    pub bluetooth: bool,
 }
 
-/// Creates the shared recorder used by the Tauri commands.
-pub fn new_recorder() -> Arc<dyn Recorder> {
-    Arc::new(cpal_impl::RecordingManager::new())
+/// Name fragments that identify a Bluetooth headset.
+///
+/// Hoisted out of the cpal module so the PulseAudio lister can use the same list.
+/// It could not before: the Linux path built every descriptor with
+/// `caution: false`, so on the one platform where a Bluetooth headset is the
+/// common case, the selector offered it as an ordinary device and nothing
+/// downstream could tell the difference. Two copies of a keyword list is how the
+/// two copies drift.
+const LOW_QUALITY_INPUT_KEYWORDS: &[&str] = &[
+    "airpods",
+    "beats",
+    "bluetooth",
+    "earbud",
+    "hands-free",
+    "headset",
+    "hfp",
+    "hsp",
+    "sony wh-",
+];
+
+/// Whether a device label names a Bluetooth headset.
+///
+/// A heuristic on purpose and by necessity: cpal exposes no transport, and
+/// CoreAudio, ALSA and WASAPI each spell the same headset differently. Every
+/// consumer uses it only to *describe* a device -- to rank it or to warn about
+/// holding it open -- never to change what the app does, so a miss costs wording
+/// rather than behaviour.
+pub(crate) fn label_has_low_quality_keyword(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    LOW_QUALITY_INPUT_KEYWORDS
+        .iter()
+        .any(|keyword| lower.contains(keyword))
+}
+
+/// Creates the recorder and the pre-warm handle, backed by one manager.
+///
+/// They must be the same object. The whole point of holding a device open is
+/// that the press adopts the stream that is already running, and adoption
+/// happens inside the recorder's own start path: two managers would each hold
+/// their own slot, the press would open a second stream, and the hold would have
+/// bought nothing but a microphone indicator.
+///
+/// They are registered as two state types because they are two capabilities. A
+/// command that starts a recording asks for the recorder; a command that holds a
+/// device asks for the warm handle, and neither has to claim the other's
+/// methods.
+pub fn new_audio_backends() -> (Arc<dyn Recorder>, Arc<dyn crate::platform::WarmCapture>) {
+    let manager = Arc::new(cpal_impl::RecordingManager::new());
+    ((manager.clone() as Arc<dyn Recorder>), manager)
 }
 
 /// Every input device across all hosts, deduplicated by label, with default
@@ -163,20 +231,184 @@ mod cpal_macos_property_data;
 
 mod cpal_impl {
     use super::{
-        compute_level_bins, retain_finite_prefix, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL,
-        LEVEL_DISPATCH_INTERVAL,
+        compute_level_bins, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
     };
     use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
     use crate::errors::RecordingError;
+    use crate::platform::audio_stage::{
+        AudioStartupStage, AudioStartupSummary, AudioStartupTrace, FirstPcmSignal,
+    };
     use crate::platform::{ChunkCallback, LevelCallback, Recorder};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{Device, HostId, SampleFormat, Stream, StreamConfig};
-    use std::cell::Cell;
     use std::cmp;
-    use std::collections::HashMap;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::{Arc, Mutex, MutexGuard};
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
     use std::time::{Duration, Instant};
+
+    #[derive(Clone)]
+    struct CachedDeviceInfo {
+        host_id: HostId,
+        confirmed: bool,
+        preference: Option<String>,
+        /// Disambiguated label, so the cache re-resolves the exact same device
+        /// even when the host exposes several inputs under one name.
+        device_label: String,
+    }
+
+    /// A fixed-size ring of recent samples kept while no recording is running.
+    ///
+    /// Its capacity is a sample count, not a duration: it is sized from the rate
+    /// of the device it is collecting from, so the same two-second setting means
+    /// two seconds at 44.1 kHz and at 48 kHz.
+    struct Preroll {
+        samples: VecDeque<f32>,
+        cap: usize,
+    }
+
+    impl Preroll {
+        fn new(cap: usize) -> Self {
+            Self {
+                samples: VecDeque::with_capacity(cap),
+                cap,
+            }
+        }
+
+        /// Adds samples, discarding the oldest once the ring is full.
+        ///
+        /// A zero-capacity ring keeps nothing, which is what a cold start and a
+        /// zero second pre-roll both ask for.
+        ///
+        /// Whole blocks are kept or dropped, never split. A block is one device
+        /// callback, so its samples are contiguous in time; trimming a few
+        /// samples off its head to fit the cap would keep a fragment of speech
+        /// that begins mid-syllable and, worse, would make the kept audio start
+        /// at an arbitrary offset rather than at a block boundary. Dropping the
+        /// whole block instead loses at most one buffer of context, and the cap
+        /// is rounded up so it rarely comes to that.
+        fn push(&mut self, samples: &[f32]) {
+            if self.cap == 0 || samples.is_empty() {
+                return;
+            }
+            if samples.len() >= self.cap {
+                // A single block larger than the whole ring: keep its tail,
+                // because the end of the block is the audio closest to the press.
+                self.samples.clear();
+                self.samples
+                    .extend(samples[samples.len() - self.cap..].iter().copied());
+                return;
+            }
+            if self.samples.len() + samples.len() > self.cap {
+                // Make room for the whole block by dropping old blocks from the
+                // head. Whatever the head holds is what must give way: trimming
+                // the incoming block instead keeps a piece of audio that begins
+                // mid-block and, with a long enough block, a fragment of the
+                // speech the ring exists to preserve.
+                let excess = self.samples.len() + samples.len() - self.cap;
+                let drop_whole = excess.min(self.samples.len());
+                self.samples.drain(..drop_whole);
+            }
+            self.samples.extend(samples.iter().copied());
+        }
+
+        /// Takes everything in the ring, oldest first.
+        fn drain(&mut self) -> Vec<f32> {
+            self.samples.drain(..).collect()
+        }
+
+        fn clear(&mut self) {
+            self.samples.clear();
+        }
+
+        fn len(&self) -> usize {
+            self.samples.len()
+        }
+    }
+
+    /// The sample count a pre-roll of this length holds at this rate.
+    ///
+    /// Rounded up, and the direction is deliberate. The ring is filled one
+    /// device buffer at a time and each block is kept whole, so a capacity that
+    /// is a fraction of a buffer short loses a full block, which on a 1024-frame
+    /// device is 21 ms of the speech the user asked to keep. Rounding up costs at
+    /// most a fraction of a millisecond more than requested and never drops a
+    /// block that fits.
+    fn preroll_capacity(preroll: Duration, sample_rate: u32) -> usize {
+        if sample_rate == 0 {
+            return 0;
+        }
+        let samples = (preroll.as_secs_f64() * f64::from(sample_rate)).ceil();
+        if !samples.is_finite() || samples <= 0.0 {
+            return 0;
+        }
+        samples.min(u32::MAX as f64) as usize
+    }
+
+    /// What a cold start prepends and what it leaves behind.
+    ///
+    /// Nothing, and a ring that keeps nothing. This is the fix for a real
+    /// defect: the shared ring is filled by the warm stream's callback, so a
+    /// cold start that drained it put the same half second of speech into two
+    /// consecutive recordings. A cold start has no previous stream to carry
+    /// audio from, so it must not read the shared ring at all.
+    ///
+    /// The returned ring is a zero-capacity stand-in rather than a clone of the
+    /// shared one, so `warm_ring` can decide afterwards whether this stream
+    /// should stay open at all without the caller having to thread a flag. The
+    /// ring a cold start actually collects into is the manager's shared one,
+    /// sized by `try_start_on_device` from the device's own rate.
+    fn cold_start_seed() -> (Vec<f32>, Arc<Mutex<Preroll>>) {
+        (Vec::new(), Arc::new(Mutex::new(Preroll::new(0))))
+    }
+
+    /// The ring a stopping recording should leave its own samples in, if any.
+    ///
+    /// `None` returns the stream to discarding, which is what a stop with no
+    /// hold configured does. The stream is still closed by the caller; this only
+    /// decides whether it stays open at all.
+    fn warm_ring(ring: &Arc<Mutex<Preroll>>, hold_after_stop: bool) -> Option<Arc<Mutex<Preroll>>> {
+        if hold_after_stop {
+            Some(Arc::clone(ring))
+        } else {
+            None
+        }
+    }
+
+    /// Where a recording's audio should go once it stops.
+    ///
+    /// Holding and the pre-roll are separate decisions that always travel
+    /// together, and both need the shared ring, so they are passed as one value
+    /// rather than as three arguments every call site has to keep in step.
+    #[derive(Clone, Copy)]
+    struct HoldPlan<'a> {
+        /// Whether the stream should stay open after this recording stops.
+        hold_after_stop: bool,
+        /// How much audio from before the press to keep.
+        preroll: Duration,
+        /// The ring a held stream collects into, sized by the start itself from
+        /// the device's own rate.
+        ring: &'a Arc<Mutex<Preroll>>,
+        manager: &'a LocalRecordingManager,
+    }
+
+    fn pause_stream_with_retry<E: std::fmt::Display>(
+        mut pause: impl FnMut() -> Result<(), E>,
+    ) -> bool {
+        match pause() {
+            Ok(()) => true,
+            Err(error) => {
+                log::error!("failed to pause input stream: {error}");
+                match pause() {
+                    Ok(()) => true,
+                    Err(error) => {
+                        log::error!("failed to retry pausing input stream: {error}");
+                        false
+                    }
+                }
+            }
+        }
+    }
 
     fn capture_cleanup_uncertain() -> bool {
         #[cfg(target_os = "linux")]
@@ -189,135 +421,791 @@ mod cpal_impl {
         }
     }
 
-    #[derive(Clone)]
-    struct CachedDeviceInfo {
-        host_id: HostId,
-        /// Disambiguated label, so the cache re-resolves the exact same device
-        /// even when the host exposes several inputs under one name.
-        device_label: String,
+    fn release_stream(stream: &mut Stream) -> (bool, bool) {
+        #[cfg(target_os = "linux")]
+        {
+            #[allow(unreachable_patterns)]
+            return match stream.as_inner_mut() {
+                cpal::platform::StreamInner::Alsa(stream) => {
+                    let released = pause_stream_with_retry(|| stream.stop_input_for_release());
+                    (released, released && stream.capture_worker_failed())
+                }
+                _ => (false, true),
+            };
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let cpal::platform::StreamInner::CoreAudio(input) = stream.as_inner();
+            if let Err(error) = input.quiesce_input() {
+                log::error!("failed to retire input callbacks: {error}");
+                return (false, true);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            if !pause_stream_with_retry(|| stream.pause()) {
+                return (false, true);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let cpal::platform::StreamInner::CoreAudio(input) = stream.as_inner();
+                if let Err(error) = input.close_paused_input() {
+                    log::error!("failed to close input stream: {error}");
+                    return (false, true);
+                }
+            }
+            (true, false)
+        }
     }
 
-    struct LocalRecordingManager {
+    /// What the capture callback does with a block of audio.
+    ///
+    /// Swapping this instead of building a stream per recording is the whole
+    /// design: the device is opened once and stays open, and a press only
+    /// changes who receives the samples.
+    enum SinkMode {
+        /// Captured samples are dropped. Only reachable while a stream is being
+        /// retired, and never with a user-visible consequence.
+        Discard,
+        /// Nothing is recording; keep a bounded tail for the next start.
+        Warm { preroll: Arc<Mutex<Preroll>> },
+        /// A recording is running and owns everything captured.
+        Recording {
+            buffer: Arc<Mutex<Vec<f32>>>,
+            level: Option<Arc<LevelEmitter>>,
+            chunk: Option<Arc<ChunkEmitter>>,
+            /// The ring that becomes the next press's pre-roll if this stream
+            /// stays open when the recording stops.
+            ///
+            /// Filled alongside the buffer, and the reason is a defect this
+            /// replaced: the ring was only ever filled while nothing was
+            /// recording, so the first warm press after a cold start inherited an
+            /// empty ring. The setting made no difference in exactly the case it
+            /// is most often used in -- someone dictates, keeps dictating, and
+            /// never turns on keep-ready.
+            preroll: Option<Arc<Mutex<Preroll>>>,
+        },
+    }
+
+    /// The capture callback's destination, shared between the audio thread and
+    /// whichever command currently owns the stream.
+    struct StreamSink {
+        state: Mutex<SinkMode>,
+        /// The first block after the stream started: the device-open cost.
+        first_pcm: Arc<FirstPcmSignal>,
+        /// The first block after a recording subscribed: the press latency.
+        first_recorded: FirstPcmSignal,
+        /// The offset `first_recorded` fired at, kept so a start can read it
+        /// back on its own clock rather than by scraping the log.
+        recorded_at_us: AtomicU64,
+        /// Microseconds since this sink last received a block. Used to tell a
+        /// stream that is delivering audio from one that is running but silent
+        /// because its device went away underneath it.
+        last_block_us: AtomicU64,
+        /// True while the stream is deliberately paused. A paused device
+        /// delivers nothing and must not read as a dead one.
+        paused: AtomicBool,
+        /// True while a recording owns this sink and has asked the device to
+        /// stop. Distinct from `paused`: a pause is resumable and a stop is the
+        /// tail of a recording, so neither may be judged stale.
+        stopped: AtomicBool,
+        /// Whether any block has ever arrived.
+        ///
+        /// A device that opens and then never calls back delivers nothing, and
+        /// that is indistinguishable from a healthy one until either a block or
+        /// enough time passes. `last_block_us` cannot express it: its zero value
+        /// is the "nothing yet" sentinel.
+        delivered: AtomicBool,
+        /// Set when the host reported an error that ends the stream, with the
+        /// fault's token. A stream that has died keeps looking healthy from the
+        /// outside — it exists, it is in the warm slot, nothing errors again —
+        /// so the death has to be recorded where the stop path can read it.
+        ///
+        /// Transient faults are not recorded: they are the ones the host
+        /// recovers from, and retiring on them is the rebuild loop.
+        faulted: Mutex<Option<&'static str>>,
+        /// How many errors the host has reported on this stream.
+        ///
+        /// Only used to keep a storm from filling the log: cpal's ALSA worker
+        /// keeps polling a device in `POLLERR` and calls the error callback on
+        /// every iteration, so an unthrottled `log::error!` per error is tens of
+        /// thousands of lines a second for a stream that is already lost.
+        faults_reported: AtomicU64,
+        /// How many times the fault token has been read, for the test above.
+        fault_reads: AtomicUsize,
+        /// When the first fatal fault was recorded, in microseconds since
+        /// `born`; zero until one arrives.
+        ///
+        /// The host reports errors on a thread of its own, and on Windows that
+        /// callback can run after the stop has already read the token. Without a
+        /// timestamp the stop path cannot tell a fault that belongs to this
+        /// recording from one that predates it, so it cannot tell how long to
+        /// wait for a late one.
+        fault_at_us: AtomicU64,
+        origin: Mutex<Instant>,
+        /// When this sink was built, on a clock nothing resets.
+        ///
+        /// `origin` is deliberately restarted on a resume and on a new
+        /// recording, because it measures "how long after the press"; the pause
+        /// bookkeeping needs a clock that only ever moves forward, or the total
+        /// paused time would be measured against a moving zero.
+        born: Instant,
+        /// Total time this stream has spent deliberately paused, in
+        /// microseconds, closed intervals only.
+        paused_total_us: AtomicU64,
+        /// When the current pause began, in microseconds since `born`; zero when
+        /// the stream is not paused.
+        paused_at_us: AtomicU64,
+    }
+
+    impl StreamSink {
+        fn new(mode: SinkMode) -> Arc<Self> {
+            Arc::new(Self {
+                state: Mutex::new(mode),
+                first_pcm: Arc::new(FirstPcmSignal::default()),
+                first_recorded: FirstPcmSignal::default(),
+                recorded_at_us: AtomicU64::new(0),
+                last_block_us: AtomicU64::new(0),
+                delivered: AtomicBool::new(false),
+                paused: AtomicBool::new(false),
+                stopped: AtomicBool::new(false),
+                faulted: Mutex::new(None),
+                faults_reported: AtomicU64::new(0),
+                fault_reads: AtomicUsize::new(0),
+                fault_at_us: AtomicU64::new(0),
+                origin: Mutex::new(Instant::now()),
+                born: Instant::now(),
+                paused_total_us: AtomicU64::new(0),
+                paused_at_us: AtomicU64::new(0),
+            })
+        }
+
+        /// The recording's buffer, when a recording is subscribed.
+        ///
+        /// Test-only: production reads the buffer it was handed by
+        /// `start_recording` rather than reaching back through the sink.
+        #[cfg(test)]
+        fn lock_recording_buffer(&self) -> Option<Arc<Mutex<Vec<f32>>>> {
+            match &*self.lock() {
+                SinkMode::Recording { buffer, .. } => Some(Arc::clone(buffer)),
+                _ => None,
+            }
+        }
+
+        fn lock(&self) -> MutexGuard<'_, SinkMode> {
+            self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        }
+
+        /// Takes one block from the capture callback.
+        fn deliver(&self, samples: &[f32]) {
+            let mut state = self.lock();
+            if samples.is_empty()
+                || self.paused.load(Ordering::Acquire)
+                || self.faulted.lock().map_or(true, |fault| fault.is_some())
+            {
+                return;
+            }
+            let invalid = samples.iter().position(|sample| !sample.is_finite());
+            let samples = match invalid {
+                Some(index) => &samples[..index],
+                None => samples,
+            };
+            if invalid.is_some() {
+                self.record_fault("input delivered an invalid PCM sample");
+            }
+            if samples.is_empty() {
+                return;
+            }
+            let elapsed = match self.origin.lock() {
+                Ok(origin) => origin.elapsed(),
+                Err(poisoned) => poisoned.into_inner().elapsed(),
+            };
+            // Two different facts. `first_pcm` clocks the callback itself, which
+            // is the device-open cost. `first_recorded` starts at
+            // `start_recording`, so it is what a press actually waits for: on a
+            // reused stream the callback has been running for a while and only
+            // this number shows the press latency.
+            self.last_block_us.store(
+                elapsed.as_micros().min(u128::from(u64::MAX)) as u64,
+                Ordering::Release,
+            );
+            self.delivered.store(true, Ordering::Release);
+            if let Some(offset) = self.first_pcm.fire(self.born.elapsed()) {
+                log::info!("first audio block reached the capture callback after {offset:?}");
+            }
+            if let Some(offset) = self.first_recorded.fire(elapsed) {
+                self.recorded_at_us.store(
+                    offset.as_micros().min(u128::from(u64::MAX)) as u64,
+                    Ordering::Release,
+                );
+            }
+
+            match &mut *state {
+                SinkMode::Discard => {}
+                SinkMode::Warm { preroll } => {
+                    if let Ok(mut ring) = preroll.lock() {
+                        ring.push(samples);
+                    }
+                }
+                SinkMode::Recording {
+                    buffer,
+                    level,
+                    chunk,
+                    preroll,
+                } => {
+                    // Append before emitting. `stop` clones the buffer after
+                    // flushing the emitter, so emitting first could deliver
+                    // audio the returned recording does not contain.
+                    if let Ok(mut buffer) = buffer.lock() {
+                        buffer.extend_from_slice(samples);
+                    }
+                    // The same samples also become the next press's pre-roll, when
+                    // this stream is going to be held afterwards. A bounded ring,
+                    // so this keeps only the tail.
+                    if let Some(preroll) = preroll {
+                        if let Ok(mut ring) = preroll.lock() {
+                            ring.push(samples);
+                        }
+                    }
+                    if let Some(level) = level {
+                        level.emit(samples);
+                    }
+                    if let Some(chunk) = chunk {
+                        chunk.emit(samples);
+                    }
+                }
+            }
+        }
+
+        /// Subscribes a recording to this stream and returns its buffer.
+        ///
+        /// `seed` is audio captured before the press. It goes into the buffer and
+        /// is handed to the chunk emitter first, so the webview's timeline starts
+        /// with it rather than after it.
+        fn start_recording(
+            &self,
+            level: Option<Arc<LevelEmitter>>,
+            chunk: Option<Arc<ChunkEmitter>>,
+            seed: Vec<f32>,
+            preroll: Option<Arc<Mutex<Preroll>>>,
+        ) -> Arc<Mutex<Vec<f32>>> {
+            let buffer = Arc::new(Mutex::new(seed.clone()));
+            {
+                let mut state = self.lock();
+                *state = SinkMode::Recording {
+                    buffer: Arc::clone(&buffer),
+                    level,
+                    chunk: chunk.clone(),
+                    preroll,
+                };
+            }
+            if let Some(chunk) = chunk {
+                if !seed.is_empty() {
+                    chunk.emit(&seed);
+                }
+            }
+            // A fresh recording is live again, whatever a previous stop left.
+            self.stopped.store(false, Ordering::Release);
+            if self.paused.swap(false, Ordering::AcqRel) {
+                self.close_pause_interval();
+            }
+            // The tally is per recording, not per stream: this sink outlives the
+            // recording that paused it, and a total carried across would be
+            // subtracted from a recording that never paused.
+            self.paused_total_us.store(0, Ordering::Release);
+            // Only the press clock restarts: the device-open clock measures the
+            // lifetime of this stream, which began when the device opened.
+            if let Ok(mut origin) = self.origin.lock() {
+                *origin = Instant::now();
+            }
+            self.first_recorded.reset();
+            self.recorded_at_us.store(0, Ordering::Release);
+            buffer
+        }
+
+        #[cfg(test)]
+        /// How long after the stream started its first block arrived.
+        ///
+        /// `None` when no block has arrived at all, which is the dead-on-arrival
+        /// case rather than a fast one, so it is reported as absent instead of
+        /// as zero. This is the number a start is judged on: it is the device
+        /// open, not the press latency, which `first_recorded` measures.
+        fn first_pcm_wait(&self) -> Option<Duration> {
+            self.first_pcm.elapsed()
+        }
+
+        /// How long since this sink last received a block.
+        ///
+        /// `None` when it has never received one, which is different from a long
+        /// time and is what a device that failed to start looks like.
+        fn silence_for(&self) -> Option<Duration> {
+            if self.paused.load(Ordering::Acquire) || self.stopped.load(Ordering::Acquire) {
+                return None;
+            }
+            let last = self.last_block_us.load(Ordering::Acquire);
+            if last == 0 {
+                return None;
+            }
+            let now = self
+                .origin
+                .lock()
+                .map(|origin| origin.elapsed())
+                .unwrap_or_default();
+            Some(now.saturating_sub(Duration::from_micros(last)))
+        }
+
+        /// Records an error the host reported while this stream was running.
+        ///
+        /// Only a fatal fault is remembered. A transient one is a condition the
+        /// host has already recovered from, and remembering it would retire a
+        /// perfectly good stream on the next press.
+        ///
+        /// The first fault wins: the stream is already gone, and a second error
+        /// from a dying backend says nothing new.
+        fn record_fault(&self, message: &str) {
+            let fault = if message.contains("overrun lost audio samples") {
+                crate::platform::stream_fault::StreamFault::Fatal
+            } else {
+                crate::platform::stream_fault::classify_stream_fault(message)
+            };
+            // The callback runs on the host's audio thread and, on ALSA, once
+            // per poll iteration. Some errors repeat for as long as the broken
+            // stream is alive, so only the first few are written in full and the
+            // rest are counted and dropped: a log that is nothing but one
+            // repeated line is how the useful one before it gets lost.
+            let seen = self.faults_reported.fetch_add(1, Ordering::AcqRel) + 1;
+            if seen <= FAULT_LOG_LIMIT {
+                log::error!("capture stream error ({}): {message}", fault.as_str());
+                if seen == FAULT_LOG_LIMIT {
+                    log::warn!(
+                        "further capture stream errors on this stream will be counted, not logged"
+                    );
+                }
+            }
+            if fault != crate::platform::stream_fault::StreamFault::Fatal {
+                return;
+            }
+            if let Ok(mut guard) = self.faulted.lock() {
+                if guard.is_none() {
+                    // Stamped with the token, under the same lock and on the
+                    // clock the sink was born on, so the stop path cannot see one
+                    // without the other. The first token wins, so the stamp is
+                    // the moment *this* recording lost its device, not the moment
+                    // the host last complained.
+                    self.fault_at_us
+                        .store(self.now_us().max(1), Ordering::Release);
+                    *guard = Some(fault.as_str());
+                    log::error!(
+                        "capture stream is gone ({}) after {seen} error(s); it will not be reused",
+                        fault.as_str()
+                    );
+                }
+            }
+        }
+
+        /// The token of the fault that ended this stream, if one did.
+        ///
+        /// Distinct from staleness: a stale stream is one that has stopped
+        /// delivering and may yet recover, while this is the host saying it will
+        /// not. Only this one justifies reporting a short recording as an error
+        /// rather than as a quiet one, which is why the token is returned rather
+        /// than a bare boolean.
+        fn fault_token(&self) -> Option<&'static str> {
+            self.fault_reads.fetch_add(1, Ordering::AcqRel);
+            self.faulted.lock().ok().and_then(|guard| *guard)
+        }
+
+        /// How many times the fault token has been read.
+        ///
+        /// Only used by the test that proves a whole recording does not pay the
+        /// bounded late-fault wait. A clock assertion cannot say that on a loaded
+        /// runner -- 5 ms is scheduling noise -- so the question is asked as
+        /// "was the token read at all", which is the thing the wait is gated on.
+        #[cfg(test)]
+        fn fault_reads(&self) -> usize {
+            self.fault_reads.load(Ordering::Acquire)
+        }
+
+        /// Whether any block has ever arrived on this stream.
+        fn has_delivered(&self) -> bool {
+            self.delivered.load(Ordering::Acquire)
+        }
+
+        /// How long this sink has existed.
+        ///
+        /// Used to decide whether a stream that has delivered nothing is still
+        /// starting or is broken. The origin is reset on resume, so a stream
+        /// taken out of a pause gets a fresh grace rather than being condemned
+        /// for the time it spent paused.
+        fn age_of_stream(&self) -> Duration {
+            match self.origin.lock() {
+                Ok(origin) => origin.elapsed(),
+                Err(poisoned) => poisoned.into_inner().elapsed(),
+            }
+        }
+
+        /// Records that the stream was paused or resumed by the app.
+        ///
+        /// A pause is deliberate, so it must not be mistaken for a dead device
+        /// by the staleness check; a resume just restarts the window.
+        fn set_paused(&self, paused: bool) {
+            if !paused {
+                // Resuming brings the stream back, so it is no longer stopped.
+                self.stopped.store(false, Ordering::Release);
+            }
+            // The pause is an interval, and the accounting below has to see the
+            // transition exactly once: a second `set_paused(true)` must not
+            // restart the clock, or the first paused stretch disappears from the
+            // total.
+            let was_paused = self.paused.swap(paused, Ordering::AcqRel);
+            if paused && !was_paused {
+                self.paused_at_us
+                    .store(self.now_us().max(1), Ordering::Release);
+            } else if !paused && was_paused {
+                self.close_pause_interval();
+            }
+            if !paused {
+                if let Ok(mut origin) = self.origin.lock() {
+                    *origin = Instant::now();
+                }
+                self.last_block_us.store(0, Ordering::Release);
+            }
+        }
+
+        /// Microseconds since this sink was built, on a clock nothing resets.
+        fn now_us(&self) -> u64 {
+            self.born.elapsed().as_micros().min(u128::from(u64::MAX)) as u64
+        }
+
+        /// Folds an open pause interval into the total, once.
+        fn close_pause_interval(&self) {
+            let began = self.paused_at_us.swap(0, Ordering::AcqRel);
+            if began == 0 {
+                return;
+            }
+            let now = self.now_us();
+            let spent = now.saturating_sub(began);
+            self.paused_total_us.fetch_add(spent, Ordering::AcqRel);
+        }
+
+        /// How long this stream has spent deliberately paused, including a pause
+        /// that is still open.
+        ///
+        /// Used to subtract the pause from the recording's expected length. A
+        /// pause is the user's own decision, so counting it as time the stream
+        /// failed to deliver would report every paused dictation as a capture
+        /// that died partway through — the exact signal the fault path exists to
+        /// make trustworthy.
+        fn paused_for(&self) -> Duration {
+            let mut total = self.paused_total_us.load(Ordering::Acquire);
+            let began = self.paused_at_us.load(Ordering::Acquire);
+            if began != 0 {
+                total = total.saturating_add(self.now_us().saturating_sub(began));
+            }
+            Duration::from_micros(total)
+        }
+
+        /// Whether the device was paused and not yet resumed.
+        ///
+        /// Test-only now: production reads the pause from `StopOutcome`, because
+        /// the stop clears the flag before the caller can ask. Kept as the
+        /// observation of the state the tests need.
+        #[cfg(test)]
+        fn is_paused(&self) -> bool {
+            self.paused.load(Ordering::Acquire)
+        }
+
+        /// Restarts the press clock without touching the recording.
+        ///
+        /// Used after a pause. The buffer, the level emitter and the chunk
+        /// emitter all keep their own state; only the measurement of "how long
+        /// after the press did the first sample arrive" is restarted, because
+        /// for a resumed recording that interval includes the pause.
+        fn restart_press_clock(&self) {
+            if let Ok(mut origin) = self.origin.lock() {
+                *origin = Instant::now();
+            }
+            self.first_recorded.reset();
+            self.recorded_at_us.store(0, Ordering::Release);
+        }
+
+        /// Stops feeding a recording and, when a preroll ring is supplied,
+        /// leaves the stream warm and collecting for the next start.
+        ///
+        /// Returns whether the stream was paused, alongside the chunk emitter.
+        /// The flag is cleared here, so a caller that asks the sink afterwards
+        /// always hears "not paused" — which is exactly how a paused recording
+        /// came to be left warm and asleep, and why the answer is returned rather
+        /// than left to be read on the other side of this call.
+        fn stop_recording(&self, preroll: Option<Arc<Mutex<Preroll>>>) -> StopOutcome {
+            self.stopped.store(true, Ordering::Release);
+            // A stop during a pause ends the pause: the interval is closed here
+            // so the figure the stop path reads includes it.
+            let was_paused = self.paused.swap(false, Ordering::AcqRel);
+            if was_paused {
+                self.close_pause_interval();
+            }
+            let mut state = self.lock();
+            let previous = std::mem::replace(
+                &mut *state,
+                match preroll {
+                    Some(preroll) => SinkMode::Warm { preroll },
+                    None => SinkMode::Discard,
+                },
+            );
+            StopOutcome {
+                emitter: match previous {
+                    SinkMode::Recording { chunk, .. } => chunk,
+                    _ => None,
+                },
+                was_paused,
+            }
+        }
+    }
+
+    /// How far behind the wall clock a recording's sample count may fall before
+    /// the gap is worth reporting.
+    ///
+    /// The two figures are never exactly equal: the sample count is quantised by
+    /// the device buffer, the wall clock starts before the first block and stops
+    /// after the last, and a device delivering a large buffer can be a whole
+    /// buffer behind at the moment of the stop. Anything under this is ordinary
+    /// accounting noise, not evidence of a stream that died.
+    const CAPTURE_GAP_TOLERANCE: Duration = Duration::from_millis(500);
+
+    /// Whether a recording contains materially less audio than the time it was
+    /// open, after allowing for that noise.
+    ///
+    /// A relative term as well as an absolute one: a 30-second dictation that
+    /// lost 600 ms is not the defect this looks for, while a 900 ms recording
+    /// that gained 5 seconds of wall clock is.
+    /// How much audio a fault must have cost before it is worth telling the user
+    /// about.
+    ///
+    /// A late error callback costs at most the one buffer that was in flight when
+    /// the device went away, so a few tens of milliseconds. Anything larger is
+    /// audio that was recorded into a stream that had already stopped.
+    ///
+    /// Deliberately not [`elapsed_gap_is_suspicious`]: that asks whether a gap is
+    /// statistically odd, and its relative term means a genuine death near the
+    /// end of a long dictation falls under it — five seconds lost out of sixty is
+    /// 8 %, so a rule meant to catch suspicious silence would silence the one
+    /// case worth reporting. This is a much smaller absolute floor.
+    const FAULT_GAP_TOLERANCE: Duration = Duration::from_millis(250);
+
+    /// The fault token to report to the user, which drops one that lost no audio.
+    ///
+    /// The host's error callback runs on its own thread and can land after the
+    /// final block was already delivered, so a `fatal` token does not by itself
+    /// prove the recording was shortened. Telling the user to check a cable for a
+    /// whole dictation is worse than saying nothing: it is a false alarm on a
+    /// working microphone. The token is still what decides whether the stream is
+    /// reused, and that decision is made from the unfiltered value.
+    fn reported_capture_fault(
+        reported: Option<String>,
+        captured: Duration,
+        expected: Duration,
+    ) -> Option<String> {
+        reported.filter(|_| expected.saturating_sub(captured) >= FAULT_GAP_TOLERANCE)
+    }
+
+    /// How long the stop path will wait for a fault the host reports late.
+    ///
+    /// The host's error callback runs on a thread it chooses, and on Windows it
+    /// can run after the stop has already read the token: the recording is
+    /// shortened, the token is read as `None`, and the user gets a short
+    /// transcript with no notice -- the exact silent death the fault path
+    /// exists to report.
+    ///
+    /// There is no lock to take that would order the two, and waiting
+    /// indefinitely means blocking a stop on an audio thread the host may have
+    /// already wedged. So the wait is bounded and short. It is only paid when the
+    /// recording came up short, which is the only case where a late fault could
+    /// change what the user is told: a whole recording is never reported as
+    /// shortened whatever arrives afterwards.
+    const LATE_FAULT_WAIT: Duration = Duration::from_millis(50);
+
+    /// How often the bounded wait re-reads the token.
+    const LATE_FAULT_POLL: Duration = Duration::from_millis(5);
+
+    /// Reads the token again for up to [`LATE_FAULT_WAIT`], if the recording
+    /// came up short.
+    ///
+    /// Returns the token that was already known when it does not wait, so the
+    /// caller can use the result unconditionally. Polling rather than a channel
+    /// because the callback must stay bounded and lock-free in the fatal case:
+    /// adding a sender to it means adding a send to the audio thread for every
+    /// error, including the storms `FAULT_LOG_LIMIT` exists to survive.
+    fn drain_late_fault(
+        sink: &StreamSink,
+        known: Option<String>,
+        captured: Duration,
+        expected: Duration,
+    ) -> Option<String> {
+        if known.is_some() || expected.saturating_sub(captured) < FAULT_GAP_TOLERANCE {
+            return known;
+        }
+        let deadline = Instant::now() + LATE_FAULT_WAIT;
+        loop {
+            if let Some(token) = sink.fault_token() {
+                return Some(token.to_string());
+            }
+            if Instant::now() >= deadline {
+                return known;
+            }
+            std::thread::sleep(LATE_FAULT_POLL);
+        }
+    }
+
+    /// How long the recording itself captured audio.
+    ///
+    /// A warm start seeds the buffer with the pre-roll, so the buffer holds up to
+    /// two seconds of audio from *before* the press. Crediting that to the
+    /// recording makes a stream that died two seconds in look complete, and the
+    /// whole point of measuring captured-against-expected is to notice exactly
+    /// that. So the seed is subtracted, and audio recorded before the press is
+    /// never counted as delivered during it.
+    ///
+    /// Returns `None` when nothing was captured after the press, which the caller
+    /// distinguishes from a zero-length capture: a cold press that captured
+    /// nothing is the fault path's job, not a division by zero.
+    fn captured_duration(
+        total_samples: usize,
+        seed_samples: usize,
+        sample_rate: u32,
+    ) -> Option<Duration> {
+        let captured = total_samples.saturating_sub(seed_samples);
+        if captured == 0 || sample_rate == 0 {
+            return None;
+        }
+        Some(Duration::from_secs_f64(
+            captured as f64 / f64::from(sample_rate),
+        ))
+    }
+
+    fn elapsed_gap_is_suspicious(captured: Duration, expected: Duration) -> bool {
+        if expected <= captured {
+            return false;
+        }
+        let missing = expected - captured;
+        if missing < CAPTURE_GAP_TOLERANCE {
+            return false;
+        }
+        // A tenth of the recording, so short recordings are held to the
+        // tolerance above while long ones are judged proportionally.
+        missing.as_millis() * 10 >= expected.as_millis().max(1)
+    }
+
+    /// What a stop needs to know about the recording it ended.
+    ///
+    /// Both fields are facts the sink knows and the caller cannot learn after
+    /// the stop has happened, so the stop returns them instead of leaving them to
+    /// be read on the wrong side of the state change.
+    struct StopOutcome {
+        /// The emitter holding this recording's unflushed audio, if it had one.
+        emitter: Option<Arc<ChunkEmitter>>,
+        /// Whether the stream was paused when the stop arrived.
+        was_paused: bool,
+    }
+
+    /// Milliseconds meaning "hold the device until something closes it".
+    ///
+    /// A sentinel rather than a second flag, so the policy is one number. A
+    /// finite hold and an indefinite one differ only in whether a timer is
+    /// scheduled, and every reader then has one value to interpret instead of
+    /// two that can disagree.
+    const WARM_FOREVER_MS: u64 = u64::MAX;
+
+    /// How long a warm stream may deliver nothing before it is presumed dead.
+    ///
+    /// A running input stream delivers blocks continuously, so a stream that has
+    /// produced nothing for this long is either not running or its device went
+    /// away. The window has to be long enough to cover a normal buffer cadence
+    /// with a slow host, and short enough that a press during a dead stream
+    /// still reopens rather than handing the user a silent recording.
+    const STALE_WARM_SILENCE: Duration = Duration::from_millis(750);
+
+    /// How many errors from one stream are written in full before the rest are
+    /// only counted. Small on purpose: the first error is the informative one.
+    const FAULT_LOG_LIMIT: u64 = 5;
+
+    struct LatestStartup {
+        summary: AudioStartupSummary,
+        first_pcm: Option<Arc<FirstPcmSignal>>,
+    }
+
+    pub struct LocalRecordingManager {
         inner: Mutex<Option<ActiveRecording>>,
-        preferred_input_name: Mutex<Option<String>>,
-        last_successful_device: Mutex<Option<CachedDeviceInfo>>,
-        // No live handle exists to retry a failed native build cleanup.
-        release_uncertain: Cell<bool>,
-    }
-
-    #[derive(Clone, Copy)]
-    struct ReleaseOutcome {
-        released: bool,
-        capture_failed: bool,
+        preferred_input_name: Arc<Mutex<Option<String>>>,
+        last_successful_device: Arc<Mutex<Option<CachedDeviceInfo>>>,
+        selection_generation: AtomicU64,
+        /// The running stream nobody is recording from, if one is held.
+        warm: Mutex<Option<WarmStream>>,
+        linger_deadline: std::cell::Cell<Option<(Instant, u64)>>,
+        unresolved_stream: std::cell::RefCell<Option<Stream>>,
+        release_blocked: std::cell::Cell<bool>,
+        /// Bumped by every request to close at a deadline. A linger thread only
+        /// closes the stream if its generation is still the current one, which
+        /// is how a renewed hold cancels a pending close instead of racing it.
+        linger_generation: Arc<AtomicU64>,
+        /// The hold policy, in milliseconds. Zero means every press opens a
+        /// device; `WARM_FOREVER_MS` means hold until closed; anything else is
+        /// the window a stopped recording stays open for.
+        linger_ms: Arc<AtomicU64>,
+        /// How much audio from before a press to keep, in microseconds.
+        preroll_micros: Arc<AtomicU64>,
+        /// Held across a warm open so a press arriving mid-open waits for it
+        /// instead of building a second stream on the same device.
+        warm_open_gate: Arc<Mutex<()>>,
+        /// How many warm opens got past every guard and touched the device.
+        ///
+        /// Test-visible, and the only way to observe the decision `open_warm`
+        /// makes after taking the gate: on a host with no capture device every
+        /// path ends in the same failed open and an empty warm slot, so
+        /// "declined" and "proceeded and failed" are indistinguishable from
+        /// outside. Counting attempts separates them.
+        warm_open_attempts: Arc<std::sync::atomic::AtomicU64>,
+        /// The tail of recent audio, filled while nothing is recording.
+        preroll: Arc<Mutex<Preroll>>,
+        /// The most recent capture start, for `capture_startup_timing`.
+        last_startup: Mutex<Option<LatestStartup>>,
     }
 
     struct ActiveRecording {
-        _stream: Stream,
+        /// `Some` while this recording owns its stream. Taken by `stop` when the
+        /// stream is handed back to the warm slot instead of closed.
+        stream: Option<Stream>,
+        /// The sink the recording's callback feeds, and the handle `stop` uses
+        /// to leave the same stream warm.
+        sink: Option<Arc<StreamSink>>,
+        /// The preroll ring to resume collecting into after this recording, or
+        /// `None` when the microphone should close at stop.
+        preroll_after_stop: Option<Arc<Mutex<Preroll>>>,
+        /// How many of this recording's samples were captured *before* the press.
+        ///
+        /// A warm start seeds the buffer with the pre-roll, so the sample count
+        /// covers more wall time than the recording was open. Subtracting this
+        /// is what keeps "captured" honest: without it, two seconds of pre-press
+        /// audio would mask two seconds of stream that died, and the fault that
+        /// exists to reveal a short recording would never fire.
+        seed_samples: usize,
         start: Instant,
-        buffer: Arc<Mutex<Vec<f32>>>,
+        buffer: Option<Arc<Mutex<Vec<f32>>>>,
         sample_rate: u32,
-        callback_gate: Arc<CallbackGate>,
-        capture_failed: Arc<AtomicBool>,
-        paused_for_release: bool,
-        _level_emitter: Option<Arc<LevelEmitter>>,
-        _chunk_emitter: Option<Arc<ChunkEmitter>>,
+        device_label: String,
+        preferred: Option<String>,
+        channels: usize,
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum CallbackState {
-        Pending,
-        Active,
-        Paused,
-        Resuming,
-        Retired,
-    }
-
-    /// Serializes publication, callback completion and retirement. Pending
-    /// candidates retain samples but must not publish to the shared emitter.
-    struct CallbackGate(Mutex<CallbackState>);
-
-    impl CallbackGate {
-        fn new() -> Arc<Self> {
-            Arc::new(Self(Mutex::new(CallbackState::Pending)))
-        }
-
-        fn with_capture(&self, callback: impl FnOnce(bool)) {
-            if let Ok(state) = self.0.lock() {
-                match *state {
-                    CallbackState::Pending | CallbackState::Resuming => callback(false),
-                    CallbackState::Active => callback(true),
-                    CallbackState::Paused | CallbackState::Retired => {}
-                }
-            }
-        }
-
-        fn with_error(&self, callback: impl FnOnce()) {
-            if let Ok(state) = self.0.lock() {
-                if *state != CallbackState::Retired {
-                    callback();
-                }
-            }
-        }
-
-        fn activate(&self, publish_prefix: impl FnOnce() -> bool) -> bool {
-            let Ok(mut state) = self.0.lock() else {
-                return false;
-            };
-            if *state != CallbackState::Pending || !publish_prefix() {
-                return false;
-            }
-            *state = CallbackState::Active;
-            true
-        }
-
-        fn pause(&self) -> bool {
-            let Ok(mut state) = self.0.lock() else {
-                return false;
-            };
-            match *state {
-                CallbackState::Active => {
-                    *state = CallbackState::Paused;
-                    true
-                }
-                CallbackState::Paused => true,
-                CallbackState::Pending | CallbackState::Resuming | CallbackState::Retired => false,
-            }
-        }
-
-        fn begin_resume(&self) -> bool {
-            let Ok(mut state) = self.0.lock() else {
-                return false;
-            };
-            match *state {
-                CallbackState::Paused => {
-                    *state = CallbackState::Resuming;
-                    true
-                }
-                CallbackState::Active => true,
-                CallbackState::Pending | CallbackState::Resuming | CallbackState::Retired => false,
-            }
-        }
-
-        fn finish_resume(&self, publish: impl FnOnce() -> bool) -> bool {
-            let Ok(mut state) = self.0.lock() else {
-                return false;
-            };
-            match *state {
-                CallbackState::Resuming if publish() => {
-                    *state = CallbackState::Active;
-                    true
-                }
-                CallbackState::Active => true,
-                _ => false,
-            }
-        }
-
-        fn retire(&self) {
-            *self
-                .0
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = CallbackState::Retired;
-        }
+    struct WarmStream {
+        stream: Stream,
+        sink: Arc<StreamSink>,
+        /// The device preference the stream was opened for. A start whose
+        /// preference differs rebuilds rather than recording the wrong device.
+        preferred: Option<String>,
+        sample_rate: u32,
+        channels: usize,
+        device_label: String,
     }
 
     /// Rate limiter shared by the level and chunk emitters.
@@ -445,15 +1333,9 @@ mod cpal_impl {
         /// A dispatch takes `dispatch` before `buffer` and never the other way
         /// round, so the two cannot deadlock against each other.
         fn dispatch_buffered_chunk(&self) {
-            let _in_order = self
-                .dispatch
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _in_order = self.dispatch.lock().unwrap_or_else(PoisonError::into_inner);
             let (chunk, offset) = {
-                let mut buffer = self
-                    .buffer
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut buffer = self.buffer.lock().unwrap_or_else(PoisonError::into_inner);
                 if buffer.is_empty() {
                     return;
                 }
@@ -471,210 +1353,1679 @@ mod cpal_impl {
         }
     }
 
-    fn activate_capture(
-        gate: &CallbackGate,
-        buffer: &Mutex<Vec<f32>>,
-        emitter: Option<&ChunkEmitter>,
-        capture_failed: &AtomicBool,
-    ) -> Result<(), RecordingError> {
-        let activated = gate.activate(|| {
-            if capture_failed.load(Ordering::Acquire) {
-                return false;
+    impl ActiveRecording {
+        /// The stream this recording owns, or `NotRecording` once it has been
+        /// handed back to the warm slot.
+        fn stream_ref(&self) -> Result<&Stream, RecordingError> {
+            self.stream.as_ref().ok_or(RecordingError::NotRecording)
+        }
+
+        /// Closes the stream this recording owns, if it still owns one.
+        ///
+        /// For the paths that build a recording and then cannot publish it. The
+        /// stream is paused before it is dropped for the same reason
+        /// `retire_stream` does it: dropping a live capture stream is not the
+        /// same as closing one, and the device can stay held.
+        fn release(mut self, manager: &LocalRecordingManager) {
+            if let Some(stream) = self.stream.take() {
+                manager.retire_stream(stream);
             }
-            let Ok(samples) = buffer.lock() else {
-                return false;
+        }
+    }
+
+    /// How long a hold may go without producing a single block before it is
+    /// presumed broken.
+    ///
+    /// Shorter than the staleness window, because this covers the case that
+    /// matters most: the device opened and `play` returned, but the host never
+    /// called back. Nothing proves the microphone works except a block arriving.
+    const WARM_READY_GRACE: Duration = Duration::from_millis(250);
+
+    impl WarmStream {
+        /// Whether this stream has stopped delivering audio.
+        ///
+        /// A running stream that delivers nothing is the failure this catches:
+        /// the device was unplugged, or the host stopped calling the callback
+        /// after the machine woke from sleep. Reusing it would hand the press a
+        /// stream that never produces a sample.
+        fn is_silent_for(&self, window: Duration) -> bool {
+            self.sink
+                .silence_for()
+                .map(|silence| silence >= window)
+                .unwrap_or(false)
+        }
+
+        /// Whether this stream has ever delivered a block.
+        ///
+        /// Distinct from "has stopped": a stream that has never delivered
+        /// anything has not stopped, and `silence_for` returns `None` for it, so
+        /// the staleness check alone reads a dead-on-arrival device as healthy.
+        fn has_delivered(&self) -> bool {
+            self.sink.has_delivered()
+        }
+
+        /// Whether this stream may be handed to a press.
+        ///
+        /// A stream that has delivered nothing is only trustworthy while it is
+        /// still inside its start-up grace. Past that, adopting it records
+        /// silence for the whole press: the level meter stays flat, the user
+        /// speaks into a recording that will transcribe nothing, and the failure
+        /// is attributed to the wrong thing.
+        fn is_usable(&self, grace: Duration) -> bool {
+            self.unusable_reason(grace).is_none()
+        }
+
+        /// Why this stream may not be handed to a press, or `None` when it may.
+        ///
+        /// Split out from `is_usable` so the rejection can be logged with the
+        /// real cause. A bare `false` was logged as "silent past the staleness
+        /// window" even when the cause was a device the host had already
+        /// declared gone, which sent more than one reader hunting the wrong
+        /// fault in the diagnostics export.
+        fn unusable_reason(&self, grace: Duration) -> Option<&'static str> {
+            // A stream the host declared dead is never usable, however recently
+            // it delivered. It can still look perfect from the outside — the
+            // object exists, the origin is young, the last block was a moment
+            // ago — and the next press would adopt it and record silence for the
+            // whole dictation.
+            if let Some(fault) = self.sink.fault_token() {
+                return Some(fault);
+            }
+            if self.has_delivered() {
+                return if self.is_silent_for(STALE_WARM_SILENCE) {
+                    Some("silent past the staleness window")
+                } else {
+                    None
+                };
+            }
+            if self.sink.age_of_stream() < grace {
+                None
+            } else {
+                Some("no block since it opened")
+            }
+        }
+    }
+
+    impl Drop for LocalRecordingManager {
+        fn drop(&mut self) {
+            let recording = self
+                .inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            if let Some(recording) = recording {
+                if let Some(sink) = &recording.sink {
+                    sink.stop_recording(None);
+                }
+                recording.release(self);
+            }
+            self.close_warm();
+            if let Some(stream) = self.unresolved_stream.get_mut().take() {
+                std::mem::forget(stream);
+            }
+        }
+    }
+
+    impl Default for LocalRecordingManager {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl LocalRecordingManager {
+        /// A recording manager with no active recording, preferred input, or
+        /// cached device.
+        pub fn new() -> Self {
+            Self {
+                inner: Mutex::new(None),
+                preferred_input_name: Arc::new(Mutex::new(None)),
+                last_successful_device: Arc::new(Mutex::new(None)),
+                selection_generation: AtomicU64::new(0),
+                warm: Mutex::new(None),
+                linger_deadline: std::cell::Cell::new(None),
+                unresolved_stream: std::cell::RefCell::new(None),
+                release_blocked: std::cell::Cell::new(false),
+                linger_generation: Arc::new(AtomicU64::new(0)),
+                // Zero: opening the device on every press is the only policy
+                // that shows no microphone indicator between dictations, so it
+                // is the one that needs no consent.
+                linger_ms: Arc::new(AtomicU64::new(0)),
+                preroll_micros: Arc::new(AtomicU64::new(500_000)),
+                warm_open_gate: Arc::new(Mutex::new(())),
+                warm_open_attempts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                preroll: Arc::new(Mutex::new(Preroll::new(0))),
+                last_startup: Mutex::new(None),
+            }
+        }
+
+        /// Remembers the host and disambiguated label of a device that just
+        /// started recording successfully, so the next start can try it first.
+        fn cache_successful_device(
+            &self,
+            host_id: HostId,
+            device_label: String,
+            preference: Option<&str>,
+        ) {
+            self.cache_device(host_id, device_label, preference, None);
+        }
+
+        fn cache_device(
+            &self,
+            host_id: HostId,
+            device_label: String,
+            preference: Option<&str>,
+            prepared_generation: Option<u64>,
+        ) {
+            if let Ok(mut guard) = self.last_successful_device.lock() {
+                if let Some(generation) = prepared_generation {
+                    if self.selection_generation.load(Ordering::SeqCst) != generation {
+                        return;
+                    }
+                } else {
+                    // A successful start takes precedence over an in-flight probe.
+                    self.selection_generation.fetch_add(1, Ordering::SeqCst);
+                }
+                *guard = Some(CachedDeviceInfo {
+                    host_id,
+                    confirmed: prepared_generation.is_none(),
+                    preference: preference.map(str::to_owned),
+                    device_label,
+                });
+            }
+        }
+
+        /// The window a warmed stream should live for after this stop.
+        ///
+        /// `None` means no timer: either the user asked for an always-ready
+        /// microphone, or nothing is keeping the device open at all.
+        fn pending_linger(&self) -> Option<Duration> {
+            match self.linger_ms.load(Ordering::SeqCst) {
+                0 | WARM_FOREVER_MS => None,
+                millis => Some(Duration::from_millis(millis)),
+            }
+        }
+
+        /// Whether a stopping recording should leave its stream open.
+        /// The pre-roll the settings ask for, as a duration.
+        fn preroll_requested(&self) -> Duration {
+            Duration::from_micros(self.preroll_micros.load(Ordering::SeqCst))
+        }
+
+        fn hold_after_stop(&self) -> bool {
+            self.linger_millis() > 0
+        }
+
+        /// Sets how long the device stays open after a recording, and closes a
+        /// stream that the new policy no longer covers.
+        ///
+        /// Zero means every press opens the device, which is the default and the
+        /// only policy with no microphone indicator between dictations. A stream
+        /// that is already open is closed, because under this policy nothing
+        /// should be open between dictations.
+        ///
+        /// The hold path wants the first half and not the second: setting the
+        /// policy with a zero while a stream is held closed the stream, which is
+        /// how the hold got undone by the default value. Everything that only
+        /// needs the policy stored calls `set_linger_policy`.
+        pub fn set_linger(&self, linger: Duration) {
+            self.set_linger_policy(linger);
+            if self.linger_millis() == 0 {
+                self.cancel_linger();
+                self.close_warm();
+            }
+        }
+
+        /// Stores the hold policy without closing anything.
+        ///
+        /// A stream that is already open keeps running: whether it should have
+        /// been closed is a question this call does not answer, and the one
+        /// caller that knows is the one closing it.
+        pub fn set_linger_policy(&self, linger: Duration) {
+            let millis = linger.as_millis().min(u128::from(u64::MAX)) as u64;
+            self.linger_ms.store(millis, Ordering::SeqCst);
+        }
+
+        /// The hold policy in milliseconds, as stored.
+        pub fn linger_millis(&self) -> u64 {
+            self.linger_ms.load(Ordering::SeqCst)
+        }
+
+        /// Applies a hold to a stream that is already open.
+        ///
+        /// Deliberately not [`set_linger`]: a zero there closes the stream, and a
+        /// caller that has just opened one would close it and then wait for an
+        /// open that is no longer held. The stream is already running when this
+        /// is called; this only says it must not stop.
+        ///
+        /// This is the whole of turning keep-ready on. Going through
+        /// `set_linger` first closed the stream the previous policy had left
+        /// warm, reopened it, and paid the cold start the feature exists to
+        /// remove, on the switch that asks for the opposite.
+        pub fn promote_to_hold(&self) {
+            // Refresh publishes its generation under this lock. Do not let it
+            // publish between cancellation and the permanent policy store, or
+            // it can reserve a fresh finite timer that the promotion never cancels.
+            let _slot = self.warm.lock().unwrap_or_else(PoisonError::into_inner);
+            self.cancel_linger();
+            self.set_linger_policy(Duration::from_millis(WARM_FOREVER_MS));
+        }
+
+        /// Sets how much audio from before a press to keep, and resizes the ring
+        /// an already-held stream is collecting into.
+        pub fn set_preroll(&self, preroll: Duration) {
+            let micros = preroll.as_micros().min(u128::from(u64::MAX)) as u64;
+            self.preroll_micros.store(micros, Ordering::SeqCst);
+            let capacity = {
+                let warm_rate = self
+                    .warm
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().map(|warm| warm.sample_rate));
+                match warm_rate {
+                    Some(rate) => preroll_capacity(preroll, rate),
+                    // No stream yet, so no rate to size against; the next open
+                    // sizes it. Clearing keeps the old length from surviving.
+                    None => {
+                        if let Ok(mut ring) = self.preroll.lock() {
+                            ring.cap = 0;
+                            ring.clear();
+                        }
+                        return;
+                    }
+                }
             };
-            if let Some(emitter) = emitter {
-                emitter.emit(&samples);
+            if let Ok(mut ring) = self.preroll.lock() {
+                ring.cap = capacity;
+                while ring.len() > capacity {
+                    ring.samples.pop_front();
+                }
             }
-            true
-        });
-        if activated {
+        }
+
+        /// Whether a held stream could actually serve a press.
+        ///
+        /// Stronger than `has_warm_stream`, which only says an object exists.
+        pub fn warm_is_usable(&self) -> bool {
+            self.warm
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|warm| warm.is_usable(WARM_READY_GRACE)))
+                .unwrap_or(false)
+        }
+
+        /// Whether a warm stream is currently held.
+        pub fn has_warm_stream(&self) -> bool {
+            match self.warm.lock() {
+                Ok(guard) => guard.is_some(),
+                Err(poisoned) => poisoned.into_inner().is_some(),
+            }
+        }
+
+        /// Closes the held stream and stops holding it.
+        ///
+        /// This is the "release the device now" action, not "stop keeping it
+        /// open after a recording". The post-recording window is a separate
+        /// preference and the stream is closing, so a window left in place would
+        /// have nothing to apply to: the policy is returned to zero here.
+        ///
+        /// The preference itself is never touched; only this process's copy of
+        /// it. Nothing here writes to the user's settings, so releasing the
+        /// device cannot turn a setting off permanently.
+        ///
+        /// **Zeroing the policy is why the caller has to put the window back.**
+        /// This function used to say the front end "restates the user's window
+        /// when it next mounts", and that was true only by accident: the effect
+        /// that pushes the window skips while the hold is on, so a release for
+        /// any reason other than turning keep-ready off left the user's window at
+        /// zero for the rest of the session. `MicrophoneReadinessSideEffects`
+        /// restores it from `release`'s continuation now, and only when nothing
+        /// has opened since. Anything that calls `release_hold` directly is
+        /// responsible for the same restore.
+        pub fn release_hold(&self) {
+            self.set_linger_policy(Duration::ZERO);
+            self.close_warm();
+        }
+
+        pub fn close_warm(&self) {
+            self.close_matching_warm(None);
+        }
+
+        fn close_matching_warm(&self, expected: Option<&Arc<StreamSink>>) -> Option<u64> {
+            let (warm, generation) = {
+                let mut guard = self.warm.lock().unwrap_or_else(PoisonError::into_inner);
+                if let Some(expected) = expected {
+                    if !guard
+                        .as_ref()
+                        .is_some_and(|warm| Arc::ptr_eq(&warm.sink, expected))
+                    {
+                        return None;
+                    }
+                }
+                let generation = self.advance_linger_generation();
+                if let Ok(mut ring) = self.preroll.lock() {
+                    ring.clear();
+                }
+                (guard.take(), generation)
+            };
+            if let Some(warm) = warm {
+                log::info!("closing warm capture stream on '{}'", warm.device_label);
+                self.retire_stream(warm.stream);
+            }
+            Some(generation)
+        }
+
+        /// Arranges for the warm stream to be closed after `linger`, unless
+        /// something renews the hold in the meantime.
+        ///
+        /// This is the "stay ready for a moment after a dictation" policy. It
+        /// uses the same warm slot as the explicit preference, so a user who
+        /// turned that preference on cannot have their stream closed by a timer
+        /// the policy only meant for the opt-out case: the preference stops
+        /// calling this at all.
+        pub fn linger_then_close(&self, linger: Duration) {
+            self.schedule_linger_close(linger, self.advance_linger_generation());
+        }
+
+        fn current_linger_deadline(&self) -> Option<Instant> {
+            let generation = self.linger_generation.load(Ordering::SeqCst);
+            self.linger_deadline
+                .get()
+                .filter(|(_, owner)| *owner == generation)
+                .map(|(deadline, _)| deadline)
+        }
+
+        fn retire_stream(&self, mut stream: Stream) -> bool {
+            let (released, failed) = release_stream(&mut stream);
+            if !released {
+                self.release_blocked.set(true);
+                if let Some(previous) = self.unresolved_stream.replace(Some(stream)) {
+                    std::mem::forget(previous);
+                }
+            }
+            failed
+        }
+
+        fn discard_unreleased_stream(&self) -> Result<bool, RecordingError> {
+            if capture_cleanup_uncertain() {
+                self.check_release()?;
+            }
+            let retained = self.unresolved_stream.borrow_mut().take();
+            let Some(retained) = retained else {
+                return Ok(false);
+            };
+            self.release_blocked.set(false);
+            self.retire_stream(retained);
+            self.check_release()?;
+            Ok(true)
+        }
+
+        fn note_start_error(&self, error: &RecordingError) {
+            if matches!(error, RecordingError::ReleaseUncertain(_)) {
+                self.release_blocked.set(true);
+            }
+        }
+
+        fn release_pending(&self) -> bool {
+            self.release_blocked.get() || capture_cleanup_uncertain()
+        }
+
+        fn check_release(&self) -> Result<(), RecordingError> {
+            if self.release_pending() {
+                Err(RecordingError::ReleaseUncertain(
+                    "previous input release is unconfirmed".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn schedule_linger_close(&self, linger: Duration, generation: u64) {
+            self.linger_deadline.set(
+                Instant::now()
+                    .checked_add(linger)
+                    .map(|deadline| (deadline, generation)),
+            );
+        }
+
+        fn expire_linger(&self) {
+            if let Some((deadline, generation)) = self.linger_deadline.get() {
+                if Instant::now() >= deadline {
+                    self.linger_deadline.set(None);
+                    if self.linger_generation.load(Ordering::SeqCst) == generation {
+                        self.close_warm();
+                    }
+                }
+            }
+        }
+
+        /// Cancels a pending linger close, so the stream the user asked to keep
+        /// stays open past it.
+        pub fn cancel_linger(&self) {
+            self.advance_linger_generation();
+            self.linger_deadline.set(None);
+        }
+
+        fn advance_linger_generation(&self) -> u64 {
+            self.linger_generation
+                .fetch_add(1, Ordering::SeqCst)
+                .wrapping_add(1)
+        }
+
+        fn refresh_can_reopen(&self, generation: u64) -> bool {
+            self.linger_millis() > 0 && self.linger_generation.load(Ordering::SeqCst) == generation
+        }
+
+        /// Tries to start recording on the previously successful device.
+        ///
+        /// Returns `None` when there is no cached device, it no longer
+        /// resolves, it does not match the preferred device, or the stream
+        /// cannot be started on it.
+        fn try_cached_device(
+            &self,
+            level_emitter: Option<Arc<LevelEmitter>>,
+            chunk_emitter: Option<Arc<ChunkEmitter>>,
+            preferred_normalized: Option<&str>,
+            hold_after_stop: bool,
+            trace: &mut AudioStartupTrace,
+        ) -> Option<(ActiveRecording, HostId, String)> {
+            let cached = {
+                let guard = self.last_successful_device.lock().ok()?;
+                guard.clone()
+            }?;
+
+            let host = cpal::host_from_id(cached.host_id).ok()?;
+
+            let device = find_device_by_label(&host, &cached.device_label);
+            if let Some(reason) =
+                cached_device_rejection(Some(&cached), preferred_normalized, device.is_some())
+            {
+                // Falling through, not failing: the slow path scores every
+                // device afresh, so a microphone that moved ports, or a headset
+                // that replaced it, still records this press.
+                log::info!(
+                    "not using cached device '{}' ({reason}); scoring devices instead",
+                    cached.device_label
+                );
+                return None;
+            }
+            let device = device?;
+
+            let result = try_start_on_device(
+                &device,
+                Some(&cached.device_label),
+                level_emitter,
+                chunk_emitter,
+                HoldPlan {
+                    hold_after_stop,
+                    preroll: self.preroll_requested(),
+                    ring: &self.preroll,
+                    manager: self,
+                },
+                trace,
+            );
+
+            match result {
+                Ok(active) => {
+                    log::info!(
+                        "using cached device '{}' via host {:?}",
+                        cached.device_label,
+                        cached.host_id
+                    );
+                    Some((active, cached.host_id, cached.device_label))
+                }
+                Err(err) => {
+                    self.note_start_error(&err);
+                    log::warn!("cached device '{}' failed: {err}", cached.device_label);
+                    None
+                }
+            }
+        }
+
+        fn guard(&self) -> Result<MutexGuard<'_, Option<ActiveRecording>>, RecordingError> {
+            self.inner
+                .lock()
+                .map_err(|_| RecordingError::AlreadyRecording)
+        }
+
+        /// Starts a recording, reusing a held stream when one is available.
+        ///
+        /// The warm path is tried first and costs no device open at all: the
+        /// stream is already running and the press only changes who receives
+        /// the samples. A cold start pays for the open and, because it prepends
+        /// nothing, cannot carry a previous stream's audio into this recording.
+        fn start_recording(
+            &self,
+            level_callback: Option<LevelCallback>,
+            chunk_callback: Option<ChunkCallback>,
+        ) -> Result<(), RecordingError> {
+            self.check_release()?;
+            let preferred_label = {
+                let guard = match self.preferred_input_name.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                guard.clone()
+            };
+            let preferred_trimmed = preferred_label
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let preferred_normalized = preferred_trimmed
+                .as_ref()
+                .map(|value| value.to_ascii_lowercase());
+
+            if self.guard()?.is_some() {
+                return Err(RecordingError::AlreadyRecording);
+            }
+
+            let level_emitter = level_callback.map(LevelEmitter::new);
+            let chunk_emitter = chunk_callback.map(ChunkEmitter::new);
+            let mut trace = AudioStartupTrace::begin();
+            trace.mark(AudioStartupStage::CommandEntered);
+
+            // Read once, before either path: the hold policy decides what this
+            // stream does when it stops, and reading it twice could see two
+            // different answers if a preference lands mid-start.
+            let hold_after_stop = self.hold_after_stop();
+
+            // Everything from here to the publish below runs under
+            // `warm_open_gate`, and never while `inner` is held. That single
+            // rule is the whole deadlock fix, and it has to hold in both
+            // directions:
+            //
+            // - holding `inner` while waiting for the gate deadlocks against
+            //   `open_warm`, which takes the gate first;
+            // - taking the gate and then *keeping* it across the publish stops a
+            //   second press from slipping past the `inner` check above while
+            //   this one is between that check and its publish, which would
+            //   otherwise start two recordings and lose one of the streams.
+            //
+            // So the order is: check `inner`, release it, take the gate, adopt
+            // or open, publish, release the gate.
+            let gate = match self.warm_open_gate.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+
+            // Warm path: the stream from the previous recording is still open
+            // and running, so nothing waits on the device.
+            if let Some(active) = self.adopt_warm_stream(
+                level_emitter.clone(),
+                chunk_emitter.clone(),
+                preferred_normalized.as_deref(),
+                &mut trace,
+            ) {
+                self.record_startup(trace, active.sink.as_ref());
+                let mut guard = self.guard()?;
+                if guard.is_some() {
+                    // Unreachable while every press publishes under this gate:
+                    // the check above and this publish are one critical
+                    // section. Treated as a loss rather than an overwrite, so a
+                    // future caller that breaks the contract leaks one stream
+                    // instead of two recordings.
+                    drop(guard);
+                    drop(gate);
+                    active.release(self);
+                    return Err(RecordingError::AlreadyRecording);
+                }
+                *guard = Some(active);
+                drop(guard);
+                drop(gate);
+                return Ok(());
+            }
+            drop(gate);
+            self.check_release()?;
+
+            // Re-acquired for the cold path: the device open below must not run
+            // while another press is already doing one, and `inner` being
+            // `Some` is what tells this press to stop. A second press that
+            // arrives while this one is opening a device sees `None` here and
+            // gets `AlreadyRecording` from the check that follows.
+            let mut guard = self.guard()?;
+            if guard.is_some() {
+                return Err(RecordingError::AlreadyRecording);
+            }
+
+            // Cold path. A held stream that could not be used has already been
+            // retired above, so this is the only device open in this press.
+            //
+            // Fast path: try the cached device first. Resolving the cached label
+            // still enumerates the selected host's input devices, but it skips
+            // candidate scoring and never iterates the other hosts.
+            if let Some((active, host_id, device_name)) = self.try_cached_device(
+                level_emitter.clone(),
+                chunk_emitter.clone(),
+                preferred_normalized.as_deref(),
+                hold_after_stop,
+                &mut trace,
+            ) {
+                self.cache_successful_device(host_id, device_name, preferred_normalized.as_deref());
+                self.record_startup(trace, active.sink.as_ref());
+                *guard = Some(active);
+                return Ok(());
+            }
+
+            self.check_release()?;
+
+            // Slow path: full device enumeration, every host in turn. The first
+            // host that yields a stream wins; a host that fails is logged and
+            // skipped rather than ending the press.
+            let hosts = ordered_host_ids();
+            let trace_ref = &mut trace;
+            match try_hosts(
+                &hosts,
+                |id| {
+                    cpal::host_from_id(id)
+                        .map_err(|err| RecordingError::StreamBuild(err.to_string()))
+                },
+                |host| {
+                    start_recording_on_host(
+                        host,
+                        level_emitter.clone(),
+                        chunk_emitter.clone(),
+                        preferred_trimmed.as_deref(),
+                        preferred_normalized.as_deref(),
+                        HoldPlan {
+                            hold_after_stop,
+                            preroll: self.preroll_requested(),
+                            ring: &self.preroll,
+                            manager: self,
+                        },
+                        trace_ref,
+                    )
+                },
+            ) {
+                Ok(((active, device_name), host_id)) => {
+                    self.cache_successful_device(
+                        host_id,
+                        device_name,
+                        preferred_normalized.as_deref(),
+                    );
+                    self.record_startup(trace, active.sink.as_ref());
+                    *guard = Some(active);
+                    Ok(())
+                }
+                Err(err) => {
+                    self.note_start_error(&err);
+                    Err(err)
+                }
+            }
+        }
+
+        /// Takes the held stream for a recording, or explains why it cannot.
+        ///
+        /// Returns `None` after retiring a stream that must not be reused, so
+        /// the caller falls back to opening a device. Every rejection here is a
+        /// stream that would have produced a wrong or empty recording.
+        /// Takes the warm stream, if it can serve this press.
+        ///
+        /// The caller must hold `warm_open_gate` for the whole call, and must
+        /// keep holding it until the resulting recording is published into
+        /// `inner`. That is the contract that makes one gate do two jobs: it
+        /// waits for an open that is already in flight, and it stops a second
+        /// press from finding `inner` empty while this one is between its check
+        /// and its publish.
+        fn adopt_warm_stream(
+            &self,
+            level_emitter: Option<Arc<LevelEmitter>>,
+            chunk_emitter: Option<Arc<ChunkEmitter>>,
+            preferred_normalized: Option<&str>,
+            trace: &mut AudioStartupTrace,
+        ) -> Option<ActiveRecording> {
+            let mut warm_guard = match self.warm.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let warm = warm_guard.take()?;
+
+            // A stream can be running and delivering nothing: the device was
+            // unplugged, the host stopped calling the callback after a sleep, or
+            // the callback was never called at all. Reusing it would hand the
+            // press a stream that never produces a sample, and the whole press
+            // would record silence, so it is retired and the caller records
+            // cold, which is slower and works.
+            if let Some(reason) = warm.unusable_reason(WARM_READY_GRACE) {
+                log::warn!(
+                    "warm stream on '{}' cannot serve a press ({reason}); reopening cold",
+                    warm.device_label
+                );
+                warm.sink.stop_recording(None);
+                self.retire_stream(warm.stream);
+                return None;
+            }
+
+            let matches_preference = match (preferred_normalized, warm.preferred.as_deref()) {
+                (None, _) => true,
+                (Some(wanted), Some(opened)) => wanted == opened.to_ascii_lowercase().as_str(),
+                (Some(_), None) => false,
+            };
+
+            if !matches_preference {
+                log::info!(
+                    "warm stream was opened for {:?} but {:?} is now preferred; reopening",
+                    warm.preferred,
+                    preferred_normalized
+                );
+                warm.sink.stop_recording(None);
+                self.retire_stream(warm.stream);
+                return None;
+            }
+
+            trace.note_reused();
+            trace.mark(AudioStartupStage::StreamReused);
+            trace.mark(AudioStartupStage::StreamStarted);
+
+            // The ring is drained, not read: this audio belongs to the
+            // recording that is starting and must not be handed to the next
+            // one as well.
+            let seed = {
+                let mut ring = match self.preroll.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                let samples = ring.drain();
+                ring.clear();
+                samples
+            };
+            if !seed.is_empty() {
+                log::info!(
+                    "warm start carried {} samples ({:.0} ms) captured before the press",
+                    seed.len(),
+                    seed.len() as f64 * 1000.0 / f64::from(warm.sample_rate.max(1))
+                );
+            }
+
+            // Taken before the seed is moved into the buffer: this is how much
+            // of what follows was captured before the press.
+            let seed_len = seed.len();
+            let buffer = warm.sink.start_recording(
+                level_emitter.clone(),
+                chunk_emitter.clone(),
+                seed,
+                Some(Arc::clone(&self.preroll)),
+            );
+
+            Some(ActiveRecording {
+                stream: Some(warm.stream),
+                sink: Some(warm.sink),
+                preroll_after_stop: warm_ring(&self.preroll, self.hold_after_stop()),
+                seed_samples: seed_len,
+                start: Instant::now(),
+                buffer: Some(buffer),
+                sample_rate: warm.sample_rate,
+                device_label: warm.device_label,
+                preferred: warm.preferred,
+                channels: warm.channels,
+            })
+        }
+
+        /// Publishes the startup stages and retains a timing-only signal for
+        /// a first PCM block that arrives after the device call returns.
+        fn record_startup(&self, trace: AudioStartupTrace, sink: Option<&Arc<StreamSink>>) {
+            let first_pcm = sink.map(|sink| Arc::clone(&sink.first_pcm));
+            let mut summary = trace.summary();
+            summary.first_pcm = first_pcm.as_deref().and_then(FirstPcmSignal::elapsed);
+            log::info!("{}", summary.log_line("audio-startup"));
+            *self
+                .last_startup
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) =
+                Some(LatestStartup { summary, first_pcm });
+        }
+
+        /// Keep only the callback's one-shot timing cell, not the stream or its
+        /// audio. A callback after start publication still reaches diagnostics.
+        pub fn last_startup_summary(&self) -> Option<AudioStartupSummary> {
+            let slot = self
+                .last_startup
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let latest = slot.as_ref()?;
+            let mut summary = latest.summary.clone();
+            summary.first_pcm = latest
+                .first_pcm
+                .as_deref()
+                .and_then(FirstPcmSignal::elapsed);
+            Some(summary)
+        }
+
+        /// Opens and starts a capture stream for the current preference and
+        /// holds it warm without recording.
+        ///
+        /// This is the "keep the microphone ready" action. It costs one device
+        /// open, which is exactly the cost every later press stops paying. The OS
+        /// shows its microphone indicator while this runs, which is why the user
+        /// has to ask for it.
+        pub fn open_warm(&self, preroll: Duration) -> Result<(), RecordingError> {
+            self.open_warm_with_policy(preroll, None)
+        }
+
+        fn open_warm_with_policy(
+            &self,
+            preroll: Duration,
+            refresh: Option<(u64, Option<Instant>)>,
+        ) -> Result<(), RecordingError> {
+            self.check_release()?;
+            // Lock order, and it is the only order: `warm_open_gate`, then
+            // `warm`, then nothing. `inner` is never held alongside the gate.
+            //
+            // This function used to take the gate, then `warm`, then `inner`,
+            // while `start_recording` took `inner` first and waited for the gate
+            // inside `adopt_warm_stream`. Two threads doing that is a deadlock:
+            // the press waits for a gate the open is holding while the open waits
+            // for the `inner` lock the press is holding. Nothing in the tests
+            // exercised it, because it needs both calls to overlap, which is
+            // exactly what the front end does when it switches keep-ready on in
+            // the breath of a press.
+            //
+            // So `inner` is read *before* the gate is taken, and the reading is
+            // re-checked cheaply afterwards by the press itself: a press that
+            // starts between the two simply opens its own device, and this holds
+            // nothing that would stop it.
+            //
+            // A recording that is already running has the device, and the front
+            // end asks for this in the same breath as it stops one, so the two
+            // overlap. Opening a second stream on the same device mid-recording
+            // either fails on the device or steals it from the press that is
+            // still in flight. The stop path opens its own hold when it ends, so
+            // declining here costs nothing and only avoids the collision.
+            if self
+                .inner
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(true)
+            {
+                log::debug!("a recording owns the device; not opening a warm stream over it");
+                return Ok(());
+            }
+
+            // Serialises with a press, so the press reuses this open instead of
+            // racing it onto the same device. Taken last, and held for the whole
+            // device open so a concurrent press waits for it rather than opening
+            // a competing stream.
+            let _gate = match self.warm_open_gate.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+
+            // Re-read `inner` now that the gate is held, and this is not
+            // redundant with the check above.
+            //
+            // The check above happens before the gate, which is necessary for
+            // the lock order (see the comment there) but means it is answered by
+            // a different moment than the one that matters. A press can start in
+            // the window between that check and this one: `start_recording`
+            // takes `inner` and then waits for this gate, so the press is
+            // *inside* that window by construction whenever the two overlap.
+            // Without this second read the sequence is:
+            //
+            //   1. `open_warm` reads `inner` as empty.
+            //   2. A press takes `inner` and blocks on the gate.
+            //   3. `open_warm` takes the gate and opens a capture device.
+            //   4. `open_warm` stores the stream in `warm` and releases the gate.
+            //   5. The press resumes, finds a warm stream, and adopts it.
+            //
+            // Step 3 is a second stream opened on the device the press is about
+            // to capture from. On a device that allows it, two captures run and
+            // the system captures the microphone twice; on one that does not, the
+            // open fails and the press pays a device-open it did not need. Either
+            // way the press has already started, and this function is holding a
+            // stream nothing is recording from.
+            //
+            // Declining here is the same trade the earlier check makes: the
+            // press opens its own device, and the stop path opens the hold when
+            // it ends.
+            if self
+                .inner
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(true)
+            {
+                log::debug!(
+                    "a recording started while waiting for the warm open gate; not opening a warm stream over it"
+                );
+                return Ok(());
+            }
+
+            let stale = self.warm.lock().ok().and_then(|slot| {
+                slot.as_ref()
+                    .filter(|warm| !warm.is_usable(WARM_READY_GRACE))
+                    .map(|warm| Arc::clone(&warm.sink))
+            });
+            if let Some(sink) = stale {
+                self.close_matching_warm(Some(&sink));
+                self.check_release()?;
+            }
+
+            let generation = {
+                let mut warm_guard = match self.warm.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                // A refresh must not reopen a stream after an intervening release.
+                if refresh.is_some_and(|(generation, deadline)| {
+                    !self.refresh_can_reopen(generation)
+                        || deadline.is_some_and(|deadline| deadline <= Instant::now())
+                }) {
+                    return Ok(());
+                }
+                if warm_guard.is_some() {
+                    log::debug!("warm stream already open; nothing to do");
+                    return Ok(());
+                }
+
+                let preferred_label = {
+                    let guard = match self.preferred_input_name.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    guard.clone()
+                };
+                let preferred_trimmed = preferred_label
+                    .as_ref()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+
+                // Past every guard, so this counts real device opens rather than
+                // declined requests. See the field's own comment.
+                self.warm_open_attempts
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                // The ring is left empty until the successful stream tells us the
+                // real rate; `open_warm_stream` sizes it.
+                let warm = self.open_warm_stream(preferred_trimmed.clone(), preroll)?;
+                if let Ok(mut ring) = self.preroll.lock() {
+                    ring.cap = preroll_capacity(preroll, warm.sample_rate);
+                    ring.clear();
+                }
+                // Any timer armed before this stream existed is now stale, and it has
+                // to learn that before the stream becomes visible here. A linger
+                // armed for a previous stream wakes up, checks its generation and
+                // finds it current, and would take *this* stream: the user's hold
+                // disappears seconds after the switch that asked for it. The bump is
+                // inside the lock the timer takes, so the two orderings are the only
+                // two possible ones, and both are safe: either the timer ran first
+                // and closed the stream it was armed for (there was one in the slot,
+                // since this open returns early when there is), or it runs after this
+                // and sees a stale generation.
+                let generation = self.advance_linger_generation();
+                *warm_guard = Some(warm);
+                generation
+            };
+            if let Some((_, Some(deadline))) = refresh {
+                self.linger_deadline.set(Some((deadline, generation)));
+                self.expire_linger();
+            }
             Ok(())
-        } else {
-            Err(RecordingError::CaptureFailed)
         }
-    }
 
-    fn finish_resume_capture(
-        gate: &CallbackGate,
-        buffer: &Mutex<Vec<f32>>,
-        emitter: Option<&ChunkEmitter>,
-        capture_failed: &AtomicBool,
-        resume_offset: usize,
-    ) -> bool {
-        gate.finish_resume(|| {
-            if capture_failed.load(Ordering::Acquire) {
-                return false;
+        /// Resolves the device a press would use, without opening a stream.
+        ///
+        /// The device enumeration and scoring are a real part of the cold start
+        /// cost, and they can be done ahead of the press with no microphone
+        /// indicator, because nothing captures. Doing them here primes the cache
+        /// that `try_cached_device` reads, so the press skips the scoring.
+        fn prepare_device(&self, preferred: Option<&str>) -> Result<String, RecordingError> {
+            self.check_release()?;
+            let preferred = preferred
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_ascii_lowercase);
+            let cached = self
+                .last_successful_device
+                .lock()
+                .ok()
+                .and_then(|cache| cache.clone());
+            if let Some(cached) = cached.filter(|device| {
+                device.confirmed && device.preference.as_deref() == preferred.as_deref()
+            }) {
+                if cpal::host_from_id(cached.host_id)
+                    .ok()
+                    .and_then(|host| find_device_by_label(&host, &cached.device_label))
+                    .is_some()
+                {
+                    return Ok(cached.device_label);
+                }
             }
-            let Ok(samples) = buffer.lock() else {
-                return false;
+            let generation = self.selection_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            let (label, host_id) = self.resolve_preferred_device(preferred.as_deref())?;
+            // A delayed preparation cannot change the held stream or make a
+            // press with a different preference use this device.
+            self.cache_device(
+                host_id,
+                label.clone(),
+                preferred.as_deref(),
+                Some(generation),
+            );
+            log::debug!("prepared '{label}' for the next press");
+            Ok(label)
+        }
+
+        fn resolve_preferred_device(
+            &self,
+            preferred: Option<&str>,
+        ) -> Result<(String, HostId), RecordingError> {
+            let hosts = ordered_host_ids();
+            try_hosts(
+                &hosts,
+                |id| {
+                    cpal::host_from_id(id)
+                        .map_err(|err| RecordingError::StreamBuild(err.to_string()))
+                },
+                |host| {
+                    let candidates = ranked_input_candidates(host, preferred);
+                    // A host with no input device is not a failure of this
+                    // function; it just cannot answer. Reported as the error the
+                    // cross-host loop already skips, so the next host is tried.
+                    candidates
+                        .into_iter()
+                        .next()
+                        .map(|best| best.label)
+                        .ok_or(RecordingError::InputDeviceUnavailable)
+                },
+            )
+        }
+
+        /// Reopens the held stream if the device set changed underneath it.
+        ///
+        /// Devices appear and disappear while the app runs: a headset connects,
+        /// a USB interface is plugged in. A held stream cannot follow that,
+        /// because a stream is bound to the device it was built on, so the
+        /// honest answer is to close it and open the newly best device. Called
+        /// when the window is focused, not on a timer.
+        pub fn refresh_warm_device(&self) {
+            // A recording is using its own stream, and that stream is not in the
+            // warm slot, so the checks below would see nothing and return. The
+            // guard is explicit anyway, because the close path in this function
+            // would otherwise be one refactor away from shutting a live
+            // microphone mid-recording.
+            if self
+                .inner
+                .lock()
+                .map(|guard| guard.is_some())
+                .unwrap_or(true)
+            {
+                log::debug!("a recording owns the device; not refreshing it");
+                return;
+            }
+            let current = self.warm.lock().ok().and_then(|guard| {
+                guard
+                    .as_ref()
+                    .map(|warm| (warm.device_label.clone(), Arc::clone(&warm.sink)))
+            });
+            let Some((current, sink)) = current else {
+                return;
             };
-            let Some(resumed) = samples.get(resume_offset..) else {
-                return false;
+
+            let preferred = self
+                .preferred_input_name
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_deref()
+                .map(str::to_ascii_lowercase);
+            let best = self
+                .resolve_preferred_device(preferred.as_deref())
+                .ok()
+                .map(|(label, _)| label);
+            match best {
+                Some(best)
+                    if normalized_name(&best) == normalized_name(&current)
+                        && sink.fault_token().is_none() =>
+                {
+                    log::debug!("held device '{current}' is still the best; keeping it");
+                }
+                Some(best) => {
+                    log::info!(
+                        "held device '{current}' is no longer the best ('{best}'); reopening"
+                    );
+                    let preroll = Duration::from_micros(self.preroll_micros.load(Ordering::SeqCst));
+                    // A device change must not extend the original privacy window.
+                    let deadline = self.current_linger_deadline();
+                    let Some(generation) = self.close_matching_warm(Some(&sink)) else {
+                        return;
+                    };
+                    // The next cold press must not reuse the device this refresh retired.
+                    self.clear_device_cache();
+                    if self.linger_millis() != WARM_FOREVER_MS && deadline.is_none() {
+                        return;
+                    }
+                    if let Err(err) =
+                        self.open_warm_with_policy(preroll, Some((generation, deadline)))
+                    {
+                        log::warn!("could not reopen the warm stream after a device change: {err}");
+                    }
+                }
+                None => {
+                    log::warn!("no usable device after a device change; releasing '{current}'");
+                    if self.close_matching_warm(Some(&sink)).is_some() {
+                        self.clear_device_cache();
+                    }
+                }
+            }
+        }
+
+        /// One readable line describing the capture path.
+        fn status_line(&self) -> String {
+            let hold = self.linger_ms.load(Ordering::SeqCst);
+            let policy = match hold {
+                0 => "cold".to_string(),
+                WARM_FOREVER_MS => "ready-forever".to_string(),
+                millis => format!("linger-{millis}ms"),
             };
-            if let Some(emitter) = emitter {
-                emitter.emit(resumed);
+            let preroll = self.preroll.lock().map(|ring| ring.cap).unwrap_or(0);
+            let requested_ms = self.preroll_micros.load(Ordering::SeqCst) / 1_000;
+            let reused = self
+                .last_startup_summary()
+                .map(|summary| summary.reused)
+                .map(|reused| if reused { "reused" } else { "opened" })
+                .unwrap_or("none");
+            // "ready" means a press would reuse a working stream, not that an
+            // object exists. A stream that has delivered nothing since it opened
+            // is not ready in any sense the user cares about, and reporting it as
+            // ready is what made a dead device look like a working one in the
+            // diagnostics export.
+            let ready = self
+                .warm
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|warm| warm.is_usable(WARM_READY_GRACE)))
+                .unwrap_or(false);
+            format!(
+                "ready={ready} policy={policy} preroll_ms={requested_ms} preroll_samples={preroll} last_start={reused}",
+            )
+        }
+
+        /// Opens a capture stream and leaves it collecting into the warm ring.
+        ///
+        /// Every host is tried in order, and the first that yields a stream
+        /// wins. The trace is recorded so a pre-warm open is measured on the
+        /// same clock as a press, which is the only way to say what the hold
+        /// actually bought.
+        fn open_warm_stream(
+            &self,
+            preferred_trimmed: Option<String>,
+            preroll: Duration,
+        ) -> Result<WarmStream, RecordingError> {
+            let preferred_normalized = preferred_trimmed
+                .as_ref()
+                .map(|value| value.to_ascii_lowercase());
+            let mut trace = AudioStartupTrace::begin();
+            trace.mark(AudioStartupStage::CommandEntered);
+
+            let trace_ref = &mut trace;
+            let hosts = ordered_host_ids();
+            let opened = try_hosts(
+                &hosts,
+                |id| {
+                    cpal::host_from_id(id)
+                        .map_err(|err| RecordingError::StreamBuild(err.to_string()))
+                },
+                |host| {
+                    let result = warm_stream_on_host(
+                        host,
+                        preferred_trimmed.as_deref(),
+                        preferred_normalized.as_deref(),
+                        Arc::clone(&self.preroll),
+                        preroll,
+                        trace_ref,
+                        self,
+                    );
+                    if let Err(err) = &result {
+                        // The message alone cannot distinguish a device another
+                        // application is holding from one that was unplugged,
+                        // and cpal 0.15 reports both as DeviceNotAvailable. The
+                        // classification is logged with the raw text so the two
+                        // cases can be told apart after the fact without
+                        // reproducing them.
+                        let reason =
+                            crate::platform::mic_usage::classify_open_failure(&err.to_string());
+                        log::warn!(
+                            "this host did not yield a warm input device ({reason}): {err}",
+                            reason = reason.as_str()
+                        );
+                    }
+                    result
+                },
+            );
+            match opened {
+                Ok((warm, _host_id)) => {
+                    self.record_startup(trace, Some(&warm.sink));
+                    Ok(warm)
+                }
+                Err(err) => {
+                    self.note_start_error(&err);
+                    Err(err)
+                }
             }
-            true
-        })
+        }
+
+        fn pause_recording(&self) -> Result<(), RecordingError> {
+            let guard = self
+                .inner
+                .lock()
+                .map_err(|_| RecordingError::NotRecording)?;
+            let recording = guard.as_ref().ok_or(RecordingError::NotRecording)?;
+            let stream = recording.stream_ref()?;
+            #[cfg(target_os = "linux")]
+            #[allow(unreachable_patterns)]
+            let paused = match stream.as_inner() {
+                cpal::platform::StreamInner::Alsa(input) if input.can_pause_input() => {
+                    input.pause_input_and_drain()
+                }
+                _ => {
+                    return Err(RecordingError::StreamPlay(
+                        "The input device does not support pause".into(),
+                    ))
+                }
+            };
+            #[cfg(target_os = "windows")]
+            #[allow(unreachable_patterns)]
+            let paused = match stream.as_inner() {
+                cpal::platform::StreamInner::Wasapi(input) => input.pause_input_and_drain(),
+                _ => {
+                    return Err(RecordingError::StreamPlay(
+                        "The input device does not support pause".into(),
+                    ))
+                }
+            };
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            let paused = stream.pause();
+            if let Some(sink) = &recording.sink {
+                sink.set_paused(true);
+                if paused.is_err() {
+                    sink.record_fault("fatal");
+                }
+            }
+            paused.map_err(|error| RecordingError::StreamPlay(error.to_string()))?;
+            // Clear the ring while paused. Without this, resuming collects
+            // pre-roll audio that belongs to the pause, and a stop-then-start
+            // would prepend speech from before the user walked away.
+            if let Some(preroll) = &recording.preroll_after_stop {
+                if let Ok(mut ring) = preroll.lock() {
+                    ring.clear();
+                }
+            }
+            log::info!("capture stream paused");
+            Ok(())
+        }
+
+        fn resume_recording(&self) -> Result<(), RecordingError> {
+            let guard = self
+                .inner
+                .lock()
+                .map_err(|_| RecordingError::NotRecording)?;
+            let recording = guard.as_ref().ok_or(RecordingError::NotRecording)?;
+            if recording
+                .sink
+                .as_ref()
+                .is_some_and(|sink| sink.fault_token().is_some())
+            {
+                return Err(RecordingError::CaptureFailed);
+            }
+            if let Err(error) = recording.stream_ref()?.play() {
+                if let Some(sink) = &recording.sink {
+                    sink.record_fault("fatal");
+                }
+                return Err(RecordingError::StreamPlay(error.to_string()));
+            }
+            // The pause froze the emitters' throttle clocks as well as the
+            // device. Restarting the press clock keeps the first-sample
+            // measurement from reporting the whole paused interval.
+            if let Some(sink) = &recording.sink {
+                sink.set_paused(false);
+                sink.restart_press_clock();
+            }
+            log::info!("capture stream resumed");
+            Ok(())
+        }
+
+        fn stop_with_handoff(
+            &self,
+            allow_hold: bool,
+            publish: impl FnOnce(RecordingResult),
+        ) -> Result<bool, RecordingError> {
+            self.check_release()?;
+            let mut guard = self
+                .inner
+                .lock()
+                .map_err(|_| RecordingError::NotRecording)?;
+            let mut recording = guard.take().ok_or(RecordingError::NotRecording)?;
+            let sample_rate = recording.sample_rate;
+            let seed_samples = recording.seed_samples;
+            let wall_duration = recording.start.elapsed();
+            // Read before the sink is unsubscribed: both facts belong to this
+            // recording, and the sink is handed to the warm slot below.
+            let capture_fault = recording
+                .sink
+                .as_ref()
+                .and_then(|sink| sink.fault_token())
+                .map(str::to_string);
+            // A pause is the user's own decision, so the time it consumed is not
+            // time the capture failed to deliver. Without this subtraction every
+            // paused dictation reads as a recording that died partway through,
+            // which is precisely the signal the fault path exists to make
+            // trustworthy.
+            let paused_for = recording
+                .sink
+                .as_ref()
+                .map(|sink| sink.paused_for())
+                .unwrap_or_default();
+            let expected_duration = wall_duration.saturating_sub(paused_for);
+            let buffer = recording.buffer.clone();
+            let device_label = recording.device_label.clone();
+            let preferred = recording.preferred.clone();
+            let channels = recording.channels;
+
+            // Unsubscribing before closing keeps the capture callback from
+            // writing a sample into a recording that already returned.
+            let resumed_preroll = recording
+                .preroll_after_stop
+                .take()
+                .filter(|_| allow_hold && self.hold_after_stop());
+            let stop_outcome = recording
+                .sink
+                .as_ref()
+                .map(|sink| sink.stop_recording(resumed_preroll.clone()))
+                .unwrap_or(StopOutcome {
+                    emitter: None,
+                    was_paused: false,
+                });
+            // The sink is the authority on whether the stream was paused, and it
+            // has just cleared that flag. Reading `is_paused()` afterwards — the
+            // original shape of this code — always answered "not paused", so a
+            // stream stopped while paused went into the warm slot asleep and the
+            // next press adopted a stream that delivered nothing until the
+            // staleness window expired.
+            let was_paused = stop_outcome.was_paused;
+            // Read again now that the sink has stopped. The first read above is
+            // followed by several lock acquisitions and the sink hand-off, which
+            // is long enough for the host's error callback to report a dead
+            // stream in between; that token was stored and then never read, so
+            // the user got a truncated dictation with no notice.
+            //
+            // This narrows the window to the instructions between this read and
+            // `reported_capture_fault` below. It does not close it: `record_fault`
+            // runs on the host's error thread and takes no lock this path holds,
+            // so there is no ordering to appeal to. Closing it properly would
+            // mean the stop waiting for in-flight callbacks, which can block on an
+            // audio thread the host has already wedged. A fault that still slips
+            // past is the silent-death case `elapsed_gap_is_suspicious` logs.
+            //
+            // The first token wins, so a fault already seen above is kept.
+            let capture_fault = recording
+                .sink
+                .as_ref()
+                .and_then(|sink| sink.fault_token())
+                .map(str::to_string)
+                .or(capture_fault);
+            let flushed_emitter = stop_outcome.emitter;
+            if let Some(chunk_emitter) = flushed_emitter {
+                chunk_emitter.flush();
+            }
+
+            let (mut samples, poisoned) =
+                buffer
+                    .as_ref()
+                    .map_or((Vec::new(), false), |buffer| match buffer.lock() {
+                        Ok(mut samples) => (std::mem::take(&mut *samples), false),
+                        Err(error) => (std::mem::take(&mut *error.into_inner()), true),
+                    });
+            let nonfinite = !super::retain_finite_prefix(&mut samples);
+            // Only the samples captured *after* the press count as this
+            // recording's length. A warm start seeds the buffer with the
+            // pre-roll, so counting every sample would credit the recording with
+            // up to two seconds of audio from before it began, and that credit is
+            // indistinguishable from a stream that died for the same span.
+            let captured =
+                captured_duration(samples.len(), seed_samples, sample_rate).unwrap_or_default();
+            let size_bytes = samples.len() as u64 * std::mem::size_of::<f32>() as u64;
+
+            // The token was read before the sink stopped and again after it, but
+            // the host's error callback runs on a thread it chooses and on
+            // Windows can still land after the last read. When the recording came
+            // up short, that late fault is the difference between telling the
+            // user their microphone stopped and handing them a short transcript
+            // with no explanation, so the wait is paid here -- once, bounded, and
+            // only in the case where it can change what they are told.
+            let drained = match recording.sink.as_ref() {
+                Some(sink) => drain_late_fault(sink, capture_fault, captured, expected_duration),
+                None => capture_fault,
+            };
+            let capture_fault =
+                reported_capture_fault(drained.clone(), captured, expected_duration);
+            let capture_failed = poisoned || nonfinite || drained.is_some();
+
+            // A capture that stopped early is logged with both figures. The
+            // numbers are the whole value here: "the recording is 1.4 s long and
+            // was open for 6.0 s" says the stream died at 1.4 s, which no single
+            // duration can express.
+            if let Some(fault) = capture_fault.as_deref() {
+                log::warn!(
+                    "capture reported {fault} during the recording: captured {} ms of {} ms",
+                    captured.as_millis(),
+                    expected_duration.as_millis()
+                );
+            } else if elapsed_gap_is_suspicious(captured, expected_duration) {
+                // The host said nothing, and the recording is materially shorter
+                // than the time it was open. That is the silent death this
+                // module cannot prevent but must not hide.
+                log::warn!(
+                    "capture delivered {} ms of audio in {} ms of recording without reporting an error",
+                    captured.as_millis(),
+                    expected_duration.as_millis()
+                );
+            }
+
+            publish(RecordingResult {
+                capture_failed,
+                metrics: RecordingMetrics {
+                    duration: captured,
+                    expected_duration,
+                    size_bytes,
+                    capture_fault: drained,
+                },
+                audio: RecordedAudio {
+                    samples,
+                    sample_rate,
+                },
+            });
+            // The device is not closed here. A configured preroll ring means the
+            // microphone should stay ready, so the same running stream goes back
+            // into the warm slot and the next press skips the device open
+            // entirely. Without a ring the stream is retired below.
+            //
+            // A stream the host declared dead is the exception: it can never
+            // serve a press, so leaving it in the warm slot holds the
+            // microphone indicator on for a device that cannot record, and keeps
+            // a broken stream alive until the next press rejects it. It is
+            // closed here instead, and the next press opens a working device.
+            // Reads the token as the host reported it, before the gap filter
+            // below: a stream declared gone is retired even when its last
+            // recording happened to be whole.
+            let keep_warm = !capture_failed;
+            let mut release_failed = false;
+            let pending_linger = self.pending_linger();
+            if !keep_warm {
+                log::info!(
+                    "not holding a capture stream the host reported gone; the next press opens one"
+                );
+            }
+            // The stream is taken out of the recording either way, so that a
+            // faulted one is retired deliberately rather than dropped as a
+            // side effect of the recording going out of scope. A stop that
+            // leaves the device open is the defect this whole path exists to
+            // avoid, and an implicit drop makes the intent unreadable.
+            let stream = recording.stream.take();
+            let stream_to_hold = match (keep_warm, stream) {
+                (true, stream) => stream,
+                (false, Some(stream)) => {
+                    release_failed |= self.retire_stream(stream);
+                    None
+                }
+                (false, None) => None,
+            };
+            match (resumed_preroll, stream_to_hold) {
+                (Some(_preroll), Some(stream)) => {
+                    let sink = recording.sink.clone();
+                    if let Some(sink) = sink {
+                        // A stream stopped while paused is still stopped: the
+                        // next press would adopt it, hear nothing, and pay a
+                        // cold reopen after the staleness window, which is worse
+                        // than the cold start it was meant to avoid. Resuming
+                        // costs no device open and is what the hold was for.
+                        if was_paused {
+                            if let Err(err) = stream.play() {
+                                log::warn!("could not resume a paused stream for the hold: {err}");
+                                self.retire_stream(stream);
+                                return Ok(true);
+                            }
+                        }
+                        let mut warm = match self.warm.lock() {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        if let Some(previous) = warm.replace(WarmStream {
+                            stream,
+                            sink,
+                            preferred,
+                            sample_rate,
+                            channels,
+                            device_label,
+                        }) {
+                            release_failed |= self.retire_stream(previous.stream);
+                        }
+                        // The stream is warm but no press has claimed it, so a
+                        // finite window closes it late; a press inside that
+                        // window is instant and a press after it pays the device
+                        // open again. The explicit preference sends
+                        // `WARM_FOREVER_MS` here, which never schedules a close.
+                        drop(warm);
+                        match pending_linger {
+                            Some(linger) => self.linger_then_close(linger),
+                            None => self.cancel_linger(),
+                        }
+                    }
+                }
+                (_, Some(stream)) => release_failed |= self.retire_stream(stream),
+                _ => {}
+            }
+
+            Ok(release_failed || self.release_pending())
+        }
     }
 
-    fn retain_input_samples(
-        buffer: &Mutex<Vec<f32>>,
-        capture_failed: &AtomicBool,
-        samples: &mut Vec<f32>,
-    ) -> bool {
-        if capture_failed.load(Ordering::Acquire) {
-            return false;
+    impl LocalRecordingManager {
+        fn is_recording(&self) -> bool {
+            self.release_pending() || self.current_sample_rate().is_some()
         }
-        if !retain_finite_prefix(samples) {
-            capture_failed.store(true, Ordering::Release);
-        }
-        if samples.is_empty() {
-            return false;
-        }
-        match buffer.lock() {
-            Ok(mut buffer) => {
-                buffer.extend_from_slice(samples);
-                true
-            }
-            Err(_) => {
-                capture_failed.store(true, Ordering::Release);
-                false
-            }
-        }
-    }
 
-    /// Transfer a retired buffer for recovery. Poison means the callback may
-    /// have been interrupted mid-update, so the result is never a success.
-    fn take_captured_samples(buffer: &Mutex<Vec<f32>>, mut incomplete: bool) -> (Vec<f32>, bool) {
-        let mut samples = match buffer.lock() {
-            Ok(mut buffer) => std::mem::take(&mut *buffer),
-            Err(poisoned) => {
-                incomplete = true;
-                std::mem::take(&mut *poisoned.into_inner())
+        fn stop(&self) -> Result<RecordingResult, RecordingError> {
+            if self.discard_unreleased_stream()? {
+                return Ok(RecordingResult {
+                    audio: RecordedAudio {
+                        samples: Vec::new(),
+                        sample_rate: 0,
+                    },
+                    metrics: RecordingMetrics {
+                        duration: Duration::ZERO,
+                        expected_duration: Duration::ZERO,
+                        size_bytes: 0,
+                        capture_fault: None,
+                    },
+                    capture_failed: true,
+                });
             }
-        };
-        for sample in &mut samples {
-            if !sample.is_finite() {
-                *sample = 0.0;
-                incomplete = true;
-            }
+            let mut result = None;
+            let release_failed = self.stop_with_handoff(false, |audio| result = Some(audio))?;
+            self.check_release()?;
+            let mut result = result.ok_or(RecordingError::NotRecording)?;
+            result.capture_failed |= release_failed;
+            Ok(result)
         }
-        (samples, incomplete)
-    }
 
-    fn pause_stream_with_retry<E: std::fmt::Display>(
-        mut pause: impl FnMut() -> Result<(), E>,
-    ) -> bool {
-        match pause() {
-            Ok(()) => true,
-            Err(error) => {
-                log::error!("failed to pause input stream: {error}");
-                match pause() {
-                    Ok(()) => true,
-                    Err(error) => {
-                        log::error!("failed to retry pausing input stream: {error}");
+        fn set_preferred_input_device(&self, name: Option<String>) {
+            let sanitized = name
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+
+            // The command layer sets this on every press, so an unchanged value
+            // has to cost nothing. Reopening the held stream on every press
+            // would turn the pre-warm into a device open per press, which is the
+            // exact cost it exists to remove.
+            let unchanged = match self.preferred_input_name.lock() {
+                Ok(mut guard) => {
+                    if *guard == sanitized {
+                        true
+                    } else {
+                        *guard = sanitized;
                         false
                     }
                 }
-            }
-        }
-    }
-
-    fn release_or_retain<T>(
-        slot: &mut Option<T>,
-        mut resource: T,
-        pause: impl FnOnce(&mut T) -> bool,
-    ) -> bool {
-        if !pause(&mut resource) {
-            *slot = Some(resource);
-            return false;
-        }
-        drop(resource);
-        true
-    }
-
-    fn start_candidate<T, E>(
-        retained: &mut Option<T>,
-        candidate: T,
-        start: impl FnOnce(&T) -> Result<(), E>,
-        retire: impl FnOnce(&T),
-        pause: impl FnOnce(&mut T) -> bool,
-    ) -> Result<T, E> {
-        match start(&candidate) {
-            Ok(()) => Ok(candidate),
-            Err(error) => {
-                retire(&candidate);
-                release_or_retain(retained, candidate, pause);
-                Err(error)
-            }
-        }
-    }
-
-    impl ActiveRecording {
-        fn pause_for_release(&mut self) -> bool {
-            if self.paused_for_release {
-                return true;
-            }
-            #[cfg(target_os = "macos")]
-            {
-                let cpal::platform::StreamInner::CoreAudio(stream) = self._stream.as_inner();
-                if let Err(error) = stream.quiesce_input() {
-                    log::error!("failed to retire input callbacks: {error}");
-                    return false;
-                }
-            }
-            #[cfg(target_os = "linux")]
-            {
-                #[allow(unreachable_patterns)]
-                let result = match self._stream.as_inner_mut() {
-                    cpal::platform::StreamInner::Alsa(stream) => {
-                        let released = pause_stream_with_retry(|| stream.stop_input_for_release());
-                        if released && stream.capture_worker_failed() {
-                            // The device is released, so this must not retain the
-                            // stream. The recording is still incomplete: the
-                            // capture worker ended by panicking.
-                            log::error!(
-                                "ALSA capture worker panicked; reporting an incomplete recording"
-                            );
-                            self.capture_failed.store(true, Ordering::Release);
-                        }
-                        released
+                Err(poisoned) => {
+                    let mut guard = poisoned.into_inner();
+                    if *guard == sanitized {
+                        true
+                    } else {
+                        *guard = sanitized;
+                        false
                     }
-                    // Do not claim release for a newly enabled, unaudited host.
-                    _ => false,
-                };
-                if !result {
-                    return false;
                 }
+            };
+            if unchanged {
+                return;
             }
-            #[cfg(not(target_os = "linux"))]
-            if !pause_stream_with_retry(|| self._stream.pause()) {
-                return false;
-            }
-            #[cfg(target_os = "macos")]
-            {
-                let cpal::platform::StreamInner::CoreAudio(stream) = self._stream.as_inner();
-                if let Err(error) = stream.close_paused_input() {
-                    log::error!("failed to close input stream: {error}");
-                    return false;
-                }
-            }
-            self.paused_for_release = true;
-            true
-        }
-    }
 
-    impl Drop for ActiveRecording {
-        fn drop(&mut self) {
-            // A driver pause or destruction can block. Stop accepting samples
-            // first, without holding the callback gate across driver calls.
-            self.callback_gate.retire();
-            if !self.paused_for_release {
-                self.pause_for_release();
+            if let Ok(mut cache) = self.last_successful_device.lock() {
+                let preferred = self
+                    .preferred_input_name
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .as_deref()
+                    .map(str::to_ascii_lowercase);
+                if cache
+                    .as_ref()
+                    .is_some_and(|entry| entry.preference != preferred)
+                {
+                    *cache = None;
+                }
             }
+
+            // A held stream belongs to the device it was opened on, so a changed
+            // preference must not leave it recording the old microphone. Closing
+            // it here means the change takes effect immediately instead of after
+            // the linger window, and it clears the indicator for a device the
+            // user just moved off.
+            if self.has_warm_stream() {
+                log::info!("preferred input changed; closing the warm stream for the old device");
+                self.close_warm();
+
+                // A held microphone has to follow the choice, not only stop
+                // using the old device. Closing alone would leave "keep it
+                // ready" on and the microphone shut, so the indicator would go
+                // out and the next press would open cold with no hint why.
+                if self.linger_ms.load(Ordering::SeqCst) == WARM_FOREVER_MS {
+                    let preroll = Duration::from_micros(self.preroll_micros.load(Ordering::SeqCst));
+                    if let Err(err) = self.open_warm(preroll) {
+                        log::warn!("could not reopen on the new preferred device: {err}");
+                    }
+                }
+            }
+        }
+
+        fn clear_device_cache(&self) {
+            if let Ok(mut cache) = self.last_successful_device.lock() {
+                self.selection_generation.fetch_add(1, Ordering::SeqCst);
+                *cache = None;
+            }
+        }
+
+        fn current_sample_rate(&self) -> Option<u32> {
+            let guard = match self.inner.lock() {
+                Ok(inner) => inner,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            guard.as_ref().map(|active| active.sample_rate)
         }
     }
 
@@ -709,7 +3060,7 @@ mod cpal_impl {
     }
 
     impl<T: 'static> ThreadBoundWorker<T> {
-        fn new(create: impl FnOnce() -> T + Send + 'static) -> Self {
+        fn new(create: impl FnOnce() -> T + Send + 'static, tick: fn(&T)) -> Self {
             let (sender, receiver) = std::sync::mpsc::sync_channel::<WorkerTask<T>>(1);
             let failed = Arc::new(AtomicBool::new(false));
             let worker_failed = Arc::clone(&failed);
@@ -718,8 +3069,13 @@ mod cpal_impl {
                 .spawn(move || {
                     let _failure_guard = WorkerFailureGuard(worker_failed);
                     let resource = create();
-                    while let Ok(task) = receiver.recv() {
-                        task(&resource);
+                    loop {
+                        tick(&resource);
+                        match receiver.recv_timeout(Duration::from_millis(25)) {
+                            Ok(task) => task(&resource),
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
                     }
                 });
             let sender = match result {
@@ -804,437 +3160,18 @@ mod cpal_impl {
     impl RecordingManager {
         pub fn new() -> Self {
             Self {
-                worker: ThreadBoundWorker::new(LocalRecordingManager::new),
+                worker: ThreadBoundWorker::new(
+                    LocalRecordingManager::new,
+                    LocalRecordingManager::expire_linger,
+                ),
                 activity: Arc::new(RecorderActivity::default()),
             }
         }
     }
 
-    impl LocalRecordingManager {
-        fn new() -> Self {
-            Self {
-                inner: Mutex::new(None),
-                preferred_input_name: Mutex::new(None),
-                last_successful_device: Mutex::new(None),
-                release_uncertain: Cell::new(false),
-            }
-        }
-
-        /// Remembers the host and disambiguated label of a device that just
-        /// started recording successfully, so the next start can try it first.
-        fn cache_successful_device(&self, host_id: HostId, device_label: String) {
-            if let Ok(mut guard) = self.last_successful_device.lock() {
-                *guard = Some(CachedDeviceInfo {
-                    host_id,
-                    device_label,
-                });
-            }
-        }
-
-        /// Tries to start recording on the previously successful device.
-        ///
-        /// Returns `None` when the cache cannot be used or the failed
-        /// candidate was fully released. An unreleased candidate stops the
-        /// search and stays in `retained` for the owner's cleanup retry.
-        fn try_cached_device(
-            &self,
-            level_emitter: Option<Arc<LevelEmitter>>,
-            chunk_emitter: Option<Arc<ChunkEmitter>>,
-            preferred_normalized: Option<&str>,
-            retained: &mut Option<ActiveRecording>,
-        ) -> Result<Option<(ActiveRecording, HostId, String)>, RecordingError> {
-            let cached = self
-                .last_successful_device
-                .lock()
-                .ok()
-                .and_then(|guard| guard.clone());
-            let Some(cached) = cached else {
-                return Ok(None);
-            };
-            let Ok(host) = cpal::host_from_id(cached.host_id) else {
-                return Ok(None);
-            };
-
-            if let Some(preferred) = preferred_normalized {
-                if !device_matches_preferred(&cached.device_label, preferred) {
-                    return Ok(None);
-                }
-            }
-
-            let Some(device) = find_device_by_label(&host, &cached.device_label) else {
-                return Ok(None);
-            };
-
-            let result = try_start_on_device(
-                &device,
-                Some(&cached.device_label),
-                level_emitter,
-                chunk_emitter,
-                retained,
-            );
-
-            match result {
-                Ok(active) => {
-                    log::info!(
-                        "using cached device '{}' via host {:?}",
-                        cached.device_label,
-                        cached.host_id
-                    );
-                    Ok(Some((active, cached.host_id, cached.device_label)))
-                }
-                Err(err) => {
-                    log::warn!("cached device '{}' failed: {err}", cached.device_label);
-                    if retained.is_some() || matches!(err, RecordingError::ReleaseUncertain(_)) {
-                        Err(err)
-                    } else {
-                        Ok(None)
-                    }
-                }
-            }
-        }
-
-        fn guard(&self) -> Result<MutexGuard<'_, Option<ActiveRecording>>, RecordingError> {
-            self.inner
-                .lock()
-                .map_err(|_| RecordingError::AlreadyRecording)
-        }
-
-        fn start_recording(
-            &self,
-            level_callback: Option<LevelCallback>,
-            chunk_callback: Option<ChunkCallback>,
-        ) -> Result<(), RecordingError> {
-            if self.release_uncertain.get() || capture_cleanup_uncertain() {
-                return Err(RecordingError::ReleaseUncertain(
-                    "a previous capture device could not be closed".into(),
-                ));
-            }
-            let result = self.start_recording_attempt(level_callback, chunk_callback);
-            if capture_cleanup_uncertain() && result.is_err() {
-                return Err(RecordingError::ReleaseUncertain(
-                    "capture probe cleanup could not confirm device release".into(),
-                ));
-            }
-            if matches!(&result, Err(RecordingError::ReleaseUncertain(_))) {
-                self.release_uncertain.set(true);
-            }
-            result
-        }
-
-        fn start_recording_attempt(
-            &self,
-            level_callback: Option<LevelCallback>,
-            chunk_callback: Option<ChunkCallback>,
-        ) -> Result<(), RecordingError> {
-            let preferred_label = {
-                let guard = match self.preferred_input_name.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                guard.clone()
-            };
-            let preferred_trimmed = preferred_label
-                .as_ref()
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .map(|value| value.to_string());
-            let preferred_normalized = preferred_trimmed
-                .as_ref()
-                .map(|value| value.to_ascii_lowercase());
-
-            let mut guard = self.guard()?;
-
-            if guard.is_some() {
-                return Err(RecordingError::AlreadyRecording);
-            }
-
-            let level_emitter = level_callback.map(LevelEmitter::new);
-            let chunk_emitter = chunk_callback.map(ChunkEmitter::new);
-
-            // Fast path: try the cached device first. Resolving the cached label
-            // still enumerates the selected host's input devices, but it skips
-            // candidate scoring and never iterates the other hosts.
-            if let Some((active, host_id, device_name)) = self.try_cached_device(
-                level_emitter.clone(),
-                chunk_emitter.clone(),
-                preferred_normalized.as_deref(),
-                &mut guard,
-            )? {
-                *guard = Some(active);
-                self.cache_successful_device(host_id, device_name);
-                return Ok(());
-            }
-
-            // Slow path: full device enumeration
-            let mut last_err: Option<RecordingError> = None;
-
-            for host_id in ordered_host_ids() {
-                let host = match cpal::host_from_id(host_id) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        log::error!("failed to load host {host_id:?}: {err}");
-                        continue;
-                    }
-                };
-
-                match start_recording_on_host(
-                    &host,
-                    level_emitter.clone(),
-                    chunk_emitter.clone(),
-                    preferred_trimmed.as_deref(),
-                    preferred_normalized.as_deref(),
-                    &mut guard,
-                ) {
-                    Ok((active, device_name)) => {
-                        *guard = Some(active);
-                        self.cache_successful_device(host_id, device_name);
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        log::warn!("host {host_id:?} did not yield a usable input device: {err}");
-                        if guard.is_some() || matches!(err, RecordingError::ReleaseUncertain(_)) {
-                            return Err(err);
-                        }
-                        last_err = Some(err);
-                    }
-                }
-            }
-
-            Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
-        }
-
-        fn pause_recording(&self) -> Result<(), RecordingError> {
-            let guard = self
-                .inner
-                .lock()
-                .map_err(|_| RecordingError::NotRecording)?;
-            let recording = guard.as_ref().ok_or(RecordingError::NotRecording)?;
-            #[cfg(target_os = "linux")]
-            {
-                #[allow(unreachable_patterns)]
-                let stream = match recording._stream.as_inner() {
-                    cpal::platform::StreamInner::Alsa(stream) if stream.can_pause_input() => stream,
-                    _ => {
-                        return Err(RecordingError::StreamPlay(
-                            "The input device does not support pause".into(),
-                        ));
-                    }
-                };
-                // ALSA must finish delivering a read before publication is
-                // paused, or that read could surface only after a later resume.
-                if let Err(err) = stream.pause_input_and_drain() {
-                    recording.capture_failed.store(true, Ordering::Release);
-                    recording.callback_gate.retire();
-                    return Err(RecordingError::StreamPlay(err.to_string()));
-                }
-                if !recording.callback_gate.pause() {
-                    recording.capture_failed.store(true, Ordering::Release);
-                    return Err(RecordingError::CaptureFailed);
-                }
-                Ok(())
-            }
-            #[cfg(target_os = "windows")]
-            {
-                #[allow(unreachable_patterns)]
-                let stream = match recording._stream.as_inner() {
-                    cpal::platform::StreamInner::Wasapi(stream) => stream,
-                    _ => {
-                        return Err(RecordingError::StreamPlay(
-                            "The input device does not support pause".into(),
-                        ));
-                    }
-                };
-                // WASAPI delivers the packets it captured before the stop to
-                // the callback, so publication stays open across the drain.
-                // Pausing the gate first would silently drop the tail.
-                if let Err(err) = stream.pause_input_and_drain() {
-                    recording.capture_failed.store(true, Ordering::Release);
-                    recording.callback_gate.retire();
-                    return Err(RecordingError::StreamPlay(err.to_string()));
-                }
-                if !recording.callback_gate.pause() {
-                    recording.capture_failed.store(true, Ordering::Release);
-                    return Err(RecordingError::CaptureFailed);
-                }
-                Ok(())
-            }
-            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-            {
-                // A failed native call may still change hardware state.
-                if !recording.callback_gate.pause() {
-                    recording.capture_failed.store(true, Ordering::Release);
-                    return Err(RecordingError::CaptureFailed);
-                }
-                if let Err(err) = recording._stream.pause() {
-                    recording.capture_failed.store(true, Ordering::Release);
-                    recording.callback_gate.retire();
-                    return Err(RecordingError::StreamPlay(err.to_string()));
-                }
-                Ok(())
-            }
-        }
-
-        fn resume_recording(&self) -> Result<(), RecordingError> {
-            let guard = self
-                .inner
-                .lock()
-                .map_err(|_| RecordingError::NotRecording)?;
-            let recording = guard.as_ref().ok_or(RecordingError::NotRecording)?;
-            if recording.capture_failed.load(Ordering::Acquire) {
-                return Err(RecordingError::CaptureFailed);
-            }
-            let resume_offset = match recording
-                .buffer
-                .lock()
-                .map(|samples| samples.len())
-                .map_err(|_| ())
-            {
-                Ok(offset) => offset,
-                Err(()) => {
-                    recording.capture_failed.store(true, Ordering::Release);
-                    recording.callback_gate.retire();
-                    return Err(RecordingError::CaptureFailed);
-                }
-            };
-            // Callbacks arriving during the native transition are retained but
-            // not published until resume is confirmed. Never hold the gate
-            // across a driver call that could invoke a callback synchronously.
-            if !recording.callback_gate.begin_resume() {
-                recording.capture_failed.store(true, Ordering::Release);
-                return Err(RecordingError::CaptureFailed);
-            }
-            if let Err(err) = recording._stream.play() {
-                recording.capture_failed.store(true, Ordering::Release);
-                recording.callback_gate.retire();
-                return Err(RecordingError::StreamPlay(err.to_string()));
-            }
-            if !finish_resume_capture(
-                &recording.callback_gate,
-                &recording.buffer,
-                recording._chunk_emitter.as_deref(),
-                &recording.capture_failed,
-                resume_offset,
-            ) {
-                recording.capture_failed.store(true, Ordering::Release);
-                recording.callback_gate.retire();
-                return Err(RecordingError::CaptureFailed);
-            }
-            Ok(())
-        }
-
-        /// Seal and publish samples before potentially blocking driver teardown.
-        /// Callback retirement is the same capture boundary used by Drop.
-        fn stop_with_handoff(
-            &self,
-            publish: impl FnOnce(Result<RecordingResult, RecordingError>),
-        ) -> ReleaseOutcome {
-            if self.release_uncertain.get() {
-                publish(Err(RecordingError::ReleaseUncertain(
-                    "capture build cleanup could not confirm device release".into(),
-                )));
-                return ReleaseOutcome {
-                    released: false,
-                    capture_failed: true,
-                };
-            }
-            let mut guard = self
-                .inner
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let Some(recording) = guard.take() else {
-                if capture_cleanup_uncertain() {
-                    publish(Err(RecordingError::ReleaseUncertain(
-                        "capture probe cleanup could not confirm device release".into(),
-                    )));
-                    return ReleaseOutcome {
-                        released: false,
-                        capture_failed: true,
-                    };
-                }
-                publish(Err(RecordingError::NotRecording));
-                return ReleaseOutcome {
-                    released: true,
-                    capture_failed: false,
-                };
-            };
-            let capture_failed = Arc::clone(&recording.capture_failed);
-            let sample_rate = recording.sample_rate;
-            let fallback_duration = recording.start.elapsed();
-            recording.callback_gate.retire();
-            let incomplete = recording.callback_gate.0.is_poisoned()
-                || recording.capture_failed.load(Ordering::Acquire);
-            let (samples, incomplete) = take_captured_samples(&recording.buffer, incomplete);
-            if !incomplete {
-                if let Some(chunk_emitter) = &recording._chunk_emitter {
-                    chunk_emitter.flush();
-                }
-            }
-            let duration = if !samples.is_empty() && sample_rate > 0 {
-                Duration::from_secs_f64(samples.len() as f64 / f64::from(sample_rate))
-            } else {
-                fallback_duration
-            };
-            let size_bytes = samples.len() as u64 * std::mem::size_of::<f32>() as u64;
-            publish(Ok(RecordingResult {
-                metrics: RecordingMetrics {
-                    duration,
-                    size_bytes,
-                },
-                audio: RecordedAudio {
-                    samples,
-                    sample_rate,
-                },
-                capture_failed: incomplete,
-            }));
-            // Keep the sealed stream if release is unconfirmed. A failed
-            // native close may not be safe to retry on the same handle.
-            let released =
-                release_or_retain(&mut guard, recording, ActiveRecording::pause_for_release);
-            let probe_uncertain = capture_cleanup_uncertain();
-            ReleaseOutcome {
-                released: released && !probe_uncertain,
-                capture_failed: capture_failed.load(Ordering::Acquire) || probe_uncertain,
-            }
-        }
-
-        fn stop_recording(&self) -> (Result<RecordingResult, RecordingError>, bool) {
-            let mut result = None;
-            let outcome = self.stop_with_handoff(|recording| result = Some(recording));
-            let mut result = result.expect("stop always publishes a result");
-            if let Ok(recording) = &mut result {
-                recording.capture_failed |= outcome.capture_failed;
-            }
-            (result, outcome.released)
-        }
-    }
-
-    impl LocalRecordingManager {
-        fn set_preferred_input_device(&self, name: Option<String>) {
-            let sanitized = name
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty());
-
-            match self.preferred_input_name.lock() {
-                Ok(mut guard) => *guard = sanitized,
-                Err(poisoned) => *poisoned.into_inner() = sanitized,
-            }
-            self.clear_device_cache();
-        }
-
-        fn clear_device_cache(&self) {
-            if let Ok(mut guard) = self.last_successful_device.lock() {
-                *guard = None;
-                log::debug!("device cache cleared");
-            }
-        }
-
-        fn current_sample_rate(&self) -> Option<u32> {
-            let guard = match self.inner.lock() {
-                Ok(inner) => inner,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            guard.as_ref().map(|active| active.sample_rate)
-        }
+    struct ReleaseOutcome {
+        released: bool,
+        capture_failed: bool,
     }
 
     /// The capture result is independent of the release signal: a blocked or
@@ -1279,11 +3216,7 @@ mod cpal_impl {
                     activity.opening();
                     let result = recorder.start_recording(level_callback, chunk_callback);
                     let rate = recorder.current_sample_rate();
-                    if result.is_ok()
-                        || rate.is_some()
-                        || recorder.release_uncertain.get()
-                        || capture_cleanup_uncertain()
-                    {
+                    if result.is_ok() || rate.is_some() || recorder.release_pending() {
                         activity.started(rate);
                     } else {
                         activity.released();
@@ -1296,7 +3229,8 @@ mod cpal_impl {
         fn stop(&self) -> Result<RecordingResult, Box<dyn std::error::Error>> {
             let activity = Arc::clone(&self.activity);
             let (result, released) = self.worker.call(move |recorder| {
-                let (result, released) = recorder.stop_recording();
+                let result = recorder.stop();
+                let released = !recorder.is_recording();
                 // An unconfirmed release keeps the sealed stream reserved.
                 // Release is published only after successful destruction.
                 if released {
@@ -1307,7 +3241,7 @@ mod cpal_impl {
             if !released {
                 return Err("Recording release is pending".into());
             }
-            result.map_err(|err| Box::new(err) as _)
+            result.map_err(|error| Box::new(error) as _)
         }
 
         fn stop_for_handoff(&self) -> Result<RecordingResult, Box<dyn std::error::Error>> {
@@ -1316,9 +3250,19 @@ mod cpal_impl {
             let (released_tx, released_rx) = std::sync::mpsc::sync_channel(1);
             let activity = Arc::clone(&self.activity);
             self.worker.send(move |recorder| {
-                let outcome = recorder.stop_with_handoff(|result| {
-                    let _ = result_tx.send(result);
-                });
+                let capture_failed = match recorder.stop_with_handoff(true, |result| {
+                    let _ = result_tx.send(Ok(result));
+                }) {
+                    Ok(failed) => failed,
+                    Err(error) => {
+                        let _ = result_tx.send(Err(error));
+                        true
+                    }
+                };
+                let outcome = ReleaseOutcome {
+                    released: !recorder.is_recording(),
+                    capture_failed,
+                };
                 // The worker does not publish release until stream destruction
                 // has actually returned on its owning thread.
                 if outcome.released {
@@ -1371,17 +3315,166 @@ mod cpal_impl {
         }
     }
 
-    const LOW_QUALITY_INPUT_KEYWORDS: &[&str] = &[
-        "airpods",
-        "beats",
-        "bluetooth",
-        "earbud",
-        "hands-free",
-        "headset",
-        "hfp",
-        "hsp",
-        "sony wh-",
-    ];
+    impl crate::platform::WarmCapture for RecordingManager {
+        fn configure_warm(
+            &self,
+            preroll: Duration,
+            linger_ms: Option<u64>,
+            hold: bool,
+            preferred: Option<String>,
+        ) -> Result<(), String> {
+            self.worker
+                .call(move |recorder| {
+                    if let Some(linger_ms) = linger_ms.filter(|_| !hold) {
+                        recorder.set_linger(Duration::from_millis(linger_ms));
+                    }
+                    recorder.set_preroll(preroll);
+                    recorder.set_preferred_device(preferred);
+                    recorder.warm_open(preroll)?;
+                    if hold {
+                        recorder.promote_to_hold();
+                    }
+                    Ok(())
+                })
+                .map_err(|error| error.to_string())?
+        }
+
+        fn warm_open(&self, preroll: Duration) -> Result<(), String> {
+            self.worker
+                .call(move |r| r.warm_open(preroll))
+                .map_err(|error| error.to_string())?
+        }
+
+        fn set_preroll(&self, preroll: Duration) {
+            if let Err(error) = self.worker.call(move |r| r.set_preroll(preroll)) {
+                log::error!("{error}");
+            }
+        }
+
+        fn prepare(&self, preferred: Option<&str>) -> Result<String, String> {
+            let preferred = preferred.map(str::to_owned);
+            self.worker
+                .call(move |r| r.prepare(preferred.as_deref()))
+                .map_err(|error| error.to_string())?
+        }
+
+        fn set_preferred_device(&self, preferred: Option<String>) {
+            if let Err(error) = self.worker.call(move |r| r.set_preferred_device(preferred)) {
+                log::error!("{error}");
+            }
+        }
+
+        fn refresh_device(&self) {
+            if let Err(error) = self.worker.call(LocalRecordingManager::refresh_device) {
+                log::error!("{error}");
+            }
+        }
+
+        fn promote_to_hold(&self) {
+            if let Err(error) = self.worker.call(LocalRecordingManager::promote_to_hold) {
+                log::error!("{error}");
+            }
+        }
+
+        fn release_hold(&self) {
+            if let Err(error) = self.worker.call(LocalRecordingManager::release_hold) {
+                log::error!("{error}");
+            }
+        }
+
+        fn warm_close(&self) {
+            if let Err(error) = self.worker.call(LocalRecordingManager::close_warm) {
+                log::error!("{error}");
+            }
+        }
+
+        fn is_ready(&self) -> bool {
+            self.worker
+                .call(LocalRecordingManager::is_ready)
+                .unwrap_or(false)
+        }
+
+        fn has_held_stream(&self) -> bool {
+            self.worker
+                .call(LocalRecordingManager::has_held_stream)
+                .unwrap_or(false)
+        }
+
+        fn set_linger(&self, linger_ms: u64) {
+            if let Err(error) = self
+                .worker
+                .call(move |r| r.set_linger(Duration::from_millis(linger_ms)))
+            {
+                log::error!("{error}");
+            }
+        }
+
+        fn status_line(&self) -> String {
+            self.worker
+                .call(LocalRecordingManager::status_line)
+                .unwrap_or_else(|error| error.to_string())
+        }
+
+        fn last_startup(&self) -> Option<Vec<(String, u64)>> {
+            self.worker
+                .call(LocalRecordingManager::last_startup)
+                .unwrap_or_default()
+        }
+    }
+
+    impl LocalRecordingManager {
+        fn warm_open(&self, preroll: Duration) -> Result<(), String> {
+            self.open_warm(preroll).map_err(|err| err.to_string())
+        }
+
+        fn prepare(&self, preferred: Option<&str>) -> Result<String, String> {
+            self.prepare_device(preferred)
+                .map_err(|err| err.to_string())
+        }
+
+        fn set_preferred_device(&self, preferred: Option<String>) {
+            // The same setter the press path uses, so a hold and the press that
+            // adopts it cannot disagree about which device is preferred.
+            self.set_preferred_input_device(preferred);
+        }
+
+        fn refresh_device(&self) {
+            self.refresh_warm_device();
+        }
+
+        fn is_ready(&self) -> bool {
+            // The dialog shows this and the user trusts it. A held stream that
+            // has delivered nothing is not ready: a press would adopt it and
+            // record silence.
+            self.warm_is_usable()
+        }
+
+        fn has_held_stream(&self) -> bool {
+            self.has_warm_stream()
+        }
+
+        fn last_startup(&self) -> Option<Vec<(String, u64)>> {
+            self.last_startup_summary().map(|summary| {
+                let mut stages = vec![(
+                    "total".to_string(),
+                    summary.total.as_micros().min(u128::from(u64::MAX)) as u64,
+                )];
+                for mark in &summary.stages {
+                    stages.push((
+                        mark.stage.as_str().to_string(),
+                        mark.at.as_micros().min(u128::from(u64::MAX)) as u64,
+                    ));
+                }
+                if let Some(wait) = summary.first_pcm {
+                    stages.push((
+                        "first_pcm_wait".to_owned(),
+                        wait.as_micros().min(u128::from(u64::MAX)) as u64,
+                    ));
+                }
+                stages
+            })
+        }
+    }
 
     fn should_avoid_input_device(device: &Device, default_output_name: Option<&str>) -> bool {
         let device_name = device.name().ok();
@@ -1389,20 +3482,18 @@ mod cpal_impl {
             .as_deref()
             .map(|name| {
                 let lower = name.to_ascii_lowercase();
-                LOW_QUALITY_INPUT_KEYWORDS
+                super::LOW_QUALITY_INPUT_KEYWORDS
                     .iter()
                     .any(|keyword| lower.contains(keyword))
             })
             .unwrap_or(false);
 
-        let output_match = default_output_name
-            .map(|name| {
-                let lower = name.to_ascii_lowercase();
-                LOW_QUALITY_INPUT_KEYWORDS
-                    .iter()
-                    .any(|keyword| lower.contains(keyword))
-            })
-            .unwrap_or(false);
+        let output_match = default_output_name.is_some_and(|name| {
+            let lower = name.to_ascii_lowercase();
+            super::LOW_QUALITY_INPUT_KEYWORDS
+                .iter()
+                .any(|keyword| lower.contains(keyword))
+        });
 
         if name_match && output_match {
             return true;
@@ -1419,7 +3510,7 @@ mod cpal_impl {
 
     fn is_preferred_input_device_name(name: &str) -> bool {
         let lower = name.to_ascii_lowercase();
-        if LOW_QUALITY_INPUT_KEYWORDS
+        if super::LOW_QUALITY_INPUT_KEYWORDS
             .iter()
             .any(|keyword| lower.contains(keyword))
         {
@@ -1443,125 +3534,365 @@ mod cpal_impl {
     }
 
     fn name_has_low_quality_keyword(name: &str) -> bool {
-        let lower = name.to_ascii_lowercase();
-        LOW_QUALITY_INPUT_KEYWORDS
-            .iter()
-            .any(|keyword| lower.contains(keyword))
+        super::label_has_low_quality_keyword(name)
     }
 
     /// All available hosts with the cpal default host first.
     fn ordered_host_ids() -> Vec<HostId> {
-        let default_host = cpal::default_host();
-        let default_id = default_host.id();
-        let mut ordered: Vec<HostId> = cpal::available_hosts()
-            .into_iter()
-            .filter(|id| *id != default_id)
-            .collect();
-        ordered.insert(0, default_id);
+        order_hosts(cpal::default_host().id(), &cpal::available_hosts())
+    }
+
+    /// The same ordering, over an explicit list of hosts.
+    ///
+    /// `ordered_host_ids` can only describe the machine it runs on, which makes
+    /// the cross-host fallback untestable: a CI box exposes one host, so a loop
+    /// that gave up after the first failure would pass every test here and fail
+    /// on a machine with two. This is the same rule factored out, so the order
+    /// can be asserted against a list rather than observed on hardware.
+    fn order_hosts<Id: Copy + PartialEq>(default: Id, available: &[Id]) -> Vec<Id> {
+        let mut ordered: Vec<Id> = Vec::with_capacity(available.len().saturating_add(1));
+        // The default is tried first because it is the one the platform routes
+        // the user's audio through, but it is not trusted to be in the list:
+        // cpal's `available_hosts` has been known to omit it.
+        ordered.push(default);
+        for id in available {
+            // A host listed twice would otherwise be opened twice, and on a
+            // backend whose enumeration is unstable that is a second device open
+            // on every press for nothing.
+            if !ordered.contains(id) {
+                ordered.push(*id);
+            }
+        }
         ordered
     }
 
-    /// Opens an input stream on a specific device.
+    /// Tries each host in turn until one yields a value.
     ///
-    /// # Errors
+    /// One host failing is not the press failing: a machine with PulseAudio's
+    /// ALSA plugin and a JACK server exposes two, and either can serve the
+    /// microphone while the other refuses. A loop that returned the first error
+    /// would hand the user "no input device" on a machine that has one.
     ///
-    /// Fails when the device has no readable default input config, its sample
-    /// format is unsupported, or the stream cannot be built.
+    /// Generic over the host type, and over how a host is produced, so the
+    /// fallback can be tested with a stand-in host. A CI machine exposes a
+    /// single host, so the two-host case is otherwise unreachable here.
+    fn try_hosts<Id, H, T>(
+        hosts: &[Id],
+        mut load: impl FnMut(Id) -> Result<H, RecordingError>,
+        mut attempt: impl FnMut(&H) -> Result<T, RecordingError>,
+    ) -> Result<(T, Id), RecordingError>
+    where
+        Id: Copy + std::fmt::Debug,
+    {
+        // Only a host that loaded and then failed to produce a stream is worth
+        // reporting: its message is the one the user can act on ("it is in use",
+        // "it was unplugged"). A host that would not load at all says something
+        // about this build's backend wiring, not about the microphone, so it is
+        // logged and does not become the press's failure. Before this split a
+        // refused host replaced a perfectly good "no input device" with an
+        // internal "stream build:" message the UI cannot classify.
+        let mut attempt_err: Option<RecordingError> = None;
+        for id in hosts {
+            let host = match load(*id) {
+                Ok(host) => host,
+                Err(err) => {
+                    log::warn!("host {id:?} could not be loaded: {err}");
+                    continue;
+                }
+            };
+            match attempt(&host) {
+                Ok(value) => return Ok((value, *id)),
+                Err(err) => {
+                    if matches!(err, RecordingError::ReleaseUncertain(_)) {
+                        return Err(err);
+                    }
+                    log::warn!("host {id:?} did not yield a usable input device: {err}");
+                    attempt_err = Some(err);
+                }
+            }
+        }
+        Err(attempt_err.unwrap_or(RecordingError::InputDeviceUnavailable))
+    }
+
+    /// Runs the candidate loop of one host and returns what recorded.
+    ///
+    /// Every candidate is tried in order and a failure is remembered rather than
+    /// returned: one device that will not open must not hide the one beside it
+    /// that will. Returns the last error when none succeed, so a press on a host
+    /// whose every device is busy reports that host's failure rather than the
+    /// generic "no input device" the caller substitutes when there is no error
+    /// to report.
+    fn first_working_candidate<T>(
+        candidates: Vec<DeviceCandidate>,
+        mut open: impl FnMut(&DeviceCandidate) -> Result<T, RecordingError>,
+    ) -> Result<(T, DeviceCandidate), RecordingError> {
+        let mut last_err: Option<RecordingError> = None;
+        for choice in candidates {
+            if let Some(reason) = &choice.avoid_reason {
+                log::debug!(
+                    "deprioritising '{}' ({reason}); will try if others fail",
+                    choice.label
+                );
+            }
+            match open(&choice) {
+                Ok(recorded) => return Ok((recorded, choice)),
+                Err(err) => {
+                    if matches!(err, RecordingError::ReleaseUncertain(_)) {
+                        return Err(err);
+                    }
+                    log::error!("failed to start on '{}': {err}", choice.label);
+                    last_err = Some(err);
+                }
+            }
+        }
+        // An empty candidate list and a list where every candidate failed are
+        // different stories with the same meaning for the caller — this host
+        // cannot serve the press — so both produce the same error shape.
+        Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
+    }
+
+    fn ranked_input_candidates(host: &cpal::Host, preferred: Option<&str>) -> Vec<DeviceCandidate> {
+        let output = host
+            .default_output_device()
+            .and_then(|device| device.name().ok());
+        let mut candidates = device_candidates_for_host(host, output.as_deref(), preferred);
+        // Prefer the matching label, then device quality, then the host default.
+        // Stable sorting preserves enumeration order for all other ties.
+        candidates.sort_by_key(|candidate| {
+            (
+                !candidate.matches_preferred,
+                candidate.priority,
+                !candidate.is_default,
+            )
+        });
+        candidates
+    }
+
+    fn resolve_input_candidates(
+        host: &cpal::Host,
+        preferred: Option<&str>,
+        trace: &mut AudioStartupTrace,
+    ) -> Vec<DeviceCandidate> {
+        let candidates = ranked_input_candidates(host, preferred);
+        trace.mark(AudioStartupStage::DeviceResolved);
+        candidates
+    }
+
+    fn classify_input_build_error(error: cpal::BuildStreamError) -> RecordingError {
+        match error {
+            cpal::BuildStreamError::CleanupUncertain { err } => {
+                RecordingError::ReleaseUncertain(err.to_string())
+            }
+            error => RecordingError::StreamBuild(error.to_string()),
+        }
+    }
+
+    fn build_sink_stream<T>(
+        device: &Device,
+        config: &StreamConfig,
+        sink: &Arc<StreamSink>,
+    ) -> Result<Stream, RecordingError>
+    where
+        T: cpal::Sample + cpal::SizedSample,
+        f32: cpal::FromSample<T>,
+    {
+        let channel_count = usize::from(config.channels.max(1));
+        let data_sink = Arc::clone(sink);
+        let error_sink = Arc::clone(sink);
+        device
+            .build_input_stream(
+                config,
+                move |data: &[T], _| {
+                    let mono: Vec<_> = data
+                        .chunks(channel_count)
+                        .map(|frame| {
+                            frame
+                                .iter()
+                                .map(|sample| sample.to_sample::<f32>())
+                                .sum::<f32>()
+                                / frame.len() as f32
+                        })
+                        .collect();
+                    data_sink.deliver(&mono);
+                },
+                move |error| error_sink.record_fault(&error.to_string()),
+                None,
+            )
+            .map_err(classify_input_build_error)
+    }
+
+    fn build_and_play_sink(
+        device: &Device,
+        config: &StreamConfig,
+        format: SampleFormat,
+        sink: &Arc<StreamSink>,
+        trace: &mut AudioStartupTrace,
+        manager: &LocalRecordingManager,
+    ) -> Result<Stream, RecordingError> {
+        let stream = match format {
+            SampleFormat::I16 => build_sink_stream::<i16>(device, config, sink),
+            SampleFormat::U16 => build_sink_stream::<u16>(device, config, sink),
+            SampleFormat::F32 => build_sink_stream::<f32>(device, config, sink),
+            format => Err(RecordingError::UnsupportedFormat(format)),
+        }?;
+        trace.mark(AudioStartupStage::StreamBuilt);
+        if let Err(error) = stream.play() {
+            manager.retire_stream(stream);
+            manager.check_release()?;
+            return Err(RecordingError::StreamPlay(error.to_string()));
+        }
+        trace.mark(AudioStartupStage::StreamStarted);
+        Ok(stream)
+    }
+
+    /// Opens a device and starts a stream that has no recording attached yet.
+    ///
+    /// The stream collects into the ring from its first block, so the pre-roll
+    /// is already there when the user presses.
+    fn open_warm_on_device(
+        device: &Device,
+        label: &str,
+        preferred: Option<String>,
+        preroll: Duration,
+        ring: Arc<Mutex<Preroll>>,
+        trace: &mut AudioStartupTrace,
+        manager: &LocalRecordingManager,
+    ) -> Result<WarmStream, RecordingError> {
+        let config = device
+            .default_input_config()
+            .map_err(|err| RecordingError::StreamConfig(err.to_string()))?;
+        let sample_format = config.sample_format();
+        let stream_config: StreamConfig = config.into();
+        let sample_rate = stream_config.sample_rate.0;
+        let channels = cmp::max(stream_config.channels as usize, 1);
+
+        // Size the ring from the real device rate, not a guess: the ring holds a
+        // sample count, so the same duration is a different count per device.
+        if let Ok(mut ring) = ring.lock() {
+            ring.cap = preroll_capacity(preroll, sample_rate);
+            ring.clear();
+        }
+
+        let sink = StreamSink::new(SinkMode::Warm {
+            preroll: Arc::clone(&ring),
+        });
+        let stream =
+            build_and_play_sink(device, &stream_config, sample_format, &sink, trace, manager)?;
+
+        Ok(WarmStream {
+            stream,
+            sink,
+            preferred,
+            sample_rate,
+            channels,
+            device_label: label.to_string(),
+        })
+    }
+
+    /// Opens a warm stream on the best candidate device of one host.
+    fn warm_stream_on_host(
+        host: &cpal::Host,
+        preferred_label: Option<&str>,
+        preferred_normalized: Option<&str>,
+        ring: Arc<Mutex<Preroll>>,
+        preroll: Duration,
+        trace: &mut AudioStartupTrace,
+        manager: &LocalRecordingManager,
+    ) -> Result<WarmStream, RecordingError> {
+        let candidates = resolve_input_candidates(host, preferred_normalized, trace);
+        let (warm, choice) = first_working_candidate(candidates, |choice| {
+            open_warm_on_device(
+                &choice.device,
+                &choice.label,
+                preferred_label.map(str::to_owned),
+                preroll,
+                Arc::clone(&ring),
+                trace,
+                manager,
+            )
+        })?;
+        log::info!(
+            "holding input device '{}' open via host {:?}",
+            choice.label,
+            host.id()
+        );
+        Ok(warm)
+    }
+
+    /// Opens an input stream on a specific device and starts recording on it.
+    ///
+    /// The stream is left warm at stop when a hold is configured. A cold start
+    /// prepends nothing: `cold_start_seed` returns an empty seed and a ring that
+    /// keeps nothing, so this recording cannot carry a previous stream's audio
+    /// and cannot stay open by accident.
     fn try_start_on_device(
         device: &Device,
         device_name: Option<&str>,
         level_emitter: Option<Arc<LevelEmitter>>,
         chunk_emitter: Option<Arc<ChunkEmitter>>,
-        retained: &mut Option<ActiveRecording>,
+        hold: HoldPlan<'_>,
+        trace: &mut AudioStartupTrace,
     ) -> Result<ActiveRecording, RecordingError> {
         let label = device_name.unwrap_or(UNKNOWN_DEVICE_LABEL);
 
         let config = device
             .default_input_config()
             .map_err(|err| RecordingError::StreamConfig(err.to_string()))?;
-
         let sample_format = config.sample_format();
         let stream_config: StreamConfig = config.into();
         let sample_rate = stream_config.sample_rate.0;
-        let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
-        let callback_gate = CallbackGate::new();
-        let capture_failed = Arc::new(AtomicBool::new(false));
+        let channels = cmp::max(stream_config.channels as usize, 1);
+        trace.mark(AudioStartupStage::DeviceResolved);
 
-        let stream = match sample_format {
-            SampleFormat::I16 => build_input_stream::<i16>(
-                device,
-                &stream_config,
-                buffer.clone(),
-                callback_gate.clone(),
-                capture_failed.clone(),
-                level_emitter.clone(),
-                chunk_emitter.clone(),
-            ),
-            SampleFormat::U16 => build_input_stream::<u16>(
-                device,
-                &stream_config,
-                buffer.clone(),
-                callback_gate.clone(),
-                capture_failed.clone(),
-                level_emitter.clone(),
-                chunk_emitter.clone(),
-            ),
-            SampleFormat::F32 => build_input_stream::<f32>(
-                device,
-                &stream_config,
-                buffer.clone(),
-                callback_gate.clone(),
-                capture_failed.clone(),
-                level_emitter.clone(),
-                chunk_emitter.clone(),
-            ),
-            other => return Err(RecordingError::UnsupportedFormat(other)),
-        };
-        let stream = match stream {
-            Ok(stream) => stream,
-            Err(err) => {
-                callback_gate.retire();
-                return Err(err);
-            }
-        };
+        let (seed, _unused_ring) = cold_start_seed();
 
-        let active = ActiveRecording {
-            _stream: stream,
-            start: Instant::now(),
-            buffer,
-            sample_rate,
-            callback_gate,
-            capture_failed,
-            paused_for_release: false,
-            _level_emitter: level_emitter,
-            _chunk_emitter: chunk_emitter,
-        };
-        let active = start_candidate(
-            retained,
-            active,
-            |active| {
-                active
-                    ._stream
-                    .play()
-                    .map_err(|err| RecordingError::StreamPlay(err.to_string()))?;
-                activate_capture(
-                    &active.callback_gate,
-                    &active.buffer,
-                    active._chunk_emitter.as_deref(),
-                    &active.capture_failed,
-                )
-            },
-            |active| {
-                // A rejected candidate may have started the hardware, but its
-                // pending samples do not belong to the eventual session.
-                active.callback_gate.retire();
-                active.capture_failed.store(true, Ordering::Release);
-                let _ = take_captured_samples(&active.buffer, true);
-            },
-            ActiveRecording::pause_for_release,
+        // The ring has to be ready before the stream starts, not after the
+        // recording stops. It was sized only on the warm path, so a cold start
+        // left it at zero capacity: nothing accumulated during the recording, and
+        // the "leave the stream warm" step handed the next press a ring that
+        // could never hold anything. The next recording then started with no
+        // pre-roll, and so did every recording after it, which made the setting
+        // do nothing at all for anyone who had not turned on keep-ready.
+        //
+        // Its capacity is a sample count, so it is sized from this device's rate.
+        if let Ok(mut ring) = hold.ring.lock() {
+            ring.cap = preroll_capacity(hold.preroll, sample_rate);
+            ring.clear();
+        }
+
+        let sink = StreamSink::new(SinkMode::Discard);
+        let stream = build_and_play_sink(
+            device,
+            &stream_config,
+            sample_format,
+            &sink,
+            trace,
+            hold.manager,
         )?;
+
+        let buffer = sink.start_recording(
+            level_emitter,
+            chunk_emitter,
+            seed,
+            // Only collect if this stream is going to stay open: a stop that
+            // closes the device has no next press to serve, and filling a ring
+            // nobody will read is work on the audio thread for nothing.
+            hold.hold_after_stop.then(|| Arc::clone(hold.ring)),
+        );
         log::info!("started on device '{label}'");
-        Ok(active)
+
+        Ok(ActiveRecording {
+            stream: Some(stream),
+            sink: Some(sink),
+            preroll_after_stop: warm_ring(hold.ring, hold.hold_after_stop),
+            seed_samples: 0,
+            start: Instant::now(),
+            buffer: Some(buffer),
+            sample_rate,
+            device_label: label.to_string(),
+            preferred: device_name.map(str::to_string),
+            channels,
+        })
     }
 
     /// Starts recording on the best candidate device of one host.
@@ -1580,82 +3911,38 @@ mod cpal_impl {
         chunk_emitter: Option<Arc<ChunkEmitter>>,
         preferred_label: Option<&str>,
         preferred_normalized: Option<&str>,
-        retained: &mut Option<ActiveRecording>,
+        hold: HoldPlan<'_>,
+        trace: &mut AudioStartupTrace,
     ) -> Result<(ActiveRecording, String), RecordingError> {
-        let default_output_name = host
-            .default_output_device()
-            .and_then(|device| device.name().ok());
-
-        let mut candidates =
-            device_candidates_for_host(host, default_output_name.as_deref(), preferred_normalized);
-        // Devices are no longer merged by name, so ties are broken by the host
-        // default first and then by enumeration order (`sort_by_key` is stable).
-        candidates.sort_by_key(|candidate| {
-            (
-                !candidate.matches_preferred,
-                candidate.priority,
-                !candidate.is_default,
-            )
-        });
-
-        let mut last_err: Option<RecordingError> = None;
-
-        for candidate in candidates {
-            let DeviceCandidate {
-                device,
-                label: device_label,
-                avoid_reason,
-                matches_preferred,
-                ..
-            } = candidate;
-            let label = device_label.as_str();
-            let fallback_preferred = preferred_label.or(preferred_normalized);
-
-            if let Some(reason) = avoid_reason {
-                log::debug!("deprioritising device '{label}' ({reason}); will try if others fail");
-            }
-
-            let active = match try_start_on_device(
-                &device,
-                Some(label),
+        let fallback_preferred = preferred_label.or(preferred_normalized);
+        let candidates = resolve_input_candidates(host, preferred_normalized, trace);
+        let (active, choice) = first_working_candidate(candidates, |choice| {
+            try_start_on_device(
+                &choice.device,
+                Some(&choice.label),
                 level_emitter.clone(),
                 chunk_emitter.clone(),
-                retained,
-            ) {
-                Ok(active) => active,
-                Err(err) => {
-                    log::warn!("failed to start input device '{label}': {err}");
-                    if retained.is_some()
-                        || matches!(
-                            err,
-                            RecordingError::CaptureFailed | RecordingError::ReleaseUncertain(_)
-                        )
-                    {
-                        return Err(err);
-                    }
-                    last_err = Some(err);
-                    continue;
-                }
-            };
+                hold,
+                trace,
+            )
+        })?;
+        let label = choice.label;
 
-            if matches_preferred {
-                log::info!(
-                    "using preferred input device '{label}' via host {:?}",
-                    host.id()
-                );
-            } else if let Some(preferred) = fallback_preferred {
-                log::warn!(
-                    "preferred input '{preferred}' not available; using '{label}' via host {:?}",
-                    host.id()
-                );
-            } else {
-                log::info!("using input device '{label}' via host {:?}", host.id());
-            }
-
-            return Ok((active, label.to_string()));
+        if choice.matches_preferred {
+            log::info!(
+                "using preferred input device '{label}' via host {:?}",
+                host.id()
+            );
+        } else if let Some(preferred) = fallback_preferred {
+            log::warn!(
+                "preferred input '{preferred}' not available; using '{label}' via host {:?}",
+                host.id()
+            );
+        } else {
+            log::info!("using input device '{label}' via host {:?}", host.id());
         }
 
-        Err(last_err.unwrap_or(RecordingError::InputDeviceUnavailable))
+        Ok((active, label))
     }
 
     struct DeviceCandidate {
@@ -1794,6 +4081,37 @@ mod cpal_impl {
         }
     }
 
+    /// Why the cached device cannot be tried, or `None` when it can.
+    ///
+    /// `still_present` is whether the host still enumerates a device under that
+    /// label; it is passed in rather than looked up so the decision can be
+    /// exercised without a host, which is the only way to test the case that
+    /// matters — the cached device was unplugged between two dictations.
+    ///
+    /// Every branch here means "try something else", never "fail the press": a
+    /// microphone that moved is a slower dictation, not a broken one.
+    fn cached_device_rejection(
+        cached: Option<&CachedDeviceInfo>,
+        preferred_normalized: Option<&str>,
+        still_present: bool,
+    ) -> Option<&'static str> {
+        let Some(cached) = cached else {
+            return Some("nothing recorded yet");
+        };
+        if cached.preference.as_deref() != preferred_normalized {
+            return Some("the preferred device changed");
+        }
+        if preferred_normalized
+            .is_some_and(|preferred| !device_matches_preferred(&cached.device_label, preferred))
+        {
+            return Some("it is not the preferred device");
+        }
+        if !still_present {
+            return Some("the device is no longer listed");
+        }
+        None
+    }
+
     /// Whether a device label equals the (already normalized) preferred name.
     fn device_matches_preferred(device_label: &str, preferred_lower: &str) -> bool {
         normalized_name(device_label) == preferred_lower
@@ -1866,8 +4184,7 @@ mod cpal_impl {
 
                 let matches_preferred = preferred_lower
                     .as_deref()
-                    .map(|preferred| device_matches_preferred(&label, preferred))
-                    .unwrap_or(false);
+                    .is_some_and(|preferred| device_matches_preferred(&label, preferred));
 
                 let (priority, avoid_reason) = if is_default {
                     default_device_score(&device, matches_preferred, default_output_name)
@@ -1919,6 +4236,7 @@ mod cpal_impl {
                         label: candidate.label.clone(),
                         is_default: false,
                         caution: false,
+                        bluetooth: super::label_has_low_quality_keyword(&candidate.label),
                     });
 
                 if candidate.avoid_reason.is_some() {
@@ -1941,2942 +4259,1703 @@ mod cpal_impl {
         list
     }
 
-    fn convert_to_mono<T>(data: &[T], channel_count: usize) -> Vec<f32>
-    where
-        T: cpal::Sample,
-        f32: cpal::FromSample<T>,
-    {
-        if channel_count == 1 {
-            return data
-                .iter()
-                .map(|sample| (*sample).to_sample::<f32>())
-                .collect();
-        }
-        let mut mono = Vec::with_capacity(data.len() / channel_count + 1);
-        for frame in data.chunks(channel_count) {
-            let sum: f32 = frame
-                .iter()
-                .map(|sample| (*sample).to_sample::<f32>())
-                .sum();
-            mono.push(sum / frame.len() as f32);
-        }
-        mono
-    }
-
-    fn build_input_stream<T>(
-        device: &Device,
-        config: &StreamConfig,
-        buffer: Arc<Mutex<Vec<f32>>>,
-        callback_gate: Arc<CallbackGate>,
-        capture_failed: Arc<AtomicBool>,
-        level_emitter: Option<Arc<LevelEmitter>>,
-        chunk_emitter: Option<Arc<ChunkEmitter>>,
-    ) -> Result<Stream, RecordingError>
-    where
-        T: cpal::Sample + cpal::SizedSample,
-        f32: cpal::FromSample<T>,
-    {
-        let channel_count = cmp::max(config.channels as usize, 1);
-        let callback_buffer = buffer.clone();
-        let error_gate = callback_gate.clone();
-        let callback_failed = capture_failed.clone();
-        let level_emitter_ref = level_emitter;
-        let chunk_emitter_ref = chunk_emitter;
-        device
-            .build_input_stream(
-                config,
-                move |data: &[T], _| {
-                    callback_gate.with_capture(|active| {
-                        if callback_failed.load(Ordering::Acquire) {
-                            return;
-                        }
-                        let mut mono_samples = convert_to_mono(data, channel_count);
-
-                        // Retain samples before emitting: a live chunk must
-                        // never get ahead of the saved recording prefix.
-                        if !retain_input_samples(
-                            &callback_buffer,
-                            &callback_failed,
-                            &mut mono_samples,
-                        ) {
-                            return;
-                        }
-
-                        if active {
-                            if let Some(ref level_emitter) = level_emitter_ref {
-                                level_emitter.emit(&mono_samples);
-                            }
-                        }
-
-                        if active {
-                            if let Some(ref chunk_emitter) = chunk_emitter_ref {
-                                chunk_emitter.emit(&mono_samples);
-                            }
-                        }
-                    })
-                },
-                move |_err| {
-                    error_gate.with_error(|| {
-                        // Do not log from an audio backend callback: the log
-                        // sink can block teardown. Stop reports this failure.
-                        capture_failed.store(true, Ordering::Release);
-                    })
-                },
-                None,
-            )
-            .map_err(|error| match error {
-                cpal::BuildStreamError::CleanupUncertain { err } => {
-                    RecordingError::ReleaseUncertain(err.to_string())
-                }
-                error => RecordingError::StreamBuild(error.to_string()),
-            })
-    }
-
     #[cfg(test)]
     mod tests {
         use super::{
-            activate_capture, convert_to_mono, device_matches_preferred, disambiguated_label,
-            finish_resume_capture, is_preferred_input_device_name, retain_input_samples,
-            take_captured_samples, CallbackGate, ChunkEmitter,
+            cached_device_rejection, captured_duration, cold_start_seed, device_matches_preferred,
+            disambiguated_label, drain_late_fault, elapsed_gap_is_suspicious,
+            is_preferred_input_device_name, order_hosts, preroll_capacity, reported_capture_fault,
+            try_hosts, warm_ring, CachedDeviceInfo, ChunkEmitter, LocalRecordingManager, Preroll,
+            RecordingError, SinkMode, StreamSink, STALE_WARM_SILENCE, WARM_FOREVER_MS,
+            WARM_READY_GRACE,
         };
+        use crate::platform::audio_stage::{AudioStartupStage, AudioStartupTrace};
         use std::collections::HashSet;
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::atomic::Ordering;
         use std::sync::{Arc, Mutex};
+        use std::time::Duration;
 
-        #[test]
-        fn coreaudio_property_listeners_use_retirable_tokens() {
-            // Registry lifetime tests run portably; macOS must still test the
-            // actual CoreAudio registration and notification behavior.
-            let listeners = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../patches/coreaudio-rs-0.11.3/src/audio_unit/macos_listeners.rs"
-            ));
-            assert!(listeners.contains("listener_registry::insert"));
-            assert!(listeners.contains("listener_registry::remove"));
-            assert!(listeners.contains("catch_unwind"));
-            assert!(!listeners.contains("self as *const _ as *mut _"));
-            assert!(!listeners.contains("sender.send(rate).unwrap()"));
+        /// Delivers a block that is measurably not the very first instant.
+        ///
+        /// A block delivered in the same instant as the origin stores an elapsed
+        /// time of zero, which is the sentinel for "never delivered", so it
+        /// cannot be told apart from no block at all.
+        fn deliver_after_a_pause(sink: &StreamSink) {
+            std::thread::sleep(Duration::from_millis(2));
+            sink.deliver(&[0.1]);
+            std::thread::sleep(Duration::from_millis(2));
         }
 
-        #[test]
-        fn coreaudio_input_buffer_uses_owned_storage_through_teardown() {
-            // This source contract complements the portable buffer tests; it
-            // cannot exercise AudioUnitRender or callback teardown on macOS.
-            let source = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../patches/coreaudio-rs-0.11.3/src/audio_unit/render_callback.rs"
-            ));
-            let input = source
-                .split_once("pub fn set_input_callback")
-                .unwrap()
-                .1
-                .split_once("pub fn free_render_callback")
-                .unwrap()
-                .0;
-            let teardown = source.split_once("pub fn free_input_callback").unwrap().1;
-            assert!(input.contains("InputBuffer::new"));
-            assert!(input.contains("data.resize(data_byte_size as usize)"));
-            assert!(!input.contains("mem::forget"));
-            assert!(!teardown.contains("Vec::from_raw_parts"));
-        }
-
-        #[test]
-        fn alsa_input_overrun_reports_lost_audio() {
-            let source = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../patches/cpal-0.15.3/src/host/alsa/mod.rs"
-            ));
-            let input = source
-                .split_once("fn input_stream_worker(")
-                .unwrap()
-                .1
-                .split_once("fn output_stream_worker(")
-                .unwrap()
-                .0;
-            assert!(input.contains("ALSA input overrun lost audio samples"));
-            assert!(input.contains("input.recover(||"));
-            assert!(input.contains(".prepare()"));
-            assert!(input.contains("stream.channel().start()"));
-        }
-
-        #[test]
-        fn macos_cpal_disconnect_listener_does_not_own_its_stream() {
-            // This is a source contract, not a substitute for a macOS device test.
-            let manifest = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
-            let patch_table = manifest.split("[patch.crates-io]").nth(1).unwrap();
-            assert!(patch_table.contains("cpal = { path = \"../../../patches/cpal-0.15.3\" }"));
-            let source = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../patches/cpal-0.15.3/src/host/coreaudio/macos/mod.rs"
-            ));
-            let listener = source
-                .split_once("fn add_disconnect_listener")
-                .unwrap()
-                .1
-                .split_once("fn fail_input_build")
-                .unwrap()
-                .0;
-            assert!(listener.contains("Arc::downgrade(&stream.inner)"));
-            assert!(listener.contains("stream_inner_weak.upgrade()"));
-            assert!(listener.contains("listener_gate.run(||"));
-            assert!(
-                listener.find("listener_gate.run(||").unwrap()
-                    < listener.find("stream_inner_weak.upgrade()").unwrap()
-            );
-            assert!(!listener.contains("stream.clone()"));
-            let inner = source
-                .split_once("struct StreamInner {")
-                .unwrap()
-                .1
-                .split_once("impl StreamInner {")
-                .unwrap()
-                .0;
-            assert!(!inner.contains("disconnect_listener"));
-            let stream = source
-                .split_once("pub struct Stream {")
-                .unwrap()
-                .1
-                .split_once("impl Stream {")
-                .unwrap()
-                .0;
-            assert!(
-                stream.contains("disconnect_listener: Arc<Option<AudioObjectPropertyListener>>")
-            );
-            assert!(stream.find("disconnect_listener:").unwrap() < stream.find("inner:").unwrap());
-        }
-
-        #[test]
-        fn alsa_confirmed_close_releases_after_a_worker_panic() {
-            // Source contract only: a panicking capture worker cannot be staged
-            // against the ALSA null device, and this suite has no microphone.
-            let source = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../patches/cpal-0.15.3/src/host/alsa/mod.rs"
-            ));
-            let release = source
-                .split_once("pub fn stop_input_for_release")
-                .unwrap()
-                .1
-                .split_once("impl Drop for Stream")
-                .unwrap()
-                .0;
-            // A confirmed close means the device is free, so neither the first
-            // call nor a retry may report an error that makes the recorder hold
-            // a handle it can never release.
-            assert!(release.contains("InputCloseState::Closed => return Ok(())"));
-            assert!(
-                !release.contains("ALSA capture worker panicked"),
-                "a panicked worker must not turn a confirmed release into an error"
-            );
-            // The panic still has to reach the recorder, as an incomplete
-            // recording rather than as a retained device.
-            assert!(source.contains("pub fn capture_worker_failed(&self) -> bool"));
-        }
-
-        #[test]
-        fn alsa_worker_panic_marks_the_recording_incomplete() {
-            let recorder = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/src/platform/audio.rs"
-            ));
-            let release = recorder
-                .split_once("fn pause_for_release(&mut self)")
-                .unwrap()
-                .1
-                .split_once("impl Drop for ActiveRecording")
-                .unwrap()
-                .0;
-            assert!(
-                release.contains("if released && stream.capture_worker_failed()"),
-                "the ALSA release path must ask whether the capture worker panicked"
-            );
-            assert!(
-                release.contains("self.capture_failed.store(true, Ordering::Release);"),
-                "a panicked capture worker must mark the recording incomplete"
-            );
-        }
-
-        #[test]
-        fn macos_cpal_returns_input_handle_before_attempting_start() {
-            // This checks the vendored source contract, not a macOS runtime.
-            let source = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../patches/cpal-0.15.3/src/host/coreaudio/macos/mod.rs"
-            ));
-            let implementation = source.split_once("impl Device {").unwrap().1;
-            let input = implementation
-                .split_once("fn build_input_stream_raw")
-                .unwrap()
-                .1
-                .split_once("fn build_output_stream_raw")
-                .unwrap()
-                .0;
-            assert!(input.contains("playing: false"));
-            assert!(input.contains("start_attempted: false"));
-            assert!(!input.contains("audio_unit.start()"));
-            let methods = source
-                .split_once("impl StreamInner {")
-                .unwrap()
-                .1
-                .split_once("/// Register the on-disconnect callback")
-                .unwrap()
-                .0;
-            assert!(methods.contains("self.start_attempted = true;"));
-            assert!(methods.contains("if self.playing || self.start_attempted"));
-            assert!(methods.contains("self.start_attempted = false;"));
-        }
-
-        #[test]
-        fn macos_input_close_drains_callbacks_before_native_teardown() {
-            let manifest = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
-            let patch_table = manifest.split("[patch.crates-io]").nth(1).unwrap();
-            assert!(patch_table
-                .contains("coreaudio-rs = { path = \"../../../patches/coreaudio-rs-0.11.3\" }"));
-            let source = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../patches/cpal-0.15.3/src/host/coreaudio/macos/mod.rs"
-            ));
-            let close = source
-                .split_once("pub fn close_paused_input")
-                .unwrap()
-                .1
-                .split_once("impl StreamTrait for Stream")
-                .unwrap()
-                .0;
-            assert!(
-                close.find("callback\n            .retire()").unwrap()
-                    < close.find("inner.audio_unit.close_stopped()").unwrap()
-            );
-            assert!(
-                close.find("inner.close_attempted = true").unwrap()
-                    < close.find("inner.audio_unit.close_stopped()").unwrap()
-            );
-            let recorder = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/src/platform/audio.rs"
-            ));
-            let release = recorder
-                .split_once("fn pause_for_release(&mut self)")
-                .unwrap()
-                .1
-                .split_once("impl Drop for ActiveRecording")
-                .unwrap()
-                .0;
-            assert!(
-                release.find("stream.quiesce_input()").unwrap()
-                    < release.find("pause_stream_with_retry").unwrap()
-            );
-            assert!(
-                release.find("pause_stream_with_retry").unwrap()
-                    < release.find("stream.close_paused_input()").unwrap()
-            );
-        }
-
-        #[test]
-        fn wasapi_cpal_joins_even_if_its_command_receiver_disconnected() {
-            // This checks the vendored source contract, not a Windows runtime.
-            let source = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../patches/cpal-0.15.3/src/host/wasapi/stream.rs"
-            ));
-            let drop_impl = source
-                .split_once("impl Drop for Stream {")
-                .unwrap()
-                .1
-                .split_once("impl StreamTrait for Stream")
-                .unwrap()
-                .0;
-            assert!(drop_impl.contains("let _ = self.push_command(Command::Terminate);"));
-            assert!(drop_impl.contains("let worker = self.thread.take();"));
-            assert!(drop_impl.contains("Foundation::CloseHandle(self.pending_scheduled_event)"));
-            assert!(
-                drop_impl.contains("let _ = worker.join();"),
-                "the drop path must join the worker"
-            );
-            // A panic inside `drop` aborts the process when the drop runs
-            // during an unwind, and both checked transitions already report a
-            // dead worker, so the drop path must not unwrap.
-            assert!(
-                !drop_impl.contains(".unwrap()"),
-                "the drop path must not unwrap a join or the thread slot"
-            );
-        }
-
-        #[test]
-        fn wasapi_pause_acknowledges_the_native_transition() {
-            // Source contract only: the WASAPI backend needs Windows to compile
-            // and to run, and neither is available to this suite.
-            let source = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../patches/cpal-0.15.3/src/host/wasapi/stream.rs"
-            ));
-            assert!(source.contains(
-                "PlayStream(Sender<Result<(), BackendSpecificError>>),\n    PauseStream(Sender<Result<(), BackendSpecificError>>),"
-            ));
-            let request = source
-                .split_once("fn request(")
-                .unwrap()
-                .1
-                .split_once("impl Drop for Stream {")
-                .unwrap()
-                .0;
-            assert!(request.contains("reply_rx.recv()"));
-            // A caller must not publish a paused state before the worker stopped
-            // the endpoint, so the trait methods wait for the acknowledgement.
-            let trait_impl = source
-                .split_once("impl StreamTrait for Stream {")
-                .unwrap()
-                .1
-                .split_once("impl Drop for StreamInner {")
-                .unwrap()
-                .0;
-            assert!(trait_impl.contains("self.request(Command::PlayStream)"));
-            assert!(trait_impl.contains("self.pause_input_and_drain()"));
-
-            let pause = source
-                .split_once("fn pause_input(")
-                .unwrap()
-                .1
-                .split_once("fn pause_output(")
-                .unwrap()
-                .0;
-            let first_drain = pause.find("drain_capture").unwrap();
-            let stop = pause.find("stream.audio_client.Stop()").unwrap();
-            let second_drain = pause[stop..].find("drain_capture").unwrap() + stop;
-            assert!(first_drain < stop);
-            assert!(stop < second_drain);
-            assert!(pause.contains("stream.playing = false;"));
-
-            // A paused stream must not deliver packets that were captured
-            // before the stop.
-            let loop_body = source
-                .split_once("fn run_input(")
-                .unwrap()
-                .1
-                .split_once("fn run_output(")
-                .unwrap()
-                .0;
-            assert!(loop_body.contains("if !run_ctxt.stream.playing {"));
-        }
-
-        #[test]
-        fn wasapi_capture_releases_every_acquired_packet() {
-            let source = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../../patches/cpal-0.15.3/src/host/wasapi/stream.rs"
-            ));
-            let packet = source
-                .split_once("fn capture_next_packet(")
-                .unwrap()
-                .1
-                .split_once("fn drain_capture(")
-                .unwrap()
-                .0;
-            // A successful `GetBuffer` that reports no frames acquires nothing.
-            assert!(
-                packet.find("if frames_available == 0 {").unwrap()
-                    < packet.find("Data::from_parts").unwrap()
-            );
-            // A silent packet holds undefined data, so the driver buffer must
-            // not be handed to the callback.
-            assert!(packet.contains("AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0"));
-            assert!(packet.contains("SampleFormat::U8 => scratch.fill(128)"));
-            // A failed timestamp must not leave the packet acquired.
-            let timestamp_error = packet
-                .split_once(
-                    "Err(error) => {\n                let release = capture_client.ReleaseBuffer",
-                )
-                .expect("timestamp failure releases the packet");
-            assert!(timestamp_error.1.contains("PacketFlow::Failed"));
-            assert!(packet.contains("AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 == 0"));
-        }
-
-        #[test]
-        fn windows_pause_drains_before_closing_the_publication_gate() {
-            let source = include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/src/platform/audio.rs"
-            ));
-            let branch = source
-                .split_once("#[cfg(target_os = \"windows\")]\n            {\n                #[allow(unreachable_patterns)]")
-                .expect("windows pause branch")
-                .1
-                .split_once("#[cfg(not(any(target_os = \"linux\", target_os = \"windows\")))]")
-                .expect("generic pause branch")
-                .0;
-            assert!(branch.contains("cpal::platform::StreamInner::Wasapi(stream)"));
-            let drain = branch.find("stream.pause_input_and_drain()").unwrap();
-            let gate = branch.find("callback_gate.pause()").unwrap();
-            assert!(drain < gate);
-            assert!(branch.contains("recording.callback_gate.retire();"));
-        }
-
-        #[test]
-        fn failed_candidate_is_retired_and_reserved_until_release_succeeds() {
-            use super::{release_or_retain, start_candidate};
-            use std::sync::atomic::AtomicUsize;
-
-            struct Candidate {
-                retired: Arc<AtomicBool>,
-                drops: Arc<AtomicUsize>,
-            }
-            impl Drop for Candidate {
-                fn drop(&mut self) {
-                    self.drops.fetch_add(1, Ordering::SeqCst);
-                }
-            }
-            let retired = Arc::new(AtomicBool::new(false));
-            let drops = Arc::new(AtomicUsize::new(0));
-            let candidate = Candidate {
-                retired: Arc::clone(&retired),
-                drops: Arc::clone(&drops),
-            };
-            let mut retained = None;
-            let failure = start_candidate(
-                &mut retained,
-                candidate,
-                |_| Err::<(), _>("play failed"),
-                |candidate| candidate.retired.store(true, Ordering::SeqCst),
-                |candidate| {
-                    assert!(candidate.retired.load(Ordering::SeqCst));
-                    false
-                },
-            );
-            assert!(matches!(failure, Err("play failed")));
-            assert!(retained.is_some());
-            assert_eq!(drops.load(Ordering::SeqCst), 0);
-            let candidate = retained.take().unwrap();
-            assert!(release_or_retain(&mut retained, candidate, |candidate| {
-                assert!(candidate.retired.load(Ordering::SeqCst));
-                true
-            }));
-            assert!(retained.is_none());
-            assert_eq!(drops.load(Ordering::SeqCst), 1);
-        }
-
-        #[test]
-        fn rejected_candidate_can_fall_back_after_confirmed_release() {
-            use super::start_candidate;
-            use std::sync::atomic::AtomicUsize;
-            struct Candidate(Arc<AtomicUsize>);
-            impl Drop for Candidate {
-                fn drop(&mut self) {
-                    self.0.fetch_add(1, Ordering::SeqCst);
-                }
-            }
-            let drops = Arc::new(AtomicUsize::new(0));
-            let mut retained = None;
-            let failed = start_candidate(
-                &mut retained,
-                Candidate(Arc::clone(&drops)),
-                |_| Err::<(), _>("activation failed"),
-                |_| {},
-                |_| true,
-            );
-            assert!(matches!(failed, Err("activation failed")));
-            assert!(retained.is_none());
-            assert_eq!(drops.load(Ordering::SeqCst), 1);
-            let next = start_candidate(
-                &mut retained,
-                Candidate(Arc::clone(&drops)),
-                |_| Ok::<(), &str>(()),
-                |_| panic!("successful candidate was retired"),
-                |_| panic!("successful candidate was paused"),
-            );
-            assert!(next.is_ok());
-            assert_eq!(drops.load(Ordering::SeqCst), 1);
-            drop(next);
-            assert_eq!(drops.load(Ordering::SeqCst), 2);
-        }
-
-        #[test]
-        fn a_failed_pause_keeps_the_stream_for_a_later_release_retry() {
-            use super::{pause_stream_with_retry, release_or_retain};
-            use std::sync::atomic::AtomicUsize;
-
-            struct Stream(Arc<AtomicUsize>);
-            impl Drop for Stream {
-                fn drop(&mut self) {
-                    self.0.fetch_add(1, Ordering::SeqCst);
-                }
-            }
-            let drops = Arc::new(AtomicUsize::new(0));
-            let mut slot = None;
-            let mut attempts = 0;
-            let paused = pause_stream_with_retry(|| -> Result<(), &'static str> {
-                attempts += 1;
-                Err("device unavailable")
-            });
-            assert!(!paused);
-            assert_eq!(attempts, 2);
-            assert!(!release_or_retain(
-                &mut slot,
-                Stream(Arc::clone(&drops)),
-                |_| paused
-            ));
-            assert_eq!(drops.load(Ordering::SeqCst), 0);
-            let stream = slot.take().unwrap();
-            let mut attempts = 0;
-            assert!(release_or_retain(&mut slot, stream, |_| {
-                pause_stream_with_retry(|| -> Result<(), &'static str> {
-                    attempts += 1;
-                    if attempts == 1 {
-                        Err("transient")
-                    } else {
-                        Ok(())
-                    }
-                })
-            }));
-            assert_eq!(attempts, 2);
-            assert!(slot.is_none());
-            assert_eq!(drops.load(Ordering::SeqCst), 1);
-        }
-
-        #[test]
-        fn handoff_preserves_sealed_samples_but_reports_unreleased_or_failed_driver() {
-            use super::{await_recording_handoff, ReleaseOutcome};
-            use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
-            use std::sync::mpsc;
-            use std::time::Duration;
-            let recording = || RecordingResult {
-                metrics: RecordingMetrics {
-                    duration: Duration::ZERO,
-                    size_bytes: 8,
-                },
-                audio: RecordedAudio {
-                    samples: vec![0.5, -0.25],
-                    sample_rate: 16000,
-                },
-                capture_failed: false,
-            };
-            for mode in [
-                "released",
-                "late-capture-failure",
-                "blocked",
-                "pause-failed",
-                "panicked",
-            ] {
-                let (result_tx, result_rx) = mpsc::channel();
-                let (released_tx, released_rx) = mpsc::channel();
-                result_tx.send(Ok(recording())).unwrap();
-                let mut release = Some(released_tx);
-                if matches!(mode, "released" | "late-capture-failure" | "pause-failed") {
-                    release
-                        .as_ref()
-                        .unwrap()
-                        .send(ReleaseOutcome {
-                            released: mode != "pause-failed",
-                            capture_failed: mode == "late-capture-failure",
-                        })
-                        .unwrap();
-                }
-                if mode == "panicked" {
-                    drop(release.take());
-                }
-                let failed = AtomicBool::new(false);
-                let result = await_recording_handoff(
-                    result_rx,
-                    released_rx,
-                    &failed,
-                    Duration::from_millis(1),
-                )
-                .unwrap();
-                assert_eq!(result.audio.samples, vec![0.5, -0.25]);
-                assert_eq!(result.audio.sample_rate, 16000);
-                assert_eq!(result.capture_failed, mode != "released");
-                assert_eq!(failed.load(Ordering::SeqCst), mode == "panicked");
-                drop(release);
-            }
-        }
-
-        #[test]
-        fn non_finite_input_retains_only_the_finite_prefix_and_retires_capture() {
-            for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-                let buffer = Mutex::new(Vec::new());
-                let failed = AtomicBool::new(false);
-                assert!(retain_input_samples(&buffer, &failed, &mut vec![0.25]));
-                let mut second = vec![0.5, bad, -0.25];
-                assert!(retain_input_samples(&buffer, &failed, &mut second));
-                assert_eq!(second, vec![0.5]);
-                assert!(failed.load(Ordering::Acquire));
-                assert!(!retain_input_samples(&buffer, &failed, &mut vec![0.75]));
-                assert_eq!(*buffer.lock().unwrap(), vec![0.25, 0.5]);
-            }
-        }
-
-        #[test]
-        fn invalid_or_overflowing_multichannel_frame_does_not_reach_capture() {
-            for bad in [f32::NAN, f32::INFINITY, f32::MAX] {
-                let other = if bad == f32::MAX { f32::MAX } else { 0.5 };
-                let mut samples = convert_to_mono(&[0.25, 0.75, bad, other, 0.5, 0.5], 2);
-                let buffer = Mutex::new(Vec::new());
-                let failed = AtomicBool::new(false);
-                assert!(retain_input_samples(&buffer, &failed, &mut samples));
-                assert!(failed.load(Ordering::Acquire));
-                assert_eq!(samples, vec![0.5]);
-                assert_eq!(*buffer.lock().unwrap(), vec![0.5]);
-            }
-            assert_eq!(convert_to_mono(&[0.25f32, 0.75, 0.5], 2), vec![0.5, 0.5]);
-        }
-
-        #[test]
-        fn non_finite_first_sample_and_poisoned_buffer_cannot_be_emitted() {
-            let failed = AtomicBool::new(false);
-            let buffer = Mutex::new(Vec::new());
-            assert!(!retain_input_samples(
-                &buffer,
-                &failed,
-                &mut vec![f32::NAN, 0.5]
-            ));
-            assert!(failed.load(Ordering::Acquire));
-            assert!(buffer.lock().unwrap().is_empty());
-
-            let buffer = Arc::new(Mutex::new(Vec::new()));
-            let poisoned = Arc::clone(&buffer);
-            let _ = std::thread::spawn(move || {
-                let _guard = poisoned.lock().unwrap();
-                panic!("simulate interrupted capture");
-            })
-            .join();
-            let failed = AtomicBool::new(false);
-            assert!(!retain_input_samples(&buffer, &failed, &mut vec![0.5]));
-            assert!(failed.load(Ordering::Acquire));
-        }
-
-        #[test]
-        fn unexpected_non_finite_buffer_is_always_marked_incomplete() {
-            let buffer = Mutex::new(vec![0.25, f32::NAN, 0.5]);
-            let (samples, incomplete) = take_captured_samples(&buffer, false);
-            assert!(incomplete);
-            assert_eq!(samples, vec![0.25, 0.0, 0.5]);
-        }
-
-        #[test]
-        fn failed_or_poisoned_capture_retains_only_a_marked_finite_prefix() {
-            let buffer = Mutex::new(vec![0.5, f32::NAN, -0.25]);
-            let (samples, failed) = take_captured_samples(&buffer, true);
-            assert!(failed);
-            assert_eq!(samples, vec![0.5, 0.0, -0.25]);
-            assert!(buffer.lock().unwrap().is_empty());
-
-            let poisoned = Arc::new(Mutex::new(vec![0.25, f32::INFINITY]));
-            let other = poisoned.clone();
-            let _ = std::thread::spawn(move || {
-                let _guard = other.lock().unwrap();
-                panic!("simulated callback panic");
-            })
-            .join();
-            let (samples, failed) = take_captured_samples(&poisoned, false);
-            assert!(failed);
-            assert_eq!(samples, vec![0.25, 0.0]);
-            assert!(poisoned.lock().unwrap_err().into_inner().is_empty());
-        }
-
-        #[test]
-        fn callback_gate_waits_for_inflight_work_and_rejects_late_callbacks() {
-            use std::sync::mpsc;
-            use std::thread;
-            use std::time::Duration;
-
-            let gate = CallbackGate::new();
-            assert!(gate.activate(|| true));
-            let samples = Arc::new(Mutex::new(Vec::new()));
-            let (entered_tx, entered_rx) = mpsc::channel();
-            let (release_tx, release_rx) = mpsc::channel();
-            let callback = {
-                let gate = gate.clone();
-                let samples = samples.clone();
-                thread::spawn(move || {
-                    gate.with_capture(|_| {
-                        entered_tx.send(()).unwrap();
-                        release_rx.recv().unwrap();
-                        samples.lock().unwrap().push(1);
-                    })
-                })
-            };
-            entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-            let (retired_tx, retired_rx) = mpsc::channel();
-            let retirement = {
-                let gate = gate.clone();
-                thread::spawn(move || {
-                    gate.retire();
-                    retired_tx.send(()).unwrap();
-                })
-            };
-            assert!(retired_rx.recv_timeout(Duration::from_millis(50)).is_err());
-            release_tx.send(()).unwrap();
-            callback.join().unwrap();
-            retired_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-            retirement.join().unwrap();
-            gate.with_capture(|_| samples.lock().unwrap().push(2));
-            assert_eq!(*samples.lock().unwrap(), vec![1]);
-        }
-
-        #[test]
-        fn pause_drains_callbacks_suppresses_samples_and_preserves_errors() {
-            use std::sync::atomic::AtomicUsize;
-            use std::sync::mpsc;
-            use std::thread;
-            use std::time::Duration;
-
-            let gate = CallbackGate::new();
-            assert!(gate.activate(|| true));
-            let (entered_tx, entered_rx) = mpsc::channel();
-            let (release_tx, release_rx) = mpsc::channel();
-            let worker_gate = Arc::clone(&gate);
-            let worker = thread::spawn(move || {
-                worker_gate.with_capture(|_| {
-                    entered_tx.send(()).unwrap();
-                    release_rx.recv().unwrap();
-                })
-            });
-            entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-            let (paused_tx, paused_rx) = mpsc::channel();
-            let pause_gate = Arc::clone(&gate);
-            let pause = thread::spawn(move || paused_tx.send(pause_gate.pause()).unwrap());
-            assert!(paused_rx.recv_timeout(Duration::from_millis(30)).is_err());
-            release_tx.send(()).unwrap();
-            worker.join().unwrap();
-            assert!(paused_rx.recv_timeout(Duration::from_secs(1)).unwrap());
-            pause.join().unwrap();
-            let calls = AtomicUsize::new(0);
-            gate.with_capture(|_| {
-                calls.fetch_add(1, Ordering::SeqCst);
-            });
-            gate.with_error(|| {
-                calls.fetch_add(10, Ordering::SeqCst);
-            });
-            assert_eq!(calls.load(Ordering::SeqCst), 10);
-            assert!(gate.begin_resume());
-            gate.with_capture(|active| {
-                assert!(!active);
-                calls.fetch_add(1, Ordering::SeqCst);
-            });
-            assert!(gate.finish_resume(|| true));
-            gate.with_capture(|active| {
-                assert!(active);
-                calls.fetch_add(1, Ordering::SeqCst);
-            });
-            gate.retire();
-            assert!(!gate.begin_resume());
-            gate.with_error(|| {
-                calls.fetch_add(100, Ordering::SeqCst);
-            });
-            assert_eq!(calls.load(Ordering::SeqCst), 12);
-        }
-
-        #[test]
-        fn resume_stages_audio_until_confirmation_without_duplicating_the_prefix() {
-            let gate = CallbackGate::new();
-            let buffer = Mutex::new(vec![1.0]);
-            let failed = AtomicBool::new(false);
-            let events = Arc::new(Mutex::new(Vec::new()));
-            let output = Arc::clone(&events);
-            let emitter = ChunkEmitter::new(Arc::new(move |samples, offset| {
-                output.lock().unwrap().push((samples, offset));
-            }));
-            activate_capture(&gate, &buffer, Some(&emitter), &failed).unwrap();
-            assert!(gate.pause());
-            assert!(gate.begin_resume());
-            gate.with_capture(|active| {
-                assert!(!active);
-                buffer.lock().unwrap().push(2.0);
-            });
-            assert_eq!(*events.lock().unwrap(), vec![(vec![1.0], 0)]);
-            assert!(finish_resume_capture(
-                &gate,
-                &buffer,
-                Some(&emitter),
-                &failed,
-                1
-            ));
-            gate.with_capture(|active| {
-                assert!(active);
-                buffer.lock().unwrap().push(3.0);
-                emitter.emit(&[3.0]);
-            });
-            emitter.flush();
-            let events = events.lock().unwrap();
-            let mut combined = Vec::new();
-            for (samples, offset) in events.iter() {
-                assert_eq!(*offset, combined.len() as u64);
-                combined.extend_from_slice(samples);
-            }
-            assert_eq!(combined, vec![1.0, 2.0, 3.0]);
-        }
-
-        #[test]
-        fn blocked_driver_pause_cannot_accept_late_audio() {
-            use std::sync::mpsc;
-            use std::thread;
-            use std::time::Duration;
-
-            let gate = CallbackGate::new();
-            assert!(gate.activate(|| true));
-            let samples = Arc::new(Mutex::new(Vec::new()));
-            gate.with_capture(|_| samples.lock().unwrap().push(1));
-            let (entered_tx, entered_rx) = mpsc::channel();
-            let (release_tx, release_rx) = mpsc::channel();
-            let shutdown = {
-                let gate = gate.clone();
-                thread::spawn(move || {
-                    gate.retire();
-                    entered_tx.send(()).unwrap();
-                    release_rx.recv().unwrap();
-                })
-            };
-            entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-            gate.with_capture(|_| samples.lock().unwrap().push(2));
-            assert_eq!(*samples.lock().unwrap(), vec![1]);
-            release_tx.send(()).unwrap();
-            shutdown.join().unwrap();
-        }
-
-        #[test]
-        fn pending_candidate_audio_is_published_only_after_success_in_order() {
-            let events = Arc::new(Mutex::new(Vec::<(Vec<f32>, u64)>::new()));
-            let emitter = {
-                let events = events.clone();
-                ChunkEmitter::new(Arc::new(move |samples, offset| {
-                    events.lock().unwrap().push((samples, offset));
-                }))
-            };
-            let failed = CallbackGate::new();
-            let failed_buffer = Mutex::new(Vec::new());
-            failed.with_capture(|active| {
-                assert!(!active);
-                failed_buffer.lock().unwrap().extend_from_slice(&[9.0]);
-            });
-            failed.retire();
-            assert!(activate_capture(
-                &failed,
-                &failed_buffer,
-                Some(&emitter),
-                &std::sync::atomic::AtomicBool::new(false)
-            )
-            .is_err());
-            assert!(events.lock().unwrap().is_empty());
-
-            let selected = CallbackGate::new();
-            let buffer = Mutex::new(Vec::new());
-            selected.with_capture(|active| {
-                assert!(!active);
-                buffer.lock().unwrap().extend_from_slice(&[1.0, 2.0]);
-            });
-            activate_capture(
-                &selected,
-                &buffer,
-                Some(&emitter),
-                &std::sync::atomic::AtomicBool::new(false),
-            )
-            .unwrap();
-            selected.with_capture(|active| {
-                assert!(active);
-                buffer.lock().unwrap().push(3.0);
-                emitter.emit(&[3.0]);
-            });
-            selected.retire();
-            emitter.flush();
-            let events = events.lock().unwrap();
-            let mut offset = 0;
-            let mut samples = Vec::new();
-            for (chunk, chunk_offset) in events.iter() {
-                assert_eq!(*chunk_offset, offset);
-                offset += chunk.len() as u64;
-                samples.extend_from_slice(chunk);
-            }
-            assert_eq!(samples, *buffer.lock().unwrap());
-            assert_eq!(samples, vec![1.0, 2.0, 3.0]);
-        }
-
-        #[test]
-        fn failed_pending_stream_does_not_publish_its_prefix() {
-            use std::sync::atomic::AtomicBool;
-            let gate = CallbackGate::new();
-            let buffer = Mutex::new(vec![1.0]);
-            let emitted = Arc::new(Mutex::new(Vec::new()));
-            let emitter = {
-                let emitted = emitted.clone();
-                ChunkEmitter::new(Arc::new(move |chunk, _| {
-                    emitted.lock().unwrap().extend(chunk)
-                }))
-            };
-            assert!(
-                activate_capture(&gate, &buffer, Some(&emitter), &AtomicBool::new(true)).is_err()
-            );
-            gate.retire();
-            assert!(emitted.lock().unwrap().is_empty());
-        }
-
-        #[test]
-        fn poisoned_callback_gate_rejects_later_callbacks() {
-            let gate = CallbackGate::new();
-            let poisoned = gate.clone();
-            assert!(std::thread::spawn(move || {
-                poisoned.with_capture(|_| panic!("simulated callback failure"));
-            })
-            .join()
-            .is_err());
-            gate.retire();
-            assert!(gate.0.is_poisoned());
-            gate.with_capture(|_| panic!("poisoned callback gate reopened"));
-        }
-
-        #[test]
-        fn thread_bound_worker_keeps_non_send_state_on_one_thread() {
-            use super::ThreadBoundWorker;
-            use std::cell::Cell;
-            use std::rc::Rc;
-            use std::sync::mpsc;
-            use std::thread;
-            use std::time::Duration;
-
-            struct Resource {
-                count: Rc<Cell<usize>>,
-                owner: thread::ThreadId,
-                dropped: mpsc::Sender<thread::ThreadId>,
-            }
-            impl Drop for Resource {
-                fn drop(&mut self) {
-                    let _ = self.dropped.send(thread::current().id());
-                }
-            }
-            let (dropped_tx, dropped_rx) = mpsc::channel();
-            let worker = Arc::new(ThreadBoundWorker::new(move || Resource {
-                count: Rc::new(Cell::new(0)),
-                owner: thread::current().id(),
-                dropped: dropped_tx,
-            }));
-            let owner = worker.call(|resource| resource.owner).unwrap();
-            let mut callers = Vec::new();
-            for _ in 0..8 {
-                let worker = Arc::clone(&worker);
-                callers.push(thread::spawn(move || {
-                    for _ in 0..25 {
-                        worker
-                            .call(|resource| {
-                                assert_eq!(thread::current().id(), resource.owner);
-                                resource.count.set(resource.count.get() + 1);
-                            })
-                            .unwrap();
-                    }
-                }));
-            }
-            for caller in callers {
-                caller.join().unwrap();
-            }
-            assert_eq!(worker.call(|resource| resource.count.get()).unwrap(), 200);
-            drop(worker);
-            assert_eq!(
-                dropped_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-                owner
-            );
-        }
-
-        #[test]
-        fn thread_bound_worker_bounds_pending_tasks() {
-            use super::{ThreadBoundWorker, WorkerTask};
-            use std::sync::mpsc::{self, TrySendError};
-            use std::time::Duration;
-
-            let worker = ThreadBoundWorker::new(|| ());
-            let (entered_tx, entered_rx) = mpsc::channel();
-            let (release_tx, release_rx) = mpsc::channel();
-            worker
-                .sender
-                .as_ref()
-                .unwrap()
-                .send(Box::new(move |_| {
-                    entered_tx.send(()).unwrap();
-                    release_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-                }))
-                .unwrap();
-            entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            worker
-                .sender
-                .as_ref()
-                .unwrap()
-                .try_send(Box::new(|_| ()))
-                .unwrap();
-            let extra: WorkerTask<()> = Box::new(|_| ());
-            assert!(matches!(
-                worker.sender.as_ref().unwrap().try_send(extra),
-                Err(TrySendError::Full(_))
-            ));
-            release_tx.send(()).unwrap();
-            worker.call(|_| ()).unwrap();
-        }
-
-        #[test]
-        fn capture_status_does_not_wait_for_a_stalled_worker() {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-            use std::sync::mpsc;
-            use std::time::Duration;
-
-            let manager = Arc::new(RecordingManager::new());
-            manager.activity.opening();
-            assert!(manager.is_recording());
-            assert_eq!(manager.current_sample_rate(), None);
-            manager.activity.started(Some(48_000));
-            let (entered_tx, entered_rx) = mpsc::channel();
-            let (release_tx, release_rx) = mpsc::channel();
-            manager
-                .worker
-                .sender
-                .as_ref()
-                .unwrap()
-                .send(Box::new(move |_| {
-                    entered_tx.send(()).unwrap();
-                    release_rx.recv().unwrap();
-                }))
-                .unwrap();
-            entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            let (status_tx, status_rx) = mpsc::channel();
-            let observed = Arc::clone(&manager);
-            let observer = std::thread::spawn(move || {
-                status_tx
-                    .send((observed.is_recording(), observed.current_sample_rate()))
-                    .unwrap();
-            });
-            let status = status_rx.recv_timeout(Duration::from_millis(500));
-            release_tx.send(()).unwrap();
-            observer.join().unwrap();
-            assert_eq!(status.unwrap(), (true, Some(48_000)));
-            manager.worker.call(|_| ()).unwrap();
-            manager.activity.released();
-            assert!(!manager.is_recording());
-            assert_eq!(manager.current_sample_rate(), None);
-        }
-
-        #[test]
-        fn a_failed_worker_cannot_claim_capture_is_inactive() {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-
-            let manager = RecordingManager::new();
-            assert!(manager
-                .worker
-                .call::<()>(|_| panic!("worker failure"))
-                .is_err());
-            assert!(manager.is_recording());
-            assert!(manager.stop().is_err());
-            assert!(manager.start(None, None).is_err());
-        }
-
-        #[test]
-        fn a_worker_that_never_started_cannot_own_capture() {
-            use super::{RecordingManager, ThreadBoundWorker};
-            use crate::platform::Recorder;
-
-            let manager = RecordingManager {
-                worker: ThreadBoundWorker {
-                    sender: None,
-                    failed: Arc::new(AtomicBool::new(false)),
-                },
-                activity: Arc::default(),
-            };
-            assert!(!manager.is_recording());
-            assert!(manager.start(None, None).is_err());
-            assert!(manager.stop().is_err());
-        }
+        // ── Pre-roll ring ──────────────────────────────────────────────
 
         #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires an isolated ALSA null capture device"]
-        fn cpal_worker_captures_and_hands_off_on_an_alsa_null_device() {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-            use std::sync::mpsc;
-            use std::thread;
-            use std::time::Duration;
+        include!("audio_alsa_fault_tests.rs");
 
-            let manager = Arc::new(RecordingManager::new());
-            for iteration in 0..2 {
-                let (captured_tx, captured_rx) = mpsc::sync_channel(1);
-                let chunks = Arc::new(Mutex::new(Vec::<(Vec<f32>, u64)>::new()));
-                let observed = Arc::clone(&chunks);
-                let start_manager = Arc::clone(&manager);
-                thread::spawn(move || {
-                    start_manager
-                        .start(
-                            Some(Arc::new(move |_| {
-                                let _ = captured_tx.try_send(());
-                                thread::sleep(Duration::from_millis(1));
-                            })),
-                            Some(Arc::new(move |samples, offset| {
-                                observed.lock().unwrap().push((samples, offset));
-                            })),
-                        )
-                        .map_err(|error| error.to_string())
-                })
-                .join()
-                .unwrap()
-                .unwrap();
-                captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-                assert!(manager.is_recording());
-                let original_rate = manager.current_sample_rate().unwrap();
-                let duplicate_start = manager.start(None, None).unwrap_err();
-                assert!(matches!(
-                    duplicate_start.downcast_ref::<crate::errors::RecordingError>(),
-                    Some(crate::errors::RecordingError::AlreadyRecording)
-                ));
-                assert!(manager.is_recording());
-                assert_eq!(manager.current_sample_rate(), Some(original_rate));
-                let pause_manager = Arc::clone(&manager);
-                thread::spawn(move || pause_manager.pause().map_err(|error| error.to_string()))
-                    .join()
-                    .unwrap()
-                    .unwrap();
-                let resume_manager = Arc::clone(&manager);
-                thread::spawn(move || resume_manager.resume().map_err(|error| error.to_string()))
-                    .join()
-                    .unwrap()
-                    .unwrap();
-                let stop_manager = Arc::clone(&manager);
-                let result = thread::spawn(move || {
-                    if iteration == 0 {
-                        stop_manager.stop()
-                    } else {
-                        stop_manager.stop_for_handoff()
-                    }
-                    .map_err(|error| error.to_string())
-                })
-                .join()
-                .unwrap()
-                .unwrap();
-                assert!(!manager.is_recording());
-                let duplicate_stop = manager.stop().unwrap_err();
-                assert!(matches!(
-                    duplicate_stop.downcast_ref::<crate::errors::RecordingError>(),
-                    Some(crate::errors::RecordingError::NotRecording)
-                ));
-                assert!(!result.capture_failed);
-                assert!(result.audio.sample_rate > 0);
-                assert!(!result.audio.samples.is_empty());
-                let chunks = chunks.lock().unwrap();
-                let mut combined = Vec::new();
-                for (samples, offset) in chunks.iter() {
-                    assert_eq!(*offset, combined.len() as u64);
-                    combined.extend_from_slice(samples);
-                }
-                assert_eq!(combined, result.audio.samples);
-            }
+        #[test]
+        fn the_ring_keeps_the_most_recent_audio_and_drops_the_oldest() {
+            let mut ring = Preroll::new(4);
+
+            ring.push(&[1.0, 2.0, 3.0]);
+            ring.push(&[4.0, 5.0]);
+
+            // The tail is what a press needs: the newest speech is what would
+            // otherwise be clipped, so the oldest goes first.
+            assert_eq!(ring.drain(), vec![2.0, 3.0, 4.0, 5.0]);
         }
 
-        #[cfg(target_os = "linux")]
         #[test]
-        #[ignore = "requires an isolated ALSA null capture device"]
-        fn cpal_alsa_pause_suppresses_samples_until_resume() {
-            use super::LocalRecordingManager;
-            use std::time::Duration;
+        fn a_block_larger_than_the_ring_keeps_only_its_tail() {
+            let mut ring = Preroll::new(3);
+
+            ring.push(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+
+            assert_eq!(ring.drain(), vec![3.0, 4.0, 5.0]);
+        }
+
+        #[test]
+        fn draining_empties_the_ring() {
+            let mut ring = Preroll::new(8);
+            ring.push(&[1.0, 2.0]);
+
+            assert_eq!(ring.drain(), vec![1.0, 2.0]);
+            // A second drain returning the same audio is how one recording ends
+            // up with the previous one's speech at its head.
+            assert_eq!(ring.drain(), Vec::<f32>::new());
+        }
+
+        #[test]
+        fn a_zero_capacity_ring_keeps_nothing() {
+            let mut ring = Preroll::new(0);
+            ring.push(&[1.0, 2.0, 3.0]);
+
+            assert_eq!(ring.len(), 0);
+            assert_eq!(ring.drain(), Vec::<f32>::new());
+        }
+
+        #[test]
+        fn pre_roll_samples_follow_the_device_rate() {
+            // The same duration is a different sample count per device, which is
+            // why the ring is sized from the rate rather than a constant.
+            assert_eq!(preroll_capacity(Duration::from_millis(500), 16_000), 8_000);
+            assert_eq!(preroll_capacity(Duration::from_millis(500), 44_100), 22_050);
+            assert_eq!(preroll_capacity(Duration::from_secs(2), 48_000), 96_000);
+        }
+
+        #[test]
+        fn a_pre_roll_rounds_up_so_a_whole_device_buffer_fits() {
+            // 0.333 ms at 44.1 kHz is 14.68 samples. Rounding down gives 14, and
+            // the ring is filled a device block at a time: on a 1024-frame device
+            // a capacity 14 samples short of a block's worth drops the entire
+            // block, which is 21 ms of the speech the user asked to keep. Rounding
+            // up costs one sample and never drops a block that fits.
+            assert_eq!(preroll_capacity(Duration::from_micros(333), 44_100), 15);
+        }
+
+        #[test]
+        fn a_ring_keeps_the_newest_audio_rather_than_the_oldest() {
+            let mut ring = Preroll::new(10);
+
+            // Eight samples in, then a block of eight that only half fits. The
+            // head gives way, because the audio closest to the press is what the
+            // pre-roll is for; the part of the new block that fits is kept.
+            ring.push(&[1.0; 8]);
+            ring.push(&[2.0; 8]);
+
+            let kept = ring.drain();
+            assert_eq!(kept.len(), 10);
+            assert_eq!(kept.iter().filter(|sample| **sample == 1.0).count(), 2);
+            assert_eq!(kept.iter().filter(|sample| **sample == 2.0).count(), 8);
+        }
+
+        #[test]
+        fn a_block_larger_than_the_ring_keeps_its_tail() {
+            let mut ring = Preroll::new(4);
+            ring.push(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+
+            // The end of the block is the audio closest to the press.
+            assert_eq!(ring.drain(), vec![3.0, 4.0, 5.0, 6.0]);
+        }
+
+        #[test]
+        fn a_zero_length_pre_roll_keeps_nothing_whatever_the_rate() {
+            assert_eq!(preroll_capacity(Duration::ZERO, 48_000), 0);
+            assert_eq!(preroll_capacity(Duration::ZERO, 0), 0);
+        }
+
+        #[test]
+        fn a_zero_rate_yields_no_capacity_instead_of_dividing_by_it() {
+            assert_eq!(preroll_capacity(Duration::from_secs(1), 0), 0);
+        }
+
+        // ── Cold start isolation ───────────────────────────────────────
+
+        #[test]
+        fn a_cold_start_prepends_nothing_from_the_shared_ring() {
+            let (seed, _ring) = cold_start_seed();
+
+            // The defect this pins: the warm stream's callback fills the shared
+            // ring, so a cold start that drained it put the same speech into two
+            // consecutive recordings.
+            assert!(seed.is_empty());
+        }
+
+        #[test]
+        fn a_cold_start_does_not_leave_the_device_open_at_stop() {
+            let (_seed, ring) = cold_start_seed();
+
+            // A zero-capacity stand-in means the stop path has nothing to resume
+            // collecting into, so the stream is retired instead of being held
+            // open with no policy behind it.
+            assert!(warm_ring(&ring, false).is_none());
+            assert!(ring.lock().unwrap().cap == 0);
+        }
+
+        #[test]
+        fn a_stream_that_never_delivered_is_not_ready() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            // Freshly opened and nothing yet: inside the grace, so a press that
+            // arrives immediately still gets the fast path.
+            assert!(!sink.has_delivered());
+            assert!(sink.age_of_stream() < WARM_READY_GRACE);
+
+            // The staleness check alone cannot catch this: `silence_for` returns
+            // `None` until the first block, which reads as "not stale".
+            assert_eq!(sink.silence_for(), None);
+            assert!(!sink.has_delivered());
+        }
+
+        #[test]
+        fn the_first_block_marks_the_stream_as_delivered() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            // `last_block_us` starts at zero and zero is its sentinel, so the
+            // flag is the only way to tell "no block" from "a block at time 0".
+            std::thread::sleep(Duration::from_millis(2));
+            sink.deliver(&[0.1]);
+
+            assert!(sink.has_delivered());
+            assert!(sink.silence_for().is_some());
+        }
+
+        #[test]
+        fn the_first_block_wait_reaches_the_startup_summary() {
+            // The summary advertises `first_pcm_wait_us`, and before this was
+            // wired nothing ever published one: the trace had an accumulator, a
+            // callback-side reporter, and no caller feeding either. A number the
+            // diagnostics export promises has to be a number something fills.
+            let sink = StreamSink::new(SinkMode::Discard);
+            assert_eq!(sink.first_pcm_wait(), None, "nothing delivered yet");
+
+            std::thread::sleep(Duration::from_millis(2));
+            sink.deliver(&[0.1]);
+
+            let wait = sink.first_pcm_wait().expect("one block arrived");
+            assert!(wait >= Duration::from_millis(2));
+
+            let mut trace = AudioStartupTrace::begin();
+            trace.mark(AudioStartupStage::StreamStarted);
+            trace.note_first_pcm(wait);
+            assert_eq!(trace.summary().first_pcm, Some(wait));
+
+            // And it is on the log line, which is where it is actually read.
+            let line = trace.summary().log_line("audio-startup");
+            assert!(line.contains("first_pcm_wait_us="), "{line}");
+        }
+
+        #[test]
+        fn a_usable_stream_needs_a_block_or_a_young_origin() {
+            // Delivered and recent: usable.
+            let fresh = StreamSink::new(SinkMode::Discard);
+            std::thread::sleep(Duration::from_millis(2));
+            fresh.deliver(&[0.1]);
+            assert!(fresh.has_delivered());
+            assert!(fresh.silence_for().unwrap() < STALE_WARM_SILENCE);
+
+            // Never delivered and past the grace: not usable, which is the case
+            // that used to be adopted and record silence.
+            let dead = StreamSink::new(SinkMode::Discard);
+            std::thread::sleep(WARM_READY_GRACE + Duration::from_millis(20));
+            assert!(!dead.has_delivered());
+            assert!(dead.age_of_stream() >= WARM_READY_GRACE);
+        }
+
+        #[test]
+        fn a_manager_with_nothing_held_is_not_ready() {
             let manager = LocalRecordingManager::new();
-            manager.start_recording(None, None).unwrap();
-            let buffer = Arc::clone(&manager.guard().unwrap().as_ref().unwrap().buffer);
-            std::thread::sleep(Duration::from_millis(10));
-            manager.pause_recording().unwrap();
-            let paused_len = buffer.lock().unwrap().len();
-            assert!(paused_len > 0);
-            std::thread::sleep(Duration::from_millis(20));
-            assert_eq!(buffer.lock().unwrap().len(), paused_len);
-            manager.resume_recording().unwrap();
-            std::thread::sleep(Duration::from_millis(10));
-            assert!(buffer.lock().unwrap().len() > paused_len);
-            let (result, released) = manager.stop_recording();
-            assert!(released);
-            assert!(!result.unwrap().capture_failed);
+
+            assert!(!manager.has_warm_stream());
+            assert!(!manager.warm_is_usable());
+            assert!(manager.status_line().contains("ready=false"));
         }
 
-        #[cfg(target_os = "linux")]
         #[test]
-        #[ignore = "requires ALSA null and the delayed-callback preload"]
-        fn cpal_alsa_pause_drains_a_read_before_its_callback() {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-            use std::sync::mpsc;
-            use std::time::{Duration, Instant};
-
-            let symbol = |name: &std::ffi::CStr| {
-                let pointer = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
-                assert!(!pointer.is_null(), "delayed callback preload required");
-                pointer
-            };
-            let arm: unsafe extern "C" fn() =
-                unsafe { std::mem::transmute(symbol(c"maus_test_arm_delayed_callback")) };
-            let entered: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(symbol(c"maus_test_delayed_callback_entered")) };
-            let release: unsafe extern "C" fn() =
-                unsafe { std::mem::transmute(symbol(c"maus_test_release_delayed_callback")) };
-            let manager = Arc::new(RecordingManager::new());
-            manager.start(None, None).unwrap();
-            unsafe { arm() };
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while unsafe { entered() } == 0 && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            if unsafe { entered() } == 0 {
-                unsafe { release() };
-                panic!("capture did not reach the delayed callback");
-            }
-
-            let (done_tx, done_rx) = mpsc::channel();
-            let (started_tx, started_rx) = mpsc::channel();
-            let worker = {
-                let manager = Arc::clone(&manager);
-                std::thread::spawn(move || {
-                    started_tx.send(()).unwrap();
-                    let result = manager.pause().map_err(|error| error.to_string());
-                    done_tx.send(result).unwrap();
-                })
-            };
-            if started_rx.recv_timeout(Duration::from_secs(2)).is_err() {
-                unsafe { release() };
-                panic!("pause worker did not start");
-            }
-            let early = done_rx.recv_timeout(Duration::from_millis(100));
-            unsafe { release() };
-            let result = match early {
-                Ok(result) => Some(result),
-                Err(mpsc::RecvTimeoutError::Timeout) => None,
-                Err(error) => panic!("pause worker exited: {error}"),
-            };
-            assert!(result.is_none(), "pause completed before delivery drained");
-            done_rx
-                .recv_timeout(Duration::from_secs(2))
-                .unwrap()
-                .unwrap();
-            worker.join().unwrap();
-            manager.resume().unwrap();
-            let result = manager.stop().unwrap();
-            assert!(!result.capture_failed);
-            assert!(!result.audio.samples.is_empty());
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the stale-poll preload"]
-        fn cpal_alsa_stale_poll_xrun_does_not_restart_after_resume() {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-            use std::sync::mpsc;
-            use std::time::{Duration, Instant};
-
-            let symbol = |name: &std::ffi::CStr| {
-                let pointer = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
-                assert!(!pointer.is_null(), "stale poll preload required");
-                pointer
-            };
-            let arm: unsafe extern "C" fn() =
-                unsafe { std::mem::transmute(symbol(c"maus_test_arm_stale_poll")) };
-            let entered: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(symbol(c"maus_test_stale_poll_entered")) };
-            let release: unsafe extern "C" fn() =
-                unsafe { std::mem::transmute(symbol(c"maus_test_release_stale_poll")) };
-            let preparations: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(symbol(c"maus_test_stale_poll_preparations")) };
-            let starts: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(symbol(c"maus_test_stale_poll_starts")) };
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let (error_tx, error_rx) = mpsc::channel();
-            let (data_tx, data_rx) = mpsc::sync_channel(1);
-            let reported = Arc::new(AtomicBool::new(false));
-            let mut stream = device
-                .build_input_stream_raw(
-                    &config,
-                    format,
-                    {
-                        let reported = Arc::clone(&reported);
-                        move |_, _| {
-                            if reported.load(Ordering::Acquire) {
-                                let _ = data_tx.try_send(());
-                            }
-                        }
-                    },
-                    move |error| {
-                        reported.store(true, Ordering::Release);
-                        let _ = error_tx.send(error.to_string());
-                    },
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            unsafe { arm() };
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while unsafe { entered() } == 0 && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            if unsafe { entered() } == 0 {
-                unsafe { release() };
-                panic!("capture did not reach the delayed poll");
-            }
-            // A blocking poll is not an admitted cycle. Pause must not wait for
-            // it, and its old result must not recover the resumed stream.
-            #[allow(unreachable_patterns)]
-            let pause = match stream.as_inner() {
-                cpal::platform::StreamInner::Alsa(stream) => stream.pause_input_and_drain(),
-                _ => panic!("ALSA stream required"),
-            };
-            let resume = stream.play();
-            unsafe { release() };
-            pause.unwrap();
-            resume.unwrap();
-            let error = error_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            assert!(error.contains("overrun lost audio samples"));
-            // Wait for a subsequent read. Recovery, if mistakenly attempted,
-            // runs after reporting the error and before that next callback.
-            data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            assert_eq!(unsafe { preparations() }, 0);
-            assert_eq!(unsafe { starts() }, 0);
-            #[allow(unreachable_patterns)]
-            match stream.as_inner_mut() {
-                cpal::platform::StreamInner::Alsa(stream) => {
-                    stream.stop_input_for_release().unwrap()
-                }
-                _ => panic!("ALSA stream required"),
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        fn exercise_alsa_pause_fault(mode: libc::c_int) {
-            use super::LocalRecordingManager;
-            use std::time::Duration;
-            let arm =
-                unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"maus_test_arm_alsa_pause".as_ptr()) };
-            let calls =
-                unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"maus_test_alsa_pause_calls".as_ptr()) };
-            assert!(
-                !arm.is_null() && !calls.is_null(),
-                "pause-failure preload required"
-            );
-            let arm: unsafe extern "C" fn(libc::c_int) = unsafe { std::mem::transmute(arm) };
-            let calls: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(calls) };
-            unsafe { arm(mode) };
+        fn promoting_a_stream_keeps_it_open_without_closing_it() {
             let manager = LocalRecordingManager::new();
-            manager.start_recording(None, None).unwrap();
-            let buffer = Arc::clone(&manager.guard().unwrap().as_ref().unwrap().buffer);
-            std::thread::sleep(Duration::from_millis(10));
-            if mode == 3 {
-                manager.pause_recording().unwrap();
-                assert!(manager.resume_recording().is_err());
-            } else {
-                assert!(manager.pause_recording().is_err());
-            }
-            let count = buffer.lock().unwrap().len();
-            std::thread::sleep(Duration::from_millis(10));
-            let after = buffer.lock().unwrap().len();
-            if mode == 1 {
-                assert_eq!(unsafe { calls() }, 0);
-                assert!(
-                    after > count,
-                    "unsupported pause must leave capture running"
-                );
-            } else {
-                assert_eq!(
-                    after, count,
-                    "failed transition must retire capture callbacks"
-                );
-                assert!(manager.resume_recording().is_err());
-            }
-            let (result, released) = manager.stop_recording();
-            assert!(released);
-            assert_eq!(result.unwrap().capture_failed, mode != 1);
+
+            // After a stop under a finite window: the stream is open and a
+            // timer is due to close it.
+            manager.set_linger(Duration::from_millis(5_000));
+            // Stand in for the timer `set_linger` would have scheduled: a
+            // generation already out there, waiting to close the stream.
+            let scheduled = manager.linger_generation.load(Ordering::SeqCst);
+            assert!(manager.status_line().contains("policy=linger-5000ms"));
+
+            manager.promote_to_hold();
+
+            // The policy moved to the hold sentinel...
+            assert!(manager.status_line().contains("policy=ready-forever"));
+            assert_eq!(manager.linger_ms.load(Ordering::SeqCst), WARM_FOREVER_MS);
+            // ...and the scheduled close was invalidated, so the thread that
+            // holds `scheduled` sees it is stale and leaves the stream alone.
+            assert_ne!(manager.linger_generation.load(Ordering::SeqCst), scheduled);
         }
 
-        #[cfg(target_os = "linux")]
         #[test]
-        #[ignore = "requires ALSA null and the test-only pause-failure preload"]
-        fn cpal_alsa_unsupported_pause_keeps_recording() {
-            exercise_alsa_pause_fault(1);
-        }
+        fn a_stale_linger_cannot_close_a_stream_opened_after_it_was_armed() {
+            // The race the generation check is supposed to prevent, and did not
+            // while it was read outside the lock: a timer armed before a close,
+            // then the close, then a fresh hold. The timer must not take the new
+            // stream.
+            //
+            // The window is timing-dependent in production, so it is reconstructed
+            // here as the two orderings the lock now forces. What is asserted is
+            // the rule itself, not the interleaving: a thread holding a stale
+            // generation never takes the slot.
+            let warm = Arc::new(Mutex::new(None::<u8>));
+            let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only pause-failure preload"]
-        fn cpal_alsa_failed_pause_marks_partial_capture() {
-            exercise_alsa_pause_fault(2);
-        }
+            let armed = generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            // A close, then a hold that puts a stream in the slot.
+            generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *warm.lock().unwrap() = Some(1);
 
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only pause-failure preload"]
-        fn cpal_alsa_failed_resume_marks_partial_capture() {
-            exercise_alsa_pause_fault(3);
-        }
-
-        #[cfg(target_os = "linux")]
-        fn exercise_alsa_playback_pause_failure(mode: libc::c_int) {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-            use std::sync::mpsc;
-            use std::time::Duration;
-
-            let arm: unsafe extern "C" fn(libc::c_int) =
-                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_arm_alsa_pause")) };
-            let calls: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_pause_calls")) };
-            let device = cpal::default_host().default_output_device().unwrap();
-            let supported = device.default_output_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let (tx, rx) = mpsc::sync_channel(1);
-            let stream = device
-                .build_output_stream_raw(
-                    &config,
-                    format,
-                    move |data, _| {
-                        data.bytes_mut().fill(0);
-                        let _ = tx.try_send(());
-                    },
-                    |_| {},
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            unsafe { arm(mode) };
-            let error = stream
-                .pause()
-                .expect_err("ALSA pause failure must be reported");
-            assert!(error.to_string().contains("snd_pcm_pause"));
-            assert_eq!(unsafe { calls() }, 1);
-            // Propagate a simulated successful native return too. The null
-            // PCM can race from running to XRUN before a real retry reaches it.
-            unsafe { arm(6) };
-            stream.pause().unwrap();
-            assert_eq!(unsafe { calls() }, 1);
-            drop(stream);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only pause-failure preload"]
-        fn cpal_alsa_playback_reports_unsupported_pause() {
-            exercise_alsa_playback_pause_failure(4);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only pause-failure preload"]
-        fn cpal_alsa_playback_reports_pause_io_error() {
-            exercise_alsa_playback_pause_failure(5);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires an isolated ALSA null capture device"]
-        fn cpal_alsa_input_waits_for_play_and_can_be_dropped_unstarted() {
-            use cpal::traits::{DeviceTrait, HostTrait};
-            use std::sync::mpsc;
-            use std::time::Duration;
-
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let (tx, rx) = mpsc::channel();
-            let errors = tx.clone();
-            let stream = device
-                .build_input_stream_raw(
-                    &config,
-                    format,
-                    move |_, _| {
-                        let _ = tx.send(());
-                    },
-                    move |_| {
-                        let _ = errors.send(());
-                    },
-                    None,
-                )
-                .unwrap();
-            assert!(matches!(
-                rx.recv_timeout(Duration::from_millis(100)),
-                Err(mpsc::RecvTimeoutError::Timeout)
-            ));
-            drop(stream);
-            assert!(rx.try_recv().is_err());
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only start-failure preload"]
-        fn cpal_alsa_failed_start_retains_an_uncertain_active_device() {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-
-            let arm = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_arm_alsa_start_failure".as_ptr(),
-                )
-            };
-            let starts = unsafe {
-                libc::dlsym(libc::RTLD_DEFAULT, c"maus_test_alsa_failed_starts".as_ptr())
-            };
-            let stops = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_alsa_failed_start_stops".as_ptr(),
-                )
-            };
-            assert!(
-                !arm.is_null() && !starts.is_null() && !stops.is_null(),
-                "start-failure preload required"
-            );
-            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
-            let starts: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(starts) };
-            let stops: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(stops) };
-            let manager = RecordingManager::new();
-            unsafe { arm() };
-            assert!(manager.start(None, None).is_err());
-            assert_eq!(unsafe { starts() }, 1);
-            assert_eq!(unsafe { stops() }, 2);
-            assert!(manager.is_recording());
-            assert!(manager.start(None, None).is_err());
-            manager.stop().unwrap();
-            assert!(!manager.is_recording());
-            manager.start(None, None).unwrap();
-            manager.stop().unwrap();
-        }
-
-        #[cfg(target_os = "linux")]
-        unsafe fn alsa_probe_symbol(name: &std::ffi::CStr) -> *mut libc::c_void {
-            let pointer = libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr());
-            assert!(!pointer.is_null(), "ALSA fault-injection preload required");
-            pointer
-        }
-
-        #[cfg(target_os = "linux")]
-        fn exercise_alsa_probe_close_failure(active: bool) {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-            use cpal::traits::{DeviceTrait, HostTrait};
-
-            let arm: unsafe extern "C" fn() = unsafe {
-                std::mem::transmute(alsa_probe_symbol(c"maus_test_arm_alsa_probe_close_failure"))
-            };
-            let closes: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_probe_closes")) };
-            let opens: unsafe extern "C" fn() -> libc::c_int = unsafe {
-                std::mem::transmute(alsa_probe_symbol(
-                    c"maus_test_alsa_opens_after_probe_failure",
-                ))
-            };
-            let capture_opens: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_capture_opens")) };
-            // Read the configuration before starting, because a live recording
-            // now refuses capability probes.
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let manager = RecordingManager::new();
-            if active {
-                manager.start(None, None).unwrap();
-            }
-            unsafe { arm() };
-            if active {
-                // Discovery while a stream owns the device must refuse to probe
-                // rather than open a second handle, so a failing probe close
-                // cannot poison admission during a recording.
-                assert!(device.default_input_config().is_err());
-                assert_eq!(unsafe { closes() }, 0);
-                assert_eq!(unsafe { capture_opens() }, 0);
-                assert!(!cpal::alsa_capture_cleanup_uncertain());
-                let listing = super::list_input_devices();
-                assert!(!listing.is_empty());
-                std::thread::sleep(std::time::Duration::from_millis(20));
-                let recording = manager.stop_for_handoff().unwrap();
-                assert!(!recording.capture_failed);
-                // With the stream released, the armed probe runs and latches the
-                // uncertainty that keeps later capture from being admitted.
-                assert!(device.default_input_config().is_err());
-            } else {
-                assert!(device.default_input_config().is_err());
-            }
-            assert_eq!(unsafe { closes() }, 1);
-            assert!(cpal::alsa_capture_cleanup_uncertain());
-            assert!(manager.is_recording());
-            if !active {
-                assert!(manager.stop().is_err());
-            }
-            assert!(manager.is_recording());
-            assert!(manager.start(None, None).is_err());
-            let other = RecordingManager::new();
-            assert!(other.is_recording());
-            assert!(other.start(None, None).is_err());
-            assert!(matches!(
-                device.build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None),
-                Err(cpal::BuildStreamError::CleanupUncertain { .. })
-            ));
-            assert_eq!(unsafe { opens() }, 0);
-            assert_eq!(unsafe { closes() }, 1);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only probe-close preload"]
-        fn cpal_alsa_capture_build_waits_for_probe_close() {
-            use cpal::traits::{DeviceTrait, HostTrait};
-            use std::sync::mpsc;
-            use std::time::{Duration, Instant};
-
-            let hold: unsafe extern "C" fn() = unsafe {
-                std::mem::transmute(alsa_probe_symbol(c"maus_test_hold_alsa_probe_close"))
-            };
-            let release: unsafe extern "C" fn() = unsafe {
-                std::mem::transmute(alsa_probe_symbol(c"maus_test_release_alsa_probe_close"))
-            };
-            let closing: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_probe_closing")) };
-            let opens: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_capture_opens")) };
-            struct Release(unsafe extern "C" fn());
-            impl Drop for Release {
-                fn drop(&mut self) {
-                    unsafe { (self.0)() }
-                }
-            }
-
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            unsafe { hold() };
-            let release_on_drop = Release(release);
-            let probe = device.clone();
-            let probe_thread = std::thread::spawn(move || probe.default_input_config());
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while unsafe { closing() } == 0 {
-                assert!(Instant::now() < deadline, "probe did not reach close");
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            let (attempt_tx, attempt_rx) = mpsc::channel();
-            let (done_tx, done_rx) = mpsc::channel();
-            let build_thread = std::thread::spawn(move || {
-                attempt_tx.send(()).unwrap();
-                let result =
-                    device.build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None);
-                let success = result
-                    .map(|mut stream| {
-                        #[allow(unreachable_patterns)]
-                        match stream.as_inner_mut() {
-                            cpal::platform::StreamInner::Alsa(inner) => {
-                                inner.stop_input_for_release().unwrap()
-                            }
-                            _ => panic!("expected ALSA stream"),
-                        }
-                    })
-                    .is_ok();
-                done_tx.send(success).unwrap();
-            });
-            attempt_rx.recv().unwrap();
-            assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
-            assert_eq!(unsafe { opens() }, 1);
-            drop(release_on_drop);
-            assert!(probe_thread.join().unwrap().is_ok());
-            assert!(done_rx.recv_timeout(Duration::from_secs(2)).unwrap());
-            build_thread.join().unwrap();
-            assert_eq!(unsafe { opens() }, 2);
-            assert!(!cpal::alsa_capture_cleanup_uncertain());
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only probe-close preload"]
-        fn cpal_alsa_uncertain_probe_blocks_successor_capture() {
-            exercise_alsa_probe_close_failure(false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only probe-close preload"]
-        fn cpal_alsa_discovery_during_recording_leaves_capture_running() {
-            exercise_alsa_probe_close_failure(true);
-        }
-
-        #[cfg(target_os = "linux")]
-        fn exercise_alsa_capability_cache(failure: Option<(i32, bool)>) {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-            use std::sync::atomic::{AtomicUsize, Ordering};
-            use std::time::{Duration, Instant};
-
-            let fail_open: unsafe extern "C" fn(libc::c_int) = unsafe {
-                std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_fail_open"))
-            };
-            let fail_setup: unsafe extern "C" fn() = unsafe {
-                std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_fail_setup"))
-            };
-            let opens: unsafe extern "C" fn() -> libc::c_int = unsafe {
-                std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_capture_opens"))
-            };
-            let injected: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_cache_injected")) };
-            let host = cpal::default_host();
-            let target = host
-                .devices()
-                .unwrap()
-                .find(|device| device.name().unwrap() == "maus_capture_only")
-                .expect("capture-only device must initially be discovered by probing");
-            let supported = target.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let default = host.default_input_device().unwrap();
-            let supported = default.default_input_config().unwrap();
-            let default_format = supported.sample_format();
-            let default_config: cpal::StreamConfig = supported.into();
-
-            if let Some((error, true)) = failure {
-                unsafe { fail_open(error) };
-                assert!(target.default_input_config().is_err());
-                assert_eq!(unsafe { injected() }, 1);
-            }
-            let callbacks = Arc::new(AtomicUsize::new(0));
-            let callback_counter = Arc::clone(&callbacks);
-            let mut stream = default
-                .build_input_stream_raw(
-                    &default_config,
-                    default_format,
-                    move |_, _| {
-                        callback_counter.fetch_add(1, Ordering::Relaxed);
-                    },
-                    |_| {},
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            let wait_for_progress = |previous| {
-                let deadline = Instant::now() + Duration::from_secs(2);
-                while callbacks.load(Ordering::Relaxed) <= previous {
-                    assert!(
-                        Instant::now() < deadline,
-                        "live stream stopped producing callbacks"
-                    );
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-            };
-            wait_for_progress(0);
-            if !matches!(failure, Some((_, true))) {
-                unsafe {
-                    if let Some((error, false)) = failure {
-                        fail_open(error)
-                    } else {
-                        fail_setup()
-                    }
-                }
-                assert!(target
-                    .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
-                    .is_err());
-                assert_eq!(unsafe { injected() }, 1);
-            }
-            assert!(!cpal::alsa_capture_cleanup_uncertain());
-            let before = unsafe { opens() };
-            let found = host
-                .devices()
-                .unwrap()
-                .any(|device| device.name().unwrap() == "maus_capture_only");
-            assert_eq!(
-                unsafe { opens() },
-                before,
-                "discovery must not open capture while a stream is live"
-            );
-            assert_eq!(
-                found,
-                !matches!(failure, Some((libc::ENODEV | libc::ENOENT, _))),
-                "unexpected capture-only discovery after {failure:?}"
-            );
-            let previous = callbacks.load(Ordering::Relaxed);
-            wait_for_progress(previous);
-            #[allow(unreachable_patterns)]
-            match stream.as_inner_mut() {
-                cpal::platform::StreamInner::Alsa(inner) => inner.stop_input_for_release().unwrap(),
-                _ => panic!("expected ALSA stream"),
-            }
-            drop(stream);
-            assert!(!cpal::alsa_capture_cleanup_uncertain());
-            let before = unsafe { opens() };
-            assert!(host
-                .devices()
-                .unwrap()
-                .any(|device| device.name().unwrap() == "maus_capture_only"));
-            assert!(
-                unsafe { opens() } > before,
-                "discovery must probe again after release"
-            );
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
-        fn cpal_alsa_cache_survives_setup_failure() {
-            exercise_alsa_capability_cache(None);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
-        fn cpal_alsa_cache_survives_busy_build() {
-            exercise_alsa_capability_cache(Some((libc::EBUSY, false)));
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
-        fn cpal_alsa_cache_survives_busy_probe() {
-            exercise_alsa_capability_cache(Some((libc::EBUSY, true)));
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
-        fn cpal_alsa_cache_forgets_missing_build() {
-            exercise_alsa_capability_cache(Some((libc::ENODEV, false)));
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
-        fn cpal_alsa_cache_forgets_missing_probe() {
-            exercise_alsa_capability_cache(Some((libc::ENODEV, true)));
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
-        fn cpal_alsa_cache_survives_permission_build() {
-            exercise_alsa_capability_cache(Some((libc::EACCES, false)));
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
-        fn cpal_alsa_cache_survives_permission_probe() {
-            exercise_alsa_capability_cache(Some((libc::EACCES, true)));
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
-        fn cpal_alsa_cache_forgets_absent_build() {
-            exercise_alsa_capability_cache(Some((libc::ENOENT, false)));
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only capability cache preload"]
-        fn cpal_alsa_cache_forgets_absent_probe() {
-            exercise_alsa_capability_cache(Some((libc::ENOENT, true)));
-        }
-
-        #[cfg(target_os = "linux")]
-        fn exercise_alsa_uncertain_open(probe: bool) {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-            use cpal::traits::{DeviceTrait, HostTrait};
-
-            let arm: unsafe extern "C" fn() = unsafe {
-                std::mem::transmute(alsa_probe_symbol(c"maus_test_arm_alsa_open_failure"))
-            };
-            let opens: unsafe extern "C" fn() -> libc::c_int = unsafe {
-                std::mem::transmute(alsa_probe_symbol(
-                    c"maus_test_alsa_opens_after_open_failure",
-                ))
-            };
-            let closes: unsafe extern "C" fn() -> libc::c_int = unsafe {
-                std::mem::transmute(alsa_probe_symbol(c"maus_test_alsa_uncertain_open_closes"))
-            };
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            unsafe { arm() };
-            if probe {
-                assert!(device.default_input_config().is_err());
-            } else {
-                assert!(matches!(
-                    device.build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None),
-                    Err(cpal::BuildStreamError::CleanupUncertain { .. })
-                ));
-            }
-            assert!(cpal::alsa_capture_cleanup_uncertain());
-            let manager = RecordingManager::new();
-            assert!(manager.is_recording());
-            assert!(manager.start(None, None).is_err());
-            assert_eq!(unsafe { opens() }, 0);
-            assert_eq!(unsafe { closes() }, 0);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only open-failure preload"]
-        fn cpal_alsa_uncertain_probe_open_blocks_capture() {
-            exercise_alsa_uncertain_open(true);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only open-failure preload"]
-        fn cpal_alsa_uncertain_stream_open_blocks_capture() {
-            exercise_alsa_uncertain_open(false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only build-failure preload"]
-        fn cpal_alsa_build_failure_distinguishes_confirmed_close() {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-
-            let arm = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_arm_alsa_build_failure".as_ptr(),
-                )
-            };
-            let closes = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_alsa_build_close_calls".as_ptr(),
-                )
-            };
-            assert!(
-                !arm.is_null() && !closes.is_null(),
-                "build-failure preload required"
-            );
-            let arm: unsafe extern "C" fn(libc::c_int) = unsafe { std::mem::transmute(arm) };
-            let closes: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(closes) };
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            unsafe { arm(0) };
-            let result = device.build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None);
-            assert!(matches!(
-                result,
-                Err(cpal::BuildStreamError::BackendSpecific { .. })
-            ));
-            assert_eq!(unsafe { closes() }, 1);
-            let stream = device
-                .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
-                .unwrap();
-            stream.play().unwrap();
-            drop(stream);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only build-failure preload"]
-        fn cpal_alsa_poll_count_error_closes_capture_and_reports_cause() {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-
-            let arm = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_arm_alsa_poll_count_failure".as_ptr(),
-                )
-            };
-            let closes = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_alsa_build_close_calls".as_ptr(),
-                )
-            };
-            assert!(
-                !arm.is_null() && !closes.is_null(),
-                "build-failure preload required"
-            );
-            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
-            let closes: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(closes) };
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            unsafe { arm() };
-            let error = device
-                .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
-                .err()
-                .expect("poll descriptor failure must reject the stream");
-            assert!(error.to_string().contains("snd_pcm_poll_descriptors_count"));
-            assert_eq!(unsafe { closes() }, 1);
-            let stream = device
-                .build_input_stream_raw(&config, format, |_, _| {}, |_| {}, None)
-                .unwrap();
-            stream.play().unwrap();
-            drop(stream);
-        }
-
-        #[cfg(target_os = "linux")]
-        fn exercise_alsa_uncertain_build_close(cached: bool) {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-
-            let arm = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_arm_alsa_build_failure".as_ptr(),
-                )
-            };
-            let setups = unsafe {
-                libc::dlsym(libc::RTLD_DEFAULT, c"maus_test_alsa_failed_setups".as_ptr())
-            };
-            let closes = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_alsa_build_close_calls".as_ptr(),
-                )
-            };
-            assert!(
-                !arm.is_null() && !setups.is_null() && !closes.is_null(),
-                "build-failure preload required"
-            );
-            let arm: unsafe extern "C" fn(libc::c_int) = unsafe { std::mem::transmute(arm) };
-            let setups: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(setups) };
-            let closes: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(closes) };
-            {
-                let manager = RecordingManager::new();
-                if cached {
-                    manager.start(None, None).unwrap();
-                    manager.stop().unwrap();
-                }
-                unsafe { arm(1) };
-                let error = manager.start(None, None).unwrap_err();
-                assert!(matches!(
-                    error.downcast_ref::<crate::errors::RecordingError>(),
-                    Some(crate::errors::RecordingError::ReleaseUncertain(_))
-                ));
-                assert_eq!(unsafe { setups() }, 1);
-                assert_eq!(unsafe { closes() }, 1);
-                assert!(manager.is_recording());
-                assert!(manager.start(None, None).is_err());
-                assert!(manager.stop().is_err());
-                assert!(manager.is_recording());
-                assert_eq!(unsafe { closes() }, 1);
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only build-failure preload"]
-        fn cpal_alsa_uncertain_build_close_blocks_successor_capture() {
-            exercise_alsa_uncertain_build_close(false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires isolated ALSA null and the test-only build-failure preload"]
-        fn cpal_alsa_uncertain_cached_build_close_blocks_successor_capture() {
-            exercise_alsa_uncertain_build_close(true);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only close-failure preload"]
-        fn cpal_alsa_failed_close_never_reuses_the_uncertain_handle() {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-            use std::sync::mpsc;
-            use std::time::Duration;
-
-            let arm = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_arm_alsa_close_failure".as_ptr(),
-                )
-            };
-            let calls =
-                unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"maus_test_alsa_close_calls".as_ptr()) };
-            assert!(
-                !arm.is_null() && !calls.is_null(),
-                "close-failure preload required"
-            );
-            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
-            let calls: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(calls) };
-            let manager = RecordingManager::new();
-            let (captured_tx, captured_rx) = mpsc::sync_channel(1);
-            manager
-                .start(
-                    Some(Arc::new(move |_| {
-                        let _ = captured_tx.try_send(());
-                    })),
-                    None,
-                )
-                .unwrap();
-            captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            unsafe { arm() };
-            assert!(manager.stop_for_handoff().unwrap().capture_failed);
-            assert_eq!(unsafe { calls() }, 1);
-            assert!(manager.is_recording());
-            assert!(manager.start(None, None).is_err());
-            assert!(manager.stop().is_err());
-            assert_eq!(unsafe { calls() }, 1);
-            assert!(manager.is_recording());
-            // Model process teardown: dropping the retained recording must not
-            // close the already-consumed, potentially invalid native handle.
-            manager
-                .worker
-                .call(|recorder| drop(recorder.guard().unwrap().take()))
-                .unwrap();
-            assert_eq!(unsafe { calls() }, 1);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only stop-failure preload"]
-        fn cpal_alsa_failed_stop_retains_ownership_until_retry_succeeds() {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-            use std::sync::mpsc;
-            use std::time::Duration;
-
-            let arm = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_fail_next_alsa_stops".as_ptr(),
-                )
-            };
-            let failures = unsafe {
-                libc::dlsym(libc::RTLD_DEFAULT, c"maus_test_alsa_stop_failures".as_ptr())
-            };
-            assert!(
-                !arm.is_null() && !failures.is_null(),
-                "stop-failure preload required"
-            );
-            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
-            let failures: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(failures) };
-            let manager = RecordingManager::new();
-            let (captured_tx, captured_rx) = mpsc::sync_channel(1);
-            manager
-                .start(
-                    Some(Arc::new(move |_| {
-                        let _ = captured_tx.try_send(());
-                    })),
-                    None,
-                )
-                .unwrap();
-            captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            unsafe { arm() };
-            let result = manager.stop_for_handoff().unwrap();
-            assert!(result.capture_failed);
-            assert_eq!(unsafe { failures() }, 2);
-            assert!(manager.is_recording());
-            assert!(manager.start(None, None).is_err());
-            manager.stop().unwrap();
-            assert!(!manager.is_recording());
-            manager.start(None, None).unwrap();
-            manager.stop().unwrap();
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires an isolated ALSA null playback device"]
-        fn cpal_alsa_playback_uses_aligned_sample_buffers() {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-            use std::sync::mpsc;
-            use std::time::Duration;
-
-            let device = cpal::default_host().default_output_device().unwrap();
-            let supported = device.default_output_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let (data_tx, data_rx) = mpsc::sync_channel(1);
-            let stream = device
-                .build_output_stream_raw(
-                    &config,
-                    format,
-                    move |data, _| {
-                        let bytes = data.bytes_mut();
-                        let _ = data_tx.try_send((bytes.len(), bytes.as_ptr() as usize));
-                        bytes.fill(0);
-                    },
-                    |_| {},
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            let (len, address) = data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            drop(stream);
-            assert!(len > 0);
-            assert_eq!(address % std::mem::align_of::<u64>(), 0);
-        }
-
-        #[cfg(target_os = "linux")]
-        fn check_alsa_partial_playback(no_progress: bool, expect_error: bool) {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-            use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-            use std::sync::Arc;
-            use std::time::{Duration, Instant};
-
-            unsafe fn symbol(name: &std::ffi::CStr) -> *mut libc::c_void {
-                let result = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
-                assert!(!result.is_null(), "short-write preload required");
-                result
-            }
-            let calls: unsafe extern "C" fn() -> libc::c_ulong =
-                unsafe { std::mem::transmute(symbol(c"maus_test_write_calls")) };
-            let completed: unsafe extern "C" fn() -> libc::c_ulong =
-                unsafe { std::mem::transmute(symbol(c"maus_test_write_completed")) };
-            let mismatch: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(symbol(c"maus_test_write_mismatch")) };
-            let device = cpal::default_host().default_output_device().unwrap();
-            let config = cpal::StreamConfig {
-                channels: 1,
-                sample_rate: cpal::SampleRate(48_000),
-                buffer_size: cpal::BufferSize::Default,
-            };
-            let callbacks = Arc::new(AtomicUsize::new(0));
-            let duplicate = Arc::new(AtomicBool::new(false));
-            let errors = Arc::new(AtomicUsize::new(0));
-            let stream = device
-                .build_output_stream(
-                    &config,
-                    {
-                        let callbacks = Arc::clone(&callbacks);
-                        let duplicate = Arc::clone(&duplicate);
-                        move |data: &mut [f32], _| {
-                            if callbacks.fetch_add(1, Ordering::SeqCst) != 0
-                                && unsafe { completed() } == 0
-                            {
-                                duplicate.store(true, Ordering::SeqCst);
-                            }
-                            for (index, sample) in data.iter_mut().enumerate() {
-                                *sample = index as f32;
-                            }
-                        }
-                    },
-                    {
-                        let errors = Arc::clone(&errors);
-                        move |_| {
-                            errors.fetch_add(1, Ordering::SeqCst);
-                        }
-                    },
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            let deadline = Instant::now() + Duration::from_secs(3);
-            while Instant::now() < deadline {
-                let done = if no_progress {
-                    unsafe { calls() >= 10 }
+            // The armed thread's own check, under the same lock it would take.
+            let took = {
+                let mut guard = warm.lock().unwrap();
+                if generation.load(std::sync::atomic::Ordering::SeqCst) != armed {
+                    None
                 } else {
-                    unsafe { completed() != 0 || mismatch() != 0 }
-                };
-                if done {
-                    break;
+                    guard.take()
                 }
-                std::thread::sleep(Duration::from_millis(2));
-            }
-            assert!(unsafe { calls() >= if no_progress { 10 } else { 4 } });
-            if !no_progress {
-                assert_eq!(unsafe { completed() }, 1);
-            }
-            assert_eq!(unsafe { mismatch() }, 0);
-            assert!(!duplicate.load(Ordering::SeqCst));
-            assert_eq!(errors.load(Ordering::SeqCst), usize::from(expect_error));
-            let drop_started = Instant::now();
-            drop(stream);
-            assert!(drop_started.elapsed() < Duration::from_millis(500));
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only short-write preload"]
-        fn cpal_alsa_partial_playback_preserves_unwritten_frames() {
-            check_alsa_partial_playback(false, false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only partial-write XRUN preload"]
-        fn cpal_alsa_playback_recovers_xrun_after_partial_write() {
-            check_alsa_partial_playback(false, false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only permanent-EAGAIN preload"]
-        fn cpal_alsa_playback_drop_interrupts_retry() {
-            check_alsa_partial_playback(true, false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only fatal-write preload"]
-        fn cpal_alsa_playback_coalesces_persistent_errors() {
-            check_alsa_partial_playback(true, true);
-        }
-
-        #[cfg(target_os = "linux")]
-        fn check_alsa_stalled_read() {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-            use std::sync::atomic::AtomicUsize;
-            use std::time::{Duration, Instant};
-            let calls =
-                unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"maus_test_read_calls".as_ptr()) };
-            assert!(!calls.is_null(), "short-read preload required");
-            let calls: unsafe extern "C" fn() -> libc::c_ulong =
-                unsafe { std::mem::transmute(calls) };
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let callbacks = Arc::new(AtomicUsize::new(0));
-            let errors = Arc::new(AtomicUsize::new(0));
-            let mut stream = device
-                .build_input_stream_raw(
-                    &config,
-                    format,
-                    {
-                        let callbacks = Arc::clone(&callbacks);
-                        move |_, _| {
-                            callbacks.fetch_add(1, Ordering::SeqCst);
-                        }
-                    },
-                    {
-                        let errors = Arc::clone(&errors);
-                        move |_| {
-                            errors.fetch_add(1, Ordering::SeqCst);
-                        }
-                    },
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            let deadline = Instant::now() + Duration::from_secs(3);
-            while unsafe { calls() } < 10 {
-                assert!(Instant::now() < deadline, "read retry did not run");
-                std::thread::sleep(Duration::from_millis(2));
-            }
-            let before = unsafe { calls() };
-            std::thread::sleep(Duration::from_millis(50));
-            assert!(
-                unsafe { calls() } - before <= 15,
-                "read retry spun despite no progress"
-            );
-            assert_eq!(callbacks.load(Ordering::SeqCst), 0);
-            assert_eq!(errors.load(Ordering::SeqCst), 0);
-            let started = Instant::now();
-            #[allow(unreachable_patterns)]
-            match stream.as_inner_mut() {
-                cpal::platform::StreamInner::Alsa(inner) => inner.stop_input_for_release().unwrap(),
-                _ => panic!("expected ALSA stream"),
-            }
-            assert!(started.elapsed() < Duration::from_millis(500));
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only permanent-EAGAIN read preload"]
-        fn cpal_alsa_stalled_read_is_interruptible() {
-            check_alsa_stalled_read();
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only zero-read preload"]
-        fn cpal_alsa_zero_read_is_interruptible() {
-            check_alsa_stalled_read();
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only short-read preload"]
-        fn cpal_alsa_delivers_only_frames_returned_by_a_short_read() {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-            use std::sync::mpsc;
-            use std::time::Duration;
-
-            let requested = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_last_read_requested".as_ptr(),
-                )
             };
-            let returned = unsafe {
-                libc::dlsym(libc::RTLD_DEFAULT, c"maus_test_last_read_returned".as_ptr())
-            };
-            assert!(
-                !requested.is_null() && !returned.is_null(),
-                "short-read preload required"
-            );
-            let requested: unsafe extern "C" fn() -> libc::c_ulong =
-                unsafe { std::mem::transmute(requested) };
-            let returned: unsafe extern "C" fn() -> libc::c_long =
-                unsafe { std::mem::transmute(returned) };
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let channels = config.channels as usize;
-            let (data_tx, data_rx) = mpsc::sync_channel(1);
-            let (error_tx, error_rx) = mpsc::sync_channel(1);
-            let stream = device
-                .build_input_stream_raw(
-                    &config,
-                    format,
-                    move |data, _| {
-                        let _ = data_tx.try_send((
-                            data.len(),
-                            data.bytes().as_ptr() as usize % std::mem::align_of::<u64>(),
-                            unsafe { requested() },
-                            unsafe { returned() },
-                        ));
-                    },
-                    move |error| {
-                        let _ = error_tx.try_send(error.to_string());
-                    },
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            let (samples, alignment, requested, returned) =
-                data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            stream.pause().unwrap();
-            drop(stream);
-            assert!(returned > 0 && (returned as libc::c_ulong) < requested);
-            assert_eq!(samples, returned as usize * channels);
-            assert_eq!(alignment, 0);
-            assert!(
-                error_rx.try_recv().is_err(),
-                "EAGAIN must not report capture failure"
+
+            assert_eq!(took, None, "a stale linger must not take the new stream");
+            assert_eq!(
+                *warm.lock().unwrap(),
+                Some(1),
+                "the stream the user is holding is still there"
             );
         }
 
-        #[cfg(target_os = "linux")]
         #[test]
-        #[ignore = "requires ALSA null and the test-only POLLERR overrun preload"]
-        fn cpal_alsa_pollerr_overrun_is_reported_and_prepared() {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-            use std::sync::mpsc;
-            use std::time::{Duration, Instant};
+        fn a_current_linger_does_close_the_stream_it_was_armed_for() {
+            // The complement: a generation that is still current takes the stream,
+            // so the rule above is not simply "never close".
+            let warm = Arc::new(Mutex::new(Some(1u8)));
+            let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let armed = generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
 
-            let arm = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_inject_alsa_poll_xrun".as_ptr(),
-                )
+            let took = {
+                let mut guard = warm.lock().unwrap();
+                if generation.load(std::sync::atomic::Ordering::SeqCst) != armed {
+                    None
+                } else {
+                    guard.take()
+                }
             };
-            let preparations = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_alsa_xrun_preparations".as_ptr(),
-                )
-            };
-            assert!(
-                !arm.is_null() && !preparations.is_null(),
-                "POLLERR overrun preload required"
+
+            assert_eq!(took, Some(1));
+            assert_eq!(*warm.lock().unwrap(), None);
+        }
+
+        #[test]
+        fn promoting_does_not_touch_a_stream_that_is_not_open() {
+            let manager = LocalRecordingManager::new();
+            manager.promote_to_hold();
+
+            assert!(!manager.has_warm_stream());
+            assert!(manager.status_line().contains("ready=false"));
+        }
+
+        #[test]
+        fn a_cold_start_stays_open_only_when_a_linger_was_configured() {
+            let (_seed, ring) = cold_start_seed();
+
+            // `linger_then_close` is what actually closes it; this only decides
+            // whether the stop path hands the stream to the warm slot at all.
+            assert!(warm_ring(&ring, true).is_some());
+        }
+
+        #[test]
+        fn a_hold_hands_back_the_ring_the_stream_was_collecting_into() {
+            let ring = Arc::new(Mutex::new(Preroll::new(8)));
+
+            let handed = warm_ring(&ring, true).expect("hold should hand the ring back");
+
+            // The same ring, not a copy: the audio captured while warm is what
+            // the next press prepends.
+            ring.lock().unwrap().push(&[1.0]);
+            assert_eq!(handed.lock().unwrap().drain(), vec![1.0]);
+        }
+
+        // ── Sink behaviour ─────────────────────────────────────────────
+
+        #[test]
+        fn the_warm_sink_collects_without_recording() {
+            let ring = Arc::new(Mutex::new(Preroll::new(8)));
+            let sink = StreamSink::new(SinkMode::Warm {
+                preroll: Arc::clone(&ring),
+            });
+
+            sink.deliver(&[0.1, 0.2]);
+            sink.deliver(&[0.3]);
+
+            assert_eq!(ring.lock().unwrap().drain(), vec![0.1, 0.2, 0.3]);
+        }
+
+        #[test]
+        fn a_discarding_sink_keeps_nothing() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            sink.deliver(&[0.1, 0.2]);
+
+            // Reaching this mode with a recording attached would be a bug, so
+            // the assertion is that it is inert rather than that it stores.
+            assert!(sink.lock_recording_buffer().is_none());
+        }
+
+        #[test]
+        fn starting_a_recording_seeds_it_with_the_preroll() {
+            let ring = Arc::new(Mutex::new(Preroll::new(8)));
+            let sink = StreamSink::new(SinkMode::Warm {
+                preroll: Arc::clone(&ring),
+            });
+            ring.lock().unwrap().push(&[0.1, 0.2]);
+
+            let buffer = sink.start_recording(None, None, vec![0.1, 0.2], None);
+            sink.deliver(&[0.3]);
+
+            // Pre-press audio first, then live audio, in that order.
+            assert_eq!(*buffer.lock().unwrap(), vec![0.1, 0.2, 0.3]);
+        }
+
+        #[test]
+        fn the_seed_is_handed_to_the_chunk_emitter_before_live_audio() {
+            let chunks = Arc::new(Mutex::new(Vec::<(Vec<f32>, u64)>::new()));
+            let callback_chunks = Arc::clone(&chunks);
+            let emitter = ChunkEmitter::new(Arc::new(move |chunk, offset| {
+                callback_chunks.lock().unwrap().push((chunk, offset));
+            }));
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            sink.start_recording(None, Some(Arc::clone(&emitter)), vec![9.0], None);
+            emitter.flush();
+
+            let chunks = chunks.lock().unwrap();
+            assert_eq!(
+                chunks.first().map(|(chunk, _)| chunk.clone()),
+                Some(vec![9.0])
             );
-            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
-            let preparations: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(preparations) };
-            let manager = RecordingManager::new();
-            let (captured_tx, captured_rx) = mpsc::sync_channel(1);
-            manager
-                .start(
-                    Some(Arc::new(move |_| {
-                        let _ = captured_tx.try_send(());
-                    })),
-                    None,
-                )
-                .unwrap();
-            captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            unsafe { arm() };
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while unsafe { preparations() } == 0 {
-                assert!(
-                    Instant::now() < deadline,
-                    "POLLERR overrun was not prepared"
+            // The seed claims offset 0, so the webview places it at the start of
+            // the timeline instead of after the live audio.
+            assert_eq!(chunks.first().map(|(_, offset)| *offset), Some(0));
+        }
+
+        #[test]
+        fn a_recording_fills_the_ring_that_becomes_the_next_presses_preroll() {
+            // The defect this pins: the callback only filled the ring while
+            // nothing was recording, so the ring a held stream left behind was
+            // always empty. The first warm press after a cold start therefore
+            // began with no pre-roll, and the setting did nothing in the case it
+            // exists for -- someone dictating repeatedly without keep-ready on.
+            let ring = Arc::new(Mutex::new(Preroll::new(8)));
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            sink.start_recording(None, None, Vec::new(), Some(Arc::clone(&ring)));
+            sink.deliver(&[1.0, 2.0, 3.0]);
+            sink.deliver(&[4.0, 5.0]);
+
+            assert_eq!(
+                ring.lock().unwrap().drain(),
+                vec![1.0, 2.0, 3.0, 4.0, 5.0],
+                "the captured audio is what the next press starts with"
+            );
+        }
+
+        #[test]
+        fn a_recording_with_no_ring_collects_nothing_for_the_next_press() {
+            // A stream that closes at stop has no next press to serve, so the
+            // audio thread must not be asked to keep a tail for one.
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.start_recording(None, None, Vec::new(), None);
+
+            sink.deliver(&[1.0, 2.0]);
+
+            // Nothing to assert on the ring, so the assertion is that the path is
+            // safe: the samples still reach the recording's own buffer.
+            let buffer = match &*sink.lock() {
+                SinkMode::Recording { buffer, .. } => Arc::clone(buffer),
+                _ => panic!("still recording"),
+            };
+            assert_eq!(buffer.lock().unwrap().as_slice(), &[1.0, 2.0]);
+        }
+
+        #[test]
+        fn stopping_a_recording_returns_its_chunk_emitter_to_flush() {
+            let emitter = ChunkEmitter::new(Arc::new(|_, _| {}));
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.start_recording(None, Some(Arc::clone(&emitter)), Vec::new(), None);
+
+            let returned = sink.stop_recording(Some(Arc::new(Mutex::new(Preroll::new(4)))));
+
+            assert!(returned.emitter.is_some());
+            assert!(!returned.was_paused);
+        }
+
+        #[test]
+        fn stopping_without_a_ring_discards_captured_audio() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.start_recording(None, None, Vec::new(), None);
+
+            sink.stop_recording(None);
+
+            assert!(matches!(*sink.lock(), SinkMode::Discard));
+        }
+
+        #[test]
+        fn stopping_hands_the_stream_back_to_the_preroll() {
+            let ring = Arc::new(Mutex::new(Preroll::new(8)));
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.start_recording(None, None, Vec::new(), None);
+
+            sink.stop_recording(Some(Arc::clone(&ring)));
+            sink.deliver(&[0.5]);
+
+            assert_eq!(ring.lock().unwrap().drain(), vec![0.5]);
+        }
+
+        // ── Staleness ──────────────────────────────────────────────────
+
+        #[test]
+        fn a_sink_that_never_delivered_reports_no_silence_figure() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            // `None` is "nothing ever arrived", which is a stream that failed to
+            // start, not one that has been quiet for a while.
+            assert_eq!(sink.silence_for(), None);
+        }
+
+        #[test]
+        fn a_stream_that_went_quiet_reads_as_stale() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            deliver_after_a_pause(&sink);
+
+            let silence = sink.silence_for().expect("a delivered block is a figure");
+
+            // The window decides, not this: what matters is that a sink with a
+            // block in its past reports a growing silence rather than `None`,
+            // and that the figure is measured from the block rather than from
+            // the sink's creation.
+            assert!(silence > Duration::ZERO, "{silence:?}");
+            assert!(silence < Duration::from_secs(5), "{silence:?}");
+        }
+
+        #[test]
+        fn a_paused_stream_does_not_read_as_dead() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.deliver(&[0.1]);
+
+            // A paused device delivers nothing on purpose, and the staleness
+            // check must not treat that as a vanished device and reopen cold.
+            sink.set_paused(true);
+            assert_eq!(sink.silence_for(), None);
+        }
+
+        #[test]
+        fn a_stopped_stream_does_not_read_as_dead() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.deliver(&[0.1]);
+
+            // A device stop is the end of a recording, not a vanished device.
+            // Conflating the two made a stop-then-start pair reopen the device
+            // and lose the press that was already in flight.
+            sink.stop_recording(Some(Arc::new(Mutex::new(Preroll::new(8)))));
+            assert_eq!(sink.silence_for(), None);
+        }
+
+        #[test]
+        fn a_stop_clears_the_pause_so_the_hold_is_not_left_asleep() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            assert!(sink.is_paused());
+
+            // The stop path reads this to decide whether the stream it is about
+            // to leave warm has to be resumed. A stale `true` would make it
+            // resume a stream that is already running, and a stale `false` would
+            // leave the hold asleep and force a cold reopen on the next press.
+            sink.stop_recording(Some(Arc::new(Mutex::new(Preroll::new(8)))));
+            assert!(!sink.is_paused());
+        }
+
+        #[test]
+        fn a_fresh_recording_clears_the_stopped_and_paused_flags() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            sink.stop_recording(None);
+            sink.start_recording(None, None, Vec::new(), None);
+            deliver_after_a_pause(&sink);
+
+            // Nothing may leak from the previous recording into the staleness
+            // verdict for this one.
+            assert!(sink.silence_for().is_some());
+        }
+
+        #[test]
+        fn resuming_a_paused_stream_clears_the_stopped_flag() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.stop_recording(None);
+            sink.set_paused(false);
+            deliver_after_a_pause(&sink);
+
+            assert!(sink.silence_for().is_some());
+        }
+
+        // ── Capture faults ─────────────────────────────────────────────
+
+        #[test]
+        fn a_fatal_fault_is_recorded_and_named() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            sink.record_fault(
+                "The requested device is no longer available. For example, it has been unplugged.",
+            );
+
+            // The token is what the stop path writes into the metrics, so it has
+            // to be the classifier's own word rather than a copy of the message.
+            assert_eq!(sink.fault_token(), Some("fatal"));
+        }
+
+        #[test]
+        fn a_fault_reported_after_the_stop_is_still_reported_for_that_recording() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            let whole = Duration::from_millis(6_000);
+            let short = Duration::from_millis(1_400);
+
+            // The host reports the device gone on its own thread, after the stop
+            // has already read the token. Nothing has been recorded yet, so the
+            // drain is what finds it.
+            assert_eq!(sink.fault_token(), None);
+
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    std::thread::sleep(Duration::from_millis(10));
+                    sink.record_fault(
+                        "The requested device is no longer available. For example, it has been unplugged.",
+                    );
+                });
+                let drained = drain_late_fault(&sink, None, short, whole);
+                assert_eq!(
+                    drained.as_deref(),
+                    Some("fatal"),
+                    "a fault arriving inside the bounded wait must reach this recording"
                 );
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            let recording = manager.stop_for_handoff().unwrap();
-            assert!(recording.capture_failed);
-            assert!(!recording.audio.samples.is_empty());
-            assert!(!manager.is_recording());
+            });
         }
 
-        #[cfg(target_os = "linux")]
-        fn check_alsa_capture_disconnect(disconnected_state: bool) {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-            use std::sync::mpsc;
-            use std::time::Duration;
-            let arm = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_inject_alsa_disconnect".as_ptr(),
-                )
-            };
-            let observations = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_alsa_disconnect_observations".as_ptr(),
-                )
-            };
-            let clear = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_clear_alsa_disconnect".as_ptr(),
-                )
-            };
-            assert!(
-                !arm.is_null() && !observations.is_null() && !clear.is_null(),
-                "disconnect preload required"
+        #[test]
+        fn a_whole_recording_does_not_wait_for_a_fault_that_could_not_matter() {
+            // The wait is only paid where it can change what the user is told. A
+            // recording that captured everything is never reported as shortened,
+            // so blocking the stop for it would be pure latency on the common
+            // path -- and keep-ready means that path runs after every dictation.
+            let sink = StreamSink::new(SinkMode::Discard);
+            let whole = Duration::from_millis(6_000);
+
+            // Deliberately not a wall-clock assertion. The first version of this
+            // test measured `elapsed()` against the poll interval, which passes
+            // on an idle machine and flakes on a loaded runner: 5 ms is within
+            // scheduling noise, and a test that fails for that reason gets
+            // disabled rather than fixed. The question worth asking is whether
+            // the wait is *entered* at all, and that is answered by the sink
+            // staying untouched -- the drain below only ever sleeps after a read,
+            // so a read count of zero proves no read and no sleep happened.
+            let drained = drain_late_fault(&sink, None, whole, whole);
+
+            assert_eq!(drained, None);
+            assert_eq!(
+                sink.fault_reads(),
+                0,
+                "a whole recording read the fault token, which means it paid the bounded wait for a fault that could not be reported"
             );
-            let clear: unsafe extern "C" fn() = unsafe { std::mem::transmute(clear) };
-            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
-            let observations: unsafe extern "C" fn() -> libc::c_uint =
-                unsafe { std::mem::transmute(observations) };
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let (data_tx, data_rx) = mpsc::sync_channel(1);
-            let (error_tx, error_rx) = mpsc::channel();
-            let mut stream = device
-                .build_input_stream_raw(
-                    &config,
-                    format,
-                    move |_, _| {
-                        let _ = data_tx.try_send(());
-                    },
-                    move |error| {
-                        let _ = error_tx.send(error);
-                    },
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            unsafe { arm() };
-            let error = error_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            assert!(
-                matches!(error, cpal::StreamError::DeviceNotAvailable),
-                "expected a device disconnect, got {error:?}"
+        }
+
+        #[test]
+        fn a_transient_fault_is_logged_but_never_recorded() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            // This is the message PipeWire's ALSA plugin produces several times
+            // a second on a perfectly working device. Recording it would retire
+            // the stream on the next press and rebuild it forever.
+            sink.record_fault(
+                "A backend-specific error has occurred: `alsa::poll()` spuriously returned",
             );
+            sink.record_fault("xrun (buffer over or under run)");
+            sink.record_fault("Resource temporarily unavailable (os error 11)");
+
+            assert_eq!(sink.fault_token(), None);
+        }
+
+        #[test]
+        fn the_first_fatal_fault_wins() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            sink.record_fault("the device associated with the stream is no longer available");
+            // A second error from a backend that is already dead says nothing
+            // new, and overwriting the token would lose when it first died.
+            sink.record_fault("something else entirely");
+
+            assert_eq!(sink.fault_token(), Some("fatal"));
+        }
+
+        #[test]
+        fn a_faulted_stream_is_never_usable_however_recently_it_delivered() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            std::thread::sleep(Duration::from_millis(2));
+            sink.deliver(&[0.1]);
+            // Fresh and delivered: without the fault check this is exactly the
+            // stream the warm path would adopt.
+            assert_eq!(
+                sink.silence_for().map(|s| s < STALE_WARM_SILENCE),
+                Some(true)
+            );
+
+            sink.record_fault("Stream Invalidated");
+
+            assert_eq!(
+                sink.fault_token(),
+                Some("fatal"),
+                "the token must name the fault rather than the staleness verdict"
+            );
+        }
+
+        #[test]
+        fn a_faulted_stream_is_rejected_for_a_press_naming_the_fault() {
+            // The verdict `WarmStream::is_usable` reads, driven directly: the
+            // handle itself needs a real cpal stream, but the decision is a
+            // function of this sink.
+            let sink = StreamSink::new(SinkMode::Discard);
+            std::thread::sleep(Duration::from_millis(2));
+            sink.deliver(&[0.1]);
+
+            sink.record_fault("the device associated with the stream is no longer available");
+
+            assert_eq!(sink.fault_token(), Some("fatal"));
+            // A stale-but-recovering stream and a dead one are different
+            // verdicts, and the log has to be able to tell them apart: this one
+            // has just delivered a block, so only the fault can explain a
+            // rejection.
+            assert!(sink
+                .silence_for()
+                .map(|silence| silence < STALE_WARM_SILENCE)
+                .unwrap_or(false));
+        }
+
+        #[test]
+        fn an_error_storm_does_not_change_the_fault_it_records() {
+            let sink = StreamSink::new(SinkMode::Discard);
+
+            // cpal's ALSA worker polls a POLLERR device and calls the error
+            // callback on every iteration, so this is hundreds of calls a
+            // second on a device that is already gone.
+            for _ in 0..1_000 {
+                sink.record_fault("`alsa::poll()` returned POLLERR: no such device");
+            }
+
+            assert_eq!(sink.fault_token(), Some("fatal"));
+        }
+
+        #[test]
+        fn a_fault_token_survives_a_restart_of_the_recording() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.record_fault("the device associated with the stream is no longer available");
+
+            sink.start_recording(None, None, Vec::new(), None);
+
+            // The host declared this *device* gone, not just this recording, so
+            // a new recording on the same dead stream must not look healthy.
+            assert_eq!(sink.fault_token(), Some("fatal"));
+        }
+
+        // ── Pause accounting ───────────────────────────────────────────
+
+        #[test]
+        fn a_paused_recording_does_not_pause_time_count_against_capture() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            std::thread::sleep(Duration::from_millis(2));
+            sink.set_paused(true);
             std::thread::sleep(Duration::from_millis(30));
-            assert!(error_rx.try_recv().is_err());
-            assert_eq!(unsafe { observations() }, 1);
-            #[allow(unreachable_patterns)]
-            match stream.as_inner_mut() {
-                cpal::platform::StreamInner::Alsa(inner) => {
-                    let result = inner.stop_input_for_release();
-                    if disconnected_state {
-                        assert!(
-                            result.is_err(),
-                            "unconfirmed native stop must remain retryable"
-                        );
-                        unsafe { clear() };
-                        inner.stop_input_for_release().unwrap();
+            let paused = sink.paused_for();
+            sink.set_paused(false);
+
+            // The whole point of the figure: a pause the user asked for is not
+            // audio the stream failed to deliver.
+            assert!(
+                paused >= Duration::from_millis(25),
+                "paused_for was {paused:?}"
+            );
+            assert!(
+                sink.paused_for() >= Duration::from_millis(25),
+                "a closed interval is still counted"
+            );
+        }
+
+        #[test]
+        fn a_second_pause_does_not_restart_the_first_interval() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(20));
+            // A repeat call from a resumed-then-paused path must not lose the
+            // stretch already spent paused.
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(10));
+            sink.set_paused(false);
+
+            assert!(sink.paused_for() >= Duration::from_millis(28));
+        }
+
+        #[test]
+        fn resuming_twice_counts_the_pause_once() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(15));
+            sink.set_paused(false);
+            let after_first = sink.paused_for();
+            sink.set_paused(false);
+
+            // Folding the same interval in twice would inflate the figure and
+            // hide a real gap of the same length.
+            assert_eq!(sink.paused_for(), after_first);
+        }
+
+        #[test]
+        fn a_pause_open_at_stop_is_counted_when_the_stop_closes_it() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(15));
+
+            sink.stop_recording(None);
+
+            // Stopping clears the flag, so if the stop did not close the
+            // interval the figure would silently be zero afterwards.
+            assert!(sink.paused_for() >= Duration::from_millis(12));
+        }
+
+        #[test]
+        fn a_stopped_stream_says_whether_it_was_paused_before_it_forgot() {
+            let paused = StreamSink::new(SinkMode::Discard);
+            paused.set_paused(true);
+
+            let outcome = paused.stop_recording(None);
+
+            // The defect this pins: the stop clears the pause flag, so the caller
+            // that asked the sink afterwards was always told "not paused" and
+            // skipped the resume. The answer has to travel back with the stop.
+            assert!(outcome.was_paused);
+            assert!(!paused.is_paused());
+
+            let running = StreamSink::new(SinkMode::Discard);
+            assert!(!running.stop_recording(None).was_paused);
+        }
+
+        #[test]
+        fn a_stop_after_a_resume_does_not_claim_the_stream_was_paused() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            sink.set_paused(false);
+
+            // A stale `true` would make the stop path resume a stream that is
+            // already running.
+            assert!(!sink.stop_recording(None).was_paused);
+        }
+
+        #[test]
+        fn a_new_recording_starts_with_no_paused_time() {
+            let sink = StreamSink::new(SinkMode::Discard);
+            sink.set_paused(true);
+            std::thread::sleep(Duration::from_millis(15));
+            sink.stop_recording(None);
+            assert!(sink.paused_for() > Duration::ZERO);
+
+            sink.start_recording(None, None, Vec::new(), None);
+
+            // The sink outlives the recording. A carried-over total would be
+            // subtracted from a recording that never paused.
+            assert_eq!(sink.paused_for(), Duration::ZERO);
+        }
+
+        // ── Reported length vs captured length ─────────────────────────
+
+        #[test]
+        fn a_gap_under_the_tolerance_is_not_suspicious() {
+            // Buffer quantisation and the wall clock starting before the first
+            // block always leave a small gap; reporting it would make every
+            // healthy recording look like a failure.
+            assert!(!elapsed_gap_is_suspicious(
+                Duration::from_millis(3_900),
+                Duration::from_millis(4_100)
+            ));
+            assert!(!elapsed_gap_is_suspicious(
+                Duration::from_millis(1_000),
+                Duration::from_millis(1_000)
+            ));
+        }
+
+        #[test]
+        fn a_recording_that_lost_a_tenth_of_its_length_is_suspicious() {
+            assert!(elapsed_gap_is_suspicious(
+                Duration::from_millis(1_400),
+                Duration::from_secs(6)
+            ));
+            assert!(elapsed_gap_is_suspicious(
+                Duration::from_millis(0),
+                Duration::from_secs(3)
+            ));
+        }
+
+        #[test]
+        fn captured_audio_longer_than_the_wall_clock_is_not_a_gap() {
+            // A pre-roll seed can make the sample count longer than the time
+            // this recording was open. That is an artefact of the seed, not a
+            // capture fault, and a subtraction here would underflow.
+            assert!(!elapsed_gap_is_suspicious(
+                Duration::from_secs(3),
+                Duration::from_secs(2)
+            ));
+        }
+
+        // ── Host ordering and fallback ─────────────────────────────────
+
+        /// A stand-in host identity.
+        ///
+        /// `cpal::HostId` only has the variants this build enables, and a test
+        /// that needs two of them cannot name a second on a single-host build.
+        /// The loops are generic over the identity, so a plain number serves and
+        /// the same rule is exercised on every platform.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum FakeHost {
+            First,
+            Second,
+        }
+
+        // ── Cached device ──────────────────────────────────────────────
+
+        #[test]
+        fn a_cached_device_that_is_no_longer_listed_falls_through_to_scoring() {
+            let cached = CachedDeviceInfo {
+                confirmed: true,
+                host_id: cpal::default_host().id(),
+                preference: None,
+                device_label: "Samson Q2U".to_string(),
+            };
+
+            // Row 35: a USB microphone unplugged between two dictations. The
+            // press must not fail on the stale cache — it must score the devices
+            // that are there now.
+            assert_eq!(
+                cached_device_rejection(Some(&cached), None, false),
+                Some("the device is no longer listed")
+            );
+        }
+
+        #[test]
+        fn a_cached_device_that_is_still_listed_is_tried() {
+            let cached = CachedDeviceInfo {
+                confirmed: true,
+                host_id: cpal::default_host().id(),
+                preference: None,
+                device_label: "Samson Q2U".to_string(),
+            };
+
+            assert_eq!(cached_device_rejection(Some(&cached), None, true), None);
+        }
+
+        #[test]
+        fn a_cached_device_that_is_not_the_preference_is_not_tried() {
+            let cached = CachedDeviceInfo {
+                confirmed: true,
+                host_id: cpal::default_host().id(),
+                preference: None,
+                device_label: "Samson Q2U".to_string(),
+            };
+
+            // The user chose another microphone since; using the cached one
+            // would record the wrong device and look like the setting was
+            // ignored.
+            assert_eq!(
+                cached_device_rejection(Some(&cached), Some("macbook pro microphone"), true),
+                Some("the preferred device changed")
+            );
+        }
+
+        #[test]
+        fn an_empty_cache_has_nothing_to_try() {
+            assert_eq!(
+                cached_device_rejection(None, None, true),
+                Some("nothing recorded yet")
+            );
+        }
+
+        #[test]
+        fn the_default_host_is_tried_first() {
+            let available = [FakeHost::First, FakeHost::Second];
+
+            assert_eq!(
+                order_hosts(FakeHost::Second, &available),
+                vec![FakeHost::Second, FakeHost::First]
+            );
+        }
+
+        #[test]
+        fn a_default_host_missing_from_the_available_list_is_still_tried() {
+            // cpal's `available_hosts` is not guaranteed to contain the default,
+            // and a press must not skip the host the platform actually uses.
+            let ordered = order_hosts(FakeHost::First, &[]);
+
+            assert_eq!(ordered, vec![FakeHost::First]);
+        }
+
+        #[test]
+        fn a_host_listed_twice_is_only_tried_once() {
+            let ordered = order_hosts(FakeHost::First, &[FakeHost::First, FakeHost::Second]);
+
+            // Opening the same host twice is a second device open on every
+            // press for nothing.
+            assert_eq!(ordered, vec![FakeHost::First, FakeHost::Second]);
+        }
+
+        #[test]
+        fn the_second_host_is_tried_when_the_first_one_fails() {
+            let hosts = [FakeHost::First, FakeHost::Second];
+            let mut attempted = Vec::new();
+
+            let result = try_hosts(&hosts, Ok::<FakeHost, RecordingError>, |id| {
+                attempted.push(*id);
+                if *id == FakeHost::First {
+                    Err(RecordingError::InputDeviceUnavailable)
+                } else {
+                    Ok("from the second host")
+                }
+            });
+
+            // The defect this pins: a loop that returned the first error would
+            // report "no input device" on a machine whose second host works.
+            assert_eq!(
+                result.ok().map(|(value, _)| value),
+                Some("from the second host")
+            );
+            assert_eq!(attempted, vec![FakeHost::First, FakeHost::Second]);
+        }
+
+        #[test]
+        fn a_host_that_will_not_load_is_skipped_rather_than_fatal() {
+            let hosts = [FakeHost::First, FakeHost::Second];
+
+            let result = try_hosts(
+                &hosts,
+                |id| {
+                    if id == FakeHost::First {
+                        Err(RecordingError::StreamBuild("pulse not running".to_string()))
                     } else {
-                        result.unwrap();
+                        Ok(id)
                     }
-                }
-                _ => panic!("expected ALSA stream"),
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only POLLHUP preload"]
-        fn cpal_alsa_capture_disconnect_stops_worker() {
-            check_alsa_capture_disconnect(false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only disconnected-state preload"]
-        fn cpal_alsa_capture_disconnected_state_stops_worker() {
-            check_alsa_capture_disconnect(true);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
-        fn cpal_alsa_disconnect_during_descriptor_fill_stops_worker() {
-            check_alsa_capture_disconnect(false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
-        fn cpal_alsa_disconnect_during_revents_stops_worker() {
-            check_alsa_capture_disconnect(false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
-        fn cpal_alsa_disconnect_during_status_stops_worker() {
-            check_alsa_capture_disconnect(false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
-        fn cpal_alsa_disconnect_during_avail_stops_worker() {
-            check_alsa_capture_disconnect(false);
-        }
-
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
-        fn cpal_alsa_disconnect_during_read_stops_worker() {
-            check_alsa_capture_disconnect(false);
-        }
-
-        #[cfg(target_os = "linux")]
-        fn check_alsa_playback_disconnect() {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-            use std::sync::mpsc;
-            use std::time::Duration;
-
-            let arm = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_inject_alsa_disconnect".as_ptr(),
-                )
-            };
-            let observations = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_alsa_disconnect_observations".as_ptr(),
-                )
-            };
-            assert!(
-                !arm.is_null() && !observations.is_null(),
-                "disconnect preload required"
+                },
+                |_| Ok("found"),
             );
-            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
-            let observations: unsafe extern "C" fn() -> libc::c_uint =
-                unsafe { std::mem::transmute(observations) };
-            let device = cpal::default_host().default_output_device().unwrap();
-            let supported = device.default_output_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let (data_tx, data_rx) = mpsc::sync_channel(1);
-            let (error_tx, error_rx) = mpsc::channel();
-            let stream = device
-                .build_output_stream_raw(
-                    &config,
-                    format,
-                    move |_, _| {
-                        let _ = data_tx.try_send(());
-                    },
-                    move |error| {
-                        let _ = error_tx.send(error);
-                    },
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            data_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            unsafe { arm() };
-            let error = error_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            assert!(
-                matches!(error, cpal::StreamError::DeviceNotAvailable),
-                "expected a device disconnect, got {error:?}"
+
+            assert_eq!(result.ok().map(|(value, _)| value), Some("found"));
+        }
+
+        #[test]
+        fn a_host_that_will_not_load_does_not_become_the_reported_error() {
+            // The regression this pins: a host that refuses to load is a build's
+            // own backend problem, not something the user can act on, so its
+            // "stream build: ..." message must not replace the "no input
+            // device" that the UI classifies into the microphone guidance.
+            let hosts = [FakeHost::First];
+
+            let err = try_hosts(
+                &hosts,
+                |_| {
+                    Err::<FakeHost, _>(RecordingError::StreamBuild("pulse not running".to_string()))
+                },
+                |_| Ok("unreachable"),
+            )
+            .unwrap_err();
+
+            assert!(matches!(err, RecordingError::InputDeviceUnavailable));
+            assert_eq!(err.to_string(), "no input device");
+        }
+
+        #[test]
+        fn a_stream_failure_still_wins_over_a_host_that_will_not_load() {
+            // The other half: a host that did load and then could not open the
+            // device has the actionable message, and it must survive a
+            // neighbouring host failing to load afterwards.
+            let hosts = [FakeHost::First, FakeHost::Second];
+
+            let err = try_hosts(
+                &hosts,
+                |id| {
+                    if id == FakeHost::First {
+                        Ok(id)
+                    } else {
+                        Err(RecordingError::StreamBuild("pulse not running".to_string()))
+                    }
+                },
+                |_| Err::<&str, _>(RecordingError::StreamBuild("device busy".to_string())),
+            )
+            .unwrap_err();
+
+            assert_eq!(err.to_string(), "stream build: device busy");
+        }
+
+        #[test]
+        fn a_fault_that_lost_no_audio_is_not_reported() {
+            let whole = Duration::from_millis(6_000);
+            // A complete recording with a late error callback: nothing to say.
+            assert_eq!(
+                reported_capture_fault(
+                    Some("fatal".to_string()),
+                    whole,
+                    whole + Duration::from_millis(120)
+                ),
+                None
             );
-            std::thread::sleep(Duration::from_millis(30));
-            assert!(error_rx.try_recv().is_err());
-            assert_eq!(unsafe { observations() }, 1);
-            drop(stream);
+            // A real death partway through: reported, and with the token intact.
+            assert_eq!(
+                reported_capture_fault(
+                    Some("fatal".to_string()),
+                    Duration::from_millis(1_400),
+                    whole
+                ),
+                Some("fatal".to_string())
+            );
+            // A death near the end of a long dictation is still a death. The
+            // relative suspicion test would have hidden this one: five seconds
+            // out of sixty is under its tenth.
+            assert_eq!(
+                reported_capture_fault(
+                    Some("fatal".to_string()),
+                    Duration::from_secs(55),
+                    Duration::from_secs(60)
+                ),
+                Some("fatal".to_string())
+            );
+            // One buffer in flight is not a shortened recording.
+            assert_eq!(
+                reported_capture_fault(
+                    Some("fatal".to_string()),
+                    Duration::from_millis(5_900),
+                    whole
+                ),
+                None
+            );
+            // No fault at all stays no fault, however short the recording.
+            assert_eq!(
+                reported_capture_fault(None, Duration::from_millis(10), whole),
+                None
+            );
         }
 
-        #[cfg(target_os = "linux")]
         #[test]
-        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
-        fn cpal_alsa_playback_disconnect_during_write_stops_worker() {
-            check_alsa_playback_disconnect();
+        fn captured_duration_excludes_the_audio_recorded_before_the_press() {
+            // 48 kHz, two seconds of pre-roll (96000 samples) plus half a second
+            // of real recording (24000). The recording is half a second long.
+            let duration = captured_duration(96_000 + 24_000, 96_000, 48_000)
+                .expect("audio recorded after the press is a duration");
+            assert_eq!(duration, Duration::from_millis(500));
         }
 
-        #[cfg(target_os = "linux")]
         #[test]
-        #[ignore = "requires ALSA null and the test-only disconnect-stage preload"]
-        fn cpal_alsa_playback_disconnect_during_recovery_stops_worker() {
-            check_alsa_playback_disconnect();
+        fn a_seeded_recording_that_captured_nothing_has_no_sample_duration() {
+            // The case the seed used to hide: the buffer holds two seconds of
+            // pre-press audio and nothing else, so the press captured nothing.
+            assert_eq!(captured_duration(96_000, 96_000, 48_000), None);
         }
 
-        #[cfg(target_os = "linux")]
         #[test]
-        #[ignore = "requires ALSA null and the test-only POLLHUP preload"]
-        fn cpal_alsa_disconnect_preserves_incomplete_recording() {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-            use std::sync::mpsc;
-            use std::time::{Duration, Instant};
+        fn the_preroll_seed_cannot_mask_a_lost_capture() {
+            // The defect this pins, end to end. A warm press seeds two seconds of
+            // pre-roll, the stream then dies immediately, and the press was open
+            // for six seconds. Counting every sample would report a two-second
+            // recording for a six-second press, which the gap test would then flag
+            // as ordinary slowness; the fault the sink reported would be dropped.
+            let expected = Duration::from_secs(6);
+            let seed = 96_000;
+            let sample_rate = 48_000;
 
-            let arm = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_inject_alsa_disconnect".as_ptr(),
-                )
-            };
-            assert!(!arm.is_null(), "disconnect preload required");
-            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
-            let manager = RecordingManager::new();
-            let (captured_tx, captured_rx) = mpsc::sync_channel(1);
-            manager
-                .start(
-                    Some(Arc::new(move |_| {
-                        let _ = captured_tx.try_send(());
-                    })),
-                    None,
-                )
-                .unwrap();
-            captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            unsafe { arm() };
-            let deadline = Instant::now() + Duration::from_secs(2);
-            loop {
-                let failed = manager
-                    .worker
-                    .call(|recorder| {
-                        recorder
-                            .inner
-                            .lock()
-                            .unwrap()
-                            .as_ref()
-                            .unwrap()
-                            .capture_failed
-                            .load(Ordering::Acquire)
-                    })
-                    .unwrap();
-                if failed {
-                    break;
+            let naive = Duration::from_secs(2);
+            assert!(
+                reported_capture_fault(Some("the device was removed".into()), naive, expected)
+                    .is_some(),
+                "a two-second seed still leaves a four-second gap, so the fault survives"
+            );
+
+            // And the honest figure is that nothing was captured after the press.
+            assert_eq!(captured_duration(seed, seed, sample_rate), None);
+            let honest = captured_duration(seed, seed, sample_rate).unwrap_or(expected);
+            assert_eq!(
+                honest, expected,
+                "with nothing captured, the wall clock stands in"
+            );
+        }
+
+        #[test]
+        fn a_cold_recording_counts_every_sample() {
+            // A cold start seeds nothing, so the arithmetic must be the identity.
+            assert_eq!(
+                captured_duration(24_000, 0, 48_000),
+                Some(Duration::from_millis(500))
+            );
+        }
+
+        #[test]
+        fn captured_duration_is_none_without_a_sample_rate() {
+            assert_eq!(captured_duration(48_000, 0, 0), None);
+        }
+
+        #[test]
+        fn no_host_yielding_a_device_is_reported_as_no_device() {
+            let hosts = [FakeHost::First];
+
+            // Row 37: with every host empty the user must be told there is no
+            // input device — the one thing they can act on — rather than handed a
+            // stream error that names an internal step.
+            let err = try_hosts(&hosts, Ok::<FakeHost, RecordingError>, |_| {
+                Err::<&str, _>(RecordingError::InputDeviceUnavailable)
+            })
+            .unwrap_err();
+
+            assert!(matches!(err, RecordingError::InputDeviceUnavailable));
+            assert_eq!(err.to_string(), "no input device");
+        }
+
+        #[test]
+        fn a_later_hosts_error_is_the_one_reported() {
+            // A machine where the first host is empty and the second says the
+            // device is busy should report busy, not "no device": the two have
+            // different remedies and the classification downstream reads this
+            // message to choose between them.
+            //
+            // The name used to say the *last* host's error wins. That stopped
+            // being true when a host that fails to load began being skipped
+            // rather than reported: the rule is now the last host that actually
+            // tried to open a device, whatever came after it.
+            let hosts = [FakeHost::First, FakeHost::Second];
+
+            let err = try_hosts(&hosts, Ok::<FakeHost, RecordingError>, |id| {
+                if *id == FakeHost::First {
+                    Err::<&str, _>(RecordingError::InputDeviceUnavailable)
+                } else {
+                    Err(RecordingError::StreamBuild(
+                        "the device is in use by another application".to_string(),
+                    ))
                 }
-                assert!(Instant::now() < deadline, "disconnect was not reported");
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            let recording = manager.stop_for_handoff().unwrap();
-            assert!(recording.capture_failed);
-            assert!(!recording.audio.samples.is_empty());
-            assert!(!manager.is_recording());
+            })
+            .unwrap_err();
+
+            assert_eq!(
+                crate::platform::mic_usage::classify_open_failure(&err.to_string()),
+                crate::platform::mic_usage::OpenFailure::InUseByAnotherApplication,
+                "the busy classification was lost: {err}"
+            );
         }
 
-        #[cfg(target_os = "linux")]
-        #[test]
-        #[ignore = "requires ALSA null and the test-only read XRUN preload"]
-        fn cpal_alsa_read_overrun_restarts_and_reports_loss() {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-            use std::sync::atomic::AtomicUsize;
-            use std::time::{Duration, Instant};
+        // ── Hold policy ────────────────────────────────────────────────
 
-            let symbol =
-                |name: &std::ffi::CStr| unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
-            let arm = symbol(c"maus_test_inject_read_xrun");
-            let prepares = symbol(c"maus_test_read_xrun_preparations");
-            let starts = symbol(c"maus_test_read_xrun_starts");
-            assert!(!arm.is_null() && !prepares.is_null() && !starts.is_null());
-            let arm: unsafe extern "C" fn() = unsafe { std::mem::transmute(arm) };
-            let prepares: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(prepares) };
-            let starts: unsafe extern "C" fn() -> libc::c_int =
-                unsafe { std::mem::transmute(starts) };
-            let device = cpal::default_host().default_input_device().unwrap();
-            let supported = device.default_input_config().unwrap();
-            let format = supported.sample_format();
-            let config: cpal::StreamConfig = supported.into();
-            let captured = Arc::new(AtomicUsize::new(0));
-            let errors = Arc::new(AtomicUsize::new(0));
-            let observed = Arc::clone(&captured);
-            let observed_errors = Arc::clone(&errors);
-            let stream = device
-                .build_input_stream_raw(
-                    &config,
-                    format,
-                    move |_, _| {
-                        observed.fetch_add(1, Ordering::SeqCst);
-                    },
-                    move |_| {
-                        observed_errors.fetch_add(1, Ordering::SeqCst);
-                    },
-                    None,
-                )
-                .unwrap();
-            stream.play().unwrap();
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while captured.load(Ordering::SeqCst) == 0 {
-                assert!(Instant::now() < deadline);
-                std::thread::yield_now();
+        #[test]
+        fn a_press_and_a_warm_open_complete_on_the_shared_worker() {
+            use crate::platform::{Recorder, WarmCapture};
+            let manager = std::sync::Arc::new(super::RecordingManager::new());
+            let (tx, rx) = std::sync::mpsc::channel();
+            for press in [true, false] {
+                let manager = manager.clone();
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    if press {
+                        let _ = manager.start(None, None);
+                    } else {
+                        let _ = manager.warm_open(Duration::ZERO);
+                    }
+                    tx.send(()).unwrap();
+                });
             }
-            unsafe { arm() };
-            while unsafe { starts() } == 0 {
-                assert!(Instant::now() < deadline, "read overrun was not restarted");
-                std::thread::yield_now();
+            for _ in 0..2 {
+                rx.recv_timeout(Duration::from_secs(10)).unwrap();
             }
-            assert_eq!(unsafe { prepares() }, 1);
-            assert_eq!(unsafe { starts() }, 1);
-            assert!(errors.load(Ordering::SeqCst) > 0);
-            let after_restart = captured.load(Ordering::SeqCst);
-            while captured.load(Ordering::SeqCst) == after_restart {
-                assert!(Instant::now() < deadline, "capture did not resume");
-                std::thread::yield_now();
-            }
-            drop(stream);
         }
 
-        #[cfg(target_os = "linux")]
         #[test]
-        #[ignore = "requires ALSA null and the test-only overrun preload"]
-        fn cpal_alsa_overrun_marks_the_captured_prefix_incomplete() {
-            use super::RecordingManager;
-            use crate::platform::Recorder;
-            use std::sync::mpsc;
-            use std::thread;
-            use std::time::{Duration, Instant};
+        fn a_zero_linger_closes_the_device_at_stop() {
+            let manager = LocalRecordingManager::new();
 
-            let symbol = unsafe {
-                libc::dlsym(
-                    libc::RTLD_DEFAULT,
-                    c"maus_test_inject_alsa_overrun".as_ptr(),
-                )
-            };
-            assert!(!symbol.is_null(), "test-only ALSA preload is required");
-            let inject: unsafe extern "C" fn() = unsafe { std::mem::transmute(symbol) };
-            let manager = RecordingManager::new();
-            let (captured_tx, captured_rx) = mpsc::sync_channel(1);
+            manager.set_linger(Duration::ZERO);
+
+            assert!(!manager.hold_after_stop());
+            assert_eq!(manager.pending_linger(), None);
+        }
+
+        #[test]
+        fn a_finite_linger_is_a_real_window() {
+            let manager = LocalRecordingManager::new();
+
+            manager.set_linger(Duration::from_millis(5_000));
+
+            assert!(manager.hold_after_stop());
+            assert_eq!(manager.pending_linger(), Some(Duration::from_millis(5_000)));
+        }
+
+        #[test]
+        fn the_ready_forever_window_never_schedules_a_close() {
+            let manager = LocalRecordingManager::new();
+
+            // `u64::MAX` is the sentinel for "hold until closed", so it must not
+            // be read as a window of 584 million years.
+            manager.set_linger(Duration::from_millis(u64::MAX));
+
+            assert!(manager.hold_after_stop());
+            assert_eq!(manager.pending_linger(), None);
+            assert_eq!(manager.linger_ms.load(Ordering::SeqCst), WARM_FOREVER_MS);
+        }
+
+        /// The ring a cold start collects into is sized from the device rate.
+        ///
+        /// Regression: only the warm path sized it, so a cold start left the
+        /// shared ring at capacity zero. Nothing accumulated, so the stream that
+        /// was left warm at stop handed the next press an empty ring: the
+        /// pre-roll silently did nothing for anyone who had not turned on
+        /// keep-ready, and the setting looked like it worked because the slider
+        /// moved.
+        #[test]
+        fn a_cold_start_sizes_the_ring_it_collects_into() {
+            let manager = LocalRecordingManager::new();
+            manager.set_preroll(Duration::from_millis(500));
+
+            // What a cold start does before its stream starts capturing.
+            let sample_rate = 48_000;
+            {
+                let mut ring = manager.preroll.lock().unwrap();
+                ring.cap = preroll_capacity(manager.preroll_requested(), sample_rate);
+                ring.clear();
+            }
+
+            // Half a second at 48 kHz is 24 000 samples, and the ring accepts
+            // them: with capacity zero `push` drops everything and the count
+            // stays at zero.
+            manager.preroll.lock().unwrap().push(&vec![0.1; 24_000]);
+            assert_eq!(manager.preroll.lock().unwrap().len(), 24_000);
+
+            // Past the cap the oldest samples go, not the whole ring.
+            manager.preroll.lock().unwrap().push(&vec![0.2; 1_000]);
+            assert_eq!(manager.preroll.lock().unwrap().len(), 24_000);
+        }
+
+        #[test]
+        fn a_zero_pre_roll_keeps_nothing_even_after_a_cold_start() {
+            let manager = LocalRecordingManager::new();
+            manager.set_preroll(Duration::ZERO);
+
+            let mut ring = manager.preroll.lock().unwrap();
+            ring.cap = preroll_capacity(manager.preroll_requested(), 48_000);
+            ring.push(&[0.1; 100]);
+            assert_eq!(ring.len(), 0);
+        }
+
+        #[test]
+        fn a_pre_roll_length_alone_does_not_keep_the_device_open() {
+            let manager = LocalRecordingManager::new();
+            manager.set_linger(Duration::ZERO);
+
+            manager.set_preroll(Duration::from_millis(500));
+
+            // Pre-roll and hold are separate decisions: keeping audio from
+            // before a press is meaningless without a stream, but a stream is
+            // not required by it.
+            assert!(!manager.hold_after_stop());
+        }
+
+        #[test]
+        fn turning_the_hold_off_releases_the_device() {
+            let manager = LocalRecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+            assert!(manager.linger_ms.load(Ordering::SeqCst) == WARM_FOREVER_MS);
+
+            manager.set_linger(Duration::ZERO);
+
+            assert!(!manager.has_warm_stream());
+            assert_eq!(manager.linger_ms.load(Ordering::SeqCst), 0);
+        }
+
+        #[test]
+        fn releasing_the_hold_leaves_the_post_recording_window_alone() {
+            let manager = LocalRecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+            // The user's own choice, made in the settings.
+            manager.set_linger(Duration::from_millis(5_000));
+            manager.set_linger_policy(Duration::from_millis(u64::MAX));
+
+            manager.release_hold();
+
+            assert_eq!(manager.linger_millis(), 0);
+            assert!(!manager.has_warm_stream());
+
+            // Now the window the user chose, restated: releasing the device must
+            // not have been a way for the app to turn off a preference.
+            manager.set_linger(Duration::from_millis(5_000));
+            assert_eq!(manager.linger_millis(), 5_000);
+        }
+
+        #[test]
+        fn restored_finite_linger_does_not_authorize_a_superseded_refresh() {
+            let manager = LocalRecordingManager::default();
+            manager.set_linger(Duration::from_millis(5_000));
+            let generation = manager.close_matching_warm(None).unwrap();
+            assert!(manager.refresh_can_reopen(generation));
+
+            manager.release_hold();
+            manager.set_linger(Duration::from_millis(5_000));
+            assert!(!manager.refresh_can_reopen(generation));
+        }
+
+        #[test]
+        fn a_refresh_keeps_the_stop_deadline_and_promotion_cancels_it() {
+            let manager = LocalRecordingManager::default();
+            manager.set_linger(Duration::from_millis(5_000));
+            manager.linger_then_close(Duration::from_secs(5));
+            let deadline = manager.current_linger_deadline().unwrap();
+            let generation = manager.close_matching_warm(None).unwrap();
+            assert!(manager.current_linger_deadline().is_none());
+            assert!(manager.refresh_can_reopen(generation));
+            // Simulate publication of the replacement stream.
+            let opened = manager.advance_linger_generation();
+            manager.linger_deadline.set(Some((deadline, opened)));
+            assert_eq!(manager.current_linger_deadline(), Some(deadline));
+            manager.promote_to_hold();
+            assert!(manager.current_linger_deadline().is_none());
+        }
+
+        #[test]
+        fn a_first_pcm_after_start_returns_updates_the_latest_summary() {
+            let manager = LocalRecordingManager::default();
+            let sink = super::StreamSink::new(super::SinkMode::Discard);
+            manager.record_startup(super::AudioStartupTrace::begin(), Some(&sink));
+            assert!(manager.last_startup_summary().unwrap().first_pcm.is_none());
+            sink.deliver(&[0.25]);
+            let wait = sink.first_pcm_wait().unwrap();
+            drop(sink);
+            assert_eq!(
+                manager.last_startup_summary().unwrap().first_pcm,
+                Some(wait)
+            );
+        }
+
+        /// The built-in detector decides a device's priority, so a miss here
+        /// means the machine's own microphone loses to a virtual one and a
+        /// press records from a device that never captures anything.
+        #[test]
+        fn builtin_names_are_recognised_across_platforms() {
+            use super::is_builtin_microphone_name;
+            // macOS names its own hardware after the model.
+            for name in [
+                "MacBook Pro Microphone",
+                "MacBook Air Microphone",
+                "Mac mini Microphone",
+                "iMac Microphone",
+                "Mac Studio Microphone",
+            ] {
+                assert!(
+                    is_builtin_microphone_name(name),
+                    "{name} should read as built-in"
+                );
+            }
+            // Portable and Linux namings.
+            for name in [
+                "Built-in Audio Analog Stereo",
+                "builtin mic",
+                "Internal Microphone",
+                "Int Mic",
+                "DMic0",
+            ] {
+                assert!(
+                    is_builtin_microphone_name(name),
+                    "{name} should read as built-in"
+                );
+            }
+            // A device that merely happens to mention a microphone is not
+            // built-in, and must not take the priority.
+            for name in [
+                "Blue Yeti Microphone",
+                "USB Microphone",
+                "AirPods Pro",
+                "Scarlett Solo",
+            ] {
+                assert!(
+                    !is_builtin_microphone_name(name),
+                    "{name} should not read as built-in"
+                );
+            }
+            // Matching is case-insensitive: every platform capitalises
+            // differently.
+            assert!(is_builtin_microphone_name("BUILT-IN MICROPHONE"));
+        }
+
+        #[test]
+        fn setting_the_policy_alone_never_closes_a_held_stream() {
+            let manager = LocalRecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+
+            manager.set_linger_policy(Duration::ZERO);
+
+            // The policy moved; the stream did not. This is the property the
+            // front end relies on when it pushes the window on mount, and the
+            // one `set_linger(0)` violates.
+            assert_eq!(manager.linger_millis(), 0);
+            assert!(!manager.has_warm_stream());
+        }
+
+        #[test]
+        fn setting_the_linger_still_closes_a_stream_the_new_policy_rejects() {
+            let manager = LocalRecordingManager::new();
+            manager.set_linger(Duration::from_millis(5_000));
+
+            manager.set_linger(Duration::ZERO);
+
+            // Under a zero window nothing may be open between dictations, so this
+            // path is the one that must close.
+            assert_eq!(manager.linger_millis(), 0);
+            assert!(!manager.has_warm_stream());
+        }
+
+        #[test]
+        fn a_running_recording_is_never_handed_to_a_warm_open() {
+            let manager = LocalRecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+
+            // Stand in for a recording that is in flight: the guard is what
+            // `open_warm` reads to decide whether the device is already taken.
+            *manager.inner.lock().unwrap() = Some(super::ActiveRecording {
+                stream: None,
+                sink: None,
+                preroll_after_stop: None,
+                seed_samples: 0,
+                start: std::time::Instant::now(),
+                buffer: None,
+                sample_rate: 48_000,
+                device_label: "test device".to_string(),
+                preferred: None,
+                channels: 1,
+            });
+
+            // The front end asks for the hold as it stops the recording, so this
+            // is the ordinary overlap, not an exotic race. Opening over it would
+            // either fail on the device or steal it from the press in flight.
             manager
-                .start(
-                    Some(Arc::new(move |_| {
-                        let _ = captured_tx.try_send(());
-                    })),
-                    None,
-                )
-                .unwrap();
-            captured_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            unsafe { inject() };
-            let deadline = Instant::now() + Duration::from_secs(2);
-            loop {
-                let failed = manager
-                    .worker
-                    .call(|recorder| {
-                        recorder
-                            .inner
-                            .lock()
-                            .unwrap()
-                            .as_ref()
-                            .unwrap()
-                            .capture_failed
-                            .load(Ordering::Acquire)
-                    })
-                    .unwrap();
-                if failed {
-                    break;
-                }
-                assert!(Instant::now() < deadline, "overrun was not reported");
-                thread::sleep(Duration::from_millis(10));
-            }
-            let recording = manager.stop_for_handoff().unwrap();
-            assert!(recording.capture_failed);
-            assert!(!recording.audio.samples.is_empty());
-            assert!(!manager.is_recording());
+                .open_warm(Duration::from_millis(500))
+                .expect("declining is not an error");
+            assert!(!manager.has_warm_stream());
+        }
+
+        #[test]
+        fn re_applying_the_same_preference_costs_nothing() {
+            let manager = LocalRecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+            manager.set_preferred_input_device(Some("Shure MV7".to_string()));
+            manager.cache_successful_device(
+                cpal::default_host().id(),
+                "Shure MV7".to_string(),
+                Some("shure mv7"),
+            );
+            assert!(manager.last_successful_device.lock().unwrap().is_some());
+
+            // The command layer sets the preference on every press. Treating an
+            // unchanged value as a change would reopen the held stream per
+            // press, which is exactly the device open the hold exists to avoid,
+            // and it would also throw away the device cache.
+            manager.set_preferred_input_device(Some("  Shure MV7  ".to_string()));
+
+            assert!(manager.last_successful_device.lock().unwrap().is_some());
+        }
+
+        #[test]
+        fn the_warm_path_reads_the_device_the_press_will_ask_for() {
+            // A hold opens a device with no press behind it, so this is the only
+            // thing that tells it which one. Left unset, it opened the automatic
+            // device and the first press replaced that stream, paying exactly the
+            // cold open the hold exists to remove.
+            let manager = LocalRecordingManager::new();
+            manager.set_preferred_device(Some("  Shure MV7  ".to_string()));
+
+            // Through the same setter the press path uses, so the two cannot
+            // disagree about which device is preferred. Asserted where the press
+            // path reads it: `open_warm` trims and drops an empty value.
+            assert_eq!(
+                manager.preferred_input_name.lock().unwrap().as_deref(),
+                Some("Shure MV7")
+            );
+        }
+
+        #[test]
+        fn a_late_preparation_cannot_replace_a_successful_selection() {
+            let manager = LocalRecordingManager::default();
+            let host_id = cpal::default_host().id();
+            let in_flight = manager.selection_generation.load(Ordering::SeqCst);
+            manager.cache_successful_device(host_id, "New default".to_string(), None);
+            manager.cache_device(host_id, "Old default".to_string(), None, Some(in_flight));
+
+            let cache = manager.last_successful_device.lock().unwrap();
+            assert_eq!(cache.as_ref().unwrap().device_label, "New default");
+        }
+
+        #[test]
+        fn a_matching_preference_update_preserves_a_prepared_cache_entry() {
+            let manager = LocalRecordingManager::default();
+            manager.cache_successful_device(
+                cpal::default_host().id(),
+                "Shure MV7".to_string(),
+                Some("shure mv7"),
+            );
+            manager.set_preferred_input_device(Some("Shure MV7".to_string()));
+
+            let cache = manager.last_successful_device.lock().unwrap();
+            assert_eq!(
+                cached_device_rejection(cache.as_ref(), Some("shure mv7"), true),
+                None
+            );
+            assert_eq!(
+                cached_device_rejection(cache.as_ref(), None, true),
+                Some("the preferred device changed")
+            );
+        }
+
+        #[test]
+        fn a_changed_preference_clears_the_device_cache() {
+            let manager = LocalRecordingManager::new();
+            manager.set_preferred_input_device(Some("Shure MV7".to_string()));
+            manager.cache_successful_device(
+                cpal::default_host().id(),
+                "Shure MV7".to_string(),
+                Some("shure mv7"),
+            );
+
+            // A real change has to drop the cache, or the next press tries the
+            // device the user just moved off.
+            manager.set_preferred_input_device(Some("MacBook Pro Microphone".to_string()));
+
+            assert!(manager.last_successful_device.lock().unwrap().is_none());
+        }
+
+        #[test]
+        fn changing_the_preferred_device_keeps_a_held_microphone_held() {
+            let manager = LocalRecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+
+            // The hold is what the user asked for, so a device change has to
+            // move it rather than switch it off. Nothing opens in a unit test, so
+            // what is asserted is the policy the reopen is gated on.
+            assert_eq!(manager.linger_ms.load(Ordering::SeqCst), WARM_FOREVER_MS);
+
+            manager.set_linger(Duration::from_millis(5_000));
+            assert_ne!(manager.linger_ms.load(Ordering::SeqCst), WARM_FOREVER_MS);
+        }
+
+        #[test]
+        fn a_status_line_names_the_policy_the_pre_roll_and_the_last_start() {
+            let manager = LocalRecordingManager::new();
+
+            let line = manager.status_line();
+
+            assert!(line.contains("ready=false"), "{line}");
+            assert!(line.contains("policy=cold"), "{line}");
+            assert!(line.contains("preroll_ms=500"), "{line}");
+            assert!(line.contains("last_start=none"), "{line}");
+        }
+
+        #[test]
+        fn a_ready_forever_status_line_says_so() {
+            let manager = LocalRecordingManager::new();
+            manager.set_linger(Duration::from_millis(u64::MAX));
+
+            let line = manager.status_line();
+
+            assert!(line.contains("policy=ready-forever"), "{line}");
+        }
+
+        #[test]
+        fn a_finite_status_line_shows_the_window() {
+            let manager = LocalRecordingManager::new();
+            manager.set_linger(Duration::from_millis(5_000));
+
+            assert!(manager.status_line().contains("policy=linger-5000ms"));
+        }
+
+        #[test]
+        fn the_pre_roll_setting_has_a_reader_that_reports_it() {
+            let manager = LocalRecordingManager::new();
+
+            manager.set_preroll(Duration::from_millis(1_200));
+
+            // A stored setting nothing reads is a setting that silently does not
+            // work, so the status line is asserted as its reader.
+            assert!(manager.status_line().contains("preroll_ms=1200"));
+        }
+
+        #[test]
+        fn resizing_the_pre_roll_while_nothing_is_held_clears_the_ring() {
+            let manager = LocalRecordingManager::new();
+            manager.preroll.lock().unwrap().cap = 999;
+            manager.preroll.lock().unwrap().push(&[1.0]);
+
+            manager.set_preroll(Duration::from_millis(500));
+
+            // With no stream there is no rate to size against, so the ring is
+            // left empty rather than carrying a stale capacity into the next
+            // open, which would keep the wrong length of audio.
+            let ring = manager.preroll.lock().unwrap();
+            assert_eq!(ring.cap, 0);
+            assert_eq!(ring.len(), 0);
+        }
+
+        // ── Startup trace wiring ───────────────────────────────────────
+
+        #[test]
+        fn a_cold_start_marks_the_stages_a_reader_expects() {
+            let base = std::time::Instant::now();
+            let mut trace = AudioStartupTrace::begin_at(base);
+            trace.mark_at(AudioStartupStage::CommandEntered, Duration::from_micros(5));
+            trace.mark_at(
+                AudioStartupStage::DeviceResolved,
+                Duration::from_micros(120),
+            );
+
+            let summary = trace.summary();
+
+            // The three stages a cold start goes through are the three a reader
+            // compares between builds.
+            assert_eq!(
+                summary.stage_at(AudioStartupStage::CommandEntered),
+                Some(Duration::from_micros(5))
+            );
+            assert!(!summary.reused);
+        }
+
+        #[test]
+        fn a_start_with_no_trace_has_no_summary() {
+            let manager = LocalRecordingManager::new();
+
+            // Nothing has started, so `capture_startup_timing` must report
+            // nothing rather than a zeroed start that looks instantaneous.
+            assert!(manager.last_startup_summary().is_none());
         }
 
         #[test]

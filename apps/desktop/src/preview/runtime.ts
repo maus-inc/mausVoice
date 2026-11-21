@@ -909,9 +909,14 @@ class PreviewRuntime {
     const wanted = (expected as WireRecord[])
       .map(clone)
       .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    const fields = ({ id, actionName, keys }: WireRecord) => [
+      id,
+      actionName,
+      keys,
+    ];
     if (
-      JSON.stringify(wanted) !==
-      JSON.stringify(this.hotkeyGroup(prefix, includeDictate))
+      JSON.stringify(wanted.map(fields)) !==
+      JSON.stringify(this.hotkeyGroup(prefix, includeDictate).map(fields))
     ) {
       throw new Error(
         includeDictate ? "DICTATION_HOTKEYS_CHANGED" : "STYLE_HOTKEYS_CHANGED",

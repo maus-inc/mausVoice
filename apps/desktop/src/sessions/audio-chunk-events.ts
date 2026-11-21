@@ -2,6 +2,13 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 export type AudioChunkAdmission = { ownerId: string; generation: number };
 
+export const matchesAudioChunkAdmission = (
+  expected: AudioChunkAdmission,
+  received: AudioChunkAdmission,
+): boolean =>
+  expected.ownerId === received.ownerId &&
+  expected.generation === received.generation;
+
 type AudioChunkPayload = {
   samples: number[];
   ownerId?: string;

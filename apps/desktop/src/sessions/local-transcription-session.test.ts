@@ -6,6 +6,7 @@ import {
   isGpuPreferredTranscriptionDevice,
   normalizeLocalWhisperModel,
 } from "../utils/local-transcription.utils";
+import type { AudioChunkAdmission } from "./audio-chunk-events";
 import { LocalTranscriptionSession } from "./local-transcription-session";
 
 const mocks = vi.hoisted(() => ({
@@ -47,6 +48,8 @@ vi.mock("../utils/log.utils", () => ({
 
 const RATE = 1_000;
 const MODEL = "base";
+const ADMISSION = { ownerId: "local-dictation", generation: 2 };
+const makeSession = () => new LocalTranscriptionSession(() => ADMISSION);
 
 /** Speech-like noise at ~0.4 RMS, or near-silence, with a unique seed. */
 const segment = (seconds: number, speech: boolean, seed: number) => {
@@ -78,12 +81,21 @@ const recording = join(
   segment(10, true, 5),
 );
 
-const chunkListener = (): ((samples: number[], offset: number) => void) => {
+const chunkListener = () => {
   const handler = mocks.listen.mock.calls.at(-1)?.[1] as
-    | ((event: { payload: { samples: number[]; offset: number } }) => void)
+    | ((event: {
+        payload: {
+          samples: number[];
+          offset: number | null;
+        } & Partial<AudioChunkAdmission>;
+      }) => void)
     | undefined;
   if (!handler) throw new Error("no audio_chunk listener was registered");
-  return (samples, offset) => handler({ payload: { samples, offset } });
+  return (
+    samples: number[],
+    offset: number | null,
+    admission: AudioChunkAdmission | null = ADMISSION,
+  ) => handler({ payload: { samples, offset, ...admission } });
 };
 
 /** Streams `audio` in 100-sample frames, the way the recorder emits it. */
@@ -92,20 +104,6 @@ const streamRecording = (audio: Float32Array, from = 0) => {
   for (let offset = from; offset < audio.length; offset += 100) {
     emit(Array.from(audio.subarray(offset, offset + 100)), offset);
   }
-};
-
-/** Same listener, but able to emit the missing-offset shape. */
-const chunkListenerAllowingMissingOffset = (): ((
-  samples: number[],
-  offset: number | null,
-) => void) => {
-  const handler = mocks.listen.mock.calls.at(-1)?.[1] as
-    | ((event: {
-        payload: { samples: number[]; offset: number | null };
-      }) => void)
-    | undefined;
-  if (!handler) throw new Error("no audio_chunk listener was registered");
-  return (samples, offset) => handler({ payload: { samples, offset } });
 };
 
 const spanResult = (samples: Float32Array) => ({
@@ -158,7 +156,7 @@ beforeEach(() => {
 
 describe("LocalTranscriptionSession pretranscription wiring", () => {
   it("listens for audio chunks on start and unlistens on cleanup", async () => {
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(RATE);
     expect(mocks.listen).toHaveBeenCalledWith(
       "audio_chunk",
@@ -171,7 +169,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
   });
 
   it("prepares the model before it listens, so a download never waits for the stop", async () => {
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(RATE);
     const settings = INITIAL_APP_STATE.settings.aiTranscription;
 
@@ -185,7 +183,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
 
   it("downloads a missing model while the user is still speaking", async () => {
     modelStatus = { downloaded: false, valid: false };
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(RATE);
 
     expect(mocks.downloadModel).toHaveBeenCalledTimes(1);
@@ -198,7 +196,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
     // can speak into nothing. A first-run download is up to 45 minutes, which
     // made the hotkey look dead for the whole of it. Subscribing first is what
     // makes "the download happens while the user is still speaking" true.
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onBeforeRecordingStart();
 
     expect(mocks.order[0]).toBe("listen");
@@ -207,7 +205,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
 
   it("downloads a missing model after subscribing, not before", async () => {
     modelStatus = { downloaded: false, valid: false };
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onBeforeRecordingStart();
 
     expect(mocks.downloadModel).toHaveBeenCalledTimes(1);
@@ -218,11 +216,11 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
     // `offset === null` is how the stream reports that it is no longer
     // contiguous. Anchoring it at 0 instead would align the whole stream
     // against a guess. `dictation-recording-intake` drops the same chunk.
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onBeforeRecordingStart();
     mocks.loggerWarning.mockClear();
 
-    const emit = chunkListenerAllowingMissingOffset();
+    const emit = chunkListener();
     emit([0.1, 0.2, 0.3], null);
 
     expect(mocks.loggerWarning).toHaveBeenCalledWith(
@@ -241,7 +239,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
     mocks.getModelStatus.mockImplementation(async () => {
       throw new Error("sidecar offline");
     });
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(RATE);
     session.cleanup();
 
@@ -254,8 +252,33 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("ignores queued audio before admission and from another recording", async () => {
+    let admission: AudioChunkAdmission | null = null;
+    const session = new LocalTranscriptionSession(() => admission);
+    await session.onBeforeRecordingStart();
+    const emit = chunkListener();
+    emit([0.9], 0);
+    admission = ADMISSION;
+    emit([0.9], 0, { ...ADMISSION, generation: 1 });
+    emit([0.9], 0, { ...ADMISSION, ownerId: "other-window" });
+    emit([0.9], 0, null);
+    emit(Array.from(recording.subarray(0, 100)), 0);
+
+    await session.onRecordingStart(RATE);
+    streamRecording(recording, 100);
+    await session.finalize({ samples: recording, sampleRate: RATE });
+
+    // An old offset-zero chunk would poison continuity and force a full retry.
+    const lengths = requestedAudio();
+    expect(lengths.length).toBeGreaterThan(1);
+    expect(lengths).not.toContain(recording.length);
+    expect(lengths.reduce((sum, length) => sum + length, 0)).toBe(
+      recording.length,
+    );
+  });
+
   it("transcribes each span once and never the whole recording", async () => {
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(RATE);
     streamRecording(recording);
 
@@ -282,7 +305,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
 
   it("transcribes the whole recording when no span was cut", async () => {
     const short = join(segment(10, true, 1), segment(10, true, 2));
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(RATE);
     streamRecording(short);
 
@@ -295,7 +318,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
 
   it("keeps a recording's filter snapshot for every span and the whole recording", async () => {
     setFilter(false);
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(RATE);
     streamRecording(recording);
     // The user re-enables the filter while still speaking.
@@ -314,7 +337,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
       metadata: {},
       warnings: [],
     });
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(RATE);
     streamRecording(recording);
 
@@ -327,7 +350,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
   });
 
   it("spends no further request when a cancel lands mid-finalize", async () => {
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(RATE);
     streamRecording(recording);
 
@@ -360,7 +383,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
 
   it("keeps recording when the audio_chunk listener fails to attach", async () => {
     mocks.listen.mockRejectedValueOnce(new Error("no event permission"));
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await expect(session.onRecordingStart(RATE)).resolves.toBeUndefined();
 
     const result = await session.finalize({

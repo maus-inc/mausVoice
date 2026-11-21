@@ -16,6 +16,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useId, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { logMicrophoneReadiness } from "../../actions/native.actions";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { produceAppState, useAppStore } from "../../store";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
@@ -174,6 +175,10 @@ export const DiagnosticsDialog = () => {
   const handleDownload = async () => {
     setExporting(true);
     try {
+      // Written to the log before the bundle is collected, so the export carries
+      // whether the microphone was held and what the last capture start spent
+      // its time on. Best effort: a failure here must not block the export.
+      await logMicrophoneReadiness();
       const diagnosticsInfo = buildDiagnosticsText(data);
       const saved = await invoke<boolean>("export_diagnostics", {
         diagnosticsInfo,

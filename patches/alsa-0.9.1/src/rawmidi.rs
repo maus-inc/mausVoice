@@ -252,7 +252,7 @@ pub struct IO<'a>(&'a Rawmidi);
 impl<'a> io::Read for IO<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let r = unsafe { alsa::snd_rawmidi_read((self.0).0, buf.as_mut_ptr() as *mut c_void, buf.len() as size_t) };
-        if r < 0 { Err(io::Error::from_raw_os_error(r as i32)) }
+        if r < 0 { Err(io::Error::from_raw_os_error((-r) as i32)) }
         else { Ok(r as usize) }
     }
 }
@@ -260,7 +260,7 @@ impl<'a> io::Read for IO<'a> {
 impl<'a> io::Write for IO<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let r = unsafe { alsa::snd_rawmidi_write((self.0).0, buf.as_ptr() as *const c_void, buf.len() as size_t) };
-        if r < 0 { Err(io::Error::from_raw_os_error(r as i32)) }
+        if r < 0 { Err(io::Error::from_raw_os_error((-r) as i32)) }
         else { Ok(r as usize) }
     }
     fn flush(&mut self) -> io::Result<()> { Ok(()) }

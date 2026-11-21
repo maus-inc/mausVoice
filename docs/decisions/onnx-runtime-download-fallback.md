@@ -41,5 +41,12 @@ A single upstream release disappearing no longer stops every desktop build. The
 cost is that the build now knows a mirror host it did not before, so a future
 contributor auditing outbound hosts sees `registry.npmmirror.com` in the download
 path. The fallback host is named in one place, `download_base_urls`, and the
-contract test `scripts/ci/verify-ort-archives.test.mjs` pins it, the override name,
-the digest-before-store ordering and the terminal-4xx rule.
+contract test `scripts/ci/verify-ort-archives.test.mjs` pins the source order and
+mirror override. `cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --test ort_download`
+uses local HTTP responses to check retry limits, digest validation and fallback.
+
+Each attempt waits at most 30 seconds for response headers after sending the GET,
+even when the server sends partial headers. Body reads keep their separate
+300-second timeout. The final error names sources by their position in the
+configured list. It includes HTTP status codes and digest failures without printing
+mirror URLs or credentials.

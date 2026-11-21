@@ -17,10 +17,13 @@ pub use super::macos_devices::{
 
 /// Find the device id for a device name.
 pub fn get_device_id_from_name(name: &str) -> Option<AudioDeviceID> {
+    if name.is_empty() {
+        return None;
+    }
     if let Ok(all_ids) = get_audio_device_ids() {
         return all_ids
             .iter()
-            .find(|id| get_device_name(**id).unwrap_or_else(|_| "".to_string()) == name)
+            .find(|id| get_device_name(**id).is_ok_and(|device_name| device_name == name))
             .copied();
     }
     None
@@ -31,7 +34,7 @@ pub fn audio_unit_from_device_id(
     device_id: AudioDeviceID,
     input: bool,
 ) -> Result<AudioUnit, Error> {
-    let mut audio_unit = AudioUnit::new(IOType::HalOutput)?;
+    let mut audio_unit = AudioUnit::new_uninitialized(IOType::HalOutput)?;
 
     if input {
         // Enable input processing.
@@ -60,6 +63,7 @@ pub fn audio_unit_from_device_id(
         Some(&device_id),
     )?;
 
+    audio_unit.initialize()?;
     Ok(audio_unit)
 }
 
@@ -98,14 +102,14 @@ pub fn find_matching_physical_format(
     stream_format: StreamFormat,
 ) -> Option<AudioStreamBasicDescription> {
     if let Ok(all_formats) = get_supported_physical_stream_formats(device_id) {
-        let requested_samplerate = stream_format.sample_rate as usize;
+        let requested_samplerate = stream_format.sample_rate;
         let requested_bits = stream_format.sample_format.size_in_bits();
         let requested_float = stream_format.sample_format == SampleFormat::F32;
         let requested_channels = stream_format.channels;
         for fmt in all_formats {
-            let min_rate = fmt.mSampleRateRange.mMinimum as usize;
-            let max_rate = fmt.mSampleRateRange.mMaximum as usize;
-            let rate = fmt.mFormat.mSampleRate as usize;
+            let min_rate = fmt.mSampleRateRange.mMinimum;
+            let max_rate = fmt.mSampleRateRange.mMaximum;
+            let rate = fmt.mFormat.mSampleRate;
             let channels = fmt.mFormat.mChannelsPerFrame;
             if let Some(AudioFormat::LinearPCM(flags)) = AudioFormat::from_format_and_flag(
                 fmt.mFormat.mFormatID,
@@ -136,7 +140,9 @@ pub fn find_matching_physical_format(
                 if rate == requested_samplerate
                     || (requested_samplerate >= min_rate && requested_samplerate <= max_rate)
                 {
-                    return Some(fmt.mFormat);
+                    let mut format = fmt.mFormat;
+                    format.mSampleRate = requested_samplerate;
+                    return Some(format);
                 }
             }
         }

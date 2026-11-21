@@ -93,7 +93,7 @@ export class VoiceInstructionRecorder {
     this.busy = true;
     const gen = ++this.opGen;
     try {
-      if (this.state === "idle") {
+      if (this.state === "idle" && !this.browserLease) {
         this.detachBrowserRecognition();
         await this.start(gen);
       } else {
@@ -234,10 +234,9 @@ export class VoiceInstructionRecorder {
         this.setIdle();
       };
       recognition.onerror = () => {
-        settleEnd();
-        this.releaseBrowserLease(lease);
         if (!alive()) return;
-        this.setIdle();
+        recognition.onresult = null;
+        this.setIdle(true);
         this.deps.onError(this.deps.unsupportedMessage());
       };
       recognition.start();
@@ -292,12 +291,13 @@ export class VoiceInstructionRecorder {
   }
 
   private async stop(gen: number): Promise<void> {
-    if (this.state === "browser") {
+    if (this.browserLease) {
       const stopped = await this.stopBrowserCapture();
       if (gen === this.opGen && !this.disposed) {
         // stop() can deliver its final result asynchronously. Keep this
         // recognizer's callbacks until end, dispose, or the next recording.
-        this.setIdle(stopped);
+        if (!stopped && this.recognition) this.recognition.onresult = null;
+        this.setIdle(Boolean(this.recognition));
         if (!stopped) this.deps.onError(this.deps.unsupportedMessage());
       }
       return;
@@ -322,8 +322,8 @@ export class VoiceInstructionRecorder {
     const lease = this.browserLease;
     const recognition = this.recognition;
     const stopped = !recognition || this.stopBrowserRecognition(recognition);
-    const ended = recognition && stopped ? this.recognitionEnded : null;
-    if (ended) await ended.catch(() => undefined);
+    if (!stopped) return false;
+    if (recognition) await this.recognitionEnded;
     if (lease) {
       if (this.browserLease === lease) this.browserLease = null;
       await lease.release().catch(() => undefined);
@@ -417,16 +417,19 @@ export class VoiceInstructionRecorder {
    * recognition attached. The caller owns the invalidation counters.
    */
   private releaseCapture(): void {
-    if (this.browserLease) this.releaseBrowserLease(this.browserLease);
-    const recognition = this.detachBrowserRecognition();
-    if (recognition && this.state === "browser") {
-      this.stopBrowserRecognition(recognition);
+    const recognition = this.recognition;
+    if (recognition) {
+      // Preserve onend: requesting stop does not confirm release of capture.
+      recognition.onresult = null;
+      if (this.browserLease) this.stopBrowserRecognition(recognition);
+    } else if (this.browserLease) {
+      this.releaseBrowserLease(this.browserLease);
     }
     if (this.state === "provider" && !this.stopInFlight) {
       void discardNativeRecording();
     }
     if (this.state !== "idle") {
-      this.setIdle();
+      this.setIdle(Boolean(this.recognition));
     }
   }
 

@@ -742,7 +742,7 @@ struct StreamWorkerContext {
 impl StreamWorkerContext {
     fn new(poll_timeout: &Option<Duration>) -> Self {
         let poll_timeout: i32 = if let Some(d) = poll_timeout {
-            d.as_millis().try_into().unwrap()
+            i32::try_from(d.as_millis()).unwrap_or(i32::MAX)
         } else {
             -1
         };
@@ -1611,8 +1611,12 @@ impl StreamTrait for Stream {
                 })
                 .map_err(|description| BackendSpecificError { description }.into());
         }
-        self.inner.channel().pause(false).ok();
-        Ok(())
+        let pcm = self.inner.channel();
+        if pcm.state() == alsa::pcm::State::Paused {
+            pcm.pause(false).map_err(Into::into)
+        } else {
+            Ok(())
+        }
     }
     fn pause(&self) -> Result<(), PauseStreamError> {
         if self.thread.is_none() {

@@ -63,7 +63,10 @@ export const ComponentPage = () => {
   const badge = STATUS_BADGE[entry.status];
 
   return (
-    <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1200 }}>
+    <Box
+      data-preview-component={entry.id}
+      sx={{ p: { xs: 2, md: 4 }, maxWidth: 1200 }}
+    >
       <Button
         component={Link}
         to="/"
@@ -147,6 +150,10 @@ export const ComponentPage = () => {
                   fontFamily: "monospace",
                   fontSize: 11.5,
                   display: "block",
+                  // A repo path is one long word with no space to break at, so
+                  // without this it overflows the panel and is cut off by the
+                  // page edge. Wrap anywhere rather than clip.
+                  overflowWrap: "anywhere",
                 }}
               >
                 {s}

@@ -21,7 +21,10 @@ export const IndexPage = () => {
 
   return (
     <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1200 }}>
-      <Typography variant="headlineSmall">
+      {/* display:block is explicit. These are custom typography variants, and
+          MUI renders an unknown variant as a <span>, so without it the heading
+          and the paragraph below it sit on the same line and collide. */}
+      <Typography variant="headlineSmall" sx={{ display: "block" }}>
         mausVoice UI — preview &amp; specs
       </Typography>
       <Typography
@@ -51,11 +54,13 @@ export const IndexPage = () => {
         if (entries.length === 0) return null;
         return (
           <Box key={cat.id} sx={{ mt: 4 }}>
-            <Typography variant="titleMedium">{cat.label}</Typography>
+            <Typography variant="titleMedium" sx={{ display: "block" }}>
+              {cat.label}
+            </Typography>
             <Typography
               variant="bodySmall"
               color="text.secondary"
-              sx={{ mb: 1.5 }}
+              sx={{ display: "block", mb: 1.5 }}
             >
               {cat.blurb}
             </Typography>
@@ -90,13 +95,21 @@ export const IndexPage = () => {
                       />
                       <Chip
                         size="small"
-                        label={`${e.spec.length} spec fields`}
+                        label={`${e.spec.length} spec ${e.spec.length === 1 ? "field" : "fields"}`}
                         variant="outlined"
                       />
                       <Typography
                         variant="bodySmall"
                         color="text.secondary"
-                        sx={{ mt: 1, fontFamily: "monospace", fontSize: 11 }}
+                        sx={{
+                          mt: 1,
+                          fontFamily: "monospace",
+                          fontSize: 11,
+                          display: "block",
+                          // A path has no break opportunity, so it overflows the
+                          // card and is cut off by the next column.
+                          overflowWrap: "anywhere",
+                        }}
                       >
                         {e.sources[0]}
                       </Typography>

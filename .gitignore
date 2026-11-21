@@ -142,6 +142,13 @@ reports/pr*/
 # Never committed: hundreds of megabytes of binaries, and CI provisions its own.
 .tooling/
 
+# Screenshots from `scripts/verify/*`. The scripts write them next to the JSON
+# measurements they also produce, and only the JSON is committed: a binary in a
+# diff is a review cost a reviewer cannot read, and it goes stale the moment a
+# colour token changes. The README under `reports/ui-verify` says so, and until
+# this rule existed nothing enforced it.
+reports/ui-verify/*.png
+
 # The block above was repeated 3 more times, byte for byte. `.gitignore`
 # semantics make the later entries no-ops, so the only effect was that a
 # future edit to the comment had to be made 4 times and 3 copies would be

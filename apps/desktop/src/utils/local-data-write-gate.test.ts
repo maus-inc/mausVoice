@@ -171,6 +171,32 @@ describe("local data write gate", () => {
     }
   });
 
+  it("does not finish beginning a clear while a subsystem is still closing", async () => {
+    let finishClose: () => void = () => undefined;
+    const unsubscribe = subscribeToLocalDataClearRequested(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClose = resolve;
+        }),
+    );
+    const started = vi.fn();
+    const clearing = beginLocalDataClear().then((release) => {
+      started();
+      return release;
+    });
+    try {
+      await Promise.resolve();
+      expect(started).not.toHaveBeenCalled();
+      expect(isLocalDataClearRequested()).toBe(true);
+    } finally {
+      finishClose();
+      unsubscribe();
+      storageEntries.delete(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+      (await clearing)();
+    }
+    expect(started).toHaveBeenCalledOnce();
+  });
+
   it("invalidates remote work across every clear attempt, including retries", async () => {
     const initialGeneration = getLocalDataClearGeneration();
     const releaseFirstClear = await beginLocalDataClear();

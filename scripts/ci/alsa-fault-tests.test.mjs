@@ -16,7 +16,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const scriptPath = join(repoRoot, "scripts/ci/run-alsa-fault-tests.sh");
 const cpalTests = join(
   repoRoot,
-  "apps/desktop/src-tauri/src/platform/audio.rs",
+  "apps/desktop/src-tauri/src/platform/audio_alsa_fault_tests.rs",
 );
 const fixtureDir = join(repoRoot, "apps/desktop/src-tauri/tests/fixtures");
 
@@ -25,7 +25,7 @@ const fixtureDir = join(repoRoot, "apps/desktop/src-tauri/tests/fixtures");
  * `LD_PRELOAD` shim, and `cargo test --lib` supplies neither. That is a fair
  * reason to skip them by default and a bad reason for them to be unreachable:
  * `scripts/ci/run-alsa-fault-tests.sh` is the only thing that runs them, so a
- * test added to `audio.rs` without a row there is dead weight that reads as
+ * test added to `audio_alsa_fault_tests.rs` without a row there is dead weight that reads as
  * coverage, and a row naming a test that no longer exists fails only when
  * somebody runs the script.
  *
@@ -126,21 +126,21 @@ describe("ALSA fault-injection runner", () => {
     );
   });
 
-  it("covers every ALSA test that audio.rs ignores", () => {
+  it("covers every ALSA test that the Rust module ignores", () => {
     assert.ok(
       rustIgnoredTests.length > 0,
-      "audio.rs must still contain the ALSA fault tests",
+      "the Rust module must still contain the ALSA fault tests",
     );
     const covered = new Set(rows.map(({ test }) => test));
     const missing = rustIgnoredTests.filter((name) => !covered.has(name));
     assert.deepEqual(
       missing,
       [],
-      "these tests are #[ignore]d in audio.rs and have no row in the runner",
+      "these tests are #[ignore]d in the Rust module and have no row in the runner",
     );
   });
 
-  it("does not run a test that audio.rs does not ignore", () => {
+  it("does not run a test that the Rust module does not ignore", () => {
     const ignored = new Set(rustIgnoredTests);
     const unknown = rows
       .map(({ test }) => test)
@@ -148,7 +148,7 @@ describe("ALSA fault-injection runner", () => {
     assert.deepEqual(
       unknown,
       [],
-      "these rows name tests that are not #[ignore]d ALSA tests in audio.rs",
+      "these rows name tests that are not #[ignore]d ALSA tests in the Rust module",
     );
   });
 

@@ -138,6 +138,21 @@ pub struct UserPreferences {
     /// Update channel this client is subscribed to: "stable" or "beta".
     #[serde(default = "default_update_channel")]
     pub update_channel: String,
+    /// Hold the capture device open between dictations.
+    ///
+    /// These three were added to the TypeScript `UserPreferences` and the UI,
+    /// but not to this struct, so `user_preferences_set` silently dropped them:
+    /// the preference looked saved until the next launch read back the default.
+    /// `serde` ignores unknown fields, so the mismatch was not an error anywhere
+    /// -- the values simply never reached the database.
+    #[serde(default)]
+    pub keep_microphone_ready: bool,
+    /// Seconds of audio from before the press that the recorder keeps.
+    #[serde(default = "default_microphone_preroll_seconds")]
+    pub microphone_preroll_seconds: f64,
+    /// How long the device stays open after a dictation stops, in ms.
+    #[serde(default)]
+    pub microphone_linger_ms: i64,
 }
 
 fn default_hallucination_filter_enabled() -> bool {
@@ -190,6 +205,13 @@ fn default_preserve_audio_on_failure() -> bool {
 
 fn default_pill_placement() -> String {
     "bottom".to_string()
+}
+
+/// Matches the recorder's own default and the TypeScript field's fallback, so a
+/// row written before this preference existed behaves like one saved with the
+/// slider untouched.
+fn default_microphone_preroll_seconds() -> f64 {
+    0.5
 }
 
 #[cfg(test)]

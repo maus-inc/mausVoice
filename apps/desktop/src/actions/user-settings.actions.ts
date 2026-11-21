@@ -4,9 +4,77 @@ import { getIntl } from "../i18n";
 import { getAppState } from "../store";
 import { normalizeDictationLimitMinutes } from "../utils/dictation-limit.utils";
 import { normalizeHandsFreeDelayMs } from "../utils/hands-free-delay.utils";
+import {
+  normalizeMicrophoneLingerMs,
+  normalizeMicrophonePrerollSeconds,
+} from "../utils/microphone-readiness.utils";
 import { refreshUpdatesForChannelChange } from "./updater.actions";
 
 import { updateUserPreferences } from "./user-actions-core";
+
+/**
+ * Turns the held microphone on or off.
+ *
+ * Only the preference is stored here. Holding the device is the readiness
+ * side-effects component's job, because it also has to account for a recording
+ * in progress, a revoked permission and a local-data clear, and a second place
+ * that opened the device would be a second place that could leave it open.
+ */
+export const setKeepMicrophoneReady = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.keepMicrophoneReady = enabled;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save the microphone readiness preference. Please try again.",
+    }),
+  );
+};
+
+/**
+ * Sets how much audio from before the press is kept.
+ *
+ * Clamped on the way in so the stored value is always one the recorder accepts;
+ * a slider cannot produce an invalid value, but a stale profile can.
+ */
+export const setMicrophonePrerollSeconds = async (
+  seconds: number,
+): Promise<void> => {
+  const clamped = normalizeMicrophonePrerollSeconds(seconds);
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.microphonePrerollSeconds = clamped;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save the pre-roll preference. Please try again.",
+    }),
+  );
+};
+
+/**
+ * Sets how long the device stays open after a dictation stops.
+ *
+ * Only the policy is stored here. The window is applied by the stop path in the
+ * backend, which reads it when the recording ends, so nothing opens now and no
+ * microphone indicator appears until the next recording stops.
+ */
+export const setMicrophoneLingerMs = async (
+  milliseconds: number,
+): Promise<void> => {
+  const clamped = normalizeMicrophoneLingerMs(milliseconds);
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.microphoneLingerMs = clamped;
+    },
+    getIntl().formatMessage({
+      defaultMessage: "Failed to save the linger preference. Please try again.",
+    }),
+  );
+};
 
 export const setUpdateChannel = async (
   channel: UpdateChannel,

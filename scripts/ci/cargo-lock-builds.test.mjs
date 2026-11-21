@@ -12,7 +12,7 @@ describe("release Cargo lockfiles", () => {
   ]) {
     it(`passes the locked flag to every Tauri build in ${path}`, () => {
       const commands = [
-        ...read(path).matchAll(/^\s*(?:run: )?(pnpm run tauri build[^\n]*)$/gm),
+        ...read(path).matchAll(/\b(pnpm run tauri build[^\n]*)$/gm),
       ].map((match) => match[1]);
       assert.equal(commands.length, count);
       for (const command of commands) {

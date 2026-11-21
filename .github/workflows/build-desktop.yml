@@ -15,6 +15,7 @@ on:
       - "rust-toolchain.toml"
       - ".github/scripts/install-desktop-linux-deps.sh"
       - ".github/workflows/build-desktop.yml"
+      - "scripts/ci/run-with-diagnostics.sh"
       - "branding/mausvoice-sidebar-installerimg.png"
       - "scripts/generate-windows-installer-sidebar.mjs"
 permissions: {}
@@ -162,6 +163,7 @@ jobs:
         run: pnpm exec turbo run build --filter=desktop... --verbosity=2 --continue ${{ matrix.os == 'windows-latest' && '--concurrency=1' || '' }}
 
       - name: Build Tauri app
+        shell: bash
         env:
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
           MAUSVOICE_DESKTOP_PLATFORM: ${{ matrix.node_platform }}
@@ -176,7 +178,8 @@ jobs:
         # `--features debug-assist` opts CI artifacts into the compile-time
         # DevTools surface so QA can inspect them. Stable releases must NOT use
         # this feature (see release.yml), which removes DevTools at compile time.
-        run: pnpm run tauri build --ci --features debug-assist ${{ matrix.args }} -- --locked
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" desktop-build pnpm run tauri build --ci --features debug-assist ${{ matrix.args }} -- --locked
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

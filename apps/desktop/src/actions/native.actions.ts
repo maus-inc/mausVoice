@@ -4,6 +4,9 @@ import { getLogger } from "../utils/log.utils";
 import { showErrorSnackbar } from "./app.actions";
 import { getNativeRepo } from "../repos";
 
+export const prepareMicrophone = (preferred: string | null): Promise<string> =>
+  getNativeRepo().prepareMicrophone(preferred);
+
 /**
  * Ask Windows to relaunch the process elevated (UAC). The decision to call
  * this stays on the frontend; Rust only performs the ShellExecuteW bootstrap.
@@ -59,5 +62,40 @@ export async function quitApp(): Promise<void> {
           "Could not close mausVoice. Try again or force quit it.",
       }),
     );
+  }
+}
+
+/**
+ * Logs the capture path's current state and its last start.
+ *
+ * Called when a diagnostics export runs, so a report carries whether the
+ * microphone was held, under which policy, and whether the last start reused a
+ * stream or opened a device. Reading it back rather than inferring it from
+ * preferences is the whole point: the preference can say "ready" while the
+ * device failed to open, and that difference is the bug worth reporting.
+ */
+// skipcq: JS-0067 -- this is an ES-module export, which is module scope, not the
+// global scope the rule is written for. The analyser only knows that because
+// `.deepsource.toml` sets `module_system = "es-modules"`, and DeepSource reads
+// that config from the default branch, where it does not exist yet -- which is
+// also why the nine new `scripts/**/*.mjs` files come back as parse errors. Both
+// are the same missing config, not nine syntax errors and one global.
+export async function logMicrophoneReadiness(): Promise<void> {
+  try {
+    const repo = getNativeRepo();
+    const report = await repo.microphoneReadinessReport();
+    getLogger().info(`Microphone readiness: ${report}`);
+    const stages = await repo.captureStartupTiming();
+    // `none` rather than silence: a build where no start was ever traced is a
+    // different bug from one where the trace is empty, and the export is the
+    // only place the difference can still be seen after the fact. This also
+    // covers the pre-warm open, which records a trace without a recording.
+    const rendered =
+      stages.length > 0
+        ? stages.map((stage) => `${stage.stage}=${stage.micros}us`).join(" ")
+        : "none";
+    getLogger().info(`Microphone last start: ${rendered}`);
+  } catch (error) {
+    getLogger().warning(`Could not read microphone readiness: ${error}`);
   }
 }
