@@ -38,7 +38,11 @@ const DoubleTap = ({ modifier }: { modifier: Modifier }) => (
     <Keycap modifier={modifier} />
     <Box
       component="span"
-      sx={{ color: "text.secondary", fontSize: "0.875rem", lineHeight: 1 }}
+      sx={(theme) => ({
+        color: "text.secondary",
+        fontSize: theme.typography.pxToRem(14),
+        lineHeight: 1,
+      })}
     >
       +
     </Box>
