@@ -1690,6 +1690,42 @@ describe("PR28 workflow and public-asset contracts", () => {
     assert.match(source.index, /:focus-visible/);
   });
 
+  it("triggers on every path the contract guards read", () => {
+    // The `Test Docs` workflow is what runs this file, so its `paths:` filter
+    // must cover every source a guard below reads. When a refactor moved the
+    // ring driver into `rust_pill_shared`, eight guards went red on the branch
+    // but the workflow never ran, because no path it watched had changed. The
+    // drift then surfaced much later, on an unrelated docs edit. Deriving the
+    // requirement from `PATHS` means a new source in this map that the filter
+    // does not cover fails here, in the run that would otherwise stay silent.
+    const trigger = readRaw(".github/workflows/test-docs.yml")
+      .split("\n  workflow_dispatch:")[0]
+      .split("\n    paths:")[1];
+    assert.ok(trigger, "Test Docs must keep a push `paths:` filter");
+
+    const globs = trigger
+      .split("\n")
+      .map((line) => /^\s*-\s*"([^"]+)"/.exec(line)?.[1])
+      .filter(Boolean);
+
+    const covered = (path) =>
+      globs.some((glob) =>
+        glob.endsWith("/**")
+          ? path.startsWith(glob.slice(0, -3) + "/")
+          : glob === path,
+      );
+
+    // Only sources this repository's own guards read need a trigger entry; the
+    // workflow itself is listed so a filter edit re-runs the check.
+    for (const [label, path] of PATHS) {
+      assert.ok(
+        covered(path),
+        `Test Docs does not trigger on ${label} (${path}); add a matching path to .github/workflows/test-docs.yml or the guards go unrun when only that source changes`,
+      );
+    }
+    assert.ok(covered(".github/workflows/test-docs.yml"));
+  });
+
   it("keeps every social metadata consumer on the checked-in asset", () => {
     const asset = resolve(repoRoot, "docs/assets/mausvoice-banner.png");
     assert.equal(statSync(asset).isFile(), true);

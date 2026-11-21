@@ -26,6 +26,7 @@ on:
       # broke eight of them silently.
       - "packages/**"
       - "apps/desktop/**"
+      - ".github/workflows/test-desktop-integration.yml"
       - ".github/workflows/release.yml"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
