@@ -8,11 +8,13 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 import {
   beginLocalDataClear,
+  getLocalDataClearGeneration,
   LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
 } from "../../utils/local-data-write-gate";
 import { resetNativeRecordingSession } from "../../utils/native-recording-session";
 import {
   admittedStartOptions,
+  attemptStillOwns,
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
@@ -175,4 +177,42 @@ it("retires the reservation instead of dispatching a stale start", async () => {
   expect(
     invoke.mock.calls.filter(([command]) => command === "start_recording"),
   ).toHaveLength(0);
+});
+
+/** Ownership reads live refs, so each case drives them through one mutable record. */
+const ownershipOf = (mounted: boolean, opId: number) => ({
+  isMounted: () => mounted,
+  currentOpId: () => opId,
+});
+
+it("lets the newest attempt on a mounted form publish its state", () => {
+  const generation = getLocalDataClearGeneration();
+  expect(attemptStillOwns(ownershipOf(true, 3), 3, generation)).toBe(true);
+});
+
+it("rejects an attempt that a newer start or stop has superseded", () => {
+  // The op id is bumped by every start and every stop, so an older reply must
+  // not publish over the state the newer attempt already set.
+  const generation = getLocalDataClearGeneration();
+  expect(attemptStillOwns(ownershipOf(true, 4), 3, generation)).toBe(false);
+});
+
+it("rejects an attempt whose component unmounted while it opened", () => {
+  const generation = getLocalDataClearGeneration();
+  expect(attemptStillOwns(ownershipOf(false, 3), 3, generation)).toBe(false);
+});
+
+it("rejects an attempt admitted before a local-data clear began", async () => {
+  const admittedGeneration = getLocalDataClearGeneration();
+  expect(attemptStillOwns(ownershipOf(true, 1), 1, admittedGeneration)).toBe(
+    true,
+  );
+  const release = await beginLocalDataClear();
+  // A clear invalidates every attempt, so the generation it was admitted under
+  // no longer matches even though the op id is unchanged.
+  expect(attemptStillOwns(ownershipOf(true, 1), 1, admittedGeneration)).toBe(
+    false,
+  );
+  localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+  release();
 });

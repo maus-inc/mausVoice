@@ -1,4 +1,6 @@
 import {
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
   subscribeToLocalDataClearRequested,
   withLocalDataWrite,
 } from "../../utils/local-data-write-gate";
@@ -68,3 +70,28 @@ export const admittedStartOptions = (
     retain(handle);
   },
 });
+
+/** The facts that decide whether a start or stop may still publish state. */
+export type AttemptOwnership = {
+  /** False once the component unmounted, so a reply cannot set state. */
+  isMounted: () => boolean;
+  /** The newest attempt id, bumped by every start and stop. */
+  currentOpId: () => number;
+};
+
+/**
+ * Whether an attempt still owns the UI it opened.
+ *
+ * A reply may land after a newer start, after the component unmounted, or after
+ * a local-data clear began. Each caller needs the same four facts, and inlining
+ * them at every branch is how the two microphone surfaces drifted apart.
+ */
+export const attemptStillOwns = (
+  ownership: AttemptOwnership,
+  opId: number,
+  clearGeneration: number,
+): boolean =>
+  ownership.isMounted() &&
+  opId === ownership.currentOpId() &&
+  !isLocalDataClearRequested() &&
+  clearGeneration === getLocalDataClearGeneration();

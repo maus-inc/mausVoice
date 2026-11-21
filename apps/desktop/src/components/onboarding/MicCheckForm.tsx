@@ -16,6 +16,7 @@ import { AudioWaveform } from "../common/AudioWaveform";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import {
   admittedStartOptions,
+  attemptStillOwns,
   invokeGuardedRecordingStart,
   subscribeRecordingAbortForClear,
 } from "../root/recording-start-gate";
@@ -63,6 +64,19 @@ export const MicCheckForm = () => {
     [],
   );
 
+  const attemptIsCurrent = useCallback(
+    (opId: number, clearGeneration: number) =>
+      attemptStillOwns(
+        {
+          isMounted: () => mountedRef.current,
+          currentOpId: () => opIdRef.current,
+        },
+        opId,
+        clearGeneration,
+      ),
+    [],
+  );
+
   const startRecording = useCallback(async () => {
     if (
       isGlobalRecording ||
@@ -80,11 +94,7 @@ export const MicCheckForm = () => {
       const { handle } = await invokeGuardedRecordingStart(
         preferredMicrophone ?? null,
         admittedStartOptions(
-          () =>
-            mountedRef.current &&
-            opId === opIdRef.current &&
-            !isLocalDataClearRequested() &&
-            clearGeneration === getLocalDataClearGeneration(),
+          () => attemptIsCurrent(opId, clearGeneration),
           (admitted) => {
             handleRef.current = admitted;
           },
@@ -93,12 +103,7 @@ export const MicCheckForm = () => {
       // A stop during the opening window already took this handle and is tearing
       // it down, so only an untouched admission publishes the recording state.
       if (handleRef.current !== handle) return;
-      if (
-        !mountedRef.current ||
-        opId !== opIdRef.current ||
-        isLocalDataClearRequested() ||
-        clearGeneration !== getLocalDataClearGeneration()
-      ) {
+      if (!attemptIsCurrent(opId, clearGeneration)) {
         // Release only the recording this attempt opened. The global helper
         // discards whatever session is current, which by now may belong to a
         // later start that superseded this one.
@@ -121,7 +126,12 @@ export const MicCheckForm = () => {
         setSyncedRecordingState("idle");
       }
     }
-  }, [isGlobalRecording, preferredMicrophone, setSyncedRecordingState]);
+  }, [
+    attemptIsCurrent,
+    isGlobalRecording,
+    preferredMicrophone,
+    setSyncedRecordingState,
+  ]);
 
   const stopRecording = useCallback(async () => {
     const currentState = recordingStateRef.current;
