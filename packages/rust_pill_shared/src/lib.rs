@@ -1293,6 +1293,31 @@ pub struct RingAnim {
     pub arm_pulse: f64,
 }
 
+impl RingAnim {
+    /// Copies every field onto a sink. The three pill crates store the ring as
+    /// individual `Cell`s, so each implements [`RingSink`] once and this becomes
+    /// the only place that knows the field list. A new ring field then reaches
+    /// all three crates instead of three hand-written blocks.
+    pub fn apply_to(self, sink: &impl RingSink) {
+        sink.set_alpha(self.alpha);
+        sink.set_release_progress(self.release_progress);
+        sink.set_press_elapsed(self.press_elapsed);
+        sink.set_release_elapsed(self.release_elapsed);
+        sink.set_arm_t(self.arm_t);
+        sink.set_arm_pulse(self.arm_pulse);
+    }
+}
+
+/// Write side of a ring frame, implemented by each pill crate's state struct.
+pub trait RingSink {
+    fn set_alpha(&self, value: f64);
+    fn set_release_progress(&self, value: f64);
+    fn set_press_elapsed(&self, value: f64);
+    fn set_release_elapsed(&self, value: f64);
+    fn set_arm_t(&self, value: f64);
+    fn set_arm_pulse(&self, value: f64);
+}
+
 impl Default for RingAnim {
     fn default() -> Self {
         Self {
@@ -1364,6 +1389,20 @@ pub fn locate_held(elapsed: f64) -> bool {
 /// press delay. The renderer receives the same value shape a real hold sends.
 pub fn locate_progress(elapsed: f64) -> f64 {
     hold_progress(elapsed, 0.0, LOCATE_FILL_SECONDS)
+}
+
+/// Whether a live pointer gesture owns the ring, so a locate replay must yield.
+///
+/// The three pill crates keep these as their own flags, so they pass them in
+/// rather than re-deriving the priority. A press, a hold in progress and a drag
+/// all outrank a replay, which keeps a locate from wiping a gesture the person
+/// is already making.
+pub const fn locate_yields_to_pointer(
+    pointer_down: bool,
+    long_press_active: bool,
+    dragging: bool,
+) -> bool {
+    pointer_down || long_press_active || dragging
 }
 
 /// One frame of the locate replay, resolved from the current state.
@@ -2701,6 +2740,71 @@ mod tests {
         );
         assert!(!end.active);
         assert_eq!(end.elapsed, 0.0);
+    }
+
+    #[test]
+    fn pointer_gestures_outrank_a_locate_replay() {
+        assert!(!locate_yields_to_pointer(false, false, false));
+        assert!(locate_yields_to_pointer(true, false, false));
+        assert!(locate_yields_to_pointer(false, true, false));
+        assert!(locate_yields_to_pointer(false, false, true));
+    }
+
+    /// Records every ring field so `apply_to` can be checked against a frame.
+    #[derive(Default)]
+    struct RecordingRing {
+        values: RefCell<[f64; 6]>,
+    }
+
+    impl RingSink for RecordingRing {
+        fn set_alpha(&self, value: f64) {
+            self.values.borrow_mut()[0] = value;
+        }
+        fn set_release_progress(&self, value: f64) {
+            self.values.borrow_mut()[1] = value;
+        }
+        fn set_press_elapsed(&self, value: f64) {
+            self.values.borrow_mut()[2] = value;
+        }
+        fn set_release_elapsed(&self, value: f64) {
+            self.values.borrow_mut()[3] = value;
+        }
+        fn set_arm_t(&self, value: f64) {
+            self.values.borrow_mut()[4] = value;
+        }
+        fn set_arm_pulse(&self, value: f64) {
+            self.values.borrow_mut()[5] = value;
+        }
+    }
+
+    #[test]
+    fn ring_frame_reaches_every_sink_field() {
+        let frame = RingAnim {
+            alpha: 0.6,
+            release_progress: 0.5,
+            press_elapsed: 0.4,
+            release_elapsed: 0.3,
+            arm_t: 0.2,
+            arm_pulse: 0.1,
+        };
+        let sink = RecordingRing::default();
+        frame.apply_to(&sink);
+        assert_eq!(*sink.values.borrow(), [0.6, 0.5, 0.4, 0.3, 0.2, 0.1]);
+    }
+
+    #[test]
+    fn reset_frame_clears_every_sink_field_except_the_seeded_release_timer() {
+        let sink = RecordingRing {
+            values: RefCell::new([1.0; 6]),
+        };
+        RingAnim::default().apply_to(&sink);
+        let values = *sink.values.borrow();
+        assert_eq!(values[0], 0.0);
+        assert_eq!(values[1], 0.0);
+        assert_eq!(values[2], 0.0);
+        assert_eq!(values[3], LONG_PRESS_RING_FADE);
+        assert_eq!(values[4], 0.0);
+        assert!(values[5] < 0.0);
     }
 
     #[test]

@@ -1770,19 +1770,18 @@ fn tick_ring(state: &PillState, dt: f64) {
         if locating { 0.0 } else { LONG_PRESS_HOLD_DELAY },
     );
 
-    state.ring_alpha.set(anim.alpha);
-    state.ring_release_progress.set(anim.release_progress);
-    state.press_elapsed.set(anim.press_elapsed);
-    state.release_elapsed.set(anim.release_elapsed);
-    state.arm_t.set(anim.arm_t);
-    state.arm_pulse.set(anim.arm_pulse);
+    anim.apply_to(state);
 }
 
 /// Begins a locate replay from a clean ring state. A second trigger restarts
 /// the sweep instead of inheriting the previous fade. A live pointer gesture
 /// wins, so the replay never wipes an in-progress press.
 fn start_locate(state: &PillState) {
-    if state.pointer_down.get() || state.long_press_active.get() || state.dragging.get() {
+    if rust_pill_shared::locate_yields_to_pointer(
+        state.pointer_down.get(),
+        state.long_press_active.get(),
+        state.dragging.get(),
+    ) {
         return;
     }
     state.locate_active.set(true);
@@ -1791,20 +1790,17 @@ fn start_locate(state: &PillState) {
 }
 
 fn reset_locate_ring(state: &PillState) {
-    let reset = rust_pill_shared::RingAnim::default();
-    state.ring_alpha.set(reset.alpha);
-    state.ring_release_progress.set(reset.release_progress);
-    state.press_elapsed.set(reset.press_elapsed);
-    state.release_elapsed.set(reset.release_elapsed);
-    state.arm_t.set(reset.arm_t);
-    state.arm_pulse.set(reset.arm_pulse);
+    rust_pill_shared::RingAnim::default().apply_to(state);
 }
 
 /// Advances the locate replay and hands the ring back when it ends. A real
 /// pointer gesture wins and takes the ring over from a clean state.
 fn tick_locate(state: &PillState, dt: f64) {
-    let cancelled =
-        state.pointer_down.get() || state.long_press_active.get() || state.dragging.get();
+    let cancelled = rust_pill_shared::locate_yields_to_pointer(
+        state.pointer_down.get(),
+        state.long_press_active.get(),
+        state.dragging.get(),
+    );
     let step = rust_pill_shared::advance_locate(
         state.locate_active.get(),
         state.locate_elapsed.get(),

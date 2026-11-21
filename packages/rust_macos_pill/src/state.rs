@@ -352,3 +352,24 @@ impl PillState {
         )
     }
 }
+
+impl rust_pill_shared::RingSink for PillState {
+    fn set_alpha(&self, value: f64) {
+        self.ring_alpha.set(value);
+    }
+    fn set_release_progress(&self, value: f64) {
+        self.ring_release_progress.set(value);
+    }
+    fn set_press_elapsed(&self, value: f64) {
+        self.press_elapsed.set(value);
+    }
+    fn set_release_elapsed(&self, value: f64) {
+        self.release_elapsed.set(value);
+    }
+    fn set_arm_t(&self, value: f64) {
+        self.arm_t.set(value);
+    }
+    fn set_arm_pulse(&self, value: f64) {
+        self.arm_pulse.set(value);
+    }
+}
