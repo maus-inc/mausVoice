@@ -888,13 +888,21 @@ describe("PR28 ring-alpha render-loop policy", () => {
     const helper = scope("windowsPill", "fn work_area_for_report(");
     assert.match(
       helper,
-      /published\.x \+ offset\.0 \+ size\.0 \/ 2\.0/,
-      "windowsPill: the work area is probed from the window's centre, not the pill's",
+      /visible_pill_centre\(\(published\.x, published\.y\), footprint\)/,
+      "windowsPill: the work area is probed from the window's origin, not the pill's centre",
+    );
+    // The arithmetic lives in the helper, so it is asserted there. A centre taken
+    // from the window corner would put a straddling window on the wrong panel.
+    const centre = scope("windowsPill", "fn visible_pill_centre(");
+    assert.match(
+      centre,
+      /origin\.0 \+ offset\.0 \+ size\.0 \/ 2\.0/,
+      "windowsPill: the centre ignores the pill's horizontal offset and width",
     );
     assert.match(
-      helper,
-      /published\.y \+ offset\.1 \+ size\.1 \/ 2\.0/,
-      "windowsPill: the work area is probed from the window's centre, not the pill's",
+      centre,
+      /origin\.1 \+ offset\.1 \+ size\.1 \/ 2\.0/,
+      "windowsPill: the centre ignores the pill's vertical offset and height",
     );
   });
 
@@ -1217,7 +1225,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
     assert.match(
       write,
-      /let monitor = monitor_handle[\s\S]{0,120}?query_monitor_info\(handle\)/,
+      /let monitor = monitor_handle[\s\S]{0,120}?query_monitor_info/,
       "windowsPill: the work area is resolved from a second monitor lookup",
     );
     // And nothing in the report may come from the live window except the size,
@@ -2581,8 +2589,13 @@ describe("native gesture adapter contracts", () => {
     const tick = source.windowsPill
       .split("fn tick_selector_placement(")[1]
       .split("fn advance_selector_placement(")[0];
-    assert.match(tick, /draw::pill_position\(/);
-    assert.match(tick, /selector_space_above\([\s\S]*?pill_y/);
+    // The tick reads the footprint the renderer draws, and answers the headroom
+    // from the pill's own top edge rather than the window's.
+    assert.match(tick, /live_pill_footprint\(state\)/);
+    assert.match(tick, /selector_space_above\(rect\.y, work\.y, offset\.1\)/);
+    // The footprint itself is the drawn pill, in window pixels.
+    const footprint = scope("windowsPill", "fn live_pill_footprint(");
+    assert.match(footprint, /draw::pill_position\(/);
     const helper = source.windowsPill
       .split("fn selector_space_above(")[1]
       .split("fn tick_selector_placement(")[0];
@@ -2871,7 +2884,8 @@ describe("native gesture adapter contracts", () => {
         `${name}: the reset path delivers without the ordering lock`,
       );
       assert.ok(
-        body.indexOf("lock_clear_delivery") < body.indexOf("clear_saved_position"),
+        body.indexOf("lock_clear_delivery") <
+          body.indexOf("clear_saved_position"),
         `${name}: the reset declares before it takes the ordering lock`,
       );
     }
