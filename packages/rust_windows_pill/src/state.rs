@@ -441,5 +441,8 @@ rust_pill_shared::impl_ring_host!(
     /// state lingers as a ghost.
     fn ring_cleared(&self) {
         self.dirty.set(true);
+    },
+    fn reduced_motion(&self) -> bool {
+        crate::pill::reduced_motion()
     }
 );

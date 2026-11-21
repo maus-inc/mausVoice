@@ -888,7 +888,7 @@ fn persist_drag_position(state: &PillState, window: id) {
 }
 
 /// True when macOS accessibility asks for reduced motion.
-fn reduced_motion() -> bool {
+pub(crate) fn reduced_motion() -> bool {
     unsafe {
         let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
         let reduce: BOOL = msg_send![workspace, accessibilityDisplayShouldReduceMotion];

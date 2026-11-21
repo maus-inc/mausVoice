@@ -182,6 +182,21 @@ pub const fn should_show_pill(
     }
 }
 
+/// Whether the pill is on screen only because a locate indication is running.
+///
+/// A locate replays the outline without the user asking to interact, so a pill
+/// that would otherwise be hidden must stay click-through while it is the sole
+/// reason the window is mapped. Otherwise a click aimed at the app underneath
+/// lands on the pill and starts dictation.
+pub const fn locate_is_the_only_reason_shown(
+    preference: PillVisibility,
+    is_active: bool,
+    owns_surface: bool,
+    indication_active: bool,
+) -> bool {
+    indication_active && !should_show_pill(preference, is_active, owns_surface, false)
+}
+
 /// Maximum character budget for the review card transcript preview.
 /// Longer transcripts are safely truncated for rendering while keeping
 /// the complete text intact for insertion and copying.
@@ -1789,6 +1804,11 @@ pub struct RingGesture {
     pub long_press_active: bool,
     pub long_press_elapsed: f64,
     pub dragging: bool,
+    /// The platform's reduced-motion preference. A locate replay is a
+    /// decorative sweep, so under reduced motion it shows a static outline
+    /// instead of animating, matching how the long-press trigger arms a still
+    /// border flash rather than deforming.
+    pub reduced_motion: bool,
 }
 
 /// What a [`RingState::tick`] frame did that the platform may need to act on.
@@ -1887,8 +1907,24 @@ impl RingState {
             return;
         }
         self.locate_active.set(true);
-        self.locate_elapsed.set(0.0);
+        // Reduced motion skips the sweep entirely: the elapsed time starts at
+        // the end of the fill so the outline is drawn complete and only the
+        // fade runs. The indication still ends on its own and the saved
+        // visibility setting resumes, because `locate_active` still expires.
+        self.locate_elapsed.set(if gesture.reduced_motion {
+            LOCATE_FILL_SECONDS
+        } else {
+            0.0
+        });
         self.reset_ring();
+        if gesture.reduced_motion {
+            // `reset_ring` seeds the fade timer at its end, which paints
+            // nothing. Restart it so the complete outline is held and then
+            // fades over the same window a full sweep would have used.
+            self.release_progress.set(1.0);
+            self.release_elapsed.set(0.0);
+            self.alpha.set(1.0);
+        }
     }
 
     /// Advances the locate replay and the ring by one frame.
@@ -1896,14 +1932,19 @@ impl RingState {
         let previous_alpha = self.alpha.get();
         let was_pulsing = pulse_is_running(self.arm_pulse.get());
 
+        // Only a replay the pointer interrupts may clear the ring. Resetting on
+        // every pointer-down frame would also zero `press_elapsed` and `arm_t`
+        // for an ordinary hold or drag, freezing the ring ramp and the arm.
+        let was_locating = self.locate_active.get();
         let cancelled = locate_yields_to_pointer(
             gesture.pointer_down,
             gesture.long_press_active,
             gesture.dragging,
         );
+        let previous_locate_elapsed = self.locate_elapsed.get();
         let step = advance_locate(
             self.locate_active.get(),
-            self.locate_elapsed.get(),
+            previous_locate_elapsed,
             delta_seconds,
             cancelled,
         );
@@ -1912,7 +1953,7 @@ impl RingState {
         }
         self.locate_active.set(step.active);
         self.locate_elapsed.set(step.elapsed);
-        if cancelled {
+        if cancelled && was_locating {
             self.reset_ring();
         }
 
@@ -1921,9 +1962,21 @@ impl RingState {
             || gesture.dragging
             || (gesture.long_press_active && gesture.long_press_elapsed > LONG_PRESS_HOLD_DELAY);
 
+        // A frame that crosses the fill boundary completes the sweep before the
+        // fade starts. `advance_ring` only stores progress while held, so
+        // without this the outline would fade from the last held frame's
+        // partial sweep, and the fade and pulse would consume the whole frame
+        // instead of only the time left after the sweep ended.
+        let crossing =
+            locating && locate_held(previous_locate_elapsed) && !locate_held(step.elapsed);
+
         let mut anim = RingAnim {
             alpha: self.alpha.get(),
-            release_progress: self.release_progress.get(),
+            release_progress: if crossing {
+                1.0
+            } else {
+                self.release_progress.get()
+            },
             press_elapsed: self.press_elapsed.get(),
             release_elapsed: self.release_elapsed.get(),
             arm_t: self.arm_t.get(),
@@ -1944,7 +1997,11 @@ impl RingState {
                         LONG_PRESS_DURATION,
                     )
                 },
-                delta_seconds,
+                delta_seconds: if crossing {
+                    (step.elapsed - LOCATE_FILL_SECONDS).max(0.0)
+                } else {
+                    delta_seconds
+                },
             },
             if locating { 0.0 } else { LONG_PRESS_HOLD_DELAY },
         );
@@ -2098,6 +2155,10 @@ pub trait RingHost {
     fn ring(&self) -> &RingState;
     fn ring_gesture(&self) -> RingGesture;
 
+    /// The platform's reduced-motion preference, read when a locate replay
+    /// starts so the shared controller can skip the decorative sweep.
+    fn reduced_motion(&self) -> bool;
+
     /// Advances the ring and the locate replay for one frame.
     fn tick_ring(&self, delta_seconds: f64) -> RingFrame {
         let frame = self.ring().tick(self.ring_gesture(), delta_seconds);
@@ -2181,6 +2242,7 @@ macro_rules! impl_ring_host {
                     long_press_active: self.long_press_active.get(),
                     long_press_elapsed: self.long_press_elapsed.get(),
                     dragging: self.dragging.get(),
+                    reduced_motion: $crate::RingHost::reduced_motion(self),
                 }
             }
 
@@ -4632,5 +4694,191 @@ mod tests {
         }
         assert!(cleared, "release must fade the ring back out");
         assert_eq!(ring.alpha(), 0.0);
+    }
+    #[test]
+    fn a_held_long_press_raises_the_ring_across_frames() {
+        // The pointer stays down for the whole hold, so every frame is a
+        // pointer-down frame. Clearing the ring on those frames would reset
+        // `press_elapsed` and freeze alpha one frame into the ramp.
+        let ring = RingState::new();
+        let held = RingGesture {
+            pointer_down: true,
+            long_press_active: true,
+            long_press_elapsed: LONG_PRESS_HOLD_DELAY + 0.2,
+            ..RingGesture::default()
+        };
+        let mut samples = Vec::new();
+        for _ in 0..20 {
+            ring.tick(held, 1.0 / 60.0);
+            samples.push(ring.alpha());
+        }
+        assert!(
+            samples[19] > samples[1] + 0.05,
+            "alpha must rise across held frames, got {samples:?}"
+        );
+    }
+
+    #[test]
+    fn a_drag_raises_the_arm_ramp_across_frames() {
+        let ring = RingState::new();
+        let drag = RingGesture {
+            pointer_down: true,
+            dragging: true,
+            ..RingGesture::default()
+        };
+        let mut samples = Vec::new();
+        for _ in 0..20 {
+            ring.tick(drag, 1.0 / 60.0);
+            samples.push(ring.arm_t());
+        }
+        assert!(
+            samples[19] > samples[1] + 0.05,
+            "arm_t must rise across drag frames, got {samples:?}"
+        );
+    }
+
+    #[test]
+    fn an_armed_pulse_survives_the_pointer_frame_that_holds_it() {
+        // Windows and macOS arm the pulse before the shared tick in the same
+        // frame, so a pointer-down reset here would wipe it before it plays.
+        let ring = RingState::new();
+        ring.arm_pulse.set(pulse_armed());
+        ring.tick(
+            RingGesture {
+                pointer_down: true,
+                long_press_active: true,
+                long_press_elapsed: LONG_PRESS_HOLD_DELAY + 0.2,
+                ..RingGesture::default()
+            },
+            1.0 / 60.0,
+        );
+        assert!(
+            pulse_is_running(ring.arm_pulse()),
+            "an armed pulse must survive a held-pointer tick"
+        );
+    }
+
+    #[test]
+    fn the_fill_boundary_frame_commits_the_complete_sweep() {
+        // Advance in uneven steps so one frame straddles LOCATE_FILL_SECONDS.
+        // The outline must be complete on that frame, and the fade must begin
+        // from there rather than from the previous frame's partial sweep.
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        let step = 1.0 / 30.0;
+        let mut previous = 0.0;
+        let mut crossed = false;
+        for _ in 0..40 {
+            let before = ring.release_progress();
+            ring.tick(idle_gesture(), step);
+            let elapsed = previous + step;
+            if previous < LOCATE_FILL_SECONDS && elapsed >= LOCATE_FILL_SECONDS {
+                assert!(
+                    (ring.release_progress() - 1.0).abs() < 1e-9,
+                    "the crossing frame must commit a full sweep, got {} (was {before})",
+                    ring.release_progress()
+                );
+                crossed = true;
+                break;
+            }
+            previous = elapsed;
+        }
+        assert!(crossed, "the loop must observe the fill boundary");
+    }
+    #[test]
+    fn a_locate_only_window_is_click_through_but_a_visible_pill_is_not() {
+        // Hidden and idle: the locate is the only reason the window is mapped.
+        assert!(locate_is_the_only_reason_shown(
+            PillVisibility::Hidden,
+            false,
+            false,
+            true
+        ));
+        // Persistent is on screen anyway, so the locate changes nothing.
+        assert!(!locate_is_the_only_reason_shown(
+            PillVisibility::Persistent,
+            false,
+            false,
+            true
+        ));
+        // WhileActive during a take would be visible without the locate.
+        assert!(!locate_is_the_only_reason_shown(
+            PillVisibility::WhileActive,
+            true,
+            false,
+            true
+        ));
+        // WhileActive and idle: locate is again the only reason.
+        assert!(locate_is_the_only_reason_shown(
+            PillVisibility::WhileActive,
+            false,
+            false,
+            true
+        ));
+        // A surface the pill owns keeps its own click handling.
+        assert!(!locate_is_the_only_reason_shown(
+            PillVisibility::Hidden,
+            false,
+            true,
+            true
+        ));
+        // No indication running means this predicate never applies.
+        assert!(!locate_is_the_only_reason_shown(
+            PillVisibility::Hidden,
+            false,
+            false,
+            false
+        ));
+    }
+    #[test]
+    fn a_reduced_motion_locate_skips_the_sweep_but_still_ends() {
+        let ring = RingState::new();
+        ring.start_locate(RingGesture {
+            reduced_motion: true,
+            ..RingGesture::default()
+        });
+        assert!(ring.locate_active());
+        // Tick once: a full-motion replay would overwrite progress with a
+        // partial sweep here. Under reduced motion the outline must still be
+        // complete, so there is nothing to animate and only the fade runs.
+        let reduced = RingGesture {
+            reduced_motion: true,
+            ..RingGesture::default()
+        };
+        ring.tick(reduced, 1.0 / 60.0);
+        assert!(
+            (ring.release_progress() - 1.0).abs() < 1e-9,
+            "reduced motion must not sweep, got {}",
+            ring.release_progress()
+        );
+        assert!(ring.alpha() > 0.99, "the outline is held, not fading yet");
+
+        let mut frames = 0;
+        let mut cleared = false;
+        while !cleared && frames < 600 {
+            cleared = ring
+                .tick(
+                    RingGesture {
+                        reduced_motion: true,
+                        ..RingGesture::default()
+                    },
+                    1.0 / 60.0,
+                )
+                .cleared;
+            frames += 1;
+        }
+        assert!(cleared, "the reduced-motion indication must still finish");
+        assert!(!ring.locate_active());
+    }
+
+    #[test]
+    fn a_full_motion_locate_starts_the_sweep_from_zero() {
+        let ring = RingState::new();
+        ring.start_locate(RingGesture {
+            reduced_motion: false,
+            ..RingGesture::default()
+        });
+        assert!(ring.locate_active());
+        assert_eq!(ring.release_progress(), 0.0);
     }
 }

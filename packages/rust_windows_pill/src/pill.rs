@@ -568,7 +568,7 @@ fn query_client_area_animation() -> Option<bool> {
 
 /// True when the user turned off client-area animation effects.
 /// Re-read at most every 2 s.
-fn reduced_motion() -> bool {
+pub(crate) fn reduced_motion() -> bool {
     let now = Instant::now();
     let stale = REDUCED_MOTION_CHECKED.with(|c| {
         if let Some(prev) = c.get() {

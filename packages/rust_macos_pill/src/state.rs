@@ -331,4 +331,10 @@ impl PillState {
     }
 }
 
-rust_pill_shared::impl_ring_host!(PillState, SPRING_STIFFNESS);
+rust_pill_shared::impl_ring_host!(
+    PillState,
+    SPRING_STIFFNESS,
+    fn reduced_motion(&self) -> bool {
+        crate::app::reduced_motion()
+    }
+);
