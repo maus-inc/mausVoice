@@ -434,26 +434,53 @@ pub fn saved_position_argument(app: &tauri::AppHandle) -> Option<String> {
 /// Ordered declaration-first: a publish that runs between these two lines must
 /// already find the latch closed.
 ///
-/// Best effort: a pill that is not running has nothing in memory to forget, and
-/// the row it would have restored from is already gone.
-///
-/// Returns the declaration id when the pill was told, so its answer can retire
-/// exactly this declaration; `None` when there is no running pill to answer, and
-/// the declaration is withdrawn here rather than left to close the latch forever.
-pub async fn forget_running_pill_position(app: &tauri::AppHandle) -> Option<u64> {
+/// A pill that is not running has nothing in memory to forget, and the row it
+/// would have restored from is already gone. That case completes; a delivery that
+/// failed while a pill is still running does not.
+pub async fn forget_running_pill_position(app: &tauri::AppHandle) -> ForgetOutcome {
     // The same ordering the reset paths hold: this declares and delivers too, and
     // a forget that overtook an earlier reset would make the reset's acknowledged
     // id a claim about a clear the pill has not seen.
     let _delivery = lock_clear_delivery().await;
     let declaration = mark_position_erased();
+    if !crate::platform::overlay::pill_is_running(app) {
+        // Nothing holds the position in memory, so nothing can replay it. The
+        // reader that would deliver a report has already stopped, and its exit
+        // withdrew every declaration, so opening the latch here changes nothing.
+        withdraw_erase(declaration);
+        return ForgetOutcome::NoPill;
+    }
     match crate::platform::overlay::notify_forget_position(app, Some(declaration)) {
-        Ok(()) => Some(declaration),
+        Ok(()) => ForgetOutcome::Delivered(declaration),
         Err(err) => {
-            log::debug!("No running pill to forget the cleared position: {err}");
-            withdraw_erase(declaration);
-            None
+            // The declaration stays outstanding on purpose. A pill that is still
+            // running may have a saved-position report buffered on its stdout
+            // that describes the position this clear just deleted, and the latch
+            // is what stops that report being stored. Withdrawing it here is how
+            // the row came back. The reader's exit withdraws it if no answer ever
+            // arrives, so the latch cannot close for the rest of the process.
+            log::error!("A running pill did not receive the cleared position: {err}");
+            ForgetOutcome::DeliveryFailed
         }
     }
+}
+
+/// What a forget attempt did, so a caller can tell an absent pill from a
+/// delivery that failed while a pill was still running.
+///
+/// The two used to be one `Option`, and the caller treated both as "nothing to
+/// do". They are not the same: an absent pill has no memory to forget, while a
+/// failed delivery leaves a running pill holding the pre-clear position with a
+/// report already on its way. Marking the wipe ready in the second case lets
+/// that report recreate the row the clear just deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForgetOutcome {
+    /// The pill was told. Its answer retires this declaration.
+    Delivered(u64),
+    /// No pill is running, so there is nothing in memory to forget.
+    NoPill,
+    /// A pill is running but the forget did not reach it.
+    DeliveryFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

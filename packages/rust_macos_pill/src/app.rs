@@ -141,6 +141,28 @@ fn to_top_down(rect: NSRect, primary_top: f64) -> Rect {
     }
 }
 
+/// Flips a rectangle between AppKit's bottom-left space and the published
+/// top-down one. The transform is its own inverse, so the same call converts in
+/// either direction.
+///
+/// The retained work area is stored in AppKit space rather than the published
+/// one. Top-down y is measured from the primary display's top edge, and that
+/// edge moves when the primary is rearranged, so a retained top-down rect
+/// silently changes meaning between the save and the next read. AppKit's origin
+/// is absolute, so a retained rect keeps describing the same panel.
+fn flip_primary_basis(
+    rect: rust_pill_shared::edge::MonitorRect,
+    primary_top: f64,
+) -> rust_pill_shared::edge::MonitorRect {
+    rust_pill_shared::edge::MonitorRect {
+        x: rect.x,
+        y: primary_top - (rect.y + rect.height),
+        width: rect.width,
+        height: rect.height,
+        id: rect.id,
+    }
+}
+
 /// Store a frame without depending on `NSRect` being `Debug` or `Clone`.
 ///
 /// `PillState` derives both, and `NSRect` implements neither, so the recorded drop
@@ -1216,17 +1238,19 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
     // The pending drop has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
     state.saved_display_id.set(display_id);
-    // The same top-down rect this report publishes as the monitor, so the retained
-    // source geometry is the one the record was stored against.
+    // The same rect this report publishes as the monitor, flipped into AppKit
+    // space so it keeps describing this panel when the primary display moves and
+    // the top-down origin of every screen shifts with it.
     if let Some(area) = monitor {
-        state
-            .saved_work_area
-            .set(rust_pill_shared::edge::MonitorRect::without_id(
+        state.saved_work_area.set(flip_primary_basis(
+            rust_pill_shared::edge::MonitorRect::without_id(
                 area.x,
                 area.y,
                 area.width,
                 area.height,
-            ));
+            ),
+            primary_top,
+        ));
     }
     // The report carries the drop too. `pill_geometry` reads the live window, so
     // using it here would store a rectangle from a different place than
@@ -2435,7 +2459,10 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             top_down.y + footprint_offset.1 + footprint_size.1 / 2.0,
         ),
         current_id,
-        Some(state.saved_work_area.get()),
+        // Rebased into this sample's top-down frame: the retained rect is stored in
+        // AppKit space, so it has to be flipped with the same `primary_top` the
+        // live areas above used, or a primary that moved compares two bases.
+        Some(flip_primary_basis(state.saved_work_area.get(), primary_top)),
     ) else {
         return;
     };
@@ -2466,8 +2493,9 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
                 // window leaves the record measuring the old rectangle, and the
                 // next disconnect computes the carry-over fraction against it.
                 // `parked.display` is the live area this resolution used.
-                if state.saved_work_area.get() != parked.display {
-                    state.saved_work_area.set(parked.display);
+                let retained = flip_primary_basis(parked.display, primary_top);
+                if state.saved_work_area.get() != retained {
+                    state.saved_work_area.set(retained);
                 }
                 if frame.origin.x != state.saved_x.get() || frame.origin.y != state.saved_y.get() {
                     state.saved_x.set(frame.origin.x);
@@ -2593,14 +2621,15 @@ unsafe fn persist_reconciled_position(state: &PillState, window: id) {
     // moves the pill onto another panel has to record that panel's geometry. Left
     // stale, the next unplug would remap from the panel the pill already left.
     if let Some(area) = monitor {
-        state
-            .saved_work_area
-            .set(rust_pill_shared::edge::MonitorRect::without_id(
+        state.saved_work_area.set(flip_primary_basis(
+            rust_pill_shared::edge::MonitorRect::without_id(
                 area.x,
                 area.y,
                 area.width,
                 area.height,
-            ));
+            ),
+            unsafe { primary_top_for(window) },
+        ));
     }
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
@@ -2901,6 +2930,8 @@ unsafe fn setup(
         // With no placement at all there is nothing to name either: the record's
         // token describes a display this process never went to.
         saved_display_id: Cell::new(restored.and(restored_display_id)),
+        // Held in Cocoa space, so it keeps describing the same panel even when the
+        // primary display moves and the top-down origin of every screen shifts.
         saved_work_area: Cell::new(restored_work_area.unwrap_or_else(|| {
             rust_pill_shared::edge::MonitorRect::without_id(0.0, 0.0, 0.0, 0.0)
         })),

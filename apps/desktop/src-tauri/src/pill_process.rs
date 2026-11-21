@@ -366,6 +366,16 @@ pub fn notify_pill_window_size(app: &tauri::AppHandle, size: &PillWindowSize) {
     }
 }
 
+/// Whether a pill process is managed right now.
+///
+/// True covers a pill whose stdin has already failed, because its stdout reader
+/// can still be draining lines it read before the failure, and one of those can
+/// be a saved-position report. That is exactly the window a local-data clear has
+/// to treat as unsafe.
+pub fn pill_is_running(app: &tauri::AppHandle) -> bool {
+    app.try_state::<std::sync::Arc<PillProcess>>().is_some()
+}
+
 pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
         if let Err(err) = pill.send(payload) {

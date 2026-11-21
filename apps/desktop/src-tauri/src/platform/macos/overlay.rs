@@ -208,6 +208,20 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Whether the linked pill is still reachable.
+///
+/// The channel sender is taken when the pill retires, so a `Some` sender is the
+/// only evidence that a message can still reach it.
+pub fn pill_is_running(app: &tauri::AppHandle) -> bool {
+    app.try_state::<std::sync::Arc<MacosPill>>()
+        .is_some_and(|pill| {
+            pill.sender
+                .lock()
+                .map(|sender| sender.is_some())
+                .unwrap_or(false)
+        })
+}
+
 /// Tell the linked pill to stop treating its current spot as saved, without
 /// moving it. Sent after a local-data clear so the reloaded window cannot write
 /// the cleared position straight back. `ack` is the declaration the pill's answer

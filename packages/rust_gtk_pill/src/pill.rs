@@ -1397,6 +1397,18 @@ fn monitor_areas(
     (!areas.is_empty()).then_some(areas)
 }
 
+/// Whether a drag, its settle, or a still-running hold owns the window right
+/// now.
+///
+/// Reconciliation can move the window in the middle of a gesture, and the frame
+/// it lands on is the layout's choice rather than the user's. The move still
+/// happens, but it must not be recorded or published as a saved position.
+fn gesture_owns_window(state: &PillState, now: f64) -> bool {
+    state.dragging.get()
+        || state.drag_motion.borrow().is_settling()
+        || state.save_guard.borrow().drag_hold_active(now)
+}
+
 /// Reconcile the pill's toplevel against the monitors connected right now.
 ///
 /// An X11 window does not get moved by the server when RandR changes, which
@@ -1517,7 +1529,14 @@ fn reconcile_display_layout(
                 .set((x.round() as i32, y.round() as i32));
             // A forget or a reset leaves the pill deliberately unsaved: the move
             // still has to happen, but it must not write the row back.
-            if !state.has_saved_position.get() {
+            //
+            // Nor is a mid-gesture frame a saved position. The move itself is
+            // still applied, because a pill left in dead space is worse than one
+            // that moves under the pointer, but the origin it lands on is the
+            // frame the layout forced, not a drop the user made. Publishing it
+            // would replace the last completed drop before release, and the
+            // release writes the drop through the guarded writer below.
+            if !state.has_saved_position.get() || gesture_owns_window(state, now) {
                 return true;
             }
             state.saved_x.set(x.round());

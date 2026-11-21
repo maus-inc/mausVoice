@@ -837,7 +837,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
   });
 
   it("drops the previous gesture's recorded drop when the next drag starts", () => {
-    // A drop the guard refused leaves `drop_origin` recorded for the frame loop's
+    // A drop the guard refused leaves `drop_record` recorded for the frame loop's
     // retry. Left behind when a new drag starts, a destroy before this gesture
     // settles would store the place the user moved away from.
     const arm = source.windowsPill.slice(
@@ -848,7 +848,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
     assert.match(
       arm,
-      /state\.drop_origin\.set\(None\)/,
+      /state\.drop_record\.set\(None\)/,
       "windowsPill: the previous gesture's recorded drop survives into this one",
     );
   });
@@ -866,10 +866,10 @@ describe("PR28 ring-alpha render-loop policy", () => {
       "windowsPill: the shutdown write does not go through the shared store",
     );
     const store = scope("windowsPill", "fn store_recorded_drop(");
-    assert.match(store, /state\.drop_origin\.take\(\)/);
+    assert.match(store, /state\.drop_record\.take\(\)/);
     assert.match(
       store,
-      /let reported = Rect \{[\s\S]{0,120}?x: origin\.0 as f64,[\s\S]{0,120}?y: origin\.1 as f64,/,
+      /let origin = \(record\.x, record\.y\);/,
       "windowsPill: the shared store carries the live rect instead of the drop",
     );
     // And the guarded writer reaches the same store, so the two paths cannot drift.
@@ -1191,10 +1191,10 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // The store is one function now, shared by the guarded writer and the shutdown
     // writer, so the assertions live on it rather than on one caller.
     const write = scope("windowsPill", "fn store_recorded_drop(");
-    assert.match(write, /state\.drop_origin\.take\(\)/);
+    assert.match(write, /state\.drop_record\.take\(\)/);
     assert.match(
       write,
-      /let reported = Rect \{[\s\S]{0,120}?x: origin\.0 as f64,[\s\S]{0,120}?y: origin\.1 as f64,/,
+      /let origin = \(record\.x, record\.y\);/,
       "windowsPill: the report carries the live rect instead of the drop",
     );
     assert.match(
@@ -1213,20 +1213,34 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // separately let a shrunk work area leave the enumerated list while
     // `MonitorFromPoint` still found the display, so the report named one panel and
     // stored another's geometry.
+    // Both fields come off the record the settle captured, so neither can be
+    // re-resolved against a layout the drop never saw.
     assert.match(
       write,
-      /let monitor_handle = monitor_for_point\(drop_centre\)/,
-      "windowsPill: the monitor is not resolved from the drop point",
+      /let display_id = record\.display_id;/,
+      "windowsPill: the display token is re-resolved instead of read from the drop",
     );
     assert.match(
       write,
-      /let display_id = monitor_handle\.and_then\(monitor_display_id\)/,
-      "windowsPill: the display token is resolved from a second monitor lookup",
+      /let monitor = record\.work_area\.map\(\|area\| Rect \{/,
+      "windowsPill: the work area is re-resolved instead of read from the drop",
+    );
+    // And the record itself is built from one monitor lookup at the settle.
+    const record = scope("windowsPill", "fn drop_record_at(");
+    assert.match(
+      record,
+      /let monitor_handle = monitor_for_point\(centre\)/,
+      "windowsPill: the drop record is not resolved from the pill's centre",
     );
     assert.match(
-      write,
-      /let monitor = monitor_handle[\s\S]{0,120}?query_monitor_info/,
-      "windowsPill: the work area is resolved from a second monitor lookup",
+      record,
+      /work_area: monitor_handle\.and_then\(query_monitor_info\)/,
+      "windowsPill: the drop record's work area is not resolved from the same handle",
+    );
+    assert.match(
+      record,
+      /display_id: monitor_handle\.and_then\(monitor_display_id\)/,
+      "windowsPill: the drop record's token is not resolved from the same handle",
     );
     // And nothing in the report may come from the live window except the size,
     // which does not move: an origin, a work area or a display resolved there can
@@ -1362,18 +1376,18 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // the user never chose.
     assert.match(
       source.windowsPill,
-      /drop_origin: Cell::new\(None\)/,
+      /drop_record: Cell::new\(None\)/,
       "windowsPill: nothing remembers where the drop landed",
     );
     assert.match(
       source.windowsPill,
-      /state\.drop_origin\.set\(Some\(\(x, y\)\)\)/,
+      /state\.drop_record\.set\(Some\(drop_record_at\(\(x, y\), state\)\)\)/,
       "windowsPill: the settle never records the drop origin",
     );
     const write = scope("windowsPill", "fn store_recorded_drop(");
     assert.match(
       write,
-      /state\.drop_origin\.take\(\)/,
+      /state\.drop_record\.take\(\)/,
       "windowsPill: the retry writes the live rect instead of the drop",
     );
     assert.match(
@@ -2642,11 +2656,19 @@ describe("native gesture adapter contracts", () => {
     // The realized origin is the restored one when there is a stored position,
     // else the pointer anchor. Both are published through the same applied cell
     // so idle placement and the frame tick read one value.
-    // The restore now also carries the display it landed on, so the origin is
-    // taken out of the pair rather than used bare.
+    // The restore also carries the display it landed on and the destination work
+    // area, so the origin is taken out of the triple rather than used bare.
     assert.match(
       source.gtkX11,
-      /let target = restored\.map_or\(init_pos, \|\(origin, _\)\| origin\)/,
+      /let target = restored\.map_or\(init_pos, \|\(origin, _, _\)\| origin\)/,
+    );
+    // The retained area comes from the same sample as the origin and the token:
+    // keeping the record's area while adopting a remapped origin leaves
+    // reconciliation measuring this origin against the display the pill left.
+    assert.match(
+      source.gtkX11,
+      /if let Some\(\(\(x, y\), display_id, work_area\)\) = restored \{[\s\S]{0,400}?state\.saved_work_area\.set\(work_area\);/,
+      "gtkX11: the retained work area is not taken from the restore",
     );
     assert.match(source.gtkX11, /state\.x11_drag_applied\.set\(target\)/);
     assert.match(
@@ -2833,20 +2855,17 @@ describe("native gesture adapter contracts", () => {
         `${ipcFor(name)}: the variant is what serde turns into forget_position`,
       );
     }
-    // The desktop withdraws the declaration when the pill could not be told, so a
-    // clear that never reached the pill cannot close the latch for the rest of the
-    // process.
     // Every path that declares and delivers a clear takes the delivery lock, so
     // arrival order at the pill matches declaration order. Without that, a clear
     // declared second can reach the pill first, and its answer retires a
     // declaration whose clear the pill has not applied.
     assert.match(
       source.pillPosition,
-      /pub async fn forget_running_pill_position\(app: &tauri::AppHandle\) -> Option<u64>/,
+      /pub async fn forget_running_pill_position\(app: &tauri::AppHandle\) -> ForgetOutcome/,
     );
     const forgetScope = scope(
       "pillPosition",
-      "pub async fn forget_running_pill_position(app: &tauri::AppHandle) -> Option<u64>",
+      "pub async fn forget_running_pill_position(app: &tauri::AppHandle) -> ForgetOutcome",
     );
     assert.match(
       forgetScope,
@@ -2858,22 +2877,37 @@ describe("native gesture adapter contracts", () => {
         forgetScope.indexOf("mark_position_erased"),
       "pillPosition: the forget path declares before it takes the ordering lock",
     );
-    // Scoped to the helper: `withdraw_erase` also appears in
-    // `clear_saved_position`, so a file-wide match would keep passing after
-    // this helper stopped withdrawing on a delivery failure.
-    // Scoped to the error branch, not the helper. `clear_saved_position` also
-    // calls `withdraw_erase`, so a helper-wide match kept passing after this
-    // branch stopped withdrawing, and the unacknowledged declaration then
-    // suppressed every later save for the rest of the process.
+    // A failed delivery keeps the declaration outstanding on purpose, and the
+    // branch must not withdraw it. The pill can have a saved-position report
+    // buffered on its stdout that describes the position this clear just deleted;
+    // the latch is what stops that report being stored. The reader's exit
+    // withdraws every declaration, so a latch left closed here cannot outlive the
+    // pill it is protecting against.
+    //
     // `[\s\S]` rather than `[^}]`, because the log line in this branch
     // interpolates `{err}` and the closing brace of that interpolation ended a
-    // `[^}]*` before the withdrawal it was looking for.
-    const forgetErrorBranch =
-      /Err\(err\) => \{[\s\S]*?withdraw_erase\(declaration\)/;
+    // `[^}]*` before the rest of the branch.
+    const forgetErrorBranch = /Err\(err\) => \{[\s\S]*?ForgetOutcome::DeliveryFailed/;
     assert.match(
       forgetScope,
       forgetErrorBranch,
-      "pillPosition: a failed delivery leaves the declaration outstanding",
+      "pillPosition: a failed delivery does not report a delivery failure",
+    );
+    const errorArm = forgetScope.slice(
+      forgetScope.indexOf("Err(err) => {"),
+      forgetScope.indexOf("ForgetOutcome::DeliveryFailed"),
+    );
+    assert.doesNotMatch(
+      errorArm,
+      /withdraw_erase\(declaration\)/,
+      "pillPosition: a failed delivery opens the latch over a report it never saw",
+    );
+    // An absent pill is the one case that completes the wipe without an answer,
+    // and it withdraws its declaration because no reader is left to do it.
+    assert.match(
+      forgetScope,
+      /pill_is_running\(app\)[\s\S]{0,600}?ForgetOutcome::NoPill/,
+      "pillPosition: an absent pill is not told apart from a failed delivery",
     );
     // Both reset paths hold it across the clear and the send.
     for (const name of ["pillProcess", "macOverlay"]) {
@@ -3549,7 +3583,7 @@ describe("native gesture adapter contracts", () => {
     // from, so a caller that stops passing it fails here.
     assert.match(
       run,
-      /initial_state\(\s*restored\.map\(\|\(origin, _\)\| origin\),\s*restored_display_id,\s*restored_work_area,\s*\)/,
+      /initial_state\(\s*restored\.map\(\|\(origin, _, _\)\| origin\),\s*restored_display_id,\s*restored_work_area,\s*\)/,
       "windowsPill: run does not hand the factory the restored placement",
     );
     const seeded = scope("windowsPill", "fn initial_state(");

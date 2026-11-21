@@ -3489,7 +3489,28 @@ pub async fn clear_local_data(
     // The pill still holds the pre-clear position in memory. Tell it to forget
     // before writes reopen, so the window reload that follows cannot publish the
     // cleared position back into the table.
-    crate::pill_position::forget_running_pill_position(&app).await;
+    //
+    // A forget that did not reach a running pill leaves the wipe incomplete on
+    // purpose. The pill can have a saved-position report buffered on its stdout
+    // that describes the position this clear just deleted, and reporting ready
+    // lets the frontend reopen writes before that report is drained, which
+    // recreates the row. The erase latch stays closed, so the report is dropped
+    // when it arrives; the user retries the clear once the pill is gone.
+    match crate::pill_position::forget_running_pill_position(&app).await {
+        crate::pill_position::ForgetOutcome::Delivered(_)
+        | crate::pill_position::ForgetOutcome::NoPill => {}
+        crate::pill_position::ForgetOutcome::DeliveryFailed => {
+            log::error!(
+                "Local data cleared, but the running pill could not be told to forget the \
+                 cleared position, so the wipe is left incomplete"
+            );
+            return Err(
+                "Database cleared, but the running pill could not be told to forget the \
+                 cleared position. Quit and reopen the app, then clear again."
+                    .to_string(),
+            );
+        }
+    }
 
     native_clear_guard.mark_ready_for_frontend_completion();
     Ok(())
