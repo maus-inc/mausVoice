@@ -297,6 +297,13 @@ pub enum Placement {
         x: f64,
         y: f64,
         display_id: Option<u64>,
+        /// The destination display's work area, in the same space as `x` and `y`.
+        ///
+        /// Returned with the origin because the caller has to retain both from
+        /// one instant. A caller that keeps the area it loaded from the record
+        /// pairs this origin with the display the pill left, and the next
+        /// disconnect measures that origin against the wrong rectangle.
+        work_area: MonitorRect,
     },
     /// Leave the platform's own placement alone. The saved display is not
     /// connected and nothing in the current layout correlates with it, so the
@@ -380,6 +387,7 @@ where
         x,
         y,
         display_id: areas[index].id,
+        work_area: areas[index],
     }
 }
 
@@ -682,8 +690,35 @@ mod tests {
                 x: 500.0,
                 y: 300.0,
                 display_id: None,
+                work_area: only,
             }
         );
+    }
+
+    /// The destination area travels with the origin and the token.
+    ///
+    /// A caller retains the area to remap from when this display later goes
+    /// away. Returning only the origin left every platform keeping the record's
+    /// own area, which describes the display the pill left.
+    #[test]
+    fn a_restore_reports_the_area_it_landed_on() {
+        let saved = rect(0.0, 0.0, 1920.0, 1040.0);
+        let destination = display(1920.0, 0.0, 2560.0, 1400.0, Some(7));
+        // Only the destination is connected, so this is the remap case: the pill
+        // is carried onto a display it was never saved against.
+        match restore(
+            named_parked(500.0, 300.0, saved, 3),
+            &[destination],
+            (200.0, 60.0),
+            bounds,
+        ) {
+            Placement::Restore { work_area, .. } => assert_eq!(
+                work_area, destination,
+                "the reported area has to be the display the origin was clamped into, \
+                 not the one the record was saved against"
+            ),
+            Placement::PlatformDefault => panic!("a connected display has to restore"),
+        }
     }
 
     /// A dock that moved to another edge shrinks the work area, and a pill that
@@ -951,6 +986,7 @@ mod tests {
                 x: 500.0,
                 y: 300.0,
                 display_id: None,
+                work_area: only,
             }
         );
     }
@@ -1291,6 +1327,7 @@ mod tests {
                 x: 500.0,
                 y: 300.0,
                 display_id: Some(99),
+                work_area: replugged,
             }
         );
     }

@@ -15,7 +15,7 @@ use crate::draw;
 use crate::gfx::Gfx;
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
-use crate::state::{ClickAction, PillState, WindowMode};
+use crate::state::{ClickAction, DropRecord, PillState, WindowMode};
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
 use rust_pill_shared::edge::MonitorRect;
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
@@ -90,9 +90,12 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
         WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
     // `None` means the window was created at the default corner, so the state
     // must not claim a saved position it does not have.
-    let restored_work_area = saved_position.map(|parked| parked.display);
-    let restored: Option<((i32, i32), Option<u64>)> =
-        saved_position.and_then(|parked| restore_position(parked, win_h));
+    let restored = saved_position.and_then(|parked| restore_position(parked, win_h));
+    // The retained area has to describe the display the restore landed on. The
+    // record's own area is the one it was saved against, so a position remapped
+    // off a missing display would be retained against that missing display, and
+    // the next unplug would carry the wrong fraction to the survivor.
+    let restored_work_area = restored.map(|(_, _, work_area)| work_area);
     // A record that has been restored is a record whose display was named, so the
     // identity survives into this process's state and is republished with the
     // next save. Losing it here would silently downgrade every later save to
@@ -102,9 +105,9 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     // saved one when that display is gone: reporting the saved token beside the
     // surviving display's geometry would store a rectangle and a name that
     // describe two different panels.
-    let restored_display_id = restored.and_then(|(_, display_id)| display_id);
+    let restored_display_id = restored.and_then(|(_, display_id, _)| display_id);
     let (wx, wy) = match restored {
-        Some((origin, _)) => origin,
+        Some((origin, _, _)) => origin,
         None => default_position(win_h),
     };
     let hwnd = unsafe {
@@ -132,7 +135,7 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
 
     let state = initial_state(
-        restored.map(|(origin, _)| origin),
+        restored.map(|(origin, _, _)| origin),
         restored_display_id,
         restored_work_area,
     );
@@ -287,6 +290,12 @@ unsafe fn on_wm_dpichanged(hwnd: HWND, lparam: LPARAM) -> LRESULT {
             // refused leaves the state describing the surface that still exists.
             if let Some(scale) = applied {
                 state.content_scale.set(scale);
+                // The window and its surface are the new size but the presented
+                // bitmap is not. An idle pill runs no animation, so nothing else
+                // would ask for the frame that presents the resized surface, and
+                // the pointer would be mapped at the new scale against a bitmap
+                // still drawn at the old one.
+                state.dirty.set(true);
             }
             reconcile_display_layout(hwnd, state);
         }
@@ -1613,7 +1622,10 @@ fn default_position(win_h: i32) -> (i32, i32) {
 ///
 /// `None` means the stored display is gone and nothing in the current layout
 /// relates to it, so the caller keeps the default placement instead of guessing.
-fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<((i32, i32), Option<u64>)> {
+fn restore_position(
+    parked: ParkedWindow,
+    win_h: i32,
+) -> Option<((i32, i32), Option<u64>, MonitorRect)> {
     // Identity-aware, because the record names a display: matching it against
     // rectangles that carry no token reduces every restore to geometry, so a pill
     // saved on a display that was resized or rearranged comes back on whichever
@@ -1626,9 +1638,12 @@ fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<((i32, i32), Opt
         |work, (window_w, window_h)| window_clamp_bounds_for_size(work, window_w, window_h),
     );
     match placement {
-        rust_pill_shared::restore::Placement::Restore { x, y, display_id } => {
-            Some(((x.round() as i32, y.round() as i32), display_id))
-        }
+        rust_pill_shared::restore::Placement::Restore {
+            x,
+            y,
+            display_id,
+            work_area,
+        } => Some(((x.round() as i32, y.round() as i32), display_id, work_area)),
         rust_pill_shared::restore::Placement::PlatformDefault => None,
     }
 }
@@ -1735,6 +1750,14 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             // undoing a placement the user could see. This is the system's move,
             // not a drag, so it is adopted without going through the save guard.
             let (cur_x, cur_y) = current_pill_origin(hwnd);
+            // The retained area is refreshed even when the origin did not move. A
+            // display whose work area changed under a stationary window leaves the
+            // record measuring the old rectangle, and the next disconnect computes
+            // the carry-over fraction against it. `parked.display` is the live area
+            // this resolution used.
+            if state.has_saved_position.get() && state.saved_work_area.get() != parked.display {
+                state.saved_work_area.set(parked.display);
+            }
             if state.has_saved_position.get()
                 && (cur_x != state.saved_x.get() || cur_y != state.saved_y.get())
             {
@@ -2127,7 +2150,7 @@ fn initial_state(
         has_saved_position: Cell::new(restored.is_some()),
         anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
         pending_drag_position: Cell::new(false),
-        drop_origin: Cell::new(None),
+        drop_record: Cell::new(None),
         drag_save_due: Cell::new(None),
         saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
         saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
@@ -2428,7 +2451,11 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
         // Final frame of the gesture: this origin is the drop. Recorded before the
         // save so a refusal keeps the place the user released at, not the one the
         // window happens to drift to before the retry runs.
-        state.drop_origin.set(Some((x, y)));
+        //
+        // The whole record is captured here, not just the origin. The retry can
+        // run after a display went away, and re-resolving the work area and token
+        // then would pair this origin with a display the pill was never on.
+        state.drop_record.set(Some(drop_record_at((x, y), state)));
         persist_drag_position(hwnd, state);
     } else if settling || dragging {
         // The frame loop owns the window, but its position is not final yet. Mark
@@ -2612,7 +2639,7 @@ fn tick_long_press(state: &PillState, dt: f64) {
         // The previous gesture's recorded drop goes with its deadline. Left behind,
         // a destroy before this drag settles would have `write_drag_position` consume
         // it and store the place the user moved away from, not where they are.
-        state.drop_origin.set(None);
+        state.drop_record.set(None);
         // A display change while this drag is held makes the drop suspect, so the
         // guard has to know a drag is in flight before the change arrives.
         state.save_guard.borrow_mut().drag_started();
@@ -2830,6 +2857,31 @@ fn write_drag_position(hwnd: HWND, state: &PillState, now: f64) {
     store_recorded_drop(hwnd, state);
 }
 
+/// Snapshot everything a drop has to report, resolved from one point at one
+/// instant.
+///
+/// Called at the settle, when the origin is the one the user released at. A
+/// single `monitor_for_point` answers the work area and the token, so the record
+/// cannot name one panel and carry another's geometry.
+fn drop_record_at(origin: (i32, i32), state: &PillState) -> DropRecord {
+    let (offset, size) = live_pill_footprint(state);
+    let centre = visible_pill_centre((origin.0 as f64, origin.1 as f64), (offset, size));
+    let monitor_handle = monitor_for_point(centre);
+    DropRecord {
+        x: origin.0,
+        y: origin.1,
+        work_area: monitor_handle.and_then(query_monitor_info).map(|info| {
+            rust_pill_shared::edge::MonitorRect::without_id(
+                info.rcWork.left as f64,
+                info.rcWork.top as f64,
+                (info.rcWork.right - info.rcWork.left) as f64,
+                (info.rcWork.bottom - info.rcWork.top) as f64,
+            )
+        }),
+        display_id: monitor_handle.and_then(monitor_display_id),
+    }
+}
+
 /// Store the recorded drop and publish it, without consulting the save guard.
 ///
 /// Shared by the guarded writer and the shutdown writer, so the two cannot
@@ -2838,55 +2890,41 @@ fn write_drag_position(hwnd: HWND, state: &PillState, now: f64) {
 /// are not the user -- settling, reconciliation, a restore of the old position --
 /// and the saved point must be the one they released at.
 fn store_recorded_drop(hwnd: HWND, state: &PillState) {
-    // `drop_origin` is consumed here so a later gesture cannot inherit a stale one.
-    let origin = state.drop_origin.take().unwrap_or_else(|| {
+    // `drop_record` is consumed here so a later gesture cannot inherit a stale one.
+    // A shutdown that arrives before the settle has no record, and then the live
+    // rect is the only origin left to store.
+    let record = state.drop_record.take().unwrap_or_else(|| {
         let mut rect = RECT::default();
         unsafe {
             let _ = GetWindowRect(hwnd, &mut rect);
         }
-        (rect.left, rect.top)
+        drop_record_at((rect.left, rect.top), state)
     });
+    let origin = (record.x, record.y);
     state.saved_x.set(origin.0);
     state.saved_y.set(origin.1);
     state.has_saved_position.set(true);
     // The pending drop has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
-    // The whole report is resolved from the drop, not from the live window.
-    // Restoration pairs the rectangle with the work area it is clamped into, so a
-    // rectangle from one display and a work area from another is worse than either
-    // alone: the desktop stores all three, and the next launch remaps the origin
-    // against a work area it never belonged to. Reconciling the layout can move the
-    // window during the retry delay, which is exactly when the two would disagree,
-    // so the origin, its size, its work area and its display are all answered from
-    // the one point that the user actually chose.
-    let (offset, size) = live_pill_footprint(state);
-    let drop_centre = visible_pill_centre((origin.0 as f64, origin.1 as f64), (offset, size));
-    // One monitor answers both fields. Resolving them separately let a shrunk work
-    // area fall out of the enumerated list while `MonitorFromPoint` still found the
-    // display by its full bounds, so the report could name panel A and store panel
-    // B's work area. The token wins on the next launch, and the pill would land on
-    // a panel it was never on. `monitor_for_point` is the single resolution both
-    // fields read.
-    let monitor_handle = monitor_for_point(drop_centre);
-    let display_id = monitor_handle.and_then(monitor_display_id);
+    // The whole report comes from the record captured at the settle, not from the
+    // live window and not from a fresh monitor lookup. Restoration pairs the
+    // rectangle with the work area it is clamped into, so a rectangle from one
+    // display and a work area from another is worse than either alone. Between the
+    // drop and this call a display can go away, and then `monitor_for_point`
+    // resolves the recorded point to a survivor: the report would put the departed
+    // display's origin beside the survivor's area and token, and the next launch
+    // would find an exact match for that token and clamp the old origin instead of
+    // carrying the relative place over from the panel that went away.
+    let display_id = record.display_id;
     state.saved_display_id.set(display_id);
-    let monitor = monitor_handle
-        .and_then(query_monitor_info)
-        .map(|info| Rect {
-            x: info.rcWork.left as f64,
-            y: info.rcWork.top as f64,
-            width: (info.rcWork.right - info.rcWork.left) as f64,
-            height: (info.rcWork.bottom - info.rcWork.top) as f64,
-        });
-    if let Some(area) = monitor {
-        state
-            .saved_work_area
-            .set(rust_pill_shared::edge::MonitorRect::without_id(
-                area.x,
-                area.y,
-                area.width,
-                area.height,
-            ));
+    let monitor = record.work_area.map(|area| Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: area.height,
+    });
+    if let Some(area) = record.work_area {
+        state.saved_work_area.set(area);
     }
     // Only the size comes from the live window: the pill's canvas does not change
     // when the layout moves it, and the size has to match the rectangle the

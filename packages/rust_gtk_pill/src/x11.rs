@@ -441,7 +441,11 @@ fn restored_position(
     display: &gdk::Display,
     window: &gtk::Window,
     state: &PillState,
-) -> Option<((c_int, c_int), Option<u64>)> {
+) -> Option<(
+    (c_int, c_int),
+    Option<u64>,
+    rust_pill_shared::edge::MonitorRect,
+)> {
     let parked = state.restored_position.get()?;
     let scale = x11_root_scale(window);
     let work_areas: Vec<_> = (0..display.n_monitors())
@@ -475,9 +479,16 @@ fn restored_position(
         },
     );
     match placement {
-        rust_pill_shared::restore::Placement::Restore { x, y, display_id } => {
-            Some(((x.round() as c_int, y.round() as c_int), display_id))
-        }
+        rust_pill_shared::restore::Placement::Restore {
+            x,
+            y,
+            display_id,
+            work_area,
+        } => Some((
+            (x.round() as c_int, y.round() as c_int),
+            display_id,
+            work_area,
+        )),
         rust_pill_shared::restore::Placement::PlatformDefault => None,
     }
 }
@@ -577,17 +588,22 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         })
     })
     .unwrap_or((0, 0));
-    let target = restored.map_or(init_pos, |(origin, _)| origin);
+    let target = restored.map_or(init_pos, |(origin, _, _)| origin);
     unsafe {
         XMoveWindow(xdisplay, xwindow, target.0, target.1);
         XFlush(xdisplay);
     }
 
     state.x11_drag_applied.set(target);
-    if let Some(((x, y), display_id)) = restored {
+    if let Some(((x, y), display_id, work_area)) = restored {
         state.saved_x.set(x as f64);
         state.saved_y.set(y as f64);
         state.has_saved_position.set(true);
+        // The retained area has to come from the same sample as the origin and
+        // the token. Keeping the record's area while adopting a remapped origin
+        // leaves reconciliation measuring this origin against the display the
+        // pill left, and the next disconnect carries the wrong fraction over.
+        state.saved_work_area.set(work_area);
         // Carry the display identity into this process's state, so the next save
         // republishes it. Dropping it here would silently downgrade every later
         // save to geometry-only matching.

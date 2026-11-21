@@ -6,6 +6,22 @@ pub(crate) use rust_pill_shared::flame::FlameTongue;
 
 use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Visibility};
 
+/// Everything a drop reported to the desktop has to agree on.
+///
+/// Captured at the settle, when the origin is the one the user released at, so
+/// the origin, its work area and its display token all describe one instant. The
+/// guarded retry and the shutdown writer both publish this record rather than
+/// re-resolving any of it, because between the drop and either of those the
+/// layout can change and a late resolution would name a display the pill was
+/// never on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DropRecord {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) work_area: Option<rust_pill_shared::edge::MonitorRect>,
+    pub(crate) display_id: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum ClickAction {
     Pill,
@@ -211,13 +227,19 @@ pub(crate) struct PillState {
     /// the frame loop wants to save but the input lock is held, so a destroy that
     /// arrives before the lock clears can still store it.
     pub(crate) pending_drag_position: Cell<bool>,
-    /// The window origin the settle left behind while a guarded save is owed.
+    /// The complete record of a drop while a guarded save is owed.
     ///
     /// `saved_x`/`saved_y` still describe the position from *before* the drop, so
     /// they cannot be asked where the pill was released. Keeping the released
     /// origin here lets the retry write the drop the user made rather than
     /// whatever it finds on the frame it finally runs.
-    pub(crate) drop_origin: Cell<Option<(i32, i32)>>,
+    ///
+    /// The work area and the display token are part of the record because the
+    /// retry can run after the layout changed. Resolving them at retry time puts
+    /// the released origin beside a display it was never on, and the next launch
+    /// then finds an exact match for that display and clamps the origin instead of
+    /// carrying the relative place over from the panel that went away.
+    pub(crate) drop_record: Cell<Option<DropRecord>>,
     /// When a drop that the display-change hold refused may be written, or `None`
     /// when no save is owed. The drop is reported once, so a refused save has to
     /// be retried from here or the position is lost.

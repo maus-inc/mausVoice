@@ -2461,6 +2461,14 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             // only when there is a position to keep.
             if state.has_saved_position.get() && !gesture_owns_window(state, now) {
                 let frame = window_frame(window);
+                // The retained area is refreshed even when the origin did not
+                // move. A display whose work area changed under a stationary
+                // window leaves the record measuring the old rectangle, and the
+                // next disconnect computes the carry-over fraction against it.
+                // `parked.display` is the live area this resolution used.
+                if state.saved_work_area.get() != parked.display {
+                    state.saved_work_area.set(parked.display);
+                }
                 if frame.origin.x != state.saved_x.get() || frame.origin.y != state.saved_y.get() {
                     state.saved_x.set(frame.origin.x);
                     state.saved_y.set(frame.origin.y);
@@ -2765,22 +2773,21 @@ unsafe fn setup(
             },
         );
         match placement {
-            rust_pill_shared::restore::Placement::Restore { x, y, display_id } => {
+            rust_pill_shared::restore::Placement::Restore {
+                x,
+                y,
+                display_id,
+                work_area,
+            } => {
                 restored_display_id = display_id;
-                // The area the placement actually landed on, resolved from the
-                // same footprint centre the restore clamped against. Taking the
-                // record's own `display` instead would retain the panel that went
-                // away, and the next unplug would remap from it again.
-                let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
-                    (window_w, window_h),
-                    (resting_pill_w, resting_pill_h),
-                    COLLAPSED_BOTTOM_INSET
-                        + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
-                );
-                restored_work_area = rust_pill_shared::layout::work_area_of(
-                    &display_rects,
-                    (x + offset.0 + size.0 / 2.0, y + offset.1 + size.1 / 2.0),
-                );
+                // The destination area comes back with the origin, so both are
+                // retained from one sample. Re-deriving it here meant building a
+                // point out of the restored origin, which is in top-down space,
+                // and comparing it against `display_rects` in the same space, so
+                // it only agreed while the primary display's top happened to be
+                // unchanged. A primary that moved converted the origin against
+                // the old top and named the wrong panel.
+                restored_work_area = Some(work_area);
                 Some(NSRect::new(
                     NSPoint::new(x, primary_top - (y + window_h)),
                     NSSize::new(window_w, window_h),

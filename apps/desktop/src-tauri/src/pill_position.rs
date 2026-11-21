@@ -485,6 +485,7 @@ fn read_rect(value: &serde_json::Value) -> Option<GeometryRect> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::future::Future;
 
     /// The save path reads exactly the fields the pill writes on the wire, so
     /// this pins that a real `PositionChanged` payload becomes a record.
@@ -657,14 +658,27 @@ mod tests {
             recorded.lock().unwrap().push(2u8);
         });
         order.lock().unwrap().push(1);
-        // The second clear cannot reach the pill while the first holds the lock.
-        tokio::task::yield_now().await;
-        assert_eq!(
-            *order.lock().unwrap(),
-            vec![1u8],
-            "the second clear delivered before the first, so its answer can \
-             retire a declaration the pill has not applied"
-        );
+        // `yield_now` only offers the scheduler a turn; it does not promise the
+        // contender runs before the guard is dropped, and a test that never polls
+        // the contender would pass even with an independent lock. Poll the second
+        // acquisition while the first guard is held and require it to stay
+        // pending, so the lock is proven to be the one thing blocking it.
+        {
+            let mut acquisition = Box::pin(lock_clear_delivery());
+            let waker = std::task::Waker::noop();
+            let mut cx = std::task::Context::from_waker(waker);
+            assert!(
+                acquisition.as_mut().poll(&mut cx).is_pending(),
+                "the second clear acquired the lock while the first held it, so \
+                 two clears can reach the pill at once"
+            );
+            assert_eq!(
+                *order.lock().unwrap(),
+                vec![1u8],
+                "the second clear delivered before the first, so its answer can \
+                 retire a declaration the pill has not applied"
+            );
+        }
         drop(first);
         second.await.unwrap();
         assert_eq!(*order.lock().unwrap(), vec![1u8, 2u8]);
