@@ -1100,12 +1100,7 @@ fn tick(state: &PillState, dt: f64) {
         dt,
     );
 
-    // needs_redraw() stops reporting motion once the ring and its pulse are
-    // finished, so the frame that clears them must be dirtied explicitly —
-    // otherwise the last painted state is never erased and a ghost lingers.
-    if rust_pill_shared::RingHost::tick_ring(state, dt).cleared {
-        state.dirty.set(true);
-    }
+    rust_pill_shared::RingHost::tick_ring(state, dt);
 
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);

@@ -12,6 +12,7 @@ pub mod drag;
 pub mod edge;
 pub mod hover;
 pub mod ipc;
+pub mod messages;
 pub mod placement;
 pub mod spring;
 pub mod text_fit;
@@ -302,6 +303,9 @@ pub enum RoundedRectArcSteps {
 
 /// How much the pill inflates when the long-press completes and drag begins,
 /// expressed as a scale factor applied to BOTH axes about the pill's centre.
+/// Corner radius cap of the resting pill, before drag inflation.
+pub const EXPANDED_RADIUS: f64 = 16.0;
+
 pub const DRAG_INFLATE_SCALE: f64 = 0.18;
 /// Spring stiffness for the inflate/deflate animation.
 pub const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
@@ -904,6 +908,384 @@ pub struct RingHeadDisc {
 /// Graphics strokes, Cairo strokes, Direct2D geometries. Everything *before*
 /// the primitive (where the head sits, how many shadow passes to make, each
 /// disc's radius and alpha, and which layers are too faint to bother with) is
+/// Top-left corner and size of the pill window content, in the platform's
+/// own drawing space.
+#[derive(Debug, Clone, Copy)]
+pub struct PillRect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl PillRect {
+    pub fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
+        Self { x, y, w, h }
+    }
+}
+
+/// Everything a renderer needs to paint one frame of the long-press ring,
+/// resolved from the ring state before any platform drawing call.
+///
+/// The three renderers used to compute this identically and then diverge only
+/// in the drawing primitives, so the computation lives here and the crates
+/// keep just the stroking. `None` from [`RingPaint::resolve`] means the ring
+/// is fully faded and nothing should be painted this frame.
+#[derive(Debug, Clone)]
+pub struct RingPaint {
+    /// Master opacity for the outline layers.
+    pub alpha: f64,
+    /// True while the arm-confirmation halo is still expanding.
+    pub pulsing: f64,
+    /// Sweep progress, 0..=1.
+    pub progress: f64,
+    /// The outline rectangle, already inset and drifted outward.
+    pub ox: f64,
+    pub oy: f64,
+    pub ow: f64,
+    pub oh: f64,
+    /// Corner radius of the outline rectangle.
+    pub r: f64,
+    /// The traced perimeter and its cumulative arc lengths.
+    pub path: Vec<(f64, f64)>,
+    pub distances: Vec<f64>,
+    pub total_len: f64,
+    /// How far along the perimeter the comet has travelled.
+    pub head_len: f64,
+    /// Phase driving the travelling glimmer.
+    pub wave_phase: f64,
+    /// Arm ramp, 0..=1.
+    pub arm_t: f64,
+}
+
+/// Per-frame inputs the ring geometry needs from a platform's pill state.
+#[derive(Debug, Clone, Copy)]
+pub struct RingPaintInput<'a> {
+    /// Ring opacity and locate state, read through the host's `RingHost`.
+    pub ring: &'a RingState,
+    pub dragging: bool,
+    pub long_press_active: bool,
+    pub long_press_elapsed: f64,
+    pub inflate: f64,
+    pub wave_phase: f64,
+    /// Top-left corner and size of the pill itself.
+    pub pill_x: f64,
+    pub pill_y: f64,
+    pub pill_w: f64,
+    pub pill_h: f64,
+    /// Corner radius of the pill, before the outline inset is added.
+    pub pill_radius: f64,
+    pub hold_delay: f64,
+    pub hold_duration: f64,
+}
+
+impl RingPaint {
+    /// Resolve one frame, or `None` when the ring is invisible and not pulsing.
+    pub fn resolve(input: &RingPaintInput<'_>) -> Option<Self> {
+        let alpha = input.ring.alpha();
+        let pulsing = if pulse_is_running(input.ring.arm_pulse()) {
+            pulse_progress(input.ring.arm_pulse())
+        } else {
+            0.0
+        };
+        if alpha <= 0.0 && pulsing <= 0.0 {
+            return None;
+        }
+
+        let progress = if input.dragging {
+            1.0
+        } else if input.long_press_active {
+            hold_progress(
+                input.long_press_elapsed,
+                input.hold_delay,
+                input.hold_duration,
+            )
+        } else {
+            input.ring.release_progress()
+        };
+
+        let drift = if input.dragging || input.long_press_active {
+            0.0
+        } else {
+            ring_release_drift(input.ring.release_elapsed())
+        };
+        let inset = 2.0 + drift;
+        let ox = input.pill_x - inset;
+        let oy = input.pill_y - inset;
+        let ow = input.pill_w + inset * 2.0;
+        let oh = input.pill_h + inset * 2.0;
+        let r = (input.pill_radius + inset).min(oh / 2.0);
+
+        let path = rounded_rectangle_perimeter(ox, oy, ow, oh, r, RoundedRectArcSteps::Auto);
+        let (distances, total_len) = path_distances(&path);
+        let head_len = total_len * progress.clamp(0.0, 1.0);
+
+        Some(Self {
+            alpha,
+            pulsing,
+            progress,
+            ox,
+            oy,
+            ow,
+            oh,
+            r,
+            path,
+            distances,
+            total_len,
+            head_len,
+            wave_phase: input.wave_phase,
+            arm_t: input.ring.arm_t(),
+        })
+    }
+
+    /// One halo ring of the arm pulse: its perimeter, stroke width and alpha.
+    ///
+    /// `delay` selects the leading halo (`0.0`) or the trailing echo
+    /// ([`RING_PULSE_ECHO_DELAY`]); the echo is half strength.
+    pub fn pulse_halo(&self, delay: f64) -> Option<RingHalo> {
+        let tt = ((self.pulsing - delay) / (1.0 - delay)).clamp(0.0, 1.0);
+        if tt <= 0.0 {
+            return None;
+        }
+        let eased = ease_out_cubic(tt);
+        let spread = RING_PULSE_SPREAD * eased;
+        let path = rounded_rectangle_perimeter(
+            self.ox - spread,
+            self.oy - spread,
+            self.ow + spread * 2.0,
+            self.oh + spread * 2.0,
+            self.r + spread,
+            RoundedRectArcSteps::Auto,
+        );
+        let echo = if delay > 0.0 { 0.5 } else { 1.0 };
+        Some(RingHalo {
+            path,
+            width: 2.2 + (0.5 - 2.2) * eased,
+            alpha: RING_PULSE_ALPHA * (1.0 - eased).powf(1.8) * echo,
+        })
+    }
+}
+
+/// The drawing primitives the shared ring painter needs from a backend.
+///
+/// The ring's layer order, the per-segment comet shading and the pulse halos
+/// used to be reimplemented per platform and drifted; the loop now lives in
+/// [`paint_ring`] and each backend only supplies these primitives.
+pub trait RingPainter {
+    /// Start a stroked path in `rgba` at `width`.
+    fn begin_stroke(&mut self, rgba: [f64; 4], width: f64);
+    fn move_to(&mut self, x: f64, y: f64);
+    fn line_to(&mut self, x: f64, y: f64);
+    fn stroke(&mut self);
+    /// Fill a circle in `rgba`.
+    fn fill_circle(&mut self, cx: f64, cy: f64, radius: f64, rgba: [f64; 4]);
+    /// Paint many segments that each carry their own colour and width.
+    fn shaded_segments(&mut self, segments: &[RingSegment]);
+}
+
+/// One per-segment comet piece, already shaded by the shared envelope.
+#[derive(Debug, Clone, Copy)]
+pub struct RingSegment {
+    pub x1: f64,
+    pub y1: f64,
+    pub x2: f64,
+    pub y2: f64,
+    pub rgba: [f64; 4],
+    pub width: f64,
+}
+
+/// Paints one resolved ring frame through a backend's primitives.
+///
+/// `points` is the caller's reusable resample buffer, filled here. `outline`
+/// is the ring colour; the shadow and underlay layers are always black.
+pub fn paint_ring<P: RingPainter>(
+    painter: &mut P,
+    plan: &RingPaint,
+    points: &mut Vec<(f64, f64, f64)>,
+    outline: (f64, f64, f64),
+) {
+    if plan.alpha > 0.0 {
+        let rgba = [outline.0, outline.1, outline.2, 0.085 * plan.alpha];
+        painter.begin_stroke(rgba, 1.0);
+        if let Some(first) = plan.path.first() {
+            painter.move_to(first.0, first.1);
+            for p in plan.path.iter().skip(1) {
+                painter.line_to(p.0, p.1);
+            }
+            painter.stroke();
+        }
+    }
+
+    if plan.alpha > 0.0 && plan.head_len > 0.0 {
+        resample_perimeter(
+            &plan.path,
+            &plan.distances,
+            plan.total_len,
+            RING_SEGMENT_PX,
+            points,
+        );
+
+        if let Some(layers) = RingLayers::new(
+            points,
+            plan.head_len,
+            plan.total_len,
+            plan.progress,
+            plan.arm_t,
+            plan.alpha,
+        ) {
+            for (width, layer_alpha) in layers.shadow_passes() {
+                painter.begin_stroke([0.0, 0.0, 0.0, layer_alpha], width);
+                painter.move_to(points[0].0, points[0].1);
+                for p in &points[1..=layers.head_index] {
+                    painter.line_to(p.0, p.1);
+                }
+                painter.stroke();
+            }
+
+            for disc in layers.underlay_discs() {
+                painter.fill_circle(disc.cx, disc.cy, disc.radius, [0.0, 0.0, 0.0, disc.alpha]);
+            }
+
+            let lift = 1.0 + RING_ARM_LIFT * plan.arm_t;
+            let mut segments = Vec::with_capacity(points.len());
+            for w in points.windows(2) {
+                let (x1, y1, _) = w[0];
+                let (x2, y2, d) = w[1];
+                if d > plan.head_len {
+                    break;
+                }
+                let env = ring_envelope(d, plan.head_len, plan.progress, plan.total_len);
+                let glim = ring_glimmer(d, plan.total_len, plan.wave_phase, plan.progress);
+                let a = (env * glim * lift).clamp(0.0, 1.0) * plan.alpha;
+                if a < RING_SEGMENT_ALPHA_CUTOFF {
+                    continue;
+                }
+                segments.push(RingSegment {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    rgba: [outline.0, outline.1, outline.2, a],
+                    width: RING_CORE_WIDTH + RING_WIDTH_SWELL * env * (1.0 - 0.35 * plan.arm_t),
+                });
+            }
+            painter.shaded_segments(&segments);
+
+            for disc in layers.head_discs() {
+                painter.fill_circle(
+                    disc.cx,
+                    disc.cy,
+                    disc.radius,
+                    [outline.0, outline.1, outline.2, disc.alpha],
+                );
+            }
+        }
+    }
+
+    if plan.pulsing > 0.0 {
+        for delay in [0.0, RING_PULSE_ECHO_DELAY] {
+            let Some(halo) = plan.pulse_halo(delay) else {
+                continue;
+            };
+            painter.begin_stroke([outline.0, outline.1, outline.2, halo.alpha], halo.width);
+            if let Some(first) = halo.path.first() {
+                painter.move_to(first.0, first.1);
+                for p in halo.path.iter().skip(1) {
+                    painter.line_to(p.0, p.1);
+                }
+                painter.stroke();
+            }
+        }
+    }
+}
+
+/// Resolve and paint one frame of the ring in a single call.
+///
+/// This is the whole per-frame entry point a platform renderer needs: it
+/// resolves the geometry from the host's own state, then hands it to
+/// [`paint_ring`]. The pill corner radius and hold ramp come from the shared
+/// pill geometry, so a renderer only passes the rectangle and its buffers.
+/// Returns `false` when the ring is invisible this frame.
+pub fn paint_ring_frame<P: RingPainter, H: RingHost + ?Sized>(
+    painter: &mut P,
+    host: &H,
+    pill: PillRect,
+    outline: (f64, f64, f64),
+) -> bool {
+    let inflate = host.inflate();
+    let radius = pill_radius(pill.w, pill.h, inflate);
+    let Some(plan) = host.ring_paint(pill, radius, LONG_PRESS_HOLD_DELAY, LONG_PRESS_DURATION)
+    else {
+        return false;
+    };
+    let mut points = host.ring_points().borrow_mut();
+    paint_ring(painter, &plan, &mut points, outline);
+    true
+}
+
+/// Corner radius of the pill for a given inflate factor.
+pub fn pill_radius(pill_w: f64, pill_h: f64, inflate: f64) -> f64 {
+    let cap = EXPANDED_RADIUS * (1.0 + inflate * DRAG_INFLATE_SCALE);
+    (pill_w.min(pill_h) * 0.5).min(cap)
+}
+
+/// Implements [`RingPainter`] for a cairo-style context wrapper.
+///
+/// GTK and macOS both drive a context with the same `move_to`/`line_to`/
+/// `arc`/`fill`/`stroke` surface, so the adapter is written once here and
+/// instantiated per backend. The wrapper must expose the context as field
+/// `0`; Cairo's `Result`-returning `stroke`/`fill` are discarded uniformly.
+#[macro_export]
+macro_rules! impl_cairo_ring_painter {
+    ($ty:ty, $tau:expr) => {
+        impl $crate::RingPainter for $ty {
+            fn begin_stroke(&mut self, rgba: [f64; 4], width: f64) {
+                self.0.set_line_width(width);
+                self.0.set_source_rgba(rgba[0], rgba[1], rgba[2], rgba[3]);
+                self.0.new_sub_path();
+            }
+
+            fn move_to(&mut self, x: f64, y: f64) {
+                self.0.move_to(x, y);
+            }
+
+            fn line_to(&mut self, x: f64, y: f64) {
+                self.0.line_to(x, y);
+            }
+
+            fn stroke(&mut self) {
+                let _ = self.0.stroke();
+            }
+
+            fn fill_circle(&mut self, cx: f64, cy: f64, radius: f64, rgba: [f64; 4]) {
+                self.0.set_source_rgba(rgba[0], rgba[1], rgba[2], rgba[3]);
+                self.0.new_sub_path();
+                self.0.arc(cx, cy, radius, 0.0, $tau);
+                let _ = self.0.fill();
+            }
+
+            fn shaded_segments(&mut self, segments: &[$crate::RingSegment]) {
+                for s in segments {
+                    self.0.set_line_width(s.width);
+                    self.0
+                        .set_source_rgba(s.rgba[0], s.rgba[1], s.rgba[2], s.rgba[3]);
+                    self.0.move_to(s.x1, s.y1);
+                    self.0.line_to(s.x2, s.y2);
+                    let _ = self.0.stroke();
+                }
+            }
+        }
+    };
+}
+
+/// One expanding halo of the arm-confirmation pulse.
+#[derive(Debug, Clone)]
+pub struct RingHalo {
+    pub path: Vec<(f64, f64)>,
+    pub width: f64,
+    pub alpha: f64,
+}
+
 /// identical, so it lives here: a platform can no longer drift by forgetting a
 /// pass, ordering the discs the other way, or applying `ring_alpha` twice.
 ///
@@ -1538,13 +1920,43 @@ pub trait RingHost {
 
     /// Advances the ring and the locate replay for one frame.
     fn tick_ring(&self, delta_seconds: f64) -> RingFrame {
-        self.ring().tick(self.ring_gesture(), delta_seconds)
+        let frame = self.ring().tick(self.ring_gesture(), delta_seconds);
+        if frame.cleared {
+            self.ring_cleared();
+        }
+        frame
     }
+
+    /// Called on the frame that clears the ring.
+    ///
+    /// Hosts that repaint continuously have nothing to do. A host that only
+    /// repaints on demand must dirty its surface here: once the ring and its
+    /// pulse stop moving it reports no further motion, so without this the
+    /// last painted state lingers as a ghost.
+    fn ring_cleared(&self) {}
 
     /// Begins a locate replay from a clean ring.
     fn begin_locate(&self) {
         self.ring().start_locate(self.ring_gesture());
     }
+
+    /// Current drag-inflate amount, which scales the pill's corner radius.
+    fn inflate(&self) -> f64;
+
+    /// Reusable buffer the ring painter fills each frame.
+    fn ring_points(&self) -> &std::cell::RefCell<Vec<(f64, f64, f64)>>;
+
+    /// Resolves one frame of ring geometry from this pill's state.
+    ///
+    /// The per-platform `impl_ring_host!` provides the field access; the
+    /// renderers only pass the pill rectangle and hold-ramp constants.
+    fn ring_paint(
+        &self,
+        pill: PillRect,
+        pill_radius: f64,
+        hold_delay: f64,
+        hold_duration: f64,
+    ) -> Option<RingPaint>;
 }
 
 /// Implements [`RingHost`] for a pill state whose gesture fields carry the
@@ -1554,8 +1966,10 @@ pub trait RingHost {
 /// ring needs are not, so the impl is generated instead of copied.
 #[macro_export]
 macro_rules! impl_ring_host {
-    ($ty:ty) => {
+    ($ty:ty $(, $extra:item)*) => {
         impl $crate::RingHost for $ty {
+            $($extra)*
+
             fn ring(&self) -> &$crate::RingState {
                 &self.ring
             }
@@ -1567,6 +1981,41 @@ macro_rules! impl_ring_host {
                     long_press_elapsed: self.long_press_elapsed.get(),
                     dragging: self.dragging.get(),
                 }
+            }
+
+            fn inflate(&self) -> f64 {
+                self.inflate_t.get()
+            }
+
+            fn ring_points(&self) -> &std::cell::RefCell<Vec<(f64, f64, f64)>> {
+                &self.ring_points
+            }
+
+            /// Resolve the ring paint plan from this pill's own state, so each
+            /// platform's renderer only supplies the pill rectangle it already
+            /// computed and the hold-ramp constants.
+            fn ring_paint(
+                &self,
+                pill: $crate::PillRect,
+                pill_radius: f64,
+                hold_delay: f64,
+                hold_duration: f64,
+            ) -> Option<$crate::RingPaint> {
+                $crate::RingPaint::resolve(&$crate::RingPaintInput {
+                    ring: &self.ring,
+                    dragging: self.dragging.get(),
+                    long_press_active: self.long_press_active.get(),
+                    long_press_elapsed: self.long_press_elapsed.get(),
+                    inflate: self.inflate_t.get(),
+                    wave_phase: self.wave_phase.get(),
+                    pill_x: pill.x,
+                    pill_y: pill.y,
+                    pill_w: pill.w,
+                    pill_h: pill.h,
+                    pill_radius,
+                    hold_delay,
+                    hold_duration,
+                })
             }
         }
     };

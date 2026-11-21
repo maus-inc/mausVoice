@@ -433,4 +433,12 @@ impl PillState {
     }
 }
 
-rust_pill_shared::impl_ring_host!(PillState);
+rust_pill_shared::impl_ring_host!(
+    PillState,
+    /// The surface only repaints when something reports motion, so the frame
+    /// that clears the ring has to be dirtied by hand or the last painted
+    /// state lingers as a ghost.
+    fn ring_cleared(&self) {
+        self.dirty.set(true);
+    }
+);

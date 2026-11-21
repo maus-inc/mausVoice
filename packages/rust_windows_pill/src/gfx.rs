@@ -398,32 +398,6 @@ impl Gfx {
         }
     }
 
-    /// Draw many segments that share one colour/width in a single call, so the
-    /// brush and stroke style are created once instead of per segment.
-    pub(crate) fn draw_line_batch(
-        &self,
-        segments: &[(f64, f64, f64, f64)],
-        rgba: [f64; 4],
-        width: f64,
-    ) {
-        if segments.is_empty() {
-            return;
-        }
-        let brush = self.brush(rgba);
-        let style = self.round_stroke_style();
-        unsafe {
-            for &(x1, y1, x2, y2) in segments {
-                self.rt.DrawLine(
-                    vec2(x1, y1),
-                    vec2(x2, y2),
-                    &brush,
-                    width as f32,
-                    style.as_ref(),
-                );
-            }
-        }
-    }
-
     /// Draw many segments that each carry their own colour and width.
     ///
     /// Used by the long-press ring, where every segment has a different alpha.

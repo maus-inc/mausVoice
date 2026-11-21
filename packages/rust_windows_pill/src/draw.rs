@@ -2,7 +2,6 @@ use crate::constants::*;
 use crate::gfx::{Gfx, ShadedSegment};
 use crate::ipc::{Phase, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
-use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
 
 thread_local! {
     /// The comet's shaded segments, kept between frames.
@@ -2238,200 +2237,76 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 /// completion while dragging so the outline reads as a drag affordance.
 /// Opacity is owned by the ring state (pinned while held, eased out after
 /// release), never by the press-progress ramp.
-fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
-    let alpha = state.ring.alpha();
-    let pulsing = rust_pill_shared::pulse_is_running(state.ring.arm_pulse());
-    if alpha <= 0.0 && !pulsing {
-        return;
+/// Direct2D adapter for the shared ring painter.
+///
+/// D2D has no cheap per-frame path object for a single-colour stroke, so the
+/// shared painter's `begin_stroke`/`move_to`/`line_to`/`stroke` calls are
+/// accumulated into a polyline and drawn in one `DrawGeometry` per stroke.
+struct D2DRing<'a> {
+    gfx: &'a Gfx,
+    rgba: [f64; 4],
+    width: f64,
+    path: Vec<(f64, f64, f64)>,
+}
+
+impl<'a> D2DRing<'a> {
+    fn new(gfx: &'a Gfx) -> Self {
+        Self {
+            gfx,
+            rgba: [0.0; 4],
+            width: 0.0,
+            path: Vec::new(),
+        }
+    }
+}
+
+impl rust_pill_shared::RingPainter for D2DRing<'_> {
+    fn begin_stroke(&mut self, rgba: [f64; 4], width: f64) {
+        self.rgba = rgba;
+        self.width = width;
+        self.path.clear();
     }
 
-    // Full outline while dragging; mid-press it tracks the eased hold ramp;
-    // after release or cancel it fades from the level actually reached instead
-    // of snapping to a complete outline.
-    let progress = if state.dragging.get() {
-        1.0
-    } else if state.long_press_active.get() {
-        long_press_progress(state.long_press_elapsed.get())
-    } else {
-        state.ring.release_progress()
-    };
+    fn move_to(&mut self, x: f64, y: f64) {
+        self.path.push((x, y, 0.0));
+    }
 
-    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
+    fn line_to(&mut self, x: f64, y: f64) {
+        self.path.push((x, y, 0.0));
+    }
 
-    // The ring drifts outward slightly as it fades, so it dissolves away from
-    // the pill rather than collapsing onto it.
-    let drift = if state.dragging.get() || state.long_press_active.get() {
-        0.0
-    } else {
-        rust_pill_shared::ring_release_drift(state.ring.release_elapsed())
-    };
-    let inset = 2.0 + drift;
-    let ox = pill_x - inset;
-    let oy = pill_y - inset;
-    let ow = pill_w + inset * 2.0;
-    let oh = pill_h + inset * 2.0;
-    let r = (radius + inset).min(oh / 2.0);
+    fn stroke(&mut self) {
+        self.gfx.stroke_polyline(&self.path, self.rgba, self.width);
+    }
 
-    // Shared perimeter construction — identical geometry on every platform so
-    // the long-press ring traces the same path across Linux/macOS/Windows.
-    let path = rounded_rectangle_perimeter(ox, oy, ow, oh, r, RoundedRectArcSteps::Auto);
-    let (distances, total_len) = path_distances(&path);
-    let head_len = total_len * progress.clamp(0.0, 1.0);
-    let wave_phase = state.wave_phase.get();
-    let arm_t = state.ring.arm_t();
+    fn fill_circle(&mut self, cx: f64, cy: f64, radius: f64, rgba: [f64; 4]) {
+        self.gfx.fill_circle(cx, cy, radius, rgba);
+    }
 
-    // Ambient layer: the unfilled track, so the ring reads as a path being
-    // travelled rather than a line appearing out of nothing.
-    if alpha > 0.0 {
-        let track_col = [
-            LONG_PRESS_OUTLINE_COLOR.0,
-            LONG_PRESS_OUTLINE_COLOR.1,
-            LONG_PRESS_OUTLINE_COLOR.2,
-            0.085 * alpha,
-        ];
-        let track: Vec<(f64, f64, f64, f64)> = path
-            .windows(2)
-            .map(|w| (w[0].0, w[0].1, w[1].0, w[1].1))
+    fn shaded_segments(&mut self, segments: &[rust_pill_shared::RingSegment]) {
+        let shaded: Vec<ShadedSegment> = segments
+            .iter()
+            .map(|s| ShadedSegment {
+                x1: s.x1,
+                y1: s.y1,
+                x2: s.x2,
+                y2: s.y2,
+                rgba: s.rgba,
+                width: s.width,
+            })
             .collect();
-        gfx.draw_line_batch(&track, track_col, 1.0);
+        self.gfx.draw_line_shaded(&shaded);
     }
+}
 
-    if alpha > 0.0 && head_len > 0.0 {
-        // One resampled perimeter drives the shadow, the comet and the head,
-        // so the layers can never drift apart and no geometry is built more
-        // than once per frame.
-        let mut points = state.ring_points.borrow_mut();
-        rust_pill_shared::resample_perimeter(
-            &path,
-            &distances,
-            total_len,
-            rust_pill_shared::RING_SEGMENT_PX,
-            &mut points,
-        );
-
-        // Degenerate geometry cannot occur with the shared perimeter (this
-        // block is only entered when `head_len > 0`), but the shadow slice
-        // and head placement below must never index an empty buffer — which
-        // `RingLayers::new` reports as `None`.
-        if let Some(layers) =
-            rust_pill_shared::RingLayers::new(&points, head_len, total_len, progress, arm_t, alpha)
-        {
-            // Shadow layer: a soft dark halo behind the silver ring so it stays
-            // readable on light backdrops. Direct2D has no cheap blur on the
-            // render path, so the ring path is stroked several times with
-            // growing widths and shrinking alphas — the passes sum to a
-            // falloff that is darkest right under the ring and gone within a
-            // few pixels. Widths, alphas and the arc's extent all come from
-            // the shared plan; only the stroking is platform code.
-            for (width, layer_alpha) in layers.shadow_passes() {
-                gfx.stroke_polyline(
-                    &points[..=layers.head_index],
-                    [0.0, 0.0, 0.0, layer_alpha],
-                    width,
-                );
-            }
-
-            // Dark underlay beneath the comet head so the soft silver blob
-            // also separates from a light backdrop; mirrors the head's disc
-            // shading.
-            for disc in layers.underlay_discs() {
-                gfx.fill_circle(disc.cx, disc.cy, disc.radius, [0.0, 0.0, 0.0, disc.alpha]);
-            }
-
-            // Primary layer: the comet. Brightness is envelope × glimmer
-            // evaluated per evenly-spaced segment — the portable stand-in for
-            // a gradient along a path, which Direct2D cannot stroke directly.
-            let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
-            // Reused across frames; see `COMET_SHADED`. `mem::take` leaves an empty
-            // Vec in the cell, so nothing is aliased while the loop fills this one.
-            let mut shaded: Vec<ShadedSegment> =
-                COMET_SHADED.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
-            shaded.clear();
-            shaded.reserve(points.len());
-            for w in points.windows(2) {
-                let (x1, y1, _) = w[0];
-                let (x2, y2, d) = w[1];
-                if d > head_len {
-                    break;
-                }
-                let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
-                let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
-                let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
-                if a < rust_pill_shared::RING_SEGMENT_ALPHA_CUTOFF {
-                    continue;
-                }
-                shaded.push(ShadedSegment {
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    rgba: [
-                        LONG_PRESS_OUTLINE_COLOR.0,
-                        LONG_PRESS_OUTLINE_COLOR.1,
-                        LONG_PRESS_OUTLINE_COLOR.2,
-                        a,
-                    ],
-                    width: rust_pill_shared::RING_CORE_WIDTH
-                        + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
-                });
-            }
-            gfx.draw_line_shaded(&shaded);
-            COMET_SHADED.with(|cell| *cell.borrow_mut() = shaded);
-
-            // Secondary layer: the soft head. Concentric discs approximate a
-            // radial falloff without allocating a gradient every frame. It
-            // dissolves and blooms before completion so nothing bright is left
-            // at the seam — once it has, the shared plan yields no discs.
-            for disc in layers.head_discs() {
-                gfx.fill_circle(
-                    disc.cx,
-                    disc.cy,
-                    disc.radius,
-                    [
-                        LONG_PRESS_OUTLINE_COLOR.0,
-                        LONG_PRESS_OUTLINE_COLOR.1,
-                        LONG_PRESS_OUTLINE_COLOR.2,
-                        disc.alpha,
-                    ],
-                );
-            }
-        }
-    }
-
-    // Confirmation layer: an expanding halo the moment the gesture arms, with a
-    // trailing echo. This is the payoff the old ring never gave.
-    if pulsing {
-        let t = rust_pill_shared::pulse_progress(state.ring.arm_pulse());
-        for delay in [0.0, rust_pill_shared::RING_PULSE_ECHO_DELAY] {
-            let tt = ((t - delay) / (1.0 - delay)).clamp(0.0, 1.0);
-            if tt <= 0.0 {
-                continue;
-            }
-            let e = rust_pill_shared::ease_out_cubic(tt);
-            let spread = rust_pill_shared::RING_PULSE_SPREAD * e;
-            let halo = rounded_rectangle_perimeter(
-                ox - spread,
-                oy - spread,
-                ow + spread * 2.0,
-                oh + spread * 2.0,
-                r + spread,
-                RoundedRectArcSteps::Auto,
-            );
-            let echo = if delay > 0.0 { 0.5 } else { 1.0 };
-            let col = [
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                rust_pill_shared::RING_PULSE_ALPHA * (1.0 - e).powf(1.8) * echo,
-            ];
-            let segs: Vec<(f64, f64, f64, f64)> = halo
-                .windows(2)
-                .map(|w| (w[0].0, w[0].1, w[1].0, w[1].1))
-                .collect();
-            gfx.draw_line_batch(&segs, col, 2.2 + (0.5 - 2.2) * e);
-        }
-    }
+fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
+    let (x, y, w, h) = pill_position(state, ww, wh);
+    rust_pill_shared::paint_ring_frame(
+        &mut D2DRing::new(gfx),
+        state,
+        rust_pill_shared::PillRect::new(x, y, w, h),
+        LONG_PRESS_OUTLINE_COLOR,
+    );
 }
 
 /// Progress of the long-press gesture, in `0.0..=1.0`.

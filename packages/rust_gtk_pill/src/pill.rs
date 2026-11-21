@@ -746,6 +746,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                         monitor,
                     });
                 }
+                // Only the Win32 pill anchors to a screen edge; the desktop
+                // broadcasts the preference, so accept it and ignore it here.
+                InMessage::PillPlacement { .. } => {}
                 InMessage::Quit => {
                     quit_tick.set(true);
                 }

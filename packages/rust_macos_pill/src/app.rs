@@ -762,6 +762,9 @@ fn perform_tick() {
                         monitor: Some(monitor),
                     });
                 }
+                // Only the Win32 pill anchors to a screen edge; the desktop
+                // broadcasts the preference, so accept it and ignore it here.
+                InMessage::PillPlacement { .. } => {}
                 InMessage::Quit => {
                     ctx.quit.set(true);
                 }
