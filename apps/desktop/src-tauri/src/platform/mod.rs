@@ -319,6 +319,13 @@ pub trait Recorder: Send + Sync {
         }
         result
     }
+    /// Seal a normal recording using the persisted hold policy, not a webview's cache.
+    fn stop_for_handoff_with_linger(
+        &self,
+        _linger: std::time::Duration,
+    ) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+        self.stop_for_handoff()
+    }
     fn pause(&self) -> Result<(), Box<dyn std::error::Error>>;
     fn resume(&self) -> Result<(), Box<dyn std::error::Error>>;
     fn set_preferred_input_device(&self, _name: Option<String>) {}

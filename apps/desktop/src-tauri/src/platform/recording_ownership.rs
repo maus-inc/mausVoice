@@ -1034,6 +1034,21 @@ impl RecordingOwnership {
         Some(scope)
     }
 
+    /// Acknowledge capture end for an already closed window scope. Prefer
+    /// `retire_document` when handling a committed replacement or destruction.
+    pub fn confirm_external_window_capture_ended(&self, key: usize) {
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if owner.as_ref().is_some_and(|owner| {
+            owner.external && owner.window.key == key && owner.window.closed.load(Ordering::Acquire)
+        }) {
+            *owner = None;
+            self.wake_starts();
+        }
+    }
+
     #[cfg(test)]
     pub fn release_external_scoped(&self, id: &str, window: &Arc<RecordingWindow>, token: u64) {
         self.release_external_matching(id, Some((window, token)));
@@ -2854,6 +2869,7 @@ mod tests {
             .claim_admission("browser", &replacement, replacement_token)
             .unwrap();
         ownership.start_external(&admission).unwrap();
+        ownership.confirm_external_window_capture_ended(33);
         ownership.release_external_window("browser", 33, token);
         assert!(start(&ownership, "native").is_err());
         ownership.release_external_window("browser", 33, replacement_token);

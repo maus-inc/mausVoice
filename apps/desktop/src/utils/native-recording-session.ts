@@ -36,8 +36,12 @@ export type NativeRecordingHandle = {
   isLive: () => boolean;
 };
 
+export class NativeRecordingBusyError extends Error {}
+
 export type NativeRecordingStartOptions = {
   waitForRelease?: boolean;
+  /** A caller may replace only the exact capture it owns. */
+  replace?: NativeRecordingHandle;
   /** Called after reserving an owner, before capture can emit its first chunk. */
   onAdmission?: (handle: NativeRecordingHandle) => void;
 };
@@ -93,9 +97,8 @@ const sampleRateFromStartResponse = (result: unknown): number => {
 /**
  * Open the microphone under a fresh native admission.
  *
- * A recording left live by a superseded start is discarded first: native admits
- * one owner at a time, and inheriting the old stream is the bug the admission
- * exists to prevent.
+ * Only a matching replacement handle can retire an existing capture. A
+ * competing caller must never discard a recording it did not start.
  */
 export const beginNativeRecording = async (
   preferredMicrophone: string | null,
@@ -103,7 +106,9 @@ export const beginNativeRecording = async (
   invokeFn: RecordingInvoke = invoke,
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> => {
   if (beginInFlight)
-    throw new Error("A recording start is already in progress");
+    throw new NativeRecordingBusyError(
+      "A recording start is already in progress",
+    );
   beginInFlight = true;
   try {
     return await beginNativeRecordingOwned(
@@ -126,6 +131,9 @@ const beginNativeRecordingOwned = async (
   if (stopInFlight) await stopInFlight;
   const superseded = liveHandle;
   if (superseded) {
+    if (options.replace !== superseded) {
+      throw new NativeRecordingBusyError("A recording is already in progress");
+    }
     await superseded.discard().catch((error: unknown) => {
       getLogger().warning(`Failed to discard a superseded recording: ${error}`);
     });
@@ -136,7 +144,7 @@ const beginNativeRecordingOwned = async (
   // capture beside it.
   const localOwner = {};
   if (!acquireLocalNativeRecording(invokeFn, localOwner)) {
-    throw new Error("A recording is already in progress");
+    throw new NativeRecordingBusyError("A recording is already in progress");
   }
   const releaseLocal = () => {
     releaseLocalNativeRecording(invokeFn, localOwner);

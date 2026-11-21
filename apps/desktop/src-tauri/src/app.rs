@@ -707,25 +707,6 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 let _ = crate::platform::window::surface_main_window(&window);
             }
         }))
-        .plugin({
-            let builder = tauri::plugin::Builder::<tauri::Wry>::new("recording-lifecycle");
-            #[cfg(target_os = "linux")]
-            let builder = builder.on_webview_ready(|webview| {
-                use gtk::prelude::ObjectExt;
-                let window = webview.window();
-                if let Err(error) = webview.with_webview(move |native| {
-                    native
-                        .inner()
-                        .connect_local("web-process-terminated", false, move |_| {
-                            crate::commands::retire_recording_window(&window);
-                            None
-                        });
-                }) {
-                    log::error!("Failed to watch recording webview termination: {error}");
-                }
-            });
-            builder.build()
-        })
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![AUTOSTART_HIDDEN_ARG]),
@@ -757,6 +738,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 // Wry emits Started at document commit (WKWebView/WebKitGTK)
                 // or ContentLoading (WebView2), not at provisional navigation.
                 // The previous document can no longer release its capture lease.
+                // A process-exit notification only identifies the webview, so it
+                // must not retire a document that has already replaced it.
                 crate::commands::retire_recording_window(&webview.window());
             }
         })

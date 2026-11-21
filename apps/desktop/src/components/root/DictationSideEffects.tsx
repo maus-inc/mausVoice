@@ -81,7 +81,6 @@ import {
   type SessionAudioIntake,
 } from "./dictation-recording-intake";
 import { createSystemVolumeDim } from "./dictation-volume-dim";
-import { syncFiniteMicrophoneLinger } from "./microphone-policy-queue";
 import {
   invokeGuardedRecordingStart,
   settleRecordingStart,
@@ -181,6 +180,7 @@ import { surfaceMainWindow } from "../../utils/window.utils";
 import { resetHotkeyFilter } from "../../utils/hotkey-filter.utils";
 import {
   discardNativeRecording,
+  NativeRecordingBusyError,
   invokeStopRecording,
   pauseNativeRecording,
   resumeNativeRecording,
@@ -1435,7 +1435,7 @@ export const DictationSideEffects = () => {
   }, [isMainWindow, isActiveSession]);
 
   const abortRecording = useCallback(
-    async (message?: AbortMessage) => {
+    async (message?: AbortMessage, preserveOtherCapture = false) => {
       const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
       // Invalidate the operation token first, so an in-flight start tail cannot
       // act on a recording that is over, and end the dim, so a volume write
@@ -1464,11 +1464,17 @@ export const DictationSideEffects = () => {
       //
       // A second `stop_recording` can still arrive from the superseded start's own
       // cleanup. That is already tolerated: the invoke is caught and logged.
-      const stopNative = abortRecordingIntake(
-        audioChunkUnlistenRef,
-        ownedAudioChunkUnlisten,
-        nativeStartOwnerRef,
-      );
+      if (preserveOtherCapture) {
+        nativeStartOwnerRef.current = null;
+        releaseAudioIntake(audioChunkUnlistenRef, ownedAudioChunkUnlisten);
+      }
+      const stopNative = preserveOtherCapture
+        ? undefined
+        : abortRecordingIntake(
+            audioChunkUnlistenRef,
+            ownedAudioChunkUnlisten,
+            nativeStartOwnerRef,
+          );
       // Detach the old session before any IPC can suspend. A later recording
       // must never be cleaned up by the tail of this abort.
       const session = sessionRef.current;
@@ -2183,15 +2189,11 @@ export const DictationSideEffects = () => {
       // This handler is sync and cannot await, but the call still has to be
       // marked discarded so it is not a floating promise. `abortRecording`
       // guards its own awaits, so nothing here can reject.
-      void abortRecording();
+      const busy = error instanceof NativeRecordingBusyError;
+      void abortRecording(undefined, busy);
 
       hardResetHotkeyState();
       clearRecordingTimers();
-      void discardNativeRecording().catch((e: unknown) =>
-        getLogger().verbose(
-          `discard_recording failed during error handling: ${e}`,
-        ),
-      );
 
       runToast(
         showToast({
@@ -2371,18 +2373,6 @@ export const DictationSideEffects = () => {
           getLogger().warning(
             `Pre-capture session setup failed, continuing without it: ${error}`,
           );
-        }
-        if (getAppState().userPrefs?.keepMicrophoneReady === false) {
-          // A short press can stop before the readiness effect's IPC lands.
-          // Wait for the latest finite policy before arming this capture.
-          await syncFiniteMicrophoneLinger(() => {
-            const prefs = getAppState().userPrefs;
-            return isCurrentStart() && prefs?.keepMicrophoneReady === false
-              ? (prefs.microphoneLingerMs ?? 0)
-              : null;
-          }).catch((error: unknown) => {
-            getLogger().warning(`Could not set the linger window: ${error}`);
-          });
         }
         if (!isCurrentStart()) {
           session.cleanup();
