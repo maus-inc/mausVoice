@@ -1026,21 +1026,20 @@ fn cpal_alsa_failed_close_never_reuses_the_uncertain_handle() {
     assert!(manager.stop_for_handoff().unwrap().capture_failed);
     assert_eq!(unsafe { calls() }, 1);
     assert!(manager.is_recording());
-    // The armed close fault is one-shot. `start()` retries the retained
-    // release before checking the gate; the retry succeeds and a fresh
-    // handle is opened, so the uncertain handle is closed, not reused.
-    manager.start(None, None).unwrap();
+    // The close failure sets the ALSA cleanup_uncertain latch. The
+    // retry in `start()` cannot clear it; `check_release()` fails and
+    // the start is refused until restart, as designed.
+    assert!(manager.start(None, None).is_err());
+    assert!(manager.stop().is_err());
+    assert_eq!(unsafe { calls() }, 1);
     assert!(manager.is_recording());
-    manager.stop().unwrap();
-    assert!(!manager.is_recording());
-    // Model process teardown: with the retry having cleared the retained
-    // stream, dropping must not close anything further.
-    let calls_after_stop = unsafe { calls() };
+    // Model process teardown: dropping the retained recording must not
+    // close the already-consumed, potentially invalid native handle.
     manager
         .worker
         .call(|recorder| drop(recorder.unresolved_stream.borrow_mut().take()))
         .unwrap();
-    assert_eq!(unsafe { calls() }, calls_after_stop);
+    assert_eq!(unsafe { calls() }, 1);
 }
 
 #[test]
