@@ -399,8 +399,16 @@ mod cpal_impl {
         }
     }
 
-    // ALSA's mmap capture gate can lose proof that all capture was released.
-    // Only the patched ALSA backend exposes a process-wide uncertainty latch.
+    // Linux ALSA uses a kernel-managed mmap ring buffer and PCM device handle
+    // where an in-flight worker failure or unclean teardown can lose hardware
+    // release guarantees. Only our patched ALSA backend exposes this process-wide
+    // uncertainty latch (`alsa_capture_cleanup_uncertain`), which permanently marks
+    // capture release as unconfirmed until restart.
+    //
+    // Other platform backends (CoreAudio on macOS, WASAPI on Windows) provide
+    // synchronous device teardown semantics through their OS audio graphs, so
+    // driver handles are reliably released upon stream drop without leaving
+    // process-global uncertainty latches.
     fn capture_cleanup_uncertain() -> bool {
         #[cfg(target_os = "linux")]
         {
@@ -1811,6 +1819,18 @@ mod cpal_impl {
                     self.linger_deadline.set(None);
                     if self.linger_generation.load(Ordering::SeqCst) == generation {
                         self.close_warm();
+                        // A failed release retains the driver handle. Retry it
+                        // periodically until it succeeds; the process-wide ALSA
+                        // latch is not a handle and must not be retried.
+                        if self.release_blocked.get() && !capture_cleanup_uncertain() {
+                            let _ = self.discard_unreleased_stream();
+                            if self.release_blocked.get() && !capture_cleanup_uncertain() {
+                                self.linger_deadline.set(Some((
+                                    Instant::now() + Duration::from_secs(1),
+                                    generation,
+                                )));
+                            }
+                        }
                     }
                 }
             }
@@ -1916,6 +1936,10 @@ mod cpal_impl {
             level_callback: Option<LevelCallback>,
             chunk_callback: Option<ChunkCallback>,
         ) -> Result<(), RecordingError> {
+            // A transient release failure must not block the next press
+            // forever. Retry the retained handle first; the ALSA latch still
+            // fails the check below and requires a restart.
+            let _ = self.discard_unreleased_stream();
             self.check_release()?;
             let preferred_label = {
                 let guard = match self.preferred_input_name.lock() {
@@ -2212,6 +2236,9 @@ mod cpal_impl {
             preroll: Duration,
             refresh: Option<(u64, Option<Instant>)>,
         ) -> Result<(), RecordingError> {
+            // Same retry as a press: a retained handle from a failed idle
+            // release gets another chance before the check below.
+            let _ = self.discard_unreleased_stream();
             self.check_release()?;
             // Lock order, and it is the only order: `warm_open_gate`, then
             // `warm`, then nothing. `inner` is never held alongside the gate.
@@ -2738,10 +2765,18 @@ mod cpal_impl {
         ) -> Result<bool, RecordingError> {
             // A stop (including abandoned-capture recovery) can override
             // this handoff without changing the policy for future starts.
-            let linger_ms = linger_override.map_or_else(
+            let mut linger_ms = linger_override.map_or_else(
                 || self.linger_millis(),
                 |linger| linger.as_millis().min(u128::from(u64::MAX)) as u64,
             );
+            // The override was read from the committed preference before this
+            // handoff ran. If keep-ready was turned off in between, the native
+            // policy is already zero; an indefinite override must not reopen
+            // the microphone with no timer. Finite races are bounded by the
+            // native maximum, so only the indefinite case needs this check.
+            if linger_ms == u64::MAX && self.linger_millis() != u64::MAX {
+                linger_ms = self.linger_millis();
+            }
             self.check_release()?;
             let mut guard = self
                 .inner
@@ -2852,8 +2887,9 @@ mod cpal_impl {
             if let Some(error) = was_paused.then(|| stream.play().err()).flatten() {
                 log::warn!("could not resume a paused stream for the hold: {error}");
                 sink.stop_recording(None);
-                self.retire_stream(stream);
-                return true;
+                // A failed resume does not fail the take that already sealed.
+                // Only an unconfirmed release keeps the pending signal.
+                return self.retire_stream(stream);
             }
             let prior = self
                 .warm
@@ -2917,7 +2953,15 @@ mod cpal_impl {
         };
         let capture_fault = reported_capture_fault(drained.clone(), captured, expected_duration);
         let seed_only = seed_only_capture(samples.len(), seed_samples, expected_duration);
-        let capture_failed = poisoned || nonfinite || drained.is_some() || seed_only;
+        // A material shortfall with no host fault is still an incomplete
+        // capture: the PCM is preserved, but the renderer must warn that most
+        // of the dictation is missing. Ordinary jitter stays below the gap
+        // check and produces no warning.
+        let capture_failed = poisoned
+            || nonfinite
+            || drained.is_some()
+            || seed_only
+            || elapsed_gap_is_suspicious(captured, expected_duration);
 
         // A capture that stopped early is logged with both figures. The
         // numbers are the whole value here: "the recording is 1.4 s long and
@@ -4740,6 +4784,44 @@ mod cpal_impl {
                 assert_eq!(sealed.metrics.capture_fault, fault);
                 assert!(sealed.capture_failed);
             }
+        }
+
+        #[test]
+        fn a_material_partial_capture_without_a_host_fault_is_incomplete() {
+            // 1.4 s of live PCM in a 6 s dictation with no host error: the
+            // samples are preserved, but the take is incomplete.
+            let recording = ActiveRecording {
+                stream: None,
+                sink: None,
+                preroll_after_stop: None,
+                seed_samples: 0,
+                start: Instant::now(),
+                buffer: Some(Arc::new(Mutex::new(vec![0.1; 1400]))),
+                sample_rate: 1000,
+                device_label: String::new(),
+                preferred: None,
+                channels: 1,
+            };
+            let sealed = seal_capture_audio(&recording, None, Duration::from_secs(6));
+            assert_eq!(sealed.audio.samples.len(), 1400);
+            assert_eq!(sealed.metrics.capture_fault, None);
+            assert!(sealed.capture_failed);
+
+            // Ordinary jitter stays below the gap check and is not marked.
+            let recording = ActiveRecording {
+                stream: None,
+                sink: None,
+                preroll_after_stop: None,
+                seed_samples: 0,
+                start: Instant::now(),
+                buffer: Some(Arc::new(Mutex::new(vec![0.1; 5900]))),
+                sample_rate: 1000,
+                device_label: String::new(),
+                preferred: None,
+                channels: 1,
+            };
+            let sealed = seal_capture_audio(&recording, None, Duration::from_secs(6));
+            assert!(!sealed.capture_failed);
         }
 
         #[test]

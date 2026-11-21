@@ -2209,11 +2209,19 @@ export const DictationSideEffects = () => {
       hardResetHotkeyState();
       clearRecordingTimers();
 
+      // An unconfirmed ALSA release needs an app restart, not a retry. The
+      // native message already says so; surface it instead of the generic
+      // failure so the user knows what to do.
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const needsRestart = errorMessage.includes("restart MausVoice");
       runToast(
         showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Recording failed",
-          }),
+          message: needsRestart
+            ? errorMessage
+            : intl.formatMessage({
+                defaultMessage: "Recording failed",
+              }),
           toastType: "error",
           duration: 8_000,
         }),
@@ -2284,6 +2292,12 @@ export const DictationSideEffects = () => {
           isLocalDataClearRequested() ||
           clearGeneration !== getLocalDataClearGeneration()
         ) {
+          // Only release the take claim if this operation still owns it. A
+          // newer start has already claimed the next operation; clearing
+          // here would unblock a competing start mid-take.
+          if (recordingOperationRef.current === operationId) {
+            invalidateRecordingOperation();
+          }
           return;
         }
 
@@ -2826,7 +2840,7 @@ export const DictationSideEffects = () => {
     if (hadTake) {
       void abortRecordingIntake(
         audioChunkUnlistenRef,
-        null,
+        audioChunkUnlistenRef.current,
         nativeStartOwnerRef,
       );
     }

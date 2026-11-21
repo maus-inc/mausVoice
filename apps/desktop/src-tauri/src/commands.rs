@@ -3,7 +3,7 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
@@ -4184,6 +4184,12 @@ fn preroll_duration(seconds: f64) -> std::time::Duration {
     std::time::Duration::from_secs_f64(clamped)
 }
 
+/// The longest finite hold the settings offer, in milliseconds. Mirrors
+/// `MAX_MICROPHONE_LINGER_MS` in the renderer. A stored value above this (an
+/// older build, a hand-edited row) must not hold the microphone longer than
+/// the user can see in settings.
+const MAX_FINITE_LINGER_MS: u64 = 30_000;
+
 /// Converts a hold policy in milliseconds into a duration.
 ///
 /// The frontend sends `Number.MAX_SAFE_INTEGER` for "hold until released", and
@@ -4205,7 +4211,9 @@ fn linger_millis(linger_ms: f64) -> u64 {
     if linger_ms >= 9.0e15 {
         return u64::MAX;
     }
-    linger_ms.round().max(1.0) as u64
+    // Finite values are bounded at the native boundary: the renderer's limit
+    // does not protect a stored preference read directly from the database.
+    linger_ms.round().max(1.0).min(MAX_FINITE_LINGER_MS as f64) as u64
 }
 
 /// The policy to apply before opening, and whether the open should be held.
@@ -4457,6 +4465,8 @@ fn saved_capture_linger_only_keeps_ready_indefinitely_when_enabled() {
     use std::time::Duration;
     assert_eq!(saved_capture_linger(false, 0), Duration::ZERO);
     assert_eq!(saved_capture_linger(false, 5000), Duration::from_secs(5));
+    // A stored value above the settings maximum is bounded, not honored.
+    assert_eq!(saved_capture_linger(false, 900_000), Duration::from_secs(30));
     assert_eq!(saved_capture_linger(false, i64::MAX), Duration::ZERO);
     assert_eq!(
         saved_capture_linger(true, 0),
@@ -4501,6 +4511,7 @@ async fn capture_handoff_reads_the_committed_local_preference() {
 pub async fn stop_recording(
     window: tauri::Window,
     recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
     database: State<'_, crate::state::OptionKeyDatabase>,
     ownership: State<'_, RecordingOwnerState>,
     owner_id: String,
@@ -4508,15 +4519,17 @@ pub async fn stop_recording(
 ) -> Result<tauri::ipc::Response, String> {
     let recorder = Arc::clone(&recorder);
     let ownership = Arc::clone(&ownership);
+    let warm = Arc::clone(&warm);
     let scope = ownership.window(recording_window_key(&window));
     // Record normal-stop intent before the blocking pool can queue this task
     // behind a slow device open or a dropped start-command guard.
     let stop_intent = ownership.note_scoped_normal_stop(&owner_id, &scope, generation)?;
-    let linger = read_capture_linger(database.pool()).await;
-    let bytes = tauri::async_runtime::spawn_blocking(move || {
+    // Stop collecting the take immediately on invocation so speech after the
+    // user stops cannot enter the saved audio while waiting for preferences.
+    let take_task = tauri::async_runtime::spawn_blocking(move || {
         let _stop_intent = stop_intent;
         let result = ownership.stop_or_recover_scoped(&owner_id, &scope, generation, || {
-            stop_native_recording_handoff(recorder.as_ref(), Some(linger))
+            stop_native_recording_handoff(recorder.as_ref(), None)
         });
         start_recording_recovery_reaper(&ownership);
         // A sealed partial response may be delivered while the worker is still
@@ -4538,9 +4551,22 @@ pub async fn stop_recording(
                 }
             },
         })
-    })
-    .await
-    .map_err(|err| err.to_string())??;
+    });
+
+    let (bytes_res, linger) = tokio::join!(
+        take_task,
+        read_capture_linger(database.pool()),
+    );
+    let bytes = bytes_res.map_err(|err| err.to_string())??;
+
+    // Apply the persisted preference to the released stream without having
+    // delayed the stop itself.
+    if linger == Duration::ZERO {
+        warm.release_hold();
+    } else {
+        warm.set_linger(linger.as_millis().min(u128::from(u64::MAX)) as u64);
+    }
+
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -7774,6 +7800,10 @@ mod tests {
         assert_eq!(linger_millis(f64::NAN), 1);
         // The finite maximum the settings dialog can send.
         assert_eq!(linger_millis(30_000.0), 30_000);
+        // A stored value above the maximum is bounded at the native boundary,
+        // so a hand-edited row cannot hold the microphone for minutes.
+        assert_eq!(linger_millis(900_000.0), 30_000);
+        assert_eq!(linger_millis(86_400_000.0), 30_000);
         // Infinity and the sentinel both mean "until released", never a window.
         assert_eq!(linger_millis(f64::MAX), u64::MAX);
         assert_eq!(linger_millis(9.0e15), u64::MAX);
