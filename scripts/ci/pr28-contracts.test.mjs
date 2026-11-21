@@ -508,7 +508,15 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
       source.pillProcess,
       /pub async fn notify_reset_position\(app: &tauri::AppHandle, strategy: &str\) -> Result<\(\), String>/,
     );
-    assert.match(source.pillProcess, /"type":"reset_position"/);
+    // Serialised rather than interpolated. The strategy is a `String` from an IPC
+    // argument, and the pill deserialises it into an enum that accepts only
+    // `current` and `cursor`, so hand-building the record meant an unvalidated
+    // value produced a message the pill rejected after the row was already gone.
+    assert.match(
+      source.pillProcess,
+      /serde_json::json!\(\{\s*"type": "reset_position",\s*"strategy": strategy,\s*"ack": declaration,\s*\}\)/,
+      "pillProcess: the reset record is interpolated instead of serialised",
+    );
     assert.match(
       source.pillProcess,
       /try_state::<std::sync::Arc<PillProcess>>\(\)/,
@@ -1190,10 +1198,27 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // it, so a live *monitor* answered from wherever the window drifted to would
     // make the desktop store an origin and a work area from different displays,
     // and the next launch would remap one against the other.
+    //
+    // It is also the drop point, not the window, that picks the monitor: the
+    // window may have been reconciled away by the retry. And one resolution has to
+    // answer both the work area and the display token, because resolving them
+    // separately let a shrunk work area leave the enumerated list while
+    // `MonitorFromPoint` still found the display, so the report named one panel and
+    // stored another's geometry.
     assert.match(
       write,
-      /let monitor = monitor_work_area_at\(/,
-      "windowsPill: the work area is resolved from the live window, not the drop",
+      /let monitor_handle = monitor_for_point\(drop_centre\)/,
+      "windowsPill: the monitor is not resolved from the drop point",
+    );
+    assert.match(
+      write,
+      /let display_id = monitor_handle\.and_then\(monitor_display_id\)/,
+      "windowsPill: the display token is resolved from a second monitor lookup",
+    );
+    assert.match(
+      write,
+      /let monitor = monitor_handle[\s\S]{0,120}?query_monitor_info\(handle\)/,
+      "windowsPill: the work area is resolved from a second monitor lookup",
     );
     // And nothing in the report may come from the live window except the size,
     // which does not move: an origin, a work area or a display resolved there can
@@ -2798,11 +2823,58 @@ describe("native gesture adapter contracts", () => {
     // The desktop withdraws the declaration when the pill could not be told, so a
     // clear that never reached the pill cannot close the latch for the rest of the
     // process.
+    // Every path that declares and delivers a clear takes the delivery lock, so
+    // arrival order at the pill matches declaration order. Without that, a clear
+    // declared second can reach the pill first, and its answer retires a
+    // declaration whose clear the pill has not applied.
     assert.match(
       source.pillPosition,
-      /pub fn forget_running_pill_position\(app: &tauri::AppHandle\) -> Option<u64>/,
+      /pub async fn forget_running_pill_position\(app: &tauri::AppHandle\) -> Option<u64>/,
     );
-    assert.match(source.pillPosition, /withdraw_erase\(declaration\)/);
+    const forgetScope = scope(
+      "pillPosition",
+      "pub async fn forget_running_pill_position(app: &tauri::AppHandle) -> Option<u64>",
+    );
+    assert.match(
+      forgetScope,
+      /lock_clear_delivery\(\)\.await/,
+      "pillPosition: the forget path delivers without the ordering lock",
+    );
+    assert.ok(
+      forgetScope.indexOf("lock_clear_delivery") <
+        forgetScope.indexOf("mark_position_erased"),
+      "pillPosition: the forget path declares before it takes the ordering lock",
+    );
+    // Scoped to the helper: `withdraw_erase` also appears in
+    // `clear_saved_position`, so a file-wide match would keep passing after
+    // this helper stopped withdrawing on a delivery failure.
+    // Scoped to the error branch, not the helper. `clear_saved_position` also
+    // calls `withdraw_erase`, so a helper-wide match kept passing after this
+    // branch stopped withdrawing, and the unacknowledged declaration then
+    // suppressed every later save for the rest of the process.
+    // `[\s\S]` rather than `[^}]`, because the log line in this branch
+    // interpolates `{err}` and the closing brace of that interpolation ended a
+    // `[^}]*` before the withdrawal it was looking for.
+    const forgetErrorBranch =
+      /Err\(err\) => \{[\s\S]*?withdraw_erase\(declaration\)/;
+    assert.match(
+      forgetScope,
+      forgetErrorBranch,
+      "pillPosition: a failed delivery leaves the declaration outstanding",
+    );
+    // Both reset paths hold it across the clear and the send.
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const body = scope(name, "pub async fn notify_reset_position(");
+      assert.match(
+        body,
+        /lock_clear_delivery\(\)\.await/,
+        `${name}: the reset path delivers without the ordering lock`,
+      );
+      assert.ok(
+        body.indexOf("lock_clear_delivery") < body.indexOf("clear_saved_position"),
+        `${name}: the reset declares before it takes the ordering lock`,
+      );
+    }
   });
 
   it("reacts to a display change on every platform", () => {
@@ -3127,13 +3199,14 @@ describe("native gesture adapter contracts", () => {
       );
     }
     // Clearing local data must cancel the retry, or it writes the row back.
-    for (const [name, marker] of [
-      ["windowsPill", "InMessage::ForgetPosition"],
-      ["macApp", "InMessage::ForgetPosition"],
-      ["gtkPill", "InMessage::ForgetPosition"],
-    ]) {
+    //
+    // GTK dispatches `ForgetPosition` to `on_forget_position`, so its clear
+    // lives in that helper rather than in the arm, while the other two clear
+    // inline. `handlerBody` covers both shapes; `scope` on the arm stops before
+    // the helper and would fail on a correct clear.
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
       assert.match(
-        scope(name, marker),
+        handlerBody(pathOf.get(name), "ForgetPosition"),
         /drag_save_due\.set\(None\)/,
         `${name}: a retry outlives the clear and recreates the row`,
       );
@@ -3205,7 +3278,7 @@ describe("native gesture adapter contracts", () => {
       // clear has not answered.
       assert.ok(
         body.indexOf("clear_saved_position") <
-          body.indexOf('reset_position","strategy'),
+          body.indexOf('"strategy": strategy'),
         `${name}: the pill is told to re-home before the record is cleared`,
       );
     }
@@ -3234,15 +3307,23 @@ describe("native gesture adapter contracts", () => {
       const text = read(file);
       const pieces = text.split("OutMessage::PositionChanged");
       for (const piece of pieces.slice(1)) {
-        const head = piece.slice(0, 400);
+        // Only the pattern's own braces. A consumer may match
+        // `OutMessage::PositionChanged { report }` and then destructure the
+        // record's fields on the next line, which is legal; reading a fixed
+        // window past the pattern rejected that valid shape.
+        const pattern = /^\s*\{([^}]*)\}/.exec(piece);
+        assert.ok(
+          pattern,
+          `${file}: destructures the published position into loose fields again`,
+        );
         assert.match(
-          head,
-          /^\s*\{\s*report\s*\}/,
+          pattern[1],
+          /^\s*report\s*$/,
           `${file}: destructures the published position into loose fields again`,
         );
         assert.doesNotMatch(
-          head,
-          /has_saved_position\s*[,}]/,
+          pattern[1],
+          /has_saved_position/,
           `${file}: reads a field the shared record owns`,
         );
       }
@@ -3379,6 +3460,20 @@ describe("native gesture adapter contracts", () => {
       /drag_save_due\.set\(/,
       "windowsPill: destroy parks a retry that will never run",
     );
+    // The drain must ask the deadline, not the pending flag. `persist_drag_position`
+    // clears `pending_drag_position` before the writer can defer, so a destroy that
+    // re-checks that flag skips the write and loses the drop. Asserting only that
+    // destroy avoids `drag_save_due.set(` left that swap passing.
+    assert.match(
+      destroy,
+      /drag_save_due\.get\(\)\.is_some\(\)/,
+      "windowsPill: destroy checks the cleared flag instead of the owed save",
+    );
+    assert.match(
+      destroy,
+      /write_drag_position_unchecked\(hwnd, state\)/,
+      "windowsPill: destroy sees the owed save and does not write it",
+    );
   });
 
   it("reads its own arguments without requiring Unicode", () => {
@@ -3435,10 +3530,13 @@ describe("native gesture adapter contracts", () => {
     // rather than silently starting unsaved.
     const run = scope("windowsPill", "pub fn run(");
     // `restored` also carries the display the placement chose, so the factory is
-    // handed the origin out of that pair plus the token alongside it.
+    // handed the origin out of that pair plus the token and the work area it was
+    // saved against alongside it. The work area is what a later unplug remaps
+    // from, so a caller that stops passing it fails here.
     assert.match(
       run,
-      /initial_state\(restored\.map\(\|\(origin, _\)\| origin\), restored_display_id\)/,
+      /initial_state\(\s*restored\.map\(\|\(origin, _\)\| origin\),\s*restored_display_id,\s*restored_work_area,\s*\)/,
+      "windowsPill: run does not hand the factory the restored placement",
     );
     const seeded = scope("windowsPill", "fn initial_state(");
     assert.match(

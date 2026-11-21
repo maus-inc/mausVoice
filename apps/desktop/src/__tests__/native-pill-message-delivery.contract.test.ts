@@ -39,8 +39,16 @@ describe("native pill message delivery", () => {
       );
 
       expect(block).toMatch(/pill\s*\.\s*send\(/);
-      // The old shape sent nothing and answered Ok anyway.
-      expect(block).not.toMatch(/pill\.send\([^;]*\);\s*Ok\(\(\)\)/);
+      // The old shape sent nothing and answered Ok anyway. Every whitespace
+      // position is allowed, because `let _ = pill` on one line and `.send(..)`
+      // on the next discards the result just as silently as `pill.send(..)`.
+      expect(block).not.toMatch(/pill\s*\.\s*send\([^;]*\)\s*;\s*Ok\(\(\)\)/);
+      // Discarding the result is the same defect with a different spelling, and
+      // the newline is the spelling that slipped through: the positive pattern
+      // above accepts the whitespace, so the negative one has to accept it too.
+      // Without the `\s*` a `let _ = pill` newline `.send(..)` passed this test
+      // while the caller waited for a response that a closed channel never sent.
+      expect(block).not.toMatch(/let\s+_\s*=\s*pill\s*\.\s*send\(/);
     },
   );
 
