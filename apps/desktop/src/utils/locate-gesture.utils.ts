@@ -53,13 +53,22 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
     pending?.family === family &&
     startedAt - pending.releasedAt <= DOUBLE_TAP_WINDOW_MS;
 
+  const isLongHold = (startedAt: number, now: number) =>
+    now - startedAt > MAX_TAP_MS;
+
+  const clear = () => {
+    pressed.clear();
+    tap = null;
+    pending = null;
+  };
+
   const release = (key: string, now: number): boolean => {
     if (!pressed.delete(key)) return false;
     if (tap?.key !== key) return false;
 
     const { family, startedAt } = tap;
     tap = null;
-    if (now - startedAt > MAX_TAP_MS) {
+    if (isLongHold(startedAt, now)) {
       pending = null;
       return false;
     }
@@ -93,9 +102,7 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
   return {
     update(keys, now, allowed) {
       if (allowed === null) {
-        pressed.clear();
-        tap = null;
-        pending = null;
+        clear();
         return false;
       }
       const next = new Set(keys.map(normalizeKey));
@@ -105,10 +112,6 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
       }
       return fired;
     },
-    reset() {
-      pressed.clear();
-      tap = null;
-      pending = null;
-    },
+    reset: clear,
   };
 };
