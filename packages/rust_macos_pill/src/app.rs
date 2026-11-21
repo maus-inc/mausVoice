@@ -475,15 +475,22 @@ extern "C" fn text_view_do_command(
         let is_review =
             with_ctx(|ctx| ctx.state.assistant_review.borrow().is_some()).unwrap_or(false);
         let mut shift_down = false;
+        let mut modifiers = rust_pill_shared::submit_key::SubmitModifiers::default();
         unsafe {
             let app: id = msg_send![class!(NSApplication), sharedApplication];
             let event: id = msg_send![app, currentEvent];
             if !event.is_null() {
                 let flags: u64 = msg_send![event, modifierFlags];
+                // NSEventModifierFlagShift, Control, Option and Command.
                 shift_down = flags & (1 << 17) != 0;
+                modifiers = rust_pill_shared::submit_key::SubmitModifiers {
+                    control: flags & (1 << 18) != 0,
+                    alt: flags & (1 << 19) != 0,
+                    meta: flags & (1 << 20) != 0,
+                };
             }
         }
-        if !is_review || !shift_down {
+        if (!is_review || !shift_down) && rust_pill_shared::submit_key::enter_submits(modifiers) {
             with_ctx(|ctx| {
                 if input::submit_entry(&ctx.state) {
                     set_entry_text("");

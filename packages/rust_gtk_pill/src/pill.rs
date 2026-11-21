@@ -1212,10 +1212,11 @@ fn handle_review_key_press(
         return glib::Propagation::Stop;
     }
 
-    let is_submit = matches!(
+    let is_enter = matches!(
         event.keyval(),
         gdk::keys::constants::Return | gdk::keys::constants::KP_Enter
-    ) && !event.state().contains(gdk::ModifierType::SHIFT_MASK);
+    );
+    let is_submit = is_enter && review_enter_submits(modifiers);
     if !is_submit {
         return glib::Propagation::Proceed;
     }
@@ -1753,6 +1754,21 @@ fn review_insert_offset(requested: ReviewPasteTarget) -> i32 {
         Some((start_offset, _)) => start_offset,
         None => requested.0,
     }
+}
+
+/// Whether an Enter press with these modifiers submits the review.
+///
+/// GTK hands Shift+Enter to the buffer for a line break in both modes, so Shift
+/// is excluded here as well as the command modifiers the shared rule rejects.
+fn review_enter_submits(modifiers: gdk::ModifierType) -> bool {
+    !modifiers.contains(gdk::ModifierType::SHIFT_MASK)
+        && rust_pill_shared::submit_key::enter_submits(
+            rust_pill_shared::submit_key::SubmitModifiers {
+                control: modifiers.contains(gdk::ModifierType::CONTROL_MASK),
+                alt: modifiers.contains(gdk::ModifierType::MOD1_MASK),
+                meta: modifiers.contains(gdk::ModifierType::SUPER_MASK),
+            },
+        )
 }
 
 fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
@@ -2777,6 +2793,36 @@ mod clipboard_response_tests {
         assert!(clipboard_result_is_current("review-1", Some("review-1")));
         assert!(!clipboard_result_is_current("review-1", Some("review-2")));
         assert!(!clipboard_result_is_current("review-1", None));
+    }
+}
+
+#[cfg(test)]
+mod review_enter_tests {
+    use super::review_enter_submits;
+    use gtk::gdk::ModifierType;
+
+    #[test]
+    fn plain_enter_submits() {
+        assert!(review_enter_submits(ModifierType::empty()));
+    }
+
+    #[test]
+    fn shift_enter_breaks_the_line_instead_of_submitting() {
+        assert!(!review_enter_submits(ModifierType::SHIFT_MASK));
+    }
+
+    #[test]
+    fn a_command_modifier_never_submits() {
+        // A desktop or input method may bind these to something else, and a
+        // review that sent on one would answer a desktop the user never confirmed.
+        for modifier in [
+            ModifierType::CONTROL_MASK,
+            ModifierType::MOD1_MASK,
+            ModifierType::SUPER_MASK,
+        ] {
+            assert!(!review_enter_submits(modifier));
+            assert!(!review_enter_submits(modifier | ModifierType::SHIFT_MASK));
+        }
     }
 }
 

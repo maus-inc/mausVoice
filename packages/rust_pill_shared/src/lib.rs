@@ -16,6 +16,7 @@ pub mod layout;
 pub mod placement;
 pub mod schema;
 pub mod spring;
+pub mod submit_key;
 pub mod text_fit;
 
 use std::cell::{Cell, RefCell};

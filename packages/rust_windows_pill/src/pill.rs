@@ -2437,15 +2437,24 @@ fn handle_edit_message(msg: &MSG) -> bool {
 
     match msg.message {
         WM_KEYDOWN => {
-            let ctrl = unsafe { (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 };
-            let shift = unsafe { (GetKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0 };
+            let down = |key: i32| unsafe { (GetKeyState(key) as u16 & 0x8000) != 0 };
+            let ctrl = down(VK_CONTROL.0 as i32);
+            let shift = down(VK_SHIFT.0 as i32);
+            let modifiers = rust_pill_shared::submit_key::SubmitModifiers {
+                control: ctrl,
+                alt: down(VK_MENU.0 as i32),
+                meta: down(VK_LWIN.0 as i32) || down(VK_RWIN.0 as i32),
+            };
 
             let is_review = STATE.with(|s| {
                 s.borrow()
                     .as_ref()
                     .is_some_and(|state| state.assistant_review.borrow().is_some())
             });
-            if msg.wParam.0 == VK_RETURN.0 as usize && (!shift || !is_review) {
+            if msg.wParam.0 == VK_RETURN.0 as usize
+                && (!shift || !is_review)
+                && rust_pill_shared::submit_key::enter_submits(modifiers)
+            {
                 // Keep Enter-to-submit. Shift+Enter adds a line to the review
                 // transcript without changing the established submit shortcut.
                 let sent = STATE.with(|s| match *s.borrow() {
