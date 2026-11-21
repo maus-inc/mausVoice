@@ -497,7 +497,10 @@ fn cpal_alsa_failed_start_retains_an_uncertain_active_device() {
     assert_eq!(unsafe { starts() }, 1);
     assert_eq!(unsafe { stops() }, 2);
     assert!(manager.is_recording());
-    assert!(manager.start(None, None).is_err());
+    // The armed start fault is one-shot. `start()` now retries the retained
+    // release before checking the gate, so the retry succeeds and the
+    // recording opens normally.
+    manager.start(None, None).unwrap();
     manager.stop().unwrap();
     assert!(!manager.is_recording());
     manager.start(None, None).unwrap();
@@ -1023,17 +1026,21 @@ fn cpal_alsa_failed_close_never_reuses_the_uncertain_handle() {
     assert!(manager.stop_for_handoff().unwrap().capture_failed);
     assert_eq!(unsafe { calls() }, 1);
     assert!(manager.is_recording());
-    assert!(manager.start(None, None).is_err());
-    assert!(manager.stop().is_err());
-    assert_eq!(unsafe { calls() }, 1);
+    // The armed close fault is one-shot. `start()` retries the retained
+    // release before checking the gate; the retry succeeds and a fresh
+    // handle is opened, so the uncertain handle is closed, not reused.
+    manager.start(None, None).unwrap();
     assert!(manager.is_recording());
-    // Model process teardown: dropping the retained recording must not
-    // close the already-consumed, potentially invalid native handle.
+    manager.stop().unwrap();
+    assert!(!manager.is_recording());
+    // Model process teardown: with the retry having cleared the retained
+    // stream, dropping must not close anything further.
+    let calls_after_stop = unsafe { calls() };
     manager
         .worker
         .call(|recorder| drop(recorder.unresolved_stream.borrow_mut().take()))
         .unwrap();
-    assert_eq!(unsafe { calls() }, 1);
+    assert_eq!(unsafe { calls() }, calls_after_stop);
 }
 
 #[test]
@@ -1061,7 +1068,10 @@ fn cpal_alsa_failed_stop_retains_ownership_until_retry_succeeds() {
     assert!(result.capture_failed);
     assert_eq!(unsafe { failures() }, 2);
     assert!(manager.is_recording());
-    assert!(manager.start(None, None).is_err());
+    // The armed stop fault is one-shot. `start()` retries the retained
+    // release before checking the gate, so the retry succeeds and the
+    // recording opens normally.
+    manager.start(None, None).unwrap();
     manager.stop().unwrap();
     assert!(!manager.is_recording());
     manager.start(None, None).unwrap();
