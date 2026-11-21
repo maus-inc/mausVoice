@@ -144,7 +144,9 @@ describe("native pill review surface", () => {
     const ipc = readRepoSource("packages/rust_windows_pill/src/ipc.rs");
     expect(ipc).toMatch(/write_message as send|write_message\(msg\)/);
 
-    const messages = readRepoSource("packages/rust_pill_shared/src/messages.rs");
+    const messages = readRepoSource(
+      "packages/rust_pill_shared/src/messages.rs",
+    );
     const send = extractRustBlock(messages, "pub fn write_message(");
 
     // Swallowing every write error is what made the unconditional clear
