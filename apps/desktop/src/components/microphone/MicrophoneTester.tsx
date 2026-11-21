@@ -9,7 +9,7 @@ import {
   getLocalDataClearGeneration,
   isLocalDataClearRequested,
 } from "../../utils/local-data-write-gate";
-import { invokeStopRecording } from "../../utils/native-recording-session";
+import { type NativeRecordingHandle } from "../../utils/native-recording-session";
 import { AudioWaveform } from "../common/AudioWaveform";
 import {
   invokeGuardedRecordingStart,
@@ -157,6 +157,7 @@ export const MicrophoneTester = ({
   const mountedRef = useRef(true);
   const opIdRef = useRef(0);
   const testStateRef = useRef(testState);
+  const handleRef = useRef<NativeRecordingHandle | null>(null);
   testStateRef.current = testState;
 
   const setSyncedTestState = useCallback(
@@ -225,14 +226,21 @@ export const MicrophoneTester = ({
     setSyncedTestState("starting");
 
     try {
-      await invokeGuardedRecordingStart(preferredMicrophone ?? null);
+      const { handle } = await invokeGuardedRecordingStart(
+        preferredMicrophone ?? null,
+      );
+      handleRef.current = handle;
       if (
         !mountedRef.current ||
         opId !== opIdRef.current ||
         isLocalDataClearRequested() ||
         clearGeneration !== getLocalDataClearGeneration()
       ) {
-        await invokeStopRecording().catch(() => undefined);
+        // Stop only the recording this attempt opened. The global helper stops
+        // whatever session is current, which may belong to a later start that
+        // superseded this one.
+        if (handleRef.current === handle) handleRef.current = null;
+        await handle.stop().catch(() => undefined);
         if (opId === opIdRef.current) {
           setSyncedTestState("idle");
         }
@@ -298,8 +306,16 @@ export const MicrophoneTester = ({
       opIdRef.current += 1;
       setSyncedTestState("stopping");
 
+      // Stop the recording this tester admitted. A global stop would reach
+      // whatever session is current, which a later start may own. While the
+      // admission is still opening there is no handle yet, so the bumped op id
+      // makes the pending start stop its own handle when it resolves.
+      const handle = handleRef.current;
+      handleRef.current = null;
       try {
-        const response = await invokeStopRecording();
+        const response = handle
+          ? await handle.stop()
+          : { samples: [] as number[], sampleRate: 0 };
 
         if (!opts?.silent && !isLocalDataClearRequested()) {
           showPreviewOutcome(response);

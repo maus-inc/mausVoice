@@ -6,6 +6,7 @@ on:
       - ".agents/skills/**"
       - "skills-lock.json"
       - ".gitignore"
+      - ".gitattributes"
       - "scripts/ci/verify-skills.mjs"
       - "scripts/ci/verify-skills.test.mjs"
       - ".github/workflows/verify-skills.yml"
@@ -31,8 +32,15 @@ concurrency:
 
 jobs:
   verify:
-    name: Skills match the lockfile
-    runs-on: ubuntu-latest
+    name: ${{ matrix.name }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Skills match the lockfile
+          - os: windows-latest
+            name: Skills match the lockfile on Windows
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     permissions:
       contents: read

@@ -58,7 +58,7 @@ describe("humanizeScrub", () => {
   });
 
   it("removes verbose hedges", () => {
-    expect(humanizeScrub("it is important to note that this works")).toContain(
+    expect(humanizeScrub("it is important to note that this works")).toBe(
       "this works",
     );
   });
@@ -78,7 +78,7 @@ describe("humanizeScrub", () => {
     const input =
       "It is important to note that leveraging cutting-edge AI will unlock a seamless experience — truly.";
     const result = humanizeScrub(input);
-    expect(result).not.toContain("it is important to note that");
+    expect(result.toLowerCase()).not.toContain("it is important to note that");
     expect(result).not.toContain("leveraging");
     expect(result).not.toContain("cutting-edge");
     expect(result).not.toContain("unlock");

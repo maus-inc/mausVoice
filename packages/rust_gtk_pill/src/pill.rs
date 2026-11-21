@@ -8,6 +8,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
 pub(crate) use rust_pill_shared::clock::monotonic_now as drag_clock_now;
+use rust_pill_shared::review_key::{handle_review_key, ReviewKey};
 
 use crate::constants::*;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
@@ -34,11 +35,116 @@ const WAYLAND_DRAG_BOUNDS: rust_pill_shared::drag::DragBounds =
 /// Runs the GTK pill: picks the display backend, creates the frameless
 /// window, and drives the message/event loop until a quit message arrives.
 pub fn run(receiver: Receiver<InMessage>) {
-    // Phase message sequence guard: see ipc::InMessage::Phase.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    let backend = display_backend();
+    let (window, drawing_area, entry) = create_widgets(backend);
+    let state = Rc::new(initial_state(backend));
+    if backend == Backend::X11 {
+        let state_realize = state.clone();
+        window.connect_realize(move |window| x11::setup_x11_window(window, state_realize.clone()));
     }
-    let backend = if gtk_layer_shell::is_supported() {
+
+    let state_alloc = state.clone();
+    window.connect_size_allocate(move |_, alloc| {
+        state_alloc.alloc_width.set(alloc.width() as f64);
+        state_alloc.alloc_height.set(alloc.height() as f64);
+    });
+
+    window.add_events(
+        gdk::EventMask::ENTER_NOTIFY_MASK
+            | gdk::EventMask::LEAVE_NOTIFY_MASK
+            | gdk::EventMask::POINTER_MOTION_MASK
+            | gdk::EventMask::BUTTON_PRESS_MASK
+            | gdk::EventMask::BUTTON_RELEASE_MASK
+            | gdk::EventMask::FOCUS_CHANGE_MASK
+            | gdk::EventMask::KEY_PRESS_MASK
+            | gdk::EventMask::SCROLL_MASK
+            | gdk::EventMask::SMOOTH_SCROLL_MASK,
+    );
+
+    connect_hover(&window, &state);
+    connect_buttons(&window, &entry, &state, backend);
+    connect_entry(&window, &entry, &state);
+    connect_paint(&drawing_area, &window, &state);
+
+    let state_tick = state.clone();
+    let da = drawing_area.clone();
+    let win_tick = window.clone();
+    let entry_tick = entry.clone();
+    let quit_flag = Rc::new(Cell::new(false));
+    let quit_tick = quit_flag.clone();
+    let backend_tick = backend;
+    glib::timeout_add_local(Duration::from_millis(16), move || {
+        while let Ok(msg) = receiver.try_recv() {
+            process_message(msg, &state_tick, &win_tick, &entry_tick, &quit_tick);
+        }
+
+        if quit_tick.get() {
+            return ControlFlow::Break;
+        }
+
+        release_pointer_if_button_up(&win_tick, &state_tick);
+        // One measured step for the whole frame: the transition springs and
+        // the drag controller share it, so a long frame slows everything
+        // together instead of each measuring a different slice.
+        let dt_tick = frame_dt();
+        tick(&state_tick, dt_tick);
+        tick_drag_frame(
+            &win_tick,
+            &state_tick,
+            backend_tick,
+            drag_clock_now(),
+            dt_tick,
+        );
+        tick_hover_frame(&state_tick);
+        tick_selector_placement(&win_tick, &state_tick, dt_tick);
+        tick_crossing_frame(&win_tick, &state_tick, dt_tick);
+
+        update_entry(&win_tick, &entry_tick, &state_tick, backend_tick);
+
+        // One visibility policy for every backend. LayerShell and PlainWayland
+        // previously keyed off `phase == Recording` alone, which ignored the
+        // user's preference: a pill set to Hidden still appeared while
+        // recording, and Persistent never showed when idle.
+        let should_show = rust_pill_shared::should_show_pill(
+            state_tick.visibility.get().into(),
+            state_tick.phase.get() != Phase::Idle,
+            state_tick.owns_panel(),
+        );
+        if should_show {
+            win_tick.show();
+        } else {
+            win_tick.hide();
+        }
+
+        if let Some(gdk_win) = win_tick.window() {
+            input::update_input_region(&gdk_win, &state_tick);
+        }
+        da.queue_draw();
+        ControlFlow::Continue
+    });
+
+    window.show_all();
+    entry.hide();
+    ipc::send(&OutMessage::Ready);
+
+    if backend == Backend::LayerShell {
+        watch_layer_monitor(window, state, quit_flag.clone());
+    }
+
+    let main_loop = glib::MainLoop::new(None, false);
+    let ml = main_loop.clone();
+    let _quit_watch = glib::timeout_add_local(Duration::from_millis(100), move || {
+        if quit_flag.get() {
+            ml.quit();
+            return ControlFlow::Break;
+        }
+        ControlFlow::Continue
+    });
+    main_loop.run();
+}
+
+fn display_backend() -> Backend {
+    if gtk_layer_shell::is_supported() {
         Backend::LayerShell
     } else {
         let display = gdk::Display::default().expect("display");
@@ -47,8 +153,10 @@ pub fn run(receiver: Receiver<InMessage>) {
         } else {
             Backend::PlainWayland
         }
-    };
+    }
+}
 
+fn create_widgets(backend: Backend) -> (gtk::Window, gtk::DrawingArea, gtk::Entry) {
     // X11 keeps room for the below selector slot under the pill, so a side
     // flip animates inside space that is already there. LayerShell is bottom
     // anchored (a taller surface would lift the pill) and PlainWayland is
@@ -129,23 +237,13 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     window.add(&overlay_widget);
 
-    let state = Rc::new(PillState {
-        phase: Cell::new(Phase::Idle),
+    (window, drawing_area, entry)
+}
+
+fn initial_state(backend: Backend) -> PillState {
+    PillState {
+        indicator: Default::default(),
         visibility: Cell::new(Visibility::WhileActive),
-        expand_t: Cell::new(0.0),
-        expand_velocity: Cell::new(0.0),
-        hovered: Cell::new(false),
-        wave_phase: Cell::new(0.0),
-        current_level: Cell::new(0.0),
-        target_level: Cell::new(0.0),
-        loading_offset: Cell::new(0.0),
-        pending_levels: RefCell::new(Vec::new()),
-        style_count: Cell::new(0),
-        style_name: RefCell::new(String::new()),
-        tooltip_t: Cell::new(0.0),
-        tooltip_velocity: Cell::new(0.0),
-        tooltip_width: Cell::new(0.0),
-        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
@@ -198,7 +296,6 @@ pub fn run(receiver: Receiver<InMessage>) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
-        stage_text: RefCell::new(None),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
@@ -241,31 +338,10 @@ pub fn run(receiver: Receiver<InMessage>) {
         alloc_width: Cell::new(0.0),
         alloc_height: Cell::new(0.0),
         backend: Cell::new(backend),
-    });
-
-    if backend == Backend::X11 {
-        let state_realize = state.clone();
-        window.connect_realize(move |window| x11::setup_x11_window(window, state_realize.clone()));
     }
+}
 
-    let state_alloc = state.clone();
-    window.connect_size_allocate(move |_, alloc| {
-        state_alloc.alloc_width.set(alloc.width() as f64);
-        state_alloc.alloc_height.set(alloc.height() as f64);
-    });
-
-    window.add_events(
-        gdk::EventMask::ENTER_NOTIFY_MASK
-            | gdk::EventMask::LEAVE_NOTIFY_MASK
-            | gdk::EventMask::POINTER_MOTION_MASK
-            | gdk::EventMask::BUTTON_PRESS_MASK
-            | gdk::EventMask::BUTTON_RELEASE_MASK
-            | gdk::EventMask::FOCUS_CHANGE_MASK
-            | gdk::EventMask::KEY_PRESS_MASK
-            | gdk::EventMask::SCROLL_MASK
-            | gdk::EventMask::SMOOTH_SCROLL_MASK,
-    );
-
+fn connect_hover(window: &gtk::Window, state: &Rc<PillState>) {
     let state_enter = state.clone();
     window.connect_enter_notify_event(move |win, event| {
         let (mx, my) = event.position();
@@ -347,7 +423,14 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
         glib::Propagation::Proceed
     });
+}
 
+fn connect_buttons(
+    window: &gtk::Window,
+    entry: &gtk::Entry,
+    state: &Rc<PillState>,
+    backend: Backend,
+) {
     let state_press = state.clone();
     let entry_press = entry.clone();
     let win_press = window.clone();
@@ -398,7 +481,7 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_click = state.clone();
     let win_click = window.clone();
-    let last_click: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
+    let last_click = Cell::new(None::<Instant>);
     window.connect_button_release_event(move |_, event| {
         let now = Instant::now();
         if let Some(prev) = last_click.get() {
@@ -435,27 +518,9 @@ pub fn run(receiver: Receiver<InMessage>) {
         input::handle_scroll(&state_scroll, event);
         glib::Propagation::Proceed
     });
+}
 
-    let state_focus_in = state.clone();
-    let entry_focus_in = entry.clone();
-    window.connect_focus_in_event(move |_, _| {
-        let is_typing = state_focus_in.is_typing();
-        if is_typing {
-            entry_focus_in.grab_focus();
-        }
-        glib::Propagation::Proceed
-    });
-
-    let state_focus_out = state.clone();
-    let entry_focus_out = entry.clone();
-    window.connect_focus_out_event(move |_, _| {
-        let is_typing = state_focus_out.is_typing();
-        if is_typing {
-            entry_focus_out.select_region(0, 0);
-        }
-        glib::Propagation::Proceed
-    });
-
+fn connect_paint(drawing_area: &gtk::DrawingArea, window: &gtk::Window, state: &Rc<PillState>) {
     let state_draw = state.clone();
     let win_draw = window.clone();
     let last_draw_error = Cell::new(None::<Instant>);
@@ -492,6 +557,28 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
         glib::Propagation::Proceed
     });
+}
+
+fn connect_entry(window: &gtk::Window, entry: &gtk::Entry, state: &Rc<PillState>) {
+    let state_focus_in = state.clone();
+    let entry_focus_in = entry.clone();
+    window.connect_focus_in_event(move |_, _| {
+        let is_typing = state_focus_in.is_typing();
+        if is_typing {
+            entry_focus_in.grab_focus();
+        }
+        glib::Propagation::Proceed
+    });
+
+    let state_focus_out = state.clone();
+    let entry_focus_out = entry.clone();
+    window.connect_focus_out_event(move |_, _| {
+        let is_typing = state_focus_out.is_typing();
+        if is_typing {
+            entry_focus_out.select_region(0, 0);
+        }
+        glib::Propagation::Proceed
+    });
 
     let state_entry = state.clone();
     entry.connect_activate(move |e| {
@@ -514,450 +601,351 @@ pub fn run(receiver: Receiver<InMessage>) {
         // same as on the Windows pill: the desktop is waiting for an answer.
         // The window sees the key before the focused entry does, so this works
         // whether or not the entry holds the keyboard.
-        if event.keyval() != gdk::keys::constants::Escape {
-            return glib::Propagation::Proceed;
-        }
-        match state_escape.pending_review_id() {
-            Some(review_id) => {
-                input::send_review_decision(&review_id, "cancel", None);
-                glib::Propagation::Stop
-            }
-            None => glib::Propagation::Proceed,
-        }
-    });
-
-    let receiver = Rc::new(RefCell::new(receiver));
-    let state_tick = state.clone();
-    let da = drawing_area.clone();
-    let win_tick = window.clone();
-    let entry_tick = entry.clone();
-    let quit_flag = Rc::new(Cell::new(false));
-    let quit_tick = quit_flag.clone();
-    let backend_tick = backend;
-    glib::timeout_add_local(Duration::from_millis(16), move || {
-        let rx = receiver.borrow();
-        while let Ok(msg) = rx.try_recv() {
-            match msg {
-                InMessage::Phase { phase, seq } => {
-                    let stale = LAST_PHASE_SEQ.with(|last| {
-                        let stale = seq < last.get();
-                        if !stale {
-                            last.set(seq);
-                        }
-                        stale
-                    });
-                    if stale {
-                        continue;
-                    }
-                    let prev = state_tick.phase.get();
-                    state_tick.phase.set(phase);
-                    state_tick
-                        .style_tooltip_gate
-                        .set_take_running(phase == Phase::Recording);
-                    // A new take sweeps any banner parked above the pill (for
-                    // example the retranscribing toast) so it cannot sit on the
-                    // style selector for the whole take. A resume from Paused
-                    // keeps toasts raised during the take, such as the cancel
-                    // confirm.
-                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                        clear_flash(&state_tick);
-                    }
-                    if rust_pill_shared::should_clear_stage_text_on_phase(
-                        prev == Phase::Loading,
-                        phase == Phase::Idle,
-                        phase == Phase::Loading,
-                    ) {
-                        *state_tick.stage_text.borrow_mut() = None;
-                    }
-                    if phase == Phase::Loading && prev != Phase::Loading {
-                        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                        state_tick.loading_offset.set(offset);
-                    }
-                    if phase == Phase::Idle && prev != Phase::Idle {
-                        state_tick.pending_levels.borrow_mut().clear();
-                        state_tick.target_level.set(0.0);
-                        state_tick.current_level.set(0.0);
-                        state_tick.wave_phase.set(0.0);
-                        state_tick.loading_offset.set(0.0);
-                    }
-                }
-                InMessage::Levels { levels } => {
-                    *state_tick.pending_levels.borrow_mut() = levels;
-                }
-                InMessage::StyleInfo { count, name } => {
-                    state_tick.style_count.set(count);
-                    *state_tick.style_name.borrow_mut() = name;
-                }
-                InMessage::Toast {
-                    message,
-                    toast_type,
-                    duration,
-                    action,
-                    action_label,
-                    reject_action,
-                    reject_action_label,
-                } => {
-                    *state_tick.flash_message.borrow_mut() = message;
-                    state_tick
-                        .flash_is_error
-                        .set(toast_type.as_deref() == Some("error"));
-                    state_tick.flash_visible.set(true);
-                    state_tick
-                        .flash_timer
-                        .set(duration.unwrap_or(FLASH_DURATION));
-                    *state_tick.flash_action.borrow_mut() = action;
-                    *state_tick.flash_action_label.borrow_mut() = action_label;
-                    *state_tick.flash_reject_action.borrow_mut() = reject_action;
-                    *state_tick.flash_reject_action_label.borrow_mut() = reject_action_label;
-                }
-                InMessage::DismissToast => {
-                    clear_flash(&state_tick);
-                }
-                InMessage::Fireworks { message } => {
-                    *state_tick.flash_message.borrow_mut() = message;
-                    state_tick.flash_is_error.set(false);
-                    *state_tick.flash_action.borrow_mut() = None;
-                    *state_tick.flash_action_label.borrow_mut() = None;
-                    *state_tick.flash_reject_action.borrow_mut() = None;
-                    *state_tick.flash_reject_action_label.borrow_mut() = None;
-                    state_tick.flash_visible.set(true);
-                    state_tick.flash_timer.set(FIREWORKS_TOTAL_DURATION);
-
-                    state_tick.fireworks_active.set(true);
-                    state_tick.fireworks_elapsed.set(0.0);
-                    state_tick.fireworks_next_launch.set(0);
-                    state_tick.fireworks_rockets.borrow_mut().clear();
-                }
-                InMessage::Flame { message } => {
-                    *state_tick.flash_message.borrow_mut() = message;
-                    state_tick.flash_is_error.set(false);
-                    *state_tick.flash_action.borrow_mut() = None;
-                    *state_tick.flash_action_label.borrow_mut() = None;
-                    *state_tick.flash_reject_action.borrow_mut() = None;
-                    *state_tick.flash_reject_action_label.borrow_mut() = None;
-                    state_tick.flash_visible.set(true);
-                    state_tick.flash_timer.set(FLAME_TOTAL_DURATION);
-
-                    state_tick.flame_active.set(true);
-                    state_tick.flame_elapsed.set(0.0);
-                    state_tick.flame_tongues.borrow_mut().clear();
-                }
-                InMessage::FlashBlue => {
-                    state_tick.flash_blue_active.set(true);
-                    state_tick.flash_blue_elapsed.set(0.0);
-                }
-                InMessage::BroadcastTranscript { text } => {
-                    *state_tick.transcript_text.borrow_mut() = text;
-                    state_tick.transcript_time_since_update.set(0.0);
-                    state_tick.transcript_has_message.set(true);
-                }
-                InMessage::StageText { text } => {
-                    let stage = rust_pill_shared::active_stage_text(text.as_deref());
-                    *state_tick.stage_text.borrow_mut() = stage.map(str::to_owned);
-                }
-                InMessage::Visibility { visibility } => {
-                    state_tick.visibility.set(visibility);
-                }
-                InMessage::WindowSize { ref size } => {
-                    let mode = WindowMode::from_str(size);
-                    state_tick.window_mode.set(mode);
-                }
-                InMessage::AssistantState {
-                    active,
-                    input_mode,
-                    compact,
-                    conversation_id,
-                    user_prompt,
-                    messages,
-                    streaming,
-                    permissions,
-                    review,
-                } => {
-                    let was_active = state_tick.assistant_active.get();
-                    state_tick.assistant_active.set(active);
-                    *state_tick.assistant_input_mode.borrow_mut() = input_mode;
-                    state_tick.assistant_compact.set(compact);
-                    *state_tick.assistant_conversation_id.borrow_mut() = conversation_id;
-                    *state_tick.assistant_user_prompt.borrow_mut() = user_prompt;
-                    *state_tick.assistant_messages.borrow_mut() = messages;
-                    *state_tick.assistant_streaming.borrow_mut() = streaming;
-                    *state_tick.assistant_permissions.borrow_mut() = permissions;
-                    let previous_review_id = state_tick
-                        .assistant_review
-                        .borrow()
-                        .as_ref()
-                        .map(|r| r.id.clone());
-                    let review_id = review.as_ref().map(|r| r.id.clone());
-                    let review_text = review.as_ref().map(|r| r.text.clone());
-                    *state_tick.assistant_review.borrow_mut() = review.map(|review| *review);
-
-                    // The entry is the review surface: a new transcript loads
-                    // into it for editing, and answering the review empties it
-                    // again. An unchanged id leaves the user's edits alone.
-                    if review_id != previous_review_id {
-                        let text = review_text.unwrap_or_default();
-                        *state_tick.entry_text.borrow_mut() = text.clone();
-                        entry_tick.set_text(&text);
-                    } else if crate::input::entry_should_be_cleared(
-                        &state_tick.entry_text.borrow(),
-                        &entry_tick.text(),
-                    ) {
-                        // The mirror was emptied somewhere that had no widget -- the
-                        // Send-button click, or `submit_entry` -- and the id did not change,
-                        // so the reload above did not run. Without this the widget keeps
-                        // showing text that has already been sent. Windows reconciles the
-                        // same way in its window procedure; this is that line.
-                        entry_tick.set_text("");
-                    }
-
-                    if (active && !was_active)
-                        || (review_id.is_some() && review_id != previous_review_id)
-                    {
-                        state_tick.should_stick.set(true);
-                        state_tick.scroll_offset.set(0.0);
-                    }
-                }
-                InMessage::ResetPosition { strategy } => {
-                    state_tick.dragging.set(false);
-                    state_tick.pointer_down.set(false);
-                    state_tick.long_press_active.set(false);
-                    state_tick.long_press_elapsed.set(0.0);
-                    state_tick.drag_cancelled.set(true);
-                    // The X11 idle timer must not save the cancelled gesture
-                    // through its missed-release fallback after this reset.
-                    state_tick.x11_release_persisted.set(true);
-                    state_tick.drag_draw_offset_x.set(0.0);
-                    state_tick.drag_draw_offset_y.set(0.0);
-                    state_tick.drag_motion.borrow_mut().reset();
-                    state_tick.selector_placement.borrow_mut().reset();
-                    state_tick.crossing.borrow_mut().reset();
-                    state_tick.has_saved_position.set(false);
-                    state_tick.reset_strategy.set(strategy);
-                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
-                    ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: false,
-                        rect,
-                        monitor,
-                    });
-                }
-                InMessage::RequestPosition => {
-                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
-                    ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: state_tick.has_saved_position.get(),
-                        rect,
-                        monitor,
-                    });
-                }
-                InMessage::Quit => {
-                    quit_tick.set(true);
-                }
-            }
-        }
-
-        if quit_tick.get() {
-            return ControlFlow::Break;
-        }
-
-        release_pointer_if_button_up(&win_tick, &state_tick);
-        // One measured step for the whole frame: the transition springs and
-        // the drag controller share it, so a long frame slows everything
-        // together instead of each measuring a different slice.
-        let dt_tick = frame_dt();
-        tick(&state_tick, dt_tick);
-        tick_drag_frame(
-            &win_tick,
-            &state_tick,
-            backend_tick,
-            drag_clock_now(),
-            dt_tick,
-        );
-        tick_hover_frame(&state_tick);
-        tick_selector_placement(&win_tick, &state_tick, dt_tick);
-        tick_crossing_frame(&win_tick, &state_tick, dt_tick);
-
-        // Show/hide entry for typing mode
-        let is_typing = state_tick.is_typing();
-        if is_typing {
-            // Recomputed every frame rather than once on show. The window is
-            // resized by one message and the state that opens the entry by
-            // another, so a size that lands second would otherwise leave the
-            // entry sitting at the old geometry.
-            let (ox, oy) = state_tick.content_offset();
-            let dw = state_tick.draw_width.get();
-            let dh = state_tick.draw_height.get();
-            let panel_w = PANEL_EXPANDED_WIDTH;
-            let panel_x = (dw - panel_w) / 2.0;
-            let margin_start = (ox + panel_x + PANEL_CONTENT_SIDE_INSET) as i32;
-            let aw = state_tick.alloc_width.get();
-            let right_margin = if aw > 0.0 {
-                aw - ox - dw
-            } else {
-                WINDOW_W_TYPING as f64 - ox - dw
-            };
-            let margin_end =
-                (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
-            let ah = state_tick.alloc_height.get();
-            let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
-            let margin_bottom = (bottom_margin + PANEL_BOTTOM_MARGIN) as i32;
-            entry_tick.set_margin_start(margin_start);
-            entry_tick.set_margin_end(margin_end);
-            entry_tick.set_margin_bottom(margin_bottom);
-            entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
-        }
-        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
-            entry_tick.set_visible(true);
-            entry_tick.show();
-            match backend_tick {
-                Backend::LayerShell => {
-                    win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
-                    glib::idle_add_local_once({
-                        let e = entry_tick.clone();
-                        move || {
-                            e.grab_focus();
-                        }
-                    });
-                }
-                Backend::X11 => {
-                    win_tick.set_accept_focus(true);
-                    glib::timeout_add_local(Duration::from_millis(100), {
-                        let e = entry_tick.clone();
-                        let w = win_tick.clone();
-                        move || {
-                            x11::force_keyboard_focus(&w);
-                            e.grab_focus();
-                            ControlFlow::Break
-                        }
-                    });
-                }
-                Backend::PlainWayland => {
-                    win_tick.set_accept_focus(true);
-                    glib::idle_add_local_once({
-                        let e = entry_tick.clone();
-                        move || {
-                            e.grab_focus();
-                        }
-                    });
-                }
-            }
-        } else if !is_typing && gtk::prelude::WidgetExt::is_visible(&entry_tick) {
-            entry_tick.select_region(0, 0);
-            entry_tick.set_visible(false);
-            entry_tick.hide();
-            match backend_tick {
-                Backend::LayerShell => {
-                    win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
-                }
-                _ => {
-                    win_tick.set_accept_focus(false);
-                }
-            }
-        }
-
-        // One visibility policy for every backend. LayerShell and PlainWayland
-        // previously keyed off `phase == Recording` alone, which ignored the
-        // user's preference: a pill set to Hidden still appeared while
-        // recording, and Persistent never showed when idle.
-        let should_show = rust_pill_shared::should_show_pill(
-            state_tick.visibility.get().into(),
-            state_tick.phase.get() != Phase::Idle,
-            state_tick.owns_panel(),
-        );
-        if should_show {
-            win_tick.show();
+        if handle_review_key(
+            event.keyval(),
+            gdk::keys::constants::Escape,
+            || state_escape.pending_review_id(),
+            input::send_review_decision,
+        ) == ReviewKey::CancelRequested
+        {
+            glib::Propagation::Stop
         } else {
-            win_tick.hide();
+            glib::Propagation::Proceed
         }
-
-        if let Some(gdk_win) = win_tick.window() {
-            input::update_input_region(&gdk_win, &state_tick);
-        }
-        da.queue_draw();
-        ControlFlow::Continue
     });
+}
 
-    window.show_all();
-    entry.hide();
-    ipc::send(&OutMessage::Ready);
+fn process_message(
+    msg: InMessage,
+    state_tick: &PillState,
+    window: &gtk::Window,
+    entry: &gtk::Entry,
+    quit: &Cell<bool>,
+) {
+    match msg {
+        InMessage::Phase { phase, seq } => {
+            state_tick
+                .indicator
+                .apply_phase(phase, seq, reduced_motion, || clear_flash(state_tick))
+        }
+        InMessage::Levels { levels } => {
+            *state_tick.pending_levels.borrow_mut() = levels;
+        }
+        InMessage::StyleInfo { count, name } => {
+            state_tick.style_count.set(count);
+            *state_tick.style_name.borrow_mut() = name;
+        }
+        InMessage::Toast {
+            message,
+            toast_type,
+            duration,
+            action,
+            action_label,
+            reject_action,
+            reject_action_label,
+        } => {
+            *state_tick.flash_message.borrow_mut() = message;
+            state_tick
+                .flash_is_error
+                .set(toast_type.as_deref() == Some("error"));
+            state_tick.flash_visible.set(true);
+            state_tick
+                .flash_timer
+                .set(duration.unwrap_or(FLASH_DURATION));
+            *state_tick.flash_action.borrow_mut() = action;
+            *state_tick.flash_action_label.borrow_mut() = action_label;
+            *state_tick.flash_reject_action.borrow_mut() = reject_action;
+            *state_tick.flash_reject_action_label.borrow_mut() = reject_action_label;
+        }
+        InMessage::DismissToast => {
+            clear_flash(state_tick);
+        }
+        InMessage::Fireworks { message } => {
+            *state_tick.flash_message.borrow_mut() = message;
+            state_tick.flash_is_error.set(false);
+            *state_tick.flash_action.borrow_mut() = None;
+            *state_tick.flash_action_label.borrow_mut() = None;
+            *state_tick.flash_reject_action.borrow_mut() = None;
+            *state_tick.flash_reject_action_label.borrow_mut() = None;
+            state_tick.flash_visible.set(true);
+            state_tick.flash_timer.set(FIREWORKS_TOTAL_DURATION);
 
-    if backend == Backend::LayerShell {
-        let window_ref = window.clone();
-        let quit_monitor = quit_flag.clone();
-        let state_monitor = state.clone();
-        let last_geom: Rc<Cell<(i32, i32, i32, i32)>> = Rc::new(Cell::new((0, 0, 0, 0)));
-        glib::timeout_add_local(Duration::from_millis(100), move || {
-            if quit_monitor.get() {
-                return ControlFlow::Break;
+            state_tick.fireworks_active.set(true);
+            state_tick.fireworks_elapsed.set(0.0);
+            state_tick.fireworks_next_launch.set(0);
+            state_tick.fireworks_rockets.borrow_mut().clear();
+        }
+        InMessage::Flame { message } => {
+            *state_tick.flash_message.borrow_mut() = message;
+            state_tick.flash_is_error.set(false);
+            *state_tick.flash_action.borrow_mut() = None;
+            *state_tick.flash_action_label.borrow_mut() = None;
+            *state_tick.flash_reject_action.borrow_mut() = None;
+            *state_tick.flash_reject_action_label.borrow_mut() = None;
+            state_tick.flash_visible.set(true);
+            state_tick.flash_timer.set(FLAME_TOTAL_DURATION);
+
+            state_tick.flame_active.set(true);
+            state_tick.flame_elapsed.set(0.0);
+            state_tick.flame_tongues.borrow_mut().clear();
+        }
+        InMessage::FlashBlue => {
+            state_tick.flash_blue_active.set(true);
+            state_tick.flash_blue_elapsed.set(0.0);
+        }
+        InMessage::BroadcastTranscript { text } => {
+            *state_tick.transcript_text.borrow_mut() = text;
+            state_tick.transcript_time_since_update.set(0.0);
+            state_tick.transcript_has_message.set(true);
+        }
+        InMessage::StageText { text } => {
+            let stage = rust_pill_shared::active_stage_text(text.as_deref());
+            *state_tick.stage_text.borrow_mut() = stage.map(str::to_owned);
+        }
+        InMessage::Visibility { visibility } => {
+            state_tick.visibility.set(visibility);
+        }
+        InMessage::WindowSize { ref size } => {
+            let mode = WindowMode::from_str(size);
+            state_tick.window_mode.set(mode);
+        }
+        InMessage::AssistantState {
+            active,
+            input_mode,
+            compact,
+            conversation_id,
+            user_prompt,
+            messages,
+            streaming,
+            permissions,
+            review,
+        } => {
+            let was_active = state_tick.assistant_active.get();
+            state_tick.assistant_active.set(active);
+            *state_tick.assistant_input_mode.borrow_mut() = input_mode;
+            state_tick.assistant_compact.set(compact);
+            *state_tick.assistant_conversation_id.borrow_mut() = conversation_id;
+            *state_tick.assistant_user_prompt.borrow_mut() = user_prompt;
+            *state_tick.assistant_messages.borrow_mut() = messages;
+            *state_tick.assistant_streaming.borrow_mut() = streaming;
+            *state_tick.assistant_permissions.borrow_mut() = permissions;
+            let previous_review_id = state_tick
+                .assistant_review
+                .borrow()
+                .as_ref()
+                .map(|r| r.id.clone());
+            let review_id = review.as_ref().map(|r| r.id.clone());
+            let review_text = review.as_ref().map(|r| r.text.clone());
+            *state_tick.assistant_review.borrow_mut() = review.map(|review| *review);
+
+            // The entry is the review surface: a new transcript loads
+            // into it for editing, and answering the review empties it
+            // again. An unchanged id leaves the user's edits alone.
+            if review_id != previous_review_id {
+                let text = review_text.unwrap_or_default();
+                *state_tick.entry_text.borrow_mut() = text.clone();
+                entry.set_text(&text);
+            } else if crate::input::entry_should_be_cleared(
+                &state_tick.entry_text.borrow(),
+                &entry.text(),
+            ) {
+                // The mirror was emptied somewhere that had no widget -- the
+                // Send-button click, or `submit_entry` -- and the id did not change,
+                // so the reload above did not run. Without this the widget keeps
+                // showing text that has already been sent. Windows reconciles the
+                // same way in its window procedure; this is that line.
+                entry.set_text("");
             }
-            let display = match gdk::Display::default() {
-                Some(d) => d,
-                None => return ControlFlow::Continue,
-            };
-            // Only re-home the overlay to the pointer's monitor for the FIRST
-            // placement (last_geom is still the sentinel) or while the user is
-            // actively dragging across screens. Chasing the pointer the rest
-            // of the time is what made the pinned pill hop displays whenever
-            // the cursor crossed an edge.
-            // The one exception: when the monitor the pill was homed on gets
-            // DISCONNECTED, the stored geometry stops matching any connected
-            // monitor and the layer-shell surface dies with the dead output —
-            // fall through so the pill is re-homed onto a live monitor.
-            let placed_once = last_geom.get() != (0, 0, 0, 0);
-            // A reset with the "cursor" strategy forces one re-home pass onto
-            // the pointer's monitor; the strategy is consumed once applied.
-            let reset_to_cursor = !state_monitor.dragging.get()
-                && state_monitor.reset_strategy.get() == ResetStrategy::Cursor;
-            if placed_once && !state_monitor.dragging.get() && !reset_to_cursor {
-                let stored = last_geom.get();
-                let still_connected = (0..display.n_monitors()).any(|i| {
-                    display.monitor(i).is_some_and(|monitor| {
-                        let g = monitor.geometry();
-                        (g.x(), g.y(), g.width(), g.height()) == stored
-                    })
-                });
-                if still_connected {
-                    return ControlFlow::Continue;
-                }
+
+            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+                state_tick.should_stick.set(true);
+                state_tick.scroll_offset.set(0.0);
             }
-            let seat = match display.default_seat() {
-                Some(s) => s,
-                None => return ControlFlow::Continue,
-            };
-            let pointer = match seat.pointer() {
-                Some(p) => p,
-                None => return ControlFlow::Continue,
-            };
-            let (_, x, y) = pointer.position();
-            // If the pointer itself sits on dead/missing output hardware, fall
-            // back to the primary monitor so the pill always has a home.
-            let monitor = display
-                .monitor_at_point(x, y)
-                .or_else(|| display.primary_monitor())
-                .or_else(|| display.monitor(0));
-            if let Some(monitor) = monitor {
-                let g = monitor.geometry();
-                let new_geom = (g.x(), g.y(), g.width(), g.height());
-                if new_geom != last_geom.get() {
-                    last_geom.set(new_geom);
-                    window_ref.set_monitor(&monitor);
-                }
-                if reset_to_cursor {
-                    state_monitor.reset_strategy.set(ResetStrategy::Current);
-                }
-            }
-            ControlFlow::Continue
-        });
+        }
+        InMessage::ResetPosition { strategy } => {
+            state_tick.dragging.set(false);
+            state_tick.pointer_down.set(false);
+            state_tick.long_press_active.set(false);
+            state_tick.long_press_elapsed.set(0.0);
+            state_tick.drag_cancelled.set(true);
+            // The X11 idle timer must not save the cancelled gesture
+            // through its missed-release fallback after this reset.
+            state_tick.x11_release_persisted.set(true);
+            state_tick.drag_draw_offset_x.set(0.0);
+            state_tick.drag_draw_offset_y.set(0.0);
+            state_tick.drag_motion.borrow_mut().reset();
+            state_tick.selector_placement.borrow_mut().reset();
+            state_tick.crossing.borrow_mut().reset();
+            state_tick.has_saved_position.set(false);
+            state_tick.reset_strategy.set(strategy);
+            let (rect, monitor) = pill_geometry(window, state_tick);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: false,
+                rect,
+                monitor,
+            });
+        }
+        InMessage::RequestPosition => {
+            let (rect, monitor) = pill_geometry(window, state_tick);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: state_tick.has_saved_position.get(),
+                rect,
+                monitor,
+            });
+        }
+        InMessage::Quit => {
+            quit.set(true);
+        }
     }
+}
 
-    let main_loop = glib::MainLoop::new(None, false);
-    let ml = main_loop.clone();
-    let _quit_watch = glib::timeout_add_local(Duration::from_millis(100), move || {
-        if quit_flag.get() {
-            ml.quit();
+fn update_entry(window: &gtk::Window, entry: &gtk::Entry, state: &PillState, backend: Backend) {
+    let is_typing = state.is_typing();
+    if is_typing {
+        // Recomputed every frame rather than once on show. The window is
+        // resized by one message and the state that opens the entry by
+        // another, so a size that lands second would otherwise leave the
+        // entry sitting at the old geometry.
+        let (ox, oy) = state.content_offset();
+        let dw = state.draw_width.get();
+        let dh = state.draw_height.get();
+        let panel_w = PANEL_EXPANDED_WIDTH;
+        let panel_x = (dw - panel_w) / 2.0;
+        let margin_start = (ox + panel_x + PANEL_CONTENT_SIDE_INSET) as i32;
+        let aw = state.alloc_width.get();
+        let right_margin = if aw > 0.0 {
+            aw - ox - dw
+        } else {
+            WINDOW_W_TYPING as f64 - ox - dw
+        };
+        let margin_end =
+            (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
+        let ah = state.alloc_height.get();
+        let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
+        let margin_bottom = (bottom_margin + PANEL_BOTTOM_MARGIN) as i32;
+        entry.set_margin_start(margin_start);
+        entry.set_margin_end(margin_end);
+        entry.set_margin_bottom(margin_bottom);
+        entry.set_height_request(PANEL_INPUT_HEIGHT as i32);
+    }
+    if is_typing && !gtk::prelude::WidgetExt::is_visible(entry) {
+        entry.set_visible(true);
+        entry.show();
+        match backend {
+            Backend::LayerShell => {
+                window.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
+                glib::idle_add_local_once({
+                    let e = entry.clone();
+                    move || {
+                        e.grab_focus();
+                    }
+                });
+            }
+            Backend::X11 => {
+                window.set_accept_focus(true);
+                glib::timeout_add_local(Duration::from_millis(100), {
+                    let e = entry.clone();
+                    let w = window.clone();
+                    move || {
+                        x11::force_keyboard_focus(&w);
+                        e.grab_focus();
+                        ControlFlow::Break
+                    }
+                });
+            }
+            Backend::PlainWayland => {
+                window.set_accept_focus(true);
+                glib::idle_add_local_once({
+                    let e = entry.clone();
+                    move || {
+                        e.grab_focus();
+                    }
+                });
+            }
+        }
+    } else if !is_typing && gtk::prelude::WidgetExt::is_visible(entry) {
+        entry.select_region(0, 0);
+        entry.set_visible(false);
+        entry.hide();
+        match backend {
+            Backend::LayerShell => {
+                window.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
+            }
+            _ => {
+                window.set_accept_focus(false);
+            }
+        }
+    }
+}
+
+fn watch_layer_monitor(
+    window_ref: gtk::Window,
+    state_monitor: Rc<PillState>,
+    quit_monitor: Rc<Cell<bool>>,
+) {
+    let last_geom = Cell::new((0, 0, 0, 0));
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        if quit_monitor.get() {
             return ControlFlow::Break;
         }
+        let display = match gdk::Display::default() {
+            Some(d) => d,
+            None => return ControlFlow::Continue,
+        };
+        // Only re-home the overlay to the pointer's monitor for the FIRST
+        // placement (last_geom is still the sentinel) or while the user is
+        // actively dragging across screens. Chasing the pointer the rest
+        // of the time is what made the pinned pill hop displays whenever
+        // the cursor crossed an edge.
+        // The one exception: when the monitor the pill was homed on gets
+        // DISCONNECTED, the stored geometry stops matching any connected
+        // monitor and the layer-shell surface dies with the dead output —
+        // fall through so the pill is re-homed onto a live monitor.
+        let placed_once = last_geom.get() != (0, 0, 0, 0);
+        // A reset with the "cursor" strategy forces one re-home pass onto
+        // the pointer's monitor; the strategy is consumed once applied.
+        let reset_to_cursor = !state_monitor.dragging.get()
+            && state_monitor.reset_strategy.get() == ResetStrategy::Cursor;
+        if placed_once && !state_monitor.dragging.get() && !reset_to_cursor {
+            let stored = last_geom.get();
+            let still_connected = (0..display.n_monitors()).any(|i| {
+                display.monitor(i).is_some_and(|monitor| {
+                    let g = monitor.geometry();
+                    (g.x(), g.y(), g.width(), g.height()) == stored
+                })
+            });
+            if still_connected {
+                return ControlFlow::Continue;
+            }
+        }
+        let seat = match display.default_seat() {
+            Some(s) => s,
+            None => return ControlFlow::Continue,
+        };
+        let pointer = match seat.pointer() {
+            Some(p) => p,
+            None => return ControlFlow::Continue,
+        };
+        let (_, x, y) = pointer.position();
+        // If the pointer itself sits on dead/missing output hardware, fall
+        // back to the primary monitor so the pill always has a home.
+        let monitor = display
+            .monitor_at_point(x, y)
+            .or_else(|| display.primary_monitor())
+            .or_else(|| display.monitor(0));
+        if let Some(monitor) = monitor {
+            let g = monitor.geometry();
+            let new_geom = (g.x(), g.y(), g.width(), g.height());
+            if new_geom != last_geom.get() {
+                last_geom.set(new_geom);
+                window_ref.set_monitor(&monitor);
+            }
+            if reset_to_cursor {
+                state_monitor.reset_strategy.set(ResetStrategy::Current);
+            }
+        }
         ControlFlow::Continue
     });
-    main_loop.run();
 }
 
 /// Builds the pill window rect and the work area of the monitor it lives on,

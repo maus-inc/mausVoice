@@ -5,9 +5,11 @@ import {
   subscribeToLocalDataClearRequested,
 } from "../../utils/local-data-write-gate";
 import {
+  ActiveRecordingError,
+  PendingRecordingReleaseError,
   beginNativeRecording,
-  discardNativeRecording,
-  stopNativeRecording,
+  waitForRecordingRelease,
+  type NativeRecordingHandle,
 } from "../../utils/native-recording-session";
 
 export type VoiceRecorderState = "idle" | "provider" | "browser";
@@ -46,13 +48,12 @@ export type VoiceInstructionRecorderDeps = {
   canUseProvider: () => boolean;
   speechRecognitionSupported: boolean;
   unsupportedMessage: () => string;
-  /** Shown when the recorder could not be claimed for browser recognition. */
-  recordingUnavailableMessage: () => string;
+  recordingUnavailableMessage: (operation: "start" | "stop") => string;
   onListeningChange: (listening: boolean) => void;
   onTranscript: (text: string) => void;
   onError: (message: string) => void;
   onResetLevels: () => void;
-  logger: { warning: (message: string) => void };
+  logger: { warning: (message: string, cause?: unknown) => void };
 };
 
 /**
@@ -63,8 +64,8 @@ export type VoiceInstructionRecorderDeps = {
  * Concurrency: a single `toggle` transition (start or stop) runs at a time via
  * `busy`. Every async operation carries an `opGen` token; `dispose` advances
  * the token so any in-flight start/stop/transcription completes as a no-op
- * instead of firing callbacks on an unmounted component. A `stopInFlight` flag
- * guarantees `stop_recording` is issued at most once per recording.
+ * instead of firing callbacks on an unmounted component. A provider stop
+ * takes its own handle before awaiting either native or transcription.
  */
 export class VoiceInstructionRecorder {
   private state: VoiceRecorderState = "idle";
@@ -73,7 +74,7 @@ export class VoiceInstructionRecorder {
   private busy = false;
   private disposed = false;
   private opGen = 0;
-  private stopInFlight = false;
+  private providerHandle: NativeRecordingHandle | null = null;
   private recognitionEnded: Promise<void> | null = null;
   private settleRecognitionEnd: (() => void) | null = null;
   private unsubscribeClear: (() => void) | null = null;
@@ -88,8 +89,16 @@ export class VoiceInstructionRecorder {
     return this.state;
   }
 
+  private isCurrent(gen: number): boolean {
+    return gen === this.opGen && this.acceptsRecording();
+  }
+
+  private acceptsRecording(): boolean {
+    return !this.disposed && !isLocalDataClearRequested();
+  }
+
   async toggle(): Promise<void> {
-    if (this.busy || this.disposed || isLocalDataClearRequested()) return;
+    if (this.busy || !this.acceptsRecording()) return;
     this.busy = true;
     const gen = ++this.opGen;
     try {
@@ -100,44 +109,74 @@ export class VoiceInstructionRecorder {
         await this.stop(gen);
       }
     } finally {
-      if (gen === this.opGen && !this.disposed) {
+      if (this.isCurrent(gen)) {
         this.busy = false;
       }
     }
+  }
+
+  private trackAdmission(gen: number, handle: NativeRecordingHandle): void {
+    // A reservation can outlive the component. Throwing here retires that
+    // tuple without dispatching start_recording.
+    if (!this.isCurrent(gen)) throw new Error("Recording start was cancelled");
+    this.providerHandle = handle;
   }
 
   private async startProvider(
     gen: number,
   ): Promise<"started" | "blocked" | "unavailable"> {
     try {
-      await beginNativeRecording(
-        this.deps.getPreferredMicrophone() ?? null,
-        {},
+      const { handle } = await beginNativeRecording(
+        this.deps.getPreferredMicrophone(),
+        {
+          handleScoped: true,
+          onAdmission: (handle) => this.trackAdmission(gen, handle),
+        },
         this.deps.invoke,
       );
-      // The native recorder is now genuinely open. If `dispose` (or another
-      // toggle) ran while we awaited mic init, release the recorder instead
-      // of notifying the UI it is listening — otherwise the OS recording
-      // indicator stays on behind a closed composer.
-      if (gen !== this.opGen || this.disposed || isLocalDataClearRequested()) {
-        void discardNativeRecording();
-        return "blocked";
-      }
+      return await this.finishProviderStart(gen, handle);
+    } catch (error) {
+      return this.providerStartFailure(gen, error);
+    }
+  }
+
+  private async finishProviderStart(
+    gen: number,
+    handle: NativeRecordingHandle,
+  ): Promise<"started" | "blocked"> {
+    if (this.isCurrent(gen) && handle.isLive()) {
       this.state = "provider";
       this.deps.onListeningChange(true);
       return "started";
-    } catch (error) {
-      if (gen !== this.opGen || this.disposed) return "blocked";
-      if (
-        isLocalDataClearRequested() ||
-        extractErrorMessage(error).includes("Local data is being cleared")
-      ) {
-        return "blocked";
-      }
-      this.deps.logger.warning(
-        "Voice Edit Mode: configured provider recording unavailable, falling back to browser speech recognition",
-      );
     }
+    // A stop may have overtaken the start reply. Do not publish listening or
+    // start a browser recognizer while native is winding down this admission.
+    if (this.providerHandle === handle) this.providerHandle = null;
+    await this.discardProvider(handle);
+    if (this.isCurrent(gen))
+      this.deps.onError(this.deps.recordingUnavailableMessage("start"));
+    return "blocked";
+  }
+
+  private providerStartFailure(
+    gen: number,
+    error: unknown,
+  ): "blocked" | "unavailable" {
+    if (!this.isCurrent(gen)) return "blocked";
+    this.providerHandle = null;
+    if (
+      error instanceof ActiveRecordingError ||
+      error instanceof PendingRecordingReleaseError
+    ) {
+      this.deps.onError(this.deps.recordingUnavailableMessage("start"));
+      return "blocked";
+    }
+    if (extractErrorMessage(error).includes("Local data is being cleared")) {
+      return "blocked";
+    }
+    this.deps.logger.warning(
+      "Voice Edit Mode: configured provider recording unavailable, falling back to browser speech recognition",
+    );
     return "unavailable";
   }
 
@@ -148,10 +187,14 @@ export class VoiceInstructionRecorder {
       if (outcome === "started" || outcome === "blocked") return;
     }
 
-    if (gen !== this.opGen || this.disposed || isLocalDataClearRequested()) {
+    if (!this.isCurrent(gen)) {
       return;
     }
 
+    await this.startBrowserOrReport(gen);
+  }
+
+  private async startBrowserOrReport(gen: number): Promise<void> {
     if (this.deps.speechRecognitionSupported) {
       await this.startBrowser(gen);
       return;
@@ -171,7 +214,7 @@ export class VoiceInstructionRecorder {
    */
   private async startBrowser(gen: number): Promise<void> {
     if (this.browserLease) {
-      this.deps.onError(this.deps.recordingUnavailableMessage());
+      this.deps.onError(this.deps.recordingUnavailableMessage("start"));
       return;
     }
     const lease = new BrowserRecordingLease(this.deps.invoke);
@@ -179,14 +222,13 @@ export class VoiceInstructionRecorder {
     try {
       await lease.acquire();
     } catch {
-      if (this.browserLease === lease) this.browserLease = null;
-      void lease.release().catch(() => undefined);
-      if (gen === this.opGen && !this.disposed) {
-        this.deps.onError(this.deps.recordingUnavailableMessage());
+      this.releaseBrowserLease(lease);
+      if (this.isCurrent(gen)) {
+        this.deps.onError(this.deps.recordingUnavailableMessage("start"));
       }
       return;
     }
-    if (gen !== this.opGen || this.disposed) {
+    if (!this.isCurrent(gen)) {
       this.releaseBrowserLease(lease);
       return;
     }
@@ -294,7 +336,7 @@ export class VoiceInstructionRecorder {
   private async stop(gen: number): Promise<void> {
     if (this.state === "browser") {
       const stopped = await this.stopBrowserCapture();
-      if (gen === this.opGen && !this.disposed) {
+      if (this.isCurrent(gen)) {
         // stop() can deliver its final result asynchronously. Keep this
         // recognizer's callbacks until end, dispose, or the next recording.
         this.setIdle(stopped);
@@ -337,8 +379,21 @@ export class VoiceInstructionRecorder {
    * the listening state, so we only return to idle on the genuine paths.
    */
   private async stopProviderRecording(gen: number): Promise<void> {
-    const transcript = await this.transcribeProviderRecording(gen);
-    if (gen !== this.opGen || this.disposed) return;
+    const handle = this.providerHandle;
+    this.providerHandle = null;
+    if (!handle?.isLive()) {
+      // A global teardown may already be stopping this admission. Do not
+      // consume its audio; finish cleanup if that stop fails.
+      if (handle) await this.discardProvider(handle);
+      if (this.isCurrent(gen)) this.setIdle();
+      return;
+    }
+    const transcript = await this.readProviderInstruction(handle, gen);
+    this.finishProviderStop(gen, transcript);
+  }
+
+  private finishProviderStop(gen: number, transcript: string | null): void {
+    if (!this.isCurrent(gen)) return;
     if (transcript) {
       this.deps.onTranscript(transcript);
     }
@@ -348,58 +403,61 @@ export class VoiceInstructionRecorder {
     }
   }
 
-  private async transcribeProviderRecording(
+  private async discardProvider(handle: NativeRecordingHandle): Promise<void> {
+    try {
+      // Only this UI waiter expires. Native still owns the admission until
+      // its stop or discard acknowledges release (including a late reply).
+      await waitForRecordingRelease(handle.discard());
+    } catch (cause) {
+      this.deps.logger.warning(
+        "Voice Edit Mode: provider recording cleanup failed",
+        cause,
+      );
+    }
+  }
+
+  private async readProviderInstruction(
+    handle: NativeRecordingHandle,
     gen: number,
   ): Promise<string | null> {
-    if (this.stopInFlight) return null;
-    this.stopInFlight = true;
+    let audio: StopRecordingResponse;
     try {
-      try {
-        const response = await stopNativeRecording(this.deps.invoke);
-        if (gen !== this.opGen || this.disposed) return null;
-        return await this.transcribeProviderResponse(gen, response);
-      } catch {
-        if (gen !== this.opGen || this.disposed) {
-          // The stop failed while this operation was invalidated:
-          // releaseCapture skipped its own discard because the stop was in
-          // flight, so drop the restored native handle here or the
-          // microphone stays live behind the invalidated continuation.
-          void discardNativeRecording();
-          return null;
-        }
+      audio = await handle.stop();
+    } catch {
+      // A rejected stop may leave this microphone open. Never start a
+      // browser fallback or look up another recording to discard here.
+      await this.discardProvider(handle);
+      if (this.isCurrent(gen)) {
         this.deps.logger.warning(
-          "Voice Edit Mode: provider transcription failed",
+          "Voice Edit Mode: provider recording failed to stop",
         );
-        if (this.deps.speechRecognitionSupported) {
-          await this.startBrowser(gen);
-        } else {
-          this.deps.onError(this.deps.unsupportedMessage());
-        }
-        // The failed stop restored the native handle, which is why the
-        // fallback above is refused the slot: drop the dead capture here
-        // or the microphone stays live behind an idle recorder.
-        await discardNativeRecording();
-        return null;
+        this.deps.onError(this.deps.recordingUnavailableMessage("stop"));
       }
-    } finally {
-      this.stopInFlight = false;
+      return null;
     }
+    return this.isCurrent(gen)
+      ? this.transcribeProviderResponse(gen, audio)
+      : null;
   }
 
   private async transcribeProviderResponse(
     gen: number,
     response: StopRecordingResponse,
   ): Promise<string | null> {
-    const samples = response.samples;
-    const sampleRate = response.sampleRate ?? 0;
-    if (!samples || samples.length === 0 || sampleRate <= 0) {
+    const { samples, sampleRate = 0 } = response;
+    if (samples.length === 0 || sampleRate <= 0) {
       return null;
     }
-    const transcript = (
-      await this.deps.transcribe({ samples, sampleRate })
-    ).trim();
-    if (gen !== this.opGen || this.disposed) return null;
-    return transcript || null;
+    try {
+      return (await this.deps.transcribe({ samples, sampleRate })).trim();
+    } catch {
+      if (!this.isCurrent(gen)) return null;
+      this.deps.logger.warning(
+        "Voice Edit Mode: provider transcription failed",
+      );
+      await this.startBrowserOrReport(gen);
+      return null;
+    }
   }
 
   private setIdle(preserveFinalResult = false): void {
@@ -422,8 +480,12 @@ export class VoiceInstructionRecorder {
     if (recognition && this.state === "browser") {
       this.stopBrowserRecognition(recognition);
     }
-    if (this.state === "provider" && !this.stopInFlight) {
-      void discardNativeRecording();
+    const handle = this.providerHandle;
+    this.providerHandle = null;
+    if (handle) {
+      // Discard reports its own failure. A logger shutting down must not turn
+      // that handled failure into a rejection after disposal.
+      this.discardProvider(handle).catch(() => undefined);
     }
     if (this.state !== "idle") {
       this.setIdle();

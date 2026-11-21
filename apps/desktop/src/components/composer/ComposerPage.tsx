@@ -134,30 +134,14 @@ export const ComposerPage = () => {
         });
   }
 
-  // Held in a ref and refreshed in an effect (never during render) so a locale
-  // change while the composer is open updates the recorder's unsupported
-  // message without a render-phase ref write.
-  const unsupportedMessageRef = useRef(
-    intl.formatMessage({
-      defaultMessage: "Voice editing is not supported on this platform",
-    }),
-  );
-  const recordingUnavailableMessageRef = useRef(
-    intl.formatMessage({
-      defaultMessage: "Could not start recording. Please try again.",
-    }),
-  );
+  // A locale change updates recorder errors without replacing a live recorder.
+  const intlRef = useRef(intl);
   useEffect(() => {
     transcriptRef.current?.focus();
   }, []);
 
   useEffect(() => {
-    unsupportedMessageRef.current = intl.formatMessage({
-      defaultMessage: "Voice editing is not supported on this platform",
-    });
-    recordingUnavailableMessageRef.current = intl.formatMessage({
-      defaultMessage: "Could not start recording. Please try again.",
-    });
+    intlRef.current = intl;
   }, [intl]);
 
   // Construct the recorder in an effect (not during render) so StrictMode's
@@ -190,8 +174,18 @@ export const ComposerPage = () => {
         }
       },
       speechRecognitionSupported,
-      unsupportedMessage: () => unsupportedMessageRef.current,
-      recordingUnavailableMessage: () => recordingUnavailableMessageRef.current,
+      unsupportedMessage: () =>
+        intlRef.current.formatMessage({
+          defaultMessage: "Voice editing is not supported on this platform",
+        }),
+      recordingUnavailableMessage: (operation) =>
+        operation === "stop"
+          ? intlRef.current.formatMessage({
+              defaultMessage: "Failed to stop recording",
+            })
+          : intlRef.current.formatMessage({
+              defaultMessage: "Could not start recording. Please try again.",
+            }),
       onListeningChange: setIsListening,
       onTranscript: (spoken) =>
         setInstruction((current) => `${current} ${spoken}`.trim()),

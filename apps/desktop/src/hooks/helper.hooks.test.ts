@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ensureUiHarness } from "../../test/helpers/jsdom-ui-harness";
+import { getLogger } from "../utils/log.utils";
 
 import { canonicalizeKey, KEY_ALIASES, useIntervalAsync } from "./helper.hooks";
+
+ensureUiHarness();
 
 describe("canonicalizeKey / KEY_ALIASES precedence", () => {
   it('maps a raw Space " " to "space"', () => {
@@ -59,12 +63,10 @@ describe("useIntervalAsync rejection handling", () => {
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
     try {
+      const callback = vi.fn().mockRejectedValue(new Error("heartbeat failed"));
+      const warning = vi.spyOn(getLogger(), "warning");
       const Probe = () => {
-        useIntervalAsync(
-          60_000,
-          () => Promise.reject(new Error("PERMISSION_DENIED: heartbeat")),
-          [],
-        );
+        useIntervalAsync(60_000, callback, []);
         return null;
       };
       const root = createRoot(container);
@@ -81,8 +83,11 @@ describe("useIntervalAsync rejection handling", () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
+      expect(callback).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledOnce();
       expect(unhandled).toEqual([]);
     } finally {
+      vi.restoreAllMocks();
       process.off("unhandledRejection", onUnhandled);
     }
   });

@@ -33,6 +33,7 @@ export default function WelcomePage() {
 
   return (
     <Box
+      component="main"
       sx={{
         position: "relative",
         width: "100%",

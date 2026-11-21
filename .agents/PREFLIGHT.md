@@ -8,6 +8,8 @@ This file is the short form. `AGENTS.md` holds the binding rules, and the
 
 ## Required local checks
 
+- [ ] On this final committed head, read the complete `CODING_STANDARDS.md` and full base-to-head patch, then fill the per-section receipt as described in `engineering/standards-review.md`. Use the accepted receipt in the PR body. Repeat for every push.
+
 - [ ] `pnpm install --frozen-lockfile`, or `CHROMEDRIVER_SKIP_DOWNLOAD=true pnpm install --frozen-lockfile` on a host that cannot reach `googlechromelabs.github.io`
 - [ ] `pnpm run lint`
 - [ ] `pnpm run check-types`

@@ -23,10 +23,7 @@ import {
   DualPaneLayout,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
-import {
-  discardNativeRecording,
-  stopNativeRecording,
-} from "../../utils/native-recording-session";
+import { type NativeRecordingHandle } from "../../utils/native-recording-session";
 
 export const MicCheckForm = () => {
   const theme = useTheme();
@@ -52,6 +49,7 @@ export const MicCheckForm = () => {
   const mountedRef = useRef(true);
   const opIdRef = useRef(0);
   const recordingStateRef = useRef(recordingState);
+  const handleRef = useRef<NativeRecordingHandle | null>(null);
   recordingStateRef.current = recordingState;
 
   const setSyncedRecordingState = useCallback(
@@ -78,14 +76,21 @@ export const MicCheckForm = () => {
     setSyncedRecordingState("starting");
 
     try {
-      await invokeGuardedRecordingStart(preferredMicrophone ?? null);
+      const { handle } = await invokeGuardedRecordingStart(
+        preferredMicrophone ?? null,
+      );
+      handleRef.current = handle;
       if (
         !mountedRef.current ||
         opId !== opIdRef.current ||
         isLocalDataClearRequested() ||
         clearGeneration !== getLocalDataClearGeneration()
       ) {
-        await discardNativeRecording();
+        // Release only the recording this attempt opened. The global helper
+        // discards whatever session is current, which by now may belong to a
+        // later start that superseded this one.
+        if (handleRef.current === handle) handleRef.current = null;
+        await handle.discard().catch(() => undefined);
         if (opId === opIdRef.current) {
           setSyncedRecordingState("idle");
         }
@@ -114,8 +119,14 @@ export const MicCheckForm = () => {
     opIdRef.current += 1;
     setSyncedRecordingState("stopping");
 
+    // Stop the recording this form admitted. A global stop would reach whatever
+    // session is current, which a later start may own. While the admission is
+    // still opening there is no handle yet, so the bumped op id makes the
+    // pending start discard its own handle when it resolves.
+    const handle = handleRef.current;
+    handleRef.current = null;
     try {
-      await stopNativeRecording();
+      if (handle) await handle.stop();
     } catch (error) {
       console.error("Failed to stop recording", error);
     } finally {

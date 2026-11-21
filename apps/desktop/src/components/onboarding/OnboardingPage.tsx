@@ -48,6 +48,7 @@ export default function OnboardingPage() {
 
   return (
     <Stack
+      component="main"
       direction="row"
       sx={{
         alignItems: "center",
