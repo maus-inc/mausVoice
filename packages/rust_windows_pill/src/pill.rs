@@ -343,8 +343,12 @@ unsafe fn on_wm_lbuttondown(hwnd: HWND, lparam: LPARAM) -> LRESULT {
             }
             // A fresh press owns its release, including selector clicks.
             state.drag_cancelled.set(false);
-            // Start long-press tracking if clicking on the pill body
-            if input::is_on_pill_at(state, x, y) {
+            // Start long-press tracking if clicking on the pill body. The hit test
+            // is laid out on the fixed canvas, so the press takes the same mapping
+            // the renderer does; the stored press point stays in window pixels,
+            // which is what `tick_long_press` adds to the window origin.
+            let (canvas_x, canvas_y) = state.pointer_to_canvas(x, y);
+            if input::is_on_pill_at(state, canvas_x, canvas_y) {
                 if state.drag_motion.borrow_mut().interrupt_settle() {
                     persist_drag_position(hwnd, state);
                 }
@@ -984,12 +988,22 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             // window can mostly sit on one panel while the visible pill is on
             // another, and `MonitorFromWindow` follows the window.
             let areas = enumerate_work_areas_with_identity().unwrap_or_default();
+            // Resolved from the visible pill, the same lookup a drag save uses.
+            // Answering with the stored token instead pairs fresh geometry with the
+            // display the pill was on when it was last saved, and the next launch
+            // remaps against that panel's work area.
+            let footprint = live_pill_footprint(state);
+            let display_id = rust_pill_shared::layout::display_id_of(
+                &areas,
+                visible_pill_centre((rect.x, rect.y), footprint),
+            )
+            .or_else(|| state.saved_display_id.get());
             ipc::send(&OutMessage::PositionChanged {
                 report: rust_pill_shared::restore::PositionReport::new(
                     state.has_saved_position.get(),
                     Some(rect),
-                    work_area_for_report(&areas, monitor, &rect, live_pill_footprint(state)),
-                    state.saved_display_id.get(),
+                    work_area_for_report(&areas, monitor, &rect, footprint),
+                    display_id,
                 ),
             });
         }
@@ -1345,11 +1359,21 @@ fn check_hover(hwnd: HWND, state: &PillState) {
     let (ox, oy) = state.content_offset();
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
+    // The canvas is mapped onto the surface after a scale change, so every
+    // rectangle below is built in canvas units and then mapped to window pixels
+    // before it is compared with the screen-space cursor. Adding the offset
+    // unscaled would name a spot inside a bitmap the window no longer has.
+    let to_screen = |x: f64, y: f64| {
+        let (wx, wy) = state.canvas_to_window(ox + x, oy + y);
+        (win_rect.left as f64 + wx, win_rect.top as f64 + wy)
+    };
+    let scaled = |value: f64| state.canvas_to_window(value, value).0;
 
     // Pill position in screen coordinates
     let (pill_x, pill_y, pill_w, pill_h) = draw::pill_position(state, dw, dh);
-    let screen_pill_x = win_rect.left as f64 + ox + pill_x;
-    let screen_pill_y = win_rect.top as f64 + oy + pill_y;
+    let (screen_pill_x, screen_pill_y) = to_screen(pill_x, pill_y);
+    let pill_w = scaled(pill_w);
+    let pill_h = scaled(pill_h);
 
     // Anticipatory hysteresis is shared (hover::{HOVER_ENTRY_PAD,
     // HOVER_EXIT_PAD}) so entry 16 px hides the 50 ms dwell + 220 ms
@@ -1360,6 +1384,7 @@ fn check_hover(hwnd: HWND, state: &PillState) {
     } else {
         rust_pill_shared::hover::HOVER_ENTRY_PAD
     };
+    let pad = scaled(pad);
     let cx = cursor.x as f64;
     let cy = cursor.y as f64;
 
@@ -1369,21 +1394,21 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         && cy <= screen_pill_y + pill_h + pad;
 
     let in_panel = if state.owns_panel() {
-        let panel_x = win_rect.left as f64 + ox;
-        let panel_y = win_rect.top as f64 + oy;
-        cx >= panel_x && cx <= panel_x + dw && cy >= panel_y && cy <= panel_y + dh
+        let (panel_x, panel_y) = to_screen(0.0, 0.0);
+        cx >= panel_x && cx <= panel_x + scaled(dw) && cy >= panel_y && cy <= panel_y + scaled(dh)
     } else {
         false
     };
 
     let in_tooltip = if state.tooltip_opacity() > 0.1 && state.style_count.get() > 1 {
-        let pill_area_top = win_rect.top as f64 + oy + (dh - PILL_AREA_HEIGHT);
         let tooltip_w = state.tooltip_width.get();
         let y_offset = (1.0 - state.tooltip_t.get()) * 4.0;
         let blend = state.selector_placement.borrow().blend();
+        // Answered in canvas units relative to the canvas origin, so the same
+        // `to_screen` mapping the pill uses applies here too.
         let (tooltip_x, tooltip_base) = rust_pill_shared::placement::tooltip_origin(
-            win_rect.left as f64 + ox,
-            pill_area_top,
+            0.0,
+            dh - PILL_AREA_HEIGHT,
             dw,
             PILL_AREA_HEIGHT,
             tooltip_w,
@@ -1391,12 +1416,15 @@ fn check_hover(hwnd: HWND, state: &PillState) {
             TOOLTIP_GAP,
             blend,
         );
-        let tooltip_y = tooltip_base + y_offset * (1.0 - 2.0 * blend);
+        let (tooltip_x, tooltip_y) =
+            to_screen(tooltip_x, tooltip_base + y_offset * (1.0 - 2.0 * blend));
+        let tooltip_w = scaled(tooltip_w);
+        let tooltip_h = scaled(TOOLTIP_HEIGHT);
 
         cx >= tooltip_x
             && cx <= tooltip_x + tooltip_w
             && cy >= tooltip_y
-            && cy <= tooltip_y + TOOLTIP_HEIGHT
+            && cy <= tooltip_y + tooltip_h
     } else {
         false
     };
@@ -1672,10 +1700,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
     let (offset, size) = live_pill_footprint(state);
     // The pill's own centre inside the window, so the display is resolved from the
     // thing the user sees rather than the transparent canvas corner.
-    let footprint_centre = (
-        rect.left as f64 + offset.0 + size.0 / 2.0,
-        rect.top as f64 + offset.1 + size.1 / 2.0,
-    );
+    let footprint_centre = visible_pill_centre((rect.left as f64, rect.top as f64), (offset, size));
     let Some(parked) = rust_pill_shared::layout::describe_parked(
         &areas,
         (rect.left as f64, rect.top as f64),
@@ -1721,10 +1746,8 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                 // display the pill just left, and the next launch would restore it
                 // against the wrong panel. Resolved from the pill's own footprint
                 // centre, the same way the `Move` branch below names its display.
-                let adopted_centre = (
-                    cur_x as f64 + offset.0 + size.0 / 2.0,
-                    cur_y as f64 + offset.1 + size.1 / 2.0,
-                );
+                let adopted_centre =
+                    visible_pill_centre((cur_x as f64, cur_y as f64), (offset, size));
                 state
                     .saved_display_id
                     .set(rust_pill_shared::layout::display_id_of(
@@ -1771,10 +1794,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             state.has_saved_position.set(true);
             // Nearest when containment fails, so a pill moved to a shared edge keeps
             // naming the display it is on instead of losing the token.
-            let moved_centre = (
-                x as f64 + offset.0 + size.0 / 2.0,
-                y as f64 + offset.1 + size.1 / 2.0,
-            );
+            let moved_centre = visible_pill_centre((x as f64, y as f64), (offset, size));
             state
                 .saved_display_id
                 .set(rust_pill_shared::layout::display_id_of(
@@ -1820,19 +1840,32 @@ fn work_area_for_report(
     published: &Rect,
     footprint: ((f64, f64), (f64, f64)),
 ) -> Option<Rect> {
+    rust_pill_shared::layout::work_area_of(
+        areas,
+        visible_pill_centre((published.x, published.y), footprint),
+    )
+    .map(|area| Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: area.height,
+    })
+    .or(monitor)
+}
+
+/// The centre of the pill the user actually sees, given the window origin and the
+/// live footprint, in screen coordinates.
+///
+/// The window is a transparent canvas that carries extra rows below the pill, so
+/// its corner and its size describe a rectangle the renderer is not filling. Every
+/// lookup that names a display has to start from this point, or two paths can name
+/// different panels for the same pill.
+fn visible_pill_centre(origin: (f64, f64), footprint: ((f64, f64), (f64, f64))) -> (f64, f64) {
     let (offset, size) = footprint;
-    let centre = (
-        published.x + offset.0 + size.0 / 2.0,
-        published.y + offset.1 + size.1 / 2.0,
-    );
-    rust_pill_shared::layout::work_area_of(areas, centre)
-        .map(|area| Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: area.height,
-        })
-        .or(monitor)
+    (
+        origin.0 + offset.0 + size.0 / 2.0,
+        origin.1 + offset.1 + size.1 / 2.0,
+    )
 }
 
 // Drawing and the native entry use the fixed typing canvas. Extra selector
@@ -2316,8 +2349,8 @@ fn drag_placement(
         let info = query_monitor_info(monitor)?;
         let work_rect = monitor_rect(info.rcWork);
         let (offset, size) = live_pill_footprint(state);
-        let center_x = current.left as f64 + offset.0 + size.0 / 2.0;
-        let center_y = current.top as f64 + offset.1 + size.1 / 2.0;
+        let (center_x, center_y) =
+            visible_pill_centre((current.left as f64, current.top as f64), (offset, size));
         let area = if state.dragging.get() {
             let current_monitor = monitor_rect(info.rcMonitor);
             let neighbors = drag_monitor_neighbors(state, current_monitor);
@@ -2418,8 +2451,19 @@ fn selector_space_above(window_y: f64, work_y: f64, pill_top: f64) -> f64 {
 fn tick_selector_placement(hwnd: HWND, state: &PillState, dt: f64) {
     let (rect, monitor) = current_pill_geometry(hwnd);
     let (offset, _) = live_pill_footprint(state);
+    let scale = {
+        let scale = state.content_scale.get();
+        if scale > 0.0 {
+            scale
+        } else {
+            1.0
+        }
+    };
+    // The footprint is in window pixels, while `TOOLTIP_HEIGHT` and the shared
+    // gap are canvas units. Answer in canvas units, or the decision compares a
+    // shrunk surface against a strip that no longer fits it.
     let space_above = monitor.map_or(f64::INFINITY, |work| {
-        selector_space_above(rect.y, work.y, offset.1)
+        selector_space_above(rect.y, work.y, offset.1) / scale
     });
     let changed = advance_selector_placement(
         &mut state.selector_placement.borrow_mut(),
@@ -2477,8 +2521,7 @@ fn monitor_geometry_at(x: f64, y: f64) -> Option<Rect> {
 fn tick_crossing(hwnd: HWND, state: &PillState, dt: f64) {
     let (rect, _) = current_pill_geometry(hwnd);
     let (offset, size) = live_pill_footprint(state);
-    let cx = rect.x + offset.0 + size.0 / 2.0;
-    let cy = rect.y + offset.1 + size.1 / 2.0;
+    let (cx, cy) = visible_pill_centre((rect.x, rect.y), (offset, size));
     let monitor = monitor_geometry_at(cx, cy).unwrap_or(Rect {
         x: f64::NAN,
         y: f64::NAN,
@@ -2817,10 +2860,7 @@ fn store_recorded_drop(hwnd: HWND, state: &PillState) {
     // so the origin, its size, its work area and its display are all answered from
     // the one point that the user actually chose.
     let (offset, size) = live_pill_footprint(state);
-    let drop_centre = (
-        origin.0 as f64 + offset.0 + size.0 / 2.0,
-        origin.1 as f64 + offset.1 + size.1 / 2.0,
-    );
+    let drop_centre = visible_pill_centre((origin.0 as f64, origin.1 as f64), (offset, size));
     // One monitor answers both fields. Resolving them separately let a shrunk work
     // area fall out of the enumerated list while `MonitorFromPoint` still found the
     // display by its full bounds, so the report could name panel A and store panel
@@ -3351,6 +3391,34 @@ mod tests {
         assert!((offset.1 - unscaled_offset.1 * 0.5).abs() < 1e-9);
         assert!((size.0 - unscaled_size.0 * 0.5).abs() < 1e-9);
         assert!((size.1 - unscaled_size.1 * 0.5).abs() < 1e-9);
+    }
+
+    /// The press path splits its units: the hit test is laid out on the fixed
+    /// canvas, while the long-press distance check adds the stored press point to
+    /// the window origin. A scaled surface makes those two different numbers, so
+    /// each has to take the mapping its consumer expects.
+    #[test]
+    fn a_press_hit_tests_on_the_canvas_and_stores_window_pixels() {
+        let state = initial_state(None, None, None);
+        state.content_scale.set(0.5);
+
+        let (press_x, press_y) = (100.0, 200.0);
+        let (canvas_x, canvas_y) = state.pointer_to_canvas(press_x, press_y);
+        assert_eq!((canvas_x, canvas_y), (200.0, 400.0));
+
+        // The stored point must round-trip back to the window pixel the press
+        // arrived on, because `tick_long_press` adds it to the window origin and
+        // compares against the cursor in screen coordinates.
+        let (back_x, back_y) = state.canvas_to_window(canvas_x, canvas_y);
+        assert!((back_x - press_x).abs() < 1e-9);
+        assert!((back_y - press_y).abs() < 1e-9);
+
+        // Storing the canvas point instead would name a spot twice as far from the
+        // origin, and the press would look like a drag on the first tick.
+        assert!(
+            (canvas_y - press_y).abs() > 1.0,
+            "the two spaces must differ, or this test cannot catch the mix-up"
+        );
     }
 
     /// The two clamps have to agree for a freshly created pill.
