@@ -250,7 +250,7 @@ describe("non-dictation microphone local-data clear guards", () => {
       }
       if (command === "start_recording")
         return Promise.resolve({ sampleRate: 1 });
-      return Promise.resolve(undefined);
+      return Promise.resolve();
     });
     invokeMock.mockImplementation(invoke);
 

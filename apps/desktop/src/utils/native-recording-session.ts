@@ -28,6 +28,10 @@ export const waitForRecordingRelease = async (
   }
 };
 
+// Enough for a transient transport rejection to clear. Native owns the longer
+// recovery, so this cap only has to outlast a momentary IPC failure.
+const PARTIAL_RELEASE_ATTEMPTS = 3;
+
 // `start_recording` returns Result<_, String>; Tauri rejects with this exact
 // string when the owner is in another webview and not in our local session.
 const RECORDING_BUSY = "A recording is already in progress";
@@ -193,11 +197,25 @@ class RecordingSession implements NativeRecordingHandle {
     return audio;
   }
 
-  private confirmPartialRelease(): void {
+  private confirmPartialRelease(attempt = 0): void {
     // Retry just this tuple; discard is idempotent and a no-op after retirement.
     // A concurrent waiter joins the same command rather than opening the gate.
-    void this.discard().catch(() => {
-      setTimeout(() => this.confirmPartialRelease(), 1_000);
+    //
+    // Bounded, because native already runs its own release retry for this
+    // admission. This loop only covers a rejected round trip, so a device that
+    // never releases would otherwise keep a timer alive for the life of the
+    // page. After the last attempt the session keeps the sealed audio it already
+    // delivered and the local slot stays held, which the next start reports as a
+    // pending release rather than silently reopening capture.
+    void this.discard().catch((cause) => {
+      if (attempt + 1 >= PARTIAL_RELEASE_ATTEMPTS) {
+        getLogger().warning(
+          `Partial capture release failed after ${PARTIAL_RELEASE_ATTEMPTS} attempts`,
+          cause,
+        );
+        return;
+      }
+      setTimeout(() => this.confirmPartialRelease(attempt + 1), 1_000);
     });
   }
 

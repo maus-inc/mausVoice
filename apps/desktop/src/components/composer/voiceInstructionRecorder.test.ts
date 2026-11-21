@@ -514,7 +514,7 @@ describe("VoiceInstructionRecorder", () => {
       .fn(() => Promise.resolve())
       .mockRejectedValueOnce(new Error("device failed"));
     const invoke = nativeInvoke({ discard_recording: discard });
-    const warning = vi.fn(() => {
+    const warning = vi.fn((_message: string, _cause?: unknown) => {
       throw new Error("logger unavailable");
     });
     const recorder = recorderFor(baseDeps({ invoke, logger: { warning } }));
@@ -526,9 +526,12 @@ describe("VoiceInstructionRecorder", () => {
       recorder.dispose();
       // Node reports unhandled rejections after the current microtask queue.
       await nextTurn();
-      expect(warning).toHaveBeenCalledExactlyOnceWith(
+      expect(warning).toHaveBeenCalledTimes(1);
+      expect(warning.mock.calls[0][0]).toBe(
         "Voice Edit Mode: provider recording cleanup failed",
       );
+      // The cause is carried so a cleanup failure can be diagnosed.
+      expect(warning.mock.calls[0][1]).toBeInstanceOf(Error);
       expect(unhandled).not.toHaveBeenCalled();
       const { handle } = await beginNativeRecording(null, {}, invoke);
       expect(discard.mock.calls).toEqual([[admission], [admission]]);

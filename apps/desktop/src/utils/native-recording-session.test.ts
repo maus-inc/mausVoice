@@ -374,6 +374,41 @@ describe("beginNativeRecording", () => {
   });
 });
 
+describe("partial capture release", () => {
+  it("stops retrying a rejected discard instead of leaving a timer running", async () => {
+    vi.useFakeTimers();
+    try {
+      const partial = encodeRecordedAudio([0.25], 16_000);
+      new DataView(partial.buffer, partial.byteOffset).setUint32(
+        0,
+        0x80000000 + 16_000,
+        true,
+      );
+      let discards = 0;
+      const { invoke } = recorderTransport({
+        stop_recording: () => Promise.resolve(partial),
+        discard_recording: () => {
+          discards += 1;
+          return Promise.reject(new Error("device stuck"));
+        },
+      });
+      const { handle } = await beginNativeRecording(null, {}, invoke);
+      const stopped = handle.stop();
+      await vi.advanceTimersByTimeAsync(0);
+      expect((await stopped).captureFailed).toBe(true);
+
+      // Each rejected attempt schedules the next, and the cap ends the chain.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(discards).toBe(3);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(discards).toBe(3);
+    } finally {
+      vi.useRealTimers();
+      resetNativeRecordingSession();
+    }
+  });
+});
+
 describe("stopping", () => {
   it("a replacement already waiting on stop waits for partial capture release too", async () => {
     let deliver!: (value: Uint8Array) => void;

@@ -278,7 +278,7 @@ function requireFastForward(previous, head) {
     git("merge-base", "--is-ancestor", previous, head);
   } catch {
     fail(
-      "Cannot verify a fast-forward from the remote topic tip. Fetch its history and merge it before pushing.",
+      `Cannot verify a fast-forward from the remote topic tip (previous: ${previous}, head: ${head}). Fetch its history and merge it before pushing.`,
     );
   }
 }

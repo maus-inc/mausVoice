@@ -53,7 +53,7 @@ export type VoiceInstructionRecorderDeps = {
   onTranscript: (text: string) => void;
   onError: (message: string) => void;
   onResetLevels: () => void;
-  logger: { warning: (message: string) => void };
+  logger: { warning: (message: string, cause?: unknown) => void };
 };
 
 /**
@@ -408,9 +408,10 @@ export class VoiceInstructionRecorder {
       // Only this UI waiter expires. Native still owns the admission until
       // its stop or discard acknowledges release (including a late reply).
       await waitForRecordingRelease(handle.discard());
-    } catch {
+    } catch (cause) {
       this.deps.logger.warning(
         "Voice Edit Mode: provider recording cleanup failed",
+        cause,
       );
     }
   }
