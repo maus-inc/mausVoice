@@ -130,6 +130,32 @@ describe("VoiceInstructionRecorder", () => {
     expect(deps.onListeningChange).toHaveBeenLastCalledWith(false);
   });
 
+  it("does not transcribe a failed capture containing pre-roll", async () => {
+    const deps = baseDeps({
+      invoke: nativeInvoke({
+        stop_recording: async () => ({
+          samples: [0.1, 0.2],
+          sampleRate: 16000,
+          captureFailed: true,
+        }),
+      }),
+      createSpeechRecognition: vi.fn(() => new FakeRecognition()),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    await recorder.toggle();
+
+    expect(deps.transcribe).not.toHaveBeenCalled();
+    expect(deps.onTranscript).not.toHaveBeenCalled();
+    expect(deps.createSpeechRecognition).not.toHaveBeenCalled();
+    expect(deps.onError).toHaveBeenCalledWith("recording unavailable");
+    expect(recorder.getState()).toBe("idle");
+    await recorder.toggle();
+    expect(recorder.getState()).toBe("provider");
+    recorder.dispose();
+  });
+
   it("falls back to browser recognition when provider recording fails", async () => {
     const deps = baseDeps({
       invoke: nativeInvoke({

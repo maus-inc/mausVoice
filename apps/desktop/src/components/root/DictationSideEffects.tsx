@@ -83,6 +83,8 @@ import {
 } from "./dictation-recording-intake";
 import { createSystemVolumeDim } from "./dictation-volume-dim";
 import {
+  assertDictationStartAvailable,
+  bindRecordingActivation,
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
@@ -1225,47 +1227,54 @@ export const DictationSideEffects = () => {
     }
   }, []);
 
-  const dictationController = useMemo(
-    () =>
-      new ActivationController(
-        async () => {
-          await revealPillForActivityIfHidden();
-          await startDictationRecording();
-        },
-        () => stopDictationRecording(),
-        // Hold-to-talk: dictation records while the hotkey (Fn) is held and stops on release.
-        true,
-      ),
-    [revealPillForActivityIfHidden],
-  );
+  // Each shortcut owns only the operation it actually started. Use the
+  // ref at release time, not the (possibly stale) state from a render.
+  const dictationController = useMemo(() => {
+    const activation = bindRecordingActivation(
+      async (claim) => {
+        await revealPillForActivityIfHidden();
+        await startDictationRecording(claim);
+      },
+      () => recordingOperationRef.current,
+      () => stopDictationRecording(),
+    );
+    return new ActivationController(activation.start, activation.stop, true);
+  }, [revealPillForActivityIfHidden]);
 
-  const agentController = useMemo(
-    () =>
-      new ActivationController(
-        async () => {
-          await revealPillForActivityIfHidden();
-          await startAgentRecording();
-        },
-        () => stopAgentRecording(),
-      ),
-    [revealPillForActivityIfHidden],
-  );
+  const agentController = useMemo(() => {
+    const activation = bindRecordingActivation(
+      async (claim) => {
+        await revealPillForActivityIfHidden();
+        await startAgentRecording(claim);
+      },
+      () => recordingOperationRef.current,
+      () => stopAgentRecording(),
+    );
+    return new ActivationController(activation.start, activation.stop);
+  }, [revealPillForActivityIfHidden]);
 
   const additionalLanguageControllers = useMemo(
     () =>
-      additionalLanguageEntries.map((entry) => ({
-        actionName: entry.actionName,
-        controller: new ActivationController(
-          async () => {
+      additionalLanguageEntries.map((entry) => {
+        const activation = bindRecordingActivation(
+          async (claim) => {
             await revealPillForActivityIfHidden();
-            await startRecording({
-              mode: "dictate",
-              language: entry.language,
-            });
+            await startRecording(
+              { mode: "dictate", language: entry.language },
+              claim,
+            );
           },
+          () => recordingOperationRef.current,
           () => stopRecording(),
-        ),
-      })),
+        );
+        return {
+          actionName: entry.actionName,
+          controller: new ActivationController(
+            activation.start,
+            activation.stop,
+          ),
+        };
+      }),
     [additionalLanguageEntries, revealPillForActivityIfHidden],
   );
 
@@ -2211,19 +2220,39 @@ export const DictationSideEffects = () => {
   );
 
   const startRecording = useCallback(
-    async (args: { mode: RecordingMode; language?: string | null }) => {
-      if (isLocalDataClearRequested()) return;
+    async (
+      {
+        mode,
+        language: requestedLanguage,
+      }: { mode: RecordingMode; language?: string | null },
+      claim: (operation: number) => void,
+    ) => {
+      const state = getAppState();
+      // Text mode keeps the assistant panel active but has already ended
+      // its voice take. The agent shortcut must still be able to resume voice.
+      const resumingAgentVoice =
+        mode === "agent" &&
+        state.activeRecordingMode === "agent" &&
+        state.assistantInputMode === "type";
+      assertDictationStartAvailable(
+        state.activeRecordingMode !== null && !resumingAgentVoice,
+        isStoppingRef.current,
+      );
       const clearGeneration = getLocalDataClearGeneration();
       const attempt = ++recordingOperationRef.current;
+      claim(attempt);
       audioIntakeSubscriptionFailedRef.current = false;
       audioIntakeRef.current = null;
-      const state = getAppState();
-      const mode = args.mode;
-      const language = args.language || getMyPrimaryDictationLanguage(state);
+      const language =
+        requestedLanguage || getMyPrimaryDictationLanguage(state);
       produceAppState((draft) => {
         draft.activeRecordingMode = mode;
         draft.dictationLanguageOverride = language;
+        if (mode === "agent") draft.assistantInputMode = "voice";
+        else if (!requestedLanguage) draft.local.lastDictatedAt = Date.now();
       });
+      if (mode === "agent") trackAgentStart();
+      else if (!requestedLanguage) trackDictationStart();
 
       const strategy = resolveRecordingStrategy(mode, strategyRef.current);
 
@@ -2260,7 +2289,7 @@ export const DictationSideEffects = () => {
 
       const preferredMicrophone = getMyPreferredMicrophone(state);
       const transcriptPrefs = getTranscriptionPrefs(state);
-      const operationId = ++recordingOperationRef.current;
+      const operationId = attempt;
       let activeSession: TranscriptionSession | null = null;
       try {
         getLogger().info(`Transcription prefs: mode=${transcriptPrefs.mode}`);
@@ -2526,55 +2555,48 @@ export const DictationSideEffects = () => {
     ],
   );
 
-  const startDictationRecording = useCallback(async () => {
-    const state = getAppState();
-    if (!getIsDictationUnlocked(state)) {
-      getLogger().verbose("Dictation not unlocked, ignoring start");
-      return;
-    }
-    if (state.pendingPillReview !== null) {
-      getLogger().info("Dictation blocked: review is pending");
-      playAlertSound();
-      return;
-    }
+  const startDictationRecording = useCallback(
+    async (claim: (operation: number) => void) => {
+      const state = getAppState();
+      if (!getIsDictationUnlocked(state)) {
+        getLogger().verbose("Dictation not unlocked, ignoring start");
+        return;
+      }
+      if (state.pendingPillReview !== null) {
+        getLogger().info("Dictation blocked: review is pending");
+        playAlertSound();
+        return;
+      }
 
-    getLogger().info("Starting dictation recording");
-    trackDictationStart();
-    produceAppState((draft) => {
-      draft.local.lastDictatedAt = Date.now();
-    });
-
-    await startRecording({ mode: "dictate" });
-  }, [startRecording]);
+      getLogger().info("Starting dictation recording");
+      await startRecording({ mode: "dictate" }, claim);
+    },
+    [startRecording],
+  );
 
   const stopDictationRecording = useCallback(async () => {
     getLogger().info("Stopping dictation recording");
     await stopRecording();
   }, [stopRecording]);
 
-  const startAgentRecording = useCallback(async () => {
-    const state = getAppState();
-    if (!getIsDictationUnlocked(state)) {
-      getLogger().verbose("Dictation not unlocked, ignoring agent start");
-      return;
-    }
-    if (state.pendingPillReview !== null) {
-      getLogger().info("Agent start blocked: review is pending");
-      playAlertSound();
-      return;
-    }
+  const startAgentRecording = useCallback(
+    async (claim: (operation: number) => void) => {
+      const state = getAppState();
+      if (!getIsDictationUnlocked(state)) {
+        getLogger().verbose("Dictation not unlocked, ignoring agent start");
+        return;
+      }
+      if (state.pendingPillReview !== null) {
+        getLogger().info("Agent start blocked: review is pending");
+        playAlertSound();
+        return;
+      }
 
-    if (state.assistantInputMode === "type") {
-      getLogger().info("Switching from type mode back to voice mode");
-      produceAppState((draft) => {
-        draft.assistantInputMode = "voice";
-      });
-    }
-
-    getLogger().info("Starting agent recording");
-    trackAgentStart();
-    await startRecording({ mode: "agent" });
-  }, [startRecording]);
+      getLogger().info("Starting agent recording");
+      await startRecording({ mode: "agent" }, claim);
+    },
+    [startRecording],
+  );
 
   const stopAgentRecording = useCallback(async () => {
     getLogger().info("Stopping agent recording");

@@ -46,7 +46,7 @@ export type VoiceInstructionRecorderDeps = {
   canUseProvider: () => boolean;
   speechRecognitionSupported: boolean;
   unsupportedMessage: () => string;
-  /** Shown when the recorder could not be claimed for browser recognition. */
+  /** Shown when recording cannot be started or usable audio was not captured. */
   recordingUnavailableMessage: () => string;
   onListeningChange: (listening: boolean) => void;
   onTranscript: (text: string) => void;
@@ -401,6 +401,12 @@ export class VoiceInstructionRecorder {
     gen: number,
     response: StopRecordingResponse,
   ): Promise<string | null> {
+    if (response.captureFailed) {
+      // A sealed partial take can consist entirely of speech before the press.
+      // Do not send it to a provider or turn it into an edit instruction.
+      this.deps.onError(this.deps.recordingUnavailableMessage());
+      return null;
+    }
     const samples = response.samples;
     const sampleRate = response.sampleRate ?? 0;
     if (!samples || samples.length === 0 || sampleRate <= 0) {

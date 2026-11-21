@@ -6,12 +6,13 @@ import {
   goToOnboardingPage,
   setOnboardingPreferredMicrophone,
 } from "../../actions/onboarding.actions";
-import { produceAppState, useAppStore } from "../../store";
+import { getAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
 import {
   getLocalDataClearGeneration,
   isLocalDataClearRequested,
 } from "../../utils/local-data-write-gate";
+import type { NativeRecordingHandle } from "../../utils/native-recording-session";
 import { AudioWaveform } from "../common/AudioWaveform";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import {
@@ -23,10 +24,10 @@ import {
   DualPaneLayout,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
-import {
-  discardNativeRecording,
-  stopNativeRecording,
-} from "../../utils/native-recording-session";
+
+const isCapturePhase = (
+  phase: ReturnType<typeof getAppState>["overlayPhase"],
+) => phase === "recording" || phase === "paused" || phase === "loading";
 
 export const MicCheckForm = () => {
   const theme = useTheme();
@@ -45,14 +46,15 @@ export const MicCheckForm = () => {
     (state) => state.onboarding.didSignUpWithAccount,
   );
 
-  const isGlobalRecording =
-    overlayPhase === "recording" || overlayPhase === "loading";
+  const isGlobalRecording = isCapturePhase(overlayPhase);
   const isRecording = recordingState === "recording";
   const isStarting = recordingState === "starting";
-  const mountedRef = useRef(true);
+  const mountedRef = useRef(false);
   const opIdRef = useRef(0);
   const recordingStateRef = useRef(recordingState);
-  recordingStateRef.current = recordingState;
+  const admittedRef = useRef<NativeRecordingHandle | null>(null);
+  const pendingStartRef = useRef<Promise<void> | null>(null);
+  const pendingStopRef = useRef<Promise<void> | null>(null);
 
   const setSyncedRecordingState = useCallback(
     (next: "idle" | "starting" | "recording" | "stopping") => {
@@ -66,7 +68,7 @@ export const MicCheckForm = () => {
 
   const startRecording = useCallback(async () => {
     if (
-      isGlobalRecording ||
+      isCapturePhase(getAppState().overlayPhase) ||
       recordingStateRef.current !== "idle" ||
       isLocalDataClearRequested()
     ) {
@@ -77,85 +79,106 @@ export const MicCheckForm = () => {
     const clearGeneration = getLocalDataClearGeneration();
     setSyncedRecordingState("starting");
 
+    const isCurrent = () =>
+      mountedRef.current &&
+      opId === opIdRef.current &&
+      !isCapturePhase(getAppState().overlayPhase) &&
+      !isLocalDataClearRequested() &&
+      clearGeneration === getLocalDataClearGeneration();
     try {
-      await invokeGuardedRecordingStart(preferredMicrophone ?? null);
-      if (
-        !mountedRef.current ||
-        opId !== opIdRef.current ||
-        isLocalDataClearRequested() ||
-        clearGeneration !== getLocalDataClearGeneration()
-      ) {
-        await discardNativeRecording();
+      const { handle } = await invokeGuardedRecordingStart(
+        preferredMicrophone ?? null,
+        {
+          onAdmission: (handle) => {
+            // Throw before opening the stream; the start helper discards the
+            // cancelled admission using its exact owner/generation pair.
+            if (!isCurrent())
+              throw new DOMException("Microphone test cancelled", "AbortError");
+            admittedRef.current = handle;
+          },
+        },
+      );
+      if (!isCurrent()) {
+        if (handle.isLive()) await handle.discard();
         if (opId === opIdRef.current) {
+          admittedRef.current = null;
           setSyncedRecordingState("idle");
         }
         return;
       }
       setSyncedRecordingState("recording");
     } catch (error) {
-      if (
-        !isLocalDataClearRequested() &&
-        clearGeneration === getLocalDataClearGeneration()
-      ) {
-        console.error("Failed to start recording", error);
-      }
+      if (isCurrent()) console.error("Failed to start recording", error);
       if (opId === opIdRef.current) {
+        admittedRef.current = null;
         setSyncedRecordingState("idle");
       }
     }
-  }, [isGlobalRecording, preferredMicrophone, setSyncedRecordingState]);
+  }, [preferredMicrophone, setSyncedRecordingState]);
 
   const stopRecording = useCallback(async () => {
+    if (pendingStopRef.current) return pendingStopRef.current;
     const currentState = recordingStateRef.current;
     if (currentState !== "recording" && currentState !== "starting") {
       return;
     }
 
     opIdRef.current += 1;
-    setSyncedRecordingState("stopping");
-
-    try {
-      await stopNativeRecording();
-    } catch (error) {
-      console.error("Failed to stop recording", error);
-    } finally {
+    const handle = admittedRef.current;
+    admittedRef.current = null;
+    if (!handle) {
       setSyncedRecordingState("idle");
-      if (!isLocalDataClearRequested()) {
-        produceAppState((draft) => {
-          draft.audioLevels = [];
-        });
-      }
+      return;
     }
+    setSyncedRecordingState("stopping");
+    const pending = handle
+      .discard()
+      .catch((error: unknown) => {
+        console.error("Failed to stop recording", error);
+      })
+      .finally(() => {
+        pendingStopRef.current = null;
+        setSyncedRecordingState("idle");
+      });
+    pendingStopRef.current = pending;
+    return pending;
   }, [setSyncedRecordingState]);
-
-  const stopRecordingRef = useRef(stopRecording);
-  useEffect(() => {
-    stopRecordingRef.current = stopRecording;
-  }, [stopRecording]);
 
   useEffect(() => {
     mountedRef.current = true;
+    setRecordingState(recordingStateRef.current);
     const unsubscribeClear = subscribeRecordingAbortForClear(
       () =>
         recordingStateRef.current === "starting" ||
         recordingStateRef.current === "recording",
-      () => stopRecordingRef.current(),
+      stopRecording,
     );
     return () => {
       mountedRef.current = false;
       unsubscribeClear();
     };
-  }, []);
+  }, [stopRecording]);
 
   useEffect(() => {
+    let cancelled = false;
     if (!showMicSelector) {
-      void startRecording();
+      const previous = pendingStartRef.current;
+      const clearGeneration = getLocalDataClearGeneration();
+      const pending = (async () => {
+        await previous;
+        await pendingStopRef.current;
+        if (!cancelled && clearGeneration === getLocalDataClearGeneration()) {
+          await startRecording();
+        }
+      })();
+      pendingStartRef.current = pending;
     }
 
     return () => {
-      void stopRecordingRef.current();
+      cancelled = true;
+      void stopRecording();
     };
-  }, [showMicSelector, preferredMicrophone]);
+  }, [showMicSelector, startRecording, stopRecording]);
 
   useEffect(() => {
     if (isGlobalRecording && (isRecording || isStarting)) {
@@ -284,7 +307,7 @@ export const MicCheckForm = () => {
               }}
             >
               <AudioWaveform
-                levels={audioLevels}
+                levels={isRecording ? audioLevels : []}
                 active={isRecording}
                 processing={isStarting}
                 style={{ width: "100%", height: "100%" }}

@@ -1,17 +1,24 @@
 // @vitest-environment jsdom
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoke = vi.hoisted(() => vi.fn());
-vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/api/window", () => ({
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  invoke,
+}));
+vi.mock("@tauri-apps/api/window", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/window")>()),
   getCurrentWindow: () => ({ label: "main" }),
 }));
 import {
   beginLocalDataClear,
   LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
 } from "../../utils/local-data-write-gate";
+import { ActivationController } from "../../utils/activation.utils";
 import { resetNativeRecordingSession } from "../../utils/native-recording-session";
 import {
+  assertDictationStartAvailable,
+  bindRecordingActivation,
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
@@ -121,4 +128,70 @@ it("stops a late microphone start after a parallel startup step has failed", asy
   await expect(tracked).resolves.toBe("started");
   expect(stop).toHaveBeenCalledOnce();
   expect(started).not.toHaveBeenCalled();
+});
+
+const drain = async () => {
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+};
+
+describe("recording shortcut ownership", () => {
+  it("keeps the first startup and ignores release of a rejected shortcut", async () => {
+    let operation = 0;
+    let active = false;
+    let finishStart!: () => void;
+    const loading = new Promise<void>((resolve) => {
+      finishStart = resolve;
+    });
+    const stop = vi.fn(async () => {
+      active = false;
+    });
+    const makeShortcut = () => {
+      const activation = bindRecordingActivation(
+        async (claim) => {
+          assertDictationStartAvailable(active, false);
+          active = true;
+          claim(++operation);
+          await loading;
+        },
+        () => operation,
+        stop,
+      );
+      return new ActivationController(activation.start, activation.stop, true);
+    };
+    const first = makeShortcut();
+    const competitor = makeShortcut();
+    first.handlePress();
+    await drain();
+    competitor.handlePress();
+    competitor.handleRelease();
+    await drain();
+    expect(competitor.isActive).toBe(false);
+    expect(operation).toBe(1);
+    expect(stop).not.toHaveBeenCalled();
+    first.handleRelease();
+    finishStart();
+    await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+  });
+
+  it("ignores controls from an unclaimed or superseded shortcut", async () => {
+    let operation = 1;
+    const stop = vi.fn(async () => {});
+    const ignored = bindRecordingActivation(
+      async () => {},
+      () => operation,
+      stop,
+    );
+    await ignored.start();
+    await ignored.stop();
+    const old = bindRecordingActivation(
+      async (claim) => claim(operation),
+      () => operation,
+      stop,
+    );
+    await old.start();
+    operation += 1;
+    await old.stop();
+    expect(stop).not.toHaveBeenCalled();
+    expect(() => assertDictationStartAvailable(false, true)).toThrow();
+  });
 });
