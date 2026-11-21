@@ -1724,7 +1724,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                     report: rust_pill_shared::restore::PositionReport::new(
                         true,
                         Some(published),
-                        work_area_for_report(monitor, &published, (offset, size)),
+                        work_area_for_report(&areas, monitor, &published, (offset, size)),
                         state.saved_display_id.get(),
                     ),
                 });
@@ -1769,7 +1769,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
                 report: rust_pill_shared::restore::PositionReport::new(
                     true,
                     Some(published),
-                    work_area_for_report(monitor, &published, (offset, size)),
+                    work_area_for_report(&areas, monitor, &published, (offset, size)),
                     state.saved_display_id.get(),
                 ),
             });
@@ -1777,33 +1777,42 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
     }
 }
 
-/// The work area that belongs to the rectangle being published, not to the
-/// window that produced it.
+/// The work area that belongs to the rectangle being published.
 ///
 /// The window is taller than the pill: it keeps transparent rows for the style
 /// selector. On displays with vertically offset tops, a pill sitting fully on one
 /// panel can still have its window straddle the other, and then
 /// `MonitorFromWindow` answers with the neighbour. The record would pair the
 /// pill's rectangle with that neighbour's work area -- and with the display token
-/// the relocation resolved for the pill's own centre -- so the stored record
-/// would describe two different panels and a restart would clamp against one it
-/// was never on.
+/// resolved for the pill's own centre -- so the stored record would describe two
+/// different panels and a restart would clamp against one it was never on.
 ///
 /// The work area is therefore resolved from the visible pill's own centre, the
-/// same point the relocation uses to name the display, so the work area and the
-/// token cannot disagree. The window's monitor is only the fallback for a point no
-/// display answers for.
+/// same point the relocation uses to name the display, and from the same
+/// enumerated work areas. Resolving it natively instead let a shrunk work area
+/// drop out of the enumerated list while `MonitorFromPoint` still found the
+/// display by its full bounds, so one report could carry panel A's name beside
+/// panel B's geometry. The window's monitor is only the fallback for a point no
+/// enumerated area answers for.
 fn work_area_for_report(
+    areas: &[rust_pill_shared::edge::MonitorRect],
     monitor: Option<Rect>,
     published: &Rect,
     footprint: ((f64, f64), (f64, f64)),
 ) -> Option<Rect> {
     let (offset, size) = footprint;
-    monitor_work_area_at(
+    let centre = (
         published.x + offset.0 + size.0 / 2.0,
         published.y + offset.1 + size.1 / 2.0,
-    )
-    .or(monitor)
+    );
+    rust_pill_shared::layout::work_area_of(areas, centre)
+        .map(|area| Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height,
+        })
+        .or(monitor)
 }
 
 // Drawing and the native entry use the fixed typing canvas. Extra selector
@@ -2671,18 +2680,6 @@ fn monitor_for_point(point: (f64, f64)) -> Option<HMONITOR> {
     // The same null test `query_monitor_info` uses, so the two cannot disagree
     // about what "no monitor" is.
     (monitor != HMONITOR::default()).then_some(monitor)
-}
-
-fn monitor_work_area_at(x: f64, y: f64) -> Option<Rect> {
-    let monitor = monitor_for_point((x, y))?;
-    unsafe {
-        query_monitor_info(monitor).map(|info| Rect {
-            x: info.rcWork.left as f64,
-            y: info.rcWork.top as f64,
-            width: (info.rcWork.right - info.rcWork.left) as f64,
-            height: (info.rcWork.bottom - info.rcWork.top) as f64,
-        })
-    }
 }
 
 /// Cancel without saving the old drop. Clear gesture flags before releasing
