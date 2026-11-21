@@ -2235,6 +2235,35 @@ export const DictationSideEffects = () => {
     ],
   );
 
+  // Extracted from `startRecording`: the mode-based tracking conditionals
+  // counted against its cognitive complexity. Both branches are independent
+  // side effects, so a helper keeps the intent clear without nesting.
+  const trackStartByMode = (
+    mode: RecordingMode,
+    requestedLanguage: string | null | undefined,
+  ) => {
+    if (mode === "agent") {
+      trackAgentStart();
+    } else if (!requestedLanguage) {
+      trackDictationStart();
+    }
+  };
+
+  // Extracted from `startRecording`: the pre-capture hook is optional and
+  // may throw; the guard must not abort the recording. Isolating it keeps
+  // the try/catch out of the main start flow's complexity budget.
+  const runPreCaptureSetup = async (
+    session: TranscriptionSession,
+  ) => {
+    try {
+      await session.onBeforeRecordingStart?.();
+    } catch (error) {
+      getLogger().warning(
+        `Pre-capture session setup failed, continuing without it: ${error}`,
+      );
+    }
+  };
+
   const startRecording = useCallback(
     async (
       {
@@ -2265,8 +2294,7 @@ export const DictationSideEffects = () => {
           if (mode === "agent") draft.assistantInputMode = "voice";
           else if (!requestedLanguage) draft.local.lastDictatedAt = Date.now();
         });
-        if (mode === "agent") trackAgentStart();
-        else if (!requestedLanguage) trackDictationStart();
+        trackStartByMode(mode, requestedLanguage);
 
         const strategy = resolveRecordingStrategy(mode, strategyRef.current);
 
@@ -2413,13 +2441,7 @@ export const DictationSideEffects = () => {
         // catch, which aborted the recording and showed "Recording failed" for a
         // start that had not begun. It only behaved because the one local
         // implementation happens to swallow its own errors.
-        try {
-          await session.onBeforeRecordingStart?.();
-        } catch (error) {
-          getLogger().warning(
-            `Pre-capture session setup failed, continuing without it: ${error}`,
-          );
-        }
+        await runPreCaptureSetup(session);
         if (!isCurrentStart()) {
           session.cleanup();
           return;
@@ -2494,7 +2516,7 @@ export const DictationSideEffects = () => {
         // Extracted to a nested helper: the live-streaming startup path has
         // enough nested conditionals that keeping it inline pushes
         // `startRecording` past SonarCloud's cognitive-complexity limit.
-        const startLiveStreamingStart = async () => {
+        const startLiveStreamingStart = () => {
           const controller = new AbortController();
           providerStartupAbortControllerRef.current = controller;
           const startupPromise = (async () => {
@@ -2547,7 +2569,7 @@ export const DictationSideEffects = () => {
         };
 
         if (sessionKind === "live-streaming") {
-          await startLiveStreamingStart();
+          startLiveStreamingStart();
           return;
         }
 
