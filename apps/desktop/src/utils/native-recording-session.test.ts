@@ -135,10 +135,30 @@ describe("beginNativeRecording", () => {
     expect(currentNativeRecording()).toBeNull();
   });
 
+  it("does not discard another caller's paused recording", async () => {
+    const { invoke } = recorderTransport();
+    const { handle } = await beginNativeRecording(null, {}, invoke);
+    await handle.pause();
+
+    await expect(beginNativeRecording(null, {}, invoke)).rejects.toThrow(
+      "A recording is already in progress",
+    );
+    expect(invoke).not.toHaveBeenCalledWith(
+      "discard_recording",
+      expect.anything(),
+    );
+    expect(handle.isLive()).toBe(true);
+    await handle.resume();
+  });
+
   it("discards a superseded recording before admitting a new one", async () => {
     const { invoke, calls } = recorderTransport();
     const first = await beginNativeRecording(null, {}, invoke);
-    const second = await beginNativeRecording(null, {}, invoke);
+    const second = await beginNativeRecording(
+      null,
+      { replace: first.handle },
+      invoke,
+    );
 
     expect(calls.map(([command]) => command)).toEqual([
       "recording_generation",

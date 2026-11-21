@@ -95,6 +95,7 @@ const baseDeps = (
     speechRecognitionSupported: true,
     unsupportedMessage: () => "unsupported",
     recordingUnavailableMessage: () => "recording unavailable",
+    captureFailedMessage: () => "recording failed",
     onListeningChange: vi.fn(),
     onTranscript: vi.fn(),
     onError: vi.fn(),
@@ -128,6 +129,33 @@ describe("VoiceInstructionRecorder", () => {
     expect(deps.onResetLevels).toHaveBeenCalled();
     expect(recorder.getState()).toBe("idle");
     expect(deps.onListeningChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("does not transcribe a failed capture containing pre-roll", async () => {
+    const deps = baseDeps({
+      invoke: nativeInvoke({
+        stop_recording: () =>
+          Promise.resolve({
+            samples: [0.1, 0.2],
+            sampleRate: 16000,
+            captureFailed: true,
+          }),
+      }),
+      createSpeechRecognition: vi.fn(() => new FakeRecognition()),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    await recorder.toggle();
+
+    expect(deps.transcribe).not.toHaveBeenCalled();
+    expect(deps.onTranscript).not.toHaveBeenCalled();
+    expect(deps.createSpeechRecognition).not.toHaveBeenCalled();
+    expect(deps.onError).toHaveBeenCalledWith("recording failed");
+    expect(recorder.getState()).toBe("idle");
+    await recorder.toggle();
+    expect(recorder.getState()).toBe("provider");
+    recorder.dispose();
   });
 
   it("falls back to browser recognition when provider recording fails", async () => {
@@ -496,6 +524,35 @@ describe("VoiceInstructionRecorder", () => {
     expect(fake.started).toBe(false);
     expect(deps.onError).not.toHaveBeenCalled();
     expect(deps.logger.warning).not.toHaveBeenCalled();
+  });
+
+  it("preserves a successor capture when old transcription fails after dispose", async () => {
+    const transcription = deferred<string>();
+    const deps = baseDeps({
+      invoke: nativeInvoke({
+        stop_recording: async () => ({ samples: [0, 1], sampleRate: 16000 }),
+      }),
+      transcribe: vi.fn(() => transcription.promise),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+    await recorder.toggle();
+    const stop = recorder.toggle();
+    await vi.waitFor(() => expect(deps.transcribe).toHaveBeenCalledOnce());
+    recorder.dispose();
+
+    const { handle: successor } = await beginNativeRecording(
+      null,
+      {},
+      deps.invoke,
+    );
+    transcription.reject(new Error("late transcription failure"));
+    await stop;
+
+    expect(successor.isLive()).toBe(true);
+    expect(deps.invoke).not.toHaveBeenCalledWith("discard_recording", {
+      ownerId: successor.ownerId,
+      generation: successor.generation,
+    });
   });
 
   it("issues stop_recording when disposed while start_recording is pending", async () => {

@@ -58,7 +58,7 @@ buffer the UI never offers.
 | 24 | A stream that has delivered nothing | Not ready; the press records cold rather than recording silence | Verified: `a_stream_that_never_delivered_is_not_ready` |
 | 25 | A stream that delivered and then went quiet | Reads as stale after the silence window | Verified: `a_stream_that_went_quiet_reads_as_stale` |
 | 26 | A paused stream | Does not read as dead, and is not reopened | Verified: `a_paused_stream_does_not_read_as_dead` |
-| 27 | A stopped stream | Does not read as dead | Verified: `a_stopped_stream_does_not_read_as_dead` |
+| 27 | Recording stops | Released streams suppress the silence check; held streams can go stale without another block | Verified: `only_a_released_sink_suppresses_the_silence_check`, `a_held_stream_can_go_stale_without_any_callback_after_stop` |
 | 28 | A stream stopped while paused | Resumed before being left warm, so the next press does not adopt a stream that delivers nothing | Verified: `a_stopped_stream_says_whether_it_was_paused_before_it_forgot`, `a_stop_after_a_resume_does_not_claim_the_stream_was_paused`. The resume decision was **wrong** before this row was deepened: the stop cleared the pause flag and the stop path then asked the sink, so it was always told "not paused" and never resumed. The pause now travels back with the stop, and the two tests hold that. The resume itself still needs a real stream; see the note below |
 | 29 | The startup trace is missing | `Microphone last start: none` rather than a fabricated summary | Verified: `a_start_with_no_trace_has_no_summary` |
 | 30 | Startup trace stages | Every stage a reader expects is marked, in order | Verified: `a_cold_start_marks_the_stages_a_reader_expects` |

@@ -147,6 +147,9 @@ export const ComposerPage = () => {
       defaultMessage: "Could not start recording. Please try again.",
     }),
   );
+  const captureFailedMessageRef = useRef(
+    intl.formatMessage({ defaultMessage: "Recording failed" }),
+  );
   useEffect(() => {
     transcriptRef.current?.focus();
   }, []);
@@ -157,6 +160,9 @@ export const ComposerPage = () => {
     });
     recordingUnavailableMessageRef.current = intl.formatMessage({
       defaultMessage: "Could not start recording. Please try again.",
+    });
+    captureFailedMessageRef.current = intl.formatMessage({
+      defaultMessage: "Recording failed",
     });
   }, [intl]);
 
@@ -192,6 +198,7 @@ export const ComposerPage = () => {
       speechRecognitionSupported,
       unsupportedMessage: () => unsupportedMessageRef.current,
       recordingUnavailableMessage: () => recordingUnavailableMessageRef.current,
+      captureFailedMessage: () => captureFailedMessageRef.current,
       onListeningChange: setIsListening,
       onTranscript: (spoken) =>
         setInstruction((current) => `${current} ${spoken}`.trim()),

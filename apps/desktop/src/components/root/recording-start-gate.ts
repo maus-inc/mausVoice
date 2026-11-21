@@ -1,10 +1,13 @@
+import type { RecordingMode } from "../../state/app.state";
 import {
+  isLocalDataClearRequested,
   subscribeToLocalDataClearRequested,
   withLocalDataWrite,
 } from "../../utils/local-data-write-gate";
 import { getLogger } from "../../utils/log.utils";
 import {
   beginNativeRecording,
+  NativeRecordingBusyError,
   type NativeRecordingHandle,
   type NativeRecordingStartOptions,
 } from "../../utils/native-recording-session";
@@ -46,3 +49,50 @@ export const invokeGuardedRecordingStart = (
   options: NativeRecordingStartOptions = {},
 ): Promise<{ sampleRate: number; handle: NativeRecordingHandle }> =>
   withLocalDataWrite(() => beginNativeRecording(preferredMicrophone, options));
+
+/** Reject before replacing any shared session state. ActivationController
+ * handles the rejection without scheduling that shortcut's stop callback. */
+export const assertDictationStartAvailable = (
+  hasActiveTake: boolean,
+  isStopping: boolean,
+  mode?: {
+    current: RecordingMode | null;
+    requested: RecordingMode;
+  },
+): void => {
+  const blockedByAgentPanel =
+    mode?.current === "agent" && mode.requested !== "agent";
+  if (
+    hasActiveTake ||
+    isStopping ||
+    blockedByAgentPanel ||
+    isLocalDataClearRequested()
+  ) {
+    throw new NativeRecordingBusyError(
+      "A dictation session is not available to start",
+    );
+  }
+};
+
+/** A shortcut can only stop the operation it claimed, even if its controller
+ * outlives a cancel, a settings change, or a later shortcut's recording. */
+export const bindRecordingActivation = (
+  start: (claim: (operation: number) => void) => Promise<void>,
+  getCurrentOperation: () => number,
+  stop: () => Promise<void>,
+) => {
+  let ownedOperation: number | null = null;
+  return {
+    start: async () => {
+      ownedOperation = null;
+      await start((operation) => {
+        ownedOperation ??= operation;
+      });
+    },
+    stop: async () => {
+      const owned = ownedOperation;
+      ownedOperation = null;
+      if (owned !== null && getCurrentOperation() === owned) await stop();
+    },
+  };
+};

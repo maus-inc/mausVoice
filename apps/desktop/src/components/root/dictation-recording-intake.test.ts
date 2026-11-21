@@ -742,6 +742,46 @@ describe("native capture ownership", () => {
     ]);
   });
 
+  it("cleans up a refused start without discarding another capture", async () => {
+    const live = await startLiveRecording();
+    const ownerRef = { current: 4 as number | null };
+    const unlisten = vi.fn();
+    const ref = { current: unlisten };
+
+    await abortRecordingIntake(ref, unlisten, ownerRef, true);
+    expect(ref.current).toBeNull();
+    expect(ownerRef.current).toBeNull();
+    expect(discards()).toHaveLength(0);
+    expect(live.isLive()).toBe(true);
+  });
+
+  it.each([null, 5])(
+    "discards only the old start after a refused restart (next claim: %s)",
+    async (nextClaim) => {
+      const old = await startLiveRecording();
+      const ownerRef = { current: 4 as number | null };
+      const listener = { current: null };
+
+      // Operation 4 is refused while operation 3 is still opening. Its abort
+      // must not stop operation 3, but operation 3's stale reply must.
+      await abortRecordingIntake(listener, null, ownerRef, true);
+      expect(old.isLive()).toBe(true);
+      ownerRef.current = nextClaim;
+      trackNativeStartHandle(ownerRef, 3, old);
+      await stopOwnedNativeStart(ownerRef, 3);
+      await stopOwnedNativeStart(ownerRef, 3);
+
+      expect(discards()).toEqual([
+        [
+          "discard_recording",
+          { ownerId: old.ownerId, generation: old.generation },
+        ],
+      ]);
+      expect(old.isLive()).toBe(false);
+      expect(ownerRef.current).toBe(nextClaim);
+    },
+  );
+
   it("stops on abort when the claim was already released", async () => {
     // The abort takes the claim itself, so the ref is normally null by the time
     // the stop is issued. It must stop the live recording in that state too.
@@ -776,9 +816,7 @@ describe("native capture ownership", () => {
     expect(discards()).toHaveLength(1);
   });
 
-  it("leaves a newer recording's stream alone even when an abort is owed a stop", async () => {
-    // The claim names the newer recording, so this stale start must not cut off
-    // a live dictation to discharge a debt the abort left behind.
+  it("leaves a newer claim alone after an abort already stopped the stale take", async () => {
     const ownerRef = { current: 3 as number | null };
     const handle = fakeHandle(3);
     trackNativeStartHandle(ownerRef, 3, handle);

@@ -139,6 +139,11 @@ mod tests {
             (vec![2.0], 1)
         );
         assert!(delivered_rx.try_recv().is_err());
+        callback(vec![4.0], 6);
+        assert_eq!(
+            delivered_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            (vec![4.0], 6)
+        );
     }
 
     #[test]
