@@ -100,6 +100,11 @@ pub(crate) struct PillState {
     pub(crate) draw_height: Cell<f64>,
     pub(crate) draw_w_velocity: Cell<f64>,
     pub(crate) draw_h_velocity: Cell<f64>,
+    /// How the fixed drawing canvas maps onto the window surface. It is 1.0 until
+    /// a per-monitor scale change resizes the surface, and it is the one value
+    /// drawing, pointer mapping and published geometry all read, so they cannot
+    /// describe the pill at different sizes.
+    pub(crate) content_scale: Cell<f64>,
 
     pub(crate) assistant_active: Cell<bool>,
     pub(crate) assistant_input_mode: RefCell<String>,
@@ -334,6 +339,35 @@ impl PillState {
     pub(crate) fn is_typing(&self) -> bool {
         (self.assistant_active.get() && *self.assistant_input_mode.borrow() == "type")
             || self.assistant_review.borrow().is_some()
+    }
+
+    /// A pointer position in window pixels mapped into drawing-canvas pixels.
+    ///
+    /// Every click region and hit test is laid out on the fixed canvas, while
+    /// mouse messages arrive in the surface's own pixels. They agree until a
+    /// scale change shrinks the surface, so the pointer has to take the same
+    /// mapping the renderer does or a click lands where the pill is not drawn.
+    pub(crate) fn pointer_to_canvas(&self, x: f64, y: f64) -> (f64, f64) {
+        let scale = self.content_scale.get();
+        if scale > 0.0 && scale != 1.0 {
+            (x / scale, y / scale)
+        } else {
+            (x, y)
+        }
+    }
+
+    /// The mapping `pointer_to_canvas` undoes: canvas pixels to window pixels.
+    ///
+    /// A real child window sits in screen coordinates, so anything placed from
+    /// canvas math has to be mapped or it lands at the wrong spot once a scale
+    /// change has shrunk the surface.
+    pub(crate) fn canvas_to_window(&self, x: f64, y: f64) -> (f64, f64) {
+        let scale = self.content_scale.get();
+        if scale > 0.0 && scale != 1.0 {
+            (x * scale, y * scale)
+        } else {
+            (x, y)
+        }
     }
 
     pub(crate) fn content_offset(&self) -> (f64, f64) {

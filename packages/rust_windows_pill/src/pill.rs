@@ -268,13 +268,26 @@ unsafe fn on_wm_dpichanged(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     // The surface has to take the new size too. Every frame presents exactly
     // the surface's own dimensions, so leaving it at the old size resizes the
     // window back on the very next frame and undoes this suggestion.
-    GFX.with(|gfx| {
+    //
+    // The renderer lays out on a fixed canvas, so a shrunken surface would draw
+    // the pill outside its own bitmap and the pill would disappear. The canvas is
+    // mapped onto the surface instead, and the same factor maps the pointer and
+    // the published geometry, so all three describe the pill at one size.
+    let applied = GFX.with(|gfx| {
         if let Some(ref mut gfx) = *gfx.borrow_mut() {
             let _ = gfx.resize(w, h);
+            Some(gfx.content_scale())
+        } else {
+            None
         }
     });
     STATE.with(|s| {
         if let Some(ref state) = *s.borrow() {
+            // Mirrored from the target rather than assumed, so a resize that was
+            // refused leaves the state describing the surface that still exists.
+            if let Some(scale) = applied {
+                state.content_scale.set(scale);
+            }
             reconcile_display_layout(hwnd, state);
         }
     });
@@ -287,6 +300,7 @@ unsafe fn on_wm_mousemove(lparam: LPARAM) -> LRESULT {
     let raw_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
     STATE.with(|s| {
         if let Some(ref state) = *s.borrow() {
+            let (raw_x, raw_y) = state.pointer_to_canvas(raw_x, raw_y);
             let (ox, oy) = state.content_offset();
             let x = raw_x - ox;
             let y = raw_y - oy;
@@ -362,6 +376,7 @@ unsafe fn on_wm_lbuttonup(hwnd: HWND, lparam: LPARAM) -> LRESULT {
             state.pointer_down.set(false);
             // Only fire click if the user wasn't dragging
             if !was_dragging && !state.drag_cancelled.get() {
+                let (x, y) = state.pointer_to_canvas(x, y);
                 input::handle_click(state, x, y);
             }
             // Hover was pinned for the duration of the gesture; settle
@@ -964,11 +979,16 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         InMessage::RequestPosition => {
             let hwnd = HWND_CELL.with(|c| c.get());
             let (rect, monitor) = current_pill_geometry(hwnd);
+            // The desktop stores this report over the record it already holds, so
+            // the work area has to describe the display the token names. The
+            // window can mostly sit on one panel while the visible pill is on
+            // another, and `MonitorFromWindow` follows the window.
+            let areas = enumerate_work_areas_with_identity().unwrap_or_default();
             ipc::send(&OutMessage::PositionChanged {
                 report: rust_pill_shared::restore::PositionReport::new(
                     state.has_saved_position.get(),
                     Some(rect),
-                    monitor,
+                    work_area_for_report(&areas, monitor, &rect, live_pill_footprint(state)),
                     state.saved_display_id.get(),
                 ),
             });
@@ -2004,6 +2024,7 @@ fn initial_state(
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
         draw_w_velocity: Cell::new(0.0),
         draw_h_velocity: Cell::new(0.0),
+        content_scale: Cell::new(1.0),
         assistant_active: Cell::new(false),
         assistant_review: RefCell::new(None),
         assistant_input_mode: RefCell::new("voice".to_string()),
@@ -2115,16 +2136,14 @@ fn window_clamp_bounds_for_size(work: MonitorRect, window_w: f64, window_h: f64)
 }
 
 fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> DragBounds {
-    let (px, py, pw, ph) =
-        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
-    let (cox, coy) = state.content_offset();
     let (min_x, min_y, max_x, max_y) = if state.effective_window_mode() == WindowMode::Dictation
         && !state.assistant_active.get()
     {
-        let fx = (cox + px).round() as i32;
-        let fy = (coy + py).round() as i32;
-        let fw = pw.round().max(1.0) as i32;
-        let fh = ph.round().max(1.0) as i32;
+        let (offset, size) = live_pill_footprint(state);
+        let fx = offset.0.round() as i32;
+        let fy = offset.1.round() as i32;
+        let fw = size.0.round().max(1.0) as i32;
+        let fh = size.1.round().max(1.0) as i32;
         (
             wa.left - fx,
             wa.top - fy,
@@ -2296,11 +2315,9 @@ fn drag_placement(
         let monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTOPRIMARY);
         let info = query_monitor_info(monitor)?;
         let work_rect = monitor_rect(info.rcWork);
-        let (px, py, pw, ph) =
-            draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
-        let (content_x, content_y) = state.content_offset();
-        let center_x = current.left as f64 + content_x + px + pw / 2.0;
-        let center_y = current.top as f64 + content_y + py + ph / 2.0;
+        let (offset, size) = live_pill_footprint(state);
+        let center_x = current.left as f64 + offset.0 + size.0 / 2.0;
+        let center_y = current.top as f64 + offset.1 + size.1 / 2.0;
         let area = if state.dragging.get() {
             let current_monitor = monitor_rect(info.rcMonitor);
             let neighbors = drag_monitor_neighbors(state, current_monitor);
@@ -2389,8 +2406,8 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
 }
 
 /// Headroom above the selector's painted anchor, not the transparent canvas.
-fn selector_space_above(window_y: f64, work_y: f64, content_y: f64, pill_y: f64) -> f64 {
-    window_y + content_y + pill_y - work_y
+fn selector_space_above(window_y: f64, work_y: f64, pill_top: f64) -> f64 {
+    window_y + pill_top - work_y
 }
 
 /// Advances the shared selector-placement controller once per animation
@@ -2400,10 +2417,9 @@ fn selector_space_above(window_y: f64, work_y: f64, content_y: f64, pill_y: f64)
 /// flapping it.
 fn tick_selector_placement(hwnd: HWND, state: &PillState, dt: f64) {
     let (rect, monitor) = current_pill_geometry(hwnd);
-    let (_, pill_y, _, _) =
-        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let (offset, _) = live_pill_footprint(state);
     let space_above = monitor.map_or(f64::INFINITY, |work| {
-        selector_space_above(rect.y, work.y, state.content_offset().1, pill_y)
+        selector_space_above(rect.y, work.y, offset.1)
     });
     let changed = advance_selector_placement(
         &mut state.selector_placement.borrow_mut(),
@@ -2460,11 +2476,9 @@ fn monitor_geometry_at(x: f64, y: f64) -> Option<Rect> {
 /// enough. A reduced-motion trigger arms the border flash instead.
 fn tick_crossing(hwnd: HWND, state: &PillState, dt: f64) {
     let (rect, _) = current_pill_geometry(hwnd);
-    let (ox, oy) = state.content_offset();
-    let (px, py, pw, ph) =
-        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
-    let cx = rect.x + ox + px + pw / 2.0;
-    let cy = rect.y + oy + py + ph / 2.0;
+    let (offset, size) = live_pill_footprint(state);
+    let cx = rect.x + offset.0 + size.0 / 2.0;
+    let cy = rect.y + offset.1 + size.1 / 2.0;
     let monitor = monitor_geometry_at(cx, cy).unwrap_or(Rect {
         x: f64::NAN,
         y: f64::NAN,
@@ -2610,7 +2624,16 @@ fn live_pill_footprint(state: &PillState) -> ((f64, f64), (f64, f64)) {
     let (px, py, pw, ph) =
         draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
     let (cox, coy) = state.content_offset();
-    ((cox + px, coy + py), (pw, ph))
+    // Returned in window pixels, because every caller adds it to a window rect or
+    // an origin that is already in window pixels. The canvas is mapped onto the
+    // surface after a scale change, so an unscaled footprint would name a spot
+    // inside a bitmap the window no longer has.
+    let scale = state.content_scale.get();
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    (
+        ((cox + px) * scale, (coy + py) * scale),
+        (pw * scale, ph * scale),
+    )
 }
 
 /// The window's current top-left origin.
@@ -2808,7 +2831,7 @@ fn store_recorded_drop(hwnd: HWND, state: &PillState) {
     let display_id = monitor_handle.and_then(monitor_display_id);
     state.saved_display_id.set(display_id);
     let monitor = monitor_handle
-        .and_then(|handle| query_monitor_info(handle))
+        .and_then(query_monitor_info)
         .map(|info| Rect {
             x: info.rcWork.left as f64,
             y: info.rcWork.top as f64,
@@ -3210,9 +3233,12 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
         let _ = GetWindowRect(main_hwnd, &mut win_rect);
     }
 
-    let screen_x = win_rect.left as f64 + ox + input_x;
-    let screen_y = win_rect.top as f64 + oy + input_y + 1.0;
-    let h = PANEL_INPUT_HEIGHT - 1.0;
+    let (dx, dy) = state.canvas_to_window(ox + input_x, oy + input_y + 1.0);
+    let (dw, dh) = state.canvas_to_window(input_w, PANEL_INPUT_HEIGHT - 1.0);
+    let screen_x = win_rect.left as f64 + dx;
+    let screen_y = win_rect.top as f64 + dy;
+    let h = dh;
+    let input_w = dw;
 
     unsafe {
         // Color key makes the background transparent; alpha matches text to panel opacity
@@ -3289,6 +3315,43 @@ pub(crate) fn focus_edit_control() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A surface that never followed a scale change keeps the mapping at 1.0, so
+    /// the pointer, the footprint and the renderer stay exactly as they were.
+    #[test]
+    fn an_unscaled_pill_maps_the_pointer_unchanged() {
+        let state = initial_state(None, None, None);
+        assert_eq!(state.content_scale.get(), 1.0);
+        assert_eq!(state.pointer_to_canvas(120.0, 240.0), (120.0, 240.0));
+        assert_eq!(state.canvas_to_window(120.0, 240.0), (120.0, 240.0));
+    }
+
+    /// After a scale change the canvas is drawn onto a smaller surface, so a
+    /// pointer position and the footprint both have to take the same factor. If
+    /// they did not, a click would land where the pill is not drawn and the
+    /// published geometry would name a spot the window does not have.
+    #[test]
+    fn a_scaled_pill_maps_the_pointer_and_footprint_together() {
+        let state = initial_state(None, None, None);
+        state.content_scale.set(0.5);
+
+        let (x, y) = state.pointer_to_canvas(100.0, 200.0);
+        assert_eq!((x, y), (200.0, 400.0));
+        let (x, y) = state.canvas_to_window(200.0, 400.0);
+        assert_eq!((x, y), (100.0, 200.0));
+
+        let (offset, size) = live_pill_footprint(&state);
+        let (unscaled_offset, unscaled_size) = {
+            let (px, py, pw, ph) =
+                draw::pill_position(&state, state.draw_width.get(), state.draw_height.get());
+            let (cox, coy) = state.content_offset();
+            ((cox + px, coy + py), (pw, ph))
+        };
+        assert!((offset.0 - unscaled_offset.0 * 0.5).abs() < 1e-9);
+        assert!((offset.1 - unscaled_offset.1 * 0.5).abs() < 1e-9);
+        assert!((size.0 - unscaled_size.0 * 0.5).abs() < 1e-9);
+        assert!((size.1 - unscaled_size.1 * 0.5).abs() < 1e-9);
+    }
 
     /// The two clamps have to agree for a freshly created pill.
     ///
@@ -3392,11 +3455,25 @@ mod tests {
 
     #[test]
     fn selector_headroom_uses_the_painted_anchor_across_monitor_origins() {
-        // Content origin plus the live pill top, across both canvas modes.
-        assert_eq!(selector_space_above(20.0, 0.0, 120.0, 80.0), 220.0);
-        assert_eq!(selector_space_above(20.0, 0.0, 0.0, 200.0), 220.0);
-        assert_eq!(selector_space_above(-530.0, -550.0, 120.0, 80.0), 220.0);
-        assert_eq!(selector_space_above(-250.0, 0.0, 120.0, 80.0), -50.0);
+        // The anchor is the live pill top in window pixels, which
+        // `live_pill_footprint` composes from the content offset and the drawn
+        // top. Both canvas modes land on the same anchor, so the headroom only
+        // depends on where the window sits on its monitor.
+        assert_eq!(selector_space_above(20.0, 0.0, 200.0), 220.0);
+        assert_eq!(selector_space_above(-530.0, -550.0, 200.0), 220.0);
+        assert_eq!(selector_space_above(-250.0, 0.0, 200.0), -50.0);
+    }
+
+    #[test]
+    fn the_footprint_composes_the_content_offset_with_the_drawn_top() {
+        // Two canvas modes reach the same painted anchor, which is the value
+        // `selector_space_above` consumes.
+        let state = initial_state(None, None, None);
+        let (offset, _) = live_pill_footprint(&state);
+        let (_, py, _, _) =
+            draw::pill_position(&state, state.draw_width.get(), state.draw_height.get());
+        let (_, coy) = state.content_offset();
+        assert!((offset.1 - (coy + py)).abs() < 1e-9);
     }
 
     #[test]

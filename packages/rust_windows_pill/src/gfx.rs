@@ -10,6 +10,36 @@ use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows_numerics::{Matrix3x2, Vector2};
 
+use crate::constants::{TOOLTIP_HEIGHT, WINDOW_H_TYPING, WINDOW_W_TYPING};
+
+/// How the fixed drawing canvas maps onto a surface of this size.
+///
+/// The renderer lays out on a fixed canvas, so a surface that is not canvas-sized
+/// has to be mapped rather than drawn into directly. Windows sizes the suggested
+/// rect by the new scale against the old one, so the surface's ratio to the canvas
+/// is the factor that keeps the pill the same size in points on screen, and it is
+/// read from the bitmap the target built, so the mapping and the surface cannot
+/// disagree. Both dimensions carry the same factor; the smaller absorbs rounding.
+fn surface_scale(width: i32, height: i32) -> f64 {
+    if width <= 0 || height <= 0 {
+        return 1.0;
+    }
+    let scale = (width as f64 / CANVAS_W as f64).min(height as f64 / CANVAS_H as f64);
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    }
+}
+
+/// The canvas every draw call, click region and hit test is laid out on. The
+/// window is this tall plus the below-selector slot, and a scale change shrinks
+/// the surface below it, so the mapping in `begin_frame` is what keeps the
+/// renderer and the surface describing the same pixels.
+pub(crate) const CANVAS_W: i32 = WINDOW_W_TYPING;
+pub(crate) const CANVAS_H: i32 =
+    WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
+
 enum ClipKind {
     AxisAligned,
     Layer,
@@ -28,6 +58,9 @@ pub(crate) struct Gfx {
     bitmap: HBITMAP,
     pub(crate) width: i32,
     pub(crate) height: i32,
+    /// Maps the fixed logical canvas onto the surface. It is 1.0 until a scale
+    /// change resizes the surface, so an unchanged window draws exactly as before.
+    content_scale: f64,
     save_stack: Vec<SaveState>,
     clip_kinds: Vec<ClipKind>,
     /// Masks handed to `PushLayer`, which borrows a geometry for the lifetime of
@@ -120,6 +153,7 @@ impl Gfx {
                 bitmap,
                 width,
                 height,
+                content_scale: 1.0,
                 save_stack: Vec::new(),
                 clip_kinds: Vec::new(),
                 layer_masks: Vec::new(),
@@ -156,7 +190,15 @@ impl Gfx {
         }
         self.width = width;
         self.height = height;
+        self.content_scale = surface_scale(width, height);
         Ok(())
+    }
+
+    /// How the canvas maps onto the surface this target actually holds. Read
+    /// rather than assumed, so a caller that publishes geometry cannot describe a
+    /// surface the target does not have.
+    pub(crate) fn content_scale(&self) -> f64 {
+        self.content_scale
     }
 
     pub(crate) fn begin_frame(&mut self) {
@@ -173,6 +215,13 @@ impl Gfx {
             };
             self.rt.BindDC(self.hdc, &rect).ok();
             self.rt.BeginDraw();
+            // A surface that followed a scale change is smaller than the canvas
+            // the renderer lays out on, so the canvas is mapped onto it. Nothing
+            // else knows the surface moved: every draw call, click region and hit
+            // test works in canvas coordinates, which is what keeps the pill on
+            // screen when the window lands on a lower-scale display.
+            self.current_transform =
+                Matrix3x2::scale(self.content_scale as f32, self.content_scale as f32);
             self.rt.SetTransform(&self.current_transform);
         }
     }
@@ -787,6 +836,35 @@ mod tests {
             x * matrix.M11 + y * matrix.M21 + matrix.M31,
             x * matrix.M12 + y * matrix.M22 + matrix.M32,
         )
+    }
+
+    #[test]
+    fn a_canvas_sized_surface_maps_one_to_one() {
+        assert_eq!(surface_scale(CANVAS_W, CANVAS_H), 1.0);
+    }
+
+    #[test]
+    fn a_smaller_surface_maps_the_canvas_onto_itself() {
+        // Windows hands a lower-scale display a proportionally smaller rect, so
+        // the ratio is what keeps the pill the same size in points.
+        assert!((surface_scale(CANVAS_W / 2, CANVAS_H / 2) - 0.5).abs() < 1e-9);
+        assert!((surface_scale(CANVAS_W * 3 / 2, CANVAS_H * 3 / 2) - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_degenerate_surface_leaves_the_mapping_alone() {
+        // The resize refuses a non-positive size and keeps the old surface, so the
+        // mapping must stay usable rather than become zero or NaN.
+        assert_eq!(surface_scale(0, CANVAS_H), 1.0);
+        assert_eq!(surface_scale(CANVAS_W, -1), 1.0);
+    }
+
+    #[test]
+    fn a_non_uniform_surface_takes_the_smaller_ratio() {
+        // Rounding can make one dimension a pixel off the other. Taking the
+        // smaller keeps the whole canvas inside the bitmap, so nothing is clipped.
+        let scale = surface_scale(CANVAS_W / 2, CANVAS_H);
+        assert!((scale - 0.5).abs() < 1e-9);
     }
 
     #[test]

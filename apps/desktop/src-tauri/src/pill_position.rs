@@ -114,6 +114,10 @@ pub fn store_published_position(
     // The clear runs its own command, so this write is the one that could land
     // after the wipe and put a position the user just erased back on screen at
     // the next launch. Take the same gate every other native write takes.
+    // Set when the re-check under the lock drops this report. The declaration can
+    // be retired by the pill's answer while this call resumes, so the flag is what
+    // keeps the drop out of the warning path rather than the latch being read twice.
+    let erased_while_waiting = std::cell::Cell::new(false);
     let written = tauri::async_runtime::block_on(async {
         // A clear can reopen the gate for the frontend's completion step while
         // the pill is still holding the pre-clear position. Nothing from that
@@ -122,6 +126,16 @@ pub fn store_published_position(
             .ok_or_else(|| sqlx::Error::Protocol("local data is being cleared".to_string()))?;
         let _guard =
             crate::db::local_data_write_gate::lock_local_data_write(Some(generation)).await?;
+        // The check above runs before the lock, so a reset can declare and delete
+        // the row in between. Re-check under the lock, the same way the clear sets
+        // its declaration before taking it: whichever side wins the lock, the
+        // report that resumes after the erase drops instead of recreating the row.
+        if erase_is_undeclared() {
+            erased_while_waiting.set(true);
+            return Err(sqlx::Error::Protocol(
+                "the record was erased while this report waited".to_string(),
+            ));
+        }
         pill_position_queries::upsert_pill_position(pool, &encoded, saved_at).await
     });
     if let Err(err) = written {
@@ -130,6 +144,8 @@ pub fn store_published_position(
         // a warning.
         if crate::db::local_data_write_gate::current_write_generation().is_none() {
             log::debug!("Dropped a pill position because local data is being cleared");
+        } else if erased_while_waiting.get() {
+            log::debug!("Dropped a pill position published before the record was erased");
         } else {
             log::warn!("Could not store the pill's position: {err}");
         }

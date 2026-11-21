@@ -2325,13 +2325,24 @@ unsafe fn display_areas() -> Option<(Vec<rust_pill_shared::edge::MonitorRect>, f
 /// pill stays partly off-screen. Startup is the exception and keeps the collapsed
 /// footprint, because nothing has been drawn yet.
 fn current_footprint(state: &PillState, window_w: f64, window_h: f64) -> ((f64, f64), (f64, f64)) {
-    let (pill_x, pill_y, pill_w, pill_h) = draw::pill_position(state, window_w, window_h);
+    // The renderer lays the pill out on the drawing canvas and shifts it into the
+    // window by `content_offset`. The window carries extra rows for the selector,
+    // so measuring against the window size would place the footprint where the
+    // pill is not drawn: reconciliation would then call a visible pill off-screen
+    // and publish a shifted position.
+    let (draw_w, draw_h) = (state.draw_width.get(), state.draw_height.get());
+    let (canvas_w, canvas_h) = if draw_w > 0.0 && draw_h > 0.0 {
+        (draw_w, draw_h)
+    } else {
+        (window_w, window_h)
+    };
+    let (pill_x, pill_y, pill_w, pill_h) = draw::pill_position(state, canvas_w, canvas_h);
     let usable = pill_w.is_finite()
         && pill_h.is_finite()
         && pill_w > 0.0
         && pill_h > 0.0
-        && pill_w <= window_w
-        && pill_h <= window_h;
+        && pill_w <= canvas_w
+        && pill_h <= canvas_h;
     if !usable {
         // A frame that has not drawn yet has no footprint to measure. The
         // collapsed one is the only answer that keeps reconciliation running
@@ -2342,7 +2353,8 @@ fn current_footprint(state: &PillState, window_w: f64, window_h: f64) -> ((f64, 
             COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
         );
     }
-    ((pill_x, pill_y), (pill_w, pill_h))
+    let (offset_x, offset_y) = state.content_offset();
+    ((offset_x + pill_x, offset_y + pill_y), (pill_w, pill_h))
 }
 
 /// Whether a gesture still owns the window, so its frame is not a saved position.
@@ -2350,8 +2362,17 @@ fn current_footprint(state: &PillState, window_w: f64, window_h: f64) -> ((f64, 
 /// A drag in flight has no completed drop, and the settle window right after one
 /// belongs to that drop. Publishing a relocation inside either replaces the last
 /// position the user actually chose with a frame the system forced.
+///
+/// The settle is read from the motion, not only from the save guard. `end_drag`
+/// clears `dragging` before the settle finishes, and the guard's hold only arms
+/// when the layout changed *during* the drag, so a display change that arrives
+/// after release but before the settle completes was unowned: reconciliation
+/// could adopt and publish the in-progress frame. Windows and GTK already read
+/// the settle here.
 fn gesture_owns_window(state: &PillState, now: f64) -> bool {
-    state.dragging.get() || state.save_guard.borrow().drag_hold_active(now)
+    state.dragging.get()
+        || state.drag_motion.borrow().is_settling()
+        || state.save_guard.borrow().drag_hold_active(now)
 }
 
 /// Reconcile the pill's window against the displays connected right now.

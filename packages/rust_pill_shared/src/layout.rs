@@ -1963,4 +1963,32 @@ pub(crate) mod tests {
             "a pill straddling two adjacent panels reported {fraction}, expected 1.0"
         );
     }
+    /// The gap the macOS ownership check used to miss.
+    ///
+    /// `drag_hold_active` only answers true when the layout changed *during* the
+    /// drag. A display change that arrives after release but before the settle
+    /// finishes leaves it false, so a platform that reads only this and the held
+    /// flag treats a window the settle still owns as free to adopt. The settle
+    /// has to be read from the motion as well.
+    #[test]
+    fn a_display_change_after_release_leaves_the_guard_hold_false_mid_settle() {
+        let mut guard = SaveGuard::new();
+        let mut drag = crate::drag::DragController::new();
+        drag.begin_drag(10.0, 10.0, 100.0, 100.0, 0.0);
+        drag.end_drag(0.01);
+        assert!(drag.is_settling(), "release did not start a settle");
+
+        // The layout changes now, which is after the release, so the hold cannot
+        // arm: the drag it would have spanned had already ended.
+        guard.layout_changed(0.02);
+
+        assert!(
+            !guard.drag_hold_active(0.02),
+            "the guard cannot cover a change that arrived after the release"
+        );
+        assert!(
+            drag.is_settling(),
+            "the settle is still running, so a held-or-hold check is not enough"
+        );
+    }
 }
