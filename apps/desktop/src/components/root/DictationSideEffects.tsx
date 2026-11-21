@@ -1435,7 +1435,7 @@ export const DictationSideEffects = () => {
   }, [isMainWindow, isActiveSession]);
 
   const abortRecording = useCallback(
-    async (message?: AbortMessage, preserveOtherCapture = false) => {
+    async (message?: AbortMessage, preserveConcurrentCapture = false) => {
       const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
       // Invalidate the operation token first, so an in-flight start tail cannot
       // act on a recording that is over, and end the dim, so a volume write
@@ -1464,17 +1464,12 @@ export const DictationSideEffects = () => {
       //
       // A second `stop_recording` can still arrive from the superseded start's own
       // cleanup. That is already tolerated: the invoke is caught and logged.
-      if (preserveOtherCapture) {
-        nativeStartOwnerRef.current = null;
-        releaseAudioIntake(audioChunkUnlistenRef, ownedAudioChunkUnlisten);
-      }
-      const stopNative = preserveOtherCapture
-        ? undefined
-        : abortRecordingIntake(
-            audioChunkUnlistenRef,
-            ownedAudioChunkUnlisten,
-            nativeStartOwnerRef,
-          );
+      const stopNative = abortRecordingIntake(
+        audioChunkUnlistenRef,
+        ownedAudioChunkUnlisten,
+        nativeStartOwnerRef,
+        preserveConcurrentCapture,
+      );
       // Detach the old session before any IPC can suspend. A later recording
       // must never be cleaned up by the tail of this abort.
       const session = sessionRef.current;
@@ -2186,11 +2181,12 @@ export const DictationSideEffects = () => {
         strategyRef.current = null;
       }
       clearRecordingState();
-      // This handler is sync and cannot await, but the call still has to be
-      // marked discarded so it is not a floating promise. `abortRecording`
-      // guards its own awaits, so nothing here can reject.
-      const busy = error instanceof NativeRecordingBusyError;
-      void abortRecording(undefined, busy);
+      abortRecording(
+        undefined,
+        error instanceof NativeRecordingBusyError,
+      ).catch(() => {
+        getLogger().warning("Could not finish aborting the failed start");
+      });
 
       hardResetHotkeyState();
       clearRecordingTimers();

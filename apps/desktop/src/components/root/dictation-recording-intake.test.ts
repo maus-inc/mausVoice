@@ -742,6 +742,19 @@ describe("native capture ownership", () => {
     ]);
   });
 
+  it("cleans up a refused start without discarding another capture", async () => {
+    const live = await startLiveRecording();
+    const ownerRef = { current: 4 as number | null };
+    const unlisten = vi.fn();
+    const ref = { current: unlisten };
+
+    await abortRecordingIntake(ref, unlisten, ownerRef, true);
+    expect(ref.current).toBeNull();
+    expect(ownerRef.current).toBeNull();
+    expect(discards()).toHaveLength(0);
+    expect(live.isLive()).toBe(true);
+  });
+
   it("stops on abort when the claim was already released", async () => {
     // The abort takes the claim itself, so the ref is normally null by the time
     // the stop is issued. It must stop the live recording in that state too.

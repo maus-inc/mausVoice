@@ -237,13 +237,21 @@ const beginNativeRecordingOwned = async (
  *
  * These are the teardown paths that have no handle in scope (a clear request,
  * an unmount, a settings action). They deliberately address whatever recording
- * is live rather than a specific owner.
+ * is live rather than a specific owner unless the caller supplies its handle.
  */
 export const stopNativeRecording = (
   invokeFn: RecordingInvoke = invoke,
+  expectedHandle?: NativeRecordingHandle,
 ): Promise<StopRecordingResponse> => {
-  if (stopInFlight) return stopInFlight;
+  if (stopInFlight) {
+    return !expectedHandle || expectedHandle === stoppingHandle
+      ? stopInFlight
+      : Promise.resolve(EMPTY_RESULT());
+  }
   const handle = liveHandle;
+  if (expectedHandle && expectedHandle !== handle) {
+    return Promise.resolve(EMPTY_RESULT());
+  }
   if (!handle) return Promise.resolve(EMPTY_RESULT());
   const localOwner = liveLocalOwner;
   liveHandle = null;

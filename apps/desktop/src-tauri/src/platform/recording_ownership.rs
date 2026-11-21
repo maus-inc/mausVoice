@@ -227,6 +227,12 @@ fn finish_stop<T>(
 }
 
 /// Serializes the recorder and its owner across every webview.
+///
+/// When coordinator locks nest, `owner` or `windows` may precede `admissions`;
+/// never hold `owner` and `windows` together. `admissions` may precede either
+/// `retired_admissions` or `recovered`, which are not held together. Drop table
+/// guards before entering an owner operation, and release `owner` before calling
+/// the driver (see `run_owned_without_lock`).
 #[derive(Default)]
 pub struct RecordingOwnership {
     owner: Arc<Mutex<Option<Owner>>>,

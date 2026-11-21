@@ -498,6 +498,35 @@ describe("VoiceInstructionRecorder", () => {
     expect(deps.logger.warning).not.toHaveBeenCalled();
   });
 
+  it("preserves a successor capture when old transcription fails after dispose", async () => {
+    const transcription = deferred<string>();
+    const deps = baseDeps({
+      invoke: nativeInvoke({
+        stop_recording: async () => ({ samples: [0, 1], sampleRate: 16000 }),
+      }),
+      transcribe: vi.fn(() => transcription.promise),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+    await recorder.toggle();
+    const stop = recorder.toggle();
+    await vi.waitFor(() => expect(deps.transcribe).toHaveBeenCalledOnce());
+    recorder.dispose();
+
+    const { handle: successor } = await beginNativeRecording(
+      null,
+      {},
+      deps.invoke,
+    );
+    transcription.reject(new Error("late transcription failure"));
+    await stop;
+
+    expect(successor.isLive()).toBe(true);
+    expect(deps.invoke).not.toHaveBeenCalledWith("discard_recording", {
+      ownerId: successor.ownerId,
+      generation: successor.generation,
+    });
+  });
+
   it("issues stop_recording when disposed while start_recording is pending", async () => {
     const startDeferred = deferred<unknown>();
     const deps = baseDeps({

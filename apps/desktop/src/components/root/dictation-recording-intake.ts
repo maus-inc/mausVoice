@@ -494,8 +494,13 @@ export const abortRecordingIntake = (
   ref: AudioChunkUnlistenRef,
   owned: UnlistenFn | null,
   ownerRef: NativeStartOwnerRef,
+  preserveConcurrentCapture = false,
 ): Promise<void> => {
   releaseAudioIntake(ref, owned);
+  if (preserveConcurrentCapture) {
+    ownerRef.current = null;
+    return Promise.resolve();
+  }
   return stopNativeRecordingForAbort(ownerRef);
 };
 
