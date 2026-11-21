@@ -513,6 +513,7 @@ fn capture_samples(
     RecordingResult {
         metrics: RecordingMetrics {
             duration,
+            has_live_samples: !all_samples.is_empty(),
             expected_duration: start.elapsed(),
             size_bytes,
             capture_fault: capture_failed.then(|| "fatal".to_owned()),

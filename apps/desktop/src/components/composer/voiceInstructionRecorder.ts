@@ -6,7 +6,7 @@ import {
 } from "../../utils/local-data-write-gate";
 import {
   beginNativeRecording,
-  discardNativeRecording,
+  type NativeRecordingHandle,
   stopNativeRecording,
 } from "../../utils/native-recording-session";
 
@@ -46,8 +46,9 @@ export type VoiceInstructionRecorderDeps = {
   canUseProvider: () => boolean;
   speechRecognitionSupported: boolean;
   unsupportedMessage: () => string;
-  /** Shown when the recorder could not be claimed for browser recognition. */
+  /** Shown when the microphone could not be claimed or started. */
   recordingUnavailableMessage: () => string;
+  captureFailedMessage: () => string;
   onListeningChange: (listening: boolean) => void;
   onTranscript: (text: string) => void;
   onError: (message: string) => void;
@@ -74,6 +75,7 @@ export class VoiceInstructionRecorder {
   private disposed = false;
   private opGen = 0;
   private stopInFlight = false;
+  private providerHandle: NativeRecordingHandle | null = null;
   private recognitionEnded: Promise<void> | null = null;
   private settleRecognitionEnd: (() => void) | null = null;
   private unsubscribeClear: (() => void) | null = null;
@@ -110,7 +112,7 @@ export class VoiceInstructionRecorder {
     gen: number,
   ): Promise<"started" | "blocked" | "unavailable"> {
     try {
-      await beginNativeRecording(
+      const { handle } = await beginNativeRecording(
         this.deps.getPreferredMicrophone() ?? null,
         {},
         this.deps.invoke,
@@ -120,9 +122,10 @@ export class VoiceInstructionRecorder {
       // of notifying the UI it is listening — otherwise the OS recording
       // indicator stays on behind a closed composer.
       if (gen !== this.opGen || this.disposed || isLocalDataClearRequested()) {
-        void discardNativeRecording();
+        await this.discardProviderHandle(handle);
         return "blocked";
       }
+      this.providerHandle = handle;
       this.state = "provider";
       this.deps.onListeningChange(true);
       return "started";
@@ -351,20 +354,24 @@ export class VoiceInstructionRecorder {
   private async transcribeProviderRecording(
     gen: number,
   ): Promise<string | null> {
-    if (this.stopInFlight) return null;
+    const handle = this.providerHandle;
+    if (this.stopInFlight || !handle) return null;
+    this.providerHandle = null;
     this.stopInFlight = true;
     try {
       try {
-        const response = await stopNativeRecording(this.deps.invoke);
+        const response = await stopNativeRecording(this.deps.invoke, handle);
         if (gen !== this.opGen || this.disposed) return null;
+        if (response.captureFailed) {
+          // A sealed partial take can consist entirely of speech before the press.
+          // Do not send it to a provider or turn it into an edit instruction.
+          this.deps.onError(this.deps.captureFailedMessage());
+          return null;
+        }
         return await this.transcribeProviderResponse(gen, response);
       } catch {
         if (gen !== this.opGen || this.disposed) {
-          // The stop failed while this operation was invalidated:
-          // releaseCapture skipped its own discard because the stop was in
-          // flight, so drop the restored native handle here or the
-          // microphone stays live behind the invalidated continuation.
-          void discardNativeRecording();
+          await this.discardProviderHandle(handle);
           return null;
         }
         this.deps.logger.warning(
@@ -375,14 +382,25 @@ export class VoiceInstructionRecorder {
         } else {
           this.deps.onError(this.deps.unsupportedMessage());
         }
-        // The failed stop restored the native handle, which is why the
-        // fallback above is refused the slot: drop the dead capture here
-        // or the microphone stays live behind an idle recorder.
-        await discardNativeRecording();
+        // A failed stop may leave this take live; a failed transcription
+        // never gives this operation authority over a successor take.
+        await this.discardProviderHandle(handle);
         return null;
       }
     } finally {
       this.stopInFlight = false;
+    }
+  }
+
+  private async discardProviderHandle(
+    handle: NativeRecordingHandle,
+  ): Promise<void> {
+    if (handle.isLive()) {
+      await handle.discard().catch(() => {
+        this.deps.logger.warning(
+          "Voice Edit Mode: could not discard provider recording",
+        );
+      });
     }
   }
 
@@ -425,9 +443,9 @@ export class VoiceInstructionRecorder {
     } else if (this.browserLease) {
       this.releaseBrowserLease(this.browserLease);
     }
-    if (this.state === "provider" && !this.stopInFlight) {
-      void discardNativeRecording();
-    }
+    const handle = this.providerHandle;
+    this.providerHandle = null;
+    if (handle) void this.discardProviderHandle(handle);
     if (this.state !== "idle") {
       this.setIdle(Boolean(this.recognition));
     }

@@ -474,7 +474,7 @@ fn handle_window_event(window: &Window, event: &WindowEvent) {
         refresh_warm_device(window.app_handle());
     }
     match event {
-        WindowEvent::Destroyed => crate::commands::retire_recording_window(window, true),
+        WindowEvent::Destroyed => crate::commands::retire_recording_window(window),
         WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
             api.prevent_close();
             save_main_window_state(window.app_handle());
@@ -663,12 +663,164 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+enum MainFrameProbe {
+    Reachable,
+    Missing,
+    Indeterminate(gtk::glib::Error),
+}
+
+#[cfg(target_os = "linux")]
+fn probe_linux_recording_document(
+    view: &webkit2gtk::WebView,
+    complete: impl FnOnce(MainFrameProbe) + 'static,
+) {
+    use webkit2gtk::WebViewExt;
+
+    // The signal doesn't name a document and can also describe a subframe.
+    // Probe the current main frame with a serializable constant in an isolated
+    // world. WebKit returns InvalidResult for no running process; a living main
+    // frame returns the constant. Don't treat other errors/timeouts as a crash.
+    #[allow(deprecated)] // Keep the same GTK API floor as Tauri/Wry.
+    view.run_javascript_in_world(
+        "true",
+        "maus-recording-lifecycle",
+        None::<&gtk::gio::Cancellable>,
+        move |reply| {
+            complete(match reply {
+                Ok(_) => MainFrameProbe::Reachable,
+                Err(error) if error.matches(webkit2gtk::JavascriptError::InvalidResult) => {
+                    MainFrameProbe::Missing
+                }
+                Err(error) => MainFrameProbe::Indeterminate(error),
+            });
+        },
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn recording_lifecycle_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::new("recording-lifecycle")
+        .on_webview_ready(|webview| {
+            use webkit2gtk::WebViewExt;
+            let window = webview.window();
+            if let Err(error) = webview.with_webview(move |native| {
+                native
+                    .inner()
+                    .connect_web_process_terminated(move |view, _| {
+                        if let Some(cleanup) =
+                            crate::commands::prepare_recording_crash_cleanup(&window)
+                        {
+                            probe_linux_recording_document(view, move |probe| match probe {
+                                MainFrameProbe::Missing => cleanup(),
+                                MainFrameProbe::Indeterminate(error) => {
+                                    log::debug!("Recording crash probe was inconclusive: {error}");
+                                }
+                                MainFrameProbe::Reachable => {}
+                            });
+                        }
+                    });
+            }) {
+                log::error!("Failed to watch recording webview termination: {error}");
+            }
+        })
+        .build()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod recording_lifecycle_tests {
+    use super::{probe_linux_recording_document, MainFrameProbe};
+    use gtk::{glib, prelude::*};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+        time::Duration,
+    };
+    use webkit2gtk::{LoadEvent, WebView, WebViewExt};
+
+    #[test]
+    #[ignore = "requires a GTK display and a working WebKit renderer"]
+    fn webkit_main_frame_probe_distinguishes_live_page_and_process_exit() {
+        gtk::init().unwrap();
+        let view = WebView::new();
+        let window = gtk::Window::new(gtk::WindowType::Toplevel);
+        window.add(&view);
+        window.show_all();
+        let event_loop = glib::MainLoop::new(None, false);
+        let living = Rc::new(RefCell::new(None));
+        let exited = Rc::new(RefCell::new(None));
+
+        let on_load = view.connect_load_changed({
+            let living = Rc::clone(&living);
+            move |view, event| {
+                if event != LoadEvent::Finished {
+                    return;
+                }
+                let living = Rc::clone(&living);
+                let active_view = view.clone();
+                probe_linux_recording_document(view, move |missing| {
+                    living.replace(Some(missing));
+                    active_view.terminate_web_process();
+                });
+            }
+        });
+        let on_exit = view.connect_web_process_terminated({
+            let exited = Rc::clone(&exited);
+            let event_loop = event_loop.clone();
+            move |view, _| {
+                let exited = Rc::clone(&exited);
+                let event_loop = event_loop.clone();
+                probe_linux_recording_document(view, move |missing| {
+                    exited.replace(Some(missing));
+                    event_loop.quit();
+                });
+            }
+        });
+        let timed_out = Rc::new(Cell::new(false));
+        let timeout = glib::timeout_add_local_once(Duration::from_secs(15), {
+            let event_loop = event_loop.clone();
+            let timed_out = Rc::clone(&timed_out);
+            move || {
+                timed_out.set(true);
+                event_loop.quit();
+            }
+        });
+        view.load_html("<!doctype html><title>Live document</title>", None);
+        event_loop.run();
+        if !timed_out.get() {
+            timeout.remove();
+        }
+        view.disconnect(on_load);
+        view.disconnect(on_exit);
+        assert!(
+            !timed_out.get(),
+            "no WebKit termination probe reply; live probe was {:?}",
+            living.borrow()
+        );
+        let living = living.take();
+        let exited = exited.take();
+        assert!(
+            matches!(living, Some(MainFrameProbe::Reachable)),
+            "live main frame: {living:?}"
+        );
+        assert!(
+            matches!(exited, Some(MainFrameProbe::Missing)),
+            "terminated main frame: {exited:?}"
+        );
+    }
+}
+
 /// Builds the Tauri application: plugins (logging, single instance, autostart,
 /// updater, window state), the invoke handler, and window event wiring.
 pub fn build() -> tauri::Builder<tauri::Wry> {
     let updater_builder = tauri_plugin_updater::Builder::new();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(recording_lifecycle_plugin());
+
+    builder
         .plugin({
             let file_name = chrono::Local::now()
                 .format("mausvoice_%Y-%m-%d_%H%M%S")
@@ -707,25 +859,6 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 let _ = crate::platform::window::surface_main_window(&window);
             }
         }))
-        .plugin({
-            let builder = tauri::plugin::Builder::<tauri::Wry>::new("recording-lifecycle");
-            #[cfg(target_os = "linux")]
-            let builder = builder.on_webview_ready(|webview| {
-                use gtk::prelude::ObjectExt;
-                let window = webview.window();
-                if let Err(error) = webview.with_webview(move |native| {
-                    native
-                        .inner()
-                        .connect_local("web-process-terminated", false, move |_| {
-                            crate::commands::retire_recording_window(&window, true);
-                            None
-                        });
-                }) {
-                    log::error!("Failed to watch recording webview termination: {error}");
-                }
-            });
-            builder.build()
-        })
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![AUTOSTART_HIDDEN_ARG]),
@@ -754,9 +887,12 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
         )
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
-                // A reload replaces the JavaScript owner without destroying the
-                // native window. Retire its scope before the new page starts.
-                crate::commands::retire_recording_window(&webview.window(), false);
+                // Wry emits Started at document commit (WKWebView/WebKitGTK)
+                // or ContentLoading (WebView2), not at provisional navigation.
+                // The previous document can no longer release its capture lease.
+                // Crash probes can stop an exact native take, but only commit
+                // or destruction retires the document and its browser lease.
+                crate::commands::retire_recording_window(&webview.window());
             }
         })
         .on_window_event(handle_window_event)

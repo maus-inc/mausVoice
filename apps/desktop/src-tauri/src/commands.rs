@@ -100,8 +100,6 @@ fn audio_dispatcher(
     Ok(worker)
 }
 
-const MAX_CHUNK_EVENT_SAMPLES: usize = 256 * 1024;
-
 // Phase delivery is replaceable state. A stalled pill pipe and a stalled
 // webview event use separate bounded workers, so neither can hold audio stop.
 static PHASE_UPDATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -3659,16 +3657,13 @@ fn recording_window_key(window: &tauri::Window) -> usize {
     std::ptr::from_ref(&*resources) as usize
 }
 
-pub(crate) fn retire_recording_window(window: &tauri::Window, capture_ended: bool) {
+pub(crate) fn retire_recording_window(window: &tauri::Window) {
     let Some(ownership) = window.try_state::<RecordingOwnerState>() else {
         return;
     };
-    let key = recording_window_key(window);
-    let scope = ownership.close_window(key);
-    if capture_ended {
-        ownership.confirm_external_window_capture_ended(key);
-    }
-    let Some(scope) = scope else { return };
+    let Some(scope) = ownership.retire_document(recording_window_key(window)) else {
+        return;
+    };
     let Some(recorder) = window.try_state::<Arc<dyn crate::platform::Recorder>>() else {
         return;
     };
@@ -3686,17 +3681,49 @@ pub(crate) fn retire_recording_window(window: &tauri::Window, capture_ended: boo
     });
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn prepare_recording_crash_cleanup(window: &tauri::Window) -> Option<impl FnOnce()> {
+    use crate::platform::recording_ownership::RecoveryStop;
+
+    let ownership = window.try_state::<RecordingOwnerState>()?;
+    let document = ownership.recording_document_for_probe(recording_window_key(window))?;
+    let recorder = window.try_state::<Arc<dyn crate::platform::Recorder>>()?;
+    let ownership = Arc::clone(&ownership);
+    let recorder = Arc::clone(&recorder);
+    Some(move || {
+        // Never resolve the window key again after the async probe. Only the
+        // confirmed scope can be marked dead, and its stop carries an admission.
+        let Some(admission) = ownership.confirm_native_process_exit(&document) else {
+            return;
+        };
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Some(Err(error)) = ownership.stop_admission_with_recovery(&admission, || {
+                let (result, active) = discard_native_recording(recorder.as_ref());
+                RecoveryStop::unsealed(result, active)
+            }) {
+                log::warn!("Could not release crashed renderer's native recording: {error}");
+                if let Some(token) = ownership.begin_release_retry_admission(&admission) {
+                    retry_recording_release(ownership, recorder, token);
+                }
+            }
+        });
+    })
+}
+
 fn take_native_recording(
     recorder: &dyn crate::platform::Recorder,
 ) -> (Result<Option<crate::domain::RecordingResult>, String>, bool) {
-    take_native_recording_using(recorder, false)
+    take_native_recording_using(recorder, false, None)
 }
 
 fn take_native_recording_using(
     recorder: &dyn crate::platform::Recorder,
     handoff: bool,
+    linger: Option<std::time::Duration>,
 ) -> (Result<Option<crate::domain::RecordingResult>, String>, bool) {
-    let stopped = if handoff {
+    let stopped = if let Some(linger) = linger {
+        recorder.stop_for_handoff_with_linger(linger)
+    } else if handoff {
         recorder.stop_for_handoff()
     } else {
         recorder.stop()
@@ -3748,7 +3775,7 @@ fn encode_recording_result(
                 header,
                 result
                     .metrics
-                    .duration
+                    .live_duration()
                     .as_millis()
                     .min(u128::from(u32::MAX)) as u32,
                 result
@@ -3765,8 +3792,9 @@ fn encode_recording_result(
 
 fn stop_native_recording_handoff(
     recorder: &dyn crate::platform::Recorder,
+    linger: Option<std::time::Duration>,
 ) -> (Result<Vec<u8>, String>, bool) {
-    let (result, still_recording) = take_native_recording_using(recorder, true);
+    let (result, still_recording) = take_native_recording_using(recorder, true, linger);
     (result.and_then(encode_recording_result), still_recording)
 }
 
@@ -3801,7 +3829,8 @@ fn recover_abandoned_recording(
         let (result, active) = discard_native_recording(recorder);
         return RecoveryStop::unsealed(result, active);
     }
-    let (result, active) = stop_native_recording_handoff(recorder);
+    // An abandoned capture may preserve sealed audio, not an idle microphone.
+    let (result, active) = stop_native_recording_handoff(recorder, Some(std::time::Duration::ZERO));
     match result {
         Ok(bytes) => {
             if ownership.retain_recording_audio(admission, Arc::new(bytes)) {
@@ -4059,7 +4088,7 @@ pub async fn start_recording(
     let chunk_emitter = crate::platform::event_dispatch::bounded_chunk_callback(
         chunk_dispatch,
         chunk_delivery,
-        MAX_CHUNK_EVENT_SAMPLES,
+        crate::platform::MAX_CHUNK_EVENT_SAMPLES,
     );
     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut guard = StartRecordingGuard {
@@ -4394,6 +4423,77 @@ pub async fn capture_startup_timing(app: AppHandle) -> Vec<CaptureStartupStage> 
         .collect()
 }
 
+fn saved_capture_linger(keep_ready: bool, linger_ms: i64) -> std::time::Duration {
+    let millis = if keep_ready {
+        u64::MAX
+    } else {
+        // Only the explicit keep-ready preference can request an indefinite hold.
+        warm_policy_to_apply(linger_ms as f64)
+            .filter(|&millis| millis != u64::MAX)
+            .unwrap_or(0)
+    };
+    std::time::Duration::from_millis(millis)
+}
+
+async fn read_capture_linger(pool: sqlx::SqlitePool) -> std::time::Duration {
+    let read = sqlx::query_as::<_, (bool, i64)>(
+        "SELECT keep_microphone_ready, microphone_linger_ms FROM user_preferences WHERE user_id = ?1",
+    )
+    .bind(crate::db::preferences_queries::LOCAL_USER_ID)
+    .fetch_optional(&pool);
+    match tokio::time::timeout(std::time::Duration::from_millis(100), read).await {
+        Ok(Ok(Some((keep_ready, linger_ms)))) => saved_capture_linger(keep_ready, linger_ms),
+        Ok(Ok(None)) => std::time::Duration::ZERO,
+        failure => {
+            log::warn!("Could not read saved microphone policy; releasing at stop: {failure:?}");
+            std::time::Duration::ZERO
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn saved_capture_linger_only_keeps_ready_indefinitely_when_enabled() {
+    use std::time::Duration;
+    assert_eq!(saved_capture_linger(false, 0), Duration::ZERO);
+    assert_eq!(saved_capture_linger(false, 5000), Duration::from_secs(5));
+    assert_eq!(saved_capture_linger(false, i64::MAX), Duration::ZERO);
+    assert_eq!(
+        saved_capture_linger(true, 0),
+        Duration::from_millis(u64::MAX)
+    );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn capture_handoff_reads_the_committed_local_preference() {
+    use std::time::Duration;
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE user_preferences (user_id TEXT, keep_microphone_ready INTEGER, microphone_linger_ms INTEGER)")
+        .execute(&pool).await.unwrap();
+    assert_eq!(read_capture_linger(pool.clone()).await, Duration::ZERO);
+    sqlx::query("INSERT INTO user_preferences VALUES (?1, 0, 5000)")
+        .bind(crate::db::preferences_queries::LOCAL_USER_ID)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        read_capture_linger(pool.clone()).await,
+        Duration::from_secs(5)
+    );
+    sqlx::query("UPDATE user_preferences SET microphone_linger_ms = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(read_capture_linger(pool.clone()).await, Duration::ZERO);
+    pool.close().await;
+    assert_eq!(read_capture_linger(pool).await, Duration::ZERO);
+}
+
 /// Raw-body command, so it is registered in `app.rs` but kept out of the
 /// Specta bindings (Specta cannot describe `ipc::Response`). The frontend
 /// decodes it with `decodeStopRecordingPayload`.
@@ -4401,6 +4501,7 @@ pub async fn capture_startup_timing(app: AppHandle) -> Vec<CaptureStartupStage> 
 pub async fn stop_recording(
     window: tauri::Window,
     recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    database: State<'_, crate::state::OptionKeyDatabase>,
     ownership: State<'_, RecordingOwnerState>,
     owner_id: String,
     generation: u64,
@@ -4411,10 +4512,11 @@ pub async fn stop_recording(
     // Record normal-stop intent before the blocking pool can queue this task
     // behind a slow device open or a dropped start-command guard.
     let stop_intent = ownership.note_scoped_normal_stop(&owner_id, &scope, generation)?;
+    let linger = read_capture_linger(database.pool()).await;
     let bytes = tauri::async_runtime::spawn_blocking(move || {
         let _stop_intent = stop_intent;
         let result = ownership.stop_or_recover_scoped(&owner_id, &scope, generation, || {
-            stop_native_recording_handoff(recorder.as_ref())
+            stop_native_recording_handoff(recorder.as_ref(), Some(linger))
         });
         start_recording_recovery_reaper(&ownership);
         // A sealed partial response may be delivered while the worker is still
@@ -7816,6 +7918,7 @@ mod tests {
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
                         duration: std::time::Duration::ZERO,
+                        has_live_samples: false,
                         expected_duration: std::time::Duration::ZERO,
                         capture_fault: None,
                         size_bytes: 8,
@@ -7866,7 +7969,7 @@ mod tests {
         ownership.finish_admission(&admission);
         let first = ownership
             .stop_or_recover_scoped("owner", &window, token, || {
-                stop_native_recording_handoff(&recorder)
+                stop_native_recording_handoff(&recorder, None)
             })
             .unwrap()
             .unwrap();
@@ -7876,7 +7979,7 @@ mod tests {
         );
         let replay = ownership
             .stop_or_recover_scoped("owner", &window, token, || {
-                stop_native_recording_handoff(&recorder)
+                stop_native_recording_handoff(&recorder, None)
             })
             .unwrap()
             .unwrap();
@@ -7937,6 +8040,7 @@ mod tests {
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
                         duration: std::time::Duration::ZERO,
+                        has_live_samples: false,
                         expected_duration: std::time::Duration::ZERO,
                         capture_fault: None,
                         size_bytes: 4,
@@ -8118,6 +8222,7 @@ mod tests {
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
                         duration: std::time::Duration::ZERO,
+                        has_live_samples: false,
                         expected_duration: std::time::Duration::ZERO,
                         capture_fault: None,
                         size_bytes: 4,
@@ -8139,10 +8244,10 @@ mod tests {
                 true
             }
         }
-        let (result, active) = take_native_recording_using(&Fake { partial: false }, true);
+        let (result, active) = take_native_recording_using(&Fake { partial: false }, true, None);
         assert!(active);
         assert!(result.is_err());
-        let (result, active) = take_native_recording_using(&Fake { partial: true }, true);
+        let (result, active) = take_native_recording_using(&Fake { partial: true }, true, None);
         assert!(active);
         let wire = encode_recording_result(result.unwrap()).unwrap();
         assert_eq!(
@@ -8168,6 +8273,7 @@ mod tests {
         let result = crate::domain::RecordingResult {
             metrics: crate::domain::RecordingMetrics {
                 duration: std::time::Duration::ZERO,
+                has_live_samples: false,
                 expected_duration: std::time::Duration::ZERO,
                 capture_fault: None,
                 size_bytes: 4,
@@ -8289,6 +8395,40 @@ mod tests {
             decode_recorded_audio(&bytes),
             Ok((44_100, vec![0.5, -0.5, 0.25]))
         );
+    }
+
+    #[test]
+    fn capture_fault_trailer_does_not_count_elapsed_fallback_as_live_pcm() {
+        use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
+        use std::time::Duration;
+
+        for (samples, has_live_samples, captured_ms) in [
+            (vec![], false, 0),
+            (vec![0.25], false, 0), // pre-roll only
+            (vec![0.25; 8_000], true, 500),
+        ] {
+            let duration = Duration::from_millis(if has_live_samples { 500 } else { 1000 });
+            let size_bytes = (samples.len() * std::mem::size_of::<f32>()) as u64;
+            let response = encode_recording_result(Some(RecordingResult {
+                metrics: RecordingMetrics {
+                    duration,
+                    has_live_samples,
+                    expected_duration: Duration::from_secs(1),
+                    size_bytes,
+                    capture_fault: Some("fatal".to_owned()),
+                },
+                capture_failed: true,
+                audio: RecordedAudio {
+                    samples,
+                    sample_rate: 16_000,
+                },
+            }))
+            .unwrap();
+            assert_eq!(
+                decode_capture_trailer(&response),
+                Some((4 + size_bytes as usize, captured_ms, 1000))
+            );
+        }
     }
 
     #[test]
@@ -12323,6 +12463,7 @@ wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJA
                 Ok(crate::domain::RecordingResult {
                     metrics: crate::domain::RecordingMetrics {
                         duration: std::time::Duration::ZERO,
+                        has_live_samples: false,
                         expected_duration: std::time::Duration::ZERO,
                         size_bytes: 0,
                         capture_fault: None,

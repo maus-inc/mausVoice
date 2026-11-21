@@ -199,6 +199,9 @@ impl SavedClipboard {
 }
 
 pub type LevelCallback = Arc<dyn Fn(Vec<f32>) + Send + Sync>;
+/// Maximum PCM batch accepted by the live-audio event dispatcher.
+pub(crate) const MAX_CHUNK_EVENT_SAMPLES: usize = 256 * 1024;
+
 /// Receives a batch of samples plus the absolute index of the batch's first
 /// sample in the recording, so consumers can place audio on an absolute
 /// timeline instead of assuming every batch is contiguous.
@@ -318,6 +321,13 @@ pub trait Recorder: Send + Sync {
             return Err("Recording is still active after stop".into());
         }
         result
+    }
+    /// Seal a normal recording using the persisted hold policy, not a webview's cache.
+    fn stop_for_handoff_with_linger(
+        &self,
+        _linger: std::time::Duration,
+    ) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+        self.stop_for_handoff()
     }
     fn pause(&self) -> Result<(), Box<dyn std::error::Error>>;
     fn resume(&self) -> Result<(), Box<dyn std::error::Error>>;

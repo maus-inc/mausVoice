@@ -14,17 +14,18 @@ pub struct RecordingMetrics {
     /// contained, so the difference is visible rather than rounded away.
     ///
     /// Two things stop that being true in every case, and both are deliberate.
-    /// When the capture produced no samples at all there is no sample-derived
+    /// When the capture produced no live samples there is no sample-derived
     /// length, so this falls back to the wall clock and the two figures are equal
-    /// even though nothing was recorded: a zero here would read as a recording
-    /// that lasted no time rather than one that failed, and `capture_fault` is
-    /// what reports that case. Audio captured before the press is not counted
-    /// either, so a warm start measures only the part of the buffer recorded
-    /// after it.
+    /// even though nothing was captured after the press. A zero here would read
+    /// as a recording that lasted no time rather than a failure; capture status
+    /// and any reported fault distinguish those cases. Audio captured before the
+    /// press is never credited toward the measured duration.
     pub duration: Duration,
+    /// Whether `duration` measures live PCM rather than the elapsed fallback.
+    pub has_live_samples: bool,
     /// How long the recorder believed it was recording.
     ///
-    /// Equal to `duration` on a healthy capture. A large gap means the stream
+    /// Equal to `live_duration()` on a healthy capture. A large gap means the stream
     /// stopped delivering partway through, which is the case that otherwise
     /// produces a silently short dictation with no indication that anything went
     /// wrong.
@@ -35,6 +36,17 @@ pub struct RecordingMetrics {
     /// the same as "everything was fine": a stream can also go quiet without
     /// saying so, and `expected_duration` covers that.
     pub capture_fault: Option<String>,
+}
+
+impl RecordingMetrics {
+    /// Live PCM duration, without the elapsed fallback used in diagnostics.
+    pub fn live_duration(&self) -> Duration {
+        if self.has_live_samples {
+            self.duration
+        } else {
+            Duration::ZERO
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
