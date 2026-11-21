@@ -1742,6 +1742,19 @@ fn review_selected_chars(buffer: &gtk::TextBuffer) -> usize {
         .unwrap_or(0)
 }
 
+/// Where the payload goes once any selection it replaces has been removed.
+///
+/// A replaced selection inserts where it started. The caret sits at the drag's
+/// end, so after the delete that offset names a point farther into the remaining
+/// text and the paste would land past the text the user highlighted. With no
+/// selection the caret is the only answer.
+fn review_insert_offset(requested: ReviewPasteTarget) -> i32 {
+    match requested.1 {
+        Some((start_offset, _)) => start_offset,
+        None => requested.0,
+    }
+}
+
 fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
     let Some(review_id) = state.pending_review_id() else {
         return;
@@ -1781,7 +1794,7 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
             let mut end = buffer.iter_at_offset(end_offset);
             buffer.delete(&mut start, &mut end);
         }
-        let mut at = buffer.iter_at_offset(requested.0);
+        let mut at = buffer.iter_at_offset(review_insert_offset(requested));
         buffer.place_cursor(&at);
         buffer.insert(&mut at, text);
         buffer.end_user_action();
@@ -2769,7 +2782,9 @@ mod clipboard_response_tests {
 
 #[cfg(test)]
 mod review_budget_tests {
-    use super::{review_paste_target_is_stale, review_replace_exceeds_budget};
+    use super::{
+        review_insert_offset, review_paste_target_is_stale, review_replace_exceeds_budget,
+    };
     use crate::constants::MAX_REVIEW_EDITOR_CHARS;
 
     #[test]
@@ -2784,6 +2799,19 @@ mod review_budget_tests {
         // An empty buffer takes a paste right up to the limit, not one more.
         assert!(!review_replace_exceeds_budget(0, 0, full));
         assert!(review_replace_exceeds_budget(0, 0, full + 1));
+    }
+
+    #[test]
+    fn a_replaced_selection_pastes_where_the_selection_started() {
+        // A left-to-right drag leaves the caret at the selection end. Inserting
+        // there after the delete would land past the highlighted text, so the
+        // start offset has to win.
+        assert_eq!(review_insert_offset((7, Some((2, 7)))), 2);
+        // A right-to-left drag leaves the caret at the start, where the two
+        // offsets already agree.
+        assert_eq!(review_insert_offset((2, Some((2, 7)))), 2);
+        // With nothing selected the caret is the only answer.
+        assert_eq!(review_insert_offset((5, None)), 5);
     }
 
     #[test]
