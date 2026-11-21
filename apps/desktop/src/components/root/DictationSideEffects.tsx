@@ -2252,9 +2252,7 @@ export const DictationSideEffects = () => {
   // Extracted from `startRecording`: the pre-capture hook is optional and
   // may throw; the guard must not abort the recording. Isolating it keeps
   // the try/catch out of the main start flow's complexity budget.
-  const runPreCaptureSetup = async (
-    session: TranscriptionSession,
-  ) => {
+  const runPreCaptureSetup = async (session: TranscriptionSession) => {
     try {
       await session.onBeforeRecordingStart?.();
     } catch (error) {
