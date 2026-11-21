@@ -7,6 +7,7 @@ import { BaseRepo } from "./base.repo";
 
 export abstract class BaseNativeRepo extends BaseRepo {
   abstract requestAdminRelaunch(): Promise<NativeSetupResult>;
+  abstract prepareMicrophone(preferred: string | null): Promise<string>;
   abstract quitApp(): Promise<void>;
   /** One line describing the capture path, for a diagnostics export. */
   abstract microphoneReadinessReport(): Promise<string>;
@@ -17,6 +18,12 @@ export abstract class BaseNativeRepo extends BaseRepo {
 export class LocalNativeRepo extends BaseNativeRepo {
   async requestAdminRelaunch(): Promise<NativeSetupResult> {
     return commands.requestAdminRelaunch();
+  }
+
+  async prepareMicrophone(preferred: string | null): Promise<string> {
+    const result = await commands.prepareMicrophone(preferred);
+    if (result.status === "error") throw new Error(result.error);
+    return result.data;
   }
 
   async quitApp(): Promise<void> {

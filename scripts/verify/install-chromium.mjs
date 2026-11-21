@@ -10,10 +10,12 @@
  *
  * It is idempotent and cheap to re-run: the output directory is wiped between
  * turns in this environment, so the reliable move is to call this again rather
- * than to keep a copy. Nothing outside the output directory is touched.
+ * than to keep a copy. Installs use a private staging directory beside the
+ * output and npm may reuse its own download cache.
  *
  *   node scripts/verify/install-chromium.mjs [--dir /tmp/chr]
  */
+import { CHROMIUM_LAUNCH_FLAGS } from "./browser-config.mjs";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
@@ -37,11 +39,10 @@ import { brotliDecompressSync } from "node:zlib";
 const VERSION = "153.0.0";
 
 const argDir = process.argv.indexOf("--dir");
-const OUT = argDir > -1 ? process.argv[argDir + 1] : path.join(tmpdir(), "chr");
-// The package is installed outside the repository on purpose: it is a 67 MB
-// browser, and a verification tool must not add that to a checkout.
-const PKG_DIR = path.join(tmpdir(), "sparticuz-chromium");
-/** The installed package itself, whose own manifest carries its version. */
+const OUT = path.resolve(
+  argDir > -1 ? process.argv[argDir + 1] : path.join(tmpdir(), "chr"),
+);
+
 /**
  * Whether `dir` holds a usable published browser, not just a directory.
  *
@@ -63,23 +64,13 @@ function hasBrowser(dir) {
   }
 }
 
-const INSTALLED_PKG = path.join(
-  PKG_DIR,
-  "node_modules",
-  "@sparticuz",
-  "chromium",
-);
-
 const log = (message) => process.stderr.write(`${message}\n`);
 
 const decompress = (source, destination) => {
-  const data = brotliDecompressSync(readFileSyncBuffer(source));
+  const data = brotliDecompressSync(readFileSync(source));
   writeFileSync(destination, data);
   return data.length;
 };
-
-const readFileSyncBuffer = (file) =>
-  execFileSync("cat", [file], { maxBuffer: 1 << 30 });
 
 const unpackTar = (archive, into) => {
   execFileSync("tar", ["-xf", archive, "-C", into], { stdio: "inherit" });
@@ -206,87 +197,84 @@ if (hasBrowser(OUT)) {
       `${prefix}${process.pid}-${processStart(process.pid) ?? "unknown"}-`,
     ),
   );
-  // Claim staging before package installation or extraction can fail.
+  // The marker records ownership, not extraction completion. The sweep must
+  // verify the namespace and that this exact owner has exited before reclaiming it.
   writeFileSync(path.join(STAGING, MARKER), `${VERSION}\n${scope ?? ""}\n`);
 
-  // The cache is ours by construction: `PKG_DIR` lives inside `CHR_DIR`, which is
-  // this script's own directory, not a caller-chosen one. Guarded anyway, and on
-  // the same rule as above, because a recursive delete is a recursive delete.
-  if (existsSync(PKG_DIR) && !existsSync(path.join(PKG_DIR, MARKER))) {
-    const contents = readdirSync(PKG_DIR);
-    if (contents.length > 0) {
-      throw new Error(
-        `${PKG_DIR} is not empty and has no ${MARKER}, so it was not created by this script. ` +
-          `Remove it yourself.`,
-      );
-    }
-  }
+  try {
+    const packageDir = path.join(STAGING, "npm-package");
+    const binDir = installChromiumPackage(packageDir);
+    extractBrowser(binDir, STAGING);
+    rmSync(packageDir, { recursive: true });
 
-  // The installed version, not the version some manifest *asks for*. Those are
-  // different facts, and reading the declaration was wrong in a way that only
-  // shows up on a stale cache: `PKG_DIR/package.json`'s dependency range is what
-  // the last install requested, so a cache left behind at an older version still
-  // declares the new one and passes the check, and the stale browser is then
-  // extracted and reported as a success. The installed package's own manifest is
-  // the only thing that knows what is actually on disk.
-  const cachedVersion = (() => {
+    // Rename only after every file is ready. A concurrent complete publish
+    // wins; callers never launch a tree that another installer is mutating.
     try {
-      const installed = JSON.parse(
-        readFileSync(path.join(INSTALLED_PKG, "package.json"), "utf8"),
-      );
-      return installed.version ?? null;
-    } catch {
-      return null;
-    }
-  })();
-
-  if (cachedVersion !== VERSION) {
-    log(`Installing @sparticuz/chromium@${VERSION} into ${PKG_DIR} …`);
-    rmSync(PKG_DIR, { recursive: true, force: true });
-    mkdirSync(PKG_DIR, { recursive: true });
-    // npm, not pnpm: this tree must not join the workspace or the lockfile.
-    //
-    // Bounded, and npm's own retries are off. Unbounded, a registry that accepts
-    // the connection and then stalls holds the script forever with no output,
-    // which reads as a hang in the verification run rather than a network fault.
-    try {
-      execFileSync(
-        "npm",
-        [
-          "install",
-          "--no-save",
-          "--no-audit",
-          "--no-fund",
-          "--fetch-retries=1",
-          "--fetch-timeout=60000",
-          `@sparticuz/chromium@${VERSION}`,
-        ],
-        { cwd: PKG_DIR, stdio: "inherit", timeout: 300_000 },
-      );
+      renameSync(STAGING, OUT);
     } catch (error) {
-      throw new Error(
-        `could not install @sparticuz/chromium@${VERSION} within 5 minutes: ${error}`,
-      );
+      if (!isPublishedInstall(OUT)) throw error;
+      log(`  another run published ${OUT} first; using it`);
     }
-    // Claim the directory, so a later run can tell it apart from someone else's.
-    writeFileSync(path.join(PKG_DIR, MARKER), `${VERSION}\n`);
+  } finally {
+    // This path belongs to this attempt alone, even if npm timed out midway.
+    rmSync(STAGING, { recursive: true, force: true });
   }
+}
 
-  // Resolved through the package directory rather than through
-  // `require.resolve("@sparticuz/chromium/package.json")`, which its `exports`
-  // map refuses.
-  const pkgRoot = path.join(PKG_DIR, "node_modules", "@sparticuz", "chromium");
-  if (!existsSync(pkgRoot)) throw new Error(`package not found at ${pkgRoot}`);
-  const binDir = path.join(pkgRoot, "bin");
-  const libDir = path.join(STAGING, "lib");
+function installChromiumPackage(packageDir) {
+  mkdirSync(packageDir);
+  log(`Installing @sparticuz/chromium@${VERSION} …`);
+  try {
+    execFileSync(
+      "npm",
+      [
+        "install",
+        "--no-save",
+        "--no-audit",
+        "--no-fund",
+        "--fetch-retries=1",
+        "--fetch-timeout=60000",
+        `@sparticuz/chromium@${VERSION}`,
+      ],
+      {
+        cwd: packageDir,
+        stdio: "inherit",
+        timeout: 300_000,
+        killSignal: "SIGKILL",
+      },
+    );
+  } catch (error) {
+    throw new Error(
+      `could not install @sparticuz/chromium@${VERSION}: ${error}`,
+    );
+  }
+  const pkgRoot = path.join(
+    packageDir,
+    "node_modules",
+    "@sparticuz",
+    "chromium",
+  );
+  const { version } = JSON.parse(
+    readFileSync(path.join(pkgRoot, "package.json"), "utf8"),
+  );
+  if (version !== VERSION) {
+    throw new Error(
+      `installed chromium package is ${version}, expected ${VERSION}`,
+    );
+  }
+  return path.join(pkgRoot, "bin");
+}
+
+function extractBrowser(binDir, staging) {
+  const libDir = path.join(staging, "lib");
   mkdirSync(libDir, { recursive: true });
 
   log("Extracting the browser …");
   const browserBytes = decompress(
     path.join(binDir, "chromium.br"),
-    path.join(STAGING, "chromium"),
+    path.join(staging, "chromium"),
   );
-  chmodSync(path.join(STAGING, "chromium"), 0o755);
+  chmodSync(path.join(staging, "chromium"), 0o755);
   log(`  chromium ${browserBytes} bytes`);
 
   // Without these the browser aborts before it can report a version: the AL2023
@@ -295,50 +283,21 @@ if (hasBrowser(OUT)) {
   for (const name of ["al2023.tar.br", "swiftshader.tar.br", "fonts.tar.br"]) {
     const source = path.join(binDir, name);
     if (!existsSync(source)) continue;
-    const tar = path.join(STAGING, name.replace(/\.br$/, ""));
+    const tar = path.join(staging, name.replace(/\.br$/, ""));
     decompress(source, tar);
-    unpackTar(tar, STAGING);
+    unpackTar(tar, staging);
     rmSync(tar, { force: true });
   }
 
   // al2023 extracts its libraries to the archive root; put them where the
   // launcher's LD_LIBRARY_PATH expects them.
-  for (const entry of readdirSync(STAGING)) {
+  for (const entry of readdirSync(staging)) {
     if (entry.endsWith(".so") || /\.so\.\d+/.test(entry)) {
-      copyFileSync(path.join(STAGING, entry), path.join(libDir, entry));
+      copyFileSync(path.join(staging, entry), path.join(libDir, entry));
     }
   }
   log(`  ${readdirSync(libDir).length} shared libraries`);
-
-  // The rename publishes the complete tree and its existing ownership marker.
-  // A concurrent winner is a success, not a failure.
-  //
-  // Two processes can both see `OUT` absent and both extract; the unique
-  // staging directory is what lets them get this far without colliding. The first
-  // rename publishes its tree, and the second then fails with ENOTEMPTY, because
-  // `rename` onto an existing non-empty directory is an error rather than a
-  // replace. That is not a fault in this run: the browser it wanted is on disk.
-  try {
-    renameSync(STAGING, OUT);
-  } catch (error) {
-    if (!isPublishedInstall(OUT)) {
-      // Anything else is a real failure, and the staging directory is left in
-      // place because it may be the only complete copy.
-      throw error;
-    }
-    log(`  another run published ${OUT} first; using it`);
-    rmSync(STAGING, { recursive: true, force: true });
-  }
 }
-
-export const LAUNCH_FLAGS = [
-  "--headless=new",
-  "--no-sandbox",
-  "--disable-gpu",
-  "--no-zygote",
-  "--single-process",
-  "--disable-dev-shm-usage",
-];
 
 const version = execFileSync(path.join(OUT, "chromium"), ["--version"], {
   env: { ...process.env, LD_LIBRARY_PATH: `${path.join(OUT, "lib")}:${OUT}` },
@@ -348,4 +307,4 @@ const version = execFileSync(path.join(OUT, "chromium"), ["--version"], {
 log(`\n${version}`);
 log(`CHROMIUM_PATH=${path.join(OUT, "chromium")}`);
 log(`LD_LIBRARY_PATH=${path.join(OUT, "lib")}:${OUT}`);
-log(`\nLaunch flags: ${LAUNCH_FLAGS.join(" ")}`);
+log(`\nLaunch flags: ${CHROMIUM_LAUNCH_FLAGS.join(" ")}`);

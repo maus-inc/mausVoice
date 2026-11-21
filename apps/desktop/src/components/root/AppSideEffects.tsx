@@ -1,6 +1,7 @@
 import { latestVisibleTranscription } from "../../utils/latest-visible-transcription";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { commands } from "@maus-inc/desktop-native-apis";
 import { Member, Nullable, User } from "@maus-inc/types";
@@ -28,7 +29,10 @@ import {
   refreshRemoteReceiverStatus,
   startRemoteReceiver,
 } from "../../actions/remote-receiver.actions";
-import { handleRemoteFinalTextReceived } from "../../actions/remote-transcript.actions";
+import {
+  handleRemoteFinalTextReceived,
+  type RemoteFinalTextReceivedPayload,
+} from "../../actions/remote-transcript.actions";
 import {
   checkForAppUpdates,
   openUpdateDialog,
@@ -137,14 +141,6 @@ type RecordingLevelPayload = {
 
 type BridgeHotkeyTriggerPayload = {
   hotkey: string;
-};
-
-type RemoteFinalTextReceivedPayload = {
-  senderDeviceId: string;
-  eventId: string;
-  text: string;
-  mode: string;
-  createdAt: string;
 };
 
 // Timeout for Firebase Auth initialization.
@@ -560,7 +556,7 @@ export const AppSideEffects = () => {
       });
   });
 
-  useTauriListen<RemoteFinalTextReceivedPayload>(
+  useTauriListen<RemoteFinalTextReceivedPayload & { receiptEvent?: string }>(
     "remote_final_text_received",
     async (payload) => {
       // Inserting the remote transcript is a window-global action; only the
@@ -568,7 +564,20 @@ export const AppSideEffects = () => {
       if (!isMainWindow) {
         return;
       }
-      await handleRemoteFinalTextReceived(payload);
+      let delivered = false;
+      try {
+        delivered = await handleRemoteFinalTextReceived(payload);
+      } finally {
+        if (payload.receiptEvent) {
+          await emit(payload.receiptEvent, delivered).catch(
+            (error: unknown) => {
+              getLogger().warning(
+                `Failed to confirm remote transcript delivery: ${error}`,
+              );
+            },
+          );
+        }
+      }
       if (isLocalDataClearRequested()) return;
       await refreshRemoteReceiverStatus().catch((error: unknown) => {
         if (!isLocalDataClearRequested()) {
@@ -910,7 +919,7 @@ export const AppSideEffects = () => {
       surfaceMainWindowDetached();
     } else if (payload.action === "open_transcriptions") {
       surfaceMainWindowDetached();
-      // The shared action lazily imports the router and logs navigation
+      // The shared action uses the lazy router entry point and logs navigation
       // failures, so it works before Router mounts and stays identical to the
       // retranscription snackbar's History action.
       openTranscriptionsHistory();

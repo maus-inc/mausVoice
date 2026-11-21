@@ -33,6 +33,7 @@ import {
   beginLocalDataClear,
   LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
 } from "../../utils/local-data-write-gate";
+import { resetNativeRecordingSession } from "../../utils/native-recording-session";
 import { VoiceInstructionRecorder } from "../composer/voiceInstructionRecorder";
 import { MicCheckForm } from "../onboarding/MicCheckForm";
 import { MicrophoneTester } from "./MicrophoneTester";
@@ -42,6 +43,7 @@ setMatchMedia(true);
 
 describe("non-dictation microphone local-data clear guards", () => {
   beforeEach(() => {
+    resetNativeRecordingSession();
     invokeMock.mockReset();
     invokeMock.mockResolvedValue(undefined);
     localStorage.clear();
@@ -69,6 +71,7 @@ describe("non-dictation microphone local-data clear guards", () => {
       canUseProvider: () => true,
       speechRecognitionSupported: true,
       unsupportedMessage: () => "Unsupported",
+      recordingUnavailableMessage: () => "Could not start recording",
       onListeningChange,
       onTranscript: vi.fn(),
       onError,
@@ -85,7 +88,17 @@ describe("non-dictation microphone local-data clear guards", () => {
   });
 
   it("aborts an active VoiceInstructionRecorder immediately when local-data clear is requested", async () => {
-    const invoke = vi.fn().mockResolvedValue(undefined);
+    let generation = 0;
+    const invoke = vi.fn((command: string) => {
+      if (command === "recording_generation") {
+        generation += 1;
+        return Promise.resolve(generation);
+      }
+      if (command === "start_recording") {
+        return Promise.resolve({ sampleRate: 16_000 });
+      }
+      return Promise.resolve(undefined);
+    });
     const onListeningChange = vi.fn();
     const recorder = new VoiceInstructionRecorder({
       invoke,
@@ -96,6 +109,7 @@ describe("non-dictation microphone local-data clear guards", () => {
       canUseProvider: () => true,
       speechRecognitionSupported: false,
       unsupportedMessage: () => "Unsupported",
+      recordingUnavailableMessage: () => "Could not start recording",
       onListeningChange,
       onTranscript: vi.fn(),
       onError: vi.fn(),
@@ -109,7 +123,10 @@ describe("non-dictation microphone local-data clear guards", () => {
     const releaseClear = await beginLocalDataClear();
     try {
       expect(recorder.getState()).toBe("idle");
-      expect(invoke).toHaveBeenCalledWith("stop_recording");
+      expect(invoke).toHaveBeenCalledWith("discard_recording", {
+        ownerId: expect.any(String),
+        generation: 1,
+      });
       expect(onListeningChange).toHaveBeenLastCalledWith(false);
     } finally {
       localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
@@ -119,10 +136,11 @@ describe("non-dictation microphone local-data clear guards", () => {
   });
 
   it("holds the write lease across MicrophoneTester start_recording and aborts on clear", async () => {
-    let resolveStart!: () => void;
+    let resolveStart!: (value: { sampleRate: number }) => void;
     invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "recording_generation") return Promise.resolve(1);
       if (cmd === "start_recording") {
-        return new Promise<void>((resolve) => {
+        return new Promise((resolve) => {
           resolveStart = resolve;
         });
       }
@@ -154,9 +172,15 @@ describe("non-dictation microphone local-data clear guards", () => {
       act(() => {
         recordBtn?.click();
       });
-      expect(invokeMock).toHaveBeenCalledWith("start_recording", {
-        args: { preferredMicrophone: null },
-      });
+      // The admission is requested first, so the microphone open is dispatched
+      // one microtask later.
+      await vi.waitFor(() =>
+        expect(invokeMock).toHaveBeenCalledWith("start_recording", {
+          ownerId: expect.any(String),
+          generation: 1,
+          args: { preferredMicrophone: null },
+        }),
+      );
 
       let clearPromise!: Promise<() => void>;
       act(() => {
@@ -164,7 +188,7 @@ describe("non-dictation microphone local-data clear guards", () => {
       });
 
       await act(async () => {
-        resolveStart();
+        resolveStart({ sampleRate: 16_000 });
         releaseClear = await clearPromise;
       });
 

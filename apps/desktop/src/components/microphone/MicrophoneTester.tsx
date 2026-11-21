@@ -4,11 +4,12 @@ import { Nullable } from "@maus-inc/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
+import type { StopRecordingResponse } from "../../types/transcription-session.types";
 import {
   getLocalDataClearGeneration,
   isLocalDataClearRequested,
 } from "../../utils/local-data-write-gate";
-import { invokeStopRecording } from "../../utils/recorded-audio.utils";
+import { invokeStopRecording } from "../../utils/native-recording-session";
 import { AudioWaveform } from "../common/AudioWaveform";
 import {
   invokeGuardedRecordingStart,
@@ -224,7 +225,7 @@ export const MicrophoneTester = ({
     setSyncedTestState("starting");
 
     try {
-      await invokeGuardedRecordingStart<void>(preferredMicrophone ?? null);
+      await invokeGuardedRecordingStart(preferredMicrophone ?? null);
       if (
         !mountedRef.current ||
         opId !== opIdRef.current ||
@@ -260,6 +261,33 @@ export const MicrophoneTester = ({
     setSyncedTestState,
   ]);
 
+  /** Publish what the test captured, and say why when it is not a clean take.
+   *
+   * A device that stops delivering audio partway through still yields usable
+   * samples, so the preview plays them and the message explains the short
+   * result instead of reporting a clean test. */
+  const showPreviewOutcome = useCallback(
+    (response: StopRecordingResponse) => {
+      const url = createPreviewUrl(response.samples, response.sampleRate ?? 0);
+      if (response.captureFailed) {
+        updatePreviewUrl(url ?? null);
+        setTestError(
+          "The microphone stopped partway through. The preview is shorter than the test.",
+        );
+        return;
+      }
+      if (url) {
+        updatePreviewUrl(url);
+        return;
+      }
+      updatePreviewUrl(null);
+      setTestError(
+        "We didn't detect any audio. Try speaking while the test is running.",
+      );
+    },
+    [createPreviewUrl, setTestError, updatePreviewUrl],
+  );
+
   const handleStopTest = useCallback(
     async (opts?: { silent?: boolean }) => {
       const currentState = testStateRef.current;
@@ -272,18 +300,9 @@ export const MicrophoneTester = ({
 
       try {
         const response = await invokeStopRecording();
-        const rate = response.sampleRate ?? 0;
 
         if (!opts?.silent && !isLocalDataClearRequested()) {
-          const url = createPreviewUrl(response.samples, rate);
-          if (url) {
-            updatePreviewUrl(url);
-          } else {
-            updatePreviewUrl(null);
-            setTestError(
-              "We didn't detect any audio. Try speaking while the test is running.",
-            );
-          }
+          showPreviewOutcome(response);
         } else {
           updatePreviewUrl(null);
         }

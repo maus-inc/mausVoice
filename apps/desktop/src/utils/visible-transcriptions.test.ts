@@ -16,10 +16,16 @@ vi.mock("../repos", () => ({
     deleteTranscription: mocks.remove,
   }),
 }));
-vi.mock("../store", () => ({
-  getAppState: () => mocks.state,
-  produceAppState: (fn: (state: typeof mocks.state) => void) => fn(mocks.state),
-}));
+vi.mock("../store", async () => {
+  const { Immer } = await import("immer");
+  const immer = new Immer({ autoFreeze: false });
+  return {
+    getAppState: () => mocks.state,
+    produceAppState: (fn: (state: typeof mocks.state) => void) => {
+      Object.assign(mocks.state, immer.produce(mocks.state, fn));
+    },
+  };
+});
 vi.mock("../actions/app.actions", () => ({ showErrorSnackbar: mocks.error }));
 vi.mock("./app.utils", () => ({
   registerTranscriptions: (

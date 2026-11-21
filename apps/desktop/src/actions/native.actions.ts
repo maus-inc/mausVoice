@@ -4,6 +4,9 @@ import { getLogger } from "../utils/log.utils";
 import { showErrorSnackbar } from "./app.actions";
 import { getNativeRepo } from "../repos";
 
+export const prepareMicrophone = (preferred: string | null): Promise<string> =>
+  getNativeRepo().prepareMicrophone(preferred);
+
 /**
  * Ask Windows to relaunch the process elevated (UAC). The decision to call
  * this stays on the frontend; Rust only performs the ShellExecuteW bootstrap.

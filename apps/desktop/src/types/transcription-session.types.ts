@@ -1,7 +1,7 @@
-import {
+import type {
   PostProcessMetadata,
   TranscribeAudioMetadata,
-} from "../actions/transcribe.actions";
+} from "./transcription-metadata.types";
 
 export type StopRecordingResponse = {
   samples: number[] | Float32Array;
@@ -22,6 +22,8 @@ export type StopRecordingResponse = {
   capturedMs?: number;
   /** How long the recorder believed it was recording. Only with `captureFault`. */
   expectedMs?: number;
+  /** Capture or physical release could not be confirmed. */
+  captureFailed?: boolean;
 };
 
 export type TranscriptionSessionResult = {

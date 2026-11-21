@@ -287,6 +287,8 @@ type ClassificationRule = {
   exactMarkers?: readonly string[];
   /** Numeric codes matched only as whole words, never inside longer digit runs. */
   statusCodes?: readonly string[];
+  /** Machine codes in prose must be complete tokens, not parts of identifiers. */
+  tokenCodes?: readonly string[];
   category: PostProcessErrorCategory;
 };
 
@@ -298,6 +300,9 @@ const matchClassificationRules = (
   rules.find(
     (rule) =>
       includesAny(value, rule.markers) ||
+      rule.tokenCodes?.some((code) =>
+        value.split(/[^a-z0-9_]+/).includes(code),
+      ) ||
       rule.statusCodes?.some((code) =>
         new RegExp(String.raw`\b${code}\b`).test(value),
       ),
@@ -446,6 +451,7 @@ const MESSAGE_CLASSIFICATION_RULES: readonly ClassificationRule[] = [
   {
     markers: AUTHENTICATION_MESSAGE_MARKERS,
     statusCodes: AUTHENTICATION_STATUS_CODES,
+    tokenCodes: AUTHENTICATION_CODES,
     category: POST_PROCESS_ERROR_CATEGORY.authentication,
   },
   {

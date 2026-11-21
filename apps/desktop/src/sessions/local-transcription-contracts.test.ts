@@ -66,6 +66,9 @@ beforeEach(() => {
 });
 afterEach(() => setAppState(structuredClone(INITIAL_APP_STATE), true));
 
+const ADMISSION = { ownerId: "local-dictation", generation: 1 };
+const makeSession = () => new LocalTranscriptionSession(() => ADMISSION);
+
 describe("local batch transcription contracts", () => {
   it("honors the request opt-out rather than rereading the live preference", async () => {
     await new LocalTranscribeAudioRepo().transcribeAudio({
@@ -110,7 +113,7 @@ describe("local filter ownership", () => {
     "keeps a recording's disabled filter when the later preference is %s",
     async (later) => {
       setFilter(false);
-      const session = new LocalTranscriptionSession();
+      const session = makeSession();
       await session.onRecordingStart(16000);
       setFilter(later);
       const output = await session.finalize({ samples, sampleRate: 16000 });
@@ -122,7 +125,7 @@ describe("local filter ownership", () => {
     },
   );
   it("transcribes nothing when the recording carries no audio", async () => {
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(16000);
     const output = await session.finalize({
       samples: new Float32Array(0),
@@ -135,7 +138,7 @@ describe("local filter ownership", () => {
     mocks.getModelStatus.mockRejectedValueOnce(
       new Error("sidecar unreachable"),
     );
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(16000);
     const output = await session.finalize({ samples, sampleRate: 16000 });
     expect(output.rawTranscript).toBe("thank you");
@@ -152,12 +155,12 @@ describe("local startup audio capture", () => {
     handler?.({
       event: "audio_chunk",
       id: 0,
-      payload: { samples, offset },
+      payload: { samples, offset, ...ADMISSION },
     });
   };
 
   it("delivers audio captured before the pretranscriber exists, in order, with its index", async () => {
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
 
     await session.onBeforeRecordingStart();
     emitChunk([0.1, 0.2], 0);
@@ -174,14 +177,14 @@ describe("local startup audio capture", () => {
   });
 
   it("still subscribes when recording starts without the early hook", async () => {
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
     await session.onRecordingStart(16000);
     expect(listen).toHaveBeenCalledTimes(1);
   });
 
   it("retries the subscription at start when the early hook could not subscribe", async () => {
     vi.mocked(listen).mockRejectedValueOnce(new Error("ipc unavailable"));
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
 
     await expect(session.onBeforeRecordingStart()).resolves.toBeUndefined();
     await session.onRecordingStart(16000);
@@ -202,7 +205,7 @@ describe("local startup audio capture", () => {
         metadata: {},
         warnings: [],
       });
-      const session = new LocalTranscriptionSession();
+      const session = makeSession();
 
       await session.onBeforeRecordingStart();
       const second = Array.from({ length: rate }, () => 0.1);
@@ -222,7 +225,7 @@ describe("local startup audio capture", () => {
   );
 
   it("keeps a minute of 16 kHz startup audio, which is under the sample cap", async () => {
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
 
     await session.onBeforeRecordingStart();
     const second = Array.from({ length: 16_000 }, () => 0.1);
@@ -247,7 +250,7 @@ describe("local startup audio capture", () => {
   });
 
   it("releases the early listener on cleanup, before the pretranscriber exists", async () => {
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
 
     await session.onBeforeRecordingStart();
     session.cleanup();
@@ -263,7 +266,7 @@ describe("local startup audio capture", () => {
       metadata: {},
       warnings: [],
     });
-    const session = new LocalTranscriptionSession();
+    const session = makeSession();
 
     await session.onRecordingStart(16000);
     setFilter(true);

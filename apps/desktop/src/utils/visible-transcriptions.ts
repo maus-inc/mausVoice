@@ -89,7 +89,7 @@ export const refreshVisibleTranscriptions = async (
       registerTranscriptions(draft, unchanged);
       draft.transcriptions.transcriptionIds = withSessionOnlyRows(
         visible.map((row) => row.id),
-        current,
+        draft.transcriptionById,
       );
     });
     return;

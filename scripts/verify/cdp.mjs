@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
 import net from "node:net";
+import { CHROMIUM_LAUNCH_FLAGS } from "./browser-config.mjs";
 
 // Both the browser and its libraries live under /tmp, which this environment
 // wipes between turns. Rather than fail with a confusing spawn error, extract
@@ -38,6 +39,7 @@ function ensureChromium() {
   execFileSync(process.execPath, [installer, "--dir", CHR_DIR], {
     stdio: "inherit",
   });
+  if (!existsSync(CHROME)) throw new Error(`no chromium at ${CHROME}`);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -76,25 +78,47 @@ async function freePort() {
   });
 }
 
+async function waitForDebugger(port) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const version = await httpJson(port, "/json/version").catch(() => null);
+    if (version?.webSocketDebuggerUrl) return version;
+    await sleep(250);
+  }
+  return null;
+}
+
+function manageChromiumProcess(proc, profile) {
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    process.off("exit", cleanup);
+    process.off("SIGINT", interrupt);
+    if (proc.exitCode === null && proc.signalCode === null)
+      proc.kill("SIGKILL");
+    rmSync(profile, { recursive: true, force: true });
+  };
+  const interrupt = () => {
+    cleanup();
+    process.exit(130);
+  };
+  process.once("exit", cleanup);
+  process.once("SIGINT", interrupt);
+  return cleanup;
+}
+
 export async function launch({ port, width = 1280, height = 900 } = {}) {
   // A fixed port collides with a browser left over from an earlier run, and the
   // symptom is a misleading "never opened its debugging port" rather than an
   // address-in-use error. Ask the OS instead.
   port = port ?? (await freePort());
   ensureChromium();
-  if (!existsSync(CHROME)) {
-    throw new Error(`no chromium at ${CHROME}`);
-  }
   const profile = mkdtempSync(join(tmpdir(), "cdp-"));
   const proc = spawn(
     CHROME,
     [
-      "--headless=new",
-      "--no-sandbox",
-      "--disable-gpu",
-      "--no-zygote",
-      "--single-process",
-      "--disable-dev-shm-usage",
+      ...CHROMIUM_LAUNCH_FLAGS,
       "--disable-software-rasterizer",
       "--hide-scrollbars",
       "--force-color-profile=srgb",
@@ -116,51 +140,25 @@ export async function launch({ port, width = 1280, height = 900 } = {}) {
   proc.stdout.on("data", (d) => (logs += d));
   proc.stderr.on("data", (d) => (logs += d));
 
-  // Wait for the debugging endpoint rather than sleeping a guessed interval.
-  const deadline = Date.now() + 30_000;
-  let version = null;
-  while (Date.now() < deadline) {
-    try {
-      version = await httpJson(port, "/json/version");
-      if (version?.webSocketDebuggerUrl) break;
-    } catch {
-      // not up yet
-    }
-    await sleep(250);
-  }
-  if (!version?.webSocketDebuggerUrl) {
-    proc.kill("SIGKILL");
-    // The profile directory exists by now and nothing else will remove it. The
-    // `cleanup` below is only reachable on the success path, so a browser that
-    // never came up left one directory behind per failed run -- the same leak
-    // the comment under `cleanup` says the hook was added to stop.
-    rmSync(profile, { recursive: true, force: true });
+  const cleanup = manageChromiumProcess(proc, profile);
+  const version = await waitForDebugger(port);
+  if (!version) {
+    cleanup();
     throw new Error(
       `chromium never opened its debugging port\n${logs.slice(-2000)}`,
     );
   }
-  // One call that puts everything back. The browser writes a profile directory
-  // per run and leaves it behind otherwise, and running these scripts a few
-  // times a day for a week filled /tmp with a few thousand of them. Exposed
-  // rather than done here because the caller owns the lifetime, and called from
-  // an exit hook as well so a throw between launch and cleanup does not leave
-  // Chromium running against a directory nothing will ever remove.
-  let cleanedUp = false;
-  const cleanup = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    if (proc.exitCode === null && proc.signalCode === null) {
-      proc.kill("SIGKILL");
-    }
-    rmSync(profile, { recursive: true, force: true });
-  };
-  process.once("exit", cleanup);
-  process.once("SIGINT", () => {
-    cleanup();
-    process.exit(130);
-  });
 
   return { proc, port, version, logs: () => logs, cleanup };
+}
+
+function settleReply(pending, message) {
+  const reply = pending.get(message.id);
+  if (!reply) return;
+  pending.delete(message.id);
+  clearTimeout(reply.timer);
+  if (message.error) reply.reject(new Error(JSON.stringify(message.error)));
+  else reply.resolve(message.result);
 }
 
 /** A tab with a request/response CDP session over the raw WebSocket. */
@@ -198,22 +196,13 @@ export async function newPage(port) {
   const pending = new Map();
   const listeners = new Map();
   ws.addEventListener("message", (event) => {
-    const msg = JSON.parse(event.data);
-    if (msg.id && pending.has(msg.id)) {
-      const { resolve, reject, timer } = pending.get(msg.id);
-      pending.delete(msg.id);
-      // The reply arrived, so the timeout is no longer needed. Left uncleared it
-      // stays armed for its full 30 s and keeps the event loop alive, which
-      // delayed every verify script's exit by up to half a minute after it had
-      // already printed its report.
-      clearTimeout(timer);
-      if (msg.error) reject(new Error(JSON.stringify(msg.error)));
-      else resolve(msg.result);
+    const message = JSON.parse(event.data);
+    if (message.id !== undefined) {
+      settleReply(pending, message);
       return;
     }
-    if (msg.method) {
-      for (const fn of listeners.get(msg.method) ?? []) fn(msg.params);
-    }
+    for (const listener of listeners.get(message.method) ?? [])
+      listener(message.params);
   });
 
   const send = (method, params = {}) =>

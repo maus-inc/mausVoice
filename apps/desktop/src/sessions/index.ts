@@ -4,6 +4,7 @@ import { getAppState } from "../store";
 import { TranscriptionSession } from "../types/transcription-session.types";
 import { ApiTranscriptionPrefs, TranscriptionPrefs } from "../utils/user.utils";
 import { AssemblyAITranscriptionSession } from "./assemblyai-transcription-session";
+import type { AudioChunkAdmission } from "./audio-chunk-events";
 import { AzureTranscriptionSession } from "./azure-transcription-session";
 import { BatchTranscriptionSession } from "./batch-transcription-session";
 import { DeepgramTranscriptionSession } from "./deepgram-transcription-session";
@@ -93,6 +94,7 @@ const CLOUD_TRANSCRIPTION_PLANS: Readonly<
 
 export const createTranscriptionSession = (
   prefs: TranscriptionPrefs,
+  getAdmission: () => AudioChunkAdmission | null = () => null,
 ): TranscriptionSession => {
   if (prefs.mode === "api") {
     const plan = CLOUD_TRANSCRIPTION_PLANS[prefs.provider];
@@ -102,7 +104,7 @@ export const createTranscriptionSession = (
   }
 
   if (prefs.mode === "local") {
-    return new LocalTranscriptionSession();
+    return new LocalTranscriptionSession(getAdmission);
   }
 
   return new BatchTranscriptionSession();

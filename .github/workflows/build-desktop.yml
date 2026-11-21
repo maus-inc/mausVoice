@@ -36,7 +36,11 @@ jobs:
   build:
     name: Build Desktop (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    # A hung build must not hold a runner for the six-hour default, so every job
+    # is capped. The cap is a guard, not a budget: on 2026-11-06 a healthy build
+    # reached it twice — macOS at 35 minutes while the arm64 pool reported
+    # capacity constraints, then Linux at 35m16s — so the ceiling is 60.
+    timeout-minutes: 60
     permissions:
       contents: read
       actions: write
@@ -175,7 +179,7 @@ jobs:
         # DevTools surface so QA can inspect them. Stable releases must NOT use
         # this feature (see release.yml), which removes DevTools at compile time.
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" desktop-build pnpm run tauri build --ci --features debug-assist ${{ matrix.args }}
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" desktop-build pnpm run tauri build --ci --features debug-assist ${{ matrix.args }} -- --locked
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

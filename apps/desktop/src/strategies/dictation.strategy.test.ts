@@ -638,6 +638,57 @@ describe("DictationStrategy backlog lifecycle", () => {
       expect(result.pendingPersistence).toBeUndefined();
     });
 
+    it("defers History persistence while a hands-free delay holds delivery", async () => {
+      // CodeAnt Major: the delay is long enough for Incognito to flip, so the
+      // write must stay on the stop path and re-read the preference after
+      // delivery settles, exactly like simulated typing.
+      const initial = getAppState();
+      setAppState(
+        {
+          userPrefs: {
+            ...(initial.userPrefs ?? createDefaultPreferences()),
+            handsFreeDelayMs: 2_000,
+            incognitoModeEnabled: false,
+          },
+        },
+        false,
+      );
+      const releaseRouting = deferred<{
+        delivered: boolean;
+        remote: boolean;
+        deliveredText: string;
+      }>();
+      routeTranscriptOutputMock.mockImplementationOnce(
+        () => releaseRouting.promise,
+      );
+      const persistTranscriptNow = vi.fn().mockResolvedValue({
+        transcription: { id: "row-1" },
+        wordCount: 2,
+      });
+
+      const pending = new DictationStrategy().handleTranscript(
+        createHandleTranscriptParams({
+          processedTranscript: "clean transcript",
+          persistTranscriptNow,
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(routeTranscriptOutputMock).toHaveBeenCalledTimes(1),
+      );
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+
+      releaseRouting.resolve({
+        delivered: true,
+        remote: false,
+        deliveredText: "clean transcript ",
+      });
+
+      const result = await pending;
+      expect(persistTranscriptNow).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ historyOwner: "stop-path" });
+      expect(result.pendingPersistence).toBeUndefined();
+    });
+
     it("pins skipReview while the concurrent row is being written", async () => {
       // A review opened mid-delivery would persist an edited second row; the
       // routing call must carry skipReview so that cannot happen.

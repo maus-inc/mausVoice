@@ -422,20 +422,15 @@ fn refresh_warm_device(app_handle: &tauri::AppHandle) {
     let Some(warm) = warm_capture(app_handle) else {
         return;
     };
-    // `has_held_stream`, not `is_ready`: the second question is "can a press use
-    // this", and a stream that stopped delivering answers no. That is exactly the
-    // stream a device change should replace, and gating on readiness meant the
-    // refresh was skipped for the one case it exists to fix. `refresh_device`
-    // already returns on its own when the slot is empty, so this asks the
-    // structural question the slot actually answers.
-    if !warm.has_held_stream() {
-        // Nothing is held, so there is nothing to follow. A cold press always
-        // resolves the device fresh.
-        return;
-    }
+    // Even reading the warm slot now crosses the CPAL owner thread. Keep both
+    // the structural check and the potentially blocking refresh off this loop.
     let spawned = std::thread::Builder::new()
         .name("warm-refresh".to_string())
-        .spawn(move || warm.refresh_device());
+        .spawn(move || {
+            if warm.has_held_stream() {
+                warm.refresh_device();
+            }
+        });
     if let Err(err) = spawned {
         log::warn!("could not check the held device after focus: {err}");
     }
@@ -479,6 +474,7 @@ fn handle_window_event(window: &Window, event: &WindowEvent) {
         refresh_warm_device(window.app_handle());
     }
     match event {
+        WindowEvent::Destroyed => crate::commands::retire_recording_window(window, true),
         WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
             api.prevent_close();
             save_main_window_state(window.app_handle());
@@ -637,6 +633,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let (recorder, warm) = crate::platform::audio::new_audio_backends();
         app.manage(recorder);
         app.manage(warm);
+        app.manage(std::sync::Arc::new(
+            crate::platform::recording_ownership::RecordingOwnership::default(),
+        ));
 
         // Pre-warm audio output for instant chime playback
         crate::system::audio_feedback::warm_audio_output();
@@ -708,6 +707,25 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 let _ = crate::platform::window::surface_main_window(&window);
             }
         }))
+        .plugin({
+            let builder = tauri::plugin::Builder::<tauri::Wry>::new("recording-lifecycle");
+            #[cfg(target_os = "linux")]
+            let builder = builder.on_webview_ready(|webview| {
+                use gtk::prelude::ObjectExt;
+                let window = webview.window();
+                if let Err(error) = webview.with_webview(move |native| {
+                    native
+                        .inner()
+                        .connect_local("web-process-terminated", false, move |_| {
+                            crate::commands::retire_recording_window(&window, true);
+                            None
+                        });
+                }) {
+                    log::error!("Failed to watch recording webview termination: {error}");
+                }
+            });
+            builder.build()
+        })
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![AUTOSTART_HIDDEN_ARG]),
@@ -734,6 +752,13 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 .with_filter(|label| label == "main")
                 .build(),
         )
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                // A reload replaces the JavaScript owner without destroying the
+                // native window. Retire its scope before the new page starts.
+                crate::commands::retire_recording_window(&webview.window(), false);
+            }
+        })
         .on_window_event(handle_window_event)
         .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
@@ -765,8 +790,14 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::remote_receiver_status,
             crate::commands::remote_sender_deliver_final_text,
             crate::commands::remote_sender_pair_with_receiver,
+            crate::commands::recording_generation,
+            crate::commands::claim_browser_recording,
+            crate::commands::release_browser_recording,
             crate::commands::start_recording,
             crate::commands::stop_recording,
+            crate::commands::acknowledge_recording,
+            crate::commands::discard_recording,
+            crate::commands::force_stop_recording,
             crate::commands::pause_recording,
             crate::commands::resume_recording,
             crate::commands::store_transcription_audio,
@@ -799,6 +830,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::hotkey_save,
             crate::commands::hotkey_delete,
             crate::commands::hotkey_replace_style_hotkeys,
+            crate::commands::hotkey_replace_dictation_language_hotkeys,
             crate::commands::set_tray_title,
             crate::commands::set_menu_icon,
             crate::commands::set_tray_language_menu,

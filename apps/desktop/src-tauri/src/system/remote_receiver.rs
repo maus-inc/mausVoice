@@ -3,15 +3,17 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use std::net::UdpSocket;
 use tauri::async_runtime;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, EventId, Listener};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
 use super::remote_channel::{ReceiverMessage, SenderMessage};
 use crate::state::{RemoteReceiverEventDetails, RemoteReceiverState, RemoteReceiverStatus};
 
 pub const EVT_REMOTE_FINAL_TEXT_RECEIVED: &str = "remote_final_text_received";
+
+use super::remote_channel::MAX_FRAME_BYTES;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +23,17 @@ pub struct RemoteFinalTextReceivedPayload {
     pub text: String,
     pub mode: String,
     pub created_at: String,
+    pub receipt_event: String,
+}
+
+const RENDERER_RECEIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
+struct RendererReceipt<'a>(&'a AppHandle, EventId);
+
+impl Drop for RendererReceipt<'_> {
+    fn drop(&mut self) {
+        self.0.unlisten(self.1);
+    }
 }
 
 pub async fn start(
@@ -131,6 +144,43 @@ fn detect_connect_address() -> Option<String> {
 
 pub fn stop(state: RemoteReceiverState) {
     state.stop();
+}
+
+/// A sender session that presented a valid shared secret at `SessionHello`.
+///
+/// The secret is kept for the life of the connection so every later frame can be
+/// re-authorized against the device row: revoking or re-trusting a device then
+/// takes effect on its next frame instead of when the connection closes.
+#[derive(Clone)]
+struct AuthenticatedSender {
+    device_id: String,
+    auth_token: String,
+    /// The session the `SessionHello` authenticated; every later frame must
+    /// carry it or the frame is rejected instead of delivered and acked.
+    session_id: String,
+}
+
+impl AuthenticatedSender {
+    fn matches(&self, session_id: &str) -> bool {
+        self.session_id == session_id
+    }
+}
+
+/// Compare two shared secrets without stopping at the first differing byte.
+///
+/// The transport has no TLS and the secret is a bearer token, so a comparison
+/// that returns early leaks its prefix length to anyone who can time the reply.
+fn secret_matches(expected: &str, presented: &str) -> bool {
+    let expected = expected.as_bytes();
+    let presented = presented.as_bytes();
+    if expected.len() != presented.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (left, right) in expected.iter().zip(presented.iter()) {
+        difference |= left ^ right;
+    }
+    difference == 0
 }
 
 fn generate_shared_secret() -> String {
@@ -272,7 +322,7 @@ struct ConnectionMessageHandler<'a> {
     receiver_generation: u64,
     writer: &'a mut tokio::net::tcp::OwnedWriteHalf,
     shutdown: &'a mut watch::Receiver<bool>,
-    authenticated_sender: &'a mut Option<String>,
+    authenticated_sender: &'a mut Option<AuthenticatedSender>,
 }
 
 impl ConnectionMessageHandler<'_> {
@@ -472,7 +522,8 @@ impl ConnectionMessageHandler<'_> {
             device_result.map_err(|error| format!("Failed to validate sender device: {error}"))?;
 
         match device {
-            Some(device) if device.trusted && device.shared_secret == auth_token => {}
+            Some(device)
+                if device.trusted && secret_matches(&device.shared_secret, &auth_token) => {}
             Some(_) => {
                 return self
                     .reject_sender(session_id, &sender_device_id, SenderRejection::Unauthorized)
@@ -488,19 +539,47 @@ impl ConnectionMessageHandler<'_> {
         if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
             return Ok(false);
         }
-        *self.authenticated_sender = Some(sender_device_id);
-        write_message_while_active(
-            self.writer,
-            &ReceiverMessage::SessionAck {
-                session_id,
-                receiver_device_id: self.state.status().device_id,
-            },
-            self.shutdown,
-            self.state,
-            self.receiver_generation,
-            self.write_generation,
-        )
-        .await
+        *self.authenticated_sender = Some(AuthenticatedSender {
+            device_id: sender_device_id,
+            auth_token,
+            session_id: session_id.clone(),
+        });
+        self.write_session_ack(session_id).await
+    }
+
+    /// Re-authorize the connection's sender for one frame.
+    ///
+    /// The session was authenticated once at `SessionHello`, but a bearer token
+    /// on a plain TCP stream must be re-checked per frame: a device revoked or
+    /// re-trusted while it holds an open connection would otherwise keep
+    /// delivering with the access it had when it connected.
+    ///
+    /// Returns the sender device id, or `None` when the frame must be rejected.
+    /// A failed check clears the session so the peer has to present
+    /// `SessionHello` again.
+    async fn authorize_final_text(&mut self) -> Result<Option<String>, String> {
+        let Some(session) = self.authenticated_sender.clone() else {
+            return Ok(None);
+        };
+        let device_result =
+            crate::db::paired_remote_device_queries::fetch_paired_remote_device_by_id(
+                (*self.pool).clone(),
+                &session.device_id,
+            )
+            .await;
+        if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
+            return Ok(None);
+        }
+        let authorized = device_result
+            .map_err(|error| format!("Failed to validate sender device: {error}"))?
+            .is_some_and(|device| {
+                device.trusted && secret_matches(&device.shared_secret, &session.auth_token)
+            });
+        if !authorized {
+            *self.authenticated_sender = None;
+            return Ok(None);
+        }
+        Ok(Some(session.device_id))
     }
 
     async fn handle_final_text(
@@ -512,7 +591,7 @@ impl ConnectionMessageHandler<'_> {
         mode: String,
         created_at: String,
     ) -> Result<bool, String> {
-        let Some(sender_device_id) = self.authenticated_sender.clone() else {
+        let Some(sender_device_id) = self.authorize_final_text().await? else {
             if !record_error_while_active(
                 self.state,
                 self.receiver_generation,
@@ -543,6 +622,11 @@ impl ConnectionMessageHandler<'_> {
             )
             .await;
         };
+        if let Some(active_device) = self.mismatched_session_device(&session_id) {
+            return self
+                .reject_session_mismatch(active_device, session_id, Some(event_id), sequence)
+                .await;
+        }
 
         if mode == "test" {
             let delivered_at = chrono::Utc::now().to_rfc3339();
@@ -561,33 +645,31 @@ impl ConnectionMessageHandler<'_> {
             {
                 return Ok(false);
             }
-            return write_message_while_active(
-                self.writer,
-                &ReceiverMessage::DeliveryAck {
-                    session_id,
-                    event_id,
-                    sequence,
-                    delivered_at,
-                },
-                self.shutdown,
-                self.state,
-                self.receiver_generation,
-                self.write_generation,
-            )
-            .await;
+            return self
+                .write_delivery_ack(session_id, event_id, sequence, delivered_at)
+                .await;
         }
 
         let target_info = current_target_info();
         let target_editable = current_target_editable_status();
+        let (receipt_tx, receipt_rx) = oneshot::channel();
+        let receipt_event = format!("remote_delivery_{}", generate_shared_secret());
+        let receipt = RendererReceipt(
+            self.app,
+            self.app.once(receipt_event.clone(), move |event| {
+                let _ = receipt_tx.send(event.payload() == "true");
+            }),
+        );
         let payload = RemoteFinalTextReceivedPayload {
             sender_device_id: sender_device_id.clone(),
             event_id: event_id.clone(),
             text,
             mode,
             created_at,
+            receipt_event,
         };
 
-        let emit_result = {
+        let emission = {
             let Ok(_event_guard) = crate::db::local_data_write_gate::lock_local_data_write(Some(
                 self.write_generation,
             ))
@@ -598,57 +680,60 @@ impl ConnectionMessageHandler<'_> {
             if !is_connection_current(self.state, self.receiver_generation, self.write_generation) {
                 return Ok(false);
             }
-            self.app.emit(EVT_REMOTE_FINAL_TEXT_RECEIVED, payload)
+            // Revocation uses the same gate. Recheck here so a device revoked
+            // after the initial frame validation cannot hand text to a renderer.
+            if self.authorize_final_text().await?.is_none() {
+                Err("Sender authorization was revoked before delivery.".to_string())
+            } else {
+                self.app
+                    .emit(EVT_REMOTE_FINAL_TEXT_RECEIVED, payload)
+                    .map_err(|error| format!("Failed to emit remote transcript event: {error}"))
+            }
         };
+        let delivered = match emission {
+            Ok(()) => tokio::select! {
+                biased;
+                _ = wait_for_shutdown(self.shutdown) => return Ok(false),
+                result = tokio::time::timeout(RENDERER_RECEIPT_TIMEOUT, receipt_rx) => match result {
+                    Ok(Ok(true)) => Ok(()),
+                    Ok(Ok(false)) => Err("The receiving window did not insert the transcript.".to_string()),
+                    _ => Err("The receiving window did not confirm transcript delivery.".to_string()),
+                },
+            },
+            Err(message) => Err(message),
+        };
+        drop(receipt);
 
-        match emit_result {
+        let event_details = RemoteReceiverEventDetails {
+            sender_device_id: Some(sender_device_id),
+            event_id: Some(event_id.clone()),
+            target_class_name: target_info.class_name.clone(),
+            target_title: target_info.title.clone(),
+            target_editable,
+        };
+        match delivered {
             Ok(()) => {
                 let delivered_at = chrono::Utc::now().to_rfc3339();
                 if !record_delivery_while_active(
                     self.state,
                     self.receiver_generation,
                     self.write_generation,
-                    RemoteReceiverEventDetails {
-                        sender_device_id: Some(sender_device_id),
-                        event_id: Some(event_id.clone()),
-                        target_class_name: target_info.class_name.clone(),
-                        target_title: target_info.title.clone(),
-                        target_editable,
-                    },
+                    event_details,
                     Some(delivered_at.clone()),
                 )
                 .await
                 {
                     return Ok(false);
                 }
-                write_message_while_active(
-                    self.writer,
-                    &ReceiverMessage::DeliveryAck {
-                        session_id,
-                        event_id,
-                        sequence,
-                        delivered_at,
-                    },
-                    self.shutdown,
-                    self.state,
-                    self.receiver_generation,
-                    self.write_generation,
-                )
-                .await
+                self.write_delivery_ack(session_id, event_id, sequence, delivered_at)
+                    .await
             }
-            Err(error) => {
-                let message = format!("Failed to emit remote transcript event: {error}");
+            Err(message) => {
                 if !record_error_while_active(
                     self.state,
                     self.receiver_generation,
                     self.write_generation,
-                    RemoteReceiverEventDetails {
-                        sender_device_id: Some(sender_device_id),
-                        event_id: Some(event_id.clone()),
-                        target_class_name: target_info.class_name.clone(),
-                        target_title: target_info.title.clone(),
-                        target_editable,
-                    },
+                    event_details,
                     message.clone(),
                 )
                 .await
@@ -661,7 +746,7 @@ impl ConnectionMessageHandler<'_> {
                         session_id,
                         event_id,
                         sequence,
-                        code: "event_emit_failed".to_string(),
+                        code: "delivery_unconfirmed".to_string(),
                         message,
                     },
                     self.shutdown,
@@ -674,11 +759,7 @@ impl ConnectionMessageHandler<'_> {
         }
     }
 
-    async fn handle_heartbeat(
-        &mut self,
-        session_id: String,
-        _sent_at: String,
-    ) -> Result<bool, String> {
+    async fn write_session_ack(&mut self, session_id: String) -> Result<bool, String> {
         write_message_while_active(
             self.writer,
             &ReceiverMessage::SessionAck {
@@ -692,6 +773,137 @@ impl ConnectionMessageHandler<'_> {
         )
         .await
     }
+
+    async fn write_delivery_ack(
+        &mut self,
+        session_id: String,
+        event_id: String,
+        sequence: u64,
+        delivered_at: String,
+    ) -> Result<bool, String> {
+        write_message_while_active(
+            self.writer,
+            &ReceiverMessage::DeliveryAck {
+                session_id,
+                event_id,
+                sequence,
+                delivered_at,
+            },
+            self.shutdown,
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+        )
+        .await
+    }
+
+    fn mismatched_session_device(&self, session_id: &str) -> Option<String> {
+        self.authenticated_sender
+            .as_ref()
+            .filter(|session| !session.matches(session_id))
+            .map(|session| session.device_id.clone())
+    }
+
+    async fn reject_session_mismatch(
+        &mut self,
+        active_device: String,
+        session_id: String,
+        event_id: Option<String>,
+        sequence: u64,
+    ) -> Result<bool, String> {
+        let message = "Frame session id does not match the authenticated session.".to_string();
+        if !record_error_while_active(
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+            RemoteReceiverEventDetails {
+                sender_device_id: Some(active_device),
+                event_id: event_id.clone(),
+                ..RemoteReceiverEventDetails::default()
+            },
+            message.clone(),
+        )
+        .await
+        {
+            return Ok(false);
+        }
+        write_message_while_active(
+            self.writer,
+            &ReceiverMessage::DeliveryError {
+                session_id,
+                event_id: event_id.unwrap_or_default(),
+                sequence,
+                code: "session_mismatch".to_string(),
+                message,
+            },
+            self.shutdown,
+            self.state,
+            self.receiver_generation,
+            self.write_generation,
+        )
+        .await
+    }
+
+    async fn handle_heartbeat(
+        &mut self,
+        session_id: String,
+        _sent_at: String,
+    ) -> Result<bool, String> {
+        if let Some(active_device) = self.mismatched_session_device(&session_id) {
+            return self
+                .reject_session_mismatch(active_device, session_id, None, 0)
+                .await;
+        }
+        self.write_session_ack(session_id).await
+    }
+}
+
+/// Read one newline-delimited frame, refusing a frame larger than
+/// [`MAX_FRAME_BYTES`].
+///
+/// The cap is per frame rather than per connection, so a well-behaved peer keeps
+/// its connection for as long as it sends ordinary frames. An oversized or
+/// unterminated frame fails the connection instead of being parsed.
+async fn read_frame<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    frame: &mut Vec<u8>,
+) -> Result<Option<String>, String> {
+    frame.clear();
+    loop {
+        let (complete, consumed) = {
+            let available = reader
+                .fill_buf()
+                .await
+                .map_err(|err| format!("Failed to read receiver message: {err}"))?;
+            if available.is_empty() {
+                if frame.is_empty() {
+                    return Ok(None);
+                }
+                return Err("Remote receiver frame ended before its newline".to_string());
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let count = newline.unwrap_or(available.len());
+            // Reserve one byte for the required newline before growing the buffer.
+            if count
+                > MAX_FRAME_BYTES
+                    .saturating_sub(1)
+                    .saturating_sub(frame.len())
+            {
+                return Err("Remote receiver frame exceeds the size limit".to_string());
+            }
+            frame.extend_from_slice(&available[..count]);
+            (newline.is_some(), count + usize::from(newline.is_some()))
+        };
+        reader.consume(consumed);
+        if complete {
+            break;
+        }
+    }
+
+    let frame = std::mem::take(frame);
+    String::from_utf8(frame)
+        .map(Some)
+        .map_err(|err| format!("Remote receiver frame is not UTF-8: {err}"))
 }
 
 async fn handle_connection(
@@ -708,14 +920,13 @@ async fn handle_connection(
     }
 
     let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
-    let mut authenticated_sender: Option<String> = None;
+    let mut reader = BufReader::new(reader);
+    let mut frame = Vec::new();
+    let mut authenticated_sender: Option<AuthenticatedSender> = None;
 
     loop {
         let line = tokio::select! {
-            result = lines.next_line() => {
-                result.map_err(|err| format!("Failed to read receiver message: {err}"))?
-            }
+            result = read_frame(&mut reader, &mut frame) => result?,
             _ = wait_for_shutdown(&mut shutdown) => return Ok(()),
         };
         let Some(line) = line else {
@@ -789,9 +1000,24 @@ async fn write_message(
 
 #[cfg(test)]
 mod tests {
-    use super::{rejection_message, wait_for_shutdown, SenderRejection};
+    use super::{
+        read_frame, rejection_message, secret_matches, wait_for_shutdown, AuthenticatedSender,
+        SenderRejection, MAX_FRAME_BYTES,
+    };
     use crate::system::remote_channel::ReceiverMessage;
     use std::time::Duration;
+
+    #[test]
+    fn shared_secrets_compare_without_stopping_at_the_first_difference() {
+        assert!(secret_matches("0123456789abcdef", "0123456789abcdef"));
+        // A single differing byte, in the middle and at the end.
+        assert!(!secret_matches("0123456789abcdef", "0123456789abcdee"));
+        assert!(!secret_matches("0123456789abcdef", "0123456789abcde0"));
+        // Length differences never compare equal, and an empty pair does.
+        assert!(!secret_matches("0123456789abcdef", "0123456789abcde"));
+        assert!(!secret_matches("", "0"));
+        assert!(secret_matches("", ""));
+    }
 
     #[test]
     fn rejected_senders_get_the_code_and_text_the_companion_app_shows() {
@@ -808,6 +1034,17 @@ mod tests {
     }
 
     #[test]
+    fn only_the_session_the_hello_authenticated_is_accepted() {
+        let session = AuthenticatedSender {
+            device_id: "device-1".to_string(),
+            auth_token: "token".to_string(),
+            session_id: "session-1".to_string(),
+        };
+        assert!(session.matches("session-1"));
+        assert!(!session.matches("session-2"));
+    }
+
+    #[test]
     fn a_rejection_carries_no_event_identity_so_the_sender_can_retry() {
         assert_eq!(
             rejection_message("session-1".to_string(), SenderRejection::Unauthorized),
@@ -819,6 +1056,86 @@ mod tests {
                 message: "Sender authentication failed.".to_string(),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn a_frame_larger_than_the_cap_fails_the_connection() {
+        let oversized = vec![b'a'; MAX_FRAME_BYTES + 1];
+        let mut reader: &[u8] = &oversized;
+        let mut frame = Vec::new();
+
+        let err = read_frame(&mut reader, &mut frame)
+            .await
+            .expect_err("an oversized frame is refused");
+
+        assert!(err.contains("size limit"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_complete_json_value_without_a_newline_is_not_a_frame() {
+        let mut reader: &[u8] = b"{\"text\":\"partial\"}";
+        let err = read_frame(&mut reader, &mut Vec::new())
+            .await
+            .expect_err("an unterminated frame is refused even when it contains valid JSON");
+        assert!(err.contains("newline"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn frame_limit_includes_the_newline() {
+        let mut at_limit = vec![b'a'; MAX_FRAME_BYTES - 1];
+        at_limit.push(b'\n');
+        let mut reader: &[u8] = &at_limit;
+        let result = read_frame(&mut reader, &mut Vec::new()).await.unwrap();
+        assert_eq!(result.unwrap().len(), MAX_FRAME_BYTES - 1);
+
+        let mut over_limit = vec![b'a'; MAX_FRAME_BYTES];
+        over_limit.push(b'\n');
+        let mut reader: &[u8] = &over_limit;
+        let err = read_frame(&mut reader, &mut Vec::new())
+            .await
+            .expect_err("the newline counts toward the size limit");
+        assert!(err.contains("size limit"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn fragmented_utf8_frame_and_clean_eof_are_handled() {
+        let bytes = "{\"text\":\"café\"}\n".as_bytes();
+        let mut reader = tokio::io::BufReader::with_capacity(2, bytes);
+        let mut frame = Vec::new();
+        assert_eq!(
+            read_frame(&mut reader, &mut frame).await.unwrap(),
+            Some("{\"text\":\"café\"}".to_string())
+        );
+        assert_eq!(read_frame(&mut reader, &mut frame).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn oversized_read_does_not_copy_unbounded_input_into_the_frame() {
+        let oversized = vec![b'a'; MAX_FRAME_BYTES * 2];
+        let mut reader: &[u8] = &oversized;
+        let mut frame = Vec::new();
+        assert!(read_frame(&mut reader, &mut frame).await.is_err());
+        assert!(frame.is_empty());
+    }
+
+    #[tokio::test]
+    async fn frames_are_read_one_line_at_a_time_and_reject_a_partial_last_frame() {
+        let mut reader: &[u8] = b"{\"a\":1}\n{\"b\":2}\n{\"c\":";
+        let mut frame = Vec::new();
+
+        assert_eq!(
+            read_frame(&mut reader, &mut frame).await.unwrap(),
+            Some("{\"a\":1}".to_string())
+        );
+        assert_eq!(
+            read_frame(&mut reader, &mut frame).await.unwrap(),
+            Some("{\"b\":2}".to_string())
+        );
+        let err = read_frame(&mut reader, &mut frame)
+            .await
+            .expect_err("a partial final frame is refused");
+        assert!(err.contains("newline"), "{err}");
+        assert_eq!(read_frame(&mut reader, &mut frame).await.unwrap(), None);
     }
 
     #[tokio::test]

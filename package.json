@@ -13,9 +13,13 @@
     "test:qa-docs": "node --test scripts/ci/warm-microphone-edge-cases.test.mjs scripts/ci/verify-wait-for-truthy.test.mjs",
     "skills:verify": "node scripts/ci/verify-skills.mjs",
     "check:pr-body": "node scripts/ci/check-pr-body.mjs",
-    "gen:bindings": "pnpm --filter @maus-inc/desktop-native-apis gen:bindings"
+    "gen:bindings": "pnpm --filter @maus-inc/desktop-native-apis gen:bindings",
+    "fallow:audit": "fallow audit --gate new-only --skip architecture",
+    "fallow:health": "fallow --format json --quiet",
+    "test:fallow": "node --test scripts/ci/fallow.test.mjs"
   },
   "devDependencies": {
+    "fallow": "3.38.1",
     "jsdom": "^30.0.1",
     "prettier": "^3.9.6",
     "smol-toml": "^1.3.0",

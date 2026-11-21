@@ -1,20 +1,10 @@
 // Screenshots and measures the microphone dialog across the states a user sees.
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { writeFileSync } from "node:fs";
+import { createReportDirectory } from "./browser-config.mjs";
 import { launch, newPage, sleep, waitForTruthy } from "./cdp.mjs";
 
-// Repository-relative, resolved from this file rather than from the shell's
-// working directory or a sandbox path: a committed file may not carry an
-// absolute path, and the screenshots belong beside the report that cites them.
-const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const OUT = process.env.OUT_DIR || join(REPO_ROOT, "reports/ui-verify");
-mkdirSync(OUT, { recursive: true });
+const OUT = createReportDirectory();
 
-// Not named `URL`: a module-scope `const URL` puts the global that line 9 uses
-// into its temporal dead zone, so the whole script threw
-// `ReferenceError: Cannot access 'URL' before initialization` before doing
-// anything at all.
 const HARNESS_URL =
   process.env.HARNESS_URL ||
   "http://127.0.0.1:5193/verify-harness/mic-dialog.html";
@@ -141,17 +131,21 @@ if (unnamed > 0) note("a11y", `${unnamed} switch(es) with no accessible name`);
 const shape = await page.evaluate(`(async () => {
   const res = await window.__TAURI_INTERNALS__.invoke('list_microphones', {});
   return JSON.stringify(res.map((d) => ({
-    keys: Object.keys(d).sort(),
-    bluetoothIsBoolean: typeof d.bluetooth === 'boolean',
+    label: typeof d.label === 'string' && d.label.trim().length > 0,
+    caution: typeof d.caution === 'boolean',
+    isDefault: typeof d.isDefault === 'boolean',
+    bluetooth: typeof d.bluetooth === 'boolean',
   })));
 })()`);
 const rows = JSON.parse(shape);
-for (const row of rows) {
-  if (!row.bluetoothIsBoolean)
+for (const [index, fields] of rows.entries()) {
+  const invalid = Object.entries(fields).filter(([, valid]) => !valid);
+  if (invalid.length) {
     note(
       "shape",
-      "a list_microphones descriptor is missing the bluetooth flag",
+      `list_microphones descriptor ${index} has invalid fields: ${invalid.map(([field]) => field).join(", ")}`,
     );
+  }
 }
 
 // ---- Screenshot: default (keep off, no pre-roll after zero) -----------------

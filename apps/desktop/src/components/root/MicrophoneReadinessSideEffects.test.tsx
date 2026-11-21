@@ -58,6 +58,11 @@ vi.mock("@maus-inc/desktop-native-apis", () => ({
   },
 }));
 
+vi.mock("../../repos", async () => {
+  const { LocalNativeRepo } = await import("../../repos/native.repo");
+  return { getNativeRepo: () => new LocalNativeRepo() };
+});
+
 vi.mock("../../store", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../store")>();
   return {
@@ -636,43 +641,30 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.showSnackbar).not.toHaveBeenCalled();
   });
 
-  it("leaves a newer hold alone when an older open answers late", async () => {
-    // A stale answer says nothing about what the shared device is doing now. If
-    // a newer request opened a stream in the meantime, closing it on the stale
-    // answer leaves keep-ready on with nothing held.
-    let finishStaleOpen: (value: unknown) => void = () => undefined;
+  it("skips queued opens superseded before they reach native code", async () => {
+    let finish: (value: unknown) => void = () => undefined;
     mocks.warmMicrophone.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          finishStaleOpen = resolve;
+          finish = resolve;
         }),
     );
     await render();
+    for (const microphonePrerollSeconds of [1.5, 2]) {
+      setState({
+        userPrefs: {
+          keepMicrophoneReady: true,
+          microphonePrerollSeconds,
+          microphoneLingerMs: 0,
+        },
+      });
+      await rerender();
+    }
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
-
-    // Supersede the in-flight open, then open again: this is the newer hold.
-    setState({});
-    await rerender();
-    setState({
-      userPrefs: {
-        keepMicrophoneReady: true,
-        microphonePrerollSeconds: 1.5,
-        microphoneLingerMs: 0,
-      },
-    });
-    await rerender();
+    await act(() => finish({ status: "ok", data: null }));
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
-    const closesBefore = mocks.closeMicrophone.mock.calls.length;
-
-    await act(async () => {
-      finishStaleOpen({ status: "ok", data: null });
-      await Promise.resolve();
-    });
-
-    // The newer hold is the one a press will use, so the stale answer must not
-    // close it. The release that superseded the first open already ran; that is
-    // the only close allowed here.
-    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(closesBefore);
+    expect(mocks.warmMicrophone.mock.calls[1]?.[0]).toBe(2);
+    expect(mocks.closeMicrophone).not.toHaveBeenCalled();
   });
 
   it("reopens after a recording that retired the held stream", async () => {
@@ -795,15 +787,7 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.warmMicrophone).not.toHaveBeenCalled();
   });
 
-  it("closes a superseded open that succeeded after the current one failed", async () => {
-    // `heldRef` is set optimistically when an open is issued and otherwise only
-    // cleared by a release, so a *failed* open left it true. A stale answer
-    // consults that flag to decide whether a newer hold owns the device, so a
-    // leftover `true` made the superseded open below skip its close and leave an
-    // indefinite capture behind on a device nothing was tracking.
-    //
-    // Sequence: open #1 stays pending, a release invalidates it, open #2 is issued
-    // and fails, then #1 settles successfully. #1 is superseded, so it must close.
+  it("orders a newer hold behind a pending open and release", async () => {
     let settleFirst: ((value: unknown) => void) | undefined;
     mocks.warmMicrophone.mockImplementationOnce(
       () =>
@@ -811,48 +795,24 @@ describe("MicrophoneReadinessSideEffects", () => {
           settleFirst = resolve;
         }),
     );
-    mocks.warmMicrophone.mockImplementationOnce(() =>
-      Promise.resolve({ status: "error", error: "device busy" }),
-    );
-
-    setState({});
     await render();
+    const prefs = {
+      keepMicrophoneReady: false,
+      microphonePrerollSeconds: 0.5,
+      microphoneLingerMs: 0,
+    };
+    setState({ userPrefs: prefs });
+    await rerender();
+    setState({ userPrefs: { ...prefs, keepMicrophoneReady: true } });
+    await rerender();
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
-    expect(settleFirst).toBeTypeOf("function");
-
-    // A release: the preference goes off, so open #1 is superseded.
-    setState({
-      userPrefs: {
-        keepMicrophoneReady: false,
-        microphonePrerollSeconds: 0.5,
-        microphoneLingerMs: 0,
-      },
-    });
-    await rerender();
-
-    // Back on, so a second open is issued and this one fails.
-    setState({
-      userPrefs: {
-        keepMicrophoneReady: true,
-        microphonePrerollSeconds: 0.5,
-        microphoneLingerMs: 0,
-      },
-      permissions: { microphone: { state: "authorized" } },
-      settings: { microphoneHeld: false },
-    });
-    await rerender();
-    expect(mocks.warmMicrophone.mock.calls.length).toBeGreaterThanOrEqual(2);
-    mocks.closeMicrophone.mockClear();
-
-    // Now the very first open — long superseded — finally succeeds.
-    await act(async () => {
-      settleFirst?.({ status: "ok", data: null });
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    // It is superseded and nothing newer is live, so it must be closed.
-    expect(mocks.closeMicrophone).toHaveBeenCalled();
+    expect(mocks.closeMicrophone).not.toHaveBeenCalled();
+    await act(() => settleFirst?.({ status: "ok", data: null }));
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(1);
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
+    expect(mocks.closeMicrophone.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.warmMicrophone.mock.invocationCallOrder[1]!,
+    );
   });
 
   it("ignores a rejection from an open that a newer request superseded", async () => {
@@ -882,7 +842,7 @@ describe("MicrophoneReadinessSideEffects", () => {
       },
     });
     await rerender();
-    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       failStaleOpen(new Error("device busy"));
@@ -891,6 +851,7 @@ describe("MicrophoneReadinessSideEffects", () => {
 
     // The warning is the observable: a superseded failure is logged verbosely and
     // reported through no snackbar, while a current one reports a hold failure.
+    expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
     expect(mocks.showSnackbar).not.toHaveBeenCalled();
   });
 
@@ -918,7 +879,7 @@ describe("MicrophoneReadinessSideEffects", () => {
       },
     });
     await rerender();
-    expect(mocks.closeMicrophone).toHaveBeenCalled();
+    expect(mocks.closeMicrophone).not.toHaveBeenCalled();
 
     // Now the open answers, successful and late.
     await act(async () => {
@@ -926,9 +887,7 @@ describe("MicrophoneReadinessSideEffects", () => {
       await Promise.resolve();
     });
 
-    // Two closes: the release the preference asked for, and the one that undoes
-    // the open which arrived after it.
-    expect(mocks.closeMicrophone.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(1);
   });
 
   it("restores the linger window after closing a superseded open", async () => {
@@ -949,12 +908,11 @@ describe("MicrophoneReadinessSideEffects", () => {
     await render();
     setState({ userPrefs: { ...prefs, keepMicrophoneReady: false } });
     await rerender();
-    expect(mocks.setMicrophoneLinger).toHaveBeenLastCalledWith(5_000);
-    mocks.setMicrophoneLinger.mockClear();
+    expect(mocks.setMicrophoneLinger).not.toHaveBeenCalled();
 
     await act(() => finishOpen({ status: "ok", data: null }));
 
-    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(2);
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(1);
     expect(mocks.setMicrophoneLinger).toHaveBeenCalledWith(5_000);
   });
 
@@ -1014,7 +972,7 @@ describe("MicrophoneReadinessSideEffects", () => {
     expect(mocks.warmMicrophone).toHaveBeenCalledTimes(2);
   });
 
-  it("re-reads the device when the close of a superseded open fails", async () => {
+  it("re-reads the device when the queued release fails", async () => {
     // The chain that undoes a late open used to have no failure path, unlike
     // every other close in the component. If `closeMicrophone` rejected there,
     // the read that follows it never ran: the dialog kept displaying whatever it
@@ -1061,7 +1019,7 @@ describe("MicrophoneReadinessSideEffects", () => {
     );
     // The close was still attempted rather than abandoned on the strength of
     // having failed.
-    expect(mocks.closeMicrophone.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(mocks.closeMicrophone).toHaveBeenCalledTimes(1);
   });
 
   it("keeps an open that is still the current request", async () => {
