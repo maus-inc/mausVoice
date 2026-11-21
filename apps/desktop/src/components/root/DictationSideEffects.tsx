@@ -2491,7 +2491,10 @@ export const DictationSideEffects = () => {
           void systemVolumeDim.dim(operationId);
         };
 
-        if (sessionKind === "live-streaming") {
+        // Extracted to a nested helper: the live-streaming startup path has
+        // enough nested conditionals that keeping it inline pushes
+        // `startRecording` past SonarCloud's cognitive-complexity limit.
+        const startLiveStreamingStart = async () => {
           const controller = new AbortController();
           providerStartupAbortControllerRef.current = controller;
           const startupPromise = (async () => {
@@ -2541,6 +2544,10 @@ export const DictationSideEffects = () => {
             intl.formatMessage({ defaultMessage: "Connecting" }),
           );
           startActiveRecordingEffects();
+        };
+
+        if (sessionKind === "live-streaming") {
+          await startLiveStreamingStart();
           return;
         }
 

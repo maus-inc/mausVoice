@@ -4213,7 +4213,7 @@ fn linger_millis(linger_ms: f64) -> u64 {
     }
     // Finite values are bounded at the native boundary: the renderer's limit
     // does not protect a stored preference read directly from the database.
-    linger_ms.round().max(1.0).min(MAX_FINITE_LINGER_MS as f64) as u64
+    linger_ms.round().clamp(1.0, MAX_FINITE_LINGER_MS as f64) as u64
 }
 
 /// The policy to apply before opening, and whether the open should be held.
@@ -4527,12 +4527,19 @@ pub async fn stop_recording(
     // Record normal-stop intent before the blocking pool can queue this task
     // behind a slow device open or a dropped start-command guard.
     let stop_intent = ownership.note_scoped_normal_stop(&owner_id, &scope, generation)?;
+    // Read the persisted linger preference before the stop starts so the stop
+    // can apply it during its own handoff. Reading it in parallel with the stop
+    // raced a newer preference change: the stop could complete with the old
+    // value, then a post-stop update applied the old policy over a newer one.
+    let linger = read_capture_linger(database.pool()).await;
     // Stop collecting the take immediately on invocation so speech after the
     // user stops cannot enter the saved audio while waiting for preferences.
+    // The linger is applied during the stop handoff itself, not on the reply
+    // path, so the reply cannot race a newer capture policy.
     let take_task = tauri::async_runtime::spawn_blocking(move || {
         let _stop_intent = stop_intent;
         let result = ownership.stop_or_recover_scoped(&owner_id, &scope, generation, || {
-            stop_native_recording_handoff(recorder.as_ref(), None)
+            stop_native_recording_handoff(recorder.as_ref(), Some(linger))
         });
         start_recording_recovery_reaper(&ownership);
         // A sealed partial response may be delivered while the worker is still
@@ -4556,11 +4563,11 @@ pub async fn stop_recording(
         })
     });
 
-    let (bytes_res, linger) = tokio::join!(take_task, read_capture_linger(database.pool()));
-    let bytes = bytes_res.map_err(|err| err.to_string())??;
+    let bytes = take_task.await.map_err(|err| err.to_string())??;
 
-    // Apply the persisted preference to the released stream without having
-    // delayed the stop itself.
+    // The linger was applied during the stop handoff above. Apply the same
+    // policy to the warm-capture hold non-blockingly so a stuck worker cannot
+    // delay the stop reply; the task is queued and processed in worker order.
     if linger == Duration::ZERO {
         warm.release_hold();
     } else {

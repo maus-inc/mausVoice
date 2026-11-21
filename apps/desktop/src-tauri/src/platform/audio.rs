@@ -1822,10 +1822,16 @@ mod cpal_impl {
                         // A failed release retains the driver handle. Retry it
                         // periodically until it succeeds; the process-wide ALSA
                         // latch is not a handle and must not be retried.
+                        //
+                        // Re-read the generation after close_warm: a newer
+                        // capture request may have advanced it between the check
+                        // above and the release attempt, and the retry must not
+                        // close a stream that generation owns.
+                        let current = self.linger_generation.load(Ordering::SeqCst);
                         if self.release_blocked.get() && !capture_cleanup_uncertain() {
                             let _ = self.discard_unreleased_stream();
                             if self.release_blocked.get() && !capture_cleanup_uncertain() {
-                                self.schedule_linger_close(Duration::from_secs(1), generation);
+                                self.schedule_linger_close(Duration::from_secs(1), current);
                             }
                         }
                     }
@@ -3475,7 +3481,10 @@ mod cpal_impl {
         }
 
         fn release_hold(&self) {
-            if let Err(error) = self.worker.call(LocalRecordingManager::release_hold) {
+            // Non-blocking: queue the release without waiting for the worker to
+            // process it. A stuck or wedged worker must not delay callers (such
+            // as the stop reply path) that only need to signal policy intent.
+            if let Err(error) = self.worker.send(LocalRecordingManager::release_hold) {
                 log::error!("{error}");
             }
         }
@@ -3499,9 +3508,11 @@ mod cpal_impl {
         }
 
         fn set_linger(&self, linger_ms: u64) {
+            // Non-blocking: queue the linger change without waiting for the
+            // worker. A stuck worker must not delay the stop reply path.
             if let Err(error) = self
                 .worker
-                .call(move |r| r.set_linger(Duration::from_millis(linger_ms)))
+                .send(move |r| r.set_linger(Duration::from_millis(linger_ms)))
             {
                 log::error!("{error}");
             }
@@ -4793,7 +4804,7 @@ mod cpal_impl {
                 start: Instant::now(),
                 buffer: Some(Arc::new(Mutex::new(vec![0.1; 1400]))),
                 sample_rate: 1000,
-                device_label: String::new(),
+                device_label: String::default(),
                 preferred: None,
                 channels: 1,
             };
@@ -4811,7 +4822,7 @@ mod cpal_impl {
                 start: Instant::now(),
                 buffer: Some(Arc::new(Mutex::new(vec![0.1; 5900]))),
                 sample_rate: 1000,
-                device_label: String::new(),
+                device_label: String::default(),
                 preferred: None,
                 channels: 1,
             };
