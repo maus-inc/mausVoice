@@ -10,9 +10,14 @@ pub mod clock;
 pub mod deform;
 pub mod drag;
 pub mod edge;
+pub mod fireworks;
+pub mod flame;
 pub mod hover;
 pub mod ipc;
+pub mod layout;
+pub mod level;
 pub mod placement;
+pub mod restore;
 pub mod spring;
 pub mod text_fit;
 

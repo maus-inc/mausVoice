@@ -128,6 +128,37 @@ impl Gfx {
         }
     }
 
+    /// Rebuild the drawing surface at a new size.
+    ///
+    /// A per-monitor scale change hands the window a suggested rect whose size
+    /// follows the new scale. The surface has to follow it, because every frame
+    /// presents exactly `width` by `height` pixels through
+    /// `UpdateLayeredWindow`: leaving the surface at its old size silently resizes
+    /// the window back on the next frame, which undoes the suggestion, throws away
+    /// the DPI handling, and leaves the pill rendered at the wrong scale until the
+    /// next resize. Growing and shrinking are both real, so both take effect.
+    pub(crate) fn resize(&mut self, width: i32, height: i32) -> Result<()> {
+        if width == self.width && height == self.height {
+            return Ok(());
+        }
+        if width <= 0 || height <= 0 {
+            // Nothing to rebuild at a degenerate size, and the caller keeps the
+            // surface it already has rather than binding an empty one.
+            return Ok(());
+        }
+        unsafe {
+            let bitmap = create_dib(self.hdc, width, height)?;
+            let _ = SelectObject(self.hdc, HGDIOBJ(bitmap.0));
+            // The old bitmap is released only after the replacement is selected,
+            // so the device context is never left pointing at a deleted object.
+            let _ = DeleteObject(HGDIOBJ(self.bitmap.0));
+            self.bitmap = bitmap;
+        }
+        self.width = width;
+        self.height = height;
+        Ok(())
+    }
+
     pub(crate) fn begin_frame(&mut self) {
         self.save_stack.clear();
         self.clip_kinds.clear();

@@ -1,5 +1,35 @@
 use std::io::{self, BufRead, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
+
+/// The newest clear this pill process has applied, or 0 for none.
+///
+/// The desktop declares an erase before it tells the pill to clear, and hands the
+/// declaration's id to the pill with the clear. The pill records it here and echoes
+/// it on every position report, so the desktop retires exactly the declarations at
+/// or below the echoed id. Retiring every outstanding declaration instead, which is
+/// what the desktop used to do, let an earlier clear's answer open the latch for a
+/// save published before a later clear, and that save put the cleared row back on
+/// the next launch.
+///
+/// Declaration ids start at 1, so 0 is the "no clear applied" sentinel. Kept as a
+/// maximum: two clears can be declared in one order and reach the pill in another,
+/// and the highest applied id is what the reports must carry.
+static APPLIED_CLEAR: AtomicU64 = AtomicU64::new(0);
+
+/// Record the clear the pill just applied, by the desktop's declaration id.
+pub fn record_applied_clear(id: Option<u64>) {
+    if let Some(id) = id {
+        APPLIED_CLEAR.fetch_max(id, Ordering::Release);
+    }
+}
+
+/// The newest clear this pill has applied, to echo on a report, or `None` when it
+/// has applied none.
+pub fn applied_clear() -> Option<u64> {
+    let applied = APPLIED_CLEAR.load(Ordering::Acquire);
+    (applied != 0).then_some(applied)
+}
 
 /// Read a newline-terminated IPC record. EOF after a partial record is not a
 /// complete message, even when the bytes happen to be valid JSON.

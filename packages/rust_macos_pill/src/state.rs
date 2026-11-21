@@ -1,8 +1,9 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{
-    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
-};
+pub(crate) use rust_pill_shared::fireworks::{Rocket, RocketPhase};
+pub(crate) use rust_pill_shared::flame::FlameTongue;
+
+use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Rect, Visibility};
 
 use crate::constants::*;
 
@@ -74,44 +75,28 @@ impl WindowMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum RocketPhase {
-    Rising,
-    Exploding,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Spark {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) life: f64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Rocket {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) trail: Vec<(f64, f64)>,
-    pub(crate) fuse: f64,
-    pub(crate) phase: RocketPhase,
-    pub(crate) num_sparks: usize,
-    pub(crate) launch_index: usize,
-    pub(crate) sparks: Vec<Spark>,
-    pub(crate) trail_alpha: f64,
-    pub(crate) color: (f64, f64, f64),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FlameTongue {
-    pub(crate) t: f64,
-    pub(crate) height: f64,
-    pub(crate) width: f64,
-    pub(crate) phase: f64,
-    pub(crate) speed: f64,
+/// A drop a save guard deferred, held until the retry may write it.
+///
+/// The rectangle and the display it belonged to are captured together, at the
+/// moment the gesture ended, so a reconciliation that moves the window during the
+/// hold cannot make the retry pair the retained rectangle with a panel the drop
+/// was never on. `frame` is in Cocoa's bottom-up space, because that is what the
+/// idle tick parks the window with; `monitor` and `display_id` are in the
+/// desktop's top-down space, because that is what the record stores.
+///
+/// `primary_top` is the basis `monitor` was flipped against, kept so the retry
+/// flips `frame` against the same line. Re-reading it at the retry would convert
+/// a frame captured against one primary top with another, so a primary-display
+/// height change during the hold would publish a rectangle offset from the
+/// `monitor` beside it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DropRecord {
+    pub(crate) frame: (f64, f64, f64, f64),
+    /// `None` when the window was on no screen at the drop, so the report carries
+    /// no monitor rather than a fabricated one.
+    pub(crate) monitor: Option<Rect>,
+    pub(crate) display_id: Option<u64>,
+    pub(crate) primary_top: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -238,15 +223,52 @@ pub(crate) struct PillState {
     pub(crate) selector_placement: RefCell<rust_pill_shared::placement::SelectorPlacement>,
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
-    pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+    /// Stable token of the display the saved position belongs to, or `None` when
+    /// it could not be named. Published with the position so the stored record
+    /// can name the display rather than only its rectangle.
+    pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// The work area the saved position was clamped into, kept so a pill whose
+    /// panel is unplugged remaps from the geometry it was saved against rather
+    /// than from the survivor it happens to be nearest to.
+    pub(crate) saved_work_area: Cell<rust_pill_shared::edge::MonitorRect>,
+    /// When a drop that the display-change hold refused may be written, or `None`
+    /// when no save is owed. The drag controller reports `settled` exactly once,
+    /// so a refused save has to be retried from here or the drop is lost.
+    pub(crate) drag_save_due: Cell<Option<f64>>,
+    /// The window frame the gesture ended at, kept while a guarded save is owed,
+    /// together with the display it was on when it landed.
+    ///
+    /// The retry runs after a delay, and the pill's own reconciliation can move the
+    /// window in between. `saved_x`/`saved_y` still describe the position from
+    /// before the drop, so they cannot answer where it landed; this can.
+    ///
+    /// A whole frame rather than an origin, because the report needs the frame
+    /// flipped into the desktop's top-down space while `saved_x`/`saved_y` need the
+    /// origin in Cocoa's bottom-up one. Keeping one value and deriving both is what
+    /// stops the two from describing different places. The display is retained with
+    /// it for the same reason: reading the live screen at retry time would pair the
+    /// retained rectangle with the panel reconciliation moved the window onto, so a
+    /// restart would restore the drop against the wrong monitor.
+    pub(crate) drop_frame: Cell<Option<DropRecord>>,
+    /// Holds position saves until the display layout has been steady, so a frame
+    /// macOS forced during a display change is never stored as the user's
+    /// position. See rust_pill_shared::layout::SaveGuard.
+    pub(crate) save_guard: RefCell<rust_pill_shared::layout::SaveGuard>,
+    /// The display-arrangement signature this pill last reconciled against, and
+    /// when it last looked. `didChangeScreenParameters` is the primary signal;
+    /// the poll covers a notification that arrives while the app is not
+    /// frontmost, which macOS can drop.
+    pub(crate) layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>,
     /// True once the pill has been placed at least once. A brand-new window
     /// sits at (0, 0) before its first layout, so an origin check alone would
     /// mistake a legitimately-placed window for "never positioned" and keep
     /// chasing the cursor; this flag lets the first placement follow the cursor
     /// and then stays put.
     pub(crate) first_placement_done: Cell<bool>,
+    /// Why this pill has no stored position and where a due placement goes.
+    pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
 
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,

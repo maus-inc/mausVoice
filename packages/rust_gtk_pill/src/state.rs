@@ -1,42 +1,12 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{
-    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
-};
+pub(crate) use rust_pill_shared::fireworks::{Rocket, RocketPhase};
+pub(crate) use rust_pill_shared::flame::FlameTongue;
+
+use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Visibility};
 
 use crate::constants::*;
 use crate::pill::Backend;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum RocketPhase {
-    Rising,
-    Exploding,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Spark {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) life: f64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Rocket {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) trail: Vec<(f64, f64)>,
-    pub(crate) fuse: f64,
-    pub(crate) phase: RocketPhase,
-    pub(crate) num_sparks: usize,
-    pub(crate) launch_index: usize,
-    pub(crate) sparks: Vec<Spark>,
-    pub(crate) trail_alpha: f64,
-    pub(crate) color: (f64, f64, f64),
-}
 
 #[derive(Debug, Clone)]
 pub(crate) enum ClickAction {
@@ -98,15 +68,6 @@ impl ClickRegion {
     pub(crate) fn contains(&self, px: f64, py: f64) -> bool {
         rect_contains(px, py, self.x, self.y, self.w, self.h)
     }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FlameTongue {
-    pub(crate) t: f64,
-    pub(crate) height: f64,
-    pub(crate) width: f64,
-    pub(crate) phase: f64,
-    pub(crate) speed: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,16 +272,43 @@ pub(crate) struct PillState {
     // ends so the toplevel stays parked until the user moves it again.
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
-    pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+    /// Stable token of the display the saved position belongs to, or `None` when
+    /// GDK could not name it. Published with the position so the stored record
+    /// can name the display rather than only its rectangle.
+    pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// The work area the saved position was clamped into, kept so a pill whose
+    /// panel is unplugged remaps from the geometry it was saved against instead
+    /// of from the survivor it happens to be nearest to. Written beside
+    /// `saved_display_id`; both describe the same drop.
+    pub(crate) saved_work_area: Cell<rust_pill_shared::edge::MonitorRect>,
+    /// Holds position saves until the display layout has been steady, so a frame
+    /// the X server or the window manager forced during a RandR change is never
+    /// stored as the user's position. See rust_pill_shared::layout::SaveGuard.
+    pub(crate) save_guard: RefCell<rust_pill_shared::layout::SaveGuard>,
+    /// The display-arrangement signature this pill last reconciled against, and
+    /// when it last looked. The RandR event is the primary signal; the poll covers
+    /// a change that lands before the event is selected or while the window is
+    /// unmapped.
+    pub(crate) layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>,
+    /// Position the host stored for this pill in a previous session, already
+    /// parsed. Taken once during realize and resolved against the monitors that
+    /// are connected then; see `rust_pill_shared::restore`.
+    pub(crate) restored_position: Cell<Option<rust_pill_shared::restore::ParkedWindow>>,
     // Set by explicit release-settle or interruption persistence; consumed by
     // the slow timer so a later cursor poll cannot overwrite the saved point.
     // The slow-timer fallback itself does not set this flag.
     pub(crate) x11_release_persisted: Cell<bool>,
+    /// When a drop that the display-change hold refused may be written, or `None`
+    /// when no save is owed. The release is reported once per settle, so a refused
+    /// save has to be retried from the frame loop or the drop is lost.
+    pub(crate) drag_save_due: Cell<Option<f64>>,
     // Last window origin the frame tick applied during an X11 drag, so steady
     // frames skip the X round trip. Seeded out of range to force the first move.
     pub(crate) x11_drag_applied: Cell<(i32, i32)>,
+    /// Why this pill has no stored position and where a due placement goes.
+    pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
     // PlainWayland draws the pill on a maximized overlay window, so dragging
     // translates the pill's draw position rather than moving the toplevel.
     pub(crate) drag_draw_offset_x: Cell<f64>,
@@ -421,9 +409,16 @@ fn content_origin(aw: f64, ah: f64, dw: f64, dh: f64, below_slot: f64) -> (f64, 
             content_canvas_height(ah, below_slot) - dh - MARGIN_BOTTOM as f64,
         )
     } else {
+        // Before the first size-allocate the allocation cells are still zero, so
+        // this branch stands in for the size the window is about to have. It has
+        // to agree with the allocated branch or a caller that runs at realize --
+        // the X11 restore does -- lands MARGIN_BOTTOM pixels high. The X11
+        // selector slot cancels in the vertical term (it is added to the height
+        // and subtracted again as `below_slot`), so the typing height alone is
+        // the correct stand-in.
         (
             (WINDOW_W_TYPING as f64 - dw) / 2.0,
-            WINDOW_H_TYPING as f64 - dh,
+            WINDOW_H_TYPING as f64 - dh - MARGIN_BOTTOM as f64,
         )
     }
 }
@@ -463,5 +458,30 @@ mod tests {
             content_origin(1000.0, 800.0, 200.0, 100.0, 0.0),
             (400.0, 700.0 - MARGIN_BOTTOM as f64)
         );
+    }
+
+    #[test]
+    fn pre_allocation_origin_matches_the_allocated_origin() {
+        // The fallback stands in for the size the window is about to have, so it
+        // must agree with the allocated branch once that size is known. The X11
+        // restore runs at realize and reads the fallback; a mismatch parks the
+        // pill off by the difference. Covered for both the X11 slot and none.
+        let dw = 200.0;
+        let dh = 100.0;
+        for slot in [
+            0.0,
+            rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+        ] {
+            assert_eq!(
+                content_origin(0.0, 0.0, dw, dh, slot),
+                content_origin(
+                    WINDOW_W_TYPING as f64,
+                    WINDOW_H_TYPING as f64 + slot,
+                    dw,
+                    dh,
+                    slot,
+                ),
+            );
+        }
     }
 }

@@ -192,9 +192,9 @@ pub fn native_setup_result() -> NativeSetupResult {
 /// which binary they spawn.
 pub mod notifications {
     pub use crate::pill_process::{
-        notify_assistant_state, notify_audio_levels, notify_phase, notify_pill_placement,
-        notify_pill_window_size, notify_request_position, notify_reset_position, notify_style_info,
-        notify_visibility,
+        notify_assistant_state, notify_audio_levels, notify_forget_position, notify_phase,
+        notify_pill_placement, notify_pill_window_size, notify_request_position,
+        notify_reset_position, notify_style_info, notify_visibility,
     };
 }
 
