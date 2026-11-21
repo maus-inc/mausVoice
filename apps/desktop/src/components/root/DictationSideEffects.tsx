@@ -81,6 +81,7 @@ import {
   type SessionAudioIntake,
 } from "./dictation-recording-intake";
 import { createSystemVolumeDim } from "./dictation-volume-dim";
+import { syncFiniteMicrophoneLinger } from "./microphone-policy-queue";
 import {
   invokeGuardedRecordingStart,
   settleRecordingStart,
@@ -2370,6 +2371,18 @@ export const DictationSideEffects = () => {
           getLogger().warning(
             `Pre-capture session setup failed, continuing without it: ${error}`,
           );
+        }
+        if (getAppState().userPrefs?.keepMicrophoneReady === false) {
+          // A short press can stop before the readiness effect's IPC lands.
+          // Wait for the latest finite policy before arming this capture.
+          await syncFiniteMicrophoneLinger(() => {
+            const prefs = getAppState().userPrefs;
+            return isCurrentStart() && prefs?.keepMicrophoneReady === false
+              ? (prefs.microphoneLingerMs ?? 0)
+              : null;
+          }).catch((error: unknown) => {
+            getLogger().warning(`Could not set the linger window: ${error}`);
+          });
         }
         if (!isCurrentStart()) {
           session.cleanup();

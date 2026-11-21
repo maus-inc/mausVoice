@@ -23,6 +23,10 @@ import {
 } from "../../utils/microphone-readiness.utils";
 import { isPermissionAuthorized } from "../../utils/permission.utils";
 import { getMyPreferredMicrophone } from "../../utils/user.utils";
+import {
+  queueMicrophonePolicyChange,
+  syncFiniteMicrophoneLinger,
+} from "./microphone-policy-queue";
 
 type AppliedHoldState = "open" | "closed" | null;
 
@@ -330,29 +334,6 @@ function useWarmMicrophoneRequests(
    */
   const requestRef = useRef(0);
 
-  const pendingPolicyRef = useRef<Promise<void> | null>(null);
-  // Queue failures do not block later work; callers await or report their own result.
-  const queuePolicyChange = useCallback(<T,>(change: () => T | Promise<T>) => {
-    const previous = pendingPolicyRef.current;
-    const pending = (async () => {
-      if (previous) {
-        // The previous caller reports its failure; do not block later changes.
-        await previous;
-      }
-      return change();
-    })();
-    const tail = pending.then(
-      () => undefined,
-      () => undefined,
-    );
-    pendingPolicyRef.current = tail;
-    return pending.finally(() => {
-      if (pendingPolicyRef.current === tail) {
-        pendingPolicyRef.current = null;
-      }
-    });
-  }, []);
-
   const restoreFiniteLinger = useCallback(async () => {
     const milliseconds = getAppState().userPrefs?.microphoneLingerMs ?? 0;
     if (!heldRef.current && milliseconds > 0) {
@@ -362,7 +343,7 @@ function useWarmMicrophoneRequests(
 
   const closeAndRestoreLinger = useCallback(
     () =>
-      queuePolicyChange(async () => {
+      queueMicrophonePolicyChange(async () => {
         await commands.closeMicrophone();
         // Retry once, checking live state again so a newer hold or preference wins.
         await restoreFiniteLinger()
@@ -373,7 +354,7 @@ function useWarmMicrophoneRequests(
             );
           });
       }),
-    [queuePolicyChange, restoreFiniteLinger],
+    [restoreFiniteLinger],
   );
 
   /**
@@ -390,7 +371,7 @@ function useWarmMicrophoneRequests(
     (seconds: number, device: string | null) => {
       heldRef.current = true;
       const request = ++requestRef.current;
-      const open = queuePolicyChange(() => {
+      const open = queueMicrophonePolicyChange(() => {
         if (
           requestRef.current !== request ||
           !heldRef.current ||
@@ -460,7 +441,6 @@ function useWarmMicrophoneRequests(
       clearHoldFailure,
       openedPrerollRef,
       publishHeld,
-      queuePolicyChange,
       reportHoldFailure,
     ],
   );
@@ -478,7 +458,7 @@ function useWarmMicrophoneRequests(
       });
   }, [appliedRef, closeAndRestoreLinger, openedPrerollRef, publishHeld]);
 
-  return { hold, release, heldRef, queuePolicyChange };
+  return { hold, release, heldRef };
 }
 
 function useMicrophoneReadinessStatus() {
@@ -647,7 +627,6 @@ function useIdleMicrophonePolicy({
   prerollSeconds,
   lingerMs,
   heldRef,
-  queuePolicyChange,
 }: {
   enabled: boolean;
   prefsLoaded: boolean;
@@ -655,7 +634,6 @@ function useIdleMicrophonePolicy({
   prerollSeconds: number;
   lingerMs: number;
   heldRef: RefObject<boolean>;
-  queuePolicyChange: <T>(change: () => T | Promise<T>) => Promise<T>;
 }) {
   // The post-recording window is a policy the stop path reads, and it has to be
   // in place before the recording that will stop, not after it. Pushing it on
@@ -679,14 +657,14 @@ function useIdleMicrophonePolicy({
       return;
     }
     logOnRejection(
-      queuePolicyChange(() =>
+      queueMicrophonePolicyChange(() =>
         commands.setMicrophonePreroll(prerollSeconds),
       ).catch((error: unknown) => {
         getLogger().warning(`Could not set the microphone pre-roll: ${error}`);
       }),
       "microphone pre-roll update",
     );
-  }, [ownsDevice, prefsLoaded, prerollSeconds, queuePolicyChange]);
+  }, [ownsDevice, prefsLoaded, prerollSeconds]);
 
   // Releases restore linger themselves; the ref is only an execution-time guard.
   useEffect(() => {
@@ -694,16 +672,17 @@ function useIdleMicrophonePolicy({
       return;
     }
     logOnRejection(
-      queuePolicyChange(async () => {
-        if (!heldRef.current) {
-          await commands.setMicrophoneLinger(lingerMs);
-        }
+      syncFiniteMicrophoneLinger(() => {
+        const prefs = getAppState().userPrefs;
+        return !heldRef.current && prefs?.keepMicrophoneReady === false
+          ? (prefs.microphoneLingerMs ?? 0)
+          : null;
       }).catch((error: unknown) => {
         getLogger().warning(`Could not set the linger window: ${error}`);
       }),
       "linger window update",
     );
-  }, [enabled, prefsLoaded, ownsDevice, lingerMs, queuePolicyChange, heldRef]);
+  }, [enabled, prefsLoaded, ownsDevice, lingerMs, heldRef]);
 }
 
 function useMicrophoneInputs() {
@@ -838,8 +817,11 @@ export const MicrophoneReadinessSideEffects = () => {
    */
   const ownsDevice = isMainLocalDataWindow();
 
-  const { hold, release, heldRef, queuePolicyChange } =
-    useWarmMicrophoneRequests(openedPrerollRef, appliedRef, publishHeld);
+  const { hold, release, heldRef } = useWarmMicrophoneRequests(
+    openedPrerollRef,
+    appliedRef,
+    publishHeld,
+  );
 
   useEffect(() => {
     // A running recording adopts the held stream -- that is the entire point of
@@ -899,7 +881,6 @@ export const MicrophoneReadinessSideEffects = () => {
     prerollSeconds,
     lingerMs,
     heldRef,
-    queuePolicyChange,
   });
 
   // One read on mount, so the dialog shows the truth before anything is toggled.

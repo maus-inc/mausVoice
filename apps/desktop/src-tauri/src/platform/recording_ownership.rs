@@ -1016,17 +1016,22 @@ impl RecordingOwnership {
         }
     }
 
-    pub fn confirm_external_window_capture_ended(&self, key: usize) {
+    /// Retire a committed-away or destroyed document and release its browser lease.
+    /// Native capture still needs the explicit stop for the returned scope.
+    pub fn retire_document(&self, key: usize) -> Option<Arc<RecordingWindow>> {
+        let scope = self.close_window(key)?;
         let mut owner = self
             .owner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if owner.as_ref().is_some_and(|owner| {
-            owner.external && owner.window.key == key && owner.window.closed.load(Ordering::Acquire)
-        }) {
+        if owner
+            .as_ref()
+            .is_some_and(|owner| owner.external && Arc::ptr_eq(&owner.window, &scope))
+        {
             *owner = None;
             self.wake_starts();
         }
+        Some(scope)
     }
 
     #[cfg(test)]
@@ -2822,12 +2827,36 @@ mod tests {
             .claim_admission("browser", &window, token)
             .unwrap();
         ownership.start_external(&admission).unwrap();
-        ownership.confirm_external_window_capture_ended(33);
+        let unrelated = ownership.window(34);
+        assert!(Arc::ptr_eq(
+            &ownership.retire_document(34).unwrap(),
+            &unrelated
+        ));
         assert!(start(&ownership, "native").is_err());
-        ownership.close_window(33).unwrap();
-        ownership.confirm_external_window_capture_ended(34);
+        ownership.retire_document(33).unwrap();
+        assert!(start(&ownership, "native").is_ok());
+    }
+
+    #[test]
+    fn a_replacement_document_can_record_without_the_old_pages_end_callback() {
+        let ownership = RecordingOwnership::default();
+        let old = ownership.window(33);
+        let token = ownership.reserve("browser", &old).unwrap();
+        let admission = ownership.claim_admission("browser", &old, token).unwrap();
+        ownership.start_external(&admission).unwrap();
+        ownership.finish_admission(&admission);
+
+        assert!(Arc::ptr_eq(&ownership.retire_document(33).unwrap(), &old));
+        let replacement = ownership.window(33);
+        assert!(!Arc::ptr_eq(&old, &replacement));
+        let replacement_token = ownership.reserve("browser", &replacement).unwrap();
+        let admission = ownership
+            .claim_admission("browser", &replacement, replacement_token)
+            .unwrap();
+        ownership.start_external(&admission).unwrap();
+        ownership.release_external_window("browser", 33, token);
         assert!(start(&ownership, "native").is_err());
-        ownership.confirm_external_window_capture_ended(33);
+        ownership.release_external_window("browser", 33, replacement_token);
         assert!(start(&ownership, "native").is_ok());
     }
 

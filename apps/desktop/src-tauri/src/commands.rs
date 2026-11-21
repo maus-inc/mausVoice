@@ -3659,16 +3659,13 @@ fn recording_window_key(window: &tauri::Window) -> usize {
     std::ptr::from_ref(&*resources) as usize
 }
 
-pub(crate) fn retire_recording_window(window: &tauri::Window, capture_ended: bool) {
+pub(crate) fn retire_recording_window(window: &tauri::Window) {
     let Some(ownership) = window.try_state::<RecordingOwnerState>() else {
         return;
     };
-    let key = recording_window_key(window);
-    let scope = ownership.close_window(key);
-    if capture_ended {
-        ownership.confirm_external_window_capture_ended(key);
-    }
-    let Some(scope) = scope else { return };
+    let Some(scope) = ownership.retire_document(recording_window_key(window)) else {
+        return;
+    };
     let Some(recorder) = window.try_state::<Arc<dyn crate::platform::Recorder>>() else {
         return;
     };

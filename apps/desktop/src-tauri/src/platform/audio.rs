@@ -410,6 +410,8 @@ mod cpal_impl {
         }
     }
 
+    // ALSA's mmap capture gate can lose proof that all capture was released.
+    // Only the patched ALSA backend exposes a process-wide uncertainty latch.
     fn capture_cleanup_uncertain() -> bool {
         #[cfg(target_os = "linux")]
         {
@@ -498,22 +500,19 @@ mod cpal_impl {
         /// The offset `first_recorded` fired at, kept so a start can read it
         /// back on its own clock rather than by scraping the log.
         recorded_at_us: AtomicU64,
-        /// Microseconds since this sink last received a block. Used to tell a
-        /// stream that is delivering audio from one that is running but silent
-        /// because its device went away underneath it.
-        last_block_us: AtomicU64,
+        /// Callback or resume timestamp on the sink's lifetime clock (`born`).
+        /// A new press resets latency measurements, not the silence window.
+        last_activity_us: AtomicU64,
         /// True while the stream is deliberately paused. A paused device
         /// delivers nothing and must not read as a dead one.
         paused: AtomicBool,
-        /// True while a recording owns this sink and has asked the device to
-        /// stop. Distinct from `paused`: a pause is resumable and a stop is the
-        /// tail of a recording, so neither may be judged stale.
+        /// True after a stop that does not keep the stream warm.
         stopped: AtomicBool,
         /// Whether any block has ever arrived.
         ///
         /// A device that opens and then never calls back delivers nothing, and
         /// that is indistinguishable from a healthy one until either a block or
-        /// enough time passes. `last_block_us` cannot express it: its zero value
+        /// enough time passes. `last_activity_us` cannot express it: its zero value
         /// is the "nothing yet" sentinel.
         delivered: AtomicBool,
         /// Set when the host reported an error that ends the stream, with the
@@ -565,7 +564,7 @@ mod cpal_impl {
                 first_pcm: Arc::new(FirstPcmSignal::default()),
                 first_recorded: FirstPcmSignal::default(),
                 recorded_at_us: AtomicU64::new(0),
-                last_block_us: AtomicU64::new(0),
+                last_activity_us: AtomicU64::new(0),
                 delivered: AtomicBool::new(false),
                 paused: AtomicBool::new(false),
                 stopped: AtomicBool::new(false),
@@ -625,10 +624,8 @@ mod cpal_impl {
             // `start_recording`, so it is what a press actually waits for: on a
             // reused stream the callback has been running for a while and only
             // this number shows the press latency.
-            self.last_block_us.store(
-                elapsed.as_micros().min(u128::from(u64::MAX)) as u64,
-                Ordering::Release,
-            );
+            self.last_activity_us
+                .store(self.now_us().max(1), Ordering::Release);
             self.delivered.store(true, Ordering::Release);
             if let Some(offset) = self.first_pcm.fire(self.born.elapsed()) {
                 log::info!("first audio block reached the capture callback after {offset:?}");
@@ -690,36 +687,24 @@ mod cpal_impl {
             preroll: Option<Arc<Mutex<Preroll>>>,
         ) -> Arc<Mutex<Vec<f32>>> {
             let buffer = Arc::new(Mutex::new(seed.clone()));
-            {
-                let mut state = self.lock();
-                *state = SinkMode::Recording {
-                    buffer: Arc::clone(&buffer),
-                    level,
-                    chunk: chunk.clone(),
-                    preroll,
-                };
+            // The emitter assigns offsets in arrival order. Seed it before
+            // the running callback can append live samples through this sink.
+            if let Some(chunk) = &chunk {
+                chunk.emit(&seed);
             }
-            if let Some(chunk) = chunk {
-                if !seed.is_empty() {
-                    chunk.emit(&seed);
-                }
-            }
-            // A fresh recording is live again, whatever a previous stop left.
+            let mut state = self.lock();
             self.stopped.store(false, Ordering::Release);
             if self.paused.swap(false, Ordering::AcqRel) {
                 self.close_pause_interval();
             }
-            // The tally is per recording, not per stream: this sink outlives the
-            // recording that paused it, and a total carried across would be
-            // subtracted from a recording that never paused.
             self.paused_total_us.store(0, Ordering::Release);
-            // Only the press clock restarts: the device-open clock measures the
-            // lifetime of this stream, which began when the device opened.
-            if let Ok(mut origin) = self.origin.lock() {
-                *origin = Instant::now();
-            }
-            self.first_recorded.reset();
-            self.recorded_at_us.store(0, Ordering::Release);
+            self.restart_press_clock();
+            *state = SinkMode::Recording {
+                buffer: Arc::clone(&buffer),
+                level,
+                chunk,
+                preroll,
+            };
             buffer
         }
 
@@ -742,16 +727,11 @@ mod cpal_impl {
             if self.paused.load(Ordering::Acquire) || self.stopped.load(Ordering::Acquire) {
                 return None;
             }
-            let last = self.last_block_us.load(Ordering::Acquire);
+            let last = self.last_activity_us.load(Ordering::Acquire);
             if last == 0 {
                 return None;
             }
-            let now = self
-                .origin
-                .lock()
-                .map(|origin| origin.elapsed())
-                .unwrap_or_default();
-            Some(now.saturating_sub(Duration::from_micros(last)))
+            Some(Duration::from_micros(self.now_us().saturating_sub(last)))
         }
 
         /// Records an error the host reported while this stream was running.
@@ -865,10 +845,17 @@ mod cpal_impl {
                 self.close_pause_interval();
             }
             if !paused {
-                if let Ok(mut origin) = self.origin.lock() {
-                    *origin = Instant::now();
-                }
-                self.last_block_us.store(0, Ordering::Release);
+                self.restart_callback_grace();
+            }
+        }
+
+        fn restart_callback_grace(&self) {
+            if let Ok(mut origin) = self.origin.lock() {
+                *origin = Instant::now();
+            }
+            if self.has_delivered() {
+                self.last_activity_us
+                    .store(self.now_us().max(1), Ordering::Release);
             }
         }
 
@@ -938,14 +925,17 @@ mod cpal_impl {
         /// came to be left warm and asleep, and why the answer is returned rather
         /// than left to be read on the other side of this call.
         fn stop_recording(&self, preroll: Option<Arc<Mutex<Preroll>>>) -> StopOutcome {
-            self.stopped.store(true, Ordering::Release);
+            let mut state = self.lock();
+            self.stopped.store(preroll.is_none(), Ordering::Release);
             // A stop during a pause ends the pause: the interval is closed here
             // so the figure the stop path reads includes it.
             let was_paused = self.paused.swap(false, Ordering::AcqRel);
             if was_paused {
                 self.close_pause_interval();
+                if preroll.is_some() {
+                    self.restart_callback_grace();
+                }
             }
-            let mut state = self.lock();
             let previous = std::mem::replace(
                 &mut *state,
                 match preroll {
@@ -1770,13 +1760,18 @@ mod cpal_impl {
         }
 
         fn check_release(&self) -> Result<(), RecordingError> {
-            if self.release_pending() {
-                Err(RecordingError::ReleaseUncertain(
-                    "previous input release is unconfirmed".into(),
-                ))
-            } else {
-                Ok(())
+            if capture_cleanup_uncertain() {
+                let message =
+                    "ALSA input release cannot be confirmed; restart MausVoice to record again";
+                log::error!("{message}");
+                return Err(RecordingError::ReleaseUncertain(message.into()));
             }
+            if self.release_blocked.get() {
+                return Err(RecordingError::ReleaseUncertain(
+                    "previous input release is unconfirmed".into(),
+                ));
+            }
+            Ok(())
         }
 
         fn schedule_linger_close(&self, linger: Duration, generation: u64) {
@@ -4429,9 +4424,6 @@ mod cpal_impl {
         fn the_first_block_marks_the_stream_as_delivered() {
             let sink = StreamSink::new(SinkMode::Discard);
 
-            // `last_block_us` starts at zero and zero is its sentinel, so the
-            // flag is the only way to tell "no block" from "a block at time 0".
-            std::thread::sleep(Duration::from_millis(2));
             sink.deliver(&[0.1]);
 
             assert!(sink.has_delivered());
@@ -4641,25 +4633,29 @@ mod cpal_impl {
         }
 
         #[test]
-        fn the_seed_is_handed_to_the_chunk_emitter_before_live_audio() {
-            let chunks = Arc::new(Mutex::new(Vec::<(Vec<f32>, u64)>::new()));
+        fn the_seed_is_dispatched_before_the_callback_can_see_recording_mode() {
+            let ring = Arc::new(Mutex::new(Preroll::new(8)));
+            let sink = StreamSink::new(SinkMode::Warm { preroll: ring });
+            let weak_sink = Arc::downgrade(&sink);
+            let chunks = Arc::new(Mutex::new(Vec::new()));
             let callback_chunks = Arc::clone(&chunks);
             let emitter = ChunkEmitter::new(Arc::new(move |chunk, offset| {
+                if offset == 0 {
+                    let sink = weak_sink.upgrade().unwrap();
+                    assert!(matches!(*sink.lock(), SinkMode::Warm { .. }));
+                }
                 callback_chunks.lock().unwrap().push((chunk, offset));
             }));
-            let sink = StreamSink::new(SinkMode::Discard);
 
-            sink.start_recording(None, Some(Arc::clone(&emitter)), vec![9.0], None);
+            let buffer = sink.start_recording(None, Some(Arc::clone(&emitter)), vec![0.1], None);
+            sink.deliver(&[0.2, 0.3]);
             emitter.flush();
 
-            let chunks = chunks.lock().unwrap();
             assert_eq!(
-                chunks.first().map(|(chunk, _)| chunk.clone()),
-                Some(vec![9.0])
+                *chunks.lock().unwrap(),
+                vec![(vec![0.1], 0), (vec![0.2, 0.3], 1)]
             );
-            // The seed claims offset 0, so the webview places it at the start of
-            // the timeline instead of after the live audio.
-            assert_eq!(chunks.first().map(|(_, offset)| *offset), Some(0));
+            assert_eq!(*buffer.lock().unwrap(), vec![0.1, 0.2, 0.3]);
         }
 
         #[test]
@@ -4773,15 +4769,42 @@ mod cpal_impl {
         }
 
         #[test]
-        fn a_stopped_stream_does_not_read_as_dead() {
+        fn only_a_released_sink_suppresses_the_silence_check() {
             let sink = StreamSink::new(SinkMode::Discard);
-            sink.deliver(&[0.1]);
+            deliver_after_a_pause(&sink);
 
-            // A device stop is the end of a recording, not a vanished device.
-            // Conflating the two made a stop-then-start pair reopen the device
-            // and lose the press that was already in flight.
-            sink.stop_recording(Some(Arc::new(Mutex::new(Preroll::new(8)))));
+            sink.stop_recording(None);
             assert_eq!(sink.silence_for(), None);
+        }
+
+        #[test]
+        fn a_held_stream_can_go_stale_without_any_callback_after_stop() {
+            let mut sink = StreamSink::new(SinkMode::Discard);
+            sink.start_recording(None, None, Vec::new(), None);
+            deliver_after_a_pause(&sink);
+            sink.stop_recording(Some(Arc::new(Mutex::new(Preroll::new(8)))));
+            let silence = sink
+                .silence_for()
+                .expect("warm handoff keeps the callback clock live");
+            assert!(silence < STALE_WARM_SILENCE);
+
+            // Age the monotonic clock without asking the device for another block.
+            Arc::get_mut(&mut sink).unwrap().born -= STALE_WARM_SILENCE;
+            assert!(sink.silence_for().unwrap() >= STALE_WARM_SILENCE);
+        }
+
+        #[test]
+        fn a_paused_hold_gets_a_fresh_window_but_can_still_go_stale() {
+            let mut sink = StreamSink::new(SinkMode::Discard);
+            sink.start_recording(None, None, Vec::new(), None);
+            deliver_after_a_pause(&sink);
+            sink.set_paused(true);
+            Arc::get_mut(&mut sink).unwrap().born -= STALE_WARM_SILENCE;
+            sink.stop_recording(Some(Arc::new(Mutex::new(Preroll::new(8)))));
+            assert!(sink.silence_for().unwrap() < STALE_WARM_SILENCE);
+
+            Arc::get_mut(&mut sink).unwrap().born -= STALE_WARM_SILENCE;
+            assert!(sink.silence_for().unwrap() >= STALE_WARM_SILENCE);
         }
 
         #[test]
