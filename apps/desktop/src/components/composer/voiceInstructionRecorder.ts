@@ -46,8 +46,9 @@ export type VoiceInstructionRecorderDeps = {
   canUseProvider: () => boolean;
   speechRecognitionSupported: boolean;
   unsupportedMessage: () => string;
-  /** Shown when recording cannot be started or usable audio was not captured. */
+  /** Shown when the microphone could not be claimed or started. */
   recordingUnavailableMessage: () => string;
+  captureFailedMessage: () => string;
   onListeningChange: (listening: boolean) => void;
   onTranscript: (text: string) => void;
   onError: (message: string) => void;
@@ -361,6 +362,12 @@ export class VoiceInstructionRecorder {
       try {
         const response = await stopNativeRecording(this.deps.invoke, handle);
         if (gen !== this.opGen || this.disposed) return null;
+        if (response.captureFailed) {
+          // A sealed partial take can consist entirely of speech before the press.
+          // Do not send it to a provider or turn it into an edit instruction.
+          this.deps.onError(this.deps.captureFailedMessage());
+          return null;
+        }
         return await this.transcribeProviderResponse(gen, response);
       } catch {
         if (gen !== this.opGen || this.disposed) {
@@ -401,12 +408,6 @@ export class VoiceInstructionRecorder {
     gen: number,
     response: StopRecordingResponse,
   ): Promise<string | null> {
-    if (response.captureFailed) {
-      // A sealed partial take can consist entirely of speech before the press.
-      // Do not send it to a provider or turn it into an edit instruction.
-      this.deps.onError(this.deps.recordingUnavailableMessage());
-      return null;
-    }
     const samples = response.samples;
     const sampleRate = response.sampleRate ?? 0;
     if (!samples || samples.length === 0 || sampleRate <= 0) {

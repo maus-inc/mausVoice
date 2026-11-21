@@ -51,8 +51,13 @@ vi.mock("react-intl", () => ({
 
 ensureUiHarness();
 let root: Root;
+const flush = (action: () => void) =>
+  act(() => {
+    action();
+    return Promise.resolve();
+  });
 const render = () =>
-  act(async () => {
+  flush(() => {
     root.render(
       <StrictMode>
         <MicCheckForm />
@@ -69,31 +74,31 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await act(async () => root.unmount());
+  await flush(() => root.unmount());
 });
 
 describe("Mic Check capture ownership", () => {
   it("does not stop another capture when no admission was granted", async () => {
     state.overlayPhase = "paused";
     await render();
-    await act(async () => root.render(null));
+    await flush(() => root.render(null));
     expect(invoke).not.toHaveBeenCalled();
   });
 
   it("discards only its late admission without opening after unmount", async () => {
     let admit!: (generation: number) => void;
-    invoke.mockImplementation(async (cmd) =>
+    invoke.mockImplementation((cmd) =>
       cmd === "recording_generation"
         ? new Promise<number>((resolve) => {
             admit = resolve;
           })
-        : undefined,
+        : Promise.resolve(),
     );
     await render();
     const owner = invoke.mock.calls[0]?.[1]?.ownerId;
     expect(typeof owner).toBe("string");
-    await act(async () => root.render(null));
-    await act(async () => admit(7));
+    await flush(() => root.render(null));
+    await flush(() => admit(7));
     expect(invoke.mock.calls).toEqual([
       ["recording_generation", { ownerId: owner }],
       ["discard_recording", { ownerId: owner, generation: 7 }],
@@ -103,12 +108,12 @@ describe("Mic Check capture ownership", () => {
 
   it("invalidates pending admission as soon as local-data clear is requested", async () => {
     let admit!: (generation: number) => void;
-    invoke.mockImplementation(async (cmd) =>
+    invoke.mockImplementation((cmd) =>
       cmd === "recording_generation"
         ? new Promise<number>((resolve) => {
             admit = resolve;
           })
-        : undefined,
+        : Promise.resolve(),
     );
     await render();
     const owner = invoke.mock.calls[0]?.[1]?.ownerId;
@@ -128,13 +133,15 @@ describe("Mic Check capture ownership", () => {
   it("waits for the exact release before starting a different microphone", async () => {
     let generation = 0;
     let release!: () => void;
-    invoke.mockImplementation(async (cmd) => {
-      if (cmd === "recording_generation") return ++generation;
-      if (cmd === "start_recording") return { sampleRate: 16000 };
+    invoke.mockImplementation((cmd) => {
+      if (cmd === "recording_generation") return Promise.resolve(++generation);
+      if (cmd === "start_recording")
+        return Promise.resolve({ sampleRate: 16000 });
       if (cmd === "discard_recording" && generation === 1)
         return new Promise<void>((resolve) => {
           release = resolve;
         });
+      return Promise.resolve();
     });
     await render();
     const firstOwner = invoke.mock.calls[0]?.[1]?.ownerId;
@@ -145,7 +152,7 @@ describe("Mic Check capture ownership", () => {
       generation: 1,
     });
     expect(generation).toBe(1);
-    await act(async () => release());
+    await flush(() => release());
     expect(invoke).toHaveBeenLastCalledWith("start_recording", {
       ownerId: expect.any(String),
       generation: 2,
@@ -153,7 +160,7 @@ describe("Mic Check capture ownership", () => {
     });
     const secondOwner = invoke.mock.calls.at(-1)?.[1]?.ownerId;
     expect(secondOwner).not.toBe(firstOwner);
-    await act(async () => root.render(null));
+    await flush(() => root.render(null));
     expect(invoke).toHaveBeenLastCalledWith("discard_recording", {
       ownerId: secondOwner,
       generation: 2,

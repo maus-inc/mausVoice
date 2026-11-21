@@ -1,3 +1,4 @@
+import type { RecordingMode } from "../../state/app.state";
 import {
   isLocalDataClearRequested,
   subscribeToLocalDataClearRequested,
@@ -54,8 +55,19 @@ export const invokeGuardedRecordingStart = (
 export const assertDictationStartAvailable = (
   hasActiveTake: boolean,
   isStopping: boolean,
+  mode?: {
+    current: RecordingMode | null;
+    requested: RecordingMode;
+  },
 ): void => {
-  if (hasActiveTake || isStopping || isLocalDataClearRequested()) {
+  const blockedByAgentPanel =
+    mode?.current === "agent" && mode.requested !== "agent";
+  if (
+    hasActiveTake ||
+    isStopping ||
+    blockedByAgentPanel ||
+    isLocalDataClearRequested()
+  ) {
     throw new NativeRecordingBusyError(
       "A dictation session is not available to start",
     );
@@ -74,7 +86,7 @@ export const bindRecordingActivation = (
     start: async () => {
       ownedOperation = null;
       await start((operation) => {
-        ownedOperation = operation;
+        ownedOperation ??= operation;
       });
     },
     stop: async () => {

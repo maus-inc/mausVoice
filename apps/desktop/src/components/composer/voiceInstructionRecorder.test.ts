@@ -95,6 +95,7 @@ const baseDeps = (
     speechRecognitionSupported: true,
     unsupportedMessage: () => "unsupported",
     recordingUnavailableMessage: () => "recording unavailable",
+    captureFailedMessage: () => "recording failed",
     onListeningChange: vi.fn(),
     onTranscript: vi.fn(),
     onError: vi.fn(),
@@ -133,11 +134,12 @@ describe("VoiceInstructionRecorder", () => {
   it("does not transcribe a failed capture containing pre-roll", async () => {
     const deps = baseDeps({
       invoke: nativeInvoke({
-        stop_recording: async () => ({
-          samples: [0.1, 0.2],
-          sampleRate: 16000,
-          captureFailed: true,
-        }),
+        stop_recording: () =>
+          Promise.resolve({
+            samples: [0.1, 0.2],
+            sampleRate: 16000,
+            captureFailed: true,
+          }),
       }),
       createSpeechRecognition: vi.fn(() => new FakeRecognition()),
     });
@@ -149,7 +151,7 @@ describe("VoiceInstructionRecorder", () => {
     expect(deps.transcribe).not.toHaveBeenCalled();
     expect(deps.onTranscript).not.toHaveBeenCalled();
     expect(deps.createSpeechRecognition).not.toHaveBeenCalled();
-    expect(deps.onError).toHaveBeenCalledWith("recording unavailable");
+    expect(deps.onError).toHaveBeenCalledWith("recording failed");
     expect(recorder.getState()).toBe("idle");
     await recorder.toggle();
     expect(recorder.getState()).toBe("provider");

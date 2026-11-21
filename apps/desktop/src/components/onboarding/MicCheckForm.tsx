@@ -116,11 +116,11 @@ export const MicCheckForm = () => {
     }
   }, [preferredMicrophone, setSyncedRecordingState]);
 
-  const stopRecording = useCallback(async () => {
+  const stopRecording = useCallback((): Promise<void> => {
     if (pendingStopRef.current) return pendingStopRef.current;
     const currentState = recordingStateRef.current;
     if (currentState !== "recording" && currentState !== "starting") {
-      return;
+      return Promise.resolve();
     }
 
     opIdRef.current += 1;
@@ -128,7 +128,7 @@ export const MicCheckForm = () => {
     admittedRef.current = null;
     if (!handle) {
       setSyncedRecordingState("idle");
-      return;
+      return Promise.resolve();
     }
     setSyncedRecordingState("stopping");
     const pending = handle
