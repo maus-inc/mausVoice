@@ -220,7 +220,7 @@ jobs:
           fi
           sudo apt-get install -y \
             build-essential pkg-config cmake \
-            libgtk-3-dev "$WEBKIT_PKG" \
+            libgtk-3-dev "$WEBKIT_PKG" xvfb xauth \
             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev
       - name: Check Rust formatting
         # Every crate, not just the one the tests below run: the deviations that
@@ -249,6 +249,13 @@ jobs:
         shell: bash
         run: |
           bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" rust-unit cargo test --locked --lib
+      - name: Verify WebKit renderer-exit detection
+        working-directory: apps/desktop/src-tauri
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+        run: >-
+          xvfb-run -a cargo test --locked --lib
+          webkit_main_frame_probe_distinguishes_live_page_and_process_exit -- --ignored
       - name: Run ALSA fault-injection tests
         # The `#[ignore]`d half of the recorder suite. It needs a null ALSA PCM
         # and an `LD_PRELOAD` shim per test, which `cargo test --lib` gives it
