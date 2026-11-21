@@ -1297,18 +1297,85 @@ fn wire_entry_and_keys(wiring: Wiring) {
     });
 
     // `paste-clipboard` only fires for the paste action. Middle-click primary
-    // selection and drag-drop insert straight into the buffer, so the budget has
-    // to be enforced here, where every insertion route arrives. An insert that
-    // would push the buffer past the budget is dropped whole rather than
-    // truncated, so the draft the user already has stays intact.
-    review_buffer.connect_insert_text(|buffer, _location, text| {
+    // selection, drag-drop and an input method commit insert into the buffer
+    // directly, so the budget has to be enforced on the buffer itself, where
+    // every insertion route arrives. An insert that would push the buffer past
+    // the budget is dropped whole rather than truncated, so the draft the user
+    // already has stays intact.
+    //
+    // An input method commits by deleting the selection and then inserting the
+    // composed text, and typing over a selection does the same. GTK emits
+    // `delete-range` for that deletion before it emits `insert-text`, so
+    // answering the budget only at the insert would accept the deletion and then
+    // refuse the replacement, losing the selected characters. Record the
+    // deletion for the length of the enclosing user action and restore it if the
+    // replacement is refused. `end-user-action` clears the record, so a plain
+    // backspace cannot pair with an unrelated later insert.
+    let reject_delete_buffer = review_buffer.clone();
+    review_buffer.connect_delete_range(move |_, start, end| {
         if LOADING_REVIEW_TEXT.with(std::cell::Cell::get) {
             return;
         }
-        if review_insert_exceeds_budget(buffer, text.chars().count()) {
-            eprintln!("Rejected a review edit that exceeded the editor budget");
-            buffer.stop_signal_emission_by_name("insert-text");
+        let Some(removed_text) = reject_delete_buffer.text(start, end, true) else {
+            return;
+        };
+        REJECTED_REVIEW_REPLACEMENT.with(|slot| {
+            *slot.borrow_mut() = Some(removed_text.to_string());
+        });
+    });
+    review_buffer.connect_end_user_action(|_| {
+        REJECTED_REVIEW_REPLACEMENT.with(|slot| *slot.borrow_mut() = None);
+    });
+
+    review_buffer.connect_insert_text(|buffer, location, text| {
+        if LOADING_REVIEW_TEXT.with(std::cell::Cell::get) {
+            return;
         }
+        let replacement = REJECTED_REVIEW_REPLACEMENT.with(|slot| slot.borrow_mut().take());
+        let Some(removed_text) = replacement else {
+            if review_insert_exceeds_budget(buffer, text.chars().count()) {
+                eprintln!("Rejected a review edit that exceeded the editor budget");
+                buffer.stop_signal_emission_by_name("insert-text");
+            }
+            return;
+        };
+        // The buffer already lost the replaced range, so the prospective size is
+        // the current count plus this insert. An in-budget replacement proceeds
+        // untouched; an over-budget one is refused and its range restored.
+        let prospective =
+            (buffer.char_count().max(0) as usize).saturating_add(text.chars().count());
+        if prospective <= MAX_REVIEW_EDITOR_CHARS {
+            return;
+        }
+        buffer.stop_signal_emission_by_name("insert-text");
+        eprintln!("Rejected a review replacement that exceeded the editor budget");
+        // Restore on an idle callback rather than inside this emission, so the
+        // buffer is not modified while GTK is still delivering the signal.
+        let insert_at = location.offset().min(buffer.char_count().max(0));
+        let restore_buffer = buffer.clone();
+        glib::idle_add_local_once(move || {
+            let mut at = restore_buffer.iter_at_offset(insert_at);
+            LOADING_REVIEW_TEXT.with(|loading| loading.set(true));
+            restore_buffer.insert(&mut at, &removed_text);
+            LOADING_REVIEW_TEXT.with(|loading| loading.set(false));
+        });
+    });
+
+    // A move drop into a full editor would insert nothing and still report
+    // success, so GTK would ask the source view to delete the dragged text and
+    // the text would vanish. The payload size is only known at delivery, so
+    // judge the drop here, before GTK's own handler inserts, and report failure
+    // without asking the source to delete. A drop that fits is left to GTK,
+    // which inserts it and finishes the move as usual. Drag motion is untouched
+    // so the drag keeps GTK's own drop-point feedback and autoscroll.
+    review_editor.connect_drag_data_received(|view, context, _x, _y, data, _info, time| {
+        let buffer = view.buffer().expect("review editor buffer");
+        if !review_insert_exceeds_budget(&buffer, review_drop_chars(data)) {
+            return;
+        }
+        view.stop_signal_emission_by_name("drag-data-received");
+        context.drag_finish(false, false, time);
+        eprintln!("Rejected a review drop that exceeded the editor budget");
     });
 
     let state_review_paste = state.clone();
@@ -1634,6 +1701,12 @@ thread_local! {
     /// so the guard below has to stand down for that one call or the load would
     /// be dropped and the editor would open empty.
     static LOADING_REVIEW_TEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set while `insert-text` has accepted a replacement of a selection that an
+    /// input method removed before the insert. GTK deletes that selection before
+    /// it emits `insert-text`, so the budget has to be answered ahead of the
+    /// deletion; an insert that then overshoots puts the deleted range back.
+    static REJECTED_REVIEW_REPLACEMENT: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Whether appending `incoming` characters to `buffer` would exceed the review
@@ -1643,13 +1716,30 @@ thread_local! {
 /// middle-click primary selection and drag-drop all reach the buffer, and the
 /// budget only holds if each one is checked before the mutation.
 fn review_insert_exceeds_budget(buffer: &gtk::TextBuffer, incoming_chars: usize) -> bool {
-    let selected = buffer
+    review_replace_exceeds_budget(
+        buffer.char_count().max(0) as usize,
+        review_selected_chars(buffer),
+        incoming_chars,
+    )
+}
+
+/// Whether a replacement of `selected` characters by `incoming` characters would
+/// exceed the review editor budget.
+fn review_replace_exceeds_budget(
+    current_chars: usize,
+    selected_chars: usize,
+    incoming_chars: usize,
+) -> bool {
+    (current_chars + incoming_chars).saturating_sub(selected_chars) > MAX_REVIEW_EDITOR_CHARS
+}
+
+/// Characters the current selection would remove, which a replacement does not
+/// have to count against the budget.
+fn review_selected_chars(buffer: &gtk::TextBuffer) -> usize {
+    buffer
         .selection_bounds()
         .map(|(start, end)| (end.offset() - start.offset()).max(0) as usize)
-        .unwrap_or(0);
-    let prospective =
-        (buffer.char_count().max(0) as usize + incoming_chars).saturating_sub(selected);
-    prospective > MAX_REVIEW_EDITOR_CHARS
+        .unwrap_or(0)
 }
 
 fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
@@ -1659,16 +1749,18 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
     let buffer = view.buffer().expect("review editor buffer");
     let state_clipboard = Rc::clone(state);
     let view_paste = view.clone();
-    // The request is asynchronous, so the selection can move before the text
-    // arrives. Capture where the user asked to paste and drop a response that
-    // would otherwise delete whatever they selected in the meantime.
-    let requested_selection = buffer.selection_bounds();
+    // The request is asynchronous, so the buffer can change before the text
+    // arrives. Record character offsets, not `TextIter`s, because GTK
+    // invalidates iterators whenever the text changes. The insertion point is
+    // part of the record: a paste with no selection and a caret that then moved
+    // would otherwise pass and insert at the new caret.
+    let requested = review_paste_target(&buffer);
     gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
         if !clipboard_result_is_current(&review_id, state_clipboard.pending_review_id().as_deref())
         {
             return;
         }
-        if buffer.selection_bounds() != requested_selection {
+        if review_paste_target_is_stale(requested, review_paste_target(&buffer)) {
             return;
         }
         let Some(text) = text else {
@@ -1684,10 +1776,14 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
             return;
         }
         buffer.begin_user_action();
-        if let Some((mut start, mut end)) = buffer.selection_bounds() {
+        if let Some((start_offset, end_offset)) = requested.1 {
+            let mut start = buffer.iter_at_offset(start_offset);
+            let mut end = buffer.iter_at_offset(end_offset);
             buffer.delete(&mut start, &mut end);
         }
-        buffer.insert_at_cursor(text);
+        let mut at = buffer.iter_at_offset(requested.0);
+        buffer.place_cursor(&at);
+        buffer.insert(&mut at, text);
         buffer.end_user_action();
         // Stopping GTK's default handler also drops its scroll-after-paste, so
         // scroll the insertion mark into view to match the built-in behavior.
@@ -1695,6 +1791,35 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
             view_paste.scroll_mark_onscreen(&insert);
         }
     });
+}
+
+/// Where a paste was requested, as character offsets that stay valid after the
+/// buffer changes. The caret is always recorded, because a paste with no
+/// selection and a caret that then moved must not insert at the new caret.
+type ReviewPasteTarget = (i32, Option<(i32, i32)>);
+
+fn review_paste_target(buffer: &gtk::TextBuffer) -> ReviewPasteTarget {
+    (
+        buffer
+            .get_insert()
+            .map(|mark| buffer.iter_at_mark(&mark).offset())
+            .unwrap_or_else(|| buffer.char_count().max(0)),
+        buffer
+            .selection_bounds()
+            .map(|(start, end)| (start.offset(), end.offset())),
+    )
+}
+
+/// Whether the caret or selection moved since the paste was requested, which
+/// means the response would land somewhere the user did not ask for.
+fn review_paste_target_is_stale(requested: ReviewPasteTarget, current: ReviewPasteTarget) -> bool {
+    requested != current
+}
+
+/// Characters a dropped selection would add, or zero when the payload is not
+/// text. A non-text target is left for GTK to reject on its own.
+fn review_drop_chars(data: &gtk::SelectionData) -> usize {
+    data.text().map(|text| text.chars().count()).unwrap_or(0)
 }
 
 fn clipboard_result_is_current(expected_review_id: &str, current_review_id: Option<&str>) -> bool {
@@ -2639,6 +2764,35 @@ mod clipboard_response_tests {
         assert!(clipboard_result_is_current("review-1", Some("review-1")));
         assert!(!clipboard_result_is_current("review-1", Some("review-2")));
         assert!(!clipboard_result_is_current("review-1", None));
+    }
+}
+
+#[cfg(test)]
+mod review_budget_tests {
+    use super::{review_paste_target_is_stale, review_replace_exceeds_budget};
+    use crate::constants::MAX_REVIEW_EDITOR_CHARS;
+
+    #[test]
+    fn replacement_is_measured_against_what_it_removes() {
+        let full = MAX_REVIEW_EDITOR_CHARS;
+        // A one-for-one replacement at the limit still fits.
+        assert!(!review_replace_exceeds_budget(full, 1, 1));
+        // Growing by one at the limit does not.
+        assert!(review_replace_exceeds_budget(full, 1, 2));
+        // Removing more than is added always fits, even past the limit.
+        assert!(!review_replace_exceeds_budget(full + 10, 20, 1));
+        // An empty buffer takes a paste right up to the limit, not one more.
+        assert!(!review_replace_exceeds_budget(0, 0, full));
+        assert!(review_replace_exceeds_budget(0, 0, full + 1));
+    }
+
+    #[test]
+    fn caret_move_without_a_selection_still_invalidates_a_paste() {
+        let before = (5, None);
+        assert!(!review_paste_target_is_stale(before, before));
+        // The reported case: no selection before and after, caret moved.
+        assert!(review_paste_target_is_stale(before, (9, None)));
+        assert!(review_paste_target_is_stale((5, Some((1, 5))), before));
     }
 }
 
