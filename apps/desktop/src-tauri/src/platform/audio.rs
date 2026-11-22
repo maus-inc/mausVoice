@@ -3582,7 +3582,7 @@ mod cpal_impl {
             // generation before applying, so a snapshot taken before a newer
             // set_microphone_linger is rejected instead of overwriting it.
             if let Err(error) = self.worker.try_send(move |r| {
-                r.apply_linger_if_current(Duration::from_millis(linger_ms), expected_generation)
+                r.apply_linger_if_current(Duration::from_millis(linger_ms), expected_generation);
             }) {
                 log::error!("{error}");
             }
