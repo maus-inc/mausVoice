@@ -45,7 +45,8 @@ export const LocateGestureSideEffects = () => {
 
     const unsubscribe = useAppStore.subscribe((state) => {
       if (applyState(state, detector)) {
-        locatePill();
+        // The action handles its own failure; nothing here needs the promise.
+        void locatePill();
       }
     });
 
