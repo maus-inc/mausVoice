@@ -18,6 +18,12 @@ use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, 
 pub(crate) struct DropRecord {
     pub(crate) x: i32,
     pub(crate) y: i32,
+    /// The window's size at the drop, so the reported rectangle is one
+    /// instant's worth of geometry. A DPI change while the save is deferred
+    /// resizes the live window, and pairing that size with this origin would
+    /// describe a window the user never released.
+    pub(crate) width: f64,
+    pub(crate) height: f64,
     pub(crate) work_area: Option<rust_pill_shared::edge::MonitorRect>,
     pub(crate) display_id: Option<u64>,
 }

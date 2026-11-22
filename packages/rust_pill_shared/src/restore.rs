@@ -79,6 +79,23 @@ pub struct ParkedWindow {
     pub display_id: Option<u64>,
 }
 
+/// Whether a rectangle can take part in the placement math.
+///
+/// Finite fields are not enough. The math reads both edges and the centre, and
+/// a magnitude near `f64::MAX` keeps every field finite while `x + width`
+/// overflows to infinity, which then turns the fraction and the clamp into
+/// NaN. A corrupt row that decodes is exactly the case this rejects.
+fn finite_box(x: f64, y: f64, width: f64, height: f64) -> bool {
+    x.is_finite()
+        && y.is_finite()
+        && width.is_finite()
+        && height.is_finite()
+        && width > 0.0
+        && height > 0.0
+        && (x + width).is_finite()
+        && (y + height).is_finite()
+}
+
 impl ParkedWindow {
     /// Build an unnamed parked window, which matches on geometry alone.
     pub fn new(x: f64, y: f64, width: f64, height: f64, display: MonitorRect) -> Option<Self> {
@@ -98,18 +115,8 @@ impl ParkedWindow {
         display: MonitorRect,
         display_id: Option<u64>,
     ) -> Option<Self> {
-        let window_usable = x.is_finite()
-            && y.is_finite()
-            && width.is_finite()
-            && height.is_finite()
-            && width > 0.0
-            && height > 0.0;
-        let display_usable = display.x.is_finite()
-            && display.y.is_finite()
-            && display.width.is_finite()
-            && display.height.is_finite()
-            && display.width > 0.0
-            && display.height > 0.0;
+        let window_usable = finite_box(x, y, width, height);
+        let display_usable = finite_box(display.x, display.y, display.width, display.height);
         (window_usable && display_usable).then_some(Self {
             x,
             y,
@@ -380,19 +387,24 @@ where
     };
 
     let destination_bounds = bounds_for(areas[index], (width, height), BoundsRole::Destination);
-    let anchor = if exact {
+    // The saved origin is a fixed point of the clamp it was stored under, so the
+    // fraction has to be measured in the same room the destination is measured
+    // in. Asking the caller for both is what keeps the two boxes the same box:
+    // the boxes are footprint-dependent, and only the caller knows the
+    // footprint.
+    let saved_bounds = bounds_for(
+        parked.display,
+        (parked.width, parked.height),
+        BoundsRole::Saved,
+    );
+    // Matching display rectangles do not mean matching boxes: the pill can be
+    // saved at one scale and restored at another, and the footprint offset
+    // inside the window grows with that scale while the origin does not. Keep
+    // the stored origin only when the boxes it was measured in are the boxes it
+    // is being restored into.
+    let anchor = if exact && saved_bounds == destination_bounds {
         (parked.x, parked.y)
     } else {
-        // The saved origin is a fixed point of the clamp it was stored under, so
-        // the fraction has to be measured in the same room the destination is
-        // measured in. Asking the caller for both is what keeps the two boxes the
-        // same box: the boxes are footprint-dependent, and only the caller knows
-        // the footprint.
-        let saved_bounds = bounds_for(
-            parked.display,
-            (parked.width, parked.height),
-            BoundsRole::Saved,
-        );
         remap(parked, destination_bounds, saved_bounds)
     };
     if !anchor.0.is_finite() || !anchor.1.is_finite() {

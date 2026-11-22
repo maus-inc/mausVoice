@@ -73,6 +73,36 @@ unsafe fn screen_visible_frame(screen: id) -> NSRect {
     msg_send![screen, visibleFrame]
 }
 
+/// The screen the pill's drop belongs to, or the window's own screen.
+///
+/// `[NSWindow screen]` answers the screen holding the largest part of the
+/// window, and the pill's window is a canvas several times the size of the
+/// visible pill. A canvas straddling two displays can therefore be attributed
+/// to the one the pill is not on, and the saved record would name that
+/// display's work area and token. The pill is drawn at the bottom centre of the
+/// canvas, so that is the point the drop is resolved from.
+unsafe fn screen_for_drop(window: id) -> id {
+    let frame = window_frame(window);
+    let point = NSPoint::new(
+        frame.origin.x + frame.size.width / 2.0,
+        frame.origin.y + MARGIN_BOTTOM as f64,
+    );
+    let list = screens();
+    let count: usize = msg_send![list, count];
+    for index in 0..count {
+        let candidate: id = msg_send![list, objectAtIndex: index];
+        let bounds: NSRect = msg_send![candidate, frame];
+        if point.x >= bounds.origin.x
+            && point.x < bounds.origin.x + bounds.size.width
+            && point.y >= bounds.origin.y
+            && point.y < bounds.origin.y + bounds.size.height
+        {
+            return candidate;
+        }
+    }
+    msg_send![window, screen]
+}
+
 /// The stable token of a screen, or `None` when it cannot be named.
 ///
 /// `NSScreen`'s device description carries an `NSScreenNumber`, which is a
@@ -209,7 +239,9 @@ unsafe fn primary_top_for(window: id) -> f64 {
 /// desktop can anchor the composer next to the real pill.
 unsafe fn pill_geometry(window: id) -> (Rect, Option<Rect>) {
     let frame = window_frame(window);
-    let screen: id = msg_send![window, screen];
+    // The pill's own screen, not the one holding the largest part of the
+    // canvas, for the reason `screen_for_drop` gives.
+    let screen = screen_for_drop(window);
 
     // `NSScreen.screens` can be EMPTY -- briefly when every display disconnects, the lid
     // closes, or the display sleeps. `objectAtIndex:0` on an empty array raises
@@ -220,7 +252,7 @@ unsafe fn pill_geometry(window: id) -> (Rect, Option<Rect>) {
     let primary_top = primary_top_for(window);
 
     let rect = to_top_down(frame, primary_top);
-    // `msg_send![window, screen]` is nil when the window is on no display, and the screen list
+    // `screen_for_drop` is nil when the window is on no display, and the screen list
     // can be empty. There is no monitor to report then, so the monitor is `None` rather than a
     // window-sized rect standing in for one: the desktop stores the reported work area as the
     // place the pill was parked, so a fabricated one would overwrite the real record with a
@@ -1132,7 +1164,7 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
 /// no screen, because a window-sized rect standing in for a work area would be
 /// stored as the place the pill was parked.
 unsafe fn drop_display_for(window: id) -> (Option<Rect>, Option<u64>, f64) {
-    let screen: id = msg_send![window, screen];
+    let screen = screen_for_drop(window);
     let primary_top = primary_top_for(window);
     let monitor = if (screen as *mut std::ffi::c_void).is_null() {
         None

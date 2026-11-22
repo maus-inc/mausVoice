@@ -2599,7 +2599,14 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
         // The whole record is captured here, not just the origin. The retry can
         // run after a display went away, and re-resolving the work area and token
         // then would pair this origin with a display the pill was never on.
-        state.drop_record.set(Some(drop_record_at((x, y), state)));
+        state.drop_record.set(Some(drop_record_at(
+            (x, y),
+            (
+                (current.right - current.left) as f64,
+                (current.bottom - current.top) as f64,
+            ),
+            state,
+        )));
         persist_drag_position(hwnd, state);
     } else if settling || dragging {
         // The frame loop owns the window, but its position is not final yet. Mark
@@ -3007,13 +3014,15 @@ fn write_drag_position(hwnd: HWND, state: &PillState, now: f64) {
 /// Called at the settle, when the origin is the one the user released at. A
 /// single `monitor_for_point` answers the work area and the token, so the record
 /// cannot name one panel and carry another's geometry.
-fn drop_record_at(origin: (i32, i32), state: &PillState) -> DropRecord {
+fn drop_record_at(origin: (i32, i32), window: (f64, f64), state: &PillState) -> DropRecord {
     let (offset, size) = live_pill_footprint(state);
     let centre = visible_pill_centre((origin.0 as f64, origin.1 as f64), (offset, size));
     let monitor_handle = monitor_for_point(centre);
     DropRecord {
         x: origin.0,
         y: origin.1,
+        width: window.0,
+        height: window.1,
         work_area: monitor_handle.and_then(query_monitor_info).map(|info| {
             rust_pill_shared::edge::MonitorRect::without_id(
                 info.rcWork.left as f64,
@@ -3042,7 +3051,14 @@ fn store_recorded_drop(hwnd: HWND, state: &PillState) {
         unsafe {
             let _ = GetWindowRect(hwnd, &mut rect);
         }
-        drop_record_at((rect.left, rect.top), state)
+        drop_record_at(
+            (rect.left, rect.top),
+            (
+                (rect.right - rect.left) as f64,
+                (rect.bottom - rect.top) as f64,
+            ),
+            state,
+        )
     });
     let origin = (record.x, record.y);
     state.saved_x.set(origin.0);
@@ -3070,15 +3086,16 @@ fn store_recorded_drop(hwnd: HWND, state: &PillState) {
     if let Some(area) = record.work_area {
         state.saved_work_area.set(area);
     }
-    // Only the size comes from the live window: the pill's canvas does not change
-    // when the layout moves it, and the size has to match the rectangle the
-    // renderer will actually draw on the next launch.
-    let (live_rect, _) = current_pill_geometry(hwnd);
+    // The size comes from the same record as the origin. A DPI change between
+    // the drop and this write resizes the live window, and the pair would then
+    // describe a window the user never released: restore computes the saved
+    // footprint fraction from the stored size, so a post-drop size moves the
+    // pill's own edge relative to the work area it is restored into.
     let reported = Rect {
         x: origin.0 as f64,
         y: origin.1 as f64,
-        width: live_rect.width,
-        height: live_rect.height,
+        width: record.width,
+        height: record.height,
     };
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(

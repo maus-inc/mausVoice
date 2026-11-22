@@ -8,9 +8,12 @@ Read the newest `YYYY-MM-DD.md` in this directory first.
 ## Review workflow for this repo's PRs
 
 - The two MANUAL reviewers are CodeAnt and CodeRabbit. The human confirmed this
-  directly on 2026-11-19; it outranks AGENTS.md, which only documents CodeRabbit
-  and Kilocode as taggable. Tag them in SEPARATE comments, never one command or
-  one comment, so neither review request gets botched.
+  directly on 2026-11-19. AGENTS.md covers both: CodeRabbit is taggable and
+  auto-reviews only `main`-based PRs, and Kilocode is taggable for delegated
+  work. AGENTS.md also limits a manual CodeRabbit request on a non-`main` base
+  to a substantially critical PR, and that limit still governs. Tag the two in
+  SEPARATE comments, never one command or one comment, so neither review
+  request gets botched.
 - `cubic` does not exist in this repo. An earlier memory line claiming "the live
   automatic reviewers are CodeAnt and cubic" was wrong and is corrected here.
   The bots that actually comment are coderabbitai, codeant-ai, sonarqubecloud,

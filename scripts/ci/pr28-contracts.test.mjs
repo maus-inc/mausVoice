@@ -1287,9 +1287,11 @@ describe("PR28 ring-alpha render-loop policy", () => {
       /display_id: monitor_handle\.and_then\(monitor_display_id\)/,
       "windowsPill: the drop record's token is not resolved from the same handle",
     );
-    // And nothing in the report may come from the live window except the size,
-    // which does not move: an origin, a work area or a display resolved there can
-    // all disagree with the drop after reconciliation has moved the pill.
+    // And nothing in the report may come from the live window: an origin, a
+    // work area, a display or a size resolved there can all disagree with the
+    // drop after reconciliation has moved the pill, and a DPI change can resize
+    // it while the save is deferred. The record captured at the settle already
+    // carries all four.
     const afterSave = write.slice(
       write.indexOf(".set(true)"),
       write.indexOf("ipc::send"),
@@ -1299,13 +1301,18 @@ describe("PR28 ring-alpha render-loop policy", () => {
       afterSave.match(/current_pill_geometry\(hwnd\)/g) ?? [];
     assert.equal(
       geometryUses.length,
-      1,
-      "the report reads the live window more than once; only the size may come from it",
+      0,
+      "the report reads the live window; the drop record already carries its size",
     );
     assert.match(
       afterSave,
-      /let \(live_rect, _\) = current_pill_geometry\(hwnd\)/,
-      "the live window is read for something other than the rectangle size",
+      /width: record\.width,\s*height: record\.height,/,
+      "the reported size does not come from the drop record",
+    );
+    assert.match(
+      record,
+      /width: window\.0,\s*height: window\.1,/,
+      "the drop record does not capture the window size",
     );
   });
 
@@ -1424,10 +1431,13 @@ describe("PR28 ring-alpha render-loop policy", () => {
       /drop_record: Cell::new\(None\)/,
       "windowsPill: nothing remembers where the drop landed",
     );
+    // The size is recorded with the origin, at the same instant: a DPI change
+    // while the save is deferred resizes the live window, and a size read then
+    // would describe a window the user never released.
     assert.match(
       source.windowsPill,
-      /state\.drop_record\.set\(Some\(drop_record_at\(\(x, y\), state\)\)\)/,
-      "windowsPill: the settle never records the drop origin",
+      /state\.drop_record\.set\(Some\(drop_record_at\(\s*\(x, y\),\s*\(\s*\(current\.right - current\.left\) as f64,\s*\(current\.bottom - current\.top\) as f64,\s*\),\s*state,\s*\)\)\)/,
+      "windowsPill: the settle never records the drop origin and size",
     );
     const write = scope("windowsPill", "fn store_recorded_drop(");
     assert.match(
