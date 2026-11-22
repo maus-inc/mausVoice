@@ -3216,8 +3216,13 @@ mod cpal_impl {
                         // Recover from a poisoned mailbox: the guard only holds
                         // a plain Option, so a prior panic cannot corrupt it.
                         match worker_intent.try_lock() {
-                            Ok(mut guard) | Err(std::sync::TryLockError::Poisoned(mut guard)) => {
+                            Ok(mut guard) => {
                                 if let Some(task) = guard.take() {
+                                    task(&resource);
+                                }
+                            }
+                            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                                if let Some(task) = poisoned.into_inner().take() {
                                     task(&resource);
                                 }
                             }
