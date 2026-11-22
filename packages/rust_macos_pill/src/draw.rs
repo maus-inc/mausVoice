@@ -1,5 +1,5 @@
 use crate::gfx::{self, Ctx};
-use crate::ipc::{Phase, PillPermission, PillStreaming};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
@@ -1391,55 +1391,17 @@ fn draw_transcript(
             y += 8.0;
         }
 
-        if let Some(ref stream) = *streaming {
-            if stream.message_id == msg.id {
-                y = draw_streaming_activity(ctx, stream, viewport.x, y, viewport.width, alpha);
-            }
-        }
-
-        if msg.is_tool_result {
-            let tool_desc = msg
-                .tool_description
-                .as_deref()
-                .or(msg.tool_name.as_deref())
-                .unwrap_or("Tool");
-            let reason = msg.reason.as_deref().unwrap_or("");
-            let display = if reason.is_empty() {
-                tool_desc.to_string()
-            } else {
-                format!("{tool_desc} — {reason}")
-            };
-
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-            ctx.select_font_face("Satoshi", false, false);
-            ctx.set_font_size(12.0);
-
-            draw_wrench_icon(ctx, viewport.x, y + 2.0, 12.0, 0.5 * alpha);
-            let text_x = viewport.x + 18.0;
-            ctx.move_to(text_x, y + 12.0);
-            ctx.show_text(&display);
-            y += 18.0;
-        } else if let Some(ref content) = msg.content {
-            let color_alpha = if msg.is_error { 0.94 } else { 0.92 };
-            let (r, g, b) = if msg.is_error {
-                (1.0, 0.4, 0.4)
-            } else {
-                (1.0, 1.0, 1.0)
-            };
-
-            ctx.set_source_rgba(r, g, b, color_alpha * alpha);
-            ctx.select_font_face("Satoshi", false, false);
-            ctx.set_font_size(14.0);
-
-            let lines = wrap_text(ctx, content, viewport.width);
-            for line in &lines {
-                ctx.move_to(viewport.x, y + line_height * 0.75);
-                ctx.show_text(line);
-                y += line_height;
-            }
-        } else {
-            y = draw_thinking_text(ctx, viewport.x, y, alpha, state);
-        }
+        y = draw_transcript_message(
+            ctx,
+            state,
+            msg,
+            (*streaming).as_ref(),
+            viewport.x,
+            viewport.width,
+            y,
+            line_height,
+            alpha,
+        );
     }
 
     for perm in permissions.iter() {
@@ -1470,6 +1432,93 @@ fn draw_transcript(
         ctx.restore();
     }
     ctx.restore();
+}
+
+/// Draws one transcript row: the streaming activity line for the message being
+/// answered, then the row itself, and returns the next baseline.
+#[allow(clippy::too_many_arguments)]
+fn draw_transcript_message(
+    ctx: &Ctx,
+    state: &PillState,
+    msg: &PillMessage,
+    streaming: Option<&PillStreaming>,
+    x: f64,
+    width: f64,
+    mut y: f64,
+    line_height: f64,
+    alpha: f64,
+) -> f64 {
+    if let Some(stream) = streaming {
+        if stream.message_id == msg.id {
+            y = draw_streaming_activity(ctx, stream, x, y, width, alpha);
+        }
+    }
+
+    if msg.is_tool_result {
+        draw_tool_result_row(ctx, msg, x, y, alpha);
+        return y + 18.0;
+    }
+
+    if let Some(ref content) = msg.content {
+        let lines = draw_message_body(ctx, content, msg.is_error, x, width, y, line_height, alpha);
+        return y + line_height * lines;
+    }
+
+    draw_thinking_text(ctx, x, y, alpha, state)
+}
+
+fn draw_tool_result_row(ctx: &Ctx, msg: &PillMessage, x: f64, y: f64, alpha: f64) {
+    let tool_desc = msg
+        .tool_description
+        .as_deref()
+        .or(msg.tool_name.as_deref())
+        .unwrap_or("Tool");
+    let reason = msg.reason.as_deref().unwrap_or("");
+    let display = if reason.is_empty() {
+        tool_desc.to_string()
+    } else {
+        format!("{tool_desc} — {reason}")
+    };
+
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(12.0);
+
+    draw_wrench_icon(ctx, x, y + 2.0, 12.0, 0.5 * alpha);
+    ctx.move_to(x + 18.0, y + 12.0);
+    ctx.show_text(&display);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_message_body(
+    ctx: &Ctx,
+    content: &str,
+    is_error: bool,
+    x: f64,
+    width: f64,
+    y: f64,
+    line_height: f64,
+    alpha: f64,
+) -> f64 {
+    let color_alpha = if is_error { 0.94 } else { 0.92 };
+    let (r, g, b) = if is_error {
+        (1.0, 0.4, 0.4)
+    } else {
+        (1.0, 1.0, 1.0)
+    };
+
+    ctx.set_source_rgba(r, g, b, color_alpha * alpha);
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(14.0);
+
+    let lines = wrap_text(ctx, content, width);
+    let mut line_y = y;
+    for line in &lines {
+        ctx.move_to(x, line_y + line_height * 0.75);
+        ctx.show_text(line);
+        line_y += line_height;
+    }
+    lines.len() as f64 * line_height
 }
 
 fn draw_streaming_activity(
