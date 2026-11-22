@@ -1509,7 +1509,24 @@ fn reconcile_display_layout(
     );
 
     match relocation {
-        rust_pill_shared::layout::Relocation::Keep => {}
+        rust_pill_shared::layout::Relocation::Keep => {
+            // A work area can change under a pill that stays inside it, and the
+            // retained rectangle is what the next disconnect measures the
+            // carry-over fraction against. Refresh it even when the origin did
+            // not move, and publish, because the desktop keeps the last report.
+            if state.has_saved_position.get() && !gesture_owns_window(state, now) {
+                let area = rust_pill_shared::layout::work_area_of(areas, footprint_centre)
+                    .unwrap_or(parked.display);
+                let display = rust_pill_shared::layout::display_id_of(areas, footprint_centre);
+                if !state.saved_work_area.get().same_geometry(area)
+                    || state.saved_display_id.get() != display
+                {
+                    state.saved_work_area.set(area);
+                    state.saved_display_id.set(display);
+                    publish_saved_geometry(window, state);
+                }
+            }
+        }
         rust_pill_shared::layout::Relocation::Stranded => {
             // Nowhere to move it to. Leaving it keeps the stored position.
         }

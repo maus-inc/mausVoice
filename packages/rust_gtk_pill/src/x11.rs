@@ -293,6 +293,19 @@ pub(crate) fn write_window_position(
     state.saved_display_id.set(display_id_at(window, state));
     state.x11_release_persisted.set(true);
     let (rect, monitor) = crate::pill::pill_geometry(window, state);
+    if let Some(area) = monitor {
+        // The retained area has to be the one the drop landed on. Leaving the
+        // previous display's rectangle here makes the next disconnect measure
+        // the carry-over fraction against a work area the pill never sat in.
+        state
+            .saved_work_area
+            .set(rust_pill_shared::edge::MonitorRect::without_id(
+                area.x,
+                area.y,
+                area.width,
+                area.height,
+            ));
+    }
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
             true,
@@ -718,6 +731,12 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
 
         if save_owed {
             // The frame tick owns the window until the owed save lands.
+            return ControlFlow::Continue;
+        }
+        if !state_tick.anchor.get().places() {
+            // `ForgetPosition` clears the anchor, and its contract is that the
+            // pill stays where it is. Parking it here would move a visible pill
+            // as a side effect of clearing local data.
             return ControlFlow::Continue;
         }
         if let Some((new_x, new_y)) = pill_pos_on_monitor(
