@@ -3208,7 +3208,8 @@ mod cpal_impl {
             let (sender, receiver) = std::sync::mpsc::sync_channel::<WorkerTask<T>>(1);
             let failed = Arc::new(AtomicBool::new(false));
             let worker_failed = Arc::clone(&failed);
-            let latest_intent = Arc::new(std::sync::Mutex::new(None));
+            let latest_intent: Arc<std::sync::Mutex<Option<WorkerTask<T>>>> =
+                Arc::new(std::sync::Mutex::new(None));
             let worker_intent = Arc::clone(&latest_intent);
             let result = std::thread::Builder::new()
                 .name("cpal-recorder".into())
