@@ -9,6 +9,7 @@ import {
   LANGUAGE_DISPLAY_NAMES,
 } from "./language.utils";
 import { ToneConfig } from "./tone.utils";
+import { getLogger } from "./log.utils";
 import { getMyUserName } from "./user.utils";
 import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
 
@@ -657,7 +658,7 @@ const transcriptionPromptByCode: Record<DictationLanguageCode, string> = {
 // this heuristic budget, so the rendered initial_prompt (terms plus
 // instruction) stays within the heuristic. An oversized prompt also raises
 // the risk of leaking into near-silent transcriptions.
-export const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
+const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
   maxEntries: 100,
   maxCharacters: 650,
 };
@@ -895,7 +896,7 @@ const PROCESSED_TRANSCRIPTION_EDITS_SCHEMA = z
 export const POST_PROCESS_TRUNCATED_WARNING =
   "The styling response was cut off at the model's output limit, so its partial reply was discarded.";
 
-export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
+const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
   edits: PROCESSED_TRANSCRIPTION_EDITS_SCHEMA,
   result: z
     .string()
@@ -946,12 +947,14 @@ ${transcript}
 
 Execute the command and provide your response in ${languageName}.
 `;
-    console.log(
+    getLogger().verbose(
       "[Agent Prompt] Using tone template, result length:",
       base.length,
     );
   } else {
-    console.log("[Agent Prompt] Using default prompt (no tone template)");
+    getLogger().verbose(
+      "[Agent Prompt] Using default prompt (no tone template)",
+    );
     base = intl.formatMessage(
       {
         defaultMessage: `

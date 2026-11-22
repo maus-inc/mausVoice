@@ -47,8 +47,6 @@ export type PillPlacement = "top" | "bottom";
 
 export type UpdateChannel = "stable" | "beta";
 
-export type PullStatus = "in_progress" | "error" | "complete";
-
 export const STYLING_MODES = ["app", "manual"] as const;
 export type StylingMode = (typeof STYLING_MODES)[number];
 export const StylingModeZod = z.enum(STYLING_MODES);

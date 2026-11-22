@@ -30,7 +30,7 @@ export const AVATAR_JPEG_QUALITY = 0.9;
  */
 export const MAX_STORED_AVATAR_CHARS = 200_000;
 
-export const ACCEPTED_AVATAR_MIME_TYPES = [
+const ACCEPTED_AVATAR_MIME_TYPES = [
   "image/png",
   "image/jpeg",
   "image/webp",
@@ -92,7 +92,7 @@ export const validateAvatarFile = (file: {
  * that fits here. A 16 MP limit bounds the nominal RGBA buffer to about 64 MB;
  * decoders can use additional memory, so it is not a guarantee against OOM.
  */
-export const MAX_AVATAR_SOURCE_PIXELS = 16_000_000;
+const MAX_AVATAR_SOURCE_PIXELS = 16_000_000;
 
 /**
  * Whether the drawn image uses transparency anywhere.

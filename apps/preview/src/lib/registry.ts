@@ -150,7 +150,7 @@ const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
 const EASE_OUT_CUBIC = "cubic-bezier(0.33, 1, 0.68, 1)";
 const EASE_IN_OUT = "cubic-bezier(0.645, 0.045, 0.355, 1)";
 
-export const EASING_OPTIONS = [
+const EASING_OPTIONS = [
   { value: EASE_OUT, label: "easeOut · quint (0.23, 1, 0.32, 1)" },
   { value: EASE_OUT_CUBIC, label: "sharp · cubic (0.33, 1, 0.68, 1)" },
   { value: EASE_IN_OUT, label: "easeInOut (0.645, 0.045, 0.355, 1)" },
@@ -1877,5 +1877,5 @@ export const entriesByCategory = (c: CategoryId) =>
   REGISTRY.filter((e) => e.category === c);
 
 /** Every registry entry whose demo renders the real component vs a recreation. */
-export const REUSED = REGISTRY.filter((e) => e.status === "reused");
-export const RECREATED = REGISTRY.filter((e) => e.status === "recreated");
+const REUSED = REGISTRY.filter((e) => e.status === "reused");
+const RECREATED = REGISTRY.filter((e) => e.status === "recreated");

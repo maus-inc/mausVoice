@@ -7,7 +7,7 @@ import type { ComponentType } from "react";
  * timing), so this event is the observable contract webdriver tests use to
  * assert route prefetching without reaching into router internals.
  */
-export const ROUTE_PREFETCH_EVENT = "maus:route-prefetch";
+const ROUTE_PREFETCH_EVENT = "maus:route-prefetch";
 
 export const createRouteLoader = (
   routeKey: string,

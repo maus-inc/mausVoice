@@ -4,6 +4,7 @@ import {
   countWords,
   isLogBreakingControl,
   isLogBreakingControlCode,
+  stripTrailingCharacters,
 } from "./string";
 
 describe("countWords", () => {
@@ -73,5 +74,25 @@ describe("isLogBreakingControl", () => {
     expect(isLogBreakingControl(String.fromCodePoint(0x0a))).toBe(true);
     expect(isLogBreakingControl("A")).toBe(false);
     expect(isLogBreakingControl("")).toBe(false);
+  });
+});
+
+describe("stripTrailingCharacters", () => {
+  it("drops the whole run of trailing characters", () => {
+    expect(stripTrailingCharacters("done...", ".")).toBe("done");
+    expect(stripTrailingCharacters("done?!", ".!?;:")).toBe("done");
+  });
+
+  it("leaves the value alone when the last character is not listed", () => {
+    expect(stripTrailingCharacters("done", ".")).toBe("done");
+    expect(stripTrailingCharacters("", ".")).toBe("");
+  });
+
+  it("stays linear on a long run", () => {
+    const value = `${"!".repeat(50_000)}tail`;
+    expect(stripTrailingCharacters(value, ".!?;:")).toBe(value);
+    expect(stripTrailingCharacters("a".repeat(50_000), ".").length).toBe(
+      50_000,
+    );
   });
 });

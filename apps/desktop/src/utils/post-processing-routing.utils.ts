@@ -27,9 +27,9 @@ import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
 import { countWords } from "./string.utils";
 
 /** At most this many sentences, under the transforms' own sentence definition. */
-export const SHORT_DICTATION_MAX_SENTENCES = 2;
+const SHORT_DICTATION_MAX_SENTENCES = 2;
 /** At most this many whitespace-separated words. */
-export const SHORT_DICTATION_MAX_WORDS = 30;
+const SHORT_DICTATION_MAX_WORDS = 30;
 /**
  * At most this many characters. This is the bound that holds for scripts
  * without spaces, where the word count is 1 for the whole input, and it also

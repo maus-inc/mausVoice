@@ -515,7 +515,7 @@ describe("release workflow shell contracts", () => {
     assert.deepEqual(next.run, ["echo second"]);
   });
 
-it("treats a pre-verdict scripts/ci path as the hazard whatever launches it", () => {
+  it("treats a pre-verdict scripts/ci path as the hazard whatever launches it", () => {
     // PRE_VERDICT_SCRIPTS_CI names no launcher. It used to be a list of them:
     //
     //     (?:node|npx|bun|deno|sh|bash|zsh|python3?|ruby|perl)\s[^\n]*scripts\/ci\/
@@ -2151,12 +2151,23 @@ it("treats a pre-verdict scripts/ci path as the hazard whatever launches it", ()
     }
   });
 
-  it("checks out trusted main ref before exposing key material", () => {
-    assert.match(
-      release,
-      /Checkout source[\s\S]*?ref:\s*refs\/heads\/main/,
-      "build checkout must explicitly pin refs/heads/main",
+  it("pins every explicit checkout to the dispatch commit", () => {
+    // The assertion this replaces matched `Checkout source` and then the FIRST
+    // `ref: refs/heads/main` anywhere later in the file, so it spanned job
+    // boundaries and pinned the verify-rust checkout rather than the build's.
+    // That checkout resolved a mutable branch at run time, which let the checks
+    // pass on a main the build jobs never packaged.
+    const refs = [...release.matchAll(/^\s*ref:\s*(.+?)\s*$/gm)].map(
+      (match) => match[1],
     );
+    assert.ok(refs.length >= 2, "the workflow must pin its explicit checkouts");
+    for (const ref of refs) {
+      assert.equal(
+        ref,
+        "${{ github.sha }}",
+        `every explicit checkout must pin the dispatch commit, found ${ref}`,
+      );
+    }
   });
 
   for (const [version, prerelease, file] of [
