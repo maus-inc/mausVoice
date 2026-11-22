@@ -28,21 +28,6 @@ export const setStylingMode = async (
   );
 };
 
-export const setActiveToneIds = async (toneIds: string[]): Promise<void> => {
-  const intl = getIntl();
-  await updateUser(
-    (user) => {
-      user.activeToneIds = toneIds;
-    },
-    intl.formatMessage({
-      defaultMessage: "Unable to update active styles. User not found.",
-    }),
-    intl.formatMessage({
-      defaultMessage: "Failed to update active styles. Please try again.",
-    }),
-  );
-};
-
 /** Apply the user's toggle intent when it reaches the shared user queue. */
 export const toggleActiveTone = (toneId: string): Promise<void> => {
   const intl = getIntl();
@@ -130,22 +115,6 @@ export const deselectActiveTone = async (
       defaultMessage: "Failed to deselect style. Please try again.",
     }),
     lease,
-  );
-};
-
-export const markUpgradeDialogSeen = async (): Promise<void> => {
-  const intl = getIntl();
-  await updateUser(
-    (user) => {
-      user.shouldShowUpgradeDialog = false;
-    },
-    intl.formatMessage({
-      defaultMessage: "Unable to mark upgrade dialog as seen. User not found.",
-    }),
-    intl.formatMessage({
-      defaultMessage:
-        "Failed to mark upgrade dialog as seen. Please try again.",
-    }),
   );
 };
 

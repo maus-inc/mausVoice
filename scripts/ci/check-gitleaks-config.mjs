@@ -272,7 +272,7 @@ function hasUseDefaultValue(text, expected) {
 }
 
 export const hasUseDefaultFalse = (text) => hasUseDefaultValue(text, "false");
-export const hasUseDefaultTrue = (text) => hasUseDefaultValue(text, "true");
+const hasUseDefaultTrue = (text) => hasUseDefaultValue(text, "true");
 
 export const hasTopLevelUseDefaultFalse = hasUseDefaultFalse;
 

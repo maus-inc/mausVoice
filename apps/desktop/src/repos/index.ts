@@ -42,7 +42,6 @@ import {
   BaseDailyActivityRepo,
   LocalDailyActivityRepo,
 } from "./daily-activity.repo";
-export type { DailyWordActivity } from "./daily-activity.repo";
 import {
   AzureOpenAIGenerateTextRepo,
   BaseGenerateTextRepo,

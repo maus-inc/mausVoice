@@ -28,22 +28,6 @@ export type AudioChunkPumpCallbacks = {
 };
 
 /**
- * Joins the committed transcript with the current partial segment, inserting
- * a single space between them. Shared by the streaming transcription sessions
- * so their transcript accumulation stays identical.
- */
-export const combineStreamingTranscript = (
-  finalTranscript: string,
-  currentSegment: string,
-): string => {
-  if (!currentSegment) {
-    return finalTranscript;
-  }
-  const separator = finalTranscript ? " " : "";
-  return finalTranscript + separator + currentSegment;
-};
-
-/**
  * Buffers incoming float32 audio chunks and drains them in frames sized to the
  * caller's chunk-duration window, delegating the actual wire format to
  * `sendChunk`. Shared by the streaming transcription sessions (AssemblyAI,

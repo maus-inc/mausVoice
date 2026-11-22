@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { getVersion } from "@tauri-apps/api/app";
 import { openExternalUrl } from "../../utils/open-url.utils";
+import { formatMediumDate } from "../../utils/format.utils";
 import { GITHUB_RELEASES_PAGE_URL } from "@maus-inc/desktop-utils";
 import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
@@ -56,19 +57,6 @@ const ChangelogErrorMessage = ({ error }: { error: unknown }) => {
 const normalizeVersion = (value: string): string =>
   value.replace(/^mausvoice[\s\-_]*v?/i, "").trim();
 
-const formatReleaseDate = (isoDate: string | null) => {
-  if (!isoDate) {
-    return null;
-  }
-  const parsed = new Date(isoDate);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-  }).format(parsed);
-};
-
 const ReleaseRow = ({
   entry,
   installed,
@@ -76,7 +64,7 @@ const ReleaseRow = ({
   entry: ChangelogEntry;
   installed: boolean;
 }) => {
-  const date = formatReleaseDate(entry.date);
+  const date = formatMediumDate(entry.date);
   return (
     <Box>
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>

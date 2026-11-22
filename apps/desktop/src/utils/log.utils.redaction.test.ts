@@ -148,3 +148,23 @@ describe("a top level array is masked like a top level record", () => {
     expect(logged()).not.toContain("opaque");
   });
 });
+
+describe("string arguments are scrubbed before they reach the log sink", () => {
+  // Built from fragments so the repository carries no literal provider key.
+  const groqKey = ["gsk", "abcdefghijklmnopqrstuvwxyz123456"].join("_");
+
+  it("scrubs a secret interpolated into a template string", () => {
+    getLogger().info(`request failed for key ${groqKey}`);
+    expect(logged()).toBe("request failed for key [redacted-secret]");
+  });
+
+  it("scrubs a secret passed as its own string argument", () => {
+    getLogger().info("key", groqKey);
+    expect(logged()).toBe("key [redacted-secret]");
+  });
+
+  it("leaves a string with no secret unchanged", () => {
+    getLogger().info("started", "no credential here");
+    expect(logged()).toBe("started no credential here");
+  });
+});

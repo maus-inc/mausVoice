@@ -148,7 +148,7 @@ const dismissScrim = {
  * Subscribes a component to a tip's visibility: true while the tip has not
  * been dismissed, false after `dismissTip` has persisted it.
  */
-export const useTip = (id: OnboardingTipId): boolean =>
+const useTip = (id: OnboardingTipId): boolean =>
   useAppStore((s) => !(s.local.dismissedTipIds ?? []).includes(id));
 
 /**

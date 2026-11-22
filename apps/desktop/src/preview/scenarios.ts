@@ -19,7 +19,7 @@ import { createDefaultPreferences } from "../actions/user.actions";
 import { getDefaultSystemTones } from "../utils/tone.utils";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 
-export const PREVIEW_SCENARIOS = [
+const PREVIEW_SCENARIOS = [
   "populated",
   "empty",
   "welcome",

@@ -84,8 +84,19 @@ export const parseRemotePairingInvite = (
     throw new Error("Pair code is not a valid mausVoice remote invite.");
   }
 
-  const decoded = decodeBase64Url(trimmed.slice(INVITE_PREFIX.length));
-  const invite = JSON.parse(decoded) as RemotePairingInvite;
+  const decoded = trimmed.slice(INVITE_PREFIX.length);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decodeBase64Url(decoded));
+  } catch {
+    // A malformed base64 payload or a non-JSON body must not surface the raw
+    // SyntaxError or DOMException text in the snackbar.
+    throw new Error("Pair code is not a valid mausVoice remote invite.");
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Pair code is not a valid mausVoice remote invite.");
+  }
+  const invite = parsed as RemotePairingInvite;
   if (
     invite.version !== 1 ||
     !invite.receiverDeviceId ||

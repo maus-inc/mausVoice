@@ -39,3 +39,42 @@ export const formatSize = (bytes: number | undefined) => {
   const gigabytes = megabytes / 1024;
   return `${gigabytes.toFixed(2)} GB`;
 };
+
+type DateInput = string | number | null | undefined;
+
+const toValidDate = (value: DateInput): Date | null => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+/**
+ * Formats a date as a medium-length date (for example "Nov 13, 2026").
+ * Returns `null` for an empty or unparseable value so callers can skip rendering.
+ */
+export const formatMediumDate = (
+  value: string | number | null | undefined,
+): string | null => {
+  const parsed = toValidDate(value);
+  return parsed
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(parsed)
+    : null;
+};
+
+/**
+ * Formats a date as a medium-length date and short time (for example
+ * "Nov 13, 2026, 8:09 PM"). Returns `null` for an empty or unparseable value.
+ */
+export const formatMediumDateTime = (
+  value: string | number | null | undefined,
+): string | null => {
+  const parsed = toValidDate(value);
+  return parsed
+    ? new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(parsed)
+    : null;
+};

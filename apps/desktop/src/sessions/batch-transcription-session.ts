@@ -21,7 +21,7 @@ import { SessionAbortScope } from "./session-abort-scope";
  * minimum), so spans stay well above that while keeping the post-stop tail
  * short.
  */
-export const CLOUD_PRETRANSCRIPTION: PauseChunkingConfig = {
+const CLOUD_PRETRANSCRIPTION: PauseChunkingConfig = {
   minChunkSec: 12,
   minPauseMs: 450,
 };
