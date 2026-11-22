@@ -1,5 +1,5 @@
 export type TranscriptionFormDataArgs = {
-  blob: ArrayBuffer | ArrayBufferView | Blob;
+  blob: ArrayBuffer | ArrayBufferView;
   ext: string;
   model: string;
   prompt?: string;
@@ -10,12 +10,9 @@ export type TranscriptionFormDataArgs = {
 // A Node `Buffer` carries an `ArrayBufferLike` that may be shared, which is not
 // a `BlobPart`. Copying the viewed range keeps the bytes and the type.
 const toAudioFile = (
-  blob: ArrayBuffer | ArrayBufferView | Blob,
+  blob: ArrayBuffer | ArrayBufferView,
   ext: string,
 ): Blob => {
-  if (blob instanceof Blob) {
-    return blob;
-  }
   const part =
     blob instanceof ArrayBuffer
       ? blob
