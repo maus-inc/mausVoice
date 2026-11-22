@@ -1613,8 +1613,9 @@ mod cpal_impl {
                 let has_held = self.warm.lock().ok().is_some_and(|guard| guard.is_some());
                 if has_held {
                     let generation = self.linger_generation.load(Ordering::SeqCst);
-                    let deadline = Instant::now() + linger;
-                    self.linger_deadline.set(Some((deadline, generation)));
+                    if let Some(deadline) = Instant::now().checked_add(linger) {
+                        self.linger_deadline.set(Some((deadline, generation)));
+                    }
                 }
             }
         }

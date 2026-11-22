@@ -4443,18 +4443,18 @@ fn saved_capture_linger(keep_ready: bool, linger_ms: i64) -> std::time::Duration
     std::time::Duration::from_millis(millis)
 }
 
-async fn read_capture_linger(pool: sqlx::SqlitePool) -> std::time::Duration {
+async fn read_capture_linger(pool: sqlx::SqlitePool) -> Option<std::time::Duration> {
     let read = sqlx::query_as::<_, (bool, i64)>(
         "SELECT keep_microphone_ready, microphone_linger_ms FROM user_preferences WHERE user_id = ?1",
     )
     .bind(crate::db::preferences_queries::LOCAL_USER_ID)
     .fetch_optional(&pool);
     match tokio::time::timeout(std::time::Duration::from_millis(100), read).await {
-        Ok(Ok(Some((keep_ready, linger_ms)))) => saved_capture_linger(keep_ready, linger_ms),
-        Ok(Ok(None)) => std::time::Duration::ZERO,
+        Ok(Ok(Some((keep_ready, linger_ms)))) => Some(saved_capture_linger(keep_ready, linger_ms)),
+        Ok(Ok(None)) => Some(std::time::Duration::ZERO),
         failure => {
-            log::warn!("Could not read saved microphone policy; releasing at stop: {failure:?}");
-            std::time::Duration::ZERO
+            log::warn!("Could not read saved microphone policy; preserving at stop: {failure:?}");
+            None
         }
     }
 }
@@ -4488,7 +4488,10 @@ async fn capture_handoff_reads_the_committed_local_preference() {
         .unwrap();
     sqlx::query("CREATE TABLE user_preferences (user_id TEXT, keep_microphone_ready INTEGER, microphone_linger_ms INTEGER)")
         .execute(&pool).await.unwrap();
-    assert_eq!(read_capture_linger(pool.clone()).await, Duration::ZERO);
+    assert_eq!(
+        read_capture_linger(pool.clone()).await,
+        Some(Duration::ZERO)
+    );
     sqlx::query("INSERT INTO user_preferences VALUES (?1, 0, 5000)")
         .bind(crate::db::preferences_queries::LOCAL_USER_ID)
         .execute(&pool)
@@ -4496,15 +4499,18 @@ async fn capture_handoff_reads_the_committed_local_preference() {
         .unwrap();
     assert_eq!(
         read_capture_linger(pool.clone()).await,
-        Duration::from_secs(5)
+        Some(Duration::from_secs(5))
     );
     sqlx::query("UPDATE user_preferences SET microphone_linger_ms = 0")
         .execute(&pool)
         .await
         .unwrap();
-    assert_eq!(read_capture_linger(pool.clone()).await, Duration::ZERO);
+    assert_eq!(
+        read_capture_linger(pool.clone()).await,
+        Some(Duration::ZERO)
+    );
     pool.close().await;
-    assert_eq!(read_capture_linger(pool).await, Duration::ZERO);
+    assert_eq!(read_capture_linger(pool).await, None);
 }
 
 /// Raw-body command, so it is registered in `app.rs` but kept out of the
@@ -4563,17 +4569,28 @@ pub async fn stop_recording(
     // `set_microphone_linger` that landed between this read and the worker
     // application. Without the generation, a stale indefinite snapshot can
     // overwrite a disable applied in that window.
-    let warm_for_generation = Arc::clone(&warm);
+    //
+    // The generation is read before and after the DB read. If it changed
+    // during the DB read, a concurrent `set_microphone_linger` landed and
+    // the DB value is stale: skip the apply rather than overwriting the
+    // newer policy with the old snapshot.
+    let warm_before = Arc::clone(&warm);
+    let warm_after = Arc::clone(&warm);
     let (bytes_res, (linger, policy_generation)) = tokio::join!(take_task, async {
-        let (linger, policy_generation) =
-            tokio::join!(read_capture_linger(database.pool()), async {
-                tauri::async_runtime::spawn_blocking(move || {
-                    warm_for_generation.linger_policy_generation()
-                })
+        let gen_before =
+            tauri::async_runtime::spawn_blocking(move || warm_before.linger_policy_generation())
                 .await
-                .unwrap_or_default()
-            });
-        (linger, policy_generation)
+                .unwrap_or_default();
+        let linger = read_capture_linger(database.pool()).await;
+        let gen_after =
+            tauri::async_runtime::spawn_blocking(move || warm_after.linger_policy_generation())
+                .await
+                .unwrap_or_default();
+        if gen_before == gen_after {
+            (linger, gen_after)
+        } else {
+            (None, gen_after)
+        }
     });
     let bytes = bytes_res.map_err(|err| err.to_string())??;
 
@@ -4583,13 +4600,19 @@ pub async fn stop_recording(
     // dropped and a newer capture's policy wins. If a newer policy
     // change landed after the snapshot, the generation check rejects
     // the stale write instead of overwriting the newer value.
-    if linger == Duration::ZERO {
-        warm.set_linger_if_current(0, policy_generation);
-    } else {
-        warm.set_linger_if_current(
-            u64::try_from(linger.as_millis()).unwrap_or(u64::MAX),
-            policy_generation,
-        );
+    //
+    // A failed preference read (`None`) preserves the current hold
+    // rather than releasing it: a database error must not silently
+    // drop a keep-ready state the user enabled.
+    if let Some(linger) = linger {
+        if linger == Duration::ZERO {
+            warm.set_linger_if_current(0, policy_generation);
+        } else {
+            warm.set_linger_if_current(
+                u64::try_from(linger.as_millis()).unwrap_or(u64::MAX),
+                policy_generation,
+            );
+        }
     }
 
     Ok(tauri::ipc::Response::new(bytes))
