@@ -4568,7 +4568,7 @@ pub async fn stop_recording(
     if linger == Duration::ZERO {
         warm.release_hold();
     } else {
-        warm.set_linger(linger.as_millis().min(u128::from(u64::MAX)) as u64);
+        warm.set_linger(u64::try_from(linger.as_millis()).unwrap_or(u64::MAX));
     }
 
     Ok(tauri::ipc::Response::new(bytes))

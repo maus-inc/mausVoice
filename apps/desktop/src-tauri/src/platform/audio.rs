@@ -1601,11 +1601,13 @@ mod cpal_impl {
                 self.cancel_linger();
                 self.close_warm();
             } else {
-                // Arm a deadline for finite values when a stream is held, so the
-                // retained stream closes at the saved window rather than staying
-                // open with a finite policy and no expiry.
+                // Arm or refresh a deadline for finite values when a stream
+                // is held, so the retained stream closes at the saved window
+                // rather than staying open with a finite policy and no expiry.
+                // A different finite value while held must update the existing
+                // deadline, otherwise the stream closes at the old window.
                 let has_held = self.warm.lock().ok().is_some_and(|guard| guard.is_some());
-                if has_held && self.current_linger_deadline().is_none() {
+                if has_held {
                     let generation = self.linger_generation.load(Ordering::SeqCst);
                     let deadline = Instant::now() + linger;
                     self.linger_deadline.set(Some((deadline, generation)));
@@ -3203,8 +3205,9 @@ mod cpal_impl {
             let worker = self.sender.as_ref().ok_or(WorkerUnavailable)?;
             match worker.try_send(Box::new(task)) {
                 Ok(()) => Ok(()),
-                // The worker's buffer is full; drop the stale task without
-                // blocking. The worker processes the latest task in order.
+                // The worker's buffer is full; drop the incoming stale task
+                // without blocking. The worker continues processing the
+                // older tasks already queued.
                 Err(std::sync::mpsc::TrySendError::Full(_)) => Ok(()),
                 Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
                     self.failed.store(true, Ordering::SeqCst);
