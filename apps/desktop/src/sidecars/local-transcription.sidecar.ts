@@ -130,16 +130,6 @@ export class SidecarRequestError extends Error {
   }
 }
 
-/**
- * True when the sidecar reports a 404 `session_not_found` — the streaming
- * session was lost (process restarted, session evicted) and the caller
- * should fall back to batch transcription.
- */
-export const isSessionNotFoundError = (error: unknown): boolean =>
-  error instanceof SidecarRequestError &&
-  error.status === 404 &&
-  error.code === "session_not_found";
-
 export class LocalTranscriptionSidecar extends BaseSidecar {
   readonly mode: SidecarMode;
   private readyModels = new Map<string, Promise<void>>();

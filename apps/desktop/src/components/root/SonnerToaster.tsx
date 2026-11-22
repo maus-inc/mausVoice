@@ -18,8 +18,6 @@ import { accent } from "../../styles/palette";
 import { duration } from "../../styles/motion";
 import { hairline, premiumSurface } from "../../styles/shadows";
 
-export { toast } from "sonner";
-
 export const SonnerToaster = () => {
   return (
     <>
