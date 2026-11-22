@@ -15,50 +15,47 @@
     "scripts/ci/check-gitleaks-config.test.mjs",
     "apps/desktop/webdriver/specs/app.render.spec.ts",
     "apps/docs/scripts/make-card-ascii.mjs",
-    "docs/assets/badges/source/generate-badges.mjs"
+    "docs/assets/badges/source/generate-badges.mjs",
+    "apps/desktop/webdriver/specs/contracts.spec.ts"
   ],
+  "ignoreDependencies": [
+    "@maus-inc/desktop-native-apis",
+    "@maus-inc/desktop-utils",
+    "@maus-inc/types",
+    "@maus-inc/utilities",
+    "@maus-inc/typescript-config",
+    "@tauri-apps/api",
+    "morphicons",
+    "react-virtuoso"
+  ],
+  "usedClassMembers": ["setExpansionFlags", "setPhase", "validateAvailability"],
   "boundaries": {
     "zones": [
       {
         "name": "desktop",
-        "patterns": [
-          "apps/desktop/src/**"
-        ]
+        "patterns": ["apps/desktop/src/**"]
       },
       {
         "name": "preview",
-        "patterns": [
-          "apps/preview/src/**"
-        ]
+        "patterns": ["apps/preview/src/**"]
       },
       {
         "name": "shared",
-        "patterns": [
-          "packages/*/src/**"
-        ]
+        "patterns": ["packages/*/src/**"]
       }
     ],
     "rules": [
       {
         "from": "shared",
-        "allow": [
-          "shared"
-        ]
+        "allow": ["shared"]
       },
       {
         "from": "desktop",
-        "allow": [
-          "desktop",
-          "shared"
-        ]
+        "allow": ["desktop", "shared"]
       },
       {
         "from": "preview",
-        "allow": [
-          "preview",
-          "desktop",
-          "shared"
-        ]
+        "allow": ["preview", "desktop", "shared"]
       }
     ],
     "calls": {
