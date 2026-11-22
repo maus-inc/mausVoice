@@ -23,6 +23,21 @@ describe("buildTranscriptionFormData", () => {
     expect(entries.get("model")).toBe("whisper-1");
   });
 
+  it("copies only the viewed range when the bytes sit inside a larger buffer", async () => {
+    const backing = new Uint8Array([9, 9, 1, 2, 3, 9]);
+    const entries = await readForm(
+      buildTranscriptionFormData({
+        blob: new Uint8Array(backing.buffer, 2, 3),
+        ext: "wav",
+        model: "whisper-1",
+      }),
+    );
+    const file = entries.get("file") as File;
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+
   it("omits an auto language instead of sending it", async () => {
     const entries = await readForm(
       buildTranscriptionFormData({

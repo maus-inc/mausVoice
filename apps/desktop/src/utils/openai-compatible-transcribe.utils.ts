@@ -1,4 +1,7 @@
-import { buildTranscriptionFormData, HttpError } from "@maus-inc/utilities";
+import {
+  buildTranscriptionFormData,
+  throwHttpError,
+} from "@maus-inc/utilities";
 import {
   buildOpenAICompatibleTranscriptionUrl,
   normalizeOpenAICompatibleBaseUrl,
@@ -110,14 +113,15 @@ export const openaiCompatibleTranscribeAudio = async ({
     // The status travels on the error as data so a retry policy can read a
     // terminal 4xx as terminal and wait out a `Retry-After` hint on a 429 or
     // 503. The message is unchanged, so existing assertions and any caller
-    // that shows it to the user read exactly as before.
-    throw new HttpError(
-      finalResponse.status,
-      `OpenAI Compatible transcription failed: ${finalResponse.status} - ${
-        errorBody || "Unknown error"
-      }`,
-      { retryAfter: finalResponse.headers.get("retry-after") },
-    );
+    // that shows it to the user read exactly as before. `errorBody` is passed
+    // through because the degradation logic above already consumed the stream.
+    await throwHttpError(finalResponse, {
+      body: errorBody,
+      message: (body) =>
+        `OpenAI Compatible transcription failed: ${finalResponse.status} - ${
+          body || "Unknown error"
+        }`,
+    });
   }
 
   const data = (await finalResponse.json()) as {

@@ -7,8 +7,9 @@ export type TranscriptionFormDataArgs = {
   responseFormat?: string;
 };
 
-// A Node `Buffer` carries an `ArrayBufferLike` that may be shared, which is not
-// a `BlobPart`. Copying the viewed range keeps the bytes and the type.
+// A Node `Buffer` views an `ArrayBufferLike` that may be shared, and a view
+// over one is not a `BlobPart`. Copying the viewed range gives an owned buffer
+// that is.
 const toAudioFile = (
   blob: ArrayBuffer | ArrayBufferView,
   ext: string,
@@ -16,10 +17,8 @@ const toAudioFile = (
   const part =
     blob instanceof ArrayBuffer
       ? blob
-      : new Uint8Array(
-          blob.buffer as ArrayBuffer,
-          blob.byteOffset,
-          blob.byteLength,
+      : Uint8Array.from(
+          new Uint8Array(blob.buffer, blob.byteOffset, blob.byteLength),
         );
   return new Blob([part], { type: `audio/${ext}` });
 };

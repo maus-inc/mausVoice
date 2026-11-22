@@ -173,6 +173,12 @@ export const toHttpError = (error: unknown): unknown => {
 export type HttpErrorSpec = {
   /** Text used when the response body cannot be read. */
   fallback?: string;
+  /**
+   * Body text the caller already read. A `Response` body is a single-use
+   * stream, so a caller that inspects the body to decide something passes it
+   * here rather than letting this helper read it a second time.
+   */
+  body?: string;
   /** Build the message from the body text. */
   message: (body: string) => string;
 };
@@ -184,12 +190,11 @@ export type HttpErrorSpec = {
  */
 export const throwHttpError = async (
   response: Response,
-  spec: HttpErrorSpec,
+  { body, fallback, message }: HttpErrorSpec,
 ): Promise<never> => {
-  const body = await response
-    .text()
-    .catch(() => spec.fallback ?? "Unknown error");
-  throw new HttpError(response.status, spec.message(body), {
+  const text =
+    body ?? (await response.text().catch(() => fallback ?? "Unknown error"));
+  throw new HttpError(response.status, message(text), {
     retryAfter: response.headers.get("retry-after"),
   });
 };

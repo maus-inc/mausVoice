@@ -486,6 +486,9 @@ const applyTimeRules = (text: string): string => {
 
   // "at three thirty" / "around eleven forty five": a clock time is only read
   // from a bare hour and minute when a time preposition sets it up.
+  // `ohMinute` and `minute` reach the callback by position, so the `oh` branch
+  // must stay a capturing group and stay ahead of the spoken-minute branch. A
+  // non-capturing group here silently shifts the minute into the wrong slot.
   out = out.replace(
     new RegExp(
       String.raw`\b(at|by|around|about|from|until|before|after)\s+(${HOUR_WORD_SOURCE})(?:\s+(?:oh|o)\s+(${UNIT_WORD_SOURCE})|\s+(${SPOKEN_MINUTE_SOURCE}))\b`,
