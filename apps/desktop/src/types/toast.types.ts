@@ -1,6 +1,6 @@
 export type ToastType = "info" | "error";
 
-export const TOAST_ACTIONS = [
+const TOAST_ACTIONS = [
   "upgrade",
   "open_agent_settings",
   "open_post_processing_settings",

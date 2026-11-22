@@ -327,11 +327,6 @@ export const routeTranscriptOutput = async (
 // Dictation backlog state management
 // ──────────────────────────────────────────────────────────────────────────────
 
-/** Return a snapshot of the current dictation backlog. */
-export const getDictationBacklog = (): string[] => {
-  return [...getAppState().dictationBacklog];
-};
-
 /** True when the backlog is non-empty. */
 export const hasDictationBacklog = (): boolean => {
   return getAppState().dictationBacklog.length > 0;

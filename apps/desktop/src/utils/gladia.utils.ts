@@ -1,7 +1,7 @@
 import type { GladiaCustomizations } from "@maus-inc/voice-ai";
 import type { DictionaryEntries } from "./prompt.utils";
 
-export const GLADIA_SUPPORTED_SAMPLE_RATES = [
+const GLADIA_SUPPORTED_SAMPLE_RATES = [
   8000, 16000, 32000, 44100, 48000,
 ] as const;
 export type GladiaSampleRate = (typeof GLADIA_SUPPORTED_SAMPLE_RATES)[number];

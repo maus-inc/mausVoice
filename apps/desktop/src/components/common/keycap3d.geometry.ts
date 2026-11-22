@@ -659,7 +659,7 @@ export const occlusionAt = (z: number, height: number): number => {
 };
 
 /** Linear light to sRGB, so the renderer can hand channels to a canvas. */
-export const linearToSrgb = (value: number): number => {
+const linearToSrgb = (value: number): number => {
   const clamped = clamp01(value);
   return clamped <= 0.0031308
     ? clamped * 12.92

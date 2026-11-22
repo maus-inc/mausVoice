@@ -24,24 +24,8 @@ import {
 } from "../../actions/updater.actions";
 import { UpdaterStatus } from "../../state/updater.state";
 import { useAppStore } from "../../store";
-import { formatSize } from "../../utils/format.utils";
+import { formatMediumDateTime, formatSize } from "../../utils/format.utils";
 import { ChangelogDialog } from "./ChangelogDialog";
-
-const formatReleaseDate = (isoDate: string | null) => {
-  if (!isoDate) {
-    return null;
-  }
-
-  const parsed = new Date(isoDate);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(parsed);
-};
 
 const getUpdaterUiState = ({
   status,
@@ -297,7 +281,7 @@ export const UpdateDialog = () => {
       });
 
   const formattedDate = useMemo(
-    () => formatReleaseDate(releaseDate),
+    () => formatMediumDateTime(releaseDate),
     [releaseDate],
   );
 

@@ -8,7 +8,7 @@ import { requestPillPosition } from "./native-pill.utils";
 import { getLogger } from "./log.utils";
 import { showDictationReviewExpiredToast } from "./review-recovery.utils";
 
-export type ComposerResult = {
+type ComposerResult = {
   requestId: string;
   accepted: boolean;
   text: string;

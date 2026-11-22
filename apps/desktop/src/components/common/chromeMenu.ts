@@ -34,7 +34,7 @@ const chromeMenuPaperStyles = (theme: Theme): SystemStyleObject<Theme> => ({
 
 export const chromeMenuPaperSx: SxProps<Theme> = chromeMenuPaperStyles;
 
-export const chromeStyleSelectMenuPaperSx: SxProps<Theme> = (theme) => ({
+const chromeStyleSelectMenuPaperSx: SxProps<Theme> = (theme) => ({
   ...chromeMenuPaperStyles(theme),
   maxHeight: `min(360px, calc(100vh - ${MENU_VIEWPORT_INSET}px))`,
 });
@@ -44,7 +44,7 @@ export const chromeStyleSelectMenuPaperSx: SxProps<Theme> = (theme) => ({
  * 32-36px row band, matching the Attio/Linear-class pickers this chrome was
  * measured against. Symmetric radius, no stripes.
  */
-export const chromeMenuItemSx = {
+const chromeMenuItemSx = {
   borderRadius: 1,
   mx: 0.5,
   my: 0.25,

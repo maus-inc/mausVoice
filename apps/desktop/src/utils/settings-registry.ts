@@ -87,9 +87,6 @@ export const SETTINGS_PAGES: SettingsPageMeta[] = [
  */
 export const DEFAULT_SETTINGS_PAGE: SettingsPageId = "home";
 
-export const settingsPageOf = (id: string): SettingsPageMeta | undefined =>
-  SETTINGS_PAGES.find((page) => page.id === id);
-
 export const isSettingsPageId = (value: string): value is SettingsPageId =>
   SETTINGS_PAGES.some((page) => page.id === value);
 
@@ -367,7 +364,7 @@ export const pageTitleOf = (
   return meta ? settingTitleOf(meta.titleKey, messages) : page;
 };
 
-export const groupTitleOf = (
+const groupTitleOf = (
   group: string,
   messages?: SettingsSearchOptions["messages"],
 ): string => settingTitleOf(group, messages);

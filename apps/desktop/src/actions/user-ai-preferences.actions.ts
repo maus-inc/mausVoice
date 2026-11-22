@@ -13,7 +13,6 @@ import {
   isGpuPreferredTranscriptionDevice,
   normalizeLocalWhisperModel,
   normalizeTranscriptionDevice,
-  supportsGpuTranscriptionDevice,
 } from "../utils/local-transcription.utils";
 import { updateUserPreferences } from "./user-actions-core";
 
@@ -84,18 +83,6 @@ export const setPreferredTranscriptionModelSize = (
     },
     (preferences) => {
       preferences.transcriptionModelSize = normalizedModelSize;
-    },
-  );
-};
-
-export const setGpuEnumerationEnabled = (enabled: boolean): Promise<void> => {
-  const nextEnabled = supportsGpuTranscriptionDevice() && enabled;
-  return persistAiPreference(
-    (draft) => {
-      draft.settings.aiTranscription.gpuEnumerationEnabled = nextEnabled;
-    },
-    (preferences) => {
-      preferences.gpuEnumerationEnabled = nextEnabled;
     },
   );
 };

@@ -83,7 +83,7 @@ export const contentControlColumnSx: SystemStyleObject<Theme> = {
   maxWidth: { xs: "60%", sm: "none" },
 };
 
-export const labelColumnSx: SystemStyleObject<Theme> = {
+const labelColumnSx: SystemStyleObject<Theme> = {
   flexGrow: 1,
   minWidth: 0,
 };

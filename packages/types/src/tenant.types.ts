@@ -14,7 +14,7 @@ export type DatabaseTenant = {
   createdBy: string;
   /** Total seats purchased for this tenant. Source of truth: Stripe webhook. */
   seatCount: number;
-  /** Stripe customer ID — set the first time the tenant opens checkout. */
+  /** Stripe customer ID, set the first time the tenant opens checkout. */
   stripeCustomerId?: Nullable<string>;
   /** Most recent active subscription ID, set by the webhook. */
   stripeSubscriptionId?: Nullable<string>;

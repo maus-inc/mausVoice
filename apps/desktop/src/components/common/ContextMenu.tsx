@@ -10,13 +10,8 @@ import { useIntl } from "react-intl";
 import { useContextMenu } from "./useContextMenu";
 
 export { ContextMenu } from "./ContextMenuSurface";
-export type {
-  ContextMenuActionItem,
-  ContextMenuDivider,
-  ContextMenuItem,
-} from "./ContextMenuSurface";
+export type { ContextMenuItem } from "./ContextMenuSurface";
 export { useContextMenu } from "./useContextMenu";
-export type { UseContextMenuReturn } from "./useContextMenu";
 
 /**
  * The editable element a right-click acted on, plus its captured selection.
