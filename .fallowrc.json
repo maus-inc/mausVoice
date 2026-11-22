@@ -107,5 +107,8 @@
       "package": "qs",
       "source": "package.json"
     }
-  ]
+  ],
+  "duplicates": {
+    "ignore": ["packages/desktop-native-apis/src/bindings.ts"]
+  }
 }

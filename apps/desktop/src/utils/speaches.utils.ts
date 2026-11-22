@@ -1,6 +1,5 @@
 import {
   buildTranscriptionFormData,
-  HttpError,
   throwHttpError,
 } from "@maus-inc/utilities";
 import { secureFetch as fetch } from "./secure-fetch.utils";
@@ -32,11 +31,10 @@ export const speachesTestIntegration = async ({
   if (!response.ok) {
     // The status is carried as data, not as prose, so a retry policy can read a
     // terminal 4xx as terminal and honour a rate-limit hint on a 429 or 503.
-    throw new HttpError(
-      response.status,
-      `Speaches returned an error (status ${response.status}). Check your configuration.`,
-      { retryAfter: response.headers.get("retry-after") },
-    );
+    await throwHttpError(response, {
+      message: () =>
+        `Speaches returned an error (status ${response.status}). Check your configuration.`,
+    });
   }
 
   return true;
