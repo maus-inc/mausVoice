@@ -4558,17 +4558,38 @@ pub async fn stop_recording(
         })
     });
 
-    let (bytes_res, linger) = tokio::join!(take_task, read_capture_linger(database.pool()));
+    // Read the persisted preference and the current policy generation
+    // together, so the continuation below can detect a newer
+    // `set_microphone_linger` that landed between this read and the worker
+    // application. Without the generation, a stale indefinite snapshot can
+    // overwrite a disable applied in that window.
+    let warm_for_generation = Arc::clone(&warm);
+    let (bytes_res, (linger, policy_generation)) = tokio::join!(take_task, async {
+        let (linger, policy_generation) =
+            tokio::join!(read_capture_linger(database.pool()), async {
+                tauri::async_runtime::spawn_blocking(move || {
+                    warm_for_generation.linger_policy_generation()
+                })
+                .await
+                .unwrap_or(0)
+            });
+        (linger, policy_generation)
+    });
     let bytes = bytes_res.map_err(|err| err.to_string())??;
 
     // Apply the persisted preference to the warm-capture hold without
-    // delaying the stop reply. `try_send` is truly non-blocking: if the
-    // worker is busy, the stale policy update is dropped and a newer
-    // capture's policy wins, which is the correct outcome.
+    // delaying the stop reply. `set_linger_if_current` is truly
+    // non-blocking: if the worker is busy, the stale policy update is
+    // dropped and a newer capture's policy wins. If a newer policy
+    // change landed after the snapshot, the generation check rejects
+    // the stale write instead of overwriting the newer value.
     if linger == Duration::ZERO {
-        warm.release_hold();
+        warm.set_linger_if_current(0, policy_generation);
     } else {
-        warm.set_linger(u64::try_from(linger.as_millis()).unwrap_or(u64::MAX));
+        warm.set_linger_if_current(
+            u64::try_from(linger.as_millis()).unwrap_or(u64::MAX),
+            policy_generation,
+        );
     }
 
     Ok(tauri::ipc::Response::new(bytes))

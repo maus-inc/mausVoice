@@ -1157,6 +1157,9 @@ mod cpal_impl {
         /// device; `WARM_FOREVER_MS` means hold until closed; anything else is
         /// the window a stopped recording stays open for.
         linger_ms: Arc<AtomicU64>,
+        /// Bumped on every policy change. A continuation that captured a
+        /// snapshot before the change must not apply it over the newer value.
+        linger_policy_generation: Arc<AtomicU64>,
         /// How much audio from before a press to keep, in microseconds.
         preroll_micros: Arc<AtomicU64>,
         /// Held across a warm open so a press arriving mid-open waits for it
@@ -1518,6 +1521,7 @@ mod cpal_impl {
                 // that shows no microphone indicator between dictations, so it
                 // is the one that needs no consent.
                 linger_ms: Arc::new(AtomicU64::new(0)),
+                linger_policy_generation: Arc::new(AtomicU64::new(0)),
                 preroll_micros: Arc::new(AtomicU64::new(500_000)),
                 warm_open_gate: Arc::new(Mutex::new(())),
                 warm_open_attempts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -1623,6 +1627,29 @@ mod cpal_impl {
         pub fn set_linger_policy(&self, linger: Duration) {
             let millis = linger.as_millis().min(u128::from(u64::MAX)) as u64;
             self.linger_ms.store(millis, Ordering::SeqCst);
+            self.linger_policy_generation.fetch_add(1, Ordering::SeqCst);
+        }
+
+        /// The current policy generation. Bumped on every [`set_linger_policy`]
+        /// call; a continuation that captured a snapshot before a change
+        /// compares its expected generation against this before applying.
+        pub fn linger_policy_generation(&self) -> u64 {
+            self.linger_policy_generation.load(Ordering::SeqCst)
+        }
+
+        /// Applies a policy snapshot only if no newer policy change has landed.
+        ///
+        /// A stop that reads the persisted preference concurrently with the
+        /// native stop captures a generation. By the time the worker applies
+        /// the snapshot, a newer `set_microphone_linger` may have changed the
+        /// policy. This rejects the stale write instead of overwriting the
+        /// newer value.
+        pub fn apply_linger_if_current(&self, linger: Duration, expected: u64) -> bool {
+            if self.linger_policy_generation.load(Ordering::SeqCst) != expected {
+                return false;
+            }
+            self.set_linger(linger);
+            true
         }
 
         /// The hold policy in milliseconds, as stored.
@@ -3548,6 +3575,23 @@ mod cpal_impl {
             {
                 log::error!("{error}");
             }
+        }
+
+        fn set_linger_if_current(&self, linger_ms: u64, expected_generation: u64) {
+            // Non-blocking and conditional: the worker checks the policy
+            // generation before applying, so a snapshot taken before a newer
+            // set_microphone_linger is rejected instead of overwriting it.
+            if let Err(error) = self.worker.try_send(move |r| {
+                r.apply_linger_if_current(Duration::from_millis(linger_ms), expected_generation)
+            }) {
+                log::error!("{error}");
+            }
+        }
+
+        fn linger_policy_generation(&self) -> u64 {
+            self.worker
+                .call(LocalRecordingManager::linger_policy_generation)
+                .unwrap_or(0)
         }
 
         fn status_line(&self) -> String {
