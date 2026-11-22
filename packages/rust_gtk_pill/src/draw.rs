@@ -6,6 +6,7 @@ use crate::ipc::{Phase, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{rect_contains, ClickAction, ClickRegion, PillState, RocketPhase};
+use rust_pill_shared::{DRAG_INFLATE_SCALE, LONG_PRESS_OUTLINE_COLOR};
 
 // Cairo retains paint errors on the context; the draw callback reports them.
 // Saved-state boundaries abort on failure rather than applying unmatched transforms.

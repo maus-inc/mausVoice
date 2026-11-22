@@ -273,21 +273,8 @@ pub(crate) const TRANSCRIPT_RADIUS: f64 = 10.0;
 pub(crate) const TRANSCRIPT_FONT_SIZE: f64 = 12.0;
 pub(crate) const TRANSCRIPT_MAX_WIDTH: f64 = 440.0;
 
-// ── Long-press balloon pop + drag ─────────────────────────────────
-// Total hold time before the drag gesture arms, taken from the shared crate so
-// every pill arms on the same ramp.
-pub(crate) use rust_pill_shared::LONG_PRESS_DURATION;
-/// Grace period before any long-press affordance is drawn. A normal click is
-/// far shorter than this, so quick taps never flash the progress outline.
-pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
-// Silver-white with a very slight cool tint — reads as a neutral "grab" affordance
-// and stays distinct from the blue commit flash (`FLASH_BLUE_COLOR`).
-pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
-#[allow(dead_code)]
-pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
-
-// Ring + drag tuning constants live in `rust_pill_shared` so every platform
-// draws the long-press ring from one source of truth.
-pub(crate) use rust_pill_shared::DRAG_INFLATE_SCALE;
+// Long-press timing, pointer travel, ring colour and the drag inflation scale
+// live in `rust_pill_shared`, so every platform draws the gesture from one
+// source of truth.
 
 // Particle physics constants

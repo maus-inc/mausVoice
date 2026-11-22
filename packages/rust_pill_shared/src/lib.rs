@@ -1809,6 +1809,15 @@ pub const LONG_PRESS_DURATION: f64 = 0.45;
 /// far shorter than this, so quick taps never flash the progress outline.
 pub const LONG_PRESS_HOLD_DELAY: f64 = 0.12;
 
+/// Distance the pointer may travel before the hold stops counting as a press. A
+/// normal click stays far inside this, so a small hand tremor never cancels the
+/// ring.
+pub const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
+
+/// Silver-white with a very slight cool tint, so the ring reads as a neutral
+/// grab affordance and stays distinct from the blue commit flash.
+pub const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
+
 /// The pointer and long-press flags the ring driver reads, passed in by each
 /// crate so the shared driver never reaches into platform state.
 #[derive(Debug, Clone, Copy, Default)]
