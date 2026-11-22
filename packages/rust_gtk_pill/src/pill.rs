@@ -1749,10 +1749,10 @@ fn review_selected_chars(buffer: &gtk::TextBuffer) -> usize {
 /// end, so after the delete that offset names a point farther into the remaining
 /// text and the paste would land past the text the user highlighted. With no
 /// selection the caret is the only answer.
-fn review_insert_offset(requested: ReviewPasteTarget) -> i32 {
-    match requested.1 {
+fn review_insert_offset(requested: &ReviewPasteTarget) -> i32 {
+    match requested.selection {
         Some((start_offset, _)) => start_offset,
-        None => requested.0,
+        None => requested.caret,
     }
 }
 
@@ -1766,7 +1766,11 @@ fn review_enter_submits(modifiers: gdk::ModifierType) -> bool {
             rust_pill_shared::submit_key::SubmitModifiers {
                 control: modifiers.contains(gdk::ModifierType::CONTROL_MASK),
                 alt: modifiers.contains(gdk::ModifierType::MOD1_MASK),
-                meta: modifiers.contains(gdk::ModifierType::SUPER_MASK),
+                // GDK keeps Meta and Super as separate bits, and a layout that
+                // maps Meta away from Mod1 sets only the former. Either one is a
+                // command modifier, so a press carrying it must not submit.
+                meta: modifiers
+                    .intersects(gdk::ModifierType::SUPER_MASK | gdk::ModifierType::META_MASK),
             },
         )
 }
@@ -1789,7 +1793,7 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
         {
             return;
         }
-        if review_paste_target_is_stale(requested, review_paste_target(&buffer)) {
+        if review_paste_target_is_stale(&requested, &review_paste_target(&buffer)) {
             return;
         }
         let Some(text) = text else {
@@ -1805,12 +1809,12 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
             return;
         }
         buffer.begin_user_action();
-        if let Some((start_offset, end_offset)) = requested.1 {
+        if let Some((start_offset, end_offset)) = requested.selection {
             let mut start = buffer.iter_at_offset(start_offset);
             let mut end = buffer.iter_at_offset(end_offset);
             buffer.delete(&mut start, &mut end);
         }
-        let mut at = buffer.iter_at_offset(review_insert_offset(requested));
+        let mut at = buffer.iter_at_offset(review_insert_offset(&requested));
         buffer.place_cursor(&at);
         buffer.insert(&mut at, text);
         buffer.end_user_action();
@@ -1822,26 +1826,51 @@ fn request_review_clipboard_text(view: &gtk::TextView, state: &Rc<PillState>) {
     });
 }
 
-/// Where a paste was requested, as character offsets that stay valid after the
-/// buffer changes. The caret is always recorded, because a paste with no
-/// selection and a caret that then moved must not insert at the new caret.
-type ReviewPasteTarget = (i32, Option<(i32, i32)>);
+/// Where a paste was requested, plus the text it was requested against.
+///
+/// Character offsets survive an edit to the buffer, but they do not identify
+/// the document: an edit that removes one character and retypes it leaves the
+/// caret and selection offsets exactly where they were, and the paste would
+/// then land in text the user never pointed at. The text is what tells the two
+/// apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewPasteTarget {
+    caret: i32,
+    selection: Option<(i32, i32)>,
+    text: String,
+}
+
+impl ReviewPasteTarget {
+    #[cfg(test)]
+    fn new(caret: i32, selection: Option<(i32, i32)>, text: &str) -> Self {
+        Self {
+            caret,
+            selection,
+            text: text.to_string(),
+        }
+    }
+}
 
 fn review_paste_target(buffer: &gtk::TextBuffer) -> ReviewPasteTarget {
-    (
-        buffer
+    ReviewPasteTarget {
+        caret: buffer
             .get_insert()
             .map(|mark| buffer.iter_at_mark(&mark).offset())
             .unwrap_or_else(|| buffer.char_count().max(0)),
-        buffer
+        selection: buffer
             .selection_bounds()
             .map(|(start, end)| (start.offset(), end.offset())),
-    )
+        text: review_buffer_text(buffer),
+    }
 }
 
-/// Whether the caret or selection moved since the paste was requested, which
-/// means the response would land somewhere the user did not ask for.
-fn review_paste_target_is_stale(requested: ReviewPasteTarget, current: ReviewPasteTarget) -> bool {
+/// Whether the caret, the selection or the text moved since the paste was
+/// requested, which means the response would land somewhere the user did not
+/// ask for.
+fn review_paste_target_is_stale(
+    requested: &ReviewPasteTarget,
+    current: &ReviewPasteTarget,
+) -> bool {
     requested != current
 }
 
@@ -2830,6 +2859,7 @@ mod review_enter_tests {
 mod review_budget_tests {
     use super::{
         review_insert_offset, review_paste_target_is_stale, review_replace_exceeds_budget,
+        ReviewPasteTarget,
     };
     use crate::constants::MAX_REVIEW_EDITOR_CHARS;
 
@@ -2852,21 +2882,45 @@ mod review_budget_tests {
         // A left-to-right drag leaves the caret at the selection end. Inserting
         // there after the delete would land past the highlighted text, so the
         // start offset has to win.
-        assert_eq!(review_insert_offset((7, Some((2, 7)))), 2);
+        assert_eq!(
+            review_insert_offset(&ReviewPasteTarget::new(7, Some((2, 7)), "")),
+            2
+        );
         // A right-to-left drag leaves the caret at the start, where the two
         // offsets already agree.
-        assert_eq!(review_insert_offset((2, Some((2, 7)))), 2);
+        assert_eq!(
+            review_insert_offset(&ReviewPasteTarget::new(2, Some((2, 7)), "")),
+            2
+        );
         // With nothing selected the caret is the only answer.
-        assert_eq!(review_insert_offset((5, None)), 5);
+        assert_eq!(
+            review_insert_offset(&ReviewPasteTarget::new(5, None, "")),
+            5
+        );
     }
 
     #[test]
     fn caret_move_without_a_selection_still_invalidates_a_paste() {
-        let before = (5, None);
-        assert!(!review_paste_target_is_stale(before, before));
+        let before = ReviewPasteTarget::new(5, None, "hello");
+        assert!(!review_paste_target_is_stale(&before, &before));
         // The reported case: no selection before and after, caret moved.
-        assert!(review_paste_target_is_stale(before, (9, None)));
-        assert!(review_paste_target_is_stale((5, Some((1, 5))), before));
+        assert!(review_paste_target_is_stale(
+            &before,
+            &ReviewPasteTarget::new(9, None, "hello")
+        ));
+        assert!(review_paste_target_is_stale(
+            &ReviewPasteTarget::new(5, Some((1, 5)), "hello"),
+            &before
+        ));
+    }
+
+    #[test]
+    fn a_text_edit_that_restores_the_offsets_still_invalidates_a_paste() {
+        // Same caret and selection, different text: the paste would land in
+        // content the user never pointed at.
+        let before = ReviewPasteTarget::new(3, None, "abcd");
+        let after = ReviewPasteTarget::new(3, None, "abXd");
+        assert!(review_paste_target_is_stale(&before, &after));
     }
 }
 

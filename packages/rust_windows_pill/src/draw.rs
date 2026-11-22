@@ -1648,8 +1648,16 @@ fn draw_permission_card(
     y + card_h
 }
 
-/// Reserve the fixed native editor's region in the scrolling transcript.
-fn draw_review_text(_gfx: &Gfx, _state: &PillState, _x: f64, y: f64, _w: f64, _alpha: f64) -> f64 {
+/// Draw the fixed review heading and reserve space for the native editor; the
+/// editable view is the sole painter of the transcript text.
+fn draw_review_text(gfx: &Gfx, state: &PillState, x: f64, y: f64, _w: f64, alpha: f64) -> f64 {
+    let review = state.assistant_review.borrow();
+    let label = review
+        .as_ref()
+        .and_then(|review| review.review_label.as_deref())
+        .unwrap_or("REVIEW TRANSCRIPT");
+    gfx.draw_text_top_left(label, x, y, 11.0, true, false, [1.0, 1.0, 1.0, 0.5 * alpha]);
+
     y + REVIEW_TITLE_HEIGHT + PANEL_REVIEW_EDITOR_HEIGHT
 }
 
