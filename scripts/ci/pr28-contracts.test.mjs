@@ -2235,7 +2235,9 @@ describe("native review and monitor contracts", () => {
       assert.doesNotMatch(draw, /"Edit",\s*ClickAction::ReviewEdit/);
       assert.match(
         draw,
-        /\(text_width \+ 20\.0\)\.max\(PERM_BUTTON_WIDTH \* 0\.8\)/,
+        // GTK measures through Pango and gets an i32, the other two already
+        // measure in f64, so the cast is part of one platform's shape only.
+        /\(text_width(?: as f64)? \+ 20\.0\)\.max\(PERM_BUTTON_WIDTH \* 0\.8\)/,
       );
     }
   });

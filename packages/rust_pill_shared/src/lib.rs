@@ -180,6 +180,22 @@ pub fn transcript_viewport_layout(
     }
 }
 
+/// The band a transcript is clipped to, with the padding its scroll state is
+/// measured against.
+///
+/// Passed as one value so each renderer's `draw_transcript` stays inside the
+/// parameter budget the static analysers enforce, and so the three renderers
+/// cannot disagree about which edge a pad belongs to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TranscriptViewport {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub top_pad: f64,
+    pub bottom_pad: f64,
+}
+
 /// Review actions reserve input space only while a review is active.
 #[inline]
 pub const fn review_actions_height(has_review: bool) -> f64 {

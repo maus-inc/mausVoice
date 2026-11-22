@@ -1423,7 +1423,17 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
         let bottom_pad = viewport.bottom_pad;
 
         draw_transcript(
-            cr, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad,
+            cr,
+            state,
+            rust_pill_shared::TranscriptViewport {
+                x: content_x,
+                y: py,
+                width: content_w,
+                height: scroll_h,
+                top_pad,
+                bottom_pad,
+            },
+            alpha,
         );
 
         // Top gradient: opaque over header area, fades into content
@@ -1582,13 +1592,8 @@ fn draw_compact_content(
 fn draw_transcript(
     cr: &cairo::Context,
     state: &PillState,
-    area_x: f64,
-    area_y: f64,
-    area_w: f64,
-    area_h: f64,
+    viewport: rust_pill_shared::TranscriptViewport,
     alpha: f64,
-    top_pad: f64,
-    bottom_pad: f64,
 ) {
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
@@ -1611,7 +1616,7 @@ fn draw_transcript(
     }
 
     cr.save().ok();
-    cr.rectangle(area_x, area_y, area_w, area_h);
+    cr.rectangle(viewport.x, viewport.y, viewport.width, viewport.height);
     cr.clip();
 
     // Everything drawn from here on scrolls, so its click regions have to be
@@ -1620,19 +1625,26 @@ fn draw_transcript(
     let region_start = state.click_regions.borrow().len();
 
     let scroll = state.scroll_offset.get();
-    let mut y = area_y + top_pad - scroll;
+    let mut y = viewport.y + viewport.top_pad - scroll;
     // The native editor and its heading are fixed, so conversation content that
     // scrolls up must not paint over them. Clip the scrolling band below the
     // review block and draw the heading outside that clip.
-    let mut band_y = area_y;
-    let mut band_h = area_h;
+    let mut band_y = viewport.y;
+    let mut band_h = viewport.height;
     if has_review {
-        let review_bottom = draw_review_text(cr, state, area_x, area_y + top_pad, area_w, alpha);
+        let review_bottom = draw_review_text(
+            cr,
+            state,
+            viewport.x,
+            viewport.y + viewport.top_pad,
+            viewport.width,
+            alpha,
+        );
         y = review_bottom - scroll;
         band_y = review_bottom;
-        band_h = (area_y + area_h - review_bottom).max(0.0);
+        band_h = (viewport.y + viewport.height - review_bottom).max(0.0);
         cr.save().ok();
-        cr.rectangle(area_x, band_y, area_w, band_h);
+        cr.rectangle(viewport.x, band_y, viewport.width, band_h);
         cr.clip();
     }
 
@@ -1647,24 +1659,33 @@ fn draw_transcript(
 
     for (i, msg) in messages.iter().enumerate() {
         if i > 0 {
-            y = draw_message_separator(cr, area_x, y, alpha);
+            y = draw_message_separator(cr, viewport.x, y, alpha);
         }
 
         if let Some(ref stream) = *streaming {
             if stream.message_id == msg.id {
-                y = draw_streaming_activity(cr, stream, area_x, y, area_w, alpha);
+                y = draw_streaming_activity(cr, stream, viewport.x, y, viewport.width, alpha);
             }
         }
 
-        y = draw_message(cr, state, msg, area_x, area_w, y, line_height, alpha);
+        y = draw_message(
+            cr,
+            state,
+            msg,
+            viewport.x,
+            viewport.width,
+            y,
+            line_height,
+            alpha,
+        );
     }
 
     for perm in permissions.iter() {
         y += 12.0;
-        y = draw_permission_card(cr, state, perm, area_x, y, area_w, alpha);
+        y = draw_permission_card(cr, state, perm, viewport.x, y, viewport.width, alpha);
     }
 
-    let total_height = y + scroll - area_y + bottom_pad;
+    let total_height = y + scroll - viewport.y + viewport.bottom_pad;
     state.content_height.set(total_height);
 
     // Trim the click targets to the part of the panel still on screen. A

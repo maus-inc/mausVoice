@@ -1106,7 +1106,17 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         let bottom_pad = viewport.bottom_pad;
 
         draw_transcript(
-            gfx, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad,
+            gfx,
+            state,
+            rust_pill_shared::TranscriptViewport {
+                x: content_x,
+                y: py,
+                width: content_w,
+                height: scroll_h,
+                top_pad,
+                bottom_pad,
+            },
+            alpha,
         );
 
         // Top gradient
@@ -1315,13 +1325,8 @@ fn draw_compact_content(
 fn draw_transcript(
     gfx: &mut Gfx,
     state: &PillState,
-    area_x: f64,
-    area_y: f64,
-    area_w: f64,
-    area_h: f64,
+    viewport: rust_pill_shared::TranscriptViewport,
     alpha: f64,
-    top_pad: f64,
-    bottom_pad: f64,
 ) {
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
@@ -1344,7 +1349,7 @@ fn draw_transcript(
     }
 
     gfx.save();
-    gfx.clip_rect(area_x, area_y, area_w, area_h);
+    gfx.clip_rect(viewport.x, viewport.y, viewport.width, viewport.height);
 
     // Everything drawn from here on scrolls, so its click regions have to be
     // checked against the visible band before they are handed to the input
@@ -1352,11 +1357,18 @@ fn draw_transcript(
     let region_start = state.click_regions.borrow().len();
 
     let scroll = state.scroll_offset.get();
-    let mut y = area_y + top_pad - scroll;
+    let mut y = viewport.y + viewport.top_pad - scroll;
     if has_review {
         // The native editor is fixed above the scrolling transcript. Keep its
         // heading fixed too, and start conversation content below the editor.
-        y = draw_review_text(gfx, state, area_x, area_y + top_pad, area_w, alpha) - scroll;
+        y = draw_review_text(
+            gfx,
+            state,
+            viewport.x,
+            viewport.y + viewport.top_pad,
+            viewport.width,
+            alpha,
+        ) - scroll;
     }
 
     let line_height = 20.0;
@@ -1365,9 +1377,9 @@ fn draw_transcript(
         if i > 0 {
             y += 16.0;
             gfx.draw_line(
-                area_x,
+                viewport.x,
                 y,
-                area_x + 36.0,
+                viewport.x + 36.0,
                 y,
                 [1.0, 1.0, 1.0, 0.45 * alpha],
                 1.0,
@@ -1377,7 +1389,7 @@ fn draw_transcript(
 
         if let Some(ref stream) = *streaming {
             if stream.message_id == msg.id {
-                y = draw_streaming_activity(gfx, stream, area_x, y, alpha);
+                y = draw_streaming_activity(gfx, stream, viewport.x, y, alpha);
             }
         }
 
@@ -1394,10 +1406,10 @@ fn draw_transcript(
                 format!("{tool_desc} — {reason}")
             };
 
-            draw_wrench_icon(gfx, area_x, y + 2.0, 12.0, 0.5 * alpha);
+            draw_wrench_icon(gfx, viewport.x, y + 2.0, 12.0, 0.5 * alpha);
             gfx.draw_text_top_left(
                 &display,
-                area_x + 18.0,
+                viewport.x + 18.0,
                 y,
                 12.0,
                 false,
@@ -1413,11 +1425,11 @@ fn draw_transcript(
             };
             let color_alpha = if msg.is_error { 0.94 } else { 0.92 };
 
-            let lines = wrap_text(gfx, content, area_w);
+            let lines = wrap_text(gfx, content, viewport.width);
             for line in &lines {
                 gfx.draw_text_top_left(
                     line,
-                    area_x,
+                    viewport.x,
                     y,
                     14.0,
                     false,
@@ -1427,16 +1439,16 @@ fn draw_transcript(
                 y += line_height;
             }
         } else {
-            y = draw_thinking_text(gfx, area_x, y, alpha, state);
+            y = draw_thinking_text(gfx, viewport.x, y, alpha, state);
         }
     }
 
     for perm in permissions.iter() {
         y += 12.0;
-        y = draw_permission_card(gfx, state, perm, area_x, y, area_w, alpha);
+        y = draw_permission_card(gfx, state, perm, viewport.x, y, viewport.width, alpha);
     }
 
-    let total_height = y + scroll - area_y + bottom_pad;
+    let total_height = y + scroll - viewport.y + viewport.bottom_pad;
     state.content_height.set(total_height);
 
     // Trim the click targets to the part of the panel still on screen. A
@@ -1446,7 +1458,12 @@ fn draw_transcript(
         let mut regions = state.click_regions.borrow_mut();
         let scrolled = regions.split_off(region_start);
         regions.extend(scrolled.into_iter().filter_map(|mut region| {
-            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            let (y, h) = rust_pill_shared::clip_span_to_band(
+                region.y,
+                region.h,
+                viewport.y,
+                viewport.height,
+            )?;
             region.y = y;
             region.h = h;
             Some(region)

@@ -1144,7 +1144,17 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         let bottom_pad = viewport.bottom_pad;
 
         draw_transcript(
-            ctx, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad,
+            ctx,
+            state,
+            rust_pill_shared::TranscriptViewport {
+                x: content_x,
+                y: py,
+                width: content_w,
+                height: scroll_h,
+                top_pad,
+                bottom_pad,
+            },
+            alpha,
         );
 
         // Top gradient
@@ -1309,13 +1319,8 @@ fn draw_compact_content(
 fn draw_transcript(
     ctx: &Ctx,
     state: &PillState,
-    area_x: f64,
-    area_y: f64,
-    area_w: f64,
-    area_h: f64,
+    viewport: rust_pill_shared::TranscriptViewport,
     alpha: f64,
-    top_pad: f64,
-    bottom_pad: f64,
 ) {
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
@@ -1338,7 +1343,7 @@ fn draw_transcript(
     }
 
     ctx.save();
-    ctx.rectangle(area_x, area_y, area_w, area_h);
+    ctx.rectangle(viewport.x, viewport.y, viewport.width, viewport.height);
     ctx.clip();
 
     // Everything drawn from here on scrolls, so its click regions have to be
@@ -1347,19 +1352,26 @@ fn draw_transcript(
     let region_start = state.click_regions.borrow().len();
 
     let scroll = state.scroll_offset.get();
-    let mut y = area_y + top_pad - scroll;
+    let mut y = viewport.y + viewport.top_pad - scroll;
     // The native editor and its heading are fixed, so conversation content that
     // scrolls up must not paint over them. Clip the scrolling band below the
     // review block and draw the heading outside that clip.
-    let mut band_y = area_y;
-    let mut band_h = area_h;
+    let mut band_y = viewport.y;
+    let mut band_h = viewport.height;
     if has_review {
-        let review_bottom = draw_review_text(ctx, state, area_x, area_y + top_pad, area_w, alpha);
+        let review_bottom = draw_review_text(
+            ctx,
+            state,
+            viewport.x,
+            viewport.y + viewport.top_pad,
+            viewport.width,
+            alpha,
+        );
         y = review_bottom - scroll;
         band_y = review_bottom;
-        band_h = (area_y + area_h - review_bottom).max(0.0);
+        band_h = (viewport.y + viewport.height - review_bottom).max(0.0);
         ctx.save();
-        ctx.rectangle(area_x, band_y, area_w, band_h);
+        ctx.rectangle(viewport.x, band_y, viewport.width, band_h);
         ctx.clip();
     }
 
@@ -1373,15 +1385,15 @@ fn draw_transcript(
             y += 16.0;
             ctx.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
             ctx.set_line_width(1.0);
-            ctx.move_to(area_x, y);
-            ctx.line_to(area_x + 36.0, y);
+            ctx.move_to(viewport.x, y);
+            ctx.line_to(viewport.x + 36.0, y);
             ctx.stroke();
             y += 8.0;
         }
 
         if let Some(ref stream) = *streaming {
             if stream.message_id == msg.id {
-                y = draw_streaming_activity(ctx, stream, area_x, y, area_w, alpha);
+                y = draw_streaming_activity(ctx, stream, viewport.x, y, viewport.width, alpha);
             }
         }
 
@@ -1402,8 +1414,8 @@ fn draw_transcript(
             ctx.select_font_face("Satoshi", false, false);
             ctx.set_font_size(12.0);
 
-            draw_wrench_icon(ctx, area_x, y + 2.0, 12.0, 0.5 * alpha);
-            let text_x = area_x + 18.0;
+            draw_wrench_icon(ctx, viewport.x, y + 2.0, 12.0, 0.5 * alpha);
+            let text_x = viewport.x + 18.0;
             ctx.move_to(text_x, y + 12.0);
             ctx.show_text(&display);
             y += 18.0;
@@ -1419,23 +1431,23 @@ fn draw_transcript(
             ctx.select_font_face("Satoshi", false, false);
             ctx.set_font_size(14.0);
 
-            let lines = wrap_text(ctx, content, area_w);
+            let lines = wrap_text(ctx, content, viewport.width);
             for line in &lines {
-                ctx.move_to(area_x, y + line_height * 0.75);
+                ctx.move_to(viewport.x, y + line_height * 0.75);
                 ctx.show_text(line);
                 y += line_height;
             }
         } else {
-            y = draw_thinking_text(ctx, area_x, y, alpha, state);
+            y = draw_thinking_text(ctx, viewport.x, y, alpha, state);
         }
     }
 
     for perm in permissions.iter() {
         y += 12.0;
-        y = draw_permission_card(ctx, state, perm, area_x, y, area_w, alpha);
+        y = draw_permission_card(ctx, state, perm, viewport.x, y, viewport.width, alpha);
     }
 
-    let total_height = y + scroll - area_y + bottom_pad;
+    let total_height = y + scroll - viewport.y + viewport.bottom_pad;
     state.content_height.set(total_height);
 
     // Trim the click targets to the part of the panel still on screen. A
