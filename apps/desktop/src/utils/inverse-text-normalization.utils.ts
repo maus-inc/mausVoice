@@ -855,8 +855,8 @@ const dropArticleBeforeNumber = (
   output: string[],
   unit: TrailingUnit,
 ): void => {
-  const previous = output[output.length - 1];
-  const beforePrevious = output[output.length - 2];
+  const previous = output.at(-1);
+  const beforePrevious = output.at(-2);
   if (
     unit.attributiveUnit ||
     beforePrevious === undefined ||

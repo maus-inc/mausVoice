@@ -1401,7 +1401,7 @@ const applyDictionaryCasing = (
     .sort((a, b) => b.length - a.length);
   let out = text;
   for (const term of candidates) {
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
     // Lookarounds rather than `\b`: the ASCII word boundary never matched a
     // term that starts or ends in a non-ASCII letter ("Beyoncé"), so those
     // terms were silently skipped.

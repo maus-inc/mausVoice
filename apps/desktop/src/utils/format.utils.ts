@@ -40,9 +40,9 @@ export const formatSize = (bytes: number | undefined) => {
   return `${gigabytes.toFixed(2)} GB`;
 };
 
-const toValidDate = (
-  value: string | number | null | undefined,
-): Date | null => {
+type DateInput = string | number | null | undefined;
+
+const toValidDate = (value: DateInput): Date | null => {
   if (value === null || value === undefined || value === "") {
     return null;
   }
