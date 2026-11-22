@@ -105,3 +105,77 @@ export const attemptStillOwns = (
 export const attemptSurvivedNoClear = (clearGeneration: number): boolean =>
   !isLocalDataClearRequested() &&
   clearGeneration === getLocalDataClearGeneration();
+
+/** What the microphone surfaces share when they open a recording. */
+export type GuardedRecordingStartOptions = {
+  /** Read the local state that forbids a new start right now. */
+  isBlocked: () => boolean;
+  /** Ownership facts the reply is judged against. */
+  ownership: AttemptOwnership;
+  /** The newest attempt id, bumped by every start and stop. */
+  opIdRef: { current: number };
+  /** The handle the surface keeps, so a stop can reach the opening admission. */
+  handleRef: { current: NativeRecordingHandle | null };
+  preferredMicrophone: string | null;
+  /** Publish the state that owns the start window. */
+  setState: (next: "idle" | "starting" | "recording") => void;
+  /** Reset per-attempt UI, such as the error text or the preview. */
+  onAdmitted?: () => void;
+  /** Report a failure that still belongs to this attempt. */
+  onError?: (error: unknown, stillOwns: boolean) => void;
+};
+
+/**
+ * Open a recording and settle its reply against the attempt that asked for it.
+ *
+ * A reply can land after a newer start, after the surface unmounted, after a
+ * local-data clear began, or after a stop already took the handle and tore it
+ * down. Each of those has to release only the recording this attempt opened, so
+ * the order of the checks is the whole point and it is written once here.
+ */
+export const runGuardedRecordingStart = async ({
+  isBlocked,
+  ownership,
+  opIdRef,
+  handleRef,
+  preferredMicrophone,
+  setState,
+  onAdmitted,
+  onError,
+}: GuardedRecordingStartOptions): Promise<void> => {
+  if (isBlocked() || isLocalDataClearRequested()) return;
+
+  const opId = ++opIdRef.current;
+  const clearGeneration = getLocalDataClearGeneration();
+  const attemptIsCurrent = (): boolean =>
+    attemptStillOwns(ownership, opId, clearGeneration);
+  onAdmitted?.();
+  setState("starting");
+
+  try {
+    const { handle } = await invokeGuardedRecordingStart(
+      preferredMicrophone,
+      admittedStartOptions(attemptIsCurrent, (admitted) => {
+        handleRef.current = admitted;
+      }),
+    );
+    // A stop during the opening window already took this handle and is tearing
+    // it down, so only an untouched admission publishes the recording state.
+    if (handleRef.current !== handle) {
+      await handle.discard().catch(() => undefined);
+      return;
+    }
+    if (!attemptIsCurrent()) {
+      if (handleRef.current === handle) handleRef.current = null;
+      await handle.discard().catch(() => undefined);
+      if (opId === opIdRef.current) setState("idle");
+      return;
+    }
+    setState("recording");
+  } catch (error) {
+    if (attemptSurvivedNoClear(clearGeneration)) {
+      onError?.(error, attemptIsCurrent());
+    }
+    if (opId === opIdRef.current) setState("idle");
+  }
+};

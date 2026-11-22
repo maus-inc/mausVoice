@@ -5,17 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import type { StopRecordingResponse } from "../../types/transcription-session.types";
-import {
-  getLocalDataClearGeneration,
-  isLocalDataClearRequested,
-} from "../../utils/local-data-write-gate";
+import { isLocalDataClearRequested } from "../../utils/local-data-write-gate";
 import { type NativeRecordingHandle } from "../../utils/native-recording-session";
 import { AudioWaveform } from "../common/AudioWaveform";
 import {
-  admittedStartOptions,
-  attemptStillOwns,
-  attemptSurvivedNoClear,
-  invokeGuardedRecordingStart,
+  runGuardedRecordingStart,
   subscribeRecordingAbortForClear,
 } from "../root/recording-start-gate";
 import {
@@ -212,91 +206,38 @@ export const MicrophoneTester = ({
     setIsPreviewPlaying,
   });
 
-  /** Whether an admitted attempt still owns the tester.
-   *
-   * A start or stop is only allowed to publish state while it is the newest
-   * attempt, the component is mounted, and no local-data clear has begun since
-   * it was admitted. Every caller needs the same four facts, so they are read
-   * once here rather than restated at each branch. */
-  const attemptIsCurrent = useCallback(
-    (opId: number, clearGeneration: number) =>
-      attemptStillOwns(
-        {
+  const handleStartTest = useCallback(
+    () =>
+      runGuardedRecordingStart({
+        isBlocked: () =>
+          testStateRef.current !== "idle" || isGlobalRecording || disabled,
+        ownership: {
           isMounted: () => mountedRef.current,
           currentOpId: () => opIdRef.current,
         },
-        opId,
-        clearGeneration,
-      ),
-    [],
+        opIdRef,
+        handleRef,
+        preferredMicrophone,
+        setState: setSyncedTestState,
+        onAdmitted: () => {
+          setTestError(null);
+          clearPreviewUrl();
+        },
+        onError: (error, stillOwns) => {
+          console.error("Failed to start microphone test", error);
+          if (stillOwns) {
+            setTestError("Unable to start microphone test. Please try again.");
+          }
+        },
+      }),
+    [
+      clearPreviewUrl,
+      disabled,
+      isGlobalRecording,
+      preferredMicrophone,
+      setSyncedTestState,
+    ],
   );
-
-  const handleStartTest = useCallback(async () => {
-    if (
-      testStateRef.current !== "idle" ||
-      isGlobalRecording ||
-      disabled ||
-      isLocalDataClearRequested()
-    ) {
-      return;
-    }
-
-    const opId = ++opIdRef.current;
-    const clearGeneration = getLocalDataClearGeneration();
-    setTestError(null);
-    clearPreviewUrl();
-    setSyncedTestState("starting");
-
-    try {
-      const { handle } = await invokeGuardedRecordingStart(
-        preferredMicrophone ?? null,
-        admittedStartOptions(
-          () => attemptIsCurrent(opId, clearGeneration),
-          (admitted) => {
-            handleRef.current = admitted;
-          },
-        ),
-      );
-      // A stop during the opening window already took this handle and is tearing
-      // it down, so only an untouched admission publishes the recording state.
-      if (handleRef.current !== handle) {
-        // That stop may have failed, leaving the admitted capture open while the
-        // tester reports idle. Discard is idempotent and scoped to this
-        // admission, so it confirms the release without reaching a successor.
-        await handle.discard().catch(() => undefined);
-        return;
-      }
-      if (!attemptIsCurrent(opId, clearGeneration)) {
-        // Release only the recording this attempt opened. The global helper stops
-        // whatever session is current, which may belong to a later start that
-        // superseded this one.
-        if (handleRef.current === handle) handleRef.current = null;
-        await handle.discard().catch(() => undefined);
-        if (opId === opIdRef.current) {
-          setSyncedTestState("idle");
-        }
-        return;
-      }
-      setSyncedTestState("recording");
-    } catch (error) {
-      if (attemptSurvivedNoClear(clearGeneration)) {
-        console.error("Failed to start microphone test", error);
-        if (attemptIsCurrent(opId, clearGeneration)) {
-          setTestError("Unable to start microphone test. Please try again.");
-        }
-      }
-      if (opId === opIdRef.current) {
-        setSyncedTestState("idle");
-      }
-    }
-  }, [
-    attemptIsCurrent,
-    clearPreviewUrl,
-    disabled,
-    isGlobalRecording,
-    preferredMicrophone,
-    setSyncedTestState,
-  ]);
 
   /** Publish what the test captured, and say why when it is not a clean take.
    *

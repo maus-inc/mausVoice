@@ -8,17 +8,11 @@ import {
 } from "../../actions/onboarding.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
-import {
-  getLocalDataClearGeneration,
-  isLocalDataClearRequested,
-} from "../../utils/local-data-write-gate";
+import { isLocalDataClearRequested } from "../../utils/local-data-write-gate";
 import { AudioWaveform } from "../common/AudioWaveform";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import {
-  admittedStartOptions,
-  attemptStillOwns,
-  attemptSurvivedNoClear,
-  invokeGuardedRecordingStart,
+  runGuardedRecordingStart,
   subscribeRecordingAbortForClear,
 } from "../root/recording-start-gate";
 import {
@@ -65,77 +59,23 @@ export const MicCheckForm = () => {
     [],
   );
 
-  const attemptIsCurrent = useCallback(
-    (opId: number, clearGeneration: number) =>
-      attemptStillOwns(
-        {
+  const startRecording = useCallback(
+    () =>
+      runGuardedRecordingStart({
+        isBlocked: () =>
+          isGlobalRecording || recordingStateRef.current !== "idle",
+        ownership: {
           isMounted: () => mountedRef.current,
           currentOpId: () => opIdRef.current,
         },
-        opId,
-        clearGeneration,
-      ),
-    [],
+        opIdRef,
+        handleRef,
+        preferredMicrophone,
+        setState: setSyncedRecordingState,
+        onError: (error) => console.error("Failed to start recording", error),
+      }),
+    [isGlobalRecording, preferredMicrophone, setSyncedRecordingState],
   );
-
-  const startRecording = useCallback(async () => {
-    if (
-      isGlobalRecording ||
-      recordingStateRef.current !== "idle" ||
-      isLocalDataClearRequested()
-    ) {
-      return;
-    }
-
-    const opId = ++opIdRef.current;
-    const clearGeneration = getLocalDataClearGeneration();
-    setSyncedRecordingState("starting");
-
-    try {
-      const { handle } = await invokeGuardedRecordingStart(
-        preferredMicrophone ?? null,
-        admittedStartOptions(
-          () => attemptIsCurrent(opId, clearGeneration),
-          (admitted) => {
-            handleRef.current = admitted;
-          },
-        ),
-      );
-      // A stop during the opening window already took this handle and is tearing
-      // it down, so only an untouched admission publishes the recording state.
-      if (handleRef.current !== handle) {
-        // That stop may have failed, leaving the admitted capture open while the
-        // form reports idle. Discard is idempotent and scoped to this admission,
-        // so it confirms the release without reaching a successor.
-        await handle.discard().catch(() => undefined);
-        return;
-      }
-      if (!attemptIsCurrent(opId, clearGeneration)) {
-        // Release only the recording this attempt opened. The global helper
-        // discards whatever session is current, which by now may belong to a
-        // later start that superseded this one.
-        if (handleRef.current === handle) handleRef.current = null;
-        await handle.discard().catch(() => undefined);
-        if (opId === opIdRef.current) {
-          setSyncedRecordingState("idle");
-        }
-        return;
-      }
-      setSyncedRecordingState("recording");
-    } catch (error) {
-      if (attemptSurvivedNoClear(clearGeneration)) {
-        console.error("Failed to start recording", error);
-      }
-      if (opId === opIdRef.current) {
-        setSyncedRecordingState("idle");
-      }
-    }
-  }, [
-    attemptIsCurrent,
-    isGlobalRecording,
-    preferredMicrophone,
-    setSyncedRecordingState,
-  ]);
 
   const stopRecording = useCallback(async () => {
     const currentState = recordingStateRef.current;

@@ -1,4 +1,4 @@
-use rust_pill_shared::indicator::{DictationIndicator, RecordingPhase};
+use rust_pill_shared::indicator::DictationIndicator;
 use std::cell::{Cell, RefCell};
 
 use crate::ipc::{
@@ -335,11 +335,7 @@ impl PillState {
     }
 }
 
-impl RecordingPhase for Phase {
-    const IDLE: Self = Self::Idle;
-    const RECORDING: Self = Self::Recording;
-    const LOADING: Self = Self::Loading;
-}
+rust_pill_shared::impl_recording_phase!(Phase);
 
 // Native paint and input code read the same indicator that receives phase IPC.
 impl std::ops::Deref for PillState {

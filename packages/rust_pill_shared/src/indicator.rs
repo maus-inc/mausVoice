@@ -12,6 +12,21 @@ pub trait RecordingPhase: Copy + Eq {
     const LOADING: Self;
 }
 
+/// Binds a platform's IPC phase enum to the indicator's three named phases.
+///
+/// Every renderer names its variants `Idle`, `Recording` and `Loading`, so the
+/// mapping is written once here rather than three times beside the enums.
+#[macro_export]
+macro_rules! impl_recording_phase {
+    ($phase:ty) => {
+        impl $crate::indicator::RecordingPhase for $phase {
+            const IDLE: Self = Self::Idle;
+            const RECORDING: Self = Self::Recording;
+            const LOADING: Self = Self::Loading;
+        }
+    };
+}
+
 #[derive(Debug, Clone)]
 pub struct DictationIndicator<P: RecordingPhase> {
     last_sequence: Cell<u64>,
