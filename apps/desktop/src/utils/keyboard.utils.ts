@@ -53,15 +53,6 @@ export const getAdditionalLanguageCode = (
 export const getSwitchToStyleActionName = (toneId: string): string =>
   `${SWITCH_TO_STYLE_HOTKEY_PREFIX}${toneId}`;
 
-export const getSwitchToStyleToneId = (actionName: string): string | null => {
-  if (!actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX)) {
-    return null;
-  }
-
-  const raw = actionName.slice(SWITCH_TO_STYLE_HOTKEY_PREFIX.length);
-  return raw.length > 0 ? raw : null;
-};
-
 /**
  * Every platform the app builds for, so a default cannot be added for one and
  * forgotten for another.

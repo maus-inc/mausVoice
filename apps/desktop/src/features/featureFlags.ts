@@ -1,7 +1,6 @@
 import { getAppState, produceAppState } from "../store";
 import { getLogger } from "../utils/log.utils";
 import {
-  DEFAULT_EXPANSION_FLAGS,
   type ExpansionFeatureName,
   type ExpansionFlags,
   parseExpansionFlags,
@@ -83,5 +82,3 @@ export const setExpansionFlag = (
 
   return currentToggle;
 };
-
-export const DEFAULT_FLAGS: ExpansionFlags = { ...DEFAULT_EXPANSION_FLAGS };

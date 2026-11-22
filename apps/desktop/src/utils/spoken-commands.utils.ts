@@ -16,7 +16,7 @@ import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
  * words cannot be part of the surrounding sentence.
  */
 
-export const isEnglishSpokenCommandLanguage = (
+const isEnglishSpokenCommandLanguage = (
   language: string | undefined,
 ): boolean =>
   language?.trim().toLowerCase() === "auto" ||

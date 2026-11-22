@@ -1,4 +1,5 @@
 import { ChatMessage, ChatMessageRole, Nullable } from "@maus-inc/types";
+import { parseJsonObject } from "@maus-inc/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
@@ -19,7 +20,9 @@ const fromLocalChatMessage = (local: LocalChatMessage): ChatMessage => ({
   role: local.role as ChatMessageRole,
   content: local.content,
   createdAt: dayjs(local.createdAt).toISOString(),
-  metadata: local.metadata ? JSON.parse(local.metadata) : null,
+  // A corrupt metadata column must not throw and take down the whole message
+  // list; an unreadable value reads as no metadata.
+  metadata: local.metadata ? parseJsonObject(local.metadata) : null,
 });
 
 const toLocalChatMessage = (message: ChatMessage): LocalChatMessage => ({

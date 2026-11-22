@@ -26,7 +26,7 @@ export const TITLE_BAR_HEIGHT = 40;
  * visible between the buttons and against the window edge, which is what
  * separates a native-style cluster from a stack of divider lines.
  */
-export const CAPTION_BUTTON_SIZE = 34;
+const CAPTION_BUTTON_SIZE = 34;
 
 /**
  * Corner radius of a caption button.
@@ -81,7 +81,7 @@ export const TRAFFIC_HIT_SIZE = Math.max(MIN_TARGET_SIZE, TRAFFIC_DOT_SIZE);
  *
  * Compare this against a logical width, not the physical width Tauri reports.
  */
-export const COMPACT_WIDTH = 900;
+const COMPACT_WIDTH = 900;
 
 /** Caption button side in the compact form. Still above `MIN_TARGET_SIZE`. */
 export const COMPACT_CAPTION_BUTTON_SIZE = 30;

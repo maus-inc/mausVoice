@@ -28,7 +28,7 @@ type OpenAICompatibleModelPickerProps = {
 /** How long one probe may run before it is abandoned and retried. */
 export const PROBE_TIMEOUT_MS = 10_000;
 /** How long to wait before probing an unavailable endpoint again. */
-export const PROBE_RETRY_MS = 3000;
+const PROBE_RETRY_MS = 3000;
 
 export const OpenAICompatibleModelPicker = ({
   apiKeyId,

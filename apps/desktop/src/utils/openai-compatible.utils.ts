@@ -1,3 +1,5 @@
+import { stripTrailingCharacters } from "@maus-inc/utilities";
+
 export const OPENAI_COMPATIBLE_DEFAULT_URL = "http://127.0.0.1:8080";
 
 export const OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH =
@@ -7,7 +9,7 @@ export const normalizeOpenAICompatibleBaseUrl = (
   baseUrl?: string | null,
 ): string => {
   const candidate = baseUrl?.trim() || OPENAI_COMPATIBLE_DEFAULT_URL;
-  return candidate.replace(/\/+$/, "");
+  return stripTrailingCharacters(candidate, "/");
 };
 
 export const buildOpenAICompatibleUrl = (

@@ -48,7 +48,7 @@ const ARROW_KEYS: Readonly<Record<string, string>> = {
 
 /** Copy of getPrettyKeyName's mapping rules (side-label suffix omitted:
  *  appendSideLabel only disambiguates Left/Right variants). */
-export const prettyKeyName = (key: string): string => {
+const prettyKeyName = (key: string): string => {
   const lower = key.toLowerCase();
   if (lower.startsWith("key")) return key.slice(3).toUpperCase();
   for (const [prefix, mac, other] of MODIFIER_PRETTY) {

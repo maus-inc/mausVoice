@@ -71,7 +71,7 @@ export const parseRetryAfterMs = (
   // became a delay to obey. Anything outside the grammar is handed to the
   // HTTP-date branch below instead, which returns null for a header that is
   // neither form and so leaves the caller on its own backoff. The digit run is
-  // tested first deliberately — it is also how a four-digit value like "3600"
+  // tested first deliberately: it is also how a four-digit value like "3600"
   // stays a capped half-minute rather than becoming the year 3600.
   const seconds = DELTA_SECONDS.test(value) ? Number(value) : Number.NaN;
   if (Number.isFinite(seconds)) {
