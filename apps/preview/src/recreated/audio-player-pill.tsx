@@ -28,7 +28,7 @@ const BAR_MIN_W = 2;
 const BAR_MAX_W = 4;
 const BAR_GAP = 2;
 
-export const formatDuration = (durationMs?: number | null): string => {
+const formatDuration = (durationMs?: number | null): string => {
   if (!durationMs || !Number.isFinite(durationMs)) return "0:00";
   const totalSeconds = Math.floor(durationMs / 1000);
   const minutes = Math.floor(totalSeconds / 60);

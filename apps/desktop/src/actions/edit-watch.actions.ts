@@ -219,7 +219,7 @@ export const resetAutoLearnSessionState = (): void => {
   recentlyLapsedProposal = null;
 };
 
-export const clearAutoLearnProposal = (): void => {
+const clearAutoLearnProposal = (): void => {
   produceAppState((draft) => {
     draft.autoLearn.proposal = null;
   });

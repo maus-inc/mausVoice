@@ -122,25 +122,21 @@ const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 export const dot = (a: Vec3, b: Vec3): number =>
   a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
-export const add = (a: Vec3, b: Vec3): Vec3 => [
-  a[0] + b[0],
-  a[1] + b[1],
-  a[2] + b[2],
-];
+const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
-export const cross = (a: Vec3, b: Vec3): Vec3 => [
+const cross = (a: Vec3, b: Vec3): Vec3 => [
   a[1] * b[2] - a[2] * b[1],
   a[2] * b[0] - a[0] * b[2],
   a[0] * b[1] - a[1] * b[0],
 ];
 
-export const scale = (a: Vec3, factor: number): Vec3 => [
+const scale = (a: Vec3, factor: number): Vec3 => [
   a[0] * factor,
   a[1] * factor,
   a[2] * factor,
 ];
 
-export const magnitude = (a: Vec3): number =>
+const magnitude = (a: Vec3): number =>
   Math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]); // NOSONAR: S7768, bounded vectors are normalized per pixel and sqrt benchmarks faster than hypot.
 
 export const normalize = (a: Vec3): Vec3 => {
