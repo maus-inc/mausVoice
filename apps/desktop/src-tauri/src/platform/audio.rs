@@ -3281,13 +3281,14 @@ mod cpal_impl {
             task: impl FnOnce(&T) + Send + 'static,
         ) -> Result<(), WorkerUnavailable> {
             let worker = self.sender.as_ref().ok_or(WorkerUnavailable)?;
-            match worker.try_send(Box::new(task)) {
+            let boxed = Box::new(task);
+            match worker.try_send(boxed) {
                 Ok(()) => Ok(()),
-                Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                Err(std::sync::mpsc::TrySendError::Full(boxed)) => {
                     // Channel full: preserve the latest instruction for the
                     // worker's next tick instead of discarding it.
                     if let Ok(mut guard) = self.latest_intent.lock() {
-                        *guard = Some(Box::new(task));
+                        *guard = Some(boxed);
                     }
                     Ok(())
                 }
