@@ -26,6 +26,7 @@
  * unchanged, which is what keeps the pass safe for the other dictation
  * languages the app supports.
  */
+import { stripTrailingCharacters } from "@maus-inc/utilities";
 
 const SMALL_NUMBERS: Readonly<Record<string, number>> = {
   zero: 0,
@@ -191,7 +192,14 @@ const isNumberToken = (word: string): boolean => {
 const isJoiningToken = (word: string): boolean => word.toLowerCase() === "and";
 
 const formatCardinal = (value: number): string =>
-  value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  value.toString().replace(/\d+/g, (run) => {
+    let grouped = "";
+    for (let i = 0; i < run.length; i += 1) {
+      if (i > 0 && (run.length - i) % 3 === 0) grouped += ",";
+      grouped += run[i];
+    }
+    return grouped;
+  });
 
 type CardinalParse = {
   value: number;
@@ -311,10 +319,10 @@ const numberWordsOf = (text: string): string[] =>
   text.split("-").filter((part) => part.length > 0);
 
 /** Sentence punctuation that can ride on the last word of a number. */
-const TRAILING_PUNCTUATION_RE = /[.,!?;:]+$/;
+const TRAILING_PUNCTUATION_CHARS = ".,!?;:";
 
 /** Punctuation that ends the number run it sits on, unlike a comma. */
-const SENTENCE_BOUNDARY_RE = /[.!?;:]+$/;
+const SENTENCE_BOUNDARY_CHARS = ".!?;:";
 
 /**
  * The word inside a token, with the punctuation the sentence put there removed.
@@ -323,7 +331,11 @@ const SENTENCE_BOUNDARY_RE = /[.!?;:]+$/;
  * only "twenty" and wrote "20 three".
  */
 const numberTokenText = (text: string): string =>
-  text.replace(TRAILING_PUNCTUATION_RE, "");
+  stripTrailingCharacters(text, TRAILING_PUNCTUATION_CHARS);
+
+/** The punctuation `numberTokenText` strips, so it can be written back. */
+const trailingPunctuationOf = (text: string): string =>
+  text.slice(stripTrailingCharacters(text, TRAILING_PUNCTUATION_CHARS).length);
 
 /** Whether a single word is one of the number words this pass understands. */
 export const isSpokenNumberWord = (word: string): boolean =>
@@ -596,7 +608,11 @@ const collectNumberRun = (
     lastTokenIndex = cursor;
     previousToken = candidate.text;
     cursor += 1;
-    if (SENTENCE_BOUNDARY_RE.test(candidate.text)) break;
+    if (
+      stripTrailingCharacters(candidate.text, SENTENCE_BOUNDARY_CHARS) !==
+      candidate.text
+    )
+      break;
   }
 
   return { words, lastTokenIndex };
@@ -616,7 +632,10 @@ const isCentWord = (segment: Segment | undefined): boolean =>
     segment &&
     !segment.isSpace &&
     ["cent", "cents"].includes(
-      segment.text.toLowerCase().replace(/[.,!?;:]+$/, ""),
+      stripTrailingCharacters(
+        segment.text.toLowerCase(),
+        TRAILING_PUNCTUATION_CHARS,
+      ),
     ),
   );
 
@@ -627,7 +646,10 @@ const unitWordAt = (
 ): { lowered: string; punctuation: string } | null => {
   const wordSegment = segments[nextIndex + 1];
   if (!wordSegment || wordSegment.isSpace) return null;
-  const lowered = wordSegment.text.toLowerCase().replace(/[.,!?;:]+$/, "");
+  const lowered = stripTrailingCharacters(
+    wordSegment.text.toLowerCase(),
+    TRAILING_PUNCTUATION_CHARS,
+  );
   return { lowered, punctuation: wordSegment.text.slice(lowered.length) };
 };
 
@@ -645,14 +667,23 @@ const unitFollowers = (
   count: number,
 ): string[] => {
   const unit = segments[nextIndex + 1];
-  if (!unit || SENTENCE_BOUNDARY_RE.test(unit.text)) return [];
+  if (
+    !unit ||
+    stripTrailingCharacters(unit.text, SENTENCE_BOUNDARY_CHARS) !== unit.text
+  )
+    return [];
   const words: string[] = [];
   while (words.length < count) {
     const index = nextIndex + 3 + words.length * 2;
     const gap = segments[index - 1];
     const word = segments[index];
     if (!gap?.isSpace || !word || word.isSpace) break;
-    words.push(word.text.toLowerCase().replace(/[.,!?;:]+$/, ""));
+    words.push(
+      stripTrailingCharacters(
+        word.text.toLowerCase(),
+        TRAILING_PUNCTUATION_CHARS,
+      ),
+    );
   }
   return words;
 };
@@ -727,7 +758,10 @@ const readPerCentUnit = (
 ): TrailingUnit => {
   const cents = segments[nextIndex + 3];
   if (!isCentWord(cents)) return unit;
-  const cleaned = cents.text.toLowerCase().replace(/[.,!?;:]+$/, "");
+  const cleaned = stripTrailingCharacters(
+    cents.text.toLowerCase(),
+    TRAILING_PUNCTUATION_CHARS,
+  );
   unit.percentSuffix = "%";
   unit.trailingPunctuation = cents.text.slice(cleaned.length);
   unit.trailingIndex = nextIndex + 3;
@@ -886,8 +920,7 @@ const applyCardinalRules = (text: string): string => {
       continue;
     }
 
-    const runPunctuation =
-      segments[lastTokenIndex].text.match(TRAILING_PUNCTUATION_RE)?.[0] ?? "";
+    const runPunctuation = trailingPunctuationOf(segments[lastTokenIndex].text);
     writeRun(output, parsedRun, unit, runPunctuation);
     index = unit.trailingIndex > 0 ? unit.trailingIndex + 1 : nextIndex;
   }

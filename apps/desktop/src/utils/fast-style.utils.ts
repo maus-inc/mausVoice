@@ -760,6 +760,21 @@ const fixSelfCorrections = (text: string): string => {
   return out.replace(/\s{2,}/g, " ").trim();
 };
 
+/**
+ * The last word that ends before `offset`, requiring whitespace between it and
+ * the offset. Replaces `/(\S+)\s+$/`, whose greedy capture backtracks
+ * super-linearly on a long run of spaces.
+ */
+const wordBeforeOffset = (whole: string, offset: number): string => {
+  const head = whole.slice(0, offset);
+  let end = head.length;
+  while (end > 0 && /\s/.test(head[end - 1] as string)) end -= 1;
+  if (end === head.length) return "";
+  let start = end;
+  while (start > 0 && !/\s/.test(head[start - 1] as string)) start -= 1;
+  return head.slice(start, end);
+};
+
 const joinSpokenDomains = (text: string): string =>
   text.replace(
     SPOKEN_DOMAIN_RE,
@@ -771,8 +786,9 @@ const joinSpokenDomains = (text: string): string =>
       whole: string,
     ): string => {
       if (SPOKEN_ADDRESS_STOPWORDS.has(host.toLowerCase())) return match;
-      const before = /(\S+)\s+$/.exec(whole.slice(0, offset));
-      const frame = before?.[1].toLowerCase().replace(/[^a-z]/g, "") ?? "";
+      const frame = wordBeforeOffset(whole, offset)
+        .toLowerCase()
+        .replace(/[^a-z]/g, "");
       return SPOKEN_DOMAIN_FRAMES.has(frame) ? `${host}.${tld}` : match;
     },
   );
