@@ -103,7 +103,13 @@ export const MicCheckForm = () => {
       );
       // A stop during the opening window already took this handle and is tearing
       // it down, so only an untouched admission publishes the recording state.
-      if (handleRef.current !== handle) return;
+      if (handleRef.current !== handle) {
+        // That stop may have failed, leaving the admitted capture open while the
+        // form reports idle. Discard is idempotent and scoped to this admission,
+        // so it confirms the release without reaching a successor.
+        await handle.discard().catch(() => undefined);
+        return;
+      }
       if (!attemptIsCurrent(opId, clearGeneration)) {
         // Release only the recording this attempt opened. The global helper
         // discards whatever session is current, which by now may belong to a

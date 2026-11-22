@@ -259,13 +259,19 @@ export const MicrophoneTester = ({
       );
       // A stop during the opening window already took this handle and is tearing
       // it down, so only an untouched admission publishes the recording state.
-      if (handleRef.current !== handle) return;
+      if (handleRef.current !== handle) {
+        // That stop may have failed, leaving the admitted capture open while the
+        // tester reports idle. Discard is idempotent and scoped to this
+        // admission, so it confirms the release without reaching a successor.
+        await handle.discard().catch(() => undefined);
+        return;
+      }
       if (!attemptIsCurrent(opId, clearGeneration)) {
-        // Stop only the recording this attempt opened. The global helper stops
+        // Release only the recording this attempt opened. The global helper stops
         // whatever session is current, which may belong to a later start that
         // superseded this one.
         if (handleRef.current === handle) handleRef.current = null;
-        await handle.stop().catch(() => undefined);
+        await handle.discard().catch(() => undefined);
         if (opId === opIdRef.current) {
           setSyncedTestState("idle");
         }
