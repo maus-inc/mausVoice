@@ -164,6 +164,18 @@ const UNAMBIGUOUS_MONTH_SOURCE = Object.keys(MONTHS)
   .filter((month) => !["may", "march", "august"].includes(month))
   .join("|");
 
+/** The twelve hours a spoken clock time can start with. */
+const HOUR_WORD_SOURCE =
+  "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve";
+
+/** Minutes below ten, which are spoken after "oh". */
+const UNIT_WORD_SOURCE = "one|two|three|four|five|six|seven|eight|nine";
+
+/** A spoken minute: "thirty", "forty five", "twenty-five". */
+const SPOKEN_MINUTE_SOURCE = `(?:twenty|thirty|forty|fifty)(?:[-\\s](?:${UNIT_WORD_SOURCE}))?`;
+
+const MERIDIEM_SOURCE = String.raw`a\.?\s?m\.?|p\.?\s?m\.?`;
+
 const MERIDIEM_NORMALIZATIONS: ReadonlyArray<readonly [RegExp, string]> = [
   [/^a\.?\s?m\.?$/i, "AM"],
   [/^p\.?\s?m\.?$/i, "PM"],
@@ -424,7 +436,10 @@ const applyTimeRules = (text: string): string => {
 
   // "quarter past three" / "half past three" / "quarter to three".
   out = out.replace(
-    /\b(quarter|half)\s+past\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/gi,
+    new RegExp(
+      String.raw`\b(quarter|half)\s+past\s+(${HOUR_WORD_SOURCE})\b`,
+      "gi",
+    ),
     (match, part: string, hour: string) => {
       const parsed = SMALL_NUMBERS[hour.toLowerCase()];
       if (parsed === undefined) return match;
@@ -432,7 +447,7 @@ const applyTimeRules = (text: string): string => {
     },
   );
   out = out.replace(
-    /\bquarter\s+to\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/gi,
+    new RegExp(String.raw`\bquarter\s+to\s+(${HOUR_WORD_SOURCE})\b`, "gi"),
     (match, hour: string) => {
       const parsed = SMALL_NUMBERS[hour.toLowerCase()];
       if (parsed === undefined) return match;
@@ -442,7 +457,10 @@ const applyTimeRules = (text: string): string => {
 
   // "three to five pm" reads as a range of clock times.
   out = out.replace(
-    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+to\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(a\.?\s?m\.?|p\.?\s?m\.?)\b/gi,
+    new RegExp(
+      String.raw`\b(${HOUR_WORD_SOURCE})\s+to\s+(${HOUR_WORD_SOURCE})\s+(${MERIDIEM_SOURCE})\b`,
+      "gi",
+    ),
     (match, from: string, to: string, tail: string) =>
       formatClockRange(
         SMALL_NUMBERS[from.toLowerCase()],
@@ -453,7 +471,10 @@ const applyTimeRules = (text: string): string => {
 
   // "three thirty pm", "three oh five p.m.", "nine am", "twelve o'clock".
   out = out.replace(
-    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\s+((?:oh|o)?\s?(?:twenty|thirty|forty|fifty)(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|(?:oh|o)\s+(?:one|two|three|four|five|six|seven|eight|nine)))?\s*(a\.?\s?m\.?|p\.?\s?m\.?|o'clock)\b/gi,
+    new RegExp(
+      String.raw`\b(${HOUR_WORD_SOURCE})(?:\s+((?:oh|o)?\s?(?:${SPOKEN_MINUTE_SOURCE})|(?:oh|o)\s+(?:${UNIT_WORD_SOURCE})))?\s*(${MERIDIEM_SOURCE}|o'clock)\b`,
+      "gi",
+    ),
     (match, hour: string, minute: string | undefined, tail: string) => {
       const parsedHour = SMALL_NUMBERS[hour.toLowerCase()];
       if (parsedHour === undefined) return match;
@@ -466,7 +487,10 @@ const applyTimeRules = (text: string): string => {
   // "at three thirty" / "around eleven forty five": a clock time is only read
   // from a bare hour and minute when a time preposition sets it up.
   out = out.replace(
-    /\b(at|by|around|about|from|until|before|after)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\s+(?:oh|o)\s+(one|two|three|four|five|six|seven|eight|nine)|\s+((?:twenty|thirty|forty|fifty)(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?))\b/gi,
+    new RegExp(
+      String.raw`\b(at|by|around|about|from|until|before|after)\s+(${HOUR_WORD_SOURCE})(?:\s+(?:oh|o)\s+(${UNIT_WORD_SOURCE})|\s+(${SPOKEN_MINUTE_SOURCE}))\b`,
+      "gi",
+    ),
     (
       match,
       cue: string,
