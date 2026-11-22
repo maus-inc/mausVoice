@@ -25,7 +25,10 @@ vi.mock("../../../actions/user.actions", () => ({
   setPillResetMonitorStrategy: vi.fn(() => Promise.resolve()),
 }));
 
-import { INITIAL_APP_STATE } from "../../../state/app.state";
+import {
+  INITIAL_APP_STATE,
+  type KeyboardListenerHealth,
+} from "../../../state/app.state";
 import { setAppState } from "../../../store";
 import { ensureUiHarness } from "../../../../test/helpers/jsdom-ui-harness";
 import { requireElement } from "../../../../test/helpers/dom";
@@ -62,11 +65,15 @@ describe("AppearanceSettingsPage pill locate row", () => {
       );
     });
 
-  const setState = (hotkeyStrategy: "listener" | "bridge") =>
+  const setState = (
+    hotkeyStrategy: "listener" | "bridge",
+    keyboardListenerHealth: KeyboardListenerHealth = "healthy_grab",
+  ) =>
     setAppState(
       {
         ...structuredClone(INITIAL_APP_STATE),
         hotkeyStrategy,
+        keyboardListenerHealth,
         userPrefs: prefs as typeof INITIAL_APP_STATE.userPrefs,
       },
       true,
@@ -120,6 +127,18 @@ describe("AppearanceSettingsPage pill locate row", () => {
 
   it("is absent when the listener strategy is unavailable", () => {
     act(() => setState("bridge"));
+    render();
+    expect(row()).toBeNull();
+  });
+
+  it("is absent while the listener is not delivering keys", () => {
+    act(() => setState("listener", "grab_failed"));
+    render();
+    expect(row()).toBeNull();
+  });
+
+  it("is absent until the listener reports its health", () => {
+    act(() => setState("listener", "stopped"));
     render();
     expect(row()).toBeNull();
   });

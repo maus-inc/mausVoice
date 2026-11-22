@@ -1708,22 +1708,41 @@ describe("PR28 workflow and public-asset contracts", () => {
       .map((line) => /^\s*-\s*"([^"]+)"/.exec(line)?.[1])
       .filter(Boolean);
 
+    const matchesGlob = (glob, path) =>
+      glob.endsWith("/**")
+        ? path.startsWith(glob.slice(0, -3) + "/")
+        : glob === path;
+
+    // A filter is a union of positive globs minus its `!` exclusions, so a path
+    // needs a positive match and no exclusion. Testing only for a positive
+    // match would pass a path a later `!` pattern takes back out.
     const covered = (path) =>
-      globs.some((glob) =>
-        glob.endsWith("/**")
-          ? path.startsWith(glob.slice(0, -3) + "/")
-          : glob === path,
+      globs.some((glob) => !glob.startsWith("!") && matchesGlob(glob, path)) &&
+      !globs.some(
+        (glob) => glob.startsWith("!") && matchesGlob(glob.slice(1), path),
       );
 
-    // Only sources this repository's own guards read need a trigger entry; the
-    // workflow itself is listed so a filter edit re-runs the check.
-    for (const [label, path] of PATHS) {
+    // Every source this file reads needs a trigger entry, not only the ones in
+    // `PATHS`: several guards read a file directly, and a hand-kept map drifts
+    // from them. The literal read arguments are taken from this file's own
+    // text, so narrowing the workflow globs to exact paths fails here for the
+    // direct reads too.
+    const literalReads = Array.from(
+      readRaw("scripts/ci/pr28-contracts.test.mjs").matchAll(
+        /read(?:Raw)?\("([^"]+)"\)/g,
+      ),
+      (match) => match[1],
+    );
+    const required = new Map([
+      ...PATHS,
+      ...literalReads.map((path) => [path, path]),
+    ]);
+    for (const [label, path] of required) {
       assert.ok(
         covered(path),
         `Test Docs does not trigger on ${label} (${path}); add a matching path to .github/workflows/test-docs.yml or the guards go unrun when only that source changes`,
       );
     }
-    assert.ok(covered(".github/workflows/test-docs.yml"));
   });
 
   it("keeps every social metadata consumer on the checked-in asset", () => {

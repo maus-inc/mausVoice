@@ -56,20 +56,6 @@ fn color(r: f64, g: f64, b: f64, a: f64) -> D2D1_COLOR_F {
     }
 }
 
-/// One stroke of the long-press ring: a segment with its own colour and width.
-///
-/// A named struct rather than a tuple because every segment carries six values
-/// and `clippy::type_complexity` rightly rejects the tuple form.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ShadedSegment {
-    pub(crate) x1: f64,
-    pub(crate) y1: f64,
-    pub(crate) x2: f64,
-    pub(crate) y2: f64,
-    pub(crate) rgba: [f64; 4],
-    pub(crate) width: f64,
-}
-
 fn centered_scale(current: Matrix3x2, cx: f64, cy: f64, sx: f64, sy: f64) -> Matrix3x2 {
     Matrix3x2::scale_around(sx as f32, sy as f32, vec2(cx, cy)) * current
 }
@@ -404,7 +390,7 @@ impl Gfx {
     /// The brush and stroke style are COM objects, so creating a pair per
     /// segment would mean hundreds of allocations per frame; instead both are
     /// created once and the brush colour is mutated in place.
-    pub(crate) fn draw_line_shaded(&self, segments: &[ShadedSegment]) {
+    pub(crate) fn draw_line_shaded(&self, segments: &[rust_pill_shared::RingSegment]) {
         if segments.is_empty() {
             return;
         }

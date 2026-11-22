@@ -132,6 +132,20 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
       }
       return fired;
     },
-    reset: clear,
+    /**
+     * Drop the sequence in flight without forgetting which keys are held.
+     *
+     * `reset` runs while the gesture is off, and a modifier can stay down
+     * across that window. Clearing `pressed` would let the next snapshot read
+     * that same hold as a fresh press, so its release would count as the first
+     * tap of a pair and one later tap would fire locate. Keeping the held set
+     * and clearing the family makes the next snapshot resume from the keys that
+     * are actually down.
+     */
+    reset() {
+      tap = null;
+      pending = null;
+      activeFamily = null;
+    },
   };
 };

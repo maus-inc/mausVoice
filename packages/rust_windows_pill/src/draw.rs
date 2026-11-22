@@ -1,26 +1,7 @@
 use crate::constants::*;
-use crate::gfx::{Gfx, ShadedSegment};
+use crate::gfx::Gfx;
 use crate::ipc::{Phase, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
-
-thread_local! {
-    /// The comet's shaded segments, kept between frames.
-    ///
-    /// `resample_perimeter` writes into a caller-owned buffer precisely so the render path does
-    /// not allocate -- its own doc says so -- and the ring honours that by writing into
-    /// `state.ring_points`. The comet then discarded that and built a fresh
-    /// `Vec::with_capacity(points.len())` every frame: roughly 138 segments at 60 Hz, about
-    /// 11 KB of short-lived heap traffic per frame on the UI thread, on the one backend that
-    /// cannot be profiled from Linux.
-    ///
-    /// Thread-local rather than a `PillState` field: the draw runs on the UI thread and
-    /// `ShadedSegment` lives in `gfx`, so a field would put a rendering type into the state
-    /// struct for nothing. Taken out and put back rather than borrowed across the loop, so a
-    /// frame that bails out midway simply loses the buffer and the next one allocates --
-    /// slower, never wrong.
-    static COMET_SHADED: std::cell::RefCell<Vec<ShadedSegment>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
 
 /// Paints the whole pill window: begins the Direct2D frame, clears, then
 /// draws the pill, panel, transcript, and overlays in z-order.
@@ -2287,18 +2268,9 @@ impl rust_pill_shared::RingPainter for D2DRing<'_> {
     }
 
     fn shaded_segments(&mut self, segments: &[rust_pill_shared::RingSegment]) {
-        let shaded: Vec<ShadedSegment> = segments
-            .iter()
-            .map(|s| ShadedSegment {
-                x1: s.x1,
-                y1: s.y1,
-                x2: s.x2,
-                y2: s.y2,
-                rgba: s.rgba,
-                width: s.width,
-            })
-            .collect();
-        self.gfx.draw_line_shaded(&shaded);
+        // The backend strokes the shared segment type directly, so the ring's
+        // per-frame buffer reaches the rasteriser without a copy.
+        self.gfx.draw_line_shaded(segments);
     }
 }
 

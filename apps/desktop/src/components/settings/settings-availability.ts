@@ -12,6 +12,7 @@ import {
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
+import { listenerDeliversKeys } from "../../utils/keyboard.utils";
 import { getPlatform } from "../../utils/platform.utils";
 import { isPillPlacementAvailable } from "./PillPlacementSetting";
 import type { SettingAvailability } from "../../utils/settings-registry";
@@ -47,11 +48,14 @@ export const useSettingsAvailability = (): SettingAvailability => {
       // Unknown until the native side reports its strategy. A Wayland session
       // has no global key source, so the double-tap cannot be detected there
       // and the row stays hidden instead of offering a switch that does
-      // nothing.
+      // nothing. A listener strategy without a live listener, such as a
+      // revoked accessibility permission, cannot see a tap either, so the row
+      // follows the listener's own health rather than the strategy alone.
       locateGestureAvailable:
         state.hotkeyStrategy === null
           ? undefined
-          : state.hotkeyStrategy === "listener",
+          : state.hotkeyStrategy === "listener" &&
+            listenerDeliversKeys(state.keyboardListenerHealth),
       changePassword: loggedIn && getHasEmailProvider(state),
       signOut: loggedIn,
       deleteAccount: loggedIn,

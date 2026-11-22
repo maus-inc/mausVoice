@@ -109,6 +109,18 @@ describe("locate gesture detector", () => {
     expect(tap(detector, "Alt", 700, "alt")).toBe(false);
   });
 
+  it("does not count a hold that spans a reset as a tap", () => {
+    const detector = createLocateGestureDetector();
+    detector.update(["Alt"], 0, "alt");
+    // The gesture is switched off and back on while the key stays down, so no
+    // release reports the hold's real start time.
+    detector.reset();
+    detector.update(["Alt"], 400, "alt");
+    expect(detector.update([], 500, "alt")).toBe(false);
+    // The 500ms hold must not seed a pair for this short tap to complete.
+    expect(tap(detector, "Alt", 560, "alt")).toBe(false);
+  });
+
   it("never reports a fire outside a clean pair of the configured family", () => {
     let seed = 0x335335;
     const random = () => {

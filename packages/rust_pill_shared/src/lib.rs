@@ -318,11 +318,11 @@ pub enum RoundedRectArcSteps {
     Exact(usize),
 }
 
-/// How much the pill inflates when the long-press completes and drag begins,
-/// expressed as a scale factor applied to BOTH axes about the pill's centre.
 /// Corner radius cap of the resting pill, before drag inflation.
 pub const EXPANDED_RADIUS: f64 = 16.0;
 
+/// How much the pill inflates when the long-press completes and drag begins,
+/// expressed as a scale factor applied to BOTH axes about the pill's centre.
 pub const DRAG_INFLATE_SCALE: f64 = 0.18;
 /// Spring stiffness for the inflate/deflate animation.
 pub const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
@@ -918,13 +918,6 @@ pub struct RingHeadDisc {
     pub alpha: f64,
 }
 
-/// The shadow and head layers of one ring frame, resolved once from the
-/// resampled perimeter.
-///
-/// The three renderers differ only in which primitives they call — Core
-/// Graphics strokes, Cairo strokes, Direct2D geometries. Everything *before*
-/// the primitive (where the head sits, how many shadow passes to make, each
-/// disc's radius and alpha, and which layers are too faint to bother with) is
 /// Top-left corner and size of the pill window content, in the platform's
 /// own drawing space.
 #[derive(Debug, Clone, Copy)]
@@ -1331,6 +1324,13 @@ pub struct RingHalo {
     pub alpha: f64,
 }
 
+/// The shadow and head layers of one ring frame, resolved once from the
+/// resampled perimeter.
+///
+/// The three renderers differ only in which primitives they call — Core
+/// Graphics strokes, Cairo strokes, Direct2D geometries. Everything *before*
+/// the primitive (where the head sits, how many shadow passes to make, each
+/// disc's radius and alpha, and which layers are too faint to bother with) is
 /// identical, so it lives here: a platform can no longer drift by forgetting a
 /// pass, ordering the discs the other way, or applying `ring_alpha` twice.
 ///
