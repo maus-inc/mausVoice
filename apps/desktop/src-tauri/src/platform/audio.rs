@@ -3213,10 +3213,16 @@ mod cpal_impl {
                         tick(&resource);
                         // Apply any latest-intent instruction left by a
                         // try_send_latest that could not enter the channel.
-                        if let Ok(mut guard) = worker_intent.try_lock() {
-                            if let Some(task) = guard.take() {
-                                task(&resource);
+                        // Recover from a poisoned mailbox: the guard only holds
+                        // a plain Option, so a prior panic cannot corrupt it.
+                        match worker_intent.try_lock() {
+                            Ok(mut guard)
+                            | Err(std::sync::TryLockError::Poisoned(mut guard)) => {
+                                if let Some(task) = guard.take() {
+                                    task(&resource);
+                                }
                             }
+                            Err(std::sync::TryLockError::WouldBlock) => {}
                         }
                         match receiver.recv_timeout(Duration::from_millis(25)) {
                             Ok(task) => task(&resource),
@@ -3262,10 +3268,15 @@ mod cpal_impl {
                 Ok(()) => Ok(()),
                 Err(std::sync::mpsc::TrySendError::Full(boxed)) => {
                     // Channel full: preserve the latest instruction for the
-                    // worker's next tick instead of discarding it.
-                    if let Ok(mut guard) = self.latest_intent.lock() {
-                        *guard = Some(boxed);
-                    }
+                    // worker's next tick instead of discarding it. Recover
+                    // from a poisoned mailbox: the guard only holds a plain
+                    // Option, so a prior panic cannot corrupt it. The worker
+                    // holds the lock only for a take() on its tick.
+                    let mut guard = self
+                        .latest_intent
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    *guard = Some(boxed);
                     Ok(())
                 }
                 Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
