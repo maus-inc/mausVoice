@@ -2,7 +2,7 @@ import { LoadingButton } from "@mui/lab";
 import { Alert, Box, Button, Stack, useTheme } from "@mui/material";
 import { Nullable } from "@maus-inc/types";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import type { StopRecordingResponse } from "../../types/transcription-session.types";
 import { isLocalDataClearRequested } from "../../utils/local-data-write-gate";
@@ -137,6 +137,7 @@ export const MicrophoneTester = ({
       ? theme.vars?.palette.level0
       : theme.vars?.palette?.level1;
 
+  const intl = useIntl();
   const [testState, setTestState] = useState<
     "idle" | "starting" | "recording" | "stopping"
   >("idle");
@@ -226,13 +227,19 @@ export const MicrophoneTester = ({
         onError: (error, stillOwns) => {
           console.error("Failed to start microphone test", error);
           if (stillOwns) {
-            setTestError("Unable to start microphone test. Please try again.");
+            setTestError(
+              intl.formatMessage({
+                defaultMessage:
+                  "Unable to start microphone test. Please try again.",
+              }),
+            );
           }
         },
       }),
     [
       clearPreviewUrl,
       disabled,
+      intl,
       isGlobalRecording,
       preferredMicrophone,
       setSyncedTestState,
@@ -250,7 +257,10 @@ export const MicrophoneTester = ({
       if (response.captureFailed) {
         updatePreviewUrl(url ?? null);
         setTestError(
-          "The microphone stopped partway through. The preview is shorter than the test.",
+          intl.formatMessage({
+            defaultMessage:
+              "The microphone stopped partway through. The preview is shorter than the test.",
+          }),
         );
         return;
       }
@@ -260,10 +270,13 @@ export const MicrophoneTester = ({
       }
       updatePreviewUrl(null);
       setTestError(
-        "We didn't detect any audio. Try speaking while the test is running.",
+        intl.formatMessage({
+          defaultMessage:
+            "We didn't detect any audio. Try speaking while the test is running.",
+        }),
       );
     },
-    [createPreviewUrl, setTestError, updatePreviewUrl],
+    [createPreviewUrl, intl, setTestError, updatePreviewUrl],
   );
 
   const handleStopTest = useCallback(
@@ -296,7 +309,12 @@ export const MicrophoneTester = ({
       } catch (error) {
         console.error("Failed to stop microphone test", error);
         if (!opts?.silent && !isLocalDataClearRequested()) {
-          setTestError("Unable to stop microphone test. Please try again.");
+          setTestError(
+            intl.formatMessage({
+              defaultMessage:
+                "Unable to stop microphone test. Please try again.",
+            }),
+          );
         }
       } finally {
         setSyncedTestState("idle");
@@ -329,10 +347,14 @@ export const MicrophoneTester = ({
       })
       .catch((error) => {
         console.error("Failed to play recorded preview", error);
-        setTestError("Unable to play the recorded preview.");
+        setTestError(
+          intl.formatMessage({
+            defaultMessage: "Unable to play the recorded preview.",
+          }),
+        );
         setIsPreviewPlaying(false);
       });
-  }, []);
+  }, [intl]);
 
   useEffect(() => {
     if (
