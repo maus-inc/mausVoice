@@ -300,7 +300,7 @@ pub trait WarmCapture: Send + Sync {
     /// A stop captures the generation alongside the persisted preference so a
     /// newer `set_microphone_linger` that lands between the read and the
     /// worker application cannot be overwritten by the stale snapshot.
-    fn set_linger_if_current(&self, linger_ms: u64, expected_generation: u64) {
+    fn set_linger_if_current(&self, linger_ms: u64, _expected_generation: u64) {
         self.set_linger(linger_ms);
     }
 
