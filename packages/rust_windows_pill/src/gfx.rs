@@ -390,14 +390,20 @@ impl Gfx {
     /// The brush and stroke style are COM objects, so creating a pair per
     /// segment would mean hundreds of allocations per frame; instead both are
     /// created once and the brush colour is mutated in place.
-    pub(crate) fn draw_line_shaded(&self, segments: &[rust_pill_shared::RingSegment]) {
-        if segments.is_empty() {
+    pub(crate) fn draw_line_shaded<I: IntoIterator<Item = rust_pill_shared::RingSegment>>(
+        &self,
+        segments: I,
+    ) {
+        let mut segments = segments.into_iter();
+        // An empty frame must not pay for the brush, and a lazy iterator cannot
+        // be asked for its length up front.
+        let Some(first) = segments.next() else {
             return;
-        }
+        };
         let brush = self.brush([1.0, 1.0, 1.0, 1.0]);
         let style = self.round_stroke_style();
         unsafe {
-            for seg in segments {
+            for seg in std::iter::once(first).chain(segments) {
                 let [r, g, b, a] = seg.rgba;
                 brush.SetColor(&color(r, g, b, a));
                 self.rt.DrawLine(

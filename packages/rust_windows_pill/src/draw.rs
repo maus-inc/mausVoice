@@ -2268,9 +2268,9 @@ impl rust_pill_shared::RingPainter for D2DRing<'_> {
         self.gfx.fill_circle(cx, cy, radius, rgba);
     }
 
-    fn shaded_segments(&mut self, segments: &[rust_pill_shared::RingSegment]) {
+    fn shaded_segments<I: Iterator<Item = rust_pill_shared::RingSegment>>(&mut self, segments: I) {
         // The backend strokes the shared segment type directly, so the ring's
-        // per-frame buffer reaches the rasteriser without a copy.
+        // per-frame segments reach the rasteriser without a copy.
         self.gfx.draw_line_shaded(segments);
     }
 }

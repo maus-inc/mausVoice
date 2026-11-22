@@ -1093,7 +1093,10 @@ pub trait RingPainter {
     /// Fill a circle in `rgba`.
     fn fill_circle(&mut self, cx: f64, cy: f64, radius: f64, rgba: [f64; 4]);
     /// Paint many segments that each carry their own colour and width.
-    fn shaded_segments(&mut self, segments: &[RingSegment]);
+    ///
+    /// Takes an iterator so the shared painter never has to materialise the
+    /// shaded segments in a buffer of its own.
+    fn shaded_segments<I: Iterator<Item = RingSegment>>(&mut self, segments: I);
 }
 
 /// One per-segment comet piece, already shaded by the shared envelope.
@@ -1192,7 +1195,7 @@ fn paint_comet<P: RingPainter>(
         painter.fill_circle(disc.cx, disc.cy, disc.radius, [0.0, 0.0, 0.0, disc.alpha]);
     }
 
-    painter.shaded_segments(&shade_segments(points, plan, outline));
+    painter.shaded_segments(comet_segments(points, plan, outline));
 
     for disc in layers.head_discs() {
         painter.fill_circle(
@@ -1206,35 +1209,30 @@ fn paint_comet<P: RingPainter>(
 
 /// Shades each resampled point up to the comet head, dropping segments too
 /// faint to see.
-fn shade_segments(
-    points: &[(f64, f64, f64)],
-    plan: &RingPaint,
+fn comet_segments<'a>(
+    points: &'a [(f64, f64, f64)],
+    plan: &'a RingPaint,
     outline: (f64, f64, f64),
-) -> Vec<RingSegment> {
+) -> impl Iterator<Item = RingSegment> + 'a {
     let lift = 1.0 + RING_ARM_LIFT * plan.arm_t;
-    let mut segments = Vec::with_capacity(points.len());
-    for w in points.windows(2) {
-        let (x1, y1, _) = w[0];
-        let (x2, y2, d) = w[1];
-        if d > plan.head_len {
-            break;
-        }
-        let env = ring_envelope(d, plan.head_len, plan.progress, plan.total_len);
-        let glim = ring_glimmer(d, plan.total_len, plan.wave_phase, plan.progress);
-        let a = (env * glim * lift).clamp(0.0, 1.0) * plan.alpha;
-        if a < RING_SEGMENT_ALPHA_CUTOFF {
-            continue;
-        }
-        segments.push(RingSegment {
-            x1,
-            y1,
-            x2,
-            y2,
-            rgba: [outline.0, outline.1, outline.2, a],
-            width: RING_CORE_WIDTH + RING_WIDTH_SWELL * env * (1.0 - 0.35 * plan.arm_t),
-        });
-    }
-    segments
+    points
+        .windows(2)
+        .take_while(move |w| w[1].2 <= plan.head_len)
+        .filter_map(move |w| {
+            let (x1, y1, _) = w[0];
+            let (x2, y2, d) = w[1];
+            let env = ring_envelope(d, plan.head_len, plan.progress, plan.total_len);
+            let glim = ring_glimmer(d, plan.total_len, plan.wave_phase, plan.progress);
+            let a = (env * glim * lift).clamp(0.0, 1.0) * plan.alpha;
+            (a >= RING_SEGMENT_ALPHA_CUTOFF).then_some(RingSegment {
+                x1,
+                y1,
+                x2,
+                y2,
+                rgba: [outline.0, outline.1, outline.2, a],
+                width: RING_CORE_WIDTH + RING_WIDTH_SWELL * env * (1.0 - 0.35 * plan.arm_t),
+            })
+        })
 }
 
 /// Resolve and paint one frame of the ring in a single call.
@@ -1302,7 +1300,7 @@ macro_rules! impl_cairo_ring_painter {
                 let _ = self.0.fill();
             }
 
-            fn shaded_segments(&mut self, segments: &[$crate::RingSegment]) {
+            fn shaded_segments<I: Iterator<Item = $crate::RingSegment>>(&mut self, segments: I) {
                 for s in segments {
                     self.0.set_line_width(s.width);
                     self.0
@@ -2785,6 +2783,54 @@ mod tests {
             let g = ring_glimmer(d, total, 1.7, 0.8);
             assert!((0.0..=1.0).contains(&g), "glimmer out of range: {g}");
         }
+    }
+
+    fn comet_plan(alpha: f64) -> RingPaint {
+        RingPaint {
+            alpha,
+            pulsing: 0.0,
+            progress: 1.0,
+            ox: 0.0,
+            oy: 0.0,
+            ow: 0.0,
+            oh: 0.0,
+            r: 0.0,
+            path: Vec::new(),
+            distances: Vec::new(),
+            total_len: 500.0,
+            head_len: 200.0,
+            wave_phase: 0.0,
+            arm_t: 0.0,
+        }
+    }
+
+    fn comet_points() -> Vec<(f64, f64, f64)> {
+        (0..=50)
+            .map(|i| (i as f64 * 10.0, 0.0, i as f64 * 10.0))
+            .collect()
+    }
+
+    #[test]
+    fn comet_segments_stop_at_the_head() {
+        let points = comet_points();
+        let segments: Vec<_> = comet_segments(&points, &comet_plan(1.0), (1.0, 1.0, 1.0)).collect();
+        assert!(
+            !segments.is_empty(),
+            "the comet body must survive the filter"
+        );
+        assert!(
+            segments.iter().all(|s| s.x2 <= 200.0),
+            "a segment past the head was drawn",
+        );
+        assert_eq!(segments[0].x1, 0.0);
+        assert_eq!(segments[0].x2, 10.0);
+    }
+
+    #[test]
+    fn comet_segments_drop_pieces_below_the_cutoff() {
+        let points = comet_points();
+        let drawn = comet_segments(&points, &comet_plan(0.0), (1.0, 1.0, 1.0)).count();
+        assert_eq!(drawn, 0, "an invisible frame must yield no segments");
     }
 
     #[test]
