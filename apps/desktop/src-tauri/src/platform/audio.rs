@@ -3591,7 +3591,7 @@ mod cpal_impl {
         fn linger_policy_generation(&self) -> u64 {
             self.worker
                 .call(LocalRecordingManager::linger_policy_generation)
-                .unwrap_or(0)
+                .unwrap_or_default()
         }
 
         fn status_line(&self) -> String {

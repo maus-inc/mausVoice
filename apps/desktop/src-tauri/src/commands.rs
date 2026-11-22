@@ -4571,7 +4571,7 @@ pub async fn stop_recording(
                     warm_for_generation.linger_policy_generation()
                 })
                 .await
-                .unwrap_or(0)
+                .unwrap_or_default()
             });
         (linger, policy_generation)
     });
