@@ -1644,12 +1644,10 @@ mod cpal_impl {
         /// the snapshot, a newer `set_microphone_linger` may have changed the
         /// policy. This rejects the stale write instead of overwriting the
         /// newer value.
-        pub fn apply_linger_if_current(&self, linger: Duration, expected: u64) -> bool {
-            if self.linger_policy_generation.load(Ordering::SeqCst) != expected {
-                return false;
+        pub fn apply_linger_if_current(&self, linger: Duration, expected: u64) {
+            if self.linger_policy_generation.load(Ordering::SeqCst) == expected {
+                self.set_linger(linger);
             }
-            self.set_linger(linger);
-            true
         }
 
         /// The hold policy in milliseconds, as stored.
@@ -3582,7 +3580,7 @@ mod cpal_impl {
             // generation before applying, so a snapshot taken before a newer
             // set_microphone_linger is rejected instead of overwriting it.
             if let Err(error) = self.worker.try_send(move |r| {
-                r.apply_linger_if_current(Duration::from_millis(linger_ms), expected_generation);
+                r.apply_linger_if_current(Duration::from_millis(linger_ms), expected_generation)
             }) {
                 log::error!("{error}");
             }
