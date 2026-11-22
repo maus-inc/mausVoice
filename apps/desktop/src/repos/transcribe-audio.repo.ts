@@ -60,7 +60,7 @@ type TranscriptionOptionsPayload = {
   deviceId?: string;
 };
 
-export type TranscribeAudioMetadata = {
+type TranscribeAudioMetadata = {
   inferenceDevice?: Nullable<string>;
   modelSize?: Nullable<string>;
   transcriptionMode?: Nullable<TranscriptionMode>;

@@ -14,7 +14,7 @@ import { getIsAssistantModeEnabled } from "../utils/assistant-mode.utils";
 import { createId } from "../utils/id.utils";
 import { getLogger } from "../utils/log.utils";
 import { sendPillStageText } from "../utils/overlay.utils";
-import { filterKnownSilenceHallucinations } from "../utils/string.utils";
+import { filterKnownSilenceHallucinations } from "../utils/hallucination.utils";
 import { getMyDictationLanguage } from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
 

@@ -10,7 +10,7 @@ import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
 // English-only list: `applyHallucinationFiltering` short-circuits and returns the
 // text unchanged for any non-English `language`, so a non-English phrase added here
 // would be dead code (never reached). Keep additions English.
-export const KNOWN_SILENCE_HALLUCINATIONS = [
+const KNOWN_SILENCE_HALLUCINATIONS = [
   "[blank_audio]",
   "[blank audio]",
   "[silence]",
@@ -203,7 +203,7 @@ export const toTranscriptionSegments = (
  * the provider sent no `avgLogprob`. The 0.9 value is deliberately
  * conservative so only clearly-silent segments are removed.
  */
-export const NO_SPEECH_PROB_THRESHOLD = 0.9;
+const NO_SPEECH_PROB_THRESHOLD = 0.9;
 
 /**
  * Whisper's reference decoder skips a window as silent only when
