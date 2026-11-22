@@ -1644,13 +1644,6 @@ mod cpal_impl {
             self.linger_policy_generation.fetch_add(1, Ordering::SeqCst);
         }
 
-        /// The current policy generation. Bumped on every [`set_linger_policy`]
-        /// call; a continuation that captured a snapshot before a change
-        /// compares its expected generation against this before applying.
-        pub fn linger_policy_generation(&self) -> u64 {
-            self.linger_policy_generation.load(Ordering::SeqCst)
-        }
-
         /// Applies a policy snapshot only if no newer policy change has landed.
         ///
         /// A stop that reads the persisted preference concurrently with the
@@ -3253,24 +3246,6 @@ mod cpal_impl {
                 return Err(WorkerUnavailable);
             }
             Ok(())
-        }
-
-        fn try_send(
-            &self,
-            task: impl FnOnce(&T) + Send + 'static,
-        ) -> Result<(), WorkerUnavailable> {
-            let worker = self.sender.as_ref().ok_or(WorkerUnavailable)?;
-            match worker.try_send(Box::new(task)) {
-                Ok(()) => Ok(()),
-                // The worker's buffer is full; drop the incoming stale task
-                // without blocking. The worker continues processing the
-                // older tasks already queued.
-                Err(std::sync::mpsc::TrySendError::Full(_)) => Ok(()),
-                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
-                    self.failed.store(true, Ordering::SeqCst);
-                    Err(WorkerUnavailable)
-                }
-            }
         }
 
         /// Submits a task with latest-wins semantics: when the channel is
