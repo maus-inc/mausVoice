@@ -1,4 +1,5 @@
 import { retry, countWords, throwHttpError } from "@maus-inc/utilities";
+import { probeProviderEndpoint } from "./provider-probe.utils";
 import type { CustomFetch } from "./types";
 
 export type ElevenLabsTestIntegrationArgs = {
@@ -8,23 +9,14 @@ export type ElevenLabsTestIntegrationArgs = {
 
 export const elevenlabsTestIntegration = async ({
   apiKey,
-  customFetch = fetch,
-}: ElevenLabsTestIntegrationArgs): Promise<boolean> => {
-  const response = await customFetch("https://api.elevenlabs.io/v1/user", {
-    method: "GET",
-    headers: { "xi-api-key": apiKey },
+  customFetch,
+}: ElevenLabsTestIntegrationArgs): Promise<boolean> =>
+  probeProviderEndpoint({
+    label: "ElevenLabs",
+    url: "https://api.elevenlabs.io/v1/user",
+    init: { method: "GET", headers: { "xi-api-key": apiKey } },
+    customFetch,
   });
-  if (!response.ok) {
-    await throwHttpError(response, {
-      fallback: "",
-      message: (detail) =>
-        detail
-          ? `ElevenLabs responded ${response.status}: ${detail}`
-          : `ElevenLabs responded with status ${response.status}`,
-    });
-  }
-  return true;
-};
 
 export type ElevenLabsTranscriptionArgs = {
   apiKey: string;

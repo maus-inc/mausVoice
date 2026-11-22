@@ -1,4 +1,5 @@
 import { countWords, retry, throwHttpError } from "@maus-inc/utilities";
+import { probeProviderEndpoint } from "./provider-probe.utils";
 import type { CustomFetch } from "./types";
 
 const XAI_BASE_URL = "https://api.x.ai/v1";
@@ -13,26 +14,17 @@ export type XaiTestIntegrationArgs = {
 
 export const xaiTestIntegration = async ({
   apiKey,
-  customFetch = fetch,
-}: XaiTestIntegrationArgs): Promise<boolean> => {
-  const response = await customFetch(`${XAI_BASE_URL}/models`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${apiKey.trim()}`,
+  customFetch,
+}: XaiTestIntegrationArgs): Promise<boolean> =>
+  probeProviderEndpoint({
+    label: "xAI",
+    url: `${XAI_BASE_URL}/models`,
+    init: {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey.trim()}` },
     },
+    customFetch,
   });
-
-  if (!response.ok) {
-    await throwHttpError(response, {
-      fallback: "",
-      message: (detail) =>
-        detail
-          ? `xAI responded ${response.status}: ${detail}`
-          : `xAI responded with status ${response.status}`,
-    });
-  }
-  return true;
-};
 
 export type XaiTranscriptionArgs = {
   apiKey: string;
