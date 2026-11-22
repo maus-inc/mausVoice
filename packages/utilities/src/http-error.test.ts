@@ -3,6 +3,7 @@ import {
   HttpError,
   MAX_RETRY_AFTER_MS,
   parseRetryAfterMs,
+  throwHttpError,
   toHttpError,
 } from "./http-error";
 
@@ -110,5 +111,58 @@ describe("toHttpError", () => {
 
     expect(toHttpError(abort)).toBe(abort);
     expect(toHttpError("boom")).toBe("boom");
+  });
+});
+
+describe("throwHttpError", () => {
+  const respond = (status: number, body: string, retryAfter?: string) =>
+    new Response(body, {
+      status,
+      headers: retryAfter ? { "retry-after": retryAfter } : undefined,
+    });
+
+  it("throws the status, the body and the retry hint as data", async () => {
+    await expect(
+      throwHttpError(respond(429, "slow down", "7"), {
+        message: (body) => `Provider failed with status 429: ${body}`,
+      }),
+    ).rejects.toMatchObject({
+      name: "HttpError",
+      status: 429,
+      message: "Provider failed with status 429: slow down",
+      retryAfterMs: 7_000,
+    });
+  });
+
+  it("uses the fallback when the body cannot be read", async () => {
+    const unreadable = new Response(null, { status: 500 });
+    Object.defineProperty(unreadable, "text", {
+      value: () => Promise.reject(new Error("stream closed")),
+    });
+    await expect(
+      throwHttpError(unreadable, {
+        fallback: "",
+        message: (body) => `Probe responded with status 500${body}`,
+      }),
+    ).rejects.toMatchObject({
+      status: 500,
+      message: "Probe responded with status 500",
+    });
+  });
+
+  it("reads the body once, so a caller that already consumed it is not a caller of this helper", async () => {
+    const response = respond(400, "bad request");
+    let reads = 0;
+    const original = response.text.bind(response);
+    Object.defineProperty(response, "text", {
+      value: () => {
+        reads += 1;
+        return original();
+      },
+    });
+    await expect(
+      throwHttpError(response, { message: (body) => body }),
+    ).rejects.toThrow("bad request");
+    expect(reads).toBe(1);
   });
 });

@@ -1,4 +1,4 @@
-import { HttpError } from "@maus-inc/utilities";
+import { buildTranscriptionFormData, HttpError } from "@maus-inc/utilities";
 import {
   buildOpenAICompatibleTranscriptionUrl,
   normalizeOpenAICompatibleBaseUrl,
@@ -52,20 +52,14 @@ export const openaiCompatibleTranscribeAudio = async ({
   // deterministic 4xx. We never default to `json`, which would silently disable
   // the silence gate for servers that DO support `verbose_json`.
   const buildBody = (format: "verbose_json" | "json" | null): FormData => {
-    const formData = new FormData();
-    const file = new Blob([blob], { type: `audio/${ext}` });
-    formData.append("file", file, `audio.${ext}`);
-    formData.append("model", model);
-    if (prompt) {
-      formData.append("prompt", prompt);
-    }
-    if (language && language !== "auto") {
-      formData.append("language", language);
-    }
-    if (format) {
-      formData.append("response_format", format);
-    }
-    return formData;
+    return buildTranscriptionFormData({
+      blob,
+      ext,
+      model,
+      prompt,
+      language,
+      responseFormat: format ?? undefined,
+    });
   };
 
   const headers: Record<string, string> = {};

@@ -1,4 +1,4 @@
-import { HttpError, retry, countWords } from "@maus-inc/utilities";
+import { retry, countWords, throwHttpError } from "@maus-inc/utilities";
 import type { CustomFetch } from "./types";
 
 export type ElevenLabsTestIntegrationArgs = {
@@ -15,14 +15,13 @@ export const elevenlabsTestIntegration = async ({
     headers: { "xi-api-key": apiKey },
   });
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new HttpError(
-      response.status,
-      detail
-        ? `ElevenLabs responded ${response.status}: ${detail}`
-        : `ElevenLabs responded with status ${response.status}`,
-      { retryAfter: response.headers.get("retry-after") },
-    );
+    await throwHttpError(response, {
+      fallback: "",
+      message: (detail) =>
+        detail
+          ? `ElevenLabs responded ${response.status}: ${detail}`
+          : `ElevenLabs responded with status ${response.status}`,
+    });
   }
   return true;
 };
@@ -84,12 +83,10 @@ export const elevenlabsTranscribeAudio = async ({
       );
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
-        throw new HttpError(
-          response.status,
-          `ElevenLabs API request failed with status ${response.status}: ${errorText}`,
-          { retryAfter: response.headers.get("retry-after") },
-        );
+        await throwHttpError(response, {
+          message: (errorText) =>
+            `ElevenLabs API request failed with status ${response.status}: ${errorText}`,
+        });
       }
 
       const data = (await response.json()) as { text?: string };
