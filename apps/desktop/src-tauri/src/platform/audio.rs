@@ -3276,8 +3276,10 @@ mod cpal_impl {
                     // from a poisoned mailbox: the guard only holds a plain
                     // Option, so a prior panic cannot corrupt it. The worker
                     // holds the lock only for a take() on its tick.
-                    let mut guard =
-                        self.latest_intent.lock().unwrap_or_else(PoisonError::into_inner);
+                    let mut guard = self
+                        .latest_intent
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
                     *guard = Some(boxed);
                     Ok(())
                 }
