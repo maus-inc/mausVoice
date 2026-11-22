@@ -295,6 +295,23 @@ pub trait WarmCapture: Send + Sync {
     /// is a window, and `u64::MAX` holds until closed.
     fn set_linger(&self, linger_ms: u64);
 
+    /// Applies a policy snapshot only if the policy generation is unchanged.
+    ///
+    /// A stop captures the generation alongside the persisted preference so a
+    /// newer `set_microphone_linger` that lands between the read and the
+    /// worker application cannot be overwritten by the stale snapshot.
+    fn set_linger_if_current(&self, linger_ms: u64, _expected_generation: u64) {
+        self.set_linger(linger_ms);
+    }
+
+    /// The current policy generation, as last bumped by a policy change.
+    ///
+    /// A stop reads this alongside the persisted preference to detect a newer
+    /// `set_microphone_linger` that landed after the read.
+    fn linger_policy_generation(&self) -> u64 {
+        0
+    }
+
     /// One readable line of policy and last-start state.
     fn status_line(&self) -> String;
 

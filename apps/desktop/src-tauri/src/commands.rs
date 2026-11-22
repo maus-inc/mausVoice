@@ -3,7 +3,7 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
@@ -4184,6 +4184,12 @@ fn preroll_duration(seconds: f64) -> std::time::Duration {
     std::time::Duration::from_secs_f64(clamped)
 }
 
+/// The longest finite hold the settings offer, in milliseconds. Mirrors
+/// `MAX_MICROPHONE_LINGER_MS` in the renderer. A stored value above this (an
+/// older build, a hand-edited row) must not hold the microphone longer than
+/// the user can see in settings.
+const MAX_FINITE_LINGER_MS: u64 = 30_000;
+
 /// Converts a hold policy in milliseconds into a duration.
 ///
 /// The frontend sends `Number.MAX_SAFE_INTEGER` for "hold until released", and
@@ -4205,7 +4211,9 @@ fn linger_millis(linger_ms: f64) -> u64 {
     if linger_ms >= 9.0e15 {
         return u64::MAX;
     }
-    linger_ms.round().max(1.0) as u64
+    // Finite values are bounded at the native boundary: the renderer's limit
+    // does not protect a stored preference read directly from the database.
+    linger_ms.round().clamp(1.0, MAX_FINITE_LINGER_MS as f64) as u64
 }
 
 /// The policy to apply before opening, and whether the open should be held.
@@ -4435,18 +4443,18 @@ fn saved_capture_linger(keep_ready: bool, linger_ms: i64) -> std::time::Duration
     std::time::Duration::from_millis(millis)
 }
 
-async fn read_capture_linger(pool: sqlx::SqlitePool) -> std::time::Duration {
+async fn read_capture_linger(pool: sqlx::SqlitePool) -> Option<std::time::Duration> {
     let read = sqlx::query_as::<_, (bool, i64)>(
         "SELECT keep_microphone_ready, microphone_linger_ms FROM user_preferences WHERE user_id = ?1",
     )
     .bind(crate::db::preferences_queries::LOCAL_USER_ID)
     .fetch_optional(&pool);
     match tokio::time::timeout(std::time::Duration::from_millis(100), read).await {
-        Ok(Ok(Some((keep_ready, linger_ms)))) => saved_capture_linger(keep_ready, linger_ms),
-        Ok(Ok(None)) => std::time::Duration::ZERO,
+        Ok(Ok(Some((keep_ready, linger_ms)))) => Some(saved_capture_linger(keep_ready, linger_ms)),
+        Ok(Ok(None)) => Some(std::time::Duration::ZERO),
         failure => {
-            log::warn!("Could not read saved microphone policy; releasing at stop: {failure:?}");
-            std::time::Duration::ZERO
+            log::warn!("Could not read saved microphone policy; preserving at stop: {failure:?}");
+            None
         }
     }
 }
@@ -4457,6 +4465,11 @@ fn saved_capture_linger_only_keeps_ready_indefinitely_when_enabled() {
     use std::time::Duration;
     assert_eq!(saved_capture_linger(false, 0), Duration::ZERO);
     assert_eq!(saved_capture_linger(false, 5000), Duration::from_secs(5));
+    // A stored value above the settings maximum is bounded, not honored.
+    assert_eq!(
+        saved_capture_linger(false, 900_000),
+        Duration::from_secs(30)
+    );
     assert_eq!(saved_capture_linger(false, i64::MAX), Duration::ZERO);
     assert_eq!(
         saved_capture_linger(true, 0),
@@ -4475,7 +4488,10 @@ async fn capture_handoff_reads_the_committed_local_preference() {
         .unwrap();
     sqlx::query("CREATE TABLE user_preferences (user_id TEXT, keep_microphone_ready INTEGER, microphone_linger_ms INTEGER)")
         .execute(&pool).await.unwrap();
-    assert_eq!(read_capture_linger(pool.clone()).await, Duration::ZERO);
+    assert_eq!(
+        read_capture_linger(pool.clone()).await,
+        Some(Duration::ZERO)
+    );
     sqlx::query("INSERT INTO user_preferences VALUES (?1, 0, 5000)")
         .bind(crate::db::preferences_queries::LOCAL_USER_ID)
         .execute(&pool)
@@ -4483,15 +4499,18 @@ async fn capture_handoff_reads_the_committed_local_preference() {
         .unwrap();
     assert_eq!(
         read_capture_linger(pool.clone()).await,
-        Duration::from_secs(5)
+        Some(Duration::from_secs(5))
     );
     sqlx::query("UPDATE user_preferences SET microphone_linger_ms = 0")
         .execute(&pool)
         .await
         .unwrap();
-    assert_eq!(read_capture_linger(pool.clone()).await, Duration::ZERO);
+    assert_eq!(
+        read_capture_linger(pool.clone()).await,
+        Some(Duration::ZERO)
+    );
     pool.close().await;
-    assert_eq!(read_capture_linger(pool).await, Duration::ZERO);
+    assert_eq!(read_capture_linger(pool).await, None);
 }
 
 /// Raw-body command, so it is registered in `app.rs` but kept out of the
@@ -4501,6 +4520,7 @@ async fn capture_handoff_reads_the_committed_local_preference() {
 pub async fn stop_recording(
     window: tauri::Window,
     recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
+    warm: State<'_, Arc<dyn crate::platform::WarmCapture>>,
     database: State<'_, crate::state::OptionKeyDatabase>,
     ownership: State<'_, RecordingOwnerState>,
     owner_id: String,
@@ -4508,15 +4528,19 @@ pub async fn stop_recording(
 ) -> Result<tauri::ipc::Response, String> {
     let recorder = Arc::clone(&recorder);
     let ownership = Arc::clone(&ownership);
+    let warm = Arc::clone(&warm);
     let scope = ownership.window(recording_window_key(&window));
     // Record normal-stop intent before the blocking pool can queue this task
     // behind a slow device open or a dropped start-command guard.
     let stop_intent = ownership.note_scoped_normal_stop(&owner_id, &scope, generation)?;
-    let linger = read_capture_linger(database.pool()).await;
-    let bytes = tauri::async_runtime::spawn_blocking(move || {
+    // Stop collecting the take immediately on invocation so speech after the
+    // user stops cannot enter the saved audio while waiting for preferences.
+    // The DB read runs concurrently with the stop so a slow preference
+    // query cannot delay the native stop itself.
+    let take_task = tauri::async_runtime::spawn_blocking(move || {
         let _stop_intent = stop_intent;
         let result = ownership.stop_or_recover_scoped(&owner_id, &scope, generation, || {
-            stop_native_recording_handoff(recorder.as_ref(), Some(linger))
+            stop_native_recording_handoff(recorder.as_ref(), None)
         });
         start_recording_recovery_reaper(&ownership);
         // A sealed partial response may be delivered while the worker is still
@@ -4538,9 +4562,59 @@ pub async fn stop_recording(
                 }
             },
         })
-    })
-    .await
-    .map_err(|err| err.to_string())??;
+    });
+
+    // Read the persisted preference and the current policy generation
+    // together, so the continuation below can detect a newer
+    // `set_microphone_linger` that landed between this read and the worker
+    // application. Without the generation, a stale indefinite snapshot can
+    // overwrite a disable applied in that window.
+    //
+    // The generation is read before and after the DB read. If it changed
+    // during the DB read, a concurrent `set_microphone_linger` landed and
+    // the DB value is stale: skip the apply rather than overwriting the
+    // newer policy with the old snapshot.
+    let warm_before = Arc::clone(&warm);
+    let warm_after = Arc::clone(&warm);
+    let (bytes_res, (linger, policy_generation)) = tokio::join!(take_task, async {
+        let gen_before =
+            tauri::async_runtime::spawn_blocking(move || warm_before.linger_policy_generation())
+                .await
+                .unwrap_or_default();
+        let linger = read_capture_linger(database.pool()).await;
+        let gen_after =
+            tauri::async_runtime::spawn_blocking(move || warm_after.linger_policy_generation())
+                .await
+                .unwrap_or_default();
+        if gen_before == gen_after {
+            (linger, gen_after)
+        } else {
+            (None, gen_after)
+        }
+    });
+    let bytes = bytes_res.map_err(|err| err.to_string())??;
+
+    // Apply the persisted preference to the warm-capture hold without
+    // delaying the stop reply. `set_linger_if_current` is truly
+    // non-blocking: if the worker is busy, the stale policy update is
+    // dropped and a newer capture's policy wins. If a newer policy
+    // change landed after the snapshot, the generation check rejects
+    // the stale write instead of overwriting the newer value.
+    //
+    // A failed preference read (`None`) preserves the current hold
+    // rather than releasing it: a database error must not silently
+    // drop a keep-ready state the user enabled.
+    if let Some(linger) = linger {
+        if linger == Duration::ZERO {
+            warm.set_linger_if_current(0, policy_generation);
+        } else {
+            warm.set_linger_if_current(
+                u64::try_from(linger.as_millis()).unwrap_or(u64::MAX),
+                policy_generation,
+            );
+        }
+    }
+
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -7774,6 +7848,10 @@ mod tests {
         assert_eq!(linger_millis(f64::NAN), 1);
         // The finite maximum the settings dialog can send.
         assert_eq!(linger_millis(30_000.0), 30_000);
+        // A stored value above the maximum is bounded at the native boundary,
+        // so a hand-edited row cannot hold the microphone for minutes.
+        assert_eq!(linger_millis(900_000.0), 30_000);
+        assert_eq!(linger_millis(86_400_000.0), 30_000);
         // Infinity and the sentinel both mean "until released", never a window.
         assert_eq!(linger_millis(f64::MAX), u64::MAX);
         assert_eq!(linger_millis(9.0e15), u64::MAX);

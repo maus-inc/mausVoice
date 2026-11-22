@@ -735,6 +735,7 @@
   "play_a_short_haptic_style_click_when_you_press_the_pill_or_s": "Reproduce un clic háptico breve al pulsar la píldora o al iniciar y detener la grabación. No suena durante el procesamiento.",
   "play_audio": "Reproducir audio",
   "playback_position": "Posición de reproducción",
+  "please_restart_mausvoice_to_continue": "Reinicia MausVoice para continuar",
   "please_restart_the_application_for_the_new_permissions_to_ta": "Por favor, reinicia la aplicación para que los nuevos permisos surtan efecto.",
   "please_specify": "Por favor, especifique",
   "png_jpg_or_webp_up_to_5_mb_cropped_to_a_square": "PNG, JPG o WebP, hasta 5 MB. Se recorta en cuadrado.",

@@ -49,7 +49,7 @@ export const MicCheckForm = () => {
   const isGlobalRecording = isCapturePhase(overlayPhase);
   const isRecording = recordingState === "recording";
   const isStarting = recordingState === "starting";
-  const mountedRef = useRef(false);
+  const mountedRef = useRef(true);
   const opIdRef = useRef(0);
   const recordingStateRef = useRef(recordingState);
   const admittedRef = useRef<NativeRecordingHandle | null>(null);

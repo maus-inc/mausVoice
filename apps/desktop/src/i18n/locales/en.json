@@ -735,6 +735,7 @@
   "play_a_short_haptic_style_click_when_you_press_the_pill_or_s": "Play a short haptic-style click when you press the pill or start and stop recording. No sound plays while a recording is processing.",
   "play_audio": "Play audio",
   "playback_position": "Playback position",
+  "please_restart_mausvoice_to_continue": "Please restart MausVoice to continue",
   "please_restart_the_application_for_the_new_permissions_to_ta": "Please restart the application for the new permissions to take effect.",
   "please_specify": "Please specify",
   "png_jpg_or_webp_up_to_5_mb_cropped_to_a_square": "PNG, JPG, or WebP, up to 5 MB. Cropped to a square.",

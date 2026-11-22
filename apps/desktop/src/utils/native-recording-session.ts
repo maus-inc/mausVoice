@@ -250,6 +250,9 @@ export const stopNativeRecording = (
   }
   const handle = liveHandle;
   if (expectedHandle && expectedHandle !== handle) {
+    getLogger().warning(
+      `stopNativeRecording called with a mismatched handle; expected ${expectedHandle.ownerId}, live ${handle?.ownerId ?? "none"}`,
+    );
     return Promise.resolve(EMPTY_RESULT());
   }
   if (!handle) return Promise.resolve(EMPTY_RESULT());

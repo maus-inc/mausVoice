@@ -399,8 +399,16 @@ mod cpal_impl {
         }
     }
 
-    // ALSA's mmap capture gate can lose proof that all capture was released.
-    // Only the patched ALSA backend exposes a process-wide uncertainty latch.
+    // Linux ALSA uses a kernel-managed mmap ring buffer and PCM device handle
+    // where an in-flight worker failure or unclean teardown can lose hardware
+    // release guarantees. Only our patched ALSA backend exposes this process-wide
+    // uncertainty latch (`alsa_capture_cleanup_uncertain`), which permanently marks
+    // capture release as unconfirmed until restart.
+    //
+    // Other platform backends (CoreAudio on macOS, WASAPI on Windows) provide
+    // synchronous device teardown semantics through their OS audio graphs, so
+    // driver handles are reliably released upon stream drop without leaving
+    // process-global uncertainty latches.
     fn capture_cleanup_uncertain() -> bool {
         #[cfg(target_os = "linux")]
         {
@@ -1149,6 +1157,9 @@ mod cpal_impl {
         /// device; `WARM_FOREVER_MS` means hold until closed; anything else is
         /// the window a stopped recording stays open for.
         linger_ms: Arc<AtomicU64>,
+        /// Bumped on every policy change. A continuation that captured a
+        /// snapshot before the change must not apply it over the newer value.
+        linger_policy_generation: Arc<AtomicU64>,
         /// How much audio from before a press to keep, in microseconds.
         preroll_micros: Arc<AtomicU64>,
         /// Held across a warm open so a press arriving mid-open waits for it
@@ -1510,6 +1521,7 @@ mod cpal_impl {
                 // that shows no microphone indicator between dictations, so it
                 // is the one that needs no consent.
                 linger_ms: Arc::new(AtomicU64::new(0)),
+                linger_policy_generation: Arc::new(AtomicU64::new(0)),
                 preroll_micros: Arc::new(AtomicU64::new(500_000)),
                 warm_open_gate: Arc::new(Mutex::new(())),
                 warm_open_attempts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -1592,6 +1604,24 @@ mod cpal_impl {
             if self.linger_millis() == 0 {
                 self.cancel_linger();
                 self.close_warm();
+            } else {
+                // Arm or refresh a deadline for finite values when a stream
+                // is held, so the retained stream closes at the saved window
+                // rather than staying open with a finite policy and no expiry.
+                // A different finite value while held must update the existing
+                // deadline, otherwise the stream closes at the old window.
+                let has_held = self.warm.lock().ok().is_some_and(|guard| guard.is_some());
+                if has_held {
+                    let generation = self.linger_generation.load(Ordering::SeqCst);
+                    match Self::finite_linger(self.linger_millis()) {
+                        Some(deadline_duration) => {
+                            if let Some(deadline) = Instant::now().checked_add(deadline_duration) {
+                                self.linger_deadline.set(Some((deadline, generation)));
+                            }
+                        }
+                        None => self.linger_deadline.set(None),
+                    }
+                }
             }
         }
 
@@ -1603,6 +1633,27 @@ mod cpal_impl {
         pub fn set_linger_policy(&self, linger: Duration) {
             let millis = linger.as_millis().min(u128::from(u64::MAX)) as u64;
             self.linger_ms.store(millis, Ordering::SeqCst);
+            self.linger_policy_generation.fetch_add(1, Ordering::SeqCst);
+        }
+
+        /// The current policy generation. Bumped on every [`set_linger_policy`]
+        /// call; a continuation that captured a snapshot before a change
+        /// compares its expected generation against this before applying.
+        pub fn linger_policy_generation(&self) -> u64 {
+            self.linger_policy_generation.load(Ordering::SeqCst)
+        }
+
+        /// Applies a policy snapshot only if no newer policy change has landed.
+        ///
+        /// A stop that reads the persisted preference concurrently with the
+        /// native stop captures a generation. By the time the worker applies
+        /// the snapshot, a newer `set_microphone_linger` may have changed the
+        /// policy. This rejects the stale write instead of overwriting the
+        /// newer value.
+        pub fn apply_linger_if_current(&self, linger: Duration, expected: u64) {
+            if self.linger_policy_generation.load(Ordering::SeqCst) == expected {
+                self.set_linger(linger);
+            }
         }
 
         /// The hold policy in milliseconds, as stored.
@@ -1810,7 +1861,23 @@ mod cpal_impl {
                 if Instant::now() >= deadline {
                     self.linger_deadline.set(None);
                     if self.linger_generation.load(Ordering::SeqCst) == generation {
-                        self.close_warm();
+                        // `close_matching_warm` advances the generation and
+                        // returns the value it advanced to, so the retry uses
+                        // the generation that actually closed the stream rather
+                        // than a separate load that could race a concurrent
+                        // advance.
+                        let current = self
+                            .close_matching_warm(None)
+                            .unwrap_or_else(|| self.linger_generation.load(Ordering::SeqCst));
+                        // A failed release retains the driver handle. Retry it
+                        // periodically until it succeeds; the process-wide ALSA
+                        // latch is not a handle and must not be retried.
+                        if self.release_blocked.get() && !capture_cleanup_uncertain() {
+                            let _ = self.discard_unreleased_stream();
+                            if self.release_blocked.get() && !capture_cleanup_uncertain() {
+                                self.schedule_linger_close(Duration::from_secs(1), current);
+                            }
+                        }
                     }
                 }
             }
@@ -1916,6 +1983,10 @@ mod cpal_impl {
             level_callback: Option<LevelCallback>,
             chunk_callback: Option<ChunkCallback>,
         ) -> Result<(), RecordingError> {
+            // A transient release failure must not block the next press
+            // forever. Retry the retained handle first; the ALSA latch still
+            // fails the check below and requires a restart.
+            let _ = self.discard_unreleased_stream();
             self.check_release()?;
             let preferred_label = {
                 let guard = match self.preferred_input_name.lock() {
@@ -2212,6 +2283,9 @@ mod cpal_impl {
             preroll: Duration,
             refresh: Option<(u64, Option<Instant>)>,
         ) -> Result<(), RecordingError> {
+            // Same retry as a press: a retained handle from a failed idle
+            // release gets another chance before the check below.
+            let _ = self.discard_unreleased_stream();
             self.check_release()?;
             // Lock order, and it is the only order: `warm_open_gate`, then
             // `warm`, then nothing. `inner` is never held alongside the gate.
@@ -2738,10 +2812,18 @@ mod cpal_impl {
         ) -> Result<bool, RecordingError> {
             // A stop (including abandoned-capture recovery) can override
             // this handoff without changing the policy for future starts.
-            let linger_ms = linger_override.map_or_else(
+            let mut linger_ms = linger_override.map_or_else(
                 || self.linger_millis(),
                 |linger| linger.as_millis().min(u128::from(u64::MAX)) as u64,
             );
+            // The override was read from the committed preference before this
+            // handoff ran. If keep-ready was turned off in between, the native
+            // policy is already zero; an indefinite override must not reopen
+            // the microphone with no timer. Finite races are bounded by the
+            // native maximum, so only the indefinite case needs this check.
+            if linger_ms == u64::MAX && self.linger_millis() != u64::MAX {
+                linger_ms = self.linger_millis();
+            }
             self.check_release()?;
             let mut guard = self
                 .inner
@@ -2852,8 +2934,9 @@ mod cpal_impl {
             if let Some(error) = was_paused.then(|| stream.play().err()).flatten() {
                 log::warn!("could not resume a paused stream for the hold: {error}");
                 sink.stop_recording(None);
-                self.retire_stream(stream);
-                return true;
+                // A failed resume does not fail the take that already sealed.
+                // Only an unconfirmed release keeps the pending signal.
+                return self.retire_stream(stream);
             }
             let prior = self
                 .warm
@@ -2917,7 +3000,13 @@ mod cpal_impl {
         };
         let capture_fault = reported_capture_fault(drained.clone(), captured, expected_duration);
         let seed_only = seed_only_capture(samples.len(), seed_samples, expected_duration);
-        let capture_failed = poisoned || nonfinite || drained.is_some() || seed_only;
+        // A material shortfall with no host fault is still an incomplete
+        // capture: the PCM is preserved, but the renderer must warn that most
+        // of the dictation is missing. Ordinary jitter stays below the gap
+        // check and produces no warning.
+        let suspicious_gap = elapsed_gap_is_suspicious(captured, expected_duration);
+        let capture_failed =
+            poisoned || nonfinite || drained.is_some() || seed_only || suspicious_gap;
 
         // A capture that stopped early is logged with both figures. The
         // numbers are the whole value here: "the recording is 1.4 s long and
@@ -3138,6 +3227,24 @@ mod cpal_impl {
                 return Err(WorkerUnavailable);
             }
             Ok(())
+        }
+
+        fn try_send(
+            &self,
+            task: impl FnOnce(&T) + Send + 'static,
+        ) -> Result<(), WorkerUnavailable> {
+            let worker = self.sender.as_ref().ok_or(WorkerUnavailable)?;
+            match worker.try_send(Box::new(task)) {
+                Ok(()) => Ok(()),
+                // The worker's buffer is full; drop the incoming stale task
+                // without blocking. The worker continues processing the
+                // older tasks already queued.
+                Err(std::sync::mpsc::TrySendError::Full(_)) => Ok(()),
+                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                    self.failed.store(true, Ordering::SeqCst);
+                    Err(WorkerUnavailable)
+                }
+            }
         }
 
         fn call<R: Send + 'static>(
@@ -3436,7 +3543,11 @@ mod cpal_impl {
         }
 
         fn release_hold(&self) {
-            if let Err(error) = self.worker.call(LocalRecordingManager::release_hold) {
+            // Non-blocking: try_send returns immediately if the worker's
+            // channel buffer is full, dropping the stale policy update. A
+            // stuck or wedged worker must not delay callers (such as the
+            // stop reply path) that only need to signal policy intent.
+            if let Err(error) = self.worker.try_send(LocalRecordingManager::release_hold) {
                 log::error!("{error}");
             }
         }
@@ -3460,12 +3571,31 @@ mod cpal_impl {
         }
 
         fn set_linger(&self, linger_ms: u64) {
+            // Non-blocking: try_send returns immediately if the worker's
+            // channel buffer is full, dropping the stale policy update.
             if let Err(error) = self
                 .worker
-                .call(move |r| r.set_linger(Duration::from_millis(linger_ms)))
+                .try_send(move |r| r.set_linger(Duration::from_millis(linger_ms)))
             {
                 log::error!("{error}");
             }
+        }
+
+        fn set_linger_if_current(&self, linger_ms: u64, expected_generation: u64) {
+            // Non-blocking and conditional: the worker checks the policy
+            // generation before applying, so a snapshot taken before a newer
+            // set_microphone_linger is rejected instead of overwriting it.
+            if let Err(error) = self.worker.try_send(move |r| {
+                r.apply_linger_if_current(Duration::from_millis(linger_ms), expected_generation)
+            }) {
+                log::error!("{error}");
+            }
+        }
+
+        fn linger_policy_generation(&self) -> u64 {
+            self.worker
+                .call(LocalRecordingManager::linger_policy_generation)
+                .unwrap_or_default()
         }
 
         fn status_line(&self) -> String {
@@ -4740,6 +4870,44 @@ mod cpal_impl {
                 assert_eq!(sealed.metrics.capture_fault, fault);
                 assert!(sealed.capture_failed);
             }
+        }
+
+        #[test]
+        fn a_material_partial_capture_without_a_host_fault_is_incomplete() {
+            // 1.4 s of live PCM in a 6 s dictation with no host error: the
+            // samples are preserved, but the take is incomplete.
+            let recording = ActiveRecording {
+                stream: None,
+                sink: None,
+                preroll_after_stop: None,
+                seed_samples: 0,
+                start: Instant::now(),
+                buffer: Some(Arc::new(Mutex::new(vec![0.1; 1400]))),
+                sample_rate: 1000,
+                device_label: String::default(),
+                preferred: None,
+                channels: 1,
+            };
+            let sealed = seal_capture_audio(&recording, None, Duration::from_secs(6));
+            assert_eq!(sealed.audio.samples.len(), 1400);
+            assert_eq!(sealed.metrics.capture_fault, None);
+            assert!(sealed.capture_failed);
+
+            // Ordinary jitter stays below the gap check and is not marked.
+            let recording = ActiveRecording {
+                stream: None,
+                sink: None,
+                preroll_after_stop: None,
+                seed_samples: 0,
+                start: Instant::now(),
+                buffer: Some(Arc::new(Mutex::new(vec![0.1; 5900]))),
+                sample_rate: 1000,
+                device_label: String::default(),
+                preferred: None,
+                channels: 1,
+            };
+            let sealed = seal_capture_audio(&recording, None, Duration::from_secs(6));
+            assert!(!sealed.capture_failed);
         }
 
         #[test]
