@@ -45,7 +45,7 @@ export const stripTrailingCharacters = (
   characters: string,
 ): string => {
   let end = value.length;
-  while (end > 0 && characters.includes(value[end - 1] as string)) {
+  while (end > 0 && characters.includes(value.charAt(end - 1))) {
     end -= 1;
   }
   return value.slice(0, end);

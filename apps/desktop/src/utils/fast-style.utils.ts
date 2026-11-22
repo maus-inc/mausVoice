@@ -768,10 +768,10 @@ const fixSelfCorrections = (text: string): string => {
 const wordBeforeOffset = (whole: string, offset: number): string => {
   const head = whole.slice(0, offset);
   let end = head.length;
-  while (end > 0 && /\s/.test(head[end - 1] as string)) end -= 1;
+  while (end > 0 && /\s/.test(head.charAt(end - 1))) end -= 1;
   if (end === head.length) return "";
   let start = end;
-  while (start > 0 && !/\s/.test(head[start - 1] as string)) start -= 1;
+  while (start > 0 && !/\s/.test(head.charAt(start - 1))) start -= 1;
   return head.slice(start, end);
 };
 
