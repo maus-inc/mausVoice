@@ -1663,22 +1663,28 @@ fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<RestoredPlacemen
     // bounds below because only `restore` knows which display it chose.
     let mut destination_scale = 1.0;
     let placement =
-        rust_pill_shared::restore::restore(parked, &work_areas, live_size, |work, window| {
-            if window == live_size {
-                // The window is recreated at the destination display's own scale,
-                // so the clamp has to describe that window. Without this a pill
-                // saved at 150% came back at 100%: its footprint sat a third
-                // closer to the window's corner, and the visible pill moved.
-                destination_scale = scale_for_area(work);
-                window_clamp_bounds_for_size(
-                    work,
-                    live_size.0 * destination_scale,
-                    live_size.1 * destination_scale,
-                )
-            } else {
+        rust_pill_shared::restore::restore(parked, &work_areas, live_size, |work, window, role| {
+            match role {
+                rust_pill_shared::restore::BoundsRole::Destination => {
+                    // The window is recreated at the destination display's own
+                    // scale, so the clamp has to describe that window. Without this
+                    // a pill saved at 150% came back at 100%: its footprint sat a
+                    // third closer to the window's corner, and the visible pill
+                    // moved.
+                    destination_scale = scale_for_area(work);
+                    window_clamp_bounds_for_size(
+                        work,
+                        live_size.0 * destination_scale,
+                        live_size.1 * destination_scale,
+                    )
+                }
                 // The record's own size is already physical, at the scale it was
-                // saved at, so it needs no conversion.
-                window_clamp_bounds_for_size(work, window.0, window.1)
+                // saved at, so it needs no conversion. The size cannot stand in for
+                // the role: a pill saved at 100% has the live size, so a saved box
+                // told apart by size alone would be scaled by the destination's DPI.
+                rust_pill_shared::restore::BoundsRole::Saved => {
+                    window_clamp_bounds_for_size(work, window.0, window.1)
+                }
             }
         });
     match placement {
@@ -1739,6 +1745,19 @@ fn enumerate_work_areas_with_identity() -> Option<Vec<MonitorRect>> {
     // the dock back inside the space this function promises to exclude, and a
     // saved work-area record stops matching the same display on the next launch.
     enumerate_displays(true).map(|snapshot| snapshot.monitors)
+}
+
+/// Whether a gesture still owns the window, so its frame is not a saved position.
+///
+/// A drag in flight has no completed drop, the settle right after one belongs to
+/// that drop, and a refused save that is still owed will write the drop the
+/// window is standing on. Publishing a relocation inside any of those replaces
+/// the last position the user actually chose with a frame the system forced.
+fn gesture_owns_window(state: &PillState, now: f64) -> bool {
+    state.dragging.get()
+        || state.drag_motion.borrow().is_settling()
+        || state.drag_save_due.get().is_some()
+        || state.save_guard.borrow().drag_hold_active(now)
 }
 
 /// Reconcile the pill's window against the displays connected right now.
@@ -1830,6 +1849,14 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             // origin would have the next cursor tick put the pill back there,
             // undoing a placement the user could see. This is the system's move,
             // not a drag, so it is adopted without going through the save guard.
+            //
+            // A drag or an owed drop owns the frame, though: the origin it would
+            // adopt is the one the pointer or the pending retry is about to write,
+            // so adopting it here would publish a mid-drag position in place of the
+            // last completed drop.
+            if gesture_owns_window(state, now) {
+                return;
+            }
             let (cur_x, cur_y) = current_pill_origin(hwnd);
             // Resolved from the pill's own footprint centre, the same lookup the
             // `Move` branch below uses, so the retained area and the retained
@@ -1895,7 +1922,13 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             // still has to happen, but it must not write the row back.
             // A stored position has to exist to be kept: a relocation is not a
             // save, and after a reset or a clear there is nothing to record.
-            if !state.has_saved_position.get() {
+            //
+            // Nor is a mid-gesture frame a saved position. The move is still
+            // applied, because a pill left off-screen is worse than one that moves
+            // under the pointer, but the origin it lands on is the frame the system
+            // forced, not a drop the user made. The completed drop writes through
+            // the guarded save path.
+            if !state.has_saved_position.get() || gesture_owns_window(state, now) {
                 return;
             }
             // The move was the pill's, so the persisted position follows it.
@@ -2015,17 +2048,12 @@ fn default_pill_y(work_area_top: i32, work_area_height: i32, win_h: i32, scale: 
 }
 
 fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
-    // The frame loop owns the window while a drag is held or settling; the
-    // cursor tick must not fight it with a stale saved position.
-    if state.dragging.get() || state.drag_motion.borrow().is_settling() {
-        return;
-    }
-    // A drop the save guard refused is retried by the frame loop, and until that
-    // retry writes it the window is still standing where the user dropped it.
-    // Parking it here would move it back to `saved_x`/`saved_y` -- the position
-    // from *before* the drop -- and the retry would then store that instead of the
-    // drop, so the refused save would quietly succeed at saving the wrong place.
-    if state.drag_save_due.get().is_some() {
+    // The frame loop owns the window while a gesture is held, settling, or owed a
+    // save; the cursor tick must not fight it with a stale saved position. Parking
+    // it here would move it back to `saved_x`/`saved_y` -- the position from
+    // *before* the drop -- and the retry would then store that instead of the
+    // drop, so a refused save would quietly succeed at saving the wrong place.
+    if gesture_owns_window(state, drag_now()) {
         return;
     }
     unsafe {

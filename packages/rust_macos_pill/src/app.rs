@@ -2496,12 +2496,26 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             // only when there is a position to keep.
             if state.has_saved_position.get() && !gesture_owns_window(state, now) {
                 let frame = window_frame(window);
+                let live = to_top_down(frame, primary_top);
+                // The area and the token are both resolved from the visible pill.
+                // Neither the window's screen nor the record's own area can stand
+                // in for it: the window's screen follows the transparent canvas,
+                // which a drag save can leave mostly on the panel the pill is not
+                // on, and `parked.display` prefers the record's token when that
+                // panel is still connected. Either one can name a panel whose work
+                // area did not change while the pill's own panel did.
+                let centre = (
+                    live.x + footprint_offset.0 + footprint_size.0 / 2.0,
+                    live.y + footprint_offset.1 + footprint_size.1 / 2.0,
+                );
+                let live_area = rust_pill_shared::layout::work_area_of(&areas, centre)
+                    .unwrap_or(parked.display);
+                let display = rust_pill_shared::layout::display_id_of(&areas, centre);
                 // The retained area is refreshed even when the origin did not
                 // move. A display whose work area changed under a stationary
                 // window leaves the record measuring the old rectangle, and the
                 // next disconnect computes the carry-over fraction against it.
-                // `parked.display` is the live area this resolution used.
-                let retained = flip_primary_basis(parked.display, primary_top);
+                let retained = flip_primary_basis(live_area, primary_top);
                 let origin_moved =
                     frame.origin.x != state.saved_x.get() || frame.origin.y != state.saved_y.get();
                 // A work area that shrank or grew under a stationary window is a
@@ -2509,15 +2523,14 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
                 // saved position, so leaving it unpublished would have a restart
                 // remap against the rectangle the display no longer has.
                 let area_changed = state.saved_work_area.get() != retained
-                    || state.saved_display_id.get() != current_id;
+                    || state.saved_display_id.get() != display;
                 if area_changed {
                     state.saved_work_area.set(retained);
                     // The origin may not have moved, but the display it names can
                     // still have changed under it: a layout change that hands a
                     // stationary window to the neighbour keeps the frame and moves
-                    // the panel. `current_id` resolved the window's screen above,
-                    // with the remembered token as its own fallback.
-                    state.saved_display_id.set(current_id);
+                    // the panel.
+                    state.saved_display_id.set(display);
                 }
                 if origin_moved {
                     state.saved_x.set(frame.origin.x);
@@ -2527,7 +2540,7 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
                     // a DPI change resizes it. Keeping the old token would publish
                     // the new geometry under the display the pill just left, and the
                     // next launch would restore it against the wrong panel.
-                    state.saved_display_id.set(current_id);
+                    state.saved_display_id.set(display);
                 }
                 if origin_moved || area_changed {
                     // The desktop holds the record, and it still names the origin
@@ -2664,7 +2677,10 @@ unsafe fn persist_reconciled_position(
     primary_top: f64,
     destination: Option<rust_pill_shared::edge::MonitorRect>,
 ) {
-    let (rect, _) = pill_geometry(window);
+    // Flipped with the caller's `primary_top`, the same value that flipped the
+    // work area above, so one report cannot pair a window rectangle and a work
+    // area read against different primary display tops.
+    let rect = to_top_down(window_frame(window), primary_top);
     if let Some(area) = destination {
         state
             .saved_work_area
@@ -2874,7 +2890,7 @@ unsafe fn setup(
             parked,
             &display_rects,
             (window_w, window_h),
-            |work, window| {
+            |work, window, _role| {
                 let (offset, size) = rust_pill_shared::restore::scaled_footprint(
                     live_footprint,
                     (window_w, window_h),

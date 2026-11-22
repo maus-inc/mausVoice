@@ -1196,6 +1196,39 @@ describe("PR28 ring-alpha render-loop policy", () => {
     }
   });
 
+  it("never adopts a frame a gesture still owns", () => {
+    // A drag in flight, the settle after one, and a drop whose save is still owed
+    // all describe a frame the user has not finished choosing. A display change
+    // arriving inside any of them runs the same reconciliation as an idle one, so
+    // without the ownership test the `Keep` arm adopts the mid-drag origin and
+    // publishes it over the last completed drop, and the `Move` arm writes the
+    // forced origin into the record. The `Move` itself still runs: a pill left
+    // off-screen is worse than one that moves under the pointer.
+    const arm = (src, name, marker) => {
+      const at = src.indexOf(marker);
+      assert.ok(at > 0, `${name}: the ${marker} arm is not recognisable`);
+      const end = src.indexOf("Relocation::", at + 20);
+      return src.slice(at, end > 0 ? end : at + 4000);
+    };
+    for (const [name, src] of [
+      ["windowsPill", source.windowsPill],
+      ["macApp", source.macApp],
+    ]) {
+      for (const marker of ["Relocation::Keep", "Relocation::Move"]) {
+        assert.match(
+          arm(src, name, marker),
+          /gesture_owns_window\(state, now\)/,
+          `${name}: ${marker} adopts a frame a gesture still owns`,
+        );
+      }
+      assert.equal(
+        src.match(/fn gesture_owns_window/g)?.length,
+        1,
+        `${name}: the ownership rule is not one function`,
+      );
+    }
+  });
+
   it("reports the drop it recorded, not the window the retry happened to find", () => {
     // The desktop stores the rectangle in the report. A retry runs after a delay,
     // and reconciliation can move the window in between, so reporting the live

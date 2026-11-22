@@ -311,6 +311,22 @@ pub enum Placement {
     PlatformDefault,
 }
 
+/// Which box a bounds callback is being asked to describe.
+///
+/// A caller that applies a per-display scale has to tell the two apart. The saved
+/// box is already in the physical pixels it was captured in, at the scale of the
+/// display it was captured on, while the destination box has to be built at the
+/// scale of the display the pill is landing on. The size alone cannot say which
+/// is which, because the two are equal whenever the window did not change size
+/// between launches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundsRole {
+    /// The room the pill will occupy on the display it is landing on.
+    Destination,
+    /// The room the saved origin was clamped into when it was stored.
+    Saved,
+}
+
 /// Restore a parked position against the displays that are connected now.
 ///
 /// `areas` are the visible areas of the connected displays, in the caller's
@@ -349,7 +365,7 @@ pub fn restore<F>(
     mut bounds_for: F,
 ) -> Placement
 where
-    F: FnMut(MonitorRect, (f64, f64)) -> DragBounds,
+    F: FnMut(MonitorRect, (f64, f64), BoundsRole) -> DragBounds,
 {
     let (width, height) = window_size;
     if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
@@ -363,7 +379,7 @@ where
         return Placement::PlatformDefault;
     };
 
-    let destination_bounds = bounds_for(areas[index], (width, height));
+    let destination_bounds = bounds_for(areas[index], (width, height), BoundsRole::Destination);
     let anchor = if exact {
         (parked.x, parked.y)
     } else {
@@ -372,14 +388,19 @@ where
         // measured in. Asking the caller for both is what keeps the two boxes the
         // same box: the boxes are footprint-dependent, and only the caller knows
         // the footprint.
-        let saved_bounds = bounds_for(parked.display, (parked.width, parked.height));
+        let saved_bounds = bounds_for(
+            parked.display,
+            (parked.width, parked.height),
+            BoundsRole::Saved,
+        );
         remap(parked, destination_bounds, saved_bounds)
     };
     if !anchor.0.is_finite() || !anchor.1.is_finite() {
         return Placement::PlatformDefault;
     }
 
-    let (x, y) = bounds_for(areas[index], (width, height)).clamp_point(anchor.0, anchor.1);
+    let (x, y) = bounds_for(areas[index], (width, height), BoundsRole::Destination)
+        .clamp_point(anchor.0, anchor.1);
     if !x.is_finite() || !y.is_finite() {
         return Placement::PlatformDefault;
     }
@@ -682,7 +703,7 @@ mod tests {
 
     /// Bounds derived from a display area and the window size, the shape every
     /// platform's own helper has.
-    fn bounds(work: MonitorRect, window: (f64, f64)) -> DragBounds {
+    fn bounds(work: MonitorRect, window: (f64, f64), _role: BoundsRole) -> DragBounds {
         DragBounds {
             min_x: work.x,
             min_y: work.y,
@@ -1084,28 +1105,39 @@ mod tests {
 
     /// A remap measures the saved origin against the room the saved window size
     /// actually had, so the restore has to ask the caller for bounds at the parked
-    /// size as well as the live one. A callback that answers both questions with
-    /// the live size measures the carry-over fraction in a room the saved origin
-    /// was never clamped into, which moves the pill by the size difference.
+    /// size as well as the live one, and it has to say which box is which. A
+    /// callback that answers both questions with the live size measures the
+    /// carry-over fraction in a room the saved origin was never clamped into, and
+    /// a callback that cannot tell the two apart applies the destination display's
+    /// scale to a box that is already in saved pixels.
     #[test]
-    fn a_remap_asks_for_bounds_at_the_parked_window_size() {
+    fn a_remap_asks_for_the_saved_box_at_the_parked_size() {
         let saved_display = rect(0.0, 0.0, 2560.0, 1400.0);
         let live_display = rect(0.0, 0.0, 1920.0, 1040.0);
         let live_window = (450.0, 543.0);
         let record = parked(2200.0, 1200.0, saved_display);
-        let mut asked: Vec<(f64, f64)> = Vec::new();
-        let placement = restore(record, &[live_display], live_window, |work, window| {
-            asked.push(window);
-            bounds(work, window)
-        });
+        let mut asked: Vec<((f64, f64), BoundsRole)> = Vec::new();
+        let placement = restore(
+            record,
+            &[live_display],
+            live_window,
+            |work, window, role| {
+                asked.push((window, role));
+                bounds(work, window, role)
+            },
+        );
         assert!(matches!(placement, Placement::Restore { .. }));
         assert!(
-            asked.contains(&(record.width, record.height)),
-            "the saved box was never measured at the parked size: {asked:?}"
+            asked.contains(&((record.width, record.height), BoundsRole::Saved)),
+            "the saved box was not measured at the parked size: {asked:?}"
         );
         assert!(
-            asked.contains(&live_window),
-            "the destination box was never measured at the live size: {asked:?}"
+            asked.contains(&(live_window, BoundsRole::Destination)),
+            "the destination box was not measured at the live size: {asked:?}"
+        );
+        assert!(
+            !asked.contains(&((record.width, record.height), BoundsRole::Destination)),
+            "the parked size was asked for as a destination box: {asked:?}"
         );
     }
 
@@ -1508,7 +1540,7 @@ mod tests {
 
         let parked_on_right =
             ParkedWindow::new_named(2400.0, 400.0, 600.0, 362.0, right, Some(7)).expect("parked");
-        let bounds = |work: MonitorRect, _window: (f64, f64)| {
+        let bounds = |work: MonitorRect, _window: (f64, f64), _role: BoundsRole| {
             footprint_bounds(work, (247.0, 309.0), (48.0, 6.0))
         };
         match restore(parked_on_right, &displays, (600.0, 362.0), bounds) {

@@ -365,12 +365,19 @@ fn relocate_from_scratch<B>(
     parked: ParkedWindow,
     areas: &[MonitorRect],
     window_size: (f64, f64),
-    bounds_for: B,
+    mut bounds_for: B,
 ) -> Relocation
 where
     B: FnMut(MonitorRect, (f64, f64)) -> DragBounds,
 {
-    match crate::restore::restore(parked, areas, window_size, bounds_for) {
+    // Reconciliation clamps against the footprint the renderer is drawing, which
+    // is the same box for the saved size and the destination size, so the role
+    // restore asks about carries no per-display scale here.
+    let mut role_free =
+        |work: MonitorRect, window: (f64, f64), _role: crate::restore::BoundsRole| {
+            bounds_for(work, window)
+        };
+    match crate::restore::restore(parked, areas, window_size, &mut role_free) {
         Placement::Restore { x, y, .. } => match finite(x, y) {
             Some((x, y)) => Relocation::Move { x, y },
             None => Relocation::Stranded,

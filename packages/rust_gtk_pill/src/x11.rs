@@ -469,7 +469,7 @@ fn restored_position(
         parked,
         &work_areas,
         (window_w, window_h),
-        |work, window| {
+        |work, window, _role| {
             // The visible pill footprint, not the transparent toplevel, is what
             // has to stay on screen. This is the same bounds
             // `placement_on_monitor` builds for dictation mode, so a restored
