@@ -32,8 +32,6 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          # The default PR checkout is the test merge; its parents include the event base.
-          fetch-depth: 2
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -47,13 +45,18 @@ jobs:
         run: |
           set -euo pipefail
           guard="$RUNNER_TEMP/check-pr-body.mjs"
-          checker=$(git ls-tree "$BASE_SHA" -- scripts/ci/check-pr-body.mjs)
-          if [[ -n "$checker" ]]; then
+          # The event's base SHA can sit further back than the checkout's depth, and
+          # a tree lookup on a missing object exits 128, which `set -e` turns into a
+          # failed job before the body is ever read. Fetch the commit first, and fall
+          # back to the head copy when the fetch is refused, so the body is always
+          # checked by one copy or the other.
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || true
+          if git cat-file -e "$BASE_SHA:scripts/ci/check-pr-body.mjs" 2>/dev/null; then
             git show "$BASE_SHA:scripts/ci/check-pr-body.mjs" > "$guard"
             echo "checker: the base branch copy at $BASE_SHA"
           else
             cp scripts/ci/check-pr-body.mjs "$guard"
-            echo "checker: the head copy, because the base branch has none yet"
+            echo "checker: the head copy, because the base branch copy is unreachable"
           fi
           printf 'GUARD=%s\n' "$guard" >> "$GITHUB_ENV"
       - name: Check the body
@@ -93,7 +96,14 @@ jobs:
           set -euo pipefail
           file=scripts/ci/standards-review.mjs
           guard="$RUNNER_TEMP/standards-review.mjs"
-          # A missing base commit is an error, not permission to use the head checker.
+          # The event's base SHA can sit past this checkout's history once the base
+          # moves, so fetch it before reading its tree. A commit that still cannot be
+          # read is an error, not permission to use the head checker.
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || true
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "::error::Base $BASE_SHA is not reachable from this checkout, so the receipt cannot be verified against the base checker."
+            exit 1
+          fi
           policy=$(git ls-tree --name-only "$BASE_SHA" -- "$file" CODING_STANDARDS.md)
           if [[ -z "$policy" ]]; then
             echo "First introduction of the policy on this base; using the proposed checker."
