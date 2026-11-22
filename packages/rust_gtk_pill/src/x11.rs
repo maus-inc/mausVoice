@@ -469,13 +469,22 @@ fn restored_position(
         parked,
         &work_areas,
         (window_w, window_h),
-        |work, _window| {
+        |work, window| {
             // The visible pill footprint, not the transparent toplevel, is what
             // has to stay on screen. This is the same bounds
             // `placement_on_monitor` builds for dictation mode, so a restored
             // origin survives the idle tick instead of being pulled inward by
             // the toplevel's transparent margins.
-            rust_pill_shared::restore::footprint_bounds(work, (fx, fy), (fw, fh))
+            //
+            // The restore asks about the saved record's window size as well as this
+            // one, and the offsets differ by the size ratio, so the footprint is
+            // carried to whichever size it is asking about.
+            let (offset, size) = rust_pill_shared::restore::scaled_footprint(
+                ((fx, fy), (fw, fh)),
+                (window_w, window_h),
+                window,
+            );
+            rust_pill_shared::restore::footprint_bounds(work, offset, size)
         },
     );
     match placement {

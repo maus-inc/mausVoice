@@ -2472,10 +2472,18 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
         &areas,
         (window_w, window_h),
         |_work, window| current_footprint(state, window.0, window.1),
-        |work, _window| {
+        |work, window| {
             // The same footprint clamp `reposition_window` applies when idle, so
-            // a reconciled origin is a fixed point of the idle tick.
-            rust_pill_shared::restore::footprint_bounds(work, footprint_offset, footprint_size)
+            // a reconciled origin is a fixed point of the idle tick. The restore
+            // also asks about the saved record's window size, whose offsets differ
+            // by the size ratio, so the live footprint is carried to whichever size
+            // it is asking about.
+            let (offset, size) = rust_pill_shared::restore::scaled_footprint(
+                (footprint_offset, footprint_size),
+                (window_w, window_h),
+                window,
+            );
+            rust_pill_shared::restore::footprint_bounds(work, offset, size)
         },
     );
 
@@ -2494,10 +2502,24 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
                 // next disconnect computes the carry-over fraction against it.
                 // `parked.display` is the live area this resolution used.
                 let retained = flip_primary_basis(parked.display, primary_top);
-                if state.saved_work_area.get() != retained {
+                let origin_moved =
+                    frame.origin.x != state.saved_x.get() || frame.origin.y != state.saved_y.get();
+                // A work area that shrank or grew under a stationary window is a
+                // record change on its own. The desktop stores this report as the
+                // saved position, so leaving it unpublished would have a restart
+                // remap against the rectangle the display no longer has.
+                let area_changed = state.saved_work_area.get() != retained
+                    || state.saved_display_id.get() != current_id;
+                if area_changed {
                     state.saved_work_area.set(retained);
+                    // The origin may not have moved, but the display it names can
+                    // still have changed under it: a layout change that hands a
+                    // stationary window to the neighbour keeps the frame and moves
+                    // the panel. `current_id` resolved the window's screen above,
+                    // with the remembered token as its own fallback.
+                    state.saved_display_id.set(current_id);
                 }
-                if frame.origin.x != state.saved_x.get() || frame.origin.y != state.saved_y.get() {
+                if origin_moved {
                     state.saved_x.set(frame.origin.x);
                     state.saved_y.set(frame.origin.y);
                     // The origin moved, so the display it names may have changed
@@ -2505,23 +2527,19 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
                     // a DPI change resizes it. Keeping the old token would publish
                     // the new geometry under the display the pill just left, and the
                     // next launch would restore it against the wrong panel.
-                    // `current_id` already resolved the window's screen above, with
-                    // the remembered token as its own fallback.
                     state.saved_display_id.set(current_id);
+                }
+                if origin_moved || area_changed {
                     // The desktop holds the record, and it still names the origin
-                    // from before AppKit moved the window. Adopting the move only in
-                    // this process would leave a restart restoring the pill to the
-                    // old place, so it is published here rather than waiting for a
-                    // report that may never come.
-                    let (rect, monitor) = unsafe { pill_geometry(window) };
-                    ipc::send(&OutMessage::PositionChanged {
-                        report: rust_pill_shared::restore::PositionReport::new(
-                            true,
-                            Some(rect),
-                            monitor,
-                            state.saved_display_id.get(),
-                        ),
-                    });
+                    // and area from before the layout moved. Adopting the change in
+                    // this process only would leave a restart restoring the pill to
+                    // the old place, so it is published here rather than waiting for
+                    // a report that may never come.
+                    //
+                    // The area is resolved from the visible pill, the same lookup
+                    // that names its display, so the published rectangle and token
+                    // describe one panel.
+                    unsafe { publish_current_position(state, window, &areas, primary_top) };
                 }
             }
         }
@@ -2550,16 +2568,25 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             state.saved_x.set(origin.x);
             state.saved_y.set(origin.y);
             state.has_saved_position.set(true);
+            // The destination display is resolved from where the visible pill
+            // landed, and the area is taken from that same lookup: the window's
+            // own screen follows the transparent canvas, which can keep most of
+            // itself on the display the pill just left, and pairing that area with
+            // this token would store two panels in one record.
+            let centre = (
+                x + footprint_offset.0 + footprint_size.0 / 2.0,
+                y + footprint_offset.1 + footprint_size.1 / 2.0,
+            );
+            let destination = rust_pill_shared::layout::work_area_of(&areas, centre);
             state
                 .saved_display_id
-                .set(rust_pill_shared::layout::display_id_of(
-                    &areas,
-                    (
-                        x + footprint_offset.0 + footprint_size.0 / 2.0,
-                        y + footprint_offset.1 + footprint_size.1 / 2.0,
-                    ),
-                ));
-            persist_reconciled_position(state, window);
+                .set(destination.and_then(|area| area.id));
+            if let Some(area) = destination {
+                state
+                    .saved_work_area
+                    .set(flip_primary_basis(area, primary_top));
+            }
+            persist_reconciled_position(state, window, primary_top, destination);
         }
     }
 }
@@ -2608,6 +2635,17 @@ unsafe fn seed_layout_baseline(state: &PillState) {
     );
 }
 
+/// The work area a published position reports, as the platform rectangle the
+/// wire format carries.
+fn report_area(area: rust_pill_shared::edge::MonitorRect) -> Rect {
+    Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: area.height,
+    }
+}
+
 /// Tell the desktop where the pill ended up after a display change made the pill
 /// move itself.
 ///
@@ -2615,27 +2653,65 @@ unsafe fn seed_layout_baseline(state: &PillState) {
 /// chose this position, and it is the only place the pill can be. Storing it is
 /// what stops the next launch restoring an origin that no longer has a screen
 /// under it.
-unsafe fn persist_reconciled_position(state: &PillState, window: id) {
-    let (rect, monitor) = pill_geometry(window);
-    // The retained area is what a later unplug remaps from, so a reconcile that
-    // moves the pill onto another panel has to record that panel's geometry. Left
-    // stale, the next unplug would remap from the panel the pill already left.
-    if let Some(area) = monitor {
-        state.saved_work_area.set(flip_primary_basis(
-            rust_pill_shared::edge::MonitorRect::without_id(
-                area.x,
-                area.y,
-                area.width,
-                area.height,
-            ),
-            unsafe { primary_top_for(window) },
-        ));
+///
+/// `destination` is resolved from the visible pill rather than from the window,
+/// because the window is a transparent canvas that can keep most of itself on the
+/// display the pill just left. Both the stored area and the published one come
+/// from it, so the record never pairs one panel's token with another's geometry.
+unsafe fn persist_reconciled_position(
+    state: &PillState,
+    window: id,
+    primary_top: f64,
+    destination: Option<rust_pill_shared::edge::MonitorRect>,
+) {
+    let (rect, _) = pill_geometry(window);
+    if let Some(area) = destination {
+        state
+            .saved_work_area
+            .set(flip_primary_basis(area, primary_top));
     }
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
             true,
             Some(rect),
-            monitor,
+            destination.map(report_area),
+            state.saved_display_id.get(),
+        ),
+    });
+}
+
+/// Publish the position the window holds now, with the area and token of the
+/// display the visible pill sits on.
+///
+/// Used when a layout change altered the record without moving the window: a work
+/// area that shrank, or a stationary window handed to the neighbouring display.
+/// The desktop keeps the last report as the saved position, so a change left
+/// unpublished is remapped against on the next launch.
+unsafe fn publish_current_position(
+    state: &PillState,
+    window: id,
+    areas: &[rust_pill_shared::edge::MonitorRect],
+    primary_top: f64,
+) {
+    let frame = window_frame(window);
+    let rect = to_top_down(frame, primary_top);
+    let (offset, size) = current_footprint(state, frame.size.width, frame.size.height);
+    let centre = (
+        rect.x + offset.0 + size.0 / 2.0,
+        rect.y + offset.1 + size.1 / 2.0,
+    );
+    let area = rust_pill_shared::layout::work_area_of(areas, centre);
+    if let Some(area) = area {
+        state
+            .saved_work_area
+            .set(flip_primary_basis(area, primary_top));
+    }
+    state.saved_display_id.set(area.and_then(|area| area.id));
+    ipc::send(&OutMessage::PositionChanged {
+        report: rust_pill_shared::restore::PositionReport::new(
+            true,
+            Some(rect),
+            area.map(report_area),
             state.saved_display_id.get(),
         ),
     });
@@ -2778,25 +2854,31 @@ unsafe fn setup(
         // the collapsed size.
         let resting_pill_w = MIN_PILL_WIDTH;
         let resting_pill_h = MIN_PILL_HEIGHT;
+        // The pill's visible footprint, not the OS window. The window is a large
+        // transparent canvas with the pill drawn inside it, so clamping the canvas
+        // pulls a pill parked at an edge inward by hundreds of pixels, and the idle
+        // tick in `reposition_window` then puts it back: the restore looks like it
+        // was ignored.
+        //
+        // The pill starts collapsed, so its resting arrangement is the shared one:
+        // centred, sitting `COLLAPSED_BOTTOM_INSET` above the window's bottom edge.
+        // The restore also asks for the saved record's window size, whose offsets
+        // differ, so the footprint is carried to whichever size it is asking about
+        // rather than reusing this one.
+        let live_footprint = rust_pill_shared::restore::centered_bottom_footprint(
+            (window_w, window_h),
+            (resting_pill_w, resting_pill_h),
+            COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+        );
         let placement = rust_pill_shared::restore::restore(
             parked,
             &display_rects,
             (window_w, window_h),
-            |work, _window| {
-                // The pill's visible footprint, not the OS window. The window is
-                // a large transparent canvas with the pill drawn inside it, so
-                // clamping the canvas pulls a pill parked at an edge inward by
-                // hundreds of pixels, and the idle tick in `reposition_window`
-                // then puts it back: the restore looks like it was ignored.
-                //
-                // The pill starts collapsed, so its resting arrangement is the
-                // shared one: centred, sitting `COLLAPSED_BOTTOM_INSET` above the
-                // window's bottom edge.
-                let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
+            |work, window| {
+                let (offset, size) = rust_pill_shared::restore::scaled_footprint(
+                    live_footprint,
                     (window_w, window_h),
-                    (resting_pill_w, resting_pill_h),
-                    COLLAPSED_BOTTOM_INSET
-                        + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+                    window,
                 );
                 rust_pill_shared::restore::footprint_bounds(work, offset, size)
             },

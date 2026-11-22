@@ -153,7 +153,11 @@ impl Gfx {
                 bitmap,
                 width,
                 height,
-                content_scale: 1.0,
+                // Read from the surface, not assumed: a window created at a
+                // display's own scale starts out larger than the canvas, and every
+                // caller that converts canvas units into window pixels has to know
+                // that from the first frame.
+                content_scale: surface_scale(width, height),
                 save_stack: Vec::new(),
                 clip_kinds: Vec::new(),
                 layer_masks: Vec::new(),

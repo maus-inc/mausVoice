@@ -558,6 +558,38 @@ pub fn centered_bottom_footprint(
     )
 }
 
+/// A footprint measured on one window, carried to another window size.
+///
+/// The canvas is a fixed layout mapped onto the surface, so a footprint measured
+/// on one window scales with the window width. [`restore`] asks for bounds at two
+/// window sizes, the one it is placing into and the one the record was saved
+/// from, and a caller only has the live footprint for the first. Scaling it is
+/// what keeps the carry-over fraction measured against the room the saved origin
+/// actually came from: the offsets are window-size dependent, so reusing the live
+/// one for the parked size shifts every remap by the difference.
+pub fn scaled_footprint(
+    footprint: ((f64, f64), (f64, f64)),
+    from_window: (f64, f64),
+    to_window: (f64, f64),
+) -> ((f64, f64), (f64, f64)) {
+    let usable =
+        |size: (f64, f64)| size.0 > 0.0 && size.1 > 0.0 && size.0.is_finite() && size.1.is_finite();
+    if !usable(from_window) || !usable(to_window) {
+        return footprint;
+    }
+    // The smaller ratio absorbs rounding, the same way `surface_scale` reads the
+    // mapping Windows hands the pill after a scale change.
+    let factor = (to_window.0 / from_window.0).min(to_window.1 / from_window.1);
+    if !factor.is_finite() || factor <= 0.0 || factor == 1.0 {
+        return footprint;
+    }
+    let ((offset_x, offset_y), (width, height)) = footprint;
+    (
+        (offset_x * factor, offset_y * factor),
+        (width * factor, height * factor),
+    )
+}
+
 /// Where the origin sat inside the display, as a fraction of the room it could
 /// slide, clamped to `0.0` to `1.0`. Returns `0.0` when there is no room.
 /// The fraction and the inverse, re-exported so the remap math has one home.
@@ -1013,6 +1045,64 @@ mod tests {
                 "display":{"x":0.0,"y":0.0,"width":1920.0,"height":1040.0}}"#
         )
         .is_none());
+    }
+
+    /// A restore asks for bounds at the saved window size as well as the live
+    /// one, and the footprint offsets are window-size dependent. Carrying the
+    /// live footprint to the saved size has to reproduce the arrangement that
+    /// size actually had, or the carry-over fraction is measured against a room
+    /// the saved origin was never clamped into.
+    #[test]
+    fn a_footprint_carried_across_a_window_size_matches_that_size_arrangement() {
+        let work = rect(0.0, 0.0, 1920.0, 1040.0);
+        let saved_window = (450.0, 543.0);
+        let live_window = (300.0, 362.0);
+        let saved = centered_bottom_footprint(
+            saved_window,
+            (72.0, 9.0),
+            9.0 + crate::placement::below_slot_extra(48.0),
+        );
+        let live = scaled_footprint(saved, saved_window, live_window);
+        // The same arrangement, expressed on the smaller window.
+        let expected = centered_bottom_footprint(
+            live_window,
+            (48.0, 6.0),
+            6.0 + crate::placement::below_slot_extra(32.0),
+        );
+        assert!((live.0 .0 - expected.0 .0).abs() < 0.01, "{live:?}");
+        assert!((live.1 .0 - expected.1 .0).abs() < 0.01, "{live:?}");
+
+        // Reusing the saved footprint for the live window is the bug: the clamp
+        // it reports is tens of pixels off the room the live pill occupies.
+        let reused = footprint_bounds(work, saved.0, saved.1);
+        let scaled = footprint_bounds(work, live.0, live.1);
+        assert!(
+            (reused.max_x - scaled.max_x).abs() > 1.0,
+            "the two window sizes clamp to the same room, so this test proves nothing"
+        );
+    }
+
+    /// The same window size, a degenerate size and a zero ratio all return the
+    /// footprint untouched, so a caller can pass any size without a guard.
+    #[test]
+    fn a_footprint_carried_to_its_own_size_is_unchanged() {
+        let footprint = ((10.0, 20.0), (48.0, 6.0));
+        assert_eq!(
+            scaled_footprint(footprint, (300.0, 362.0), (300.0, 362.0)),
+            footprint
+        );
+        assert_eq!(
+            scaled_footprint(footprint, (0.0, 0.0), (300.0, 362.0)),
+            footprint
+        );
+        assert_eq!(
+            scaled_footprint(footprint, (300.0, 362.0), (0.0, 0.0)),
+            footprint
+        );
+        assert_eq!(
+            scaled_footprint(footprint, (f64::NAN, 362.0), (300.0, 362.0)),
+            footprint
+        );
     }
 
     /// The bug this function exists to prevent: restore and idle clamped

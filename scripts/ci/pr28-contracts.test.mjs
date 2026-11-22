@@ -88,28 +88,38 @@ const handlerBody = (path, variant) => {
   // that names a variant looks the same as the arm that matches it.
   const text = readRaw(path);
   const snake = variant.replace(/(?<!^)([A-Z])/g, "_$1").toLowerCase();
-  const fnAt = text.indexOf(`fn on_${snake}(`);
+  // The arm that dispatches to this variant, from its line to the next arm. Found
+  // by its own line rather than by substring, so a mention in a comment is not one.
+  const arm = new RegExp(`^ *InMessage::${variant}\\b`);
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => arm.test(line));
+  let armText = "";
+  if (start !== -1) {
+    const indent = /^ */.exec(lines[start])[0].length;
+    const next = new RegExp(`^ {0,${indent}}InMessage::[A-Z]`);
+    let end = start + 1;
+    while (end < lines.length && !next.test(lines[end])) end += 1;
+    armText = lines.slice(start, end).join("\n");
+  }
+  const fnName = `on_${snake}`;
+  const fnAt = text.indexOf(`fn ${fnName}(`);
   if (fnAt !== -1) {
-    const start = text.lastIndexOf("\n", fnAt) + 1;
+    // A named handler only counts while an arm still calls it. A function left
+    // behind by a removed arm reads as a handler while the runtime ignores the
+    // message, so every guard built on it would pass over dead code.
+    if (!armText.includes(`${fnName}(`)) return "";
+    const fnStart = text.lastIndexOf("\n", fnAt) + 1;
     let depth = 0;
     for (let i = text.indexOf("{", fnAt); i < text.length; i += 1) {
       if (text[i] === "{") depth += 1;
       else if (text[i] === "}") {
         depth -= 1;
-        if (depth === 0) return collapse(text.slice(start, i + 1));
+        if (depth === 0) return collapse(text.slice(fnStart, i + 1));
       }
     }
+    return "";
   }
-  // Otherwise an inline arm, found by its own line rather than by substring.
-  const arm = new RegExp(`^ *InMessage::${variant}\\b`);
-  const lines = text.split("\n");
-  const start = lines.findIndex((line) => arm.test(line));
-  if (start === -1) return "";
-  const indent = /^ */.exec(lines[start])[0].length;
-  const next = new RegExp(`^ {0,${indent}}InMessage::[A-Z]`);
-  let end = start + 1;
-  while (end < lines.length && !next.test(lines[end])) end += 1;
-  return collapse(lines.slice(start, end).join("\n"));
+  return collapse(armText);
 };
 
 const PATHS = [
@@ -1176,9 +1186,11 @@ describe("PR28 ring-alpha render-loop policy", () => {
       ["macApp", source.macApp],
     ]) {
       const arm = keep(src, name);
+      // The report is sent by the helper both arms call, so the arm itself names
+      // it rather than spelling out the message.
       assert.match(
         arm,
-        /PositionChanged/,
+        /PositionChanged|publish_current_position\(/,
         `${name}: an adopted move is never published, so a restart restores the old origin`,
       );
     }
@@ -2786,8 +2798,11 @@ describe("native gesture adapter contracts", () => {
       source.windowsPill,
       /saved_position\.and_then\(\|parked\| restore_position\(parked, win_h\)\)/,
     );
+    // The window is created at the destination display's scale, so the default
+    // corner is measured against the physical height and that scale.
     const body = scope("windowsPill", "fn default_position(");
-    assert.match(body, /default_pill_y\(wa\.top, wa_h, win_h\)/);
+    assert.match(body, /let scale = scale_for_monitor\(monitor\);/);
+    assert.match(body, /default_pill_y\(wa\.top, wa_h, win_h, scale\)/);
   });
 
   it("restores against the visible footprint, not the transparent canvas", () => {
@@ -2816,10 +2831,16 @@ describe("native gesture adapter contracts", () => {
       );
     }
     // GTK draws inside a toplevel whose transparent margins differ per axis, so
-    // it passes the visible pill rect directly.
+    // it passes the visible pill rect directly. The restore asks about the saved
+    // record's window size as well as this one, so the rect is carried to the size
+    // being asked about rather than reused for both.
     assert.match(
       source.gtkX11,
-      /rust_pill_shared::restore::footprint_bounds\(work, \(fx, fy\), \(fw, fh\)\)/,
+      /scaled_footprint\(\s*\(\(fx, fy\), \(fw, fh\)\),\s*\(window_w, window_h\),\s*window,\s*\)/,
+    );
+    assert.match(
+      source.gtkX11,
+      /rust_pill_shared::restore::footprint_bounds\(work, offset, size\)/,
     );
   });
 
@@ -2896,7 +2917,8 @@ describe("native gesture adapter contracts", () => {
     // `[\s\S]` rather than `[^}]`, because the log line in this branch
     // interpolates `{err}` and the closing brace of that interpolation ended a
     // `[^}]*` before the rest of the branch.
-    const forgetErrorBranch = /Err\(err\) => \{[\s\S]*?ForgetOutcome::DeliveryFailed/;
+    const forgetErrorBranch =
+      /Err\(err\) => \{[\s\S]*?ForgetOutcome::DeliveryFailed/;
     assert.match(
       forgetScope,
       forgetErrorBranch,
@@ -2917,6 +2939,23 @@ describe("native gesture adapter contracts", () => {
       forgetScope,
       /pill_is_running\(app\)[\s\S]{0,600}?ForgetOutcome::NoPill/,
       "pillPosition: an absent pill is not told apart from a failed delivery",
+    );
+    // The withdrawal is part of that branch, not a nearby line. The reader exited
+    // before this declaration existed, so its exit cannot withdraw it: without the
+    // call the wipe reports success with a declaration left outstanding.
+    const noPillBranch = forgetScope.slice(
+      forgetScope.indexOf("if !crate::platform::overlay::pill_is_running(app)"),
+      forgetScope.indexOf("ForgetOutcome::NoPill") +
+        "ForgetOutcome::NoPill".length,
+    );
+    assert.ok(
+      noPillBranch.length > 0,
+      "pillPosition: the absent-pill branch is not where this guard looks",
+    );
+    assert.match(
+      noPillBranch,
+      /withdraw_erase\(declaration\); return ForgetOutcome::NoPill/,
+      "pillPosition: the absent-pill branch leaves the declaration it made outstanding",
     );
     // Both reset paths hold it across the clear and the send.
     for (const name of ["pillProcess", "macOverlay"]) {
@@ -3592,7 +3631,7 @@ describe("native gesture adapter contracts", () => {
     // from, so a caller that stops passing it fails here.
     assert.match(
       run,
-      /initial_state\(\s*restored\.map\(\|\(origin, _, _\)\| origin\),\s*restored_display_id,\s*restored_work_area,\s*\)/,
+      /initial_state\(\s*restored\.map\(\|placement\| placement\.origin\),\s*restored_display_id,\s*restored_work_area,\s*\)/,
       "windowsPill: run does not hand the factory the restored placement",
     );
     const seeded = scope("windowsPill", "fn initial_state(");
@@ -3751,14 +3790,21 @@ describe("native gesture adapter contracts", () => {
   });
 
   it("parks and clamps Windows content without counting transparent selector rows", () => {
-    assert.match(source.windowsPill, /win_h\.clamp\(0, WINDOW_H_TYPING\)/);
+    // The clamp is the canvas as the window shows it, so it scales with the
+    // surface: clamping a 150% window to the logical 362 rows would let it hang
+    // below the work area by the difference.
     assert.match(
       source.windowsPill,
-      /work_area_height - content_canvas_height\(win_h\) - MARGIN_BOTTOM/,
+      /let canvas = \(WINDOW_H_TYPING as f64 \* scale\)\.round\(\) as i32;/,
+    );
+    assert.match(source.windowsPill, /win_h\.clamp\(0, canvas\.max\(0\)\)/);
+    assert.match(
+      source.windowsPill,
+      /work_area_height - content_canvas_height\(win_h, scale\) - margin/,
     );
     assert.match(
       source.windowsPill,
-      /wa\.bottom - content_canvas_height\(win_h\)/,
+      /wa\.bottom - content_canvas_height\(win_h, state\.content_scale\.get\(\)\)/,
     );
   });
 

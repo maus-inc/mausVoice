@@ -95,7 +95,7 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     // record's own area is the one it was saved against, so a position remapped
     // off a missing display would be retained against that missing display, and
     // the next unplug would carry the wrong fraction to the survivor.
-    let restored_work_area = restored.map(|(_, _, work_area)| work_area);
+    let restored_work_area = restored.map(|placement| placement.work_area);
     // A record that has been restored is a record whose display was named, so the
     // identity survives into this process's state and is republished with the
     // next save. Losing it here would silently downgrade every later save to
@@ -105,11 +105,20 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     // saved one when that display is gone: reporting the saved token beside the
     // surviving display's geometry would store a rectangle and a name that
     // describe two different panels.
-    let restored_display_id = restored.and_then(|(_, display_id, _)| display_id);
-    let (wx, wy) = match restored {
-        Some((origin, _, _)) => origin,
-        None => default_position(win_h),
+    let restored_display_id = restored.and_then(|placement| placement.display_id);
+    // The window is created at the destination display's own scale. A pill saved
+    // on a 150% display comes back at 150%, so its footprint keeps the place the
+    // record measured instead of shrinking toward the window's corner and letting
+    // Windows move the window to compensate on the first DPI notification.
+    let (wx, wy, scale) = match restored {
+        Some(placement) => (placement.origin.0, placement.origin.1, placement.scale),
+        None => {
+            let ((x, y), scale) = default_position(win_h);
+            (x, y, scale)
+        }
     };
+    let win_w = (WINDOW_W_TYPING as f64 * scale).round().max(1.0) as i32;
+    let win_h = (win_h as f64 * scale).round().max(1.0) as i32;
     let hwnd = unsafe {
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -118,7 +127,7 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
             WS_POPUP,
             wx,
             wy,
-            WINDOW_W_TYPING,
+            win_w,
             win_h,
             None,
             None,
@@ -131,14 +140,17 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     HWND_CELL.with(|c| c.set(hwnd));
     eprintln!("[pill] window created in {:?}", t0.elapsed());
 
-    let gfx = Gfx::new(WINDOW_W_TYPING, win_h).expect("Failed to create D2D context");
+    let gfx = Gfx::new(win_w, win_h).expect("Failed to create D2D context");
     eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
 
     let state = initial_state(
-        restored.map(|(origin, _, _)| origin),
+        restored.map(|placement| placement.origin),
         restored_display_id,
         restored_work_area,
     );
+    // Mirrored from the surface, so every canvas-to-window conversion describes
+    // the bitmap the target actually holds.
+    state.content_scale.set(gfx.content_scale());
     // Record the arrangement the window was just placed against, before the first
     // poll. A fresh poll treats its first observation as the baseline and
     // reconciles nothing, so an output removed between this placement and that
@@ -1001,12 +1013,16 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             // Answering with the stored token instead pairs fresh geometry with the
             // display the pill was on when it was last saved, and the next launch
             // remaps against that panel's work area.
+            //
+            // No fallback to the remembered token: the work area below comes from
+            // the live lookup, and a saved token beside a live area names two
+            // panels. An unnamed display therefore reports no token at all, which
+            // is the honest record, and restore falls back to geometry.
             let footprint = live_pill_footprint(state);
             let display_id = rust_pill_shared::layout::display_id_of(
                 &areas,
                 visible_pill_centre((rect.x, rect.y), footprint),
-            )
-            .or_else(|| state.saved_display_id.get());
+            );
             ipc::send(&OutMessage::PositionChanged {
                 report: rust_pill_shared::restore::PositionReport::new(
                     state.has_saved_position.get(),
@@ -1601,20 +1617,25 @@ fn monitor_display_id(monitor: HMONITOR) -> Option<u64> {
 /// Resolving this before `CreateWindowExW` is what makes a restore invisible.
 /// The window is shown by a later message, but it is created at this origin, so
 /// placing it afterwards would be a visible move on the first frame.
-fn default_position(win_h: i32) -> (i32, i32) {
+fn default_position(win_h: i32) -> ((i32, i32), f64) {
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
         let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
         let Some(info) = query_monitor_info(monitor) else {
-            return (0, 0);
+            return ((0, 0), 1.0);
         };
+        // The window is created at this display's scale, so the default corner has
+        // to be measured against a window that size.
+        let scale = scale_for_monitor(monitor);
         let wa = info.rcWork;
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
-        let x = default_pill_x(wa.left, wa_w, WINDOW_W_TYPING).round() as i32;
-        let y = default_pill_y(wa.top, wa_h, win_h);
-        (x, y)
+        let win_w = (WINDOW_W_TYPING as f64 * scale).round() as i32;
+        let win_h = (win_h as f64 * scale).round() as i32;
+        let x = default_pill_x(wa.left, wa_w, win_w).round() as i32;
+        let y = default_pill_y(wa.top, wa_h, win_h, scale);
+        ((x, y), scale)
     }
 }
 
@@ -1622,30 +1643,90 @@ fn default_position(win_h: i32) -> (i32, i32) {
 ///
 /// `None` means the stored display is gone and nothing in the current layout
 /// relates to it, so the caller keeps the default placement instead of guessing.
-fn restore_position(
-    parked: ParkedWindow,
-    win_h: i32,
-) -> Option<((i32, i32), Option<u64>, MonitorRect)> {
+/// Where a restore placed the window, and the scale it has to be created at.
+#[derive(Clone, Copy)]
+struct RestoredPlacement {
+    origin: (i32, i32),
+    display_id: Option<u64>,
+    work_area: MonitorRect,
+    scale: f64,
+}
+
+fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<RestoredPlacement> {
     // Identity-aware, because the record names a display: matching it against
     // rectangles that carry no token reduces every restore to geometry, so a pill
     // saved on a display that was resized or rearranged comes back on whichever
     // display happens to sit nearest its old origin.
     let work_areas = enumerate_work_areas_with_identity()?;
-    let placement = rust_pill_shared::restore::restore(
-        parked,
-        &work_areas,
-        (WINDOW_W_TYPING as f64, win_h as f64),
-        |work, (window_w, window_h)| window_clamp_bounds_for_size(work, window_w, window_h),
-    );
+    let live_size = (WINDOW_W_TYPING as f64, win_h as f64);
+    // The scale the window will be created at, filled in by the destination
+    // bounds below because only `restore` knows which display it chose.
+    let mut destination_scale = 1.0;
+    let placement =
+        rust_pill_shared::restore::restore(parked, &work_areas, live_size, |work, window| {
+            if window == live_size {
+                // The window is recreated at the destination display's own scale,
+                // so the clamp has to describe that window. Without this a pill
+                // saved at 150% came back at 100%: its footprint sat a third
+                // closer to the window's corner, and the visible pill moved.
+                destination_scale = scale_for_area(work);
+                window_clamp_bounds_for_size(
+                    work,
+                    live_size.0 * destination_scale,
+                    live_size.1 * destination_scale,
+                )
+            } else {
+                // The record's own size is already physical, at the scale it was
+                // saved at, so it needs no conversion.
+                window_clamp_bounds_for_size(work, window.0, window.1)
+            }
+        });
     match placement {
         rust_pill_shared::restore::Placement::Restore {
             x,
             y,
             display_id,
             work_area,
-        } => Some(((x.round() as i32, y.round() as i32), display_id, work_area)),
+        } => Some(RestoredPlacement {
+            origin: (x.round() as i32, y.round() as i32),
+            display_id,
+            work_area,
+            scale: destination_scale,
+        }),
         rust_pill_shared::restore::Placement::PlatformDefault => None,
     }
+}
+
+/// The scale Windows reports for a monitor, as a multiple of 96 DPI.
+///
+/// Every stored origin and work area is physical, while the pill lays itself out
+/// on a logical canvas, so a window has to be built at the scale of the display it
+/// lands on. A monitor that cannot be queried answers 1.0, which is the old
+/// behaviour and never worse than guessing a scale.
+fn scale_for_monitor(monitor: HMONITOR) -> f64 {
+    let mut dpi_x = 96u32;
+    let mut dpi_y = 96u32;
+    let queried = unsafe {
+        windows::Win32::UI::HiDpi::GetDpiForMonitor(
+            monitor,
+            windows::Win32::UI::HiDpi::MDT_EFFECTIVE_DPI,
+            &mut dpi_x,
+            &mut dpi_y,
+        )
+    };
+    if queried.is_err() || dpi_x == 0 {
+        return 1.0;
+    }
+    dpi_x as f64 / 96.0
+}
+
+/// The scale of the display a work area belongs to.
+fn scale_for_area(area: rust_pill_shared::edge::MonitorRect) -> f64 {
+    let centre = POINT {
+        x: (area.x + area.width / 2.0).round() as i32,
+        y: (area.y + area.height / 2.0).round() as i32,
+    };
+    scale_for_monitor(unsafe { MonitorFromPoint(centre, MONITOR_DEFAULTTONEAREST) })
 }
 
 /// Enumerate the work areas of the connected displays, each with its stable
@@ -1750,48 +1831,54 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             // undoing a placement the user could see. This is the system's move,
             // not a drag, so it is adopted without going through the save guard.
             let (cur_x, cur_y) = current_pill_origin(hwnd);
-            // The retained area is refreshed even when the origin did not move. A
-            // display whose work area changed under a stationary window leaves the
-            // record measuring the old rectangle, and the next disconnect computes
-            // the carry-over fraction against it. `parked.display` is the live area
-            // this resolution used.
-            if state.has_saved_position.get() && state.saved_work_area.get() != parked.display {
-                state.saved_work_area.set(parked.display);
+            // Resolved from the pill's own footprint centre, the same lookup the
+            // `Move` branch below uses, so the retained area and the retained
+            // token always name one display.
+            let centre = visible_pill_centre((cur_x as f64, cur_y as f64), (offset, size));
+            let live_area =
+                rust_pill_shared::layout::work_area_of(&areas, centre).unwrap_or(parked.display);
+            let display = rust_pill_shared::layout::display_id_of(&areas, centre);
+            let saved = state.has_saved_position.get();
+            let origin_moved =
+                saved && (cur_x != state.saved_x.get() || cur_y != state.saved_y.get());
+            // A work area that shrank, or a stationary window handed to the
+            // neighbouring display, is a record change on its own. The desktop
+            // keeps the last report, so leaving it unpublished means a restart
+            // remaps against a rectangle the display no longer has.
+            let area_changed = saved
+                && (state.saved_work_area.get() != live_area
+                    || state.saved_display_id.get() != display);
+            if area_changed {
+                state.saved_work_area.set(live_area);
+                // The origin may not have moved, but the display it names can
+                // still have changed under it: a DPI change can hand a stationary
+                // window to the neighbouring display. Keeping the old token would
+                // pair the adopted geometry with the display the pill just left.
+                state.saved_display_id.set(display);
             }
-            if state.has_saved_position.get()
-                && (cur_x != state.saved_x.get() || cur_y != state.saved_y.get())
-            {
+            if origin_moved {
                 state.saved_x.set(cur_x);
                 state.saved_y.set(cur_y);
-                // The origin moved, so the display it names may have with it: a
-                // DPI change can hand the window to the neighbouring display.
-                // Keeping the old token would pair the adopted geometry with the
-                // display the pill just left, and the next launch would restore it
-                // against the wrong panel. Resolved from the pill's own footprint
-                // centre, the same way the `Move` branch below names its display.
-                let adopted_centre =
-                    visible_pill_centre((cur_x as f64, cur_y as f64), (offset, size));
-                state
-                    .saved_display_id
-                    .set(rust_pill_shared::layout::display_id_of(
-                        &areas,
-                        adopted_centre,
-                    ));
-                if let Some(area) = rust_pill_shared::layout::work_area_of(&areas, adopted_centre) {
-                    state.saved_work_area.set(area);
-                }
+                state.saved_display_id.set(display);
+            }
+            if origin_moved || area_changed {
                 // The desktop holds the record, and the record is now wrong: it
-                // still names the origin from before the system moved the window.
-                // Adopting the move in this process only would leave a restart
-                // restoring the pill to the old place, so the adoption is published
+                // still names the origin and area from before the system moved the
+                // window. Adopting the change in this process only would leave a
+                // restart restoring the pill to the old place, so it is published
                 // here rather than waiting for a report that may never come.
-                let (published, monitor) = current_pill_geometry(hwnd);
+                let (published, _) = current_pill_geometry(hwnd);
                 ipc::send(&OutMessage::PositionChanged {
                     report: rust_pill_shared::restore::PositionReport::new(
                         true,
                         Some(published),
-                        work_area_for_report(&areas, monitor, &published, (offset, size)),
-                        state.saved_display_id.get(),
+                        Some(Rect {
+                            x: live_area.x,
+                            y: live_area.y,
+                            width: live_area.width,
+                            height: live_area.height,
+                        }),
+                        display,
                     ),
                 });
             }
@@ -1893,20 +1980,37 @@ fn visible_pill_centre(origin: (f64, f64), footprint: ((f64, f64), (f64, f64))) 
 
 // Drawing and the native entry use the fixed typing canvas. Extra selector
 // rows belong below it; they must not lift the parked content or panel clamp.
-fn content_canvas_height(win_h: i32) -> i32 {
-    win_h.clamp(0, WINDOW_H_TYPING)
+//
+// The clamp is the canvas as it appears in the window, so it scales: at 150% the
+// canvas occupies 543 rows, and clamping to the logical 362 would let the window
+// hang below the work area by the difference.
+fn content_canvas_height(win_h: i32, scale: f64) -> i32 {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let canvas = (WINDOW_H_TYPING as f64 * scale).round() as i32;
+    win_h.clamp(0, canvas.max(0))
 }
 
 fn default_pill_x(work_area_left: i32, work_area_width: i32, win_w: i32) -> f64 {
     work_area_left as f64 + (work_area_width as f64 - win_w as f64) / 2.0
 }
 
-fn default_pill_y(work_area_top: i32, work_area_height: i32, win_h: i32) -> i32 {
+fn default_pill_y(work_area_top: i32, work_area_height: i32, win_h: i32, scale: f64) -> i32 {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let margin = (MARGIN_BOTTOM as f64 * scale).round() as i32;
     let placement = PILL_PLACEMENT.with(|c| c.get());
     if placement == PILL_PLACEMENT_TOP {
-        work_area_top + MARGIN_BOTTOM - (WINDOW_H_TYPING - DICTATION_WINDOW_HEIGHT)
+        let offset = ((WINDOW_H_TYPING - DICTATION_WINDOW_HEIGHT) as f64 * scale).round() as i32;
+        work_area_top + margin - offset
     } else {
-        work_area_top + work_area_height - content_canvas_height(win_h) - MARGIN_BOTTOM
+        work_area_top + work_area_height - content_canvas_height(win_h, scale) - margin
     }
 }
 
@@ -1942,11 +2046,18 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         // monitors (and clamp into the wrong work area) whenever the pointer
         // crossed a screen edge. Drags and their release settles never reach
         // this function; the frame loop positions them on the cursor's monitor.
-        let (px, py, pw, ph) =
-            draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
-        let (cox, coy) = state.content_offset();
-        let footprint_cx = (cox + px + pw / 2.0).round() as i32;
-        let footprint_cy = (coy + py + ph / 2.0).round() as i32;
+        // The footprint the renderer is drawing, in window pixels. The canvas is
+        // mapped onto the surface after a scale change, so canvas offsets added to
+        // a screen-pixel origin would name a spot inside a bitmap the window no
+        // longer has, and the lookup could resolve the neighbouring monitor.
+        let footprint = live_pill_footprint(state);
+        let centre_of = |origin: (f64, f64)| {
+            let (cx, cy) = visible_pill_centre(origin, footprint);
+            POINT {
+                x: cx.round() as i32,
+                y: cy.round() as i32,
+            }
+        };
         // One question, answered in one place: is this pill due a placement, and
         // does that placement follow the pointer? The shared model owns both
         // halves so the three pills cannot answer differently.
@@ -1961,16 +2072,10 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let monitor = if reset_to_cursor {
             MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
         } else if state.has_saved_position.get() {
-            let saved_center = POINT {
-                x: state.saved_x.get() + footprint_cx,
-                y: state.saved_y.get() + footprint_cy,
-            };
+            let saved_center = centre_of((state.saved_x.get() as f64, state.saved_y.get() as f64));
             MonitorFromPoint(saved_center, MONITOR_DEFAULTTONEAREST)
         } else {
-            let probe = POINT {
-                x: current.left + footprint_cx,
-                y: current.top + footprint_cy,
-            };
+            let probe = centre_of((current.left as f64, current.top as f64));
             MonitorFromPoint(probe, MONITOR_DEFAULTTONEAREST)
         };
         let Some(info) = query_monitor_info(monitor) else {
@@ -2012,7 +2117,7 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             bounds.clamp_point(state.saved_x.get() as f64, state.saved_y.get() as f64)
         } else {
             let x = default_pill_x(wa.left, wa_w, win_w);
-            let y = default_pill_y(wa.top, wa_h, win_h);
+            let y = default_pill_y(wa.top, wa_h, win_h, state.content_scale.get());
             bounds.clamp_point(x, y as f64)
         };
         // Win32 origins must be integral. The f64 default center can land
@@ -2183,10 +2288,21 @@ fn window_clamp_bounds_for_size(work: MonitorRect, window_w: f64, window_h: f64)
     // bottom edge. That is exactly what `window_clamp_bounds` derives from
     // `pill_position` once a frame has run, so a restored origin is not nudged
     // by the first cursor tick.
+    //
+    // The window's own width says which scale it was built at, because the canvas
+    // is a fixed logical layout: a physical window is that layout times the scale.
+    // The pill and its reserve scale with it, so a 150% window reserves a 150%
+    // footprint instead of clamping the pill a third of the way inside.
+    let scale = if window_w.is_finite() && window_w > 0.0 {
+        window_w / WINDOW_W_TYPING as f64
+    } else {
+        1.0
+    };
     let (offset, size) = rust_pill_shared::restore::centered_bottom_footprint(
         (window_w, window_h),
-        (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
-        COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+        (MIN_PILL_WIDTH * scale, MIN_PILL_HEIGHT * scale),
+        (COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT))
+            * scale,
     );
     rust_pill_shared::restore::footprint_bounds(work, offset, size)
 }
@@ -2211,7 +2327,7 @@ fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> D
             wa.left,
             wa.top,
             wa.right - win_w,
-            wa.bottom - content_canvas_height(win_h),
+            wa.bottom - content_canvas_height(win_h, state.content_scale.get()),
         )
     };
 
@@ -3714,7 +3830,10 @@ mod tests {
     #[test]
     fn default_pill_y_bottom_anchors_to_bottom() {
         PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_BOTTOM));
-        assert_eq!(default_pill_y(0, 1080, 362), 1080 - 362 - MARGIN_BOTTOM);
+        assert_eq!(
+            default_pill_y(0, 1080, 362, 1.0),
+            1080 - 362 - MARGIN_BOTTOM
+        );
     }
 
     #[test]
@@ -3723,11 +3842,11 @@ mod tests {
         let full_h =
             WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
         for work_top in [-1080, 0, 50] {
-            let y = default_pill_y(work_top, 1080, full_h);
-            assert_eq!(y, default_pill_y(work_top, 1080, WINDOW_H_TYPING));
+            let y = default_pill_y(work_top, 1080, full_h, 1.0);
+            assert_eq!(y, default_pill_y(work_top, 1080, WINDOW_H_TYPING, 1.0));
             assert_eq!(y + WINDOW_H_TYPING, work_top + 1080 - MARGIN_BOTTOM);
             // Panel clamp must not undo the default placement on the next tick.
-            assert!(y <= work_top + 1080 - content_canvas_height(full_h));
+            assert!(y <= work_top + 1080 - content_canvas_height(full_h, 1.0));
         }
     }
 
