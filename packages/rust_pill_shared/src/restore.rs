@@ -1082,6 +1082,33 @@ mod tests {
         );
     }
 
+    /// A remap measures the saved origin against the room the saved window size
+    /// actually had, so the restore has to ask the caller for bounds at the parked
+    /// size as well as the live one. A callback that answers both questions with
+    /// the live size measures the carry-over fraction in a room the saved origin
+    /// was never clamped into, which moves the pill by the size difference.
+    #[test]
+    fn a_remap_asks_for_bounds_at_the_parked_window_size() {
+        let saved_display = rect(0.0, 0.0, 2560.0, 1400.0);
+        let live_display = rect(0.0, 0.0, 1920.0, 1040.0);
+        let live_window = (450.0, 543.0);
+        let record = parked(2200.0, 1200.0, saved_display);
+        let mut asked: Vec<(f64, f64)> = Vec::new();
+        let placement = restore(record, &[live_display], live_window, |work, window| {
+            asked.push(window);
+            bounds(work, window)
+        });
+        assert!(matches!(placement, Placement::Restore { .. }));
+        assert!(
+            asked.contains(&(record.width, record.height)),
+            "the saved box was never measured at the parked size: {asked:?}"
+        );
+        assert!(
+            asked.contains(&live_window),
+            "the destination box was never measured at the live size: {asked:?}"
+        );
+    }
+
     /// The same window size, a degenerate size and a zero ratio all return the
     /// footprint untouched, so a caller can pass any size without a guard.
     #[test]
