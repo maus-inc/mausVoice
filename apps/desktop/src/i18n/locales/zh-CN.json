@@ -800,6 +800,7 @@
   "record": "录音",
   "recording_failed": "录制失败",
   "recording_failed_partway_transcribing_what_was_captured": "录制中途失败。正在转写已录到的部分。",
+  "please_restart_mausvoice_to_continue": "请重启 MausVoice 以继续",
   "recording_keys": "正在记录按键...",
   "recording_stopped_duration_limit_reached": "录音已停止：已达到时长限制",
   "recording_stopped_provider_duration_limit_reached": "录音已停止：已达到服务商时长限制",

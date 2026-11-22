@@ -800,6 +800,7 @@
   "record": "Record",
   "recording_failed": "Recording failed",
   "recording_failed_partway_transcribing_what_was_captured": "Recording failed partway. Transcribing what was captured.",
+  "please_restart_mausvoice_to_continue": "Please restart MausVoice to continue",
   "recording_keys": "Recording keys...",
   "recording_stopped_duration_limit_reached": "Recording stopped: duration limit reached",
   "recording_stopped_provider_duration_limit_reached": "Recording stopped: provider duration limit reached",

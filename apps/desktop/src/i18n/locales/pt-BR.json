@@ -800,6 +800,7 @@
   "record": "Gravar",
   "recording_failed": "Falha na gravação",
   "recording_failed_partway_transcribing_what_was_captured": "A gravação falhou no meio do caminho. Transcrevendo o que foi capturado.",
+  "please_restart_mausvoice_to_continue": "Reinicie o MausVoice para continuar",
   "recording_keys": "Gravando teclas...",
   "recording_stopped_duration_limit_reached": "Gravação interrompida: limite de duração atingido",
   "recording_stopped_provider_duration_limit_reached": "Gravação interrompida: limite de duração do provedor atingido",

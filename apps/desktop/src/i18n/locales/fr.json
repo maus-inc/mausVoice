@@ -800,6 +800,7 @@
   "record": "Enregistrer",
   "recording_failed": "Échec de l'enregistrement",
   "recording_failed_partway_transcribing_what_was_captured": "L'enregistrement a échoué en cours de route. La partie captée est transcrite.",
+  "please_restart_mausvoice_to_continue": "Redémarrez MausVoice pour continuer",
   "recording_keys": "Enregistrement des touches...",
   "recording_stopped_duration_limit_reached": "Enregistrement arrêté : limite de durée atteinte",
   "recording_stopped_provider_duration_limit_reached": "Enregistrement arrêté : la limite de durée du fournisseur est atteinte",
