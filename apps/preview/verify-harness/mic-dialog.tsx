@@ -121,6 +121,9 @@ const handlers: Record<string, (args: any) => unknown> = {
 const eventCallbacks = new Map<number, (payload: unknown) => void>();
 let nextEventId = 1;
 
+(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+  unregisterListener: (_id: number) => {},
+};
 (window as any).__TAURI_INTERNALS__ = {
   // The settings dialog only ever lives in the main window, and the local-data
   // write gate refuses writes from any other label. Labelling it anything else

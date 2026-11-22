@@ -1600,6 +1600,16 @@ mod cpal_impl {
             if self.linger_millis() == 0 {
                 self.cancel_linger();
                 self.close_warm();
+            } else {
+                // Arm a deadline for finite values when a stream is held, so the
+                // retained stream closes at the saved window rather than staying
+                // open with a finite policy and no expiry.
+                let has_held = self.warm.lock().ok().is_some_and(|guard| guard.is_some());
+                if has_held && self.current_linger_deadline().is_none() {
+                    let generation = self.linger_generation.load(Ordering::SeqCst);
+                    let deadline = Instant::now() + linger;
+                    self.linger_deadline.set(Some((deadline, generation)));
+                }
             }
         }
 
@@ -1818,16 +1828,17 @@ mod cpal_impl {
                 if Instant::now() >= deadline {
                     self.linger_deadline.set(None);
                     if self.linger_generation.load(Ordering::SeqCst) == generation {
-                        self.close_warm();
+                        // `close_matching_warm` advances the generation and
+                        // returns the value it advanced to, so the retry uses
+                        // the generation that actually closed the stream rather
+                        // than a separate load that could race a concurrent
+                        // advance.
+                        let current = self
+                            .close_matching_warm(None)
+                            .unwrap_or_else(|| self.linger_generation.load(Ordering::SeqCst));
                         // A failed release retains the driver handle. Retry it
                         // periodically until it succeeds; the process-wide ALSA
                         // latch is not a handle and must not be retried.
-                        //
-                        // Re-read the generation after close_warm: a newer
-                        // capture request may have advanced it between the check
-                        // above and the release attempt, and the retry must not
-                        // close a stream that generation owns.
-                        let current = self.linger_generation.load(Ordering::SeqCst);
                         if self.release_blocked.get() && !capture_cleanup_uncertain() {
                             let _ = self.discard_unreleased_stream();
                             if self.release_blocked.get() && !capture_cleanup_uncertain() {
@@ -3185,6 +3196,23 @@ mod cpal_impl {
             Ok(())
         }
 
+        fn try_send(
+            &self,
+            task: impl FnOnce(&T) + Send + 'static,
+        ) -> Result<(), WorkerUnavailable> {
+            let worker = self.sender.as_ref().ok_or(WorkerUnavailable)?;
+            match worker.try_send(Box::new(task)) {
+                Ok(()) => Ok(()),
+                // The worker's buffer is full; drop the stale task without
+                // blocking. The worker processes the latest task in order.
+                Err(std::sync::mpsc::TrySendError::Full(_)) => Ok(()),
+                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                    self.failed.store(true, Ordering::SeqCst);
+                    Err(WorkerUnavailable)
+                }
+            }
+        }
+
         fn call<R: Send + 'static>(
             &self,
             task: impl FnOnce(&T) -> R + Send + 'static,
@@ -3481,10 +3509,11 @@ mod cpal_impl {
         }
 
         fn release_hold(&self) {
-            // Non-blocking: queue the release without waiting for the worker to
-            // process it. A stuck or wedged worker must not delay callers (such
-            // as the stop reply path) that only need to signal policy intent.
-            if let Err(error) = self.worker.send(LocalRecordingManager::release_hold) {
+            // Non-blocking: try_send returns immediately if the worker's
+            // channel buffer is full, dropping the stale policy update. A
+            // stuck or wedged worker must not delay callers (such as the
+            // stop reply path) that only need to signal policy intent.
+            if let Err(error) = self.worker.try_send(LocalRecordingManager::release_hold) {
                 log::error!("{error}");
             }
         }
@@ -3508,11 +3537,11 @@ mod cpal_impl {
         }
 
         fn set_linger(&self, linger_ms: u64) {
-            // Non-blocking: queue the linger change without waiting for the
-            // worker. A stuck worker must not delay the stop reply path.
+            // Non-blocking: try_send returns immediately if the worker's
+            // channel buffer is full, dropping the stale policy update.
             if let Err(error) = self
                 .worker
-                .send(move |r| r.set_linger(Duration::from_millis(linger_ms)))
+                .try_send(move |r| r.set_linger(Duration::from_millis(linger_ms)))
             {
                 log::error!("{error}");
             }

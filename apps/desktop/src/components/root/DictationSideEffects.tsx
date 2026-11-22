@@ -2218,7 +2218,9 @@ export const DictationSideEffects = () => {
       runToast(
         showToast({
           message: needsRestart
-            ? errorMessage
+            ? intl.formatMessage({
+                defaultMessage: "Please restart MausVoice to continue",
+              })
             : intl.formatMessage({
                 defaultMessage: "Recording failed",
               }),
