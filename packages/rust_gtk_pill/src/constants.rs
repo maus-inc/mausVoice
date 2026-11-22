@@ -7,9 +7,9 @@ pub(crate) const DICTATION_WINDOW_WIDTH: i32 = 200;
 pub(crate) const DICTATION_WINDOW_HEIGHT: i32 = 86;
 pub(crate) const MARGIN_BOTTOM: i32 = 8;
 
-/// Total hold time before the drag gesture arms. Tuned to the 350-600ms band
-/// so the gesture feels deliberate without making the user wait.
-pub(crate) const LONG_PRESS_DURATION: f64 = 0.45;
+// Total hold time before the drag gesture arms, taken from the shared crate so
+// every pill arms on the same ramp.
+pub(crate) use rust_pill_shared::LONG_PRESS_DURATION;
 /// Grace period before any long-press affordance is drawn. A normal click is
 /// far shorter than this, so quick taps never flash the progress outline.
 pub(crate) const CANCEL_FLASH_DURATION: f64 = 0.4;

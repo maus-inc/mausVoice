@@ -980,6 +980,9 @@ pub struct RingPaint {
 pub struct RingPaintInput<'a> {
     /// Ring opacity and locate state, read through the host's `RingHost`.
     pub ring: &'a RingState,
+    /// True when the outline must keep its geometry while it fades. A locate
+    /// replay under reduced motion still fades out, but nothing may move.
+    pub static_outline: bool,
     pub dragging: bool,
     pub long_press_active: bool,
     pub long_press_elapsed: f64,
@@ -1021,7 +1024,7 @@ impl RingPaint {
             input.ring.release_progress()
         };
 
-        let drift = if input.dragging || input.long_press_active {
+        let drift = if input.dragging || input.long_press_active || input.static_outline {
             0.0
         } else {
             ring_release_drift(input.ring.release_elapsed())
@@ -1484,6 +1487,16 @@ pub fn ring_alpha(held: bool, hold_elapsed: f64, release_elapsed: f64, hold_dela
 /// Outward drift of the ring while it fades after release, in pixels.
 pub fn ring_release_drift(release_elapsed: f64) -> f64 {
     RING_RELEASE_DRIFT * ease_out_cubic(release_elapsed / LONG_PRESS_RING_FADE)
+}
+
+/// Whether the outline must hold its geometry while it fades.
+///
+/// Only a locate replay under reduced motion qualifies. The replay is
+/// decorative, so the fade stays and the expansion does not. A pointer release
+/// keeps its drift, because that movement is the affordance the person just
+/// made.
+pub const fn ring_outline_is_static(locate_active: bool, reduced_motion: bool) -> bool {
+    locate_active && reduced_motion
 }
 
 /// The pill must be at least this expanded before the style tooltip appears,
@@ -2311,6 +2324,10 @@ macro_rules! impl_ring_host {
             ) -> Option<$crate::RingPaint> {
                 $crate::RingPaint::resolve(&$crate::RingPaintInput {
                     ring: &self.ring,
+                    static_outline: $crate::ring_outline_is_static(
+                        self.ring.locate_active(),
+                        $crate::RingHost::reduced_motion(self),
+                    ),
                     dragging: self.dragging.get(),
                     long_press_active: self.long_press_active.get(),
                     long_press_elapsed: self.long_press_elapsed.get(),
@@ -4605,6 +4622,76 @@ mod tests {
 
     fn idle_gesture() -> RingGesture {
         RingGesture::default()
+    }
+
+    fn paint_input(ring: &RingState, static_outline: bool) -> RingPaintInput<'_> {
+        RingPaintInput {
+            ring,
+            static_outline,
+            dragging: false,
+            long_press_active: false,
+            long_press_elapsed: 0.0,
+            inflate: 0.0,
+            wave_phase: 0.0,
+            pill_x: 10.0,
+            pill_y: 10.0,
+            pill_w: 120.0,
+            pill_h: 32.0,
+            pill_radius: 16.0,
+            hold_delay: LONG_PRESS_HOLD_DELAY,
+            hold_duration: LONG_PRESS_DURATION,
+        }
+    }
+
+    fn reduced_motion_gesture() -> RingGesture {
+        RingGesture {
+            reduced_motion: true,
+            ..RingGesture::default()
+        }
+    }
+
+    #[test]
+    fn only_a_reduced_motion_replay_freezes_the_outline() {
+        assert!(ring_outline_is_static(true, true));
+        assert!(!ring_outline_is_static(true, false));
+        assert!(!ring_outline_is_static(false, true));
+        assert!(!ring_outline_is_static(false, false));
+    }
+
+    #[test]
+    fn a_reduced_motion_replay_fades_without_moving_the_outline() {
+        let ring = RingState::new();
+        ring.start_locate(reduced_motion_gesture());
+        let first = RingPaint::resolve(&paint_input(&ring, true)).expect("visible");
+
+        for _ in 0..10 {
+            ring.tick(reduced_motion_gesture(), 1.0 / 60.0);
+        }
+        let later = RingPaint::resolve(&paint_input(&ring, true)).expect("still fading");
+
+        assert!(later.alpha < first.alpha, "the opacity fade still runs");
+        assert_eq!((later.ox, later.oy), (first.ox, first.oy));
+        assert_eq!((later.ow, later.oh), (first.ow, first.oh));
+    }
+
+    #[test]
+    fn a_replayed_outline_drifts_while_it_fades_without_reduced_motion() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        for _ in 0..40 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        let early = RingPaint::resolve(&paint_input(&ring, false)).expect("fading");
+
+        for _ in 0..10 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        let later = RingPaint::resolve(&paint_input(&ring, false)).expect("still fading");
+
+        assert!(
+            later.ow > early.ow,
+            "a normal replay expands as the outline fades"
+        );
     }
 
     #[test]

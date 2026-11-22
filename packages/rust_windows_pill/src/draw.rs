@@ -74,15 +74,18 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
         }
 
         draw_cancel_button(gfx, state, ww, wh);
+    }
 
-        // Long-press outline indicator. The ring alpha stays pinned for the whole
-        // hold and eases out after release, so the outline survives the
-        // press→drag hand-off and never vanishes under an inflated pill.
-        if state.ring.alpha() > 0.0 || rust_pill_shared::pulse_is_running(state.ring.arm_pulse()) {
-            paint_pill_attached(gfx, state, ww, wh, |gfx| {
-                draw_long_press_ring(gfx, state, ww, wh);
-            });
-        }
+    // Long-press and locate outline. The ring alpha stays pinned for the whole
+    // hold and eases out after release, so the outline survives the press→drag
+    // hand-off and never vanishes under an inflated pill. It draws with the
+    // assistant panel open too, because a locate replay answers "where is the
+    // pill" and the long-press ring is the only feedback for a hold that arms a
+    // drag, which the panel does not disable. GTK draws it the same way.
+    if state.ring.alpha() > 0.0 || rust_pill_shared::pulse_is_running(state.ring.arm_pulse()) {
+        paint_pill_attached(gfx, state, ww, wh, |gfx| {
+            draw_long_press_ring(gfx, state, ww, wh);
+        });
     }
 
     gfx.restore();

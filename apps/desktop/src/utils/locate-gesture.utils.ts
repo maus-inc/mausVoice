@@ -111,11 +111,19 @@ export const createLocateGestureDetector = (): LocateGestureDetector => {
   return {
     update(keys, now, allowed) {
       if (allowed !== activeFamily) {
-        // A different family (or disabling the gesture) invalidates any
-        // sequence in flight, even when the held keys have not changed.
         activeFamily = allowed;
-        clear();
-        if (allowed === null) return false;
+        if (allowed === null) {
+          // Nothing is tracked while the gesture is off, so a key released
+          // during that window cannot linger as pressed.
+          clear();
+          return false;
+        }
+        // A different family invalidates the sequence in flight, even when the
+        // held keys have not changed. The held keys stay in `pressed`, because
+        // clearing them would hand a long hold a fresh start time on the next
+        // snapshot and let it complete a pair as if it were a short tap.
+        tap = null;
+        pending = null;
       }
       const next = new Set(keys.map(normalizeKey));
       const fired = releaseMissing(next, now);

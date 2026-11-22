@@ -1201,12 +1201,25 @@ fn tick_transcript(state: &PillState, dt: f64) {
 }
 
 fn update_visibility(hwnd: HWND, state: &PillState) {
+    let is_active = state.phase.get() != Phase::Idle;
+    let owns_panel = state.owns_panel();
+    let locating = state.ring.locate_active();
     let should_show = rust_pill_shared::should_show_pill(
         state.visibility.get().into(),
-        state.phase.get() != Phase::Idle,
-        state.owns_panel(),
-        state.ring.locate_active(),
+        is_active,
+        owns_panel,
+        locating,
     );
+    // A locate replay can be the only reason this window is on screen, and
+    // nothing in it was meant to receive a click. Without this the pill
+    // swallows a click aimed at the app underneath and starts dictation.
+    let locate_only = rust_pill_shared::locate_is_the_only_reason_shown(
+        state.visibility.get().into(),
+        is_active,
+        owns_panel,
+        locating,
+    );
+    set_click_through(hwnd, locate_only);
 
     unsafe {
         if should_show {
@@ -1215,6 +1228,25 @@ fn update_visibility(hwnd: HWND, state: &PillState) {
             }
         } else if IsWindowVisible(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+}
+
+/// Makes the whole window transparent to the mouse while `click_through` is set.
+///
+/// `WS_EX_TRANSPARENT` is honoured for hit-testing because the window is also
+/// layered, so the click reaches the window underneath instead of the pill.
+fn set_click_through(hwnd: HWND, click_through: bool) {
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let transparent = WS_EX_TRANSPARENT.0;
+        let next = if click_through {
+            style | transparent
+        } else {
+            style & !transparent
+        };
+        if next != style {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next as isize);
         }
     }
 }

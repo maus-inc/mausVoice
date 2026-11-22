@@ -817,13 +817,27 @@ fn perform_tick() {
         }
 
         // Visibility
+        let is_active = ctx.state.phase.get() != Phase::Idle;
+        let owns_panel = ctx.state.owns_panel();
+        let locating = ctx.state.ring.locate_active();
         let should_show = rust_pill_shared::should_show_pill(
             ctx.state.visibility.get().into(),
-            ctx.state.phase.get() != Phase::Idle,
-            ctx.state.owns_panel(),
-            ctx.state.ring.locate_active(),
+            is_active,
+            owns_panel,
+            locating,
+        );
+        // A locate replay can be the only reason this window is on screen, and
+        // nothing in it was meant to receive a click. Without this the pill
+        // swallows a click aimed at the app underneath and starts dictation.
+        let locate_only = rust_pill_shared::locate_is_the_only_reason_shown(
+            ctx.state.visibility.get().into(),
+            is_active,
+            owns_panel,
+            locating,
         );
         unsafe {
+            let _: () =
+                msg_send![ctx.window, setIgnoresMouseEvents: if locate_only { YES } else { NO }];
             if should_show {
                 let _: () = msg_send![ctx.window, orderFront:nil];
             } else {
