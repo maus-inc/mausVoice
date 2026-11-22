@@ -3855,11 +3855,11 @@ mod tests {
         PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_TOP));
         let expected_offset = WINDOW_H_TYPING - DICTATION_WINDOW_HEIGHT;
         assert_eq!(
-            default_pill_y(0, 1080, 362),
+            default_pill_y(0, 1080, 362, 1.0),
             MARGIN_BOTTOM - expected_offset
         );
         assert_eq!(
-            default_pill_y(50, 1080, 362),
+            default_pill_y(50, 1080, 362, 1.0),
             50 + MARGIN_BOTTOM - expected_offset
         );
     }
