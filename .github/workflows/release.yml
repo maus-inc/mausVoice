@@ -125,7 +125,9 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: refs/heads/main
+          # Pin to the dispatch commit so these checks cannot pass on a newer
+          # main than the one the build jobs package.
+          ref: ${{ github.sha }}
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       - name: Cache cargo
@@ -480,7 +482,9 @@ jobs:
       - name: Checkout source (for auto release notes)
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: refs/heads/main
+          # Pin to the dispatch commit so the notes and scripts describe the
+          # code the installers were built from.
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Download all artifacts
