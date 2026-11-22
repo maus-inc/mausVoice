@@ -5,8 +5,7 @@ import {
   TonePreviewNoProviderError,
 } from "../../actions/tone-preview.actions";
 
-export type TonePreviewStatus =
-  "idle" | "running" | "done" | "error" | "unavailable";
+type TonePreviewStatus = "idle" | "running" | "done" | "error" | "unavailable";
 
 export const useTonePreview = (defaultSampleText: string) => {
   const [status, setStatus] = useState<TonePreviewStatus>("idle");

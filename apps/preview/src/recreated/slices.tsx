@@ -142,7 +142,7 @@ export type MicOption = {
   isDefault?: boolean;
 };
 
-export const MIC_FIXTURES: MicOption[] = [
+const MIC_FIXTURES: MicOption[] = [
   { value: "macbook-mic", label: "MacBook Pro Microphone", isDefault: true },
   { value: "usb-yeti", label: "Yeti USB Microphone" },
   { value: "bt-airpods", label: "AirPods Pro", caution: true },

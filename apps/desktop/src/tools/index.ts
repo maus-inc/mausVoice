@@ -28,7 +28,7 @@ const staticInfo = (
  * Declarative tool registry.  Adding a tool now means registering its factory
  * and metadata once; the agent and settings surfaces consume the same list.
  */
-export const TOOL_REGISTRY: ReadonlyMap<string, ToolRegistryEntry> = new Map<
+const TOOL_REGISTRY: ReadonlyMap<string, ToolRegistryEntry> = new Map<
   string,
   ToolRegistryEntry
 >([

@@ -181,7 +181,7 @@ export const openToneEditorDialog = (options: {
  *
  * Does not touch `updatedAt` — that stays owned by `setSelectedToneId`.
  */
-export const applyWritingStyleSelectionNow = (
+const applyWritingStyleSelectionNow = (
   toneId: string,
   lease?: LocalDataWriteLease,
 ): boolean => {

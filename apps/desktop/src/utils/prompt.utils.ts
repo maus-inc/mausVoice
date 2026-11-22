@@ -658,7 +658,7 @@ const transcriptionPromptByCode: Record<DictationLanguageCode, string> = {
 // this heuristic budget, so the rendered initial_prompt (terms plus
 // instruction) stays within the heuristic. An oversized prompt also raises
 // the risk of leaking into near-silent transcriptions.
-export const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
+const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
   maxEntries: 100,
   maxCharacters: 650,
 };
@@ -896,7 +896,7 @@ const PROCESSED_TRANSCRIPTION_EDITS_SCHEMA = z
 export const POST_PROCESS_TRUNCATED_WARNING =
   "The styling response was cut off at the model's output limit, so its partial reply was discarded.";
 
-export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
+const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
   edits: PROCESSED_TRANSCRIPTION_EDITS_SCHEMA,
   result: z
     .string()
