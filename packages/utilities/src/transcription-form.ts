@@ -1,10 +1,30 @@
 export type TranscriptionFormDataArgs = {
-  blob: BlobPart;
+  blob: ArrayBuffer | ArrayBufferView | Blob;
   ext: string;
   model: string;
   prompt?: string;
   language?: string;
   responseFormat?: string;
+};
+
+// A Node `Buffer` carries an `ArrayBufferLike` that may be shared, which is not
+// a `BlobPart`. Copying the viewed range keeps the bytes and the type.
+const toAudioFile = (
+  blob: ArrayBuffer | ArrayBufferView | Blob,
+  ext: string,
+): Blob => {
+  if (blob instanceof Blob) {
+    return blob;
+  }
+  const part =
+    blob instanceof ArrayBuffer
+      ? blob
+      : new Uint8Array(
+          blob.buffer as ArrayBuffer,
+          blob.byteOffset,
+          blob.byteLength,
+        );
+  return new Blob([part], { type: `audio/${ext}` });
 };
 
 /**
@@ -21,11 +41,7 @@ export const buildTranscriptionFormData = ({
   responseFormat,
 }: TranscriptionFormDataArgs): FormData => {
   const formData = new FormData();
-  formData.append(
-    "file",
-    new Blob([blob], { type: `audio/${ext}` }),
-    `audio.${ext}`,
-  );
+  formData.append("file", toAudioFile(blob, ext), `audio.${ext}`);
   formData.append("model", model);
   if (prompt) {
     formData.append("prompt", prompt);
