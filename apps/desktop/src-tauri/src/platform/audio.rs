@@ -1507,6 +1507,14 @@ mod cpal_impl {
         /// A recording manager with no active recording, preferred input, or
         /// cached device.
         pub fn new() -> Self {
+            Self::new_with_policy_generation(Arc::new(AtomicU64::new(0)))
+        }
+
+        /// A recording manager that shares its policy-generation atomic with
+        /// the caller. The caller keeps a reference so the stop path can read
+        /// the current generation without dispatching through the worker,
+        /// which would block on a stalled thread.
+        pub fn new_with_policy_generation(linger_policy_generation: Arc<AtomicU64>) -> Self {
             Self {
                 inner: Mutex::new(None),
                 preferred_input_name: Arc::new(Mutex::new(None)),
@@ -1521,7 +1529,7 @@ mod cpal_impl {
                 // that shows no microphone indicator between dictations, so it
                 // is the one that needs no consent.
                 linger_ms: Arc::new(AtomicU64::new(0)),
-                linger_policy_generation: Arc::new(AtomicU64::new(0)),
+                linger_policy_generation,
                 preroll_micros: Arc::new(AtomicU64::new(500_000)),
                 warm_open_gate: Arc::new(Mutex::new(())),
                 warm_open_attempts: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -1634,13 +1642,6 @@ mod cpal_impl {
             let millis = linger.as_millis().min(u128::from(u64::MAX)) as u64;
             self.linger_ms.store(millis, Ordering::SeqCst);
             self.linger_policy_generation.fetch_add(1, Ordering::SeqCst);
-        }
-
-        /// The current policy generation. Bumped on every [`set_linger_policy`]
-        /// call; a continuation that captured a snapshot before a change
-        /// compares its expected generation against this before applying.
-        pub fn linger_policy_generation(&self) -> u64 {
-            self.linger_policy_generation.load(Ordering::SeqCst)
         }
 
         /// Applies a policy snapshot only if no newer policy change has landed.
@@ -3179,6 +3180,10 @@ mod cpal_impl {
     struct ThreadBoundWorker<T> {
         sender: Option<std::sync::mpsc::SyncSender<WorkerTask<T>>>,
         failed: Arc<AtomicBool>,
+        /// Durable store for the most recent policy instruction when the
+        /// channel is full. The worker checks this after each tick and applies
+        /// any pending task, so the latest intent is never silently dropped.
+        latest_intent: Arc<std::sync::Mutex<Option<WorkerTask<T>>>>,
     }
 
     struct WorkerFailureGuard(Arc<AtomicBool>);
@@ -3196,6 +3201,9 @@ mod cpal_impl {
             let (sender, receiver) = std::sync::mpsc::sync_channel::<WorkerTask<T>>(1);
             let failed = Arc::new(AtomicBool::new(false));
             let worker_failed = Arc::clone(&failed);
+            let latest_intent: Arc<std::sync::Mutex<Option<WorkerTask<T>>>> =
+                Arc::new(std::sync::Mutex::new(None));
+            let worker_intent = Arc::clone(&latest_intent);
             let result = std::thread::Builder::new()
                 .name("cpal-recorder".into())
                 .spawn(move || {
@@ -3203,6 +3211,23 @@ mod cpal_impl {
                     let resource = create();
                     loop {
                         tick(&resource);
+                        // Apply any latest-intent instruction left by a
+                        // try_send_latest that could not enter the channel.
+                        // Recover from a poisoned mailbox: the guard only holds
+                        // a plain Option, so a prior panic cannot corrupt it.
+                        match worker_intent.try_lock() {
+                            Ok(mut guard) => {
+                                if let Some(task) = guard.take() {
+                                    task(&resource);
+                                }
+                            }
+                            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                                if let Some(task) = poisoned.into_inner().take() {
+                                    task(&resource);
+                                }
+                            }
+                            Err(std::sync::TryLockError::WouldBlock) => {}
+                        }
                         match receiver.recv_timeout(Duration::from_millis(25)) {
                             Ok(task) => task(&resource),
                             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -3217,7 +3242,11 @@ mod cpal_impl {
                     None
                 }
             };
-            Self { sender, failed }
+            Self {
+                sender,
+                failed,
+                latest_intent,
+            }
         }
 
         fn send(&self, task: impl FnOnce(&T) + Send + 'static) -> Result<(), WorkerUnavailable> {
@@ -3229,17 +3258,31 @@ mod cpal_impl {
             Ok(())
         }
 
-        fn try_send(
+        /// Submits a task with latest-wins semantics: when the channel is
+        /// full, the task is stored in the latest-intent mailbox instead of
+        /// being dropped. The worker applies it on its next tick. Callers stay
+        /// non-blocking and the most recent instruction is never lost.
+        fn try_send_latest(
             &self,
             task: impl FnOnce(&T) + Send + 'static,
         ) -> Result<(), WorkerUnavailable> {
             let worker = self.sender.as_ref().ok_or(WorkerUnavailable)?;
-            match worker.try_send(Box::new(task)) {
+            let boxed = Box::new(task);
+            match worker.try_send(boxed) {
                 Ok(()) => Ok(()),
-                // The worker's buffer is full; drop the incoming stale task
-                // without blocking. The worker continues processing the
-                // older tasks already queued.
-                Err(std::sync::mpsc::TrySendError::Full(_)) => Ok(()),
+                Err(std::sync::mpsc::TrySendError::Full(boxed)) => {
+                    // Channel full: preserve the latest instruction for the
+                    // worker's next tick instead of discarding it. Recover
+                    // from a poisoned mailbox: the guard only holds a plain
+                    // Option, so a prior panic cannot corrupt it. The worker
+                    // holds the lock only for a take() on its tick.
+                    let mut guard = self
+                        .latest_intent
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    *guard = Some(boxed);
+                    Ok(())
+                }
                 Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
                     self.failed.store(true, Ordering::SeqCst);
                     Err(WorkerUnavailable)
@@ -3305,16 +3348,23 @@ mod cpal_impl {
     pub struct RecordingManager {
         worker: ThreadBoundWorker<LocalRecordingManager>,
         activity: Arc<RecorderActivity>,
+        /// A direct reference to the policy-generation atomic so the stop path
+        /// can read the current generation without dispatching through the
+        /// worker, which would block on a stalled thread.
+        linger_policy_generation: Arc<AtomicU64>,
     }
 
     impl RecordingManager {
         pub fn new() -> Self {
+            let linger_policy_generation = Arc::new(AtomicU64::new(0));
+            let worker_generation = Arc::clone(&linger_policy_generation);
             Self {
                 worker: ThreadBoundWorker::new(
-                    LocalRecordingManager::new,
+                    move || LocalRecordingManager::new_with_policy_generation(worker_generation),
                     LocalRecordingManager::expire_linger,
                 ),
                 activity: Arc::new(RecorderActivity::default()),
+                linger_policy_generation,
             }
         }
     }
@@ -3543,11 +3593,15 @@ mod cpal_impl {
         }
 
         fn release_hold(&self) {
-            // Non-blocking: try_send returns immediately if the worker's
-            // channel buffer is full, dropping the stale policy update. A
-            // stuck or wedged worker must not delay callers (such as the
+            // Non-blocking and latest-wins: try_send_latest returns
+            // immediately if the worker's channel buffer is full, preserving
+            // the instruction in the latest-intent mailbox instead of dropping
+            // it. A stuck or wedged worker must not delay callers (such as the
             // stop reply path) that only need to signal policy intent.
-            if let Err(error) = self.worker.try_send(LocalRecordingManager::release_hold) {
+            if let Err(error) = self
+                .worker
+                .try_send_latest(LocalRecordingManager::release_hold)
+            {
                 log::error!("{error}");
             }
         }
@@ -3571,21 +3625,25 @@ mod cpal_impl {
         }
 
         fn set_linger(&self, linger_ms: u64) {
-            // Non-blocking: try_send returns immediately if the worker's
-            // channel buffer is full, dropping the stale policy update.
+            // Non-blocking and latest-wins: try_send_latest returns
+            // immediately if the worker's channel buffer is full, preserving
+            // the instruction in the latest-intent mailbox instead of dropping
+            // the latest policy update.
             if let Err(error) = self
                 .worker
-                .try_send(move |r| r.set_linger(Duration::from_millis(linger_ms)))
+                .try_send_latest(move |r| r.set_linger(Duration::from_millis(linger_ms)))
             {
                 log::error!("{error}");
             }
         }
 
         fn set_linger_if_current(&self, linger_ms: u64, expected_generation: u64) {
-            // Non-blocking and conditional: the worker checks the policy
-            // generation before applying, so a snapshot taken before a newer
-            // set_microphone_linger is rejected instead of overwriting it.
-            if let Err(error) = self.worker.try_send(move |r| {
+            // Non-blocking, latest-wins and conditional: the worker checks
+            // the policy generation before applying, so a snapshot taken
+            // before a newer set_microphone_linger is rejected instead of
+            // overwriting it. A full queue preserves the instruction in the
+            // latest-intent mailbox rather than dropping it.
+            if let Err(error) = self.worker.try_send_latest(move |r| {
                 r.apply_linger_if_current(Duration::from_millis(linger_ms), expected_generation)
             }) {
                 log::error!("{error}");
@@ -3593,9 +3651,11 @@ mod cpal_impl {
         }
 
         fn linger_policy_generation(&self) -> u64 {
-            self.worker
-                .call(LocalRecordingManager::linger_policy_generation)
-                .unwrap_or_default()
+            // Direct atomic read, no worker dispatch. The stop path calls this
+            // while the worker may be stalled on a slow device operation; going
+            // through `worker.call()` would block on `receiver.recv()` and hang
+            // the stop reply.
+            self.linger_policy_generation.load(Ordering::SeqCst)
         }
 
         fn status_line(&self) -> String {
