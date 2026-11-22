@@ -18,14 +18,15 @@ pub fn set_out_sender(sender: Sender<OutMessage>) {
 }
 
 pub fn send(msg: &OutMessage) -> bool {
-    let sent_via_channel = OUT_SENDER.with(|cell| {
+    // A configured channel is the only route the embedded desktop reads. If its
+    // receiver has dropped, a stdout write would report success for a message
+    // nobody receives, and the caller would clear text the desktop never saw.
+    if let Some(result) = OUT_SENDER.with(|cell| {
         cell.borrow()
             .as_ref()
-            .map(|s| s.send(msg.clone()).is_ok())
-            .unwrap_or(false)
-    });
-    if sent_via_channel {
-        return true;
+            .map(|sender| sender.send(msg.clone()))
+    }) {
+        return result.is_ok();
     }
     let mut stdout = io::stdout().lock();
     if serde_json::to_writer(&mut stdout, msg).is_err() {

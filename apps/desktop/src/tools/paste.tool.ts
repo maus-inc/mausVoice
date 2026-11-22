@@ -247,9 +247,17 @@ const createOrRecoverReviewDraft = async (
     ) {
       throw error;
     }
-    state.pendingReviewMessage = await updatePendingPasteReviewDraftById(
+    const recovered = await updatePendingPasteReviewDraftById(
       conversationId,
       pendingReviewId,
+      text,
+      generation,
+    );
+    // A newer save can land while the recovery read is in flight, so converge
+    // the recovered row on the latest text exactly as the create path does.
+    state.pendingReviewMessage = await reconcileLatestExistingReviewDraft(
+      state,
+      recovered,
       text,
       generation,
     );

@@ -1,4 +1,4 @@
-import type { ToolInfo } from "@maus-inc/types";
+import type { ChatMessage, ToolInfo } from "@maus-inc/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const reviewTranscriptBeforeInsertMock = vi.hoisted(() => vi.fn());
@@ -858,5 +858,72 @@ describe("PasteTool review", () => {
       text: "agent version",
       keybind: null,
     });
+  });
+
+  it("converges a duplicate-id recovery onto the newest draft", async () => {
+    const pendingRow = (text: string, draftRevision: number) =>
+      ({
+        id: "pending-review",
+        conversationId: "conv-1",
+        metadata: {
+          type: "pending-paste-review",
+          toolName: "paste",
+          toolCallState: "awaiting-manual-paste",
+          text,
+          status: "pending",
+          draftRevision,
+        },
+      }) as unknown as ChatMessage;
+
+    let resolveRecovery!: (row: ChatMessage) => void;
+    let openNewest!: () => void;
+    createPendingPasteReviewMock
+      .mockRejectedValueOnce(
+        new Error("UNIQUE constraint failed: chat_messages.id"),
+      )
+      .mockResolvedValueOnce(pendingRow("newest", 2));
+    updatePendingPasteReviewDraftByIdMock.mockImplementation(() => {
+      // The recovery read is in flight; the newer save lands before it returns.
+      openNewest();
+      return new Promise<ChatMessage>((resolve) => {
+        resolveRecovery = resolve;
+      });
+    });
+    updatePendingPasteReviewDraftMock.mockImplementation(
+      (_message: ChatMessage, text: string) =>
+        Promise.resolve(pendingRow(text, 2)),
+    );
+    reviewTranscriptBeforeInsertMock.mockImplementation(
+      (
+        _text: string,
+        _source: string,
+        options?: { onOpen?: (text: string) => Promise<void> },
+      ) => {
+        openNewest = () => void options?.onOpen?.("newest");
+        void options?.onOpen?.("oldest");
+        return Promise.resolve(null);
+      },
+    );
+
+    await new PasteTool(toolInfo).execute(
+      { text: "agent version" },
+      { conversationId: "conv-1" },
+    );
+    await vi.waitFor(() =>
+      expect(updatePendingPasteReviewDraftByIdMock).toHaveBeenCalled(),
+    );
+    await vi.waitFor(() =>
+      expect(createPendingPasteReviewMock).toHaveBeenCalledTimes(2),
+    );
+    resolveRecovery(pendingRow("oldest", 1));
+
+    // Without convergence the recovery would publish the older row it read.
+    await vi.waitFor(() =>
+      expect(updatePendingPasteReviewDraftMock).toHaveBeenCalledWith(
+        expect.anything(),
+        "newest",
+        2,
+      ),
+    );
   });
 });
