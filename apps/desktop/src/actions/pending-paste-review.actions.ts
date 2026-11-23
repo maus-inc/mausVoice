@@ -95,14 +95,12 @@ const updatePendingPasteReview = (
   });
 
 /**
- * Copy the saved text for a manual paste. The latest edit is persisted before
- * touching the clipboard, so a clipboard failure leaves a retryable, durable
- * pending action rather than losing the user's wording.
+ * The Paste review carried by this message snapshot, refusing one that is no
+ * longer pending. It reads the snapshot it is handed, not the stored record, so
+ * a caller holding an old message copy is rejected only when that copy already
+ * recorded the action as done.
  */
-export const copyPendingPasteReview = async (
-  message: ChatMessage,
-  text: string,
-): Promise<void> => {
+const requirePendingReview = (message: ChatMessage) => {
   const pending = getPendingPasteReview(message.metadata);
   if (pending?.status !== "pending") {
     throw new Error(
@@ -111,6 +109,19 @@ export const copyPendingPasteReview = async (
       }),
     );
   }
+  return pending;
+};
+
+/**
+ * Copy the saved text for a manual paste. The latest edit is persisted before
+ * touching the clipboard, so a clipboard failure leaves a retryable, durable
+ * pending action rather than losing the user's wording.
+ */
+export const copyPendingPasteReview = async (
+  message: ChatMessage,
+  text: string,
+): Promise<void> => {
+  const pending = requirePendingReview(message);
   if (!text.trim()) {
     throw new Error(
       getIntl().formatMessage({
@@ -134,14 +145,7 @@ export const cancelPendingPasteReview = async (
   message: ChatMessage,
   text: string,
 ): Promise<void> => {
-  const pending = getPendingPasteReview(message.metadata);
-  if (pending?.status !== "pending") {
-    throw new Error(
-      getIntl().formatMessage({
-        defaultMessage: "This Paste review is no longer pending",
-      }),
-    );
-  }
+  const pending = requirePendingReview(message);
 
   // Cancel dismisses the action, not its durable record. Treat an empty editor
   // as no replacement so a deletion immediately before Cancel cannot erase the

@@ -1,4 +1,5 @@
-import { HttpError, countWords, retry } from "@maus-inc/utilities";
+import { countWords, retry, throwHttpError } from "@maus-inc/utilities";
+import { probeProviderEndpoint } from "./provider-probe.utils";
 import type { CustomFetch } from "./types";
 
 const XAI_BASE_URL = "https://api.x.ai/v1";
@@ -13,27 +14,17 @@ export type XaiTestIntegrationArgs = {
 
 export const xaiTestIntegration = async ({
   apiKey,
-  customFetch = fetch,
-}: XaiTestIntegrationArgs): Promise<boolean> => {
-  const response = await customFetch(`${XAI_BASE_URL}/models`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${apiKey.trim()}`,
+  customFetch,
+}: XaiTestIntegrationArgs): Promise<boolean> =>
+  probeProviderEndpoint({
+    label: "xAI",
+    url: `${XAI_BASE_URL}/models`,
+    init: {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey.trim()}` },
     },
+    customFetch,
   });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new HttpError(
-      response.status,
-      detail
-        ? `xAI responded ${response.status}: ${detail}`
-        : `xAI responded with status ${response.status}`,
-      { retryAfter: response.headers.get("retry-after") },
-    );
-  }
-  return true;
-};
 
 export type XaiTranscriptionArgs = {
   apiKey: string;
@@ -80,12 +71,10 @@ export const xaiTranscribeAudio = ({
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
-        throw new HttpError(
-          response.status,
-          `xAI STT request failed with status ${response.status}: ${errorText}`,
-          { retryAfter: response.headers.get("retry-after") },
-        );
+        await throwHttpError(response, {
+          message: (errorText) =>
+            `xAI STT request failed with status ${response.status}: ${errorText}`,
+        });
       }
 
       const data = (await response.json()) as { text?: string };
@@ -129,12 +118,10 @@ export const xaiGenerateSpeech = async ({
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "Unknown error");
-    throw new HttpError(
-      response.status,
-      `xAI TTS request failed with status ${response.status}: ${errorText}`,
-      { retryAfter: response.headers.get("retry-after") },
-    );
+    await throwHttpError(response, {
+      message: (errorText) =>
+        `xAI TTS request failed with status ${response.status}: ${errorText}`,
+    });
   }
 
   return response.arrayBuffer();

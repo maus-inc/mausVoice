@@ -169,3 +169,32 @@ export const toHttpError = (error: unknown): unknown => {
     retryAfter: readRetryAfterHeader(error),
   });
 };
+
+export type HttpErrorSpec = {
+  /** Text used when the response body cannot be read. */
+  fallback?: string;
+  /**
+   * Body text the caller already read. A `Response` body is a single-use
+   * stream, so a caller that inspects the body to decide something passes it
+   * here rather than letting this helper read it a second time.
+   */
+  body?: string;
+  /** Build the message from the body text. */
+  message: (body: string) => string;
+};
+
+/**
+ * Throw the `HttpError` a non-2xx response represents. Reads the body once and
+ * carries the `Retry-After` hint, so a retry policy reads the status and the
+ * hint as data instead of parsing the message.
+ */
+export const throwHttpError = async (
+  response: Response,
+  { body, fallback, message }: HttpErrorSpec,
+): Promise<never> => {
+  const text =
+    body ?? (await response.text().catch(() => fallback ?? "Unknown error"));
+  throw new HttpError(response.status, message(text), {
+    retryAfter: response.headers.get("retry-after"),
+  });
+};

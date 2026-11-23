@@ -170,6 +170,10 @@ describe("updater manifest builder", () => {
       join(here, "release-notes.mjs"),
       join(scriptDir, "release-notes.mjs"),
     );
+    copyFileSync(
+      join(here, "direct-invocation.mjs"),
+      join(scriptDir, "direct-invocation.mjs"),
+    );
 
     const artifacts = fullySignedArtifacts();
     const manifest = buildManifest(artifacts, {}, spacedScript);
