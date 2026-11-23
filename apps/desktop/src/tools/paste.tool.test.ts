@@ -877,12 +877,15 @@ describe("PasteTool review", () => {
 
     let resolveRecovery!: (row: ChatMessage) => void;
     let openNewest!: () => void;
-    createPendingPasteReviewMock
-      .mockRejectedValueOnce(
-        new Error("UNIQUE constraint failed: chat_messages.id"),
-      )
-      .mockResolvedValueOnce(pendingRow("newest", 2));
+    // The row exists from the first attempt, so a retry cannot insert it again:
+    // every create rejects, which is the sequence the recovery path is for.
+    createPendingPasteReviewMock.mockRejectedValue(
+      new Error("UNIQUE constraint failed: chat_messages.id"),
+    );
+    let recoveries = 0;
     updatePendingPasteReviewDraftByIdMock.mockImplementation(() => {
+      recoveries += 1;
+      if (recoveries > 1) return Promise.resolve(pendingRow("newest", 2));
       // The recovery read is in flight; the newer save lands before it returns.
       openNewest();
       return new Promise<ChatMessage>((resolve) => {
@@ -897,10 +900,17 @@ describe("PasteTool review", () => {
       (
         _text: string,
         _source: string,
-        options?: { onOpen?: (text: string) => Promise<void> },
+        options?: {
+          onOpen?: (text: string, signal?: AbortSignal) => Promise<void>;
+        },
       ) => {
-        openNewest = () => void options?.onOpen?.("newest");
-        void options?.onOpen?.("oldest");
+        const controller = new AbortController();
+        openNewest = () => {
+          // The second Open cancels the first, as the UI does.
+          controller.abort();
+          void options?.onOpen?.("newest");
+        };
+        void options?.onOpen?.("oldest", controller.signal);
         return Promise.resolve(null);
       },
     );

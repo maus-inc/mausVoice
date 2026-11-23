@@ -230,15 +230,20 @@ const createOrRecoverReviewDraft = async (
       text,
       pendingReviewId ?? undefined,
     );
+    // The row is committed whether or not the correction below lands, so it is
+    // retained first: cleanup can only cancel a card the state knows about, and
+    // a rejected correction would otherwise leave the committed row untracked.
+    state.pendingReviewMessage = saved;
     // A newer save can land while this create is in flight. The create writes
     // its own row into the store on the way back, so converge the durable row
     // and the store on the latest text, exactly as the update path does.
-    state.pendingReviewMessage = await reconcileLatestExistingReviewDraft(
+    const reconciled = await reconcileLatestExistingReviewDraft(
       state,
       saved,
       text,
       generation,
     );
+    state.pendingReviewMessage = reconciled;
   } catch (error) {
     if (
       !isDuplicateIdError(error) ||

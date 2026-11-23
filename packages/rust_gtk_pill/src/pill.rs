@@ -526,11 +526,15 @@ fn layout_composer(
 
     review_scroll_tick.set_margin_start(margin_start);
     review_scroll_tick.set_margin_end(margin_end);
+    // The opening offset is motion: with animations off the editor is placed at
+    // its resting position instead of sliding the last 12 units.
+    let opening = if reduced_motion() {
+        0.0
+    } else {
+        1.0 - state_tick.panel_open_t.get()
+    };
     review_scroll_tick.set_margin_top(
-        (oy + PANEL_TOP_MARGIN
-            + (1.0 - state_tick.panel_open_t.get()) * 12.0
-            + PANEL_TRANSCRIPT_TOP_OFFSET
-            + 28.0) as i32,
+        (oy + PANEL_TOP_MARGIN + opening * 12.0 + PANEL_TRANSCRIPT_TOP_OFFSET + 28.0) as i32,
     );
     review_scroll_tick.set_height_request(PANEL_REVIEW_EDITOR_HEIGHT as i32);
     let panel_opacity = state_tick.panel_open_t.get().clamp(0.0, 1.0);
@@ -1212,9 +1216,13 @@ fn handle_review_key_press(
         return glib::Propagation::Stop;
     }
 
+    // `ISO_Enter` is what several layouts report for the same physical key, and
+    // GTK treats it as a newline unless it is handled here.
     let is_enter = matches!(
         event.keyval(),
-        gdk::keys::constants::Return | gdk::keys::constants::KP_Enter
+        gdk::keys::constants::Return
+            | gdk::keys::constants::KP_Enter
+            | gdk::keys::constants::ISO_Enter
     );
     let is_submit = is_enter && review_enter_submits(modifiers);
     if !is_submit {
