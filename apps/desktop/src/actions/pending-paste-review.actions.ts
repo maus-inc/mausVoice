@@ -54,9 +54,13 @@ export const getPendingPasteReview = (
   };
 };
 
-const requirePendingPasteReview = (
-  message: ChatMessage,
-): PendingPasteReviewMetadata => {
+/**
+ * The Paste review carried by this message snapshot, refusing one that is no
+ * longer pending. It reads the snapshot it is handed, not the stored record, so
+ * a caller holding an old message copy is rejected only when that copy already
+ * recorded the action as done.
+ */
+const requirePendingReview = (message: ChatMessage) => {
   const pending = getPendingPasteReview(message.metadata);
   if (pending?.status !== "pending") {
     throw new Error(
@@ -156,7 +160,7 @@ export async function updatePendingPasteReviewDraft(
   text: string,
   requestedRevision?: number,
 ): Promise<ChatMessage> {
-  const pending = requirePendingPasteReview(message);
+  const pending = requirePendingReview(message);
   if (!text.trim()) {
     throw new Error(
       getIntl().formatMessage({
@@ -203,7 +207,7 @@ export const copyPendingPasteReview = async (
   message: ChatMessage,
   text: string,
 ): Promise<void> => {
-  const pending = requirePendingPasteReview(message);
+  const pending = requirePendingReview(message);
   if (!text.trim()) {
     throw new Error(
       getIntl().formatMessage({
@@ -271,7 +275,7 @@ export const cancelPendingPasteReview = async (
   message: ChatMessage,
   text: string,
 ): Promise<void> => {
-  const pending = requirePendingPasteReview(message);
+  const pending = requirePendingReview(message);
 
   // Cancel dismisses the action, not its durable record. Treat an empty editor
   // as no replacement so a deletion immediately before Cancel cannot erase the

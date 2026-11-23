@@ -15,8 +15,10 @@
     "scripts/ci/check-gitleaks-config.test.mjs",
     "apps/desktop/webdriver/specs/app.render.spec.ts",
     "apps/docs/scripts/make-card-ascii.mjs",
-    "docs/assets/badges/source/generate-badges.mjs"
+    "docs/assets/badges/source/generate-badges.mjs",
+    "apps/desktop/webdriver/specs/contracts.spec.ts"
   ],
+  "usedClassMembers": ["setExpansionFlags", "setPhase", "validateAvailability"],
   "boundaries": {
     "zones": [
       {
@@ -101,5 +103,8 @@
       "package": "qs",
       "source": "package.json"
     }
-  ]
+  ],
+  "duplicates": {
+    "ignore": ["packages/desktop-native-apis/src/bindings.ts"]
+  }
 }
