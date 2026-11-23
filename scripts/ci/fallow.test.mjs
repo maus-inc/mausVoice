@@ -172,12 +172,6 @@ test("architecture detects a cyclic fixture", (t) => {
 // removed by moving `invokeStopRecording` onto the session module.
 const INHERITED_CYCLES = [
   "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts",
-  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/agent-configs.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
-  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts -> apps/desktop/src/actions/tool.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/repos/tool.repo.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
-  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts -> apps/desktop/src/actions/tool.actions.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
-  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/repos/tool.repo.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
-  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
-  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/repos/tool.repo.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
   "apps/desktop/src/utils/feature.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/utils/keyboard.utils.ts",
   "apps/desktop/src/utils/keyboard.utils.ts -> apps/desktop/src/utils/user.utils.ts",
 ];

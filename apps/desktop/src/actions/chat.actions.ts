@@ -1,4 +1,4 @@
-import type { ChatMessage, Conversation } from "@maus-inc/types";
+import type { Conversation } from "@maus-inc/types";
 import { abortAgentLoop, CHAT_AGENT_CONFIG, runAgent } from "../agents";
 import { getChatMessageRepo, getConversationRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
@@ -13,9 +13,15 @@ import { getIsDevMode } from "../utils/env.utils";
 import { getLogger } from "../utils/log.utils";
 import { createAsyncMutationTracker } from "../utils/async-mutation-tracker";
 import {
+  createChatMessage,
+  updateChatMessage,
+} from "../utils/chat-message.utils";
+import {
   type LocalDataWriteLease,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
+
+export { createChatMessage, updateChatMessage };
 
 const conversationCreations = createAsyncMutationTracker();
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
@@ -331,38 +337,6 @@ export const loadChatMessages = async (
     registerChatMessages(draft, conversationId, messages);
   });
 };
-
-export const createChatMessage = (
-  message: ChatMessage,
-  existingLease?: LocalDataWriteLease,
-): Promise<ChatMessage> =>
-  withLocalDataWrite(async (lease) => {
-    const saved = await getChatMessageRepo().createChatMessage(message, lease);
-
-    produceAppState((draft) => {
-      draft.chatMessageById[saved.id] = saved;
-      const ids =
-        draft.chatMessageIdsByConversationId[saved.conversationId] ?? [];
-      ids.push(saved.id);
-      draft.chatMessageIdsByConversationId[saved.conversationId] = ids;
-    }, lease);
-
-    return saved;
-  }, existingLease);
-
-export const updateChatMessage = (
-  message: ChatMessage,
-  existingLease?: LocalDataWriteLease,
-): Promise<ChatMessage> =>
-  withLocalDataWrite(async (lease) => {
-    const saved = await getChatMessageRepo().updateChatMessage(message, lease);
-
-    produceAppState((draft) => {
-      draft.chatMessageById[saved.id] = saved;
-    }, lease);
-
-    return saved;
-  }, existingLease);
 
 export const deleteChatMessages = (
   conversationId: string,
