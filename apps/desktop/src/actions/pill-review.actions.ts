@@ -479,13 +479,74 @@ const updateReviewDraft = (
   }
 };
 
+/** The save outlived `OPEN_SAVE_TIMEOUT_MS`, which is not a user cancel. */
+class OpenSaveTimeoutError extends Error {}
+
+/**
+ * Runs the Open hand-off with the save timeout, aborting it when the deadline
+ * passes. The abort signal is the caller's, so a cancel and a timeout stay
+ * distinguishable through [`OpenSaveTimeoutError`].
+ */
+const saveOpenWithTimeout = async (
+  onOpen: (text: string, signal: AbortSignal) => Promise<void>,
+  text: string,
+  abortController: AbortController,
+): Promise<void> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      onOpen(text, abortController.signal),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          abortController.abort();
+          reject(new OpenSaveTimeoutError("The Paste review save timed out"));
+        }, OPEN_SAVE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+  }
+};
+
+/** True when this review can hand its text to Chats, narrowing `onOpen`. */
+const canOpenPasteInChats = (
+  current: QueuedReview,
+): current is QueuedReview & {
+  onOpen: NonNullable<QueuedReview["onOpen"]>;
+} => current.session.source === "assistant-tool" && Boolean(current.onOpen);
+
+/**
+ * True when a failed save needs no report: the review already left the queue,
+ * or the person cancelled it. A timeout aborts too, so it is not silent.
+ */
+const openSaveFailureIsSilent = (
+  current: QueuedReview,
+  abortController: AbortController,
+  error: unknown,
+): boolean =>
+  head() !== current ||
+  (abortController.signal.aborted && !(error instanceof OpenSaveTimeoutError));
+
+const reportOpenSaveFailure = (): never => {
+  runToast(
+    showToast({
+      message: getIntl().formatMessage({
+        defaultMessage:
+          "Could not save this Paste review. It remains open so you can retry.",
+      }),
+      toastType: "error",
+      duration: 8000,
+    }),
+  );
+  throw new Error("Could not save the pending Paste review");
+};
+
 const openAssistantPasteInChats = async (
   current: QueuedReview,
   id: string,
   text: string,
 ): Promise<boolean> => {
-  if (current.session.source !== "assistant-tool" || !current.onOpen)
-    return false;
+  if (!canOpenPasteInChats(current)) return false;
 
   // Opening Chats changes focus away from the destination application. The
   // caller must durably save the edited text before this review can settle.
@@ -493,35 +554,12 @@ const openAssistantPasteInChats = async (
   clearReviewTimeout();
   const abortController = new AbortController();
   current.openSaveController = abortController;
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let saveTimedOut = false;
   try {
-    await Promise.race([
-      current.onOpen(text, abortController.signal),
-      new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          saveTimedOut = true;
-          abortController.abort();
-          reject(new Error("The Paste review save timed out"));
-        }, OPEN_SAVE_TIMEOUT_MS);
-      }),
-    ]);
-  } catch {
-    if (head() !== current || (abortController.signal.aborted && !saveTimedOut))
-      return true;
-    runToast(
-      showToast({
-        message: getIntl().formatMessage({
-          defaultMessage:
-            "Could not save this Paste review. It remains open so you can retry.",
-        }),
-        toastType: "error",
-        duration: 8000,
-      }),
-    );
-    throw new Error("Could not save the pending Paste review");
+    await saveOpenWithTimeout(current.onOpen, text, abortController);
+  } catch (error) {
+    if (openSaveFailureIsSilent(current, abortController, error)) return true;
+    reportOpenSaveFailure();
   } finally {
-    if (timeoutId !== null) clearTimeout(timeoutId);
     if (current.openSaveController === abortController) {
       current.openSaveController = undefined;
     }
@@ -555,9 +593,24 @@ const rejectOpenWithoutConversation = (
   return true;
 };
 
+/** Settles the review, or hands it to the composer, once copy is out of play. */
+const settleOrHandOff = async (
+  current: QueuedReview,
+  id: string,
+  action: PillReviewAction,
+  text: string,
+): Promise<void> => {
+  if (action === "open" && (await openAssistantPasteInChats(current, id, text)))
+    return;
+  if (action === "edit" || action === "open") {
+    await reviewInComposer(current, text, action);
+    return;
+  }
+  settle(id, action === "insert" ? text : null, action);
+};
+
 // Keep the decision sequence in one place; moving its async branches changes
 // how failures leave the current review retryable.
-// fallow-ignore-next-line complexity
 const applyDecision = async (
   id: string,
   action: PillReviewAction,
@@ -580,16 +633,7 @@ const applyDecision = async (
       }
       current.onCopy?.();
     }
-    if (
-      action === "open" &&
-      (await openAssistantPasteInChats(current, id, text))
-    )
-      return;
-    if (action === "edit" || action === "open") {
-      await reviewInComposer(current, text, action);
-      return;
-    }
-    settle(id, action === "insert" ? text : null, action);
+    await settleOrHandOff(current, id, action, text);
   } finally {
     // A failure leaves the review open so the click can be repeated, rather
     // than stranding the transcript behind a busy flag nobody can clear. On
