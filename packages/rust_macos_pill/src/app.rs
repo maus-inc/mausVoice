@@ -102,12 +102,31 @@ fn pill_drop_point(state: &PillState, frame: NSRect) -> (f64, f64) {
 /// pill's painted rect, so the answer follows the pill across a display edge
 /// rather than following the canvas.
 unsafe fn screen_for_drop(window: id, state: &PillState) -> id {
-    let frame = window_frame(window);
+    let screen = screen_for_frame(window_frame(window), state);
+    if (screen as *mut std::ffi::c_void).is_null() {
+        // The window's own screen is the last resort for a live window, which
+        // is the one case that still has a window to ask.
+        msg_send![window, screen]
+    } else {
+        screen
+    }
+}
+
+/// The screen holding the pill's painted centre for `frame`.
+///
+/// Nil when no screen contains the point. The caller decides what that means: a
+/// live window can fall back to `[NSWindow screen]`, and a retained drop stays
+/// unresolved rather than inventing a panel.
+unsafe fn screen_for_frame(frame: NSRect, state: &PillState) -> id {
     let (cx, cy) = pill_drop_point(state, frame);
-    let point = NSPoint::new(
+    screen_at_point(NSPoint::new(
         frame.origin.x + cx,
         frame.origin.y + frame.size.height - cy,
-    );
+    ))
+}
+
+/// The first screen whose frame contains `point`, or nil.
+unsafe fn screen_at_point(point: NSPoint) -> id {
     let list = screens();
     let count: usize = msg_send![list, count];
     for index in 0..count {
@@ -121,7 +140,7 @@ unsafe fn screen_for_drop(window: id, state: &PillState) -> id {
             return candidate;
         }
     }
-    msg_send![window, screen]
+    std::ptr::null_mut()
 }
 
 /// The stable token of a screen, or `None` when it cannot be named.
@@ -241,7 +260,14 @@ fn frame_from_tuple(frame: (f64, f64, f64, f64)) -> NSRect {
 /// site: two copies of this arithmetic are two chances to flip against a
 /// different line, which looks exactly like a position being wrong.
 unsafe fn primary_top_for(window: id) -> f64 {
-    let frame = window_frame(window);
+    primary_top_or(window_frame(window))
+}
+
+/// The primary display's top edge, or `fallback`'s when no display is listed.
+///
+/// No displays leaves the caller's own frame standing in, so the pair stays
+/// self-consistent instead of being measured against nothing.
+unsafe fn primary_top_or(fallback: NSRect) -> f64 {
     let primary_screens = screens();
     let count: usize = msg_send![primary_screens, count];
     if count > 0 {
@@ -249,9 +275,7 @@ unsafe fn primary_top_for(window: id) -> f64 {
         let pf: NSRect = msg_send![primary, frame];
         pf.origin.y + pf.size.height
     } else {
-        // No displays: the window's own frame stands in, so the pair stays
-        // self-consistent instead of being measured against nothing.
-        frame.origin.y + frame.size.height
+        fallback.origin.y + fallback.size.height
     }
 }
 
@@ -995,6 +1019,10 @@ fn perform_tick() {
                     // this gesture already moved away from.
                     ctx.state.drop_frame.set(None);
                     ctx.state.drag_motion.borrow_mut().reset();
+                    // A cancelled gesture has no drop to record, and a drag hold
+                    // left armed has no end time: every later placement and
+                    // reconciliation would be refused.
+                    ctx.state.save_guard.borrow_mut().drag_cancelled();
                     ctx.state.selector_placement.borrow_mut().reset();
                     ctx.state.crossing.borrow_mut().reset();
                     ctx.state
@@ -1028,6 +1056,7 @@ fn perform_tick() {
                     ctx.state.long_press_active.set(false);
                     ctx.state.drag_cancelled.set(true);
                     ctx.state.drag_motion.borrow_mut().reset();
+                    ctx.state.save_guard.borrow_mut().drag_cancelled();
                     // Stop treating where the pill is sitting as the saved position.
                     // Local data was just cleared, and the next `RequestPosition`
                     // republishes this flag, so leaving it set would write the row back.
@@ -1057,9 +1086,16 @@ fn perform_tick() {
                 }
                 InMessage::RequestPosition => {
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window, &ctx.state) };
+                    // A gesture owns the window while it is dragged, and the
+                    // frame read here is the one the drag has reached, not a
+                    // place the user has dropped. Authorizing it would let the
+                    // desktop store a mid-gesture frame before the release. The
+                    // composer still gets the live geometry to place against.
+                    let persist = ctx.state.has_saved_position.get()
+                        && !gesture_owns_window(&ctx.state, drag_now());
                     ipc::send(&OutMessage::PositionChanged {
                         report: rust_pill_shared::restore::PositionReport::new(
-                            ctx.state.has_saved_position.get(),
+                            persist,
                             Some(rect),
                             monitor,
                             ctx.state.saved_display_id.get(),
@@ -1185,19 +1221,40 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
 /// no screen, because a window-sized rect standing in for a work area would be
 /// stored as the place the pill was parked.
 unsafe fn drop_display_for(window: id, state: &PillState) -> (Option<Rect>, Option<u64>, f64) {
-    let screen = screen_for_drop(window, state);
-    let primary_top = primary_top_for(window);
-    let monitor = if (screen as *mut std::ffi::c_void).is_null() {
-        None
+    let frame = window_frame(window);
+    let screen = screen_for_frame(frame, state);
+    // A live window can still name its own screen when no screen rect contains
+    // the pill's centre. A retained drop has no window to ask.
+    let screen = if (screen as *mut std::ffi::c_void).is_null() {
+        msg_send![window, screen]
     } else {
-        Some(to_top_down(screen_visible_frame(screen), primary_top))
+        screen
     };
-    let display_id = if (screen as *mut std::ffi::c_void).is_null() {
-        None
-    } else {
-        screen_display_id(screen)
-    };
-    (monitor, display_id, primary_top)
+    display_record(screen, primary_top_or(frame))
+}
+
+/// The display a retained drop frame belongs to, resolved now.
+///
+/// Used when the drop was captured while no screen resolved: the frame still
+/// says where the pill was dropped, so the display is looked up from it rather
+/// than from a window that reconciliation may have moved.
+unsafe fn drop_display_for_frame(
+    frame: NSRect,
+    state: &PillState,
+) -> (Option<Rect>, Option<u64>, f64) {
+    display_record(screen_for_frame(frame, state), primary_top_or(frame))
+}
+
+/// The work area and token of `screen`, in the published top-down space.
+unsafe fn display_record(screen: id, primary_top: f64) -> (Option<Rect>, Option<u64>, f64) {
+    if (screen as *mut std::ffi::c_void).is_null() {
+        return (None, None, primary_top);
+    }
+    (
+        Some(to_top_down(screen_visible_frame(screen), primary_top)),
+        screen_display_id(screen),
+        primary_top,
+    )
 }
 
 /// Retains the settled position and tells the desktop, which stores it so the
@@ -1274,6 +1331,22 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
     // `msg_send![window, screen]` read the live window, which may no longer be
     // where the user dropped it.
     let (frame, monitor, display_id, primary_top) = match state.drop_frame.take() {
+        Some(record) if record.monitor.is_none() => {
+            // The drop was captured while no display resolved. The frame still
+            // says where the pill was dropped, so the display is looked up from
+            // it now that one may be back. The desktop ignores a report without
+            // a monitor, so consuming an unresolved record here would clear the
+            // deadline and lose the drop; it stays owed instead.
+            let frame = frame_from_tuple(record.frame);
+            let (monitor, display_id, primary_top) =
+                unsafe { drop_display_for_frame(frame, state) };
+            if monitor.is_none() {
+                state.drop_frame.set(Some(record));
+                state.drag_save_due.set(due);
+                return;
+            }
+            (frame, monitor, display_id, primary_top)
+        }
         Some(record) => (
             frame_from_tuple(record.frame),
             record.monitor,
@@ -1779,7 +1852,11 @@ fn tick_flame(state: &PillState, dt: f64) {
         elapsed: &state.flame_elapsed,
         tongues: &state.flame_tongues,
     }
-    .tick(dt, rust_pill_shared::flame::hashed_tongue);
+    .tick(
+        dt,
+        !reduced_motion(),
+        rust_pill_shared::flame::hashed_tongue,
+    );
 }
 
 fn tick_flash_blue(state: &PillState, dt: f64) {
@@ -2460,7 +2537,7 @@ fn gesture_owns_window(state: &PillState, now: f64) -> bool {
 /// platforms: hold saves until the layout settles, resolve the position against
 /// the new layout, and adopt whatever the resolution decides so the next launch
 /// restores the place the user can actually see.
-unsafe fn reconcile_display_layout(window: id, state: &PillState) {
+unsafe fn reconcile_display_layout(window: id, state: &PillState) -> bool {
     let now = drag_now();
     state.save_guard.borrow_mut().layout_changed(now);
     if state.dragging.get() {
@@ -2474,13 +2551,15 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
     let Some((areas, primary_top)) = display_areas() else {
         // No screens is not evidence that the pill's screen is gone: every
         // display disconnecting briefly looks like this. Leaving the window alone
-        // is what keeps its position intact for when one comes back.
-        return;
+        // is what keeps its position intact for when one comes back. It is also
+        // not an arrangement this call handled, so the poll retries.
+        return false;
     };
     let frame = window_frame(window);
     let (window_w, window_h) = (frame.size.width, frame.size.height);
     if window_w <= 0.0 || window_h <= 0.0 {
-        return;
+        // Not sized yet, so there is no footprint to reconcile.
+        return false;
     }
     let top_down = to_top_down(frame, primary_top);
     // The window's own screen decides which display this record is about, and its
@@ -2517,7 +2596,7 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
         // live areas above used, or a primary that moved compares two bases.
         Some(flip_primary_basis(state.saved_work_area.get(), primary_top)),
     ) else {
-        return;
+        return false;
     };
 
     let relocation = rust_pill_shared::layout::reconcile(
@@ -2629,7 +2708,8 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             // would replace the last completed drop before release, and the
             // completed drop writes through the guarded writer below.
             if !state.has_saved_position.get() || gesture_owns_window(state, now) {
-                return;
+                // Handled: the move was applied, and there is no record to keep.
+                return true;
             }
             state.saved_x.set(origin.x);
             state.saved_y.set(origin.y);
@@ -2655,6 +2735,7 @@ unsafe fn reconcile_display_layout(window: id, state: &PillState) {
             persist_reconciled_position(state, window, primary_top, destination);
         }
     }
+    true
 }
 
 /// Reconcile if the display arrangement changed and no notification said so.
@@ -2673,12 +2754,18 @@ unsafe fn poll_display_layout(window: id, state: &PillState, now: f64) {
     let Some((areas, _)) = display_areas() else {
         return;
     };
+    let previous = state.layout_poll.borrow().signature();
     let outcome = state
         .layout_poll
         .borrow_mut()
         .observe(now, rust_pill_shared::layout::layout_signature(&areas));
-    if outcome == rust_pill_shared::layout::PollOutcome::Changed {
-        unsafe { reconcile_display_layout(window, state) };
+    if outcome == rust_pill_shared::layout::PollOutcome::Changed
+        && !unsafe { reconcile_display_layout(window, state) }
+    {
+        // Reconciling against this snapshot was impossible, so the change is not
+        // handled. Left committed, the next poll would compare equal and the pill
+        // would never be looked at again.
+        state.layout_poll.borrow_mut().defer(previous);
     }
 }
 

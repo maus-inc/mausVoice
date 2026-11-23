@@ -644,12 +644,18 @@ fn poll_display_layout(hwnd: HWND, state: &PillState) {
         // Same rule as the message path: a failed enumeration is not evidence.
         return;
     };
+    let previous = state.layout_poll.borrow().signature();
     let outcome = state
         .layout_poll
         .borrow_mut()
         .observe(now, rust_pill_shared::layout::layout_signature(&areas));
-    if outcome == rust_pill_shared::layout::PollOutcome::Changed {
-        reconcile_display_layout(hwnd, state);
+    if outcome == rust_pill_shared::layout::PollOutcome::Changed
+        && !reconcile_display_layout(hwnd, state)
+    {
+        // Reconciling against this snapshot was impossible, so the change is not
+        // handled. Left committed, the next poll would compare equal and the pill
+        // would never be looked at again.
+        state.layout_poll.borrow_mut().defer(previous);
     }
 }
 
@@ -1023,9 +1029,14 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 &areas,
                 visible_pill_centre((rect.x, rect.y), footprint),
             );
+            // A gesture owns the window while it is dragged, and the rect above
+            // is where the drag has reached, not a place the user has dropped.
+            // Authorizing it would let the desktop store a mid-gesture frame
+            // before the release. The composer still gets the live geometry.
+            let persist = state.has_saved_position.get() && !gesture_owns_window(state, drag_now());
             ipc::send(&OutMessage::PositionChanged {
                 report: rust_pill_shared::restore::PositionReport::new(
-                    state.has_saved_position.get(),
+                    persist,
                     Some(rect),
                     work_area_for_report(&areas, monitor, &rect, footprint),
                     display_id,
@@ -1288,7 +1299,11 @@ fn tick_flame(state: &PillState, dt: f64) {
         elapsed: &state.flame_elapsed,
         tongues: &state.flame_tongues,
     }
-    .tick(dt, rust_pill_shared::flame::hashed_tongue);
+    .tick(
+        dt,
+        !reduced_motion(),
+        rust_pill_shared::flame::hashed_tongue,
+    );
 }
 
 fn tick_flash_blue(state: &PillState, dt: f64) {
@@ -1778,7 +1793,7 @@ fn gesture_owns_window(state: &PillState, now: f64) -> bool {
 /// 4. Adopt the resolved origin as the saved position. The move was the pill's
 ///    own, not a drag, so the stored record has to follow it or the next launch
 ///    would restore the stranded origin.
-fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
+fn reconcile_display_layout(hwnd: HWND, state: &PillState) -> bool {
     let now = drag_now();
     state.save_guard.borrow_mut().layout_changed(now);
     if state.dragging.get() {
@@ -1791,8 +1806,9 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
     }
 
     let Some(areas) = enumerate_work_areas_with_identity() else {
-        // A partial or failed enumeration is not evidence of a missing display.
-        return;
+        // A partial or failed enumeration is not evidence of a missing display,
+        // and it is not an arrangement this call handled: the poll retries.
+        return false;
     };
     let mut rect = RECT::default();
     let mut window_rect = RECT::default();
@@ -1804,7 +1820,9 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
     let win_w = rect.right - rect.left;
     let win_h = rect.bottom - rect.top;
     if win_w <= 0 || win_h <= 0 {
-        return;
+        // The window has not been sized yet, so there is no footprint to
+        // reconcile against.
+        return false;
     }
 
     // Derived from where the pill is actually drawn, not from the window size.
@@ -1824,7 +1842,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
         state.saved_display_id.get(),
         Some(state.saved_work_area.get()),
     ) else {
-        return;
+        return false;
     };
 
     let relocation = rust_pill_shared::layout::reconcile(
@@ -1855,7 +1873,9 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             // so adopting it here would publish a mid-drag position in place of the
             // last completed drop.
             if gesture_owns_window(state, now) {
-                return;
+                // Handled: a gesture owns the frame, so adopting the system's
+                // move would publish a mid-drag position.
+                return true;
             }
             let (cur_x, cur_y) = current_pill_origin(hwnd);
             // Resolved from the pill's own footprint centre, the same lookup the
@@ -1929,7 +1949,8 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             // forced, not a drop the user made. The completed drop writes through
             // the guarded save path.
             if !state.has_saved_position.get() || gesture_owns_window(state, now) {
-                return;
+                // Handled: the move was applied, and there is no record to keep.
+                return true;
             }
             // The move was the pill's, so the persisted position follows it.
             state.saved_x.set(x);
@@ -1958,6 +1979,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) {
             });
         }
     }
+    true
 }
 
 /// The work area that belongs to the rectangle being published.
@@ -2599,14 +2621,30 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
         // The whole record is captured here, not just the origin. The retry can
         // run after a display went away, and re-resolving the work area and token
         // then would pair this origin with a display the pill was never on.
-        state.drop_record.set(Some(drop_record_at(
-            (x, y),
+        //
+        // The size is read after the move: crossing onto a monitor with another
+        // DPI delivers `WM_DPICHANGED` during `move_window`, and that handler
+        // resizes the window before the call returns. The rect read before the
+        // move would pair the new origin with the old size.
+        let mut settled = RECT::default();
+        // SAFETY: the call only writes the struct it is given.
+        let settled_ok = unsafe { GetWindowRect(hwnd, &mut settled).is_ok() }
+            && settled.right > settled.left
+            && settled.bottom > settled.top;
+        let (width, height) = if settled_ok {
+            (
+                (settled.right - settled.left) as f64,
+                (settled.bottom - settled.top) as f64,
+            )
+        } else {
             (
                 (current.right - current.left) as f64,
                 (current.bottom - current.top) as f64,
-            ),
-            state,
-        )));
+            )
+        };
+        state
+            .drop_record
+            .set(Some(drop_record_at((x, y), (width, height), state)));
         persist_drag_position(hwnd, state);
     } else if settling || dragging {
         // The frame loop owns the window, but its position is not final yet. Mark
@@ -2937,6 +2975,10 @@ fn cancel_drag_gesture(hwnd: HWND, state: &PillState) {
     let _ = end_drag(hwnd, state, false);
     // end_drag also runs when idle; cancel an already-running settle too.
     state.drag_motion.borrow_mut().reset();
+    // A gesture that was cancelled rather than dropped must stop owning the
+    // window. Left armed after a layout change, the hold has no end time and
+    // every later placement is refused.
+    state.save_guard.borrow_mut().drag_cancelled();
 }
 
 /// Terminate an in-progress drag, persist the drop position and release the

@@ -275,19 +275,19 @@ where
 /// looks for is ASCII written by the desktop process, so a lossy conversion could
 /// only ever manufacture a match, and skipping cannot lose a real one.
 pub fn saved_position_from_process_args() -> Option<ParkedWindow> {
-    // The same scan `saved_position_from_args` performs, over the same list, so
-    // the one rule about a repeated flag holds for both entry points rather than
-    // only for the one a test can drive.
-    let mut records = std::env::args_os().filter_map(|arg| {
-        arg.to_str()
-            .and_then(|arg| arg.strip_prefix(SAVED_POSITION_ARG))
-            .map(str::to_string)
-    });
-    let record = records.next()?;
-    if records.next().is_some() {
-        return None;
-    }
-    ParkedWindow::decode(&record)
+    record_from_os_args(std::env::args_os())
+}
+
+/// The saved-position record named by a command line of `OsString`s.
+///
+/// The scan is `saved_position_from_args` over the arguments that are Unicode,
+/// so the rule about a repeated flag holds for both entry points and a test can
+/// drive this one instead of a copy of it.
+fn record_from_os_args<I>(args: I) -> Option<ParkedWindow>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    saved_position_from_args(args.into_iter().filter_map(|arg| arg.into_string().ok()))
 }
 
 /// Where to put the pill on this launch.
@@ -411,8 +411,9 @@ where
         return Placement::PlatformDefault;
     }
 
-    let (x, y) = bounds_for(areas[index], (width, height), BoundsRole::Destination)
-        .clamp_point(anchor.0, anchor.1);
+    // The same box the anchor was measured in: the caller's closure may read a
+    // live scale, and a second call can answer with a different box.
+    let (x, y) = destination_bounds.clamp_point(anchor.0, anchor.1);
     if !x.is_finite() || !y.is_finite() {
         return Placement::PlatformDefault;
     }
@@ -1011,15 +1012,10 @@ mod tests {
         }
         args.push(std::ffi::OsString::from(flag));
 
-        // The same scan `saved_position_from_process_args` performs, over a list
-        // this test controls: `std::env::args` is not injectable.
-        let found = args.iter().find_map(|arg| {
-            arg.to_str()
-                .and_then(|arg| arg.strip_prefix(SAVED_POSITION_ARG))
-                .map(str::to_string)
-        });
+        // The production scan, over a list this test controls: `std::env::args`
+        // is not injectable, so the entry point is split from the environment.
         assert_eq!(
-            found.and_then(|record| ParkedWindow::decode(&record)),
+            record_from_os_args(args),
             Some(parked(500.0, 300.0, only)),
             "a non-Unicode argument must not hide the flag"
         );
@@ -1034,6 +1030,28 @@ mod tests {
                 "the fixture has to be invalid Unicode to prove the point"
             );
         }
+    }
+
+    /// The process scan answers a repeated flag the same way the string entry
+    /// point does, so a test of the shared helper covers both.
+    #[test]
+    fn process_scan_treats_a_second_flag_as_ambiguous() {
+        let first = parked(500.0, 300.0, rect(0.0, 0.0, 1920.0, 1040.0))
+            .encode()
+            .expect("encoded");
+        let second = parked(50.0, 60.0, rect(0.0, 0.0, 2560.0, 1440.0))
+            .encode()
+            .expect("encoded");
+        let args = vec![
+            std::ffi::OsString::from("mausvoice-gtk-pill"),
+            std::ffi::OsString::from(format!("{SAVED_POSITION_ARG}{first}")),
+            std::ffi::OsString::from(format!("{SAVED_POSITION_ARG}{second}")),
+        ];
+        assert_eq!(
+            record_from_os_args(args),
+            None,
+            "the process scan must not take the first of two flags"
+        );
     }
 
     /// The record a pill reads has to be the record the desktop wrote, so the

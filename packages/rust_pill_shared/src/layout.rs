@@ -450,6 +450,19 @@ impl SaveGuard {
         self.last_drag_end = None;
     }
 
+    /// Record that the gesture was cancelled rather than dropped.
+    ///
+    /// A cancelled drag has no frame to record: the drop it would have produced
+    /// belongs to a position the user abandoned. Without this the drag hold
+    /// stays armed with no end time, and a layout change that landed mid-drag
+    /// keeps [`Self::drag_hold_active`] true for the life of the process, so
+    /// every later placement and reconciliation is refused. The layout settle
+    /// is left alone, because a display change may still be in flight.
+    pub fn drag_cancelled(&mut self) {
+        self.drag_spans_layout_change = false;
+        self.last_drag_end = None;
+    }
+
     /// Record that a layout change landed while a drag was held.
     pub fn layout_changed_during_drag(&mut self, now: f64) {
         self.layout_changed(now);
@@ -1376,6 +1389,27 @@ pub(crate) mod tests {
         let mut guard = SaveGuard::new();
         guard.layout_changed_during_drag(10.0);
         assert!(!guard.allows_save(100.0));
+    }
+
+    /// A reset cancels the gesture, and the cancelled drag must stop owning the
+    /// window: left armed, the hold has no end time and every later placement
+    /// and reconciliation is refused until the process restarts.
+    #[test]
+    fn a_cancelled_drag_releases_the_window() {
+        let mut guard = SaveGuard::new();
+        guard.drag_started();
+        guard.layout_changed_during_drag(10.0);
+        assert!(guard.drag_hold_active(11.0));
+
+        guard.drag_cancelled();
+        assert!(
+            !guard.drag_hold_active(11.0),
+            "the cancelled drag still holds"
+        );
+        // The settle that landed with the drag is not the cancelled gesture's to
+        // clear, so a save still waits for it.
+        assert!(!guard.allows_save(10.1));
+        assert!(guard.allows_save(10.0 + LAYOUT_SETTLE_SECONDS));
     }
 
     /// The bug this deadline exists to prevent: the drop is reported once, the

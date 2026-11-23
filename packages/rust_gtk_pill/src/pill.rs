@@ -324,6 +324,9 @@ fn on_reset_position(
     state_tick.drag_draw_offset_x.set(0.0);
     state_tick.drag_draw_offset_y.set(0.0);
     state_tick.drag_motion.borrow_mut().reset();
+    // A cancelled gesture has no drop to record, and a drag hold left armed has
+    // no end time: every later placement and reconciliation would be refused.
+    state_tick.save_guard.borrow_mut().drag_cancelled();
     state_tick.selector_placement.borrow_mut().reset();
     state_tick.crossing.borrow_mut().reset();
     state_tick.has_saved_position.set(false);
@@ -364,6 +367,7 @@ fn on_forget_position(ack: Option<u64>, state_tick: &Rc<PillState>) {
     state_tick.drag_cancelled.set(true);
     state_tick.x11_release_persisted.set(true);
     state_tick.drag_motion.borrow_mut().reset();
+    state_tick.save_guard.borrow_mut().drag_cancelled();
     // Stop treating where the pill is sitting as the saved position.
     // Local data was just cleared, and the next `RequestPosition`
     // republishes this flag, so leaving it set would write the row back.
@@ -389,16 +393,47 @@ fn on_forget_position(ack: Option<u64>, state_tick: &Rc<PillState>) {
 }
 
 /// Applies `InMessage::RequestPosition`.
+///
+/// A gesture owns the window while it is dragged. `pill_geometry` answers with
+/// the saved origin, which is where the pill was left, while the monitor beside
+/// it is read live, so the pair names two places at once and the desktop stores
+/// the pair. The live origin is what the composer has to place against, and the
+/// report must not authorize a save the user has not made: the release writes
+/// the drop through the guarded writer.
 fn on_request_position(state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
-    let (rect, monitor) = pill_geometry(win_tick, state_tick);
+    let (saved_rect, monitor) = pill_geometry(win_tick, state_tick);
+    let (rect, persist) = match (
+        gesture_owns_window(state_tick, drag_clock_now()),
+        live_pill_rect(win_tick, state_tick),
+    ) {
+        (true, Some(live)) => (Some(live), false),
+        _ => (saved_rect, state_tick.has_saved_position.get()),
+    };
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
-            state_tick.has_saved_position.get(),
+            persist,
             rect,
             monitor,
             state_tick.saved_display_id.get(),
         ),
     });
+}
+
+/// The pill's live rectangle in root pixels, from the origin the last move
+/// applied, or `None` where the window's origin is not queryable.
+fn live_pill_rect(window: &gtk::Window, state: &PillState) -> Option<Rect> {
+    if state.backend.get() != Backend::X11 {
+        return None;
+    }
+    let (w, h) = window.size();
+    let scale = x11::x11_root_scale(window);
+    let (x, y) = state.x11_drag_applied.get();
+    Some(Rect {
+        x: x as f64,
+        y: y as f64,
+        width: w as f64 * scale,
+        height: h as f64 * scale,
+    })
 }
 
 /// Applies `InMessage::Quit`.
@@ -2463,7 +2498,7 @@ fn tick_flame(state: &PillState) {
         elapsed: &state.flame_elapsed,
         tongues: &state.flame_tongues,
     }
-    .tick(dt, |i| {
+    .tick(dt, !reduced_motion(), |i| {
         let t = if rust_pill_shared::flame::FLAME_TONGUE_COUNT > 1 {
             i as f64 / (rust_pill_shared::flame::FLAME_TONGUE_COUNT - 1) as f64
         } else {

@@ -75,6 +75,22 @@ const scopeOf = (relativePath, marker) => {
   return collapse(lines.slice(start, end + 1).join("\n"));
 };
 
+// The text inside the brace-delimited block whose opening `{` is at
+// `openIndex`. A pattern with `[\s\S]*?` can cross the block's closing brace and
+// match a `return` from a later branch, so a guard that cares whether *this*
+// branch returns has to read the block itself.
+const balancedBlock = (text, openIndex) => {
+  let depth = 0;
+  for (let i = openIndex; i < text.length; i += 1) {
+    if (text[i] === "{") depth += 1;
+    else if (text[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(openIndex + 1, i);
+    }
+  }
+  return "";
+};
+
 // The body of one message handler, whichever shape it has.
 //
 // A message used to be a match arm inline in the drain loop, so guards split the
@@ -785,10 +801,16 @@ describe("PR28 ring-alpha render-loop policy", () => {
       "a failed clear leaves its declaration set and drops every later save",
     );
     // The declaration precedes the delete, which is what keeps a publish queued
-    // behind the clear from landing after it.
+    // behind the clear from landing after it. Both have to be present before the
+    // comparison means anything: two `-1`s also compare as ordered.
+    const declarationAt = clear.indexOf(
+      "let declaration = mark_position_erased()",
+    );
+    const deleteAt = clear.indexOf("clear_pill_position");
+    assert.ok(declarationAt >= 0, "the clear never declares the erase");
+    assert.ok(deleteAt >= 0, "the clear never deletes the row");
     assert.ok(
-      clear.indexOf("let declaration = mark_position_erased()") <
-        clear.indexOf("clear_pill_position"),
+      declarationAt < deleteAt,
       "the declaration must precede the delete",
     );
   });
@@ -841,8 +863,15 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // describe different panels, and the flip basis is captured with them.
     assert.match(
       write,
-      /let \(monitor, display_id, primary_top\) = unsafe \{ drop_display_for\(window\) \};/,
+      /let \(monitor, display_id, primary_top\) =\s*unsafe \{ drop_display_for\(window, state\) \};/,
       "macOS: the display is not captured with the frame",
+    );
+    // A drop captured while no screen resolved is completed from its own frame
+    // rather than consumed unresolved, which the desktop would ignore.
+    assert.match(
+      write,
+      /Some\(record\) if record\.monitor\.is_none\(\) => \{[\s\S]{0,900}?drop_display_for_frame\(frame, state\)/,
+      "macOS: an unresolved drop is consumed instead of completed or kept owed",
     );
   });
 
@@ -1005,10 +1034,15 @@ describe("PR28 ring-alpha render-loop policy", () => {
       "macOS: the retry converts against the live primary top, not the capture-time one",
     );
     // The basis is captured with the frame and the display, in one record.
-    const capture = scope("macApp", "unsafe fn drop_display_for(");
+    const capture = scope("macApp", "unsafe fn display_record(");
     assert.match(
       capture,
-      /\(monitor, display_id, primary_top\)/,
+      /-> \(Option<Rect>, Option<u64>, f64\)/,
+      "macOS: the drop capture does not return the flip basis",
+    );
+    assert.match(
+      capture,
+      /primary_top\)/,
       "macOS: the drop capture does not return the flip basis",
     );
     assert.match(
@@ -1157,13 +1191,13 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // clears that hold for the next gesture, so the flag has to be cleared with
     // it: a second unsettled drop would otherwise be treated as already recorded,
     // and `allows_save` answers false for a drag that never ended -- forever.
-    const x11 = read("packages/rust_gtk_pill/src/x11.rs");
     // The rule lives in `note_drag_holds`, which the timer calls while a drag is
     // held or settling. It asserts the pairing rather than the placement: the flag
-    // is only correct next to the check that a drag is starting.
-    const at = x11.indexOf("fn note_drag_holds(");
-    assert.ok(at > 0, "the drag-hold rule is not recognisable");
-    const rule = x11.slice(at, x11.indexOf("\n}", at));
+    // is only correct next to the check that a drag is starting. Scoped to the
+    // function, because the collapsed file has no newlines to stop a slice at and
+    // a later `if dragging` block could satisfy the assertion.
+    const rule = scope("gtkX11", "fn note_drag_holds(");
+    assert.ok(rule.length > 0, "the drag-hold rule is not recognisable");
     assert.match(
       rule,
       /if dragging \{\s*drop_recorded\.set\(false\);/,
@@ -1421,6 +1455,28 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
   });
 
+  it("withholds the save flag from a report taken mid-gesture", () => {
+    // A report tells the desktop whether to store the record. While a gesture
+    // owns the window the geometry is where the pointer is, not where the user
+    // dropped the pill, so the flag has to be withheld: a report that authorizes
+    // the save stores a frame the user never chose.
+    const handlers = [["gtkPill", scope("gtkPill", "fn on_request_position(")]];
+    for (const name of ["windowsPill", "macPill"]) {
+      const text = source[name];
+      const at = text.indexOf("InMessage::RequestPosition => {");
+      const next = text.indexOf("InMessage::", at + 1);
+      handlers.push([name, at < 0 ? "" : text.slice(at, next)]);
+    }
+    for (const [name, handler] of handlers) {
+      assert.ok(handler.length > 0, `${name}: no RequestPosition handler`);
+      assert.match(
+        handler,
+        /gesture_owns_window\(/,
+        `${name}: a report authorizes a save while a gesture owns the window`,
+      );
+    }
+  });
+
   it("writes the drop the user made, not whatever the retry frame finds", () => {
     // A refused save leaves `saved_x`/`saved_y` describing the position from
     // before the drop. If the retry reads the live window instead of remembering
@@ -1436,8 +1492,15 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // would describe a window the user never released.
     assert.match(
       source.windowsPill,
-      /state\.drop_record\.set\(Some\(drop_record_at\(\s*\(x, y\),\s*\(\s*\(current\.right - current\.left\) as f64,\s*\(current\.bottom - current\.top\) as f64,\s*\),\s*state,\s*\)\)\)/,
+      /state\.drop_record\.set\(Some\(drop_record_at\(\(x, y\), \(width, height\), state\)\)\)/,
       "windowsPill: the settle never records the drop origin and size",
+    );
+    // The size is read after the final move, because a DPI change delivered by
+    // that move resizes the window before it returns.
+    assert.match(
+      source.windowsPill,
+      /GetWindowRect\(hwnd, &mut settled\)/,
+      "windowsPill: the drop size is read before the move that can resize it",
     );
     const write = scope("windowsPill", "fn store_recorded_drop(");
     assert.match(
@@ -3054,10 +3117,14 @@ describe("native gesture adapter contracts", () => {
         /rust_pill_shared::layout::reconcile\(/,
         `${name}: nothing re-resolves the position against the new layout`,
       );
+      // The call, not the definition: a platform that stopped calling it would
+      // still match its own `fn reconcile_display_layout(`.
+      const poll = scope(name, "fn poll_display_layout(");
+      assert.ok(poll.length > 0, `${name}: no display poll`);
       assert.match(
-        source[name],
+        poll,
         /reconcile_display_layout\(/,
-        `${name}: reconciliation exists but is never called`,
+        `${name}: the poll never reconciles the arrangement it saw change`,
       );
     }
   });
@@ -3107,12 +3174,15 @@ describe("native gesture adapter contracts", () => {
         `${name}: the guard's verdict is not what decides the save`,
       );
       // The refusal has to be a return, not a logged warning that falls through.
-      // `[^}]` is not enough now that the refusal records the drop origin before
-      // it returns: the point is still that the branch ends in a `return`, so the
-      // store below it is unreachable when the guard refuses.
+      // The block is read to its own closing brace: a pattern that runs on can
+      // match a later branch's `return` and pass while the refusal falls through.
+      const refusalAt = save.indexOf(
+        "if !state.save_guard.borrow().allows_save(now) {",
+      );
+      assert.ok(refusalAt >= 0, `${name}: the guard's refusal is not recognisable`);
       assert.match(
-        save,
-        /if !state\.save_guard\.borrow\(\)\.allows_save\(now\) \{[\s\S]*?return;/,
+        balancedBlock(save, save.indexOf("{", refusalAt)),
+        /return;/,
         `${name}: the refusal does not stop the save`,
       );
     }
@@ -3455,9 +3525,10 @@ describe("native gesture adapter contracts", () => {
           pattern,
           `${file}: destructures the published position into loose fields again`,
         );
+        // `report` or a rename of it, which is the same binding.
         assert.match(
           pattern[1],
-          /^\s*report\s*$/,
+          /^\s*report\s*(:\s*\w+)?\s*$/,
           `${file}: destructures the published position into loose fields again`,
         );
         assert.doesNotMatch(
@@ -3626,12 +3697,14 @@ describe("native gesture adapter contracts", () => {
     // `args_os` rather than `args`, and the non-Unicode argument is skipped rather
     // than converted: the scan has to be able to walk past a path it cannot read.
     assert.match(shared, /std::env::args_os\(\)/);
-    assert.match(shared, /arg\.to_str\(\)/);
+    assert.match(
+      shared,
+      /into_string\(\)\.ok\(\)/,
+      "shared: a non-Unicode argument is converted instead of skipped",
+    );
     // A repeated flag describes two positions, so it is answered the way the
     // documentation says a repeated one is: `None`, not first-wins.
-    const reader = shared
-      .split("pub fn saved_position_from_args")[1]
-      .split("\n}\n")[0];
+    const reader = scope("restore", "pub fn saved_position_from_args");
     assert.match(
       reader,
       /if records\.next\(\)\.is_some\(\) \{\s*return None;/,
@@ -3655,8 +3728,24 @@ describe("native gesture adapter contracts", () => {
     // Clearing the row is a local-data write like any other. Ungated, it can
     // race a save that is already queued and the row comes back after the wipe.
     const clear = scope("pillPosition", "pub async fn clear_saved_position(");
-    assert.match(clear, /lock_local_data_write\(None\)/);
-    assert.match(clear, /clear_pill_position/);
+    const guard = /let (\w+) = [\w:]*lock_local_data_write\(None\)/.exec(clear);
+    assert.ok(guard, "the clear never takes the write gate");
+    assert.notStrictEqual(
+      guard[1],
+      "_",
+      "an underscore binding drops the write gate immediately",
+    );
+    const deleteAt = clear.indexOf("clear_pill_position");
+    assert.ok(deleteAt >= 0, "the clear never deletes the row");
+    assert.ok(
+      clear.indexOf(guard[0]) < deleteAt,
+      "the write gate has to be taken before the delete",
+    );
+    assert.doesNotMatch(
+      clear.slice(0, deleteAt),
+      new RegExp(`drop\\(${guard[1]}\\)`),
+      "the write gate is dropped before the delete",
+    );
   });
 
   it("seeds the Windows state from the position it created the window at", () => {

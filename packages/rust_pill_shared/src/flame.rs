@@ -70,7 +70,11 @@ impl Flame<'_> {
     /// `seed` is asked for each tongue the first time the flame is drawn, and is
     /// not consulted again while tongues exist: reseeding every frame would make
     /// the flame flicker rather than sway.
-    pub fn tick(&self, dt: f64, seed: impl Fn(usize) -> FlameTongue) {
+    ///
+    /// `sway` is the caller's motion preference. Reduced motion keeps the seeded
+    /// shape and lets only the burn-out fade run, because the sway, the flicker
+    /// and the height changes are the motion the setting asks to suppress.
+    pub fn tick(&self, dt: f64, sway: bool, seed: impl Fn(usize) -> FlameTongue) {
         if !self.active.get() {
             return;
         }
@@ -85,8 +89,10 @@ impl Flame<'_> {
             }
         }
 
-        for tongue in tongues.iter_mut() {
-            tongue.phase += tongue.speed * dt;
+        if sway {
+            for tongue in tongues.iter_mut() {
+                tongue.phase += tongue.speed * dt;
+            }
         }
 
         if elapsed >= FLAME_TOTAL_DURATION {
@@ -130,7 +136,7 @@ mod tests {
     fn an_inactive_flame_does_nothing() {
         let h = Harness::new();
         h.active.set(false);
-        h.flame().tick(0.1, hashed_tongue);
+        h.flame().tick(0.1, true, hashed_tongue);
         assert_eq!(h.elapsed.get(), 0.0);
         assert!(h.tongues.borrow().is_empty());
     }
@@ -139,12 +145,12 @@ mod tests {
     #[test]
     fn tongues_are_seeded_once_and_then_sway() {
         let h = Harness::new();
-        h.flame().tick(0.1, hashed_tongue);
+        h.flame().tick(0.1, true, hashed_tongue);
         assert_eq!(h.tongues.borrow().len(), FLAME_TONGUE_COUNT);
         let phases: Vec<f64> = h.tongues.borrow().iter().map(|t| t.phase).collect();
         let speeds: Vec<f64> = h.tongues.borrow().iter().map(|t| t.speed).collect();
 
-        h.flame().tick(0.1, hashed_tongue);
+        h.flame().tick(0.1, true, hashed_tongue);
         let after: Vec<f64> = h.tongues.borrow().iter().map(|t| t.phase).collect();
         for (i, (now, before)) in after.iter().zip(phases.iter()).enumerate() {
             let expected = before + speeds[i] * 0.1;
@@ -154,6 +160,27 @@ mod tests {
                 now - before
             );
         }
+    }
+
+    /// Reduced motion keeps the shape still: the seeded phases do not advance,
+    /// while the burn-out clock still runs so the flame fades on schedule.
+    #[test]
+    fn reduced_motion_holds_the_shape_and_still_burns_out() {
+        let h = Harness::new();
+        h.flame().tick(0.1, false, hashed_tongue);
+        let phases: Vec<f64> = h.tongues.borrow().iter().map(|t| t.phase).collect();
+        for _ in 0..30 {
+            h.flame().tick(0.1, false, hashed_tongue);
+        }
+        let after: Vec<f64> = h.tongues.borrow().iter().map(|t| t.phase).collect();
+        assert_eq!(phases, after, "a tongue swayed under reduced motion");
+        assert!(
+            (h.elapsed.get() - 3.1).abs() < 1e-9,
+            "the fade clock stalled"
+        );
+
+        h.flame().tick(FLAME_TOTAL_DURATION, false, hashed_tongue);
+        assert!(!h.active.get(), "the flame never burnt out");
     }
 
     /// The hash gives the five tongues different heights: a flame whose tongues
@@ -182,8 +209,8 @@ mod tests {
     #[test]
     fn the_flame_goes_out_and_clears_itself() {
         let h = Harness::new();
-        h.flame().tick(0.1, hashed_tongue);
-        h.flame().tick(FLAME_TOTAL_DURATION, hashed_tongue);
+        h.flame().tick(0.1, true, hashed_tongue);
+        h.flame().tick(FLAME_TOTAL_DURATION, true, hashed_tongue);
         assert!(!h.active.get(), "the flame never went out");
         assert!(h.tongues.borrow().is_empty(), "burnt tongues were kept");
     }
@@ -193,7 +220,7 @@ mod tests {
     #[test]
     fn a_custom_seed_is_honoured() {
         let h = Harness::new();
-        h.flame().tick(0.1, |i| FlameTongue {
+        h.flame().tick(0.1, true, |i| FlameTongue {
             t: i as f64,
             height: FLAME_MIN_HEIGHT,
             width: FLAME_MIN_WIDTH,
