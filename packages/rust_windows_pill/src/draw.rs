@@ -1357,18 +1357,24 @@ fn draw_transcript(
     let region_start = state.click_regions.borrow().len();
 
     let scroll = state.scroll_offset.get();
+    let mut content_top = viewport.y;
     let mut y = viewport.y + viewport.top_pad - scroll;
     if has_review {
         // The native editor is fixed above the scrolling transcript. Keep its
         // heading fixed too, and start conversation content below the editor.
-        y = draw_review_text(
-            gfx,
-            state,
+        let heading_y = viewport.y + viewport.top_pad;
+        content_top = draw_review_text(gfx, state, viewport.x, heading_y, viewport.width, alpha);
+        y = content_top - scroll;
+        // The viewport clip alone would let scrolled content paint over the
+        // fixed heading and behind the native editor, which GTK and macOS
+        // already exclude. The band below the review block is the whole of the
+        // area this content may occupy.
+        gfx.clip_rect(
             viewport.x,
-            viewport.y + viewport.top_pad,
+            content_top,
             viewport.width,
-            alpha,
-        ) - scroll;
+            (viewport.y + viewport.height - content_top).max(0.0),
+        );
     }
 
     let line_height = 20.0;
@@ -1461,8 +1467,8 @@ fn draw_transcript(
             let (y, h) = rust_pill_shared::clip_span_to_band(
                 region.y,
                 region.h,
-                viewport.y,
-                viewport.height,
+                content_top,
+                (viewport.y + viewport.height - content_top).max(0.0),
             )?;
             region.y = y;
             region.h = h;

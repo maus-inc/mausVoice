@@ -2655,13 +2655,16 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
             EDIT_LABEL_HEIGHT,
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE,
         );
+        // The caption row is hidden during a review, so the editor takes the
+        // height it would have occupied instead of leaving a blank strip.
+        let label_h = if is_review { 0 } else { EDIT_LABEL_HEIGHT };
         let _ = SetWindowPos(
             edit,
             None,
             0,
-            EDIT_LABEL_HEIGHT,
+            label_h,
             input_w as i32,
-            (h as i32 - EDIT_LABEL_HEIGHT).max(1),
+            (h as i32 - label_h).max(1),
             SWP_NOZORDER | SWP_NOACTIVATE,
         );
     }
@@ -2676,7 +2679,10 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
 }
 
 fn should_show_edit_label(is_review: bool, text: &str) -> bool {
-    is_review || text.is_empty()
+    // During a review the canvas draws the heading, and the caption row would
+    // repeat it a few points lower. The edit control carries the same caption
+    // as its accessible name, so a screen reader still hears it.
+    !is_review && text.is_empty()
 }
 
 fn update_edit_label_visibility(state: &PillState, text: &str) {
@@ -2813,11 +2819,12 @@ mod tests {
     }
 
     #[test]
-    fn composer_prompt_hides_while_typing_and_review_heading_stays_fixed() {
+    fn composer_prompt_hides_while_typing_and_the_review_caption_is_not_doubled() {
         assert!(should_show_edit_label(false, ""));
         assert!(!should_show_edit_label(false, "assistant message"));
-        // The review heading is owned by the fixed native overlay label.
-        assert!(should_show_edit_label(true, "transcript text"));
+        // The canvas heading owns the review caption; the native row would
+        // repeat it a few points lower.
+        assert!(!should_show_edit_label(true, "transcript text"));
     }
 
     #[test]
