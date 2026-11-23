@@ -18,16 +18,6 @@
     "docs/assets/badges/source/generate-badges.mjs",
     "apps/desktop/webdriver/specs/contracts.spec.ts"
   ],
-  "ignoreDependencies": [
-    "@maus-inc/desktop-native-apis",
-    "@maus-inc/desktop-utils",
-    "@maus-inc/types",
-    "@maus-inc/utilities",
-    "@maus-inc/typescript-config",
-    "@tauri-apps/api",
-    "morphicons",
-    "react-virtuoso"
-  ],
   "usedClassMembers": ["setExpansionFlags", "setPhase", "validateAvailability"],
   "boundaries": {
     "zones": [

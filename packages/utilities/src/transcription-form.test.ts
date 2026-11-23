@@ -38,6 +38,22 @@ describe("buildTranscriptionFormData", () => {
     );
   });
 
+  it("copies a shared-backed view, which BlobPart does not accept directly", async () => {
+    const shared = new SharedArrayBuffer(3);
+    new Uint8Array(shared).set([4, 5, 6]);
+    const entries = await readForm(
+      buildTranscriptionFormData({
+        blob: new Uint8Array(shared),
+        ext: "wav",
+        model: "whisper-1",
+      }),
+    );
+    const file = entries.get("file") as File;
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(
+      new Uint8Array([4, 5, 6]),
+    );
+  });
+
   it("omits an auto language instead of sending it", async () => {
     const entries = await readForm(
       buildTranscriptionFormData({

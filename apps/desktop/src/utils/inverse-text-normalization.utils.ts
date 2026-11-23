@@ -172,7 +172,7 @@ const HOUR_WORD_SOURCE =
 const UNIT_WORD_SOURCE = "one|two|three|four|five|six|seven|eight|nine";
 
 /** A spoken minute: "thirty", "forty five", "twenty-five". */
-const SPOKEN_MINUTE_SOURCE = `(?:twenty|thirty|forty|fifty)(?:[-\\s](?:${UNIT_WORD_SOURCE}))?`;
+const SPOKEN_MINUTE_SOURCE = String.raw`(?:twenty|thirty|forty|fifty)(?:[-\s](?:${UNIT_WORD_SOURCE}))?`;
 
 const MERIDIEM_SOURCE = String.raw`a\.?\s?m\.?|p\.?\s?m\.?`;
 

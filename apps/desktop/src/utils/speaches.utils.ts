@@ -32,6 +32,9 @@ export const speachesTestIntegration = async ({
     // The status is carried as data, not as prose, so a retry policy can read a
     // terminal 4xx as terminal and honour a rate-limit hint on a 429 or 503.
     await throwHttpError(response, {
+      // The message never uses the body, and this probe has no abort signal, so
+      // an unread body is better than an unbounded read against a stalled server.
+      body: "",
       message: () =>
         `Speaches returned an error (status ${response.status}). Check your configuration.`,
     });

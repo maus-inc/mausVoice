@@ -95,8 +95,10 @@ const updatePendingPasteReview = (
   });
 
 /**
- * The durable record behind a Paste review, refusing one that is no longer
- * pending so a stale pill cannot copy or cancel text the user already acted on.
+ * The Paste review carried by this message snapshot, refusing one that is no
+ * longer pending. It reads the snapshot it is handed, not the stored record, so
+ * a caller holding an old message copy is rejected only when that copy already
+ * recorded the action as done.
  */
 const requirePendingReview = (message: ChatMessage) => {
   const pending = getPendingPasteReview(message.metadata);
