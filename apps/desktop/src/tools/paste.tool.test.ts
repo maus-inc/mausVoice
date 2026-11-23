@@ -102,6 +102,60 @@ describe("PasteTool review", () => {
     );
   });
 
+  it("copies instead of inserting when the review outlives its app", async () => {
+    // The paste command types into whatever field has focus when it runs, so an
+    // insert after the user left the app would land in the new one.
+    let frontmost = "Notes";
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_current_app_info") {
+        return Promise.resolve({ appName: frontmost });
+      }
+      if (command === "paste") return Promise.resolve("pasted");
+      return Promise.resolve(undefined);
+    });
+    reviewTranscriptBeforeInsertMock.mockImplementation(() => {
+      frontmost = "Mail";
+      return Promise.resolve("edited text");
+    });
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({ copiedToClipboard: true });
+
+    expect(invokeMock).toHaveBeenCalledWith("copy_to_clipboard", {
+      text: "edited text",
+    });
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
+    expect(createPendingPasteReviewMock).toHaveBeenCalledWith(
+      "conv-1",
+      "edited text",
+    );
+  });
+
+  it("inserts when the review ends in the app it started in", async () => {
+    reviewTranscriptBeforeInsertMock.mockResolvedValue("edited text");
+    invokeMock.mockImplementation((command: string) =>
+      command === "get_current_app_info"
+        ? Promise.resolve({ appName: "Notes" })
+        : Promise.resolve("pasted"),
+    );
+
+    await expect(
+      new PasteTool(toolInfo).execute(
+        { text: "agent version" },
+        { conversationId: "conv-1" },
+      ),
+    ).resolves.toEqual({});
+
+    expect(invokeMock).toHaveBeenCalledWith("paste", {
+      text: "edited text",
+      keybind: null,
+    });
+  });
+
   it("saves no review when the text already landed in the target", async () => {
     reviewTranscriptBeforeInsertMock.mockResolvedValue("edited text");
 
@@ -152,7 +206,7 @@ describe("PasteTool review", () => {
     ).rejects.toThrow("This Paste review is no longer pending");
 
     expect(emitMock).not.toHaveBeenCalled();
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
   });
 
   it("saves the review and reports the failure when the insert errors", async () => {
@@ -236,7 +290,7 @@ describe("PasteTool review", () => {
       "Paste transcript review expired before a decision was made.",
     );
 
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
     expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
   });
 
@@ -259,7 +313,7 @@ describe("PasteTool review", () => {
       ),
     ).rejects.toThrow("Paste transcript review could not be completed.");
 
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
     expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
   });
 
@@ -271,7 +325,7 @@ describe("PasteTool review", () => {
     ).resolves.toEqual({ canceled: true });
 
     expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
   });
 
   it("reviews as an assistant-tool source and pastes the settled text", async () => {
@@ -329,7 +383,7 @@ describe("PasteTool review", () => {
       conversationId: "conv-1",
       pendingPasteReview: true,
     });
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
   });
 
   it("saves a later Insert edit without pasting after an Open hand-off", async () => {
@@ -358,7 +412,7 @@ describe("PasteTool review", () => {
       "edited after Open timed out",
       2,
     );
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
   });
 
   it("cancels a late Open save when the user chose Insert after timeout", async () => {
@@ -598,7 +652,7 @@ describe("PasteTool review", () => {
 
     expect(createPendingPasteReviewMock).toHaveBeenCalledOnce();
     expect(emitMock).not.toHaveBeenCalled();
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
   });
 
   it("reuses a late successful save when retrying an aborted Open hand-off", async () => {
@@ -646,7 +700,7 @@ describe("PasteTool review", () => {
 
     expect(createPendingPasteReviewMock).toHaveBeenCalledOnce();
     expect(emitMock).toHaveBeenCalledOnce();
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
   });
 
   it("lets Open retry proceed when an earlier save promise is stalled", async () => {
@@ -832,7 +886,7 @@ describe("PasteTool review", () => {
       ),
     ).resolves.toEqual({ copiedToClipboard: true });
 
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
     expect(createPendingPasteReviewMock).not.toHaveBeenCalled();
   });
 
@@ -843,7 +897,7 @@ describe("PasteTool review", () => {
       new PasteTool(toolInfo).execute({ text: "agent version" }),
     ).resolves.toEqual({ canceled: true });
 
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
   });
 
   it("pastes directly when review-before-insert is disabled", async () => {

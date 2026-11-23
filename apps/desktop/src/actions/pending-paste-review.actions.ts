@@ -5,9 +5,9 @@ import { createId } from "../utils/id.utils";
 import { nowIso } from "../utils/date.utils";
 import { LocalChatMessageRepo } from "../repos/chat-message.repo";
 import {
-  createChatMessageWithRepo,
-  updateChatMessageWithRepo,
-} from "./chat-message.actions";
+  createChatMessage,
+  updateChatMessage,
+} from "../utils/chat-message.utils";
 
 export const PENDING_PASTE_REVIEW_TYPE = "pending-paste-review";
 
@@ -95,7 +95,7 @@ export const createPendingPasteReview = async (
     );
   }
 
-  return createChatMessageWithRepo(new LocalChatMessageRepo(), {
+  return createChatMessage({
     id,
     conversationId,
     role: "system",
@@ -119,7 +119,7 @@ const updatePendingPasteReview = (
   status: PendingPasteReviewStatus,
   draftRevision = pending.draftRevision + 1,
 ): Promise<ChatMessage> =>
-  updateChatMessageWithRepo(new LocalChatMessageRepo(), {
+  updateChatMessage({
     ...message,
     metadata: {
       ...pending,

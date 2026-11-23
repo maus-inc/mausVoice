@@ -1,7 +1,6 @@
-import type { ChatMessage, Conversation } from "@maus-inc/types";
+import type { Conversation } from "@maus-inc/types";
 import { abortAgentLoop, CHAT_AGENT_CONFIG, runAgent } from "../agents";
 import { getChatMessageRepo, getConversationRepo } from "../repos";
-import { createChatMessageWithRepo } from "./chat-message.actions";
 import { getAppState, produceAppState } from "../store";
 import type { AppState } from "../state/app.state";
 import {
@@ -14,9 +13,15 @@ import { getIsDevMode } from "../utils/env.utils";
 import { getLogger } from "../utils/log.utils";
 import { createAsyncMutationTracker } from "../utils/async-mutation-tracker";
 import {
+  createChatMessage,
+  updateChatMessage,
+} from "../utils/chat-message.utils";
+import {
   type LocalDataWriteLease,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
+
+export { createChatMessage, updateChatMessage };
 
 const conversationCreations = createAsyncMutationTracker();
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
@@ -332,12 +337,6 @@ export const loadChatMessages = async (
     registerChatMessages(draft, conversationId, messages);
   });
 };
-
-export const createChatMessage = (
-  message: ChatMessage,
-  existingLease?: LocalDataWriteLease,
-): Promise<ChatMessage> =>
-  createChatMessageWithRepo(getChatMessageRepo(), message, existingLease);
 
 export const deleteChatMessages = (
   conversationId: string,

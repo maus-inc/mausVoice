@@ -52,6 +52,48 @@ vi.mock("../i18n/intl", async (importOriginal) => {
 const conversationStorage = new Map<string, Conversation>();
 const messageStorage = new Map<string, ChatMessage>();
 
+// Shared by the repos barrel and the chat message repo module. The message
+// writes now live in utils/chat-message.utils, which imports the repo module
+// directly, so both seams need the same fake.
+const chatMessageRepoStub = () => ({
+  createChatMessage: (message: ChatMessage) => {
+    if (repoMocks.rejectNextCreate) {
+      repoMocks.rejectNextCreate = false;
+      return Promise.reject(new Error("persist rejected"));
+    }
+    messageStorage.set(message.id, message);
+    return Promise.resolve(message);
+  },
+  listChatMessages: (conversationId: string) => {
+    if (repoMocks.rejectNextList) {
+      repoMocks.rejectNextList = false;
+      repoMocks.rejectNextMessageDelete = false;
+      return Promise.reject(new Error("list rejected"));
+    }
+    return Promise.resolve(
+      [...messageStorage.values()].filter(
+        (message) => message.conversationId === conversationId,
+      ),
+    );
+  },
+  updateChatMessage: (message: ChatMessage) => {
+    messageStorage.set(message.id, message);
+    return Promise.resolve(message);
+  },
+  deleteChatMessages: (ids: string[]) => {
+    if (repoMocks.rejectNextMessageDelete) {
+      repoMocks.rejectNextMessageDelete = false;
+      return Promise.reject(new Error("message delete rejected"));
+    }
+    for (const id of ids) messageStorage.delete(id);
+    return Promise.resolve();
+  },
+});
+
+vi.mock("../repos/chat-message.repo", () => ({
+  getChatMessageRepo: () => chatMessageRepoStub(),
+}));
+
 // Only the two repo methods sendChatMessage touches are faked, plus the
 // deleteConversation method deleteConversation touches. Everything else
 // stays out so an unexpected repo call fails loudly. Setting
@@ -78,40 +120,7 @@ vi.mock("../repos", () => ({
       return Promise.resolve();
     },
   }),
-  getChatMessageRepo: () => ({
-    createChatMessage: (message: ChatMessage) => {
-      if (repoMocks.rejectNextCreate) {
-        repoMocks.rejectNextCreate = false;
-        return Promise.reject(new Error("persist rejected"));
-      }
-      messageStorage.set(message.id, message);
-      return Promise.resolve(message);
-    },
-    listChatMessages: (conversationId: string) => {
-      if (repoMocks.rejectNextList) {
-        repoMocks.rejectNextList = false;
-        repoMocks.rejectNextMessageDelete = false;
-        return Promise.reject(new Error("list rejected"));
-      }
-      return Promise.resolve(
-        [...messageStorage.values()].filter(
-          (message) => message.conversationId === conversationId,
-        ),
-      );
-    },
-    updateChatMessage: (message: ChatMessage) => {
-      messageStorage.set(message.id, message);
-      return Promise.resolve(message);
-    },
-    deleteChatMessages: (ids: string[]) => {
-      if (repoMocks.rejectNextMessageDelete) {
-        repoMocks.rejectNextMessageDelete = false;
-        return Promise.reject(new Error("message delete rejected"));
-      }
-      for (const id of ids) messageStorage.delete(id);
-      return Promise.resolve();
-    },
-  }),
+  getChatMessageRepo: () => chatMessageRepoStub(),
 }));
 
 import {

@@ -335,10 +335,55 @@ const completeOpenedPendingPaste = async (
   return { awaitingManualPaste: true };
 };
 
-const pasteReviewedText = async (
+/**
+ * The app the review was opened against, or null when the platform cannot say.
+ *
+ * Read before the review and again before the insert, so the insert can tell
+ * whether the user is still in the app they started in.
+ */
+const captureFrontmostApp = async (): Promise<string | null> => {
+  try {
+    const info = await invoke<{ appName?: string }>("get_current_app_info");
+    const name = info?.appName?.trim() ?? "";
+    return name || null;
+  } catch (error) {
+    // A platform that cannot report the frontmost app (Wayland) leaves the insert
+    // unguarded, which is the behaviour every platform had before the guard.
+    getLogger().warning(`Could not read the frontmost app: ${error}`);
+    return null;
+  }
+};
+
+/**
+ * Copy instead of inserting when focus left the app the review started in.
+ *
+ * The paste command types into whatever field has focus when it runs, so a user
+ * who switches apps while the review is open would otherwise get the transcript
+ * in the new app. The clipboard keeps it where they can reach it and the pending
+ * card keeps it recoverable.
+ */
+const copyInsteadOfInsert = async (
   conversationId: string | undefined,
   text: string,
 ): Promise<Record<string, unknown>> => {
+  try {
+    await invoke<void>("copy_to_clipboard", { text });
+  } catch (error) {
+    await savePendingPasteReview(conversationId ?? "", text);
+    throw error;
+  }
+  await savePendingPasteReview(conversationId ?? "", text);
+  return { copiedToClipboard: true };
+};
+
+const pasteReviewedText = async (
+  conversationId: string | undefined,
+  text: string,
+  reviewedApp: string | null,
+): Promise<Record<string, unknown>> => {
+  if (reviewedApp !== null && (await captureFrontmostApp()) !== reviewedApp) {
+    return copyInsteadOfInsert(conversationId, text);
+  }
   let outcome: PasteOutcome;
   try {
     outcome = await invoke<PasteOutcome>("paste", { text, keybind: null });
@@ -357,7 +402,8 @@ const pasteReviewedText = async (
 const completePasteReview = async (
   state: PasteReviewState,
   text: string | null,
-  conversationId?: string,
+  conversationId: string | undefined,
+  reviewedApp: string | null,
 ): Promise<Record<string, unknown>> => {
   if (state.openedPendingPaste) {
     return completeOpenedPendingPaste(state, text, conversationId);
@@ -372,7 +418,7 @@ const completePasteReview = async (
     throw new Error("Paste transcript review could not be completed.");
   }
   if (!text?.trim()) return { canceled: true };
-  return pasteReviewedText(conversationId, text);
+  return pasteReviewedText(conversationId, text, reviewedApp);
 };
 
 export class PasteTool extends BaseTool {
@@ -411,21 +457,24 @@ export class PasteTool extends BaseTool {
           }
         : {}),
     };
+    const reviewEnabled = getAppState().userPrefs?.reviewBeforeInsert === true;
+    // Captured before the review, because the review is where the user can leave
+    // for another app.
+    const reviewedApp = reviewEnabled ? await captureFrontmostApp() : null;
     let text: string | null;
     try {
-      text =
-        getAppState().userPrefs?.reviewBeforeInsert === true
-          ? await reviewTranscriptBeforeInsert(
-              requestedText,
-              "assistant-tool",
-              reviewOptions,
-            )
-          : requestedText;
+      text = reviewEnabled
+        ? await reviewTranscriptBeforeInsert(
+            requestedText,
+            "assistant-tool",
+            reviewOptions,
+          )
+        : requestedText;
     } finally {
       state.reviewResolved = true;
       cancelUnusedPendingReview(state);
     }
-    return completePasteReview(state, text, conversationId);
+    return completePasteReview(state, text, conversationId, reviewedApp);
   }
 
   getAlwaysAllow(_params: Record<string, unknown>, scope = "global"): boolean {
