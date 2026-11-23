@@ -1863,6 +1863,11 @@ pub struct RingState {
     arm_pulse: Cell<f64>,
     locate_active: Cell<bool>,
     locate_elapsed: Cell<f64>,
+    /// The replay was invoked from the keyboard, so it holds a complete outline
+    /// instead of sweeping. `DESIGN.md` says keyboard-invoked actions never
+    /// animate, and a locate is the one indication whose whole content is the
+    /// outline, so it still shows, just without motion.
+    locate_still: Cell<bool>,
 }
 
 impl Default for RingState {
@@ -1877,6 +1882,7 @@ impl Default for RingState {
             arm_pulse: Cell::new(seed.arm_pulse),
             locate_active: Cell::new(false),
             locate_elapsed: Cell::new(0.0),
+            locate_still: Cell::new(false),
         }
     }
 }
@@ -1911,6 +1917,11 @@ impl RingState {
         self.locate_active.get()
     }
 
+    /// True while the in-flight replay holds a still outline.
+    pub fn locate_still(&self) -> bool {
+        self.locate_still.get()
+    }
+
     /// Starts the arm-confirmation pulse from outside the tick.
     pub fn arm(&self) {
         self.arm_pulse.set(pulse_armed());
@@ -1938,6 +1949,20 @@ impl RingState {
     /// sweep instead of inheriting the previous fade, and a live pointer
     /// gesture wins so the replay never wipes an in-progress press.
     pub fn start_locate(&self, gesture: RingGesture) {
+        self.start_locate_with(gesture, false);
+    }
+
+    /// Begins a locate replay that holds a complete outline and never sweeps.
+    ///
+    /// The keyboard trigger reaches this. `apps/desktop/DESIGN.md` states that
+    /// keyboard-invoked actions never animate, and a locate is an explicit
+    /// request whose whole content is the outline, so the outline appears
+    /// complete, holds, and fades. The pointer long-press keeps its sweep.
+    pub fn start_locate_still(&self, gesture: RingGesture) {
+        self.start_locate_with(gesture, true);
+    }
+
+    fn start_locate_with(&self, gesture: RingGesture, still: bool) {
         if locate_yields_to_pointer(
             gesture.pointer_down,
             gesture.long_press_active,
@@ -1946,11 +1971,13 @@ impl RingState {
             return;
         }
         self.locate_active.set(true);
+        self.locate_still.set(still);
         // Reduced motion skips the sweep entirely: the outline is drawn
-        // complete and only the fade runs.
+        // complete and only the fade runs. A keyboard trigger does the same,
+        // because a still outline is what the design rule requires there.
         self.locate_elapsed.set(0.0);
         self.reset_ring();
-        if gesture.reduced_motion {
+        if still || gesture.reduced_motion {
             self.hold_static_outline();
         }
     }
@@ -1990,6 +2017,9 @@ impl RingState {
         }
         self.locate_active.set(step.active);
         self.locate_elapsed.set(step.elapsed);
+        if !step.active {
+            self.locate_still.set(false);
+        }
         if cancelled && was_locating {
             self.reset_ring();
         }
@@ -2214,8 +2244,11 @@ pub trait RingHost {
     fn ring_cleared(&self) {}
 
     /// Begins a locate replay from a clean ring.
+    ///
+    /// The modifier double-tap is the only caller, so this is the keyboard
+    /// trigger and it holds a still outline.
     fn begin_locate(&self) {
-        self.ring().start_locate(self.ring_gesture());
+        self.ring().start_locate_still(self.ring_gesture());
     }
 
     /// Advances the drag affordances and the ring for one frame.
@@ -2350,7 +2383,7 @@ macro_rules! impl_ring_host {
                     ring: &self.ring,
                     static_outline: $crate::ring_outline_is_static(
                         self.ring.locate_active(),
-                        $crate::RingHost::reduced_motion(self),
+                        $crate::RingHost::reduced_motion(self) || self.ring.locate_still(),
                     ),
                     dragging: self.dragging.get(),
                     long_press_active: self.long_press_active.get(),
@@ -4744,6 +4777,58 @@ mod tests {
         assert!(later.alpha < first.alpha, "the opacity fade still runs");
         assert_eq!((later.ox, later.oy), (first.ox, first.oy));
         assert_eq!((later.ow, later.oh), (first.ow, first.oh));
+    }
+
+    #[test]
+    fn a_keyboard_locate_holds_a_complete_outline_from_the_first_frame() {
+        let ring = RingState::new();
+        ring.start_locate_still(idle_gesture());
+
+        let static_outline = ring_outline_is_static(ring.locate_active(), ring.locate_still());
+        assert!(static_outline, "the keyboard replay is static on its own");
+        let first = RingPaint::resolve(&paint_input(&ring, static_outline)).expect("visible");
+        assert_eq!(first.alpha, 1.0, "no sweep to wait for");
+
+        for _ in 0..10 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        let later = RingPaint::resolve(&paint_input(&ring, static_outline)).expect("still fading");
+
+        assert!(later.alpha < first.alpha, "the opacity fade still runs");
+        assert_eq!((later.ox, later.oy), (first.ox, first.oy));
+        assert_eq!((later.ow, later.oh), (first.ow, first.oh));
+    }
+
+    #[test]
+    fn a_pointer_locate_keeps_its_sweep() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+
+        assert!(!ring.locate_still(), "only the keyboard trigger is still");
+        assert!(!ring_outline_is_static(
+            ring.locate_active(),
+            ring.locate_still()
+        ));
+        assert!(
+            RingPaint::resolve(&paint_input(&ring, false)).is_none(),
+            "the sweep starts from an empty ring, so nothing paints yet"
+        );
+    }
+
+    #[test]
+    fn the_still_flag_clears_when_the_replay_ends() {
+        let ring = RingState::new();
+        ring.start_locate_still(idle_gesture());
+        assert!(ring.locate_still());
+
+        for _ in 0..240 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        assert!(!ring.locate_active(), "the replay expired");
+        assert!(
+            !ring.locate_still(),
+            "a later pointer replay must sweep again"
+        );
     }
 
     #[test]
