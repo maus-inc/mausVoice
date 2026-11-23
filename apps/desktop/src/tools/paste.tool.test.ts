@@ -877,6 +877,12 @@ describe("PasteTool review", () => {
 
     let resolveRecovery!: (row: ChatMessage) => void;
     let openNewest!: () => void;
+    let finishReview!: (text: string | null) => void;
+    // The review stays open until the person decides, which is what lets the
+    // newer Open navigate before the tool finishes.
+    const decided = new Promise<string | null>((resolve) => {
+      finishReview = resolve;
+    });
     // The row exists from the first attempt, so a retry cannot insert it again:
     // every create rejects, which is the sequence the recovery path is for.
     createPendingPasteReviewMock.mockRejectedValue(
@@ -908,14 +914,14 @@ describe("PasteTool review", () => {
         openNewest = () => {
           // The second Open cancels the first, as the UI does.
           controller.abort();
-          void options?.onOpen?.("newest");
+          void options?.onOpen?.("newest").then(() => finishReview("newest"));
         };
         void options?.onOpen?.("oldest", controller.signal);
-        return Promise.resolve(null);
+        return decided;
       },
     );
 
-    await new PasteTool(toolInfo).execute(
+    const execution = new PasteTool(toolInfo).execute(
       { text: "agent version" },
       { conversationId: "conv-1" },
     );
@@ -926,14 +932,24 @@ describe("PasteTool review", () => {
       expect(createPendingPasteReviewMock).toHaveBeenCalledTimes(2),
     );
     resolveRecovery(pendingRow("oldest", 1));
+    await execution;
 
-    // Without convergence the recovery would publish the older row it read.
+    // Without convergence the older recovery would keep the row it read.
     await vi.waitFor(() =>
       expect(updatePendingPasteReviewDraftMock).toHaveBeenCalledWith(
-        expect.anything(),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ text: "oldest" }),
+        }),
         "newest",
-        2,
+        expect.any(Number),
       ),
     );
+    // Only the newer Open navigates, and the navigation carries the review the
+    // correction settled on rather than the row the older recovery read.
+    expect(emitMock).toHaveBeenCalledWith("open-pill-conversation", {
+      conversationId: "conv-1",
+      pendingPasteReview: true,
+    });
+    expect(emitMock).toHaveBeenCalledTimes(1);
   });
 });
