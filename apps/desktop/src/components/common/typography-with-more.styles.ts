@@ -3,7 +3,7 @@ import type { TypographyProps } from "@mui/material/Typography";
 import { noHoverQuery } from "../../styles/motion";
 
 const coarseTouchQuery = "(hover: none) and (pointer: coarse)";
-export const narrowInlineToggleQuery =
+const narrowInlineToggleQuery =
   "@container typography-with-more (max-width: 480px)";
 
 export const defaultClampStyles = (maxLines: number) => ({
@@ -14,7 +14,7 @@ export const defaultClampStyles = (maxLines: number) => ({
 });
 
 /** The clamp only applies while the text is collapsed. */
-export const normalizeSxProp = (
+const normalizeSxProp = (
   baseClampStyles: Record<string, unknown>,
   shouldClamp: boolean,
   sx: TypographyProps["sx"],
