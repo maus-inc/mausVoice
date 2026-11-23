@@ -28,7 +28,10 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { isDirectInvocation } from "./direct-invocation.mjs";
+
+export { isDirectInvocation };
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -169,10 +172,6 @@ export function verifySkills(
     }`,
   );
   return drift === 0;
-}
-
-export function isDirectInvocation(moduleUrl, scriptPath) {
-  return Boolean(scriptPath) && moduleUrl === pathToFileURL(scriptPath).href;
 }
 
 if (isDirectInvocation(import.meta.url, process.argv[1])) {

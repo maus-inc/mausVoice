@@ -1,4 +1,9 @@
-import { HttpError, retry, countWords } from "@maus-inc/utilities";
+import {
+  buildTranscriptionFormData,
+  countWords,
+  retry,
+  throwHttpError,
+} from "@maus-inc/utilities";
 
 export type SpeachesTestIntegrationArgs = {
   baseUrl: string;
@@ -37,18 +42,13 @@ export const speachesTranscribeAudio = ({
   return retry({
     retries: 3,
     fn: async () => {
-      const formData = new FormData();
-      const arrayBuffer =
-        blob instanceof ArrayBuffer ? blob : new Uint8Array(blob).buffer;
-      const file = new Blob([arrayBuffer], { type: `audio/${ext}` });
-      formData.append("file", file, `audio.${ext}`);
-      formData.append("model", model);
-      if (prompt) {
-        formData.append("prompt", prompt);
-      }
-      if (language) {
-        formData.append("language", language);
-      }
+      const formData = buildTranscriptionFormData({
+        blob,
+        ext,
+        model,
+        prompt,
+        language,
+      });
 
       const url = baseUrl.replace(/\/$/, "");
       const response = await fetch(`${url}/v1/audio/transcriptions`, {
@@ -57,12 +57,10 @@ export const speachesTranscribeAudio = ({
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
-        throw new HttpError(
-          response.status,
-          `Speaches transcription failed: ${response.status} - ${errorText}`,
-          { retryAfter: response.headers.get("retry-after") },
-        );
+        await throwHttpError(response, {
+          message: (errorText) =>
+            `Speaches transcription failed: ${response.status} - ${errorText}`,
+        });
       }
 
       const data = (await response.json()) as { text?: string };
