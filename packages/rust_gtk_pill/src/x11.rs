@@ -824,6 +824,12 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
                     XFlush(xdisplay);
                 }
             }
+            if reset_to_cursor {
+                // The reset acknowledgement went out before this move and describes
+                // the display the pill was on. Publish where it landed so the
+                // composer anchors to the display the reset put it on.
+                crate::pill::publish_applied_placement(&win_tick, &state_tick);
+            }
         } else {
             // Monitor resolution failed (e.g. display reconfig mid-tick): leave
             // the window where it is rather than mutating saved-position state or

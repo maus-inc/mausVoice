@@ -172,6 +172,11 @@ pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
 #[allow(dead_code)]
 pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 
+/// How long to wait before retrying a drop whose panel was gone when it was
+/// recorded. Short, because the frame loop is the retry and the drop is reported
+/// exactly once.
+pub(crate) const DROP_RETRY_SECONDS: f64 = 0.25;
+
 // Ring + drag tuning constants live in `rust_pill_shared` so every platform
 // draws the long-press ring from one source of truth.
 pub(crate) use rust_pill_shared::{DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS};

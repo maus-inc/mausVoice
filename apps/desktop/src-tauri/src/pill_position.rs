@@ -74,12 +74,12 @@ pub fn store_published_position(
     rect: &serde_json::Value,
     monitor: &serde_json::Value,
     display_id: Option<u64>,
-) {
+) -> bool {
     let Some(window_rect) = read_rect(rect) else {
-        return;
+        return false;
     };
     let Some(work_area) = read_rect(monitor) else {
-        return;
+        return false;
     };
     let Some(parked) = ParkedWindow::new_named(
         window_rect.x,
@@ -90,14 +90,14 @@ pub fn store_published_position(
         display_id,
     ) else {
         log::debug!("Ignoring a pill geometry that does not describe a usable window");
-        return;
+        return false;
     };
     let Some(encoded) = parked.encode() else {
         log::warn!("Could not encode the pill's position for storage");
-        return;
+        return false;
     };
     let Some(database) = app.try_state::<OptionKeyDatabase>() else {
-        return;
+        return false;
     };
     let pool = database.pool();
     let saved_at = chrono::Utc::now().timestamp();
@@ -109,7 +109,7 @@ pub fn store_published_position(
     // would leave the pill parked with nothing stored.
     if erase_is_undeclared() {
         log::debug!("Dropped a pill position published before the record was erased");
-        return;
+        return false;
     }
     // The clear runs its own command, so this write is the one that could land
     // after the wipe and put a position the user just erased back on screen at
@@ -138,18 +138,60 @@ pub fn store_published_position(
         }
         pill_position_queries::upsert_pill_position(pool, &encoded, saved_at).await
     });
-    if let Err(err) = written {
-        // A refused gate means the user is clearing local data right now, which
-        // is a correct outcome, not a fault. Only a real database error is worth
-        // a warning.
-        if crate::db::local_data_write_gate::current_write_generation().is_none() {
-            log::debug!("Dropped a pill position because local data is being cleared");
-        } else if erased_while_waiting.get() {
-            log::debug!("Dropped a pill position published before the record was erased");
-        } else {
-            log::warn!("Could not store the pill's position: {err}");
+    match written {
+        Ok(()) => true,
+        Err(err) => {
+            // A refused gate means the user is clearing local data right now, which
+            // is a correct outcome, not a fault. Only a real database error is worth
+            // a warning.
+            if crate::db::local_data_write_gate::current_write_generation().is_none() {
+                log::debug!("Dropped a pill position because local data is being cleared");
+            } else if erased_while_waiting.get() {
+                log::debug!("Dropped a pill position published before the record was erased");
+            } else {
+                log::warn!("Could not store the pill's position: {err}");
+            }
+            false
         }
     }
+}
+
+/// Handles one `PositionChanged` report from a pill.
+///
+/// The sidecar path and the in-process macOS path both reach this, so the
+/// storable decision, the store and the tray state cannot drift apart. Returns
+/// the payload the renderer caches.
+pub fn apply_published_position(
+    app: &tauri::AppHandle,
+    has_saved_position: bool,
+    rect: Option<serde_json::Value>,
+    monitor: Option<serde_json::Value>,
+    display_id: Option<u64>,
+    ack: Option<u64>,
+) -> serde_json::Value {
+    // Every report is accounted for before it is acted on, including the ones that
+    // carry nothing: a clear is answered by the report that names its id, and that
+    // answer is what retires the clear's declaration.
+    let storable = note_report(has_saved_position, ack);
+    // Only a geometry the pill considers saved describes where the user left it. A
+    // reset publishes `has_saved_position: false` with the corner it just moved to,
+    // and storing that would undo the reset.
+    //
+    // The flag the tray reads follows the store, not the pill's latch. A report
+    // that could not be stored leaves no row for Reset to delete, and macOS
+    // reports a saved position with no monitor while its screens are asleep, so
+    // the latch alone would offer a Reset that has nothing to clear.
+    let stored = storable
+        && has_saved_position
+        && match (rect.as_ref(), monitor.as_ref()) {
+            (Some(rect), Some(monitor)) => store_published_position(app, rect, monitor, display_id),
+            _ => false,
+        };
+    serde_json::json!({
+        "hasSavedPosition": stored,
+        "rect": rect,
+        "monitor": monitor,
+    })
 }
 
 /// Set right after a clear or a reset, so a `PositionChanged` that was already

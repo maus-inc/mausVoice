@@ -387,6 +387,21 @@ impl DragController {
         self.settle_elapsed = 0.0;
     }
 
+    /// Rebase the latched grab offset onto a new surface scale.
+    ///
+    /// The offset is a physical distance from the window origin to the point the
+    /// user grabbed, and the surface is rendered at the display's scale. When that
+    /// scale changes mid-gesture the same canvas point covers a different number of
+    /// physical pixels, so an offset left as it was holds the grabbed point away
+    /// from the pointer by the difference.
+    pub fn rescale_grab(&mut self, ratio: f64) {
+        if !ratio.is_finite() || ratio <= 0.0 || self.phase == DragPhase::Idle {
+            return;
+        }
+        self.grab_dx *= ratio;
+        self.grab_dy *= ratio;
+    }
+
     /// Record a pointer observation between frames (a motion event). Samples
     /// coalesce: only the newest position is ever used for tracking, and the
     /// ring keeps just enough history for the release-velocity estimate.
@@ -716,6 +731,26 @@ mod tests {
     use super::*;
 
     const FRAME_DT: f64 = 1.0 / 60.0;
+
+    #[test]
+    fn rescaling_the_grab_keeps_the_grabbed_point_under_the_pointer() {
+        // A 100% window grabbed 300 px in from its origin. At 150% that canvas
+        // point is 450 px in, so an offset left at 300 puts the pill 150 px off.
+        let mut drag = DragController::new();
+        drag.begin_drag(300.0, 0.0, 1000.0, 500.0, 0.0);
+        drag.rescale_grab(1.5);
+        let out = drag.advance(&held_frame(1300.0, 500.0, 0.0));
+        assert!((out.x - 850.0).abs() < 1e-9, "got {}", out.x);
+    }
+
+    #[test]
+    fn rescaling_an_idle_controller_leaves_the_next_grab_alone() {
+        let mut drag = DragController::new();
+        drag.rescale_grab(1.5);
+        drag.begin_drag(300.0, 0.0, 1000.0, 500.0, 0.0);
+        let out = drag.advance(&held_frame(1300.0, 500.0, 0.0));
+        assert!((out.x - 1000.0).abs() < 1e-9, "got {}", out.x);
+    }
 
     fn wide_bounds() -> DragBounds {
         DragBounds {

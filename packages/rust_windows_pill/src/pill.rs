@@ -89,8 +89,19 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
     let win_h =
         WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
     // `None` means the window was created at the default corner, so the state
-    // must not claim a saved position it does not have.
-    let restored = saved_position.and_then(|parked| restore_position(parked, win_h));
+    // must not claim a saved position it does not have. A record whose display
+    // enumeration failed is kept, not dropped: nothing else re-reads it, so
+    // discarding it here would leave the pill at the default corner for the rest
+    // of the session.
+    let mut pending_restore = None;
+    let restored = saved_position.and_then(|parked| match restore_position(parked, win_h) {
+        RestoreOutcome::Applied(placement) => Some(placement),
+        RestoreOutcome::NoPlace => None,
+        RestoreOutcome::NoDisplays => {
+            pending_restore = Some(parked);
+            None
+        }
+    });
     // The retained area has to describe the display the restore landed on. The
     // record's own area is the one it was saved against, so a position remapped
     // off a missing display would be retained against that missing display, and
@@ -147,6 +158,7 @@ pub fn run(receiver: Receiver<InMessage>, saved_position: Option<ParkedWindow>) 
         restored.map(|placement| placement.origin),
         restored_display_id,
         restored_work_area,
+        pending_restore,
     );
     // Mirrored from the surface, so every canvas-to-window conversion describes
     // the bitmap the target actually holds.
@@ -276,6 +288,109 @@ unsafe fn on_wm_displaychange(hwnd: HWND) -> LRESULT {
     LRESULT(0)
 }
 
+/// Rebase the latched grab offset when the surface scale changes.
+///
+/// The offset is a physical distance, and the canvas point it names is rendered at
+/// the surface scale, so a change mid-drag leaves the grabbed point that far from
+/// the pointer until the offset is rebased.
+fn rebase_grab_for_scale(state: &PillState, scale: f64) {
+    let previous = state.content_scale.get();
+    if previous <= 0.0 || (scale - previous).abs() <= f64::EPSILON {
+        return;
+    }
+    state
+        .drag_motion
+        .borrow_mut()
+        .rescale_grab(scale / previous);
+}
+
+/// Apply a surface size a previous `resize` refused, before the next presentation.
+///
+/// A failed resize leaves the window at the new size and the surface at the old
+/// one. Every frame presents the surface's own dimensions, so the next frame would
+/// resize the window back and nothing would ask for the new allocation again.
+fn retry_pending_surface(state: &PillState) {
+    let Some((width, height)) = state.pending_surface.get() else {
+        return;
+    };
+    let applied = GFX.with(|gfx| {
+        let mut slot = gfx.borrow_mut();
+        let gfx = slot.as_mut()?;
+        gfx.resize(width, height).ok().map(|()| gfx.content_scale())
+    });
+    let Some(scale) = applied else {
+        return;
+    };
+    state.pending_surface.set(None);
+    rebase_grab_for_scale(state, scale);
+    state.content_scale.set(scale);
+    state.dirty.set(true);
+}
+
+/// Apply a stored record the launch could not resolve because display enumeration
+/// failed.
+///
+/// The record is read once, at launch, so discarding it there would leave the pill
+/// at the default corner for the whole session.
+fn try_restore_pending(hwnd: HWND, state: &PillState) {
+    let Some(parked) = state.pending_restore.get() else {
+        return;
+    };
+    let win_h =
+        WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
+    match restore_position(parked, win_h) {
+        RestoreOutcome::Applied(placement) => {
+            state.pending_restore.set(None);
+            state.has_saved_position.set(true);
+            state.saved_x.set(placement.origin.0);
+            state.saved_y.set(placement.origin.1);
+            state.saved_work_area.set(placement.work_area);
+            state.saved_display_id.set(placement.display_id);
+            state.dirty.set(true);
+            // Moving onto the record's display is also what makes Windows send the
+            // DPI change that sizes the surface for that display.
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    placement.origin.0,
+                    placement.origin.1,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+            let mut rect = RECT::default();
+            unsafe {
+                let _ = GetWindowRect(hwnd, &mut rect);
+            }
+            let area = placement.work_area;
+            ipc::send(&OutMessage::PositionChanged {
+                report: rust_pill_shared::restore::PositionReport::new(
+                    true,
+                    Some(Rect {
+                        x: placement.origin.0 as f64,
+                        y: placement.origin.1 as f64,
+                        width: (rect.right - rect.left) as f64,
+                        height: (rect.bottom - rect.top) as f64,
+                    }),
+                    Some(Rect {
+                        x: area.x,
+                        y: area.y,
+                        width: area.width,
+                        height: area.height,
+                    }),
+                    placement.display_id,
+                ),
+            });
+        }
+        // A record with no place on the displays connected now is the platform's
+        // to place, the same answer the launch gives.
+        RestoreOutcome::NoPlace => state.pending_restore.set(None),
+        RestoreOutcome::NoDisplays => {}
+    }
+}
+
 /// Handles `WM_DPICHANGED`.
 unsafe fn on_wm_dpichanged(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     // Per-Monitor V2 hands us a suggested rect for the new scale. Without
@@ -304,8 +419,7 @@ unsafe fn on_wm_dpichanged(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     // the published geometry, so all three describe the pill at one size.
     let applied = GFX.with(|gfx| {
         if let Some(ref mut gfx) = *gfx.borrow_mut() {
-            let _ = gfx.resize(w, h);
-            Some(gfx.content_scale())
+            gfx.resize(w, h).ok().map(|()| gfx.content_scale())
         } else {
             None
         }
@@ -315,6 +429,7 @@ unsafe fn on_wm_dpichanged(hwnd: HWND, lparam: LPARAM) -> LRESULT {
             // Mirrored from the target rather than assumed, so a resize that was
             // refused leaves the state describing the surface that still exists.
             if let Some(scale) = applied {
+                rebase_grab_for_scale(state, scale);
                 state.content_scale.set(scale);
                 // The window and its surface are the new size but the presented
                 // bitmap is not. An idle pill runs no animation, so nothing else
@@ -322,6 +437,11 @@ unsafe fn on_wm_dpichanged(hwnd: HWND, lparam: LPARAM) -> LRESULT {
                 // the pointer would be mapped at the new scale against a bitmap
                 // still drawn at the old one.
                 state.dirty.set(true);
+            } else {
+                // The window keeps the suggested size while the surface keeps the
+                // old one, and the next frame presents the old size and resizes the
+                // window back. The frame loop retries this size before presenting.
+                state.pending_surface.set(Some((w, h)));
             }
             if let Some(areas) = enumerate_work_areas_with_identity() {
                 if reconcile_display_layout(hwnd, state, &areas) {
@@ -613,6 +733,12 @@ fn on_anim_tick(hwnd: HWND) {
 
     maybe_reassert_topmost(hwnd, Instant::now());
 
+    STATE.with(|s| {
+        if let Some(ref state) = *s.borrow() {
+            retry_pending_surface(state);
+        }
+    });
+
     GFX.with(|g| {
         STATE.with(|s| {
             if let (Some(ref mut gfx), Some(ref state)) = (&mut *g.borrow_mut(), &*s.borrow()) {
@@ -638,6 +764,9 @@ fn on_cursor_tick(hwnd: HWND) {
             // messages miss, only later, which is the right trade for a change
             // that would otherwise strand the pill.
             poll_display_layout(hwnd, state);
+            // A record the launch could not resolve because enumeration failed is
+            // applied as soon as one succeeds.
+            try_restore_pending(hwnd, state);
             // Hover is sampled every animation frame in on_anim_tick
             // (16.7 ms); the cursor timer at 60 ms now only re-anchors the
             // pill to the cursor monitor when it has not been dragged.
@@ -665,6 +794,22 @@ fn poll_display_layout(hwnd: HWND, state: &PillState) {
         // Same rule as the message path: a failed enumeration is not evidence.
         return;
     };
+    // A scale change can arrive with no `WM_DPICHANGED` at all: a hidden window
+    // gets nothing, and a per-monitor change on a window the system moved can be
+    // swallowed. The pixel work area can be identical across the two DPIs, so the
+    // signature cannot see it either. Comparing the window's DPI with the one the
+    // surface was built for is the only signal left.
+    let window_scale = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd) } as f64 / 96.0;
+    if window_scale > 0.0 && (window_scale - state.content_scale.get()).abs() > 0.001 {
+        let mut client = RECT::default();
+        if unsafe { GetClientRect(hwnd, &mut client) }.is_ok() {
+            state.pending_surface.set(Some((
+                client.right - client.left,
+                client.bottom - client.top,
+            )));
+            retry_pending_surface(state);
+        }
+    }
     let previous = state.layout_poll.borrow().signature();
     let outcome = state
         .layout_poll
@@ -1011,6 +1156,9 @@ fn on_reset_position(state: &PillState, msg: InMessage) {
     // position the reset just replaced.
     state.pending_drag_position.set(false);
     state.drag_save_due.set(None);
+    // A restore still owed describes the position this reset just cleared, so it
+    // must not land afterwards.
+    state.pending_restore.set(None);
     state.selector_placement.borrow_mut().reset();
     state.crossing.borrow_mut().reset();
     // A reset names its destination, so the anchor carries it.
@@ -1058,6 +1206,9 @@ fn on_forget_position(state: &PillState, msg: InMessage) {
     // tick later: it would republish `has_saved_position` and recreate
     // the row the clear just removed.
     state.drag_save_due.set(None);
+    // The clear removes the record, so a restore still owed has nothing left to
+    // apply.
+    state.pending_restore.set(None);
     // Clearing local data drops the stored position without moving the
     // pill, so placement must leave the window exactly where it is.
     state
@@ -1628,10 +1779,12 @@ fn query_monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
 /// from the EDID, so the same physical panel keeps it across reconnects, reboots
 /// and port changes, and two identical panels still differ in the instance id.
 ///
-/// The slot name is the fallback when the device path is unavailable. That keeps
-/// the token non-empty on a driver that exposes no path, at the cost of that
-/// display recognising itself only while it stays in the same slot, which is the
-/// same guarantee geometry already gave.
+/// A driver that exposes no device path gets no name at all. The slot name is not
+/// a substitute: Windows reassigns it, so a replacement panel in the same slot
+/// would match a record written for the panel it replaced, and the stored origin
+/// would be clamped into a different display instead of being carried over by
+/// geometry. An unnamed display degrades to geometry matching, which is the
+/// guarantee the slot name claimed and did not have.
 fn monitor_device_name(monitor: HMONITOR) -> String {
     let mut info = MONITORINFOEXW {
         monitorInfo: MONITORINFO {
@@ -1664,7 +1817,7 @@ fn monitor_device_name(monitor: HMONITOR) -> String {
                 return path;
             }
         }
-        wide_to_string(&info.szDevice)
+        String::new()
     }
 }
 
@@ -1723,12 +1876,25 @@ struct RestoredPlacement {
     scale: f64,
 }
 
-fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<RestoredPlacement> {
+/// What the launch could do with a stored record.
+enum RestoreOutcome {
+    Applied(RestoredPlacement),
+    /// The record has no place on the displays connected now.
+    NoPlace,
+    /// Display enumeration failed, so nothing about the record could be decided.
+    /// The caller keeps the record and retries it against the next complete
+    /// snapshot rather than starting the session at the default corner.
+    NoDisplays,
+}
+
+fn restore_position(parked: ParkedWindow, win_h: i32) -> RestoreOutcome {
     // Identity-aware, because the record names a display: matching it against
     // rectangles that carry no token reduces every restore to geometry, so a pill
     // saved on a display that was resized or rearranged comes back on whichever
     // display happens to sit nearest its old origin.
-    let work_areas = enumerate_work_areas_with_identity()?;
+    let Some(work_areas) = enumerate_work_areas_with_identity() else {
+        return RestoreOutcome::NoDisplays;
+    };
     let live_size = (WINDOW_W_TYPING as f64, win_h as f64);
     // The scale the window will be created at, filled in by the destination
     // bounds below because only `restore` knows which display it chose.
@@ -1764,13 +1930,13 @@ fn restore_position(parked: ParkedWindow, win_h: i32) -> Option<RestoredPlacemen
             y,
             display_id,
             work_area,
-        } => Some(RestoredPlacement {
+        } => RestoreOutcome::Applied(RestoredPlacement {
             origin: (x.round() as i32, y.round() as i32),
             display_id,
             work_area,
             scale: destination_scale,
         }),
-        rust_pill_shared::restore::Placement::PlatformDefault => None,
+        rust_pill_shared::restore::Placement::PlatformDefault => RestoreOutcome::NoPlace,
     }
 }
 
@@ -2292,6 +2458,7 @@ fn initial_state(
     restored: Option<(i32, i32)>,
     restored_display_id: Option<u64>,
     restored_work_area: Option<rust_pill_shared::edge::MonitorRect>,
+    pending_restore: Option<ParkedWindow>,
 ) -> PillState {
     PillState {
         phase: Cell::new(Phase::Idle),
@@ -2390,6 +2557,8 @@ fn initial_state(
         saved_x: Cell::new(restored.map_or(0, |origin| origin.0)),
         saved_y: Cell::new(restored.map_or(0, |origin| origin.1)),
         saved_display_id: Cell::new(restored_display_id),
+        pending_restore: Cell::new(pending_restore),
+        pending_surface: Cell::new(None),
         saved_work_area: Cell::new(restored_work_area.unwrap_or_else(|| {
             rust_pill_shared::edge::MonitorRect::without_id(0.0, 0.0, 0.0, 0.0)
         })),
@@ -3164,6 +3333,34 @@ fn drop_record_at(origin: (i32, i32), window: (f64, f64), state: &PillState) -> 
     }
 }
 
+/// Fill in the panel under a recorded drop that lost its own.
+///
+/// `drop_record_at` takes the work area and the token from one lookup, and a
+/// display that disconnects between the two calls leaves both empty. The origin
+/// and size are still the user's, so resolving them again completes the record
+/// rather than discarding a drop that is reported exactly once.
+fn complete_drop_record(record: DropRecord, state: &PillState) -> Option<DropRecord> {
+    if record.work_area.is_some() {
+        return Some(record);
+    }
+    let (offset, size) = live_pill_footprint(state);
+    let centre = visible_pill_centre((record.x as f64, record.y as f64), (offset, size));
+    let monitor_handle = monitor_for_point(centre);
+    let work_area = monitor_handle.and_then(query_monitor_info).map(|info| {
+        rust_pill_shared::edge::MonitorRect::without_id(
+            info.rcWork.left as f64,
+            info.rcWork.top as f64,
+            (info.rcWork.right - info.rcWork.left) as f64,
+            (info.rcWork.bottom - info.rcWork.top) as f64,
+        )
+    })?;
+    Some(DropRecord {
+        work_area: Some(work_area),
+        display_id: monitor_handle.and_then(monitor_display_id),
+        ..record
+    })
+}
+
 /// Store the recorded drop and publish it, without consulting the save guard.
 ///
 /// Shared by the guarded writer and the shutdown writer, so the two cannot
@@ -3189,6 +3386,17 @@ fn store_recorded_drop(hwnd: HWND, state: &PillState) {
             state,
         )
     });
+    // A panel that went away between `monitor_for_point` and `GetMonitorInfoW`
+    // leaves the record with an origin and no work area, and a report without one
+    // cannot be stored. Completing the record from its own origin keeps the drop
+    // the user made instead of spending it, and the frame loop comes back for it.
+    let Some(record) = complete_drop_record(record, state) else {
+        state.drop_record.set(Some(record));
+        state
+            .drag_save_due
+            .set(Some(drag_now() + DROP_RETRY_SECONDS));
+        return;
+    };
     let origin = (record.x, record.y);
     state.saved_x.set(origin.0);
     state.saved_y.set(origin.1);
@@ -3688,7 +3896,7 @@ mod tests {
     /// the pointer, the footprint and the renderer stay exactly as they were.
     #[test]
     fn an_unscaled_pill_maps_the_pointer_unchanged() {
-        let state = initial_state(None, None, None);
+        let state = initial_state(None, None, None, None);
         assert_eq!(state.content_scale.get(), 1.0);
         assert_eq!(state.pointer_to_canvas(120.0, 240.0), (120.0, 240.0));
         assert_eq!(state.canvas_to_window(120.0, 240.0), (120.0, 240.0));
@@ -3700,7 +3908,7 @@ mod tests {
     /// published geometry would name a spot the window does not have.
     #[test]
     fn a_scaled_pill_maps_the_pointer_and_footprint_together() {
-        let state = initial_state(None, None, None);
+        let state = initial_state(None, None, None, None);
         state.content_scale.set(0.5);
 
         let (x, y) = state.pointer_to_canvas(100.0, 200.0);
@@ -3727,7 +3935,7 @@ mod tests {
     /// each has to take the mapping its consumer expects.
     #[test]
     fn a_press_hit_tests_on_the_canvas_and_stores_window_pixels() {
-        let state = initial_state(None, None, None);
+        let state = initial_state(None, None, None, None);
         state.content_scale.set(0.5);
 
         let (press_x, press_y) = (100.0, 200.0);
@@ -3758,7 +3966,7 @@ mod tests {
     /// restart but not the following 60 ms.
     #[test]
     fn both_clamps_agree_for_a_pill_at_rest() {
-        let state = initial_state(None, None, None);
+        let state = initial_state(None, None, None, None);
         let work = MonitorRect::without_id(0.0, 0.0, 1920.0, 1080.0);
         let win_w = WINDOW_W_TYPING;
         let win_h =
@@ -3864,7 +4072,7 @@ mod tests {
     fn the_footprint_composes_the_content_offset_with_the_drawn_top() {
         // Two canvas modes reach the same painted anchor, which is the value
         // `selector_space_above` consumes.
-        let state = initial_state(None, None, None);
+        let state = initial_state(None, None, None, None);
         let (offset, _) = live_pill_footprint(&state);
         let (_, py, _, _) =
             draw::pill_position(&state, state.draw_width.get(), state.draw_height.get());

@@ -383,28 +383,14 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let monitor_json = monitor.map(|m| {
                         serde_json::json!({ "x": m.x, "y": m.y, "width": m.width, "height": m.height })
                     });
-                    // Every report is accounted for before it is acted on, including
-                    // the ones that carry nothing: a clear is answered by the report
-                    // that names its id, and that answer is what retires the clear's
-                    // declaration.
-                    let storable = crate::pill_position::note_report(has_saved_position, ack);
-                    // Only a geometry the pill considers saved describes where
-                    // the user left it. A reset publishes the default corner it
-                    // just moved to, and storing that would undo the reset.
-                    if storable && has_saved_position {
-                        if let (Some(rect), Some(monitor)) =
-                            (rect_json.as_ref(), monitor_json.as_ref())
-                        {
-                            crate::pill_position::store_published_position(
-                                &app, rect, monitor, display_id,
-                            );
-                        }
-                    }
-                    let payload = serde_json::json!({
-                        "hasSavedPosition": has_saved_position,
-                        "rect": rect_json,
-                        "monitor": monitor_json,
-                    });
+                    let payload = crate::pill_position::apply_published_position(
+                        &app,
+                        has_saved_position,
+                        rect_json,
+                        monitor_json,
+                        display_id,
+                        ack,
+                    );
                     let _ = app.emit_to("main", "pill-position-changed", payload);
                 }
             }

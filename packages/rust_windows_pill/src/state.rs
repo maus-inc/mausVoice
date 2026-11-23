@@ -256,6 +256,15 @@ pub(crate) struct PillState {
     /// the display could not be named. Published with the position so the stored
     /// record can name the display rather than only its rectangle.
     pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// A stored record the launch could not resolve because display enumeration
+    /// failed. The cursor tick applies it once an enumeration succeeds, and a reset
+    /// or a clear spends it first.
+    pub(crate) pending_restore: Cell<Option<rust_pill_shared::restore::ParkedWindow>>,
+    /// A surface size `resize` refused, kept so the frame loop retries it before the
+    /// next presentation. Without the retry the window stays at the new size while
+    /// the surface keeps the old one, and the next frame presents the old size and
+    /// resizes the window back.
+    pub(crate) pending_surface: Cell<Option<(i32, i32)>>,
     /// The work area the saved position was clamped into, kept so a pill whose
     /// panel is unplugged remaps from the geometry it was saved against rather
     /// than from the survivor it happens to be nearest to.

@@ -446,7 +446,17 @@ pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Re
     let Some(declaration) = crate::pill_position::clear_saved_position(app, &_write).await else {
         return Err("Could not clear the pill's stored position, so it was not reset".to_string());
     };
-    match app.try_state::<std::sync::Arc<PillProcess>>() {
+    // The row is gone by now, which is the durable half of a reset: the next launch
+    // starts at the default corner whether or not the pill hears about it. So a
+    // delivery failure is logged, not reported as a failed reset, because the user
+    // would otherwise be told to retry an action that already took effect.
+    let send_failed = match app.try_state::<std::sync::Arc<PillProcess>>() {
+        // No process is the same outcome as a failed send: the row is gone and
+        // there is nothing on screen to move.
+        None => {
+            log::debug!("Reset the stored pill position with no managed pill process");
+            None
+        }
         Some(pill) => {
             // Serialised rather than interpolated: the strategy reaches this
             // function as a string, and the pill deserialises it into an enum
@@ -459,19 +469,17 @@ pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Re
                 "ack": declaration,
             })
             .to_string();
-            pill.send(&msg).map_err(|err| {
-                // The pill will never answer this declaration, so it has to go
-                // back now. Left outstanding it closes the latch for the rest of
-                // the process and every later drag is dropped silently.
-                crate::pill_position::withdraw_erase(declaration);
-                format!("failed to reset pill position: {err}")
-            })
+            pill.send(&msg).err()
         }
-        None => {
-            crate::pill_position::withdraw_erase(declaration);
-            Err("Reset position requested with no managed pill process".to_string())
-        }
+    };
+    if let Some(err) = send_failed {
+        // The pill will never answer this declaration, so it has to go back now.
+        // Left outstanding it closes the latch for the rest of the process and
+        // every later drag is dropped silently.
+        crate::pill_position::withdraw_erase(declaration);
+        log::warn!("Reset the stored pill position but could not tell the pill to re-home: {err}");
     }
+    Ok(())
 }
 
 pub fn resolve_pill_binary_in_resources(
@@ -933,24 +941,14 @@ fn dispatch_pill_event(app: &tauri::AppHandle, event: PillEvent) {
             display_id,
             ack,
         } => {
-            // Every report is accounted for before it is acted on, including the
-            // ones that carry nothing: a clear is answered by the report that names
-            // its id, and that answer is what retires the clear's declaration.
-            let storable = crate::pill_position::note_report(has_saved_position, ack);
-            // Only a geometry the pill considers saved describes where the user
-            // left it. A reset publishes `has_saved_position: false` with the
-            // default corner it just moved to, and storing that would undo the
-            // reset on the next launch.
-            if storable && has_saved_position {
-                if let (Some(rect), Some(monitor)) = (rect.as_ref(), monitor.as_ref()) {
-                    crate::pill_position::store_published_position(app, rect, monitor, display_id);
-                }
-            }
-            let payload = serde_json::json!({
-                "hasSavedPosition": has_saved_position,
-                "rect": rect,
-                "monitor": monitor,
-            });
+            let payload = crate::pill_position::apply_published_position(
+                app,
+                has_saved_position,
+                rect,
+                monitor,
+                display_id,
+                ack,
+            );
             let _ = app.emit_to("main", "pill-position-changed", payload);
         }
     }

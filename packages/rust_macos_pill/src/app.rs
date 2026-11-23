@@ -592,10 +592,10 @@ extern "C" fn mouse_down(_this: &Object, _sel: Sel, event: id) {
                 ctx.state.long_press_elapsed.set(0.0);
                 ctx.state.long_press_start_x.set(view_loc.x);
                 ctx.state.long_press_start_y.set(view_loc.y);
-                // A display change while this gesture is live makes the drop
-                // suspect, so the guard has to know a drag is in flight before the
-                // change arrives rather than afterwards.
-                ctx.state.save_guard.borrow_mut().drag_started();
+                // The guard is armed where the drag actually arms, in
+                // `tick_long_press`. Arming it here would clear a previous drop's
+                // hold on every click, including a click that never becomes a drag,
+                // and that drop would then be written before its own hold expired.
             }
         }
     });
@@ -1071,6 +1071,9 @@ fn on_reset_position(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
     ctx.state.long_press_active.set(false);
     ctx.state.long_press_elapsed.set(0.0);
     ctx.state.drag_cancelled.set(true);
+    // A restore still owed describes the position this reset just cleared, so it
+    // must not land afterwards.
+    ctx.state.pending_restore.borrow_mut().take();
     ctx.state.has_saved_position.set(false);
     ctx.state.saved_display_id.set(None);
     ctx.state
@@ -1126,6 +1129,9 @@ fn on_forget_position(ctx: &AppContext, msg: InMessage) {
     ctx.state.drag_cancelled.set(true);
     ctx.state.drag_motion.borrow_mut().reset();
     ctx.state.save_guard.borrow_mut().drag_cancelled();
+    // The clear removes the record, so a restore still owed has nothing left to
+    // apply.
+    ctx.state.pending_restore.borrow_mut().take();
     // Stop treating where the pill is sitting as the saved position.
     // Local data was just cleared, and the next `RequestPosition`
     // republishes this flag, so leaving it set would write the row back.
@@ -2045,6 +2051,10 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         // Enter drag mode directly (skip balloon pop for snappy interaction).
         state.dragging.set(true);
         state.drag_cancelled.set(false);
+        // A drag is in flight from here, so a display change from now on makes the
+        // drop suspect. This also discards the previous gesture's deadline, which
+        // belongs to a drop this drag supersedes.
+        state.save_guard.borrow_mut().drag_started();
         // A save still owed from the previous gesture belongs to a drop the user
         // has already made. Left armed, the frame loop's retry would fire during
         // this drag and store the window while it is moving -- a position nobody
@@ -2233,8 +2243,69 @@ fn clamp_bounds(
     }
 }
 
+/// Applies a stored record the startup pass could not resolve.
+///
+/// The record is only unresolvable when no display was connected during setup,
+/// which happens while every display is asleep or a lid is closed. Leaving it
+/// unapplied would park the pill at the default corner for the whole session,
+/// because the record is read once, at launch.
+fn try_restore_pending(state: &PillState, window: id) {
+    let Some(parked) = *state.pending_restore.borrow() else {
+        return;
+    };
+    unsafe {
+        // Still nothing to resolve against, so the record stays owed.
+        let Some((areas, primary_top)) = display_areas() else {
+            return;
+        };
+        let frame = window_frame(window);
+        let window_size = (frame.size.width, frame.size.height);
+        let live_footprint = rust_pill_shared::restore::centered_bottom_footprint(
+            window_size,
+            (MIN_PILL_WIDTH, MIN_PILL_HEIGHT),
+            COLLAPSED_BOTTOM_INSET + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+        );
+        let placement = rust_pill_shared::restore::restore(
+            parked,
+            &areas,
+            window_size,
+            |work, window, _role| {
+                let (offset, size) = rust_pill_shared::restore::scaled_footprint(
+                    live_footprint,
+                    window_size,
+                    window,
+                );
+                rust_pill_shared::restore::footprint_bounds(work, offset, size)
+            },
+        );
+        // Spent either way: a record with no place on the displays connected now
+        // is the platform's to place, the same answer the startup pass gives.
+        state.pending_restore.borrow_mut().take();
+        let rust_pill_shared::restore::Placement::Restore {
+            x,
+            y,
+            display_id,
+            work_area,
+        } = placement
+        else {
+            return;
+        };
+        let origin_y = primary_top - (y + window_size.1);
+        state.has_saved_position.set(true);
+        state.saved_x.set(x);
+        state.saved_y.set(origin_y);
+        state
+            .saved_work_area
+            .set(flip_primary_basis(work_area, primary_top));
+        state.saved_display_id.set(display_id);
+        set_window_origin(window, NSPoint::new(x, origin_y));
+        publish_current_position(state, window, &areas, primary_top);
+    }
+}
+
 fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
     unsafe {
+        try_restore_pending(state, window);
         let mouse_loc = mouse_location();
         let screens = screens();
         let count: usize = msg_send![screens, count];
@@ -2509,15 +2580,13 @@ fn park_window(
     if (current_origin.x - target_x).abs() > 1.0 || (current_origin.y - target_y).abs() > 1.0 {
         unsafe { set_window_origin(window, NSPoint::new(target_x, target_y)) };
     }
-    // The clamp is what the window is held at, so it is what the stored record
-    // has to say. Leaving the pre-clamp origin behind publishes a spot the pill
-    // is not on, and the next tick would put it back there.
-    if (target_x - state.saved_x.get()).abs() > f64::EPSILON
-        || (target_y - state.saved_y.get()).abs() > f64::EPSILON
-    {
-        state.saved_x.set(target_x);
-        state.saved_y.set(target_y);
-    }
+    // The clamp holds the live window and nothing else. Writing it back would
+    // make a bound that only exists while the assistant panel is open permanent:
+    // the panel narrows the left bound to the work-area edge, and the inset origin
+    // it produces still fits the bare pill's bounds afterwards, so the pill would
+    // stay inset once the panel closed. Keeping the record where the user put it
+    // lets the clamp relax back to the edge, and the clamp itself is recomputed
+    // from that record every frame, so it does not drift either.
 }
 
 fn default_content_origin_y(work_bottom: f64, window_height: f64) -> f64 {
@@ -3082,10 +3151,16 @@ unsafe fn setup(
     // Copying `saved_position.display` here would retain the geometry of the panel
     // that went away, which is the panel this restore exists to move off.
     let mut restored_work_area: Option<rust_pill_shared::edge::MonitorRect> = None;
+    // Set when the record could not be resolved because no display was connected
+    // yet. The frame tick retries it; dropping it here would leave the pill at the
+    // default corner for the rest of the session, because nothing else re-reads the
+    // record.
+    let mut restore_pending = false;
     let restored = saved_position.and_then(|parked| {
         let screen_list = screens();
         let count: usize = unsafe { msg_send![screen_list, count] };
         if count == 0 {
+            restore_pending = true;
             return None;
         }
         let primary: id = unsafe { msg_send![screen_list, objectAtIndex: 0usize] };
@@ -3279,6 +3354,11 @@ unsafe fn setup(
         // With no placement at all there is nothing to name either: the record's
         // token describes a display this process never went to.
         saved_display_id: Cell::new(restored.and(restored_display_id)),
+        pending_restore: RefCell::new(if restore_pending {
+            saved_position
+        } else {
+            None
+        }),
         // Held in Cocoa space, so it keeps describing the same panel even when the
         // primary display moves and the top-down origin of every screen shifts.
         saved_work_area: Cell::new(restored_work_area.unwrap_or_else(|| {

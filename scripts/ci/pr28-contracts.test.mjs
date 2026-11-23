@@ -574,7 +574,9 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
       /invoke\("reset_pill_position", \{ strategy \}\)/,
     );
     // The Rust command emits a typed reset_position payload to the pill
-    // process and returns an error (not a panic) when no pill is managed.
+    // process. It returns `Result` so a failure that leaves the stored row in
+    // place can reach the caller; a missing pill is not one of those, because the
+    // row is already gone and the next launch starts at the default corner.
     // `commands.rs` returns that `Result` straight out of a `#[tauri::command]`,
     // so the return type is part of the contract and is pinned with the
     // parameters. The chain is `async` so the main thread does not wait on the
@@ -598,7 +600,8 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     );
     assert.match(
       source.pillProcess,
-      /Reset position requested with no managed pill process/,
+      /Reset the stored pill position with no managed pill process/,
+      "pillProcess: a reset with no pill to move is logged, not reported as a failure",
     );
     // Each platform overlay routes the reset into its pill channel, carrying the
     // clear's declaration id so the pill's answer retires exactly it.
@@ -1199,15 +1202,24 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(pos, /if erase_is_undeclared\(\)/);
     assert.doesNotMatch(pos, /take_erased_publish/);
     // And every report is accounted for, not only the saves: reading only the
-    // saves would never see the answer that retires the declaration.
+    // saves would never see the answer that retires the declaration. The
+    // accounting lives in one shared handler, so the two pill paths cannot drift
+    // apart on it, and both of them have to go through that handler.
+    const apply = pos.slice(pos.indexOf("pub fn apply_published_position("));
+    assert.ok(apply, "the shared position handler is missing");
+    assert.match(
+      apply,
+      /note_report\(has_saved_position, ack\)/,
+      "the shared handler does not account for every report",
+    );
     for (const file of [
       "apps/desktop/src-tauri/src/pill_process.rs",
       "apps/desktop/src-tauri/src/platform/macos/overlay.rs",
     ]) {
       assert.match(
         read(file),
-        /pill_position::note_report\(has_saved_position, ack\)/,
-        `${file}: reports that carry no position are not accounted for`,
+        /pill_position::apply_published_position\(/,
+        `${file}: a pill report bypasses the shared handler`,
       );
     }
   });
@@ -3083,7 +3095,15 @@ describe("native gesture adapter contracts", () => {
     // as a pair; the height it was clamped against is still the created one.
     assert.match(
       source.windowsPill,
-      /saved_position\.and_then\(\|parked\| restore_position\(parked, win_h\)\)/,
+      /restore_position\(parked, win_h\)/,
+      "windowsPill: the restore is not clamped against the created height",
+    );
+    // A record whose display enumeration failed is kept for the cursor tick, so
+    // the launch still has to hand it to the state factory.
+    assert.match(
+      source.windowsPill,
+      /RestoreOutcome::NoDisplays => \{\s*pending_restore = Some\(parked\);/,
+      "windowsPill: a record the launch could not resolve is discarded",
     );
     // The window is created at the destination display's scale, so the default
     // corner is measured against the physical height and that scale.
@@ -3506,8 +3526,8 @@ describe("native gesture adapter contracts", () => {
     const restore = scope("windowsPill", "fn restore_position(");
     assert.match(
       restore,
-      /enumerate_work_areas_with_identity\(\)\?/,
-      "windowsPill: restore enumerates displays without their identity",
+      /let Some\(work_areas\) = enumerate_work_areas_with_identity\(\) else \{\s*return RestoreOutcome::NoDisplays;/,
+      "windowsPill: restore enumerates displays without their identity, or treats a failed enumeration as a verdict on the record",
     );
     assert.doesNotMatch(restore, /enumerate_work_areas\(\)\?/);
     // One callback serves both enumerations, so the token cannot be attached in
@@ -4009,8 +4029,8 @@ describe("native gesture adapter contracts", () => {
     // from, so a caller that stops passing it fails here.
     assert.match(
       run,
-      /initial_state\(\s*restored\.map\(\|placement\| placement\.origin\),\s*restored_display_id,\s*restored_work_area,\s*\)/,
-      "windowsPill: run does not hand the factory the restored placement",
+      /initial_state\(\s*restored\.map\(\|placement\| placement\.origin\),\s*restored_display_id,\s*restored_work_area,\s*pending_restore,\s*\)/,
+      "windowsPill: run does not hand the factory the restored placement and any record it still owes",
     );
     const seeded = scope("windowsPill", "fn initial_state(");
     assert.match(
@@ -4369,24 +4389,35 @@ describe("macOS saved-position scope", () => {
       source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
     assert.equal(seeds, 1, "the restored origin must be seeded exactly once");
     // Four writers of the saved origin, each with its own reason: the drop, the
-    // idle clamp that holds the window at a moved origin, the reconciliation that
-    // adopts a move AppKit already made, and the reconciliation that moves the pill
-    // itself. Anything else is another code path deciding where the pill was parked.
+    // retry that applies a record the launch could not resolve, the reconciliation
+    // that adopts a move AppKit already made, and the reconciliation that moves the
+    // pill itself. Anything else is another code path deciding where the pill was
+    // parked. The idle clamp is deliberately not one of them: its left bound
+    // narrows only while the assistant panel is open, and the inset origin it
+    // produces still fits the bare pill's bounds, so recording it would leave the
+    // pill inset after the panel closed.
     //
     // A refused drop is no longer one of them: it records the origin in
     // `drop_origin` and the write reads it back, so the retry cannot save a
     // repositioned frame, and the one writer that records it is the one above.
     assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 4);
     assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 4);
-    // The clamp writer is the one that cannot be dropped without the record
-    // disagreeing with the window it describes: the tick clamps `saved_x` into
-    // the visible frame and then holds the window there, so a stored origin the
-    // clamp moved is a spot the pill is not on.
-    assert.match(
+    // The clamp holds the live window and must not reach the record: its bound
+    // depends on whether the assistant panel is open, so a recorded clamp outlives
+    // the panel that caused it.
+    assert.doesNotMatch(
       source.macApp,
       /state\.saved_x\.set\(target_x\)/,
-      "macApp: the clamped origin is never recorded, so the next tick re-parks",
+      "macApp: the transient clamp is written back into the record",
     );
+    // The retry that applies a record the launch could not resolve has to publish
+    // where it landed, because the record it applied names the display it was saved
+    // on, not necessarily the one it was placed on.
+    const retry = source.macApp
+      .split("fn try_restore_pending(")[1]
+      .split("fn reposition_window(")[0];
+    assert.match(retry, /restore::restore\(/);
+    assert.match(retry, /publish_current_position\(/);
     const capture = source.macApp
       .split("fn persist_drag_position(")[1]
       .split("fn reduced_motion(")[0];

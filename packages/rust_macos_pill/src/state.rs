@@ -233,6 +233,10 @@ pub(crate) struct PillState {
     /// it could not be named. Published with the position so the stored record
     /// can name the display rather than only its rectangle.
     pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// A stored record the startup pass could not resolve because no display was
+    /// connected yet. The frame tick applies it as soon as one is, and a reset or a
+    /// clear spends it first.
+    pub(crate) pending_restore: RefCell<Option<rust_pill_shared::restore::ParkedWindow>>,
     /// The work area the saved position was clamped into, kept so a pill whose
     /// panel is unplugged remaps from the geometry it was saved against rather
     /// than from the survivor it happens to be nearest to.

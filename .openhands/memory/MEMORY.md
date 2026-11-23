@@ -51,6 +51,11 @@ Read the newest `YYYY-MM-DD.md` in this directory first.
 - 329 lock protocol: the local-data write gate is taken before
   `lock_clear_delivery`, never after. `clear_saved_position(app, &guard)` takes
   the caller's guard. Reversing it deadlocks a reset against a local-data clear.
+- The SonarCloud check can read `success` / "Quality Gate passed" while its
+  summary still counts New issues. Read `check-runs` `.output.summary` for the
+  "N New issues" link, and the run's annotations for path and line. `rust:S6529`
+  (a closure that only calls one method) is fixed by passing the method, e.g.
+  `CELL.with(Cell::get)`.
 - A `reviewThreads(first:100)` query undercounts big PRs (329 has 256 threads).
   Always paginate before reporting an unresolved count.
 - `pnpm run check-types` needs `pnpm run build` first for `apps/preview`.

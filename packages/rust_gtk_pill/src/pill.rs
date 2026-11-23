@@ -417,8 +417,19 @@ fn on_request_position(state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
     // A drop whose save is still owed is the record that has to reach the store,
     // and the stored origin beside it is the pre-drop one, so nothing is
     // storable while it is pending either.
+    // The stored origin also has to be on the display the window occupies now. A
+    // deferred drop commits after reconciliation has moved the pill, so the record
+    // can name the display it was dropped on while the window sits on another. The
+    // stored work area belongs to that record, so pairing it with the stored origin
+    // is consistent but describes the wrong display for the composer.
+    let stored_on_live_display = match (&saved_rect, &live_monitor) {
+        (Some(rect), Some(area)) => rect_centre_inside(rect, area),
+        // No stored origin to place, or no live monitor to contradict it.
+        _ => true,
+    };
     let persist = state_tick.has_saved_position.get()
         && saved_monitor.is_some()
+        && stored_on_live_display
         && state_tick.drag_save_due.get().is_none()
         && !gesture_owns_window(state_tick, drag_clock_now());
     let (rect, monitor) = if persist {
@@ -456,6 +467,19 @@ fn saved_work_area_rect(state: &PillState) -> Option<Rect> {
     } else {
         None
     }
+}
+
+/// Whether a rectangle's centre falls inside a work area.
+///
+/// The lower edges are exclusive, matching the containment rule the placement
+/// math uses, so a pill sitting on a shared seam is not counted on both displays.
+fn rect_centre_inside(rect: &Rect, area: &Rect) -> bool {
+    let centre_x = rect.x + rect.width / 2.0;
+    let centre_y = rect.y + rect.height / 2.0;
+    centre_x >= area.x
+        && centre_x < area.x + area.width
+        && centre_y >= area.y
+        && centre_y < area.y + area.height
 }
 
 /// The pill's live rectangle in root pixels, from the origin the last move
@@ -1662,14 +1686,15 @@ fn reconcile_display_layout(
                     areas,
                     reconciled_centre,
                 ));
-            if let Some(area) = rust_pill_shared::layout::work_area_of(areas, reconciled_centre) {
+            let sampled_area = rust_pill_shared::layout::work_area_of(areas, reconciled_centre);
+            if let Some(area) = sampled_area {
                 state.saved_work_area.set(area);
             }
             // The move was the pill's, not a drag, so it does not go through the
             // save guard: this position is the only place the pill can be, and
             // storing it is what stops the next launch restoring a stranded
             // origin.
-            publish_saved_geometry(window, state);
+            publish_geometry(window, state, sampled_area);
         }
     }
     true
@@ -1827,6 +1852,22 @@ fn tick_drag_frame(window: &gtk::Window, state: &PillState, backend: Backend, no
     }
 }
 
+/// Publishes where a placement actually landed, without authorizing a save.
+///
+/// A reset acknowledges the clear before the X11 timer moves the pill, so on its
+/// own it describes the display the pill is leaving. The desktop caches the last
+/// report, and without this one the composer keeps anchoring to that display until
+/// something else reports.
+pub(crate) fn publish_applied_placement(window: &gtk::Window, state: &PillState) {
+    let Some(rect) = live_pill_rect(window, state) else {
+        return;
+    };
+    let (_, monitor) = pill_geometry(window, state);
+    ipc::send(&OutMessage::PositionChanged {
+        report: rust_pill_shared::restore::PositionReport::new(false, Some(rect), monitor, None),
+    });
+}
+
 /// Whether the applied-origin latch has never been set.
 ///
 /// X11 virtual screen coordinates are signed, and a second monitor placed to the
@@ -1842,8 +1883,29 @@ fn is_unapplied(x: f64, y: f64) -> bool {
 /// moves a stranded pill. X11 has its own applier because the applied origin is
 /// authoritative there, so this is the Wayland half of the same decision.
 fn publish_saved_geometry(window: &gtk::Window, state: &PillState) {
+    publish_geometry(window, state, None);
+}
+
+/// `sampled_work_area` is the snapshot the caller placed the pill with. On X11
+/// every work-area read is a fresh `_NET_WORKAREAS` query, and a window manager
+/// can change a dock reservation between two of them, so the relocation path
+/// publishes the sample its origin and display token came from instead of a
+/// second read that may disagree with both.
+fn publish_geometry(
+    window: &gtk::Window,
+    state: &PillState,
+    sampled_work_area: Option<rust_pill_shared::edge::MonitorRect>,
+) {
     state.has_saved_position.set(true);
-    let (rect, monitor) = pill_geometry(window, state);
+    let (rect, live_monitor) = pill_geometry(window, state);
+    let monitor = sampled_work_area
+        .map(|area| Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height,
+        })
+        .or(live_monitor);
     if let Some(area) = monitor {
         state
             .saved_work_area
