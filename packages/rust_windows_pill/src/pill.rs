@@ -783,55 +783,12 @@ fn clear_flash(state: &PillState) {
 
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
+///
+/// A message whose arm carries its own branching lives in its own function, so
+/// this match stays one arm per message and each decision is read on its own.
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
-    // Phase message sequence guard: see ipc::InMessage::Phase.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
     state.dirty.set(true);
     match msg {
-        InMessage::Phase { phase, seq } => {
-            let stale = LAST_PHASE_SEQ.with(|last| {
-                let stale = seq < last.get();
-                if !stale {
-                    last.set(seq);
-                }
-                stale
-            });
-            if stale {
-                return;
-            }
-            let prev = state.phase.get();
-            state.phase.set(phase);
-            state
-                .style_tooltip_gate
-                .set_take_running(phase == Phase::Recording);
-            // A new take sweeps any banner parked above the pill (for example
-            // the retranscribing toast) so it cannot sit on the style selector
-            // for the whole take. A resume from Paused keeps toasts raised
-            // during the take, such as the cancel confirm.
-            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                clear_flash(state);
-            }
-            if rust_pill_shared::should_clear_stage_text_on_phase(
-                prev == Phase::Loading,
-                phase == Phase::Idle,
-                phase == Phase::Loading,
-            ) {
-                *state.stage_text.borrow_mut() = None;
-            }
-            if phase == Phase::Loading && prev != Phase::Loading {
-                let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                state.loading_offset.set(offset);
-            }
-            if phase == Phase::Idle && prev != Phase::Idle {
-                state.pending_levels.borrow_mut().clear();
-                state.target_level.set(0.0);
-                state.current_level.set(0.0);
-                state.wave_phase.set(0.0);
-                state.loading_offset.set(0.0);
-            }
-        }
         InMessage::Levels { levels } => {
             *state.pending_levels.borrow_mut() = levels;
         }
@@ -916,156 +873,6 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         InMessage::WindowSize { ref size } => {
             state.window_mode.set(WindowMode::from_str(size));
         }
-        InMessage::AssistantState {
-            active,
-            input_mode,
-            compact,
-            conversation_id,
-            user_prompt,
-            messages,
-            streaming,
-            permissions,
-            review,
-        } => {
-            let was_active = state.assistant_active.get();
-            let previous_review_id = state
-                .assistant_review
-                .borrow()
-                .as_ref()
-                .map(|r| r.id.clone());
-            let review_id = review.as_ref().map(|r| r.id.clone());
-            let review_text = review.as_ref().map(|r| r.text.clone());
-            *state.assistant_review.borrow_mut() = review.map(|review| *review);
-
-            // The entry is the review surface: a new transcript loads into it
-            // for editing, and answering the review empties it again. An
-            // unchanged id leaves the user's edits alone.
-            if review_id != previous_review_id {
-                let text = review_text.unwrap_or_default();
-                *state.entry_text.borrow_mut() = text.clone();
-                set_edit_text(&text);
-            }
-            state.assistant_active.set(active);
-            *state.assistant_input_mode.borrow_mut() = input_mode;
-            state.assistant_compact.set(compact);
-            *state.assistant_conversation_id.borrow_mut() = conversation_id;
-            *state.assistant_user_prompt.borrow_mut() = user_prompt;
-            *state.assistant_messages.borrow_mut() = messages;
-            *state.assistant_streaming.borrow_mut() = streaming;
-            *state.assistant_permissions.borrow_mut() = permissions;
-            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
-                state.should_stick.set(true);
-                state.scroll_offset.set(0.0);
-            }
-        }
-        InMessage::ResetPosition { strategy, ack } => {
-            let hwnd = HWND_CELL.with(|c| c.get());
-            cancel_drag_gesture(hwnd, state);
-            state.has_saved_position.set(false);
-            state.saved_display_id.set(None);
-            state
-                .saved_work_area
-                .set(rust_pill_shared::edge::MonitorRect::without_id(
-                    0.0, 0.0, 0.0, 0.0,
-                ));
-            // The reset deletes the stored row, so any save still owed from the
-            // previous gesture would recreate it on the next tick -- with the
-            // position the reset just replaced.
-            state.pending_drag_position.set(false);
-            state.drag_save_due.set(None);
-            state.selector_placement.borrow_mut().reset();
-            state.crossing.borrow_mut().reset();
-            // A reset names its destination, so the anchor carries it.
-            state
-                .anchor
-                .set(rust_pill_shared::layout::Anchor::from_reset(
-                    strategy == ResetStrategy::Cursor,
-                ));
-            state.dirty.set(true);
-            reposition_to_cursor_monitor(hwnd, state);
-            check_hover(hwnd, state);
-            // Record this clear before the report goes out, so the answer carries
-            // its id and the desktop retires exactly this declaration.
-            rust_pill_shared::ipc::record_applied_clear(ack);
-            let (rect, monitor) = current_pill_geometry(hwnd);
-            ipc::send(&OutMessage::PositionChanged {
-                report: rust_pill_shared::restore::PositionReport::new(
-                    false,
-                    Some(rect),
-                    monitor,
-                    None,
-                ),
-            });
-        }
-        InMessage::ForgetPosition { ack } => {
-            // A drag that is still held, or a settle that has not finished, would
-            // reach `persist_drag_position` on a later frame and publish a saved
-            // position again -- recreating the row the clear just deleted. Cancel
-            // the gesture first; a drag started after the clear still saves.
-            cancel_drag_gesture(HWND_CELL.with(Cell::get), state);
-            // Stop treating where the pill is sitting as the saved position.
-            // Local data was just cleared, and the next `RequestPosition`
-            // republishes this flag, so leaving it set would write the row back.
-            state.has_saved_position.set(false);
-            state.saved_display_id.set(None);
-            state
-                .saved_work_area
-                .set(rust_pill_shared::edge::MonitorRect::without_id(
-                    0.0, 0.0, 0.0, 0.0,
-                ));
-            // A pending final position is a save the user did not ask for and the
-            // clear has just made wrong, so it must not survive into the destroy.
-            state.pending_drag_position.set(false);
-            // A retry parked against the old position is the same hazard one
-            // tick later: it would republish `has_saved_position` and recreate
-            // the row the clear just removed.
-            state.drag_save_due.set(None);
-            // Clearing local data drops the stored position without moving the
-            // pill, so placement must leave the window exactly where it is.
-            state
-                .anchor
-                .set(rust_pill_shared::layout::Anchor::from_forget());
-            // This clear answers with the report the reloaded window's
-            // `RequestPosition` asks for, so the id is held for the reports that
-            // follow.
-            rust_pill_shared::ipc::record_applied_clear(ack);
-        }
-        InMessage::RequestPosition => {
-            let hwnd = HWND_CELL.with(|c| c.get());
-            let (rect, monitor) = current_pill_geometry(hwnd);
-            // The desktop stores this report over the record it already holds, so
-            // the work area has to describe the display the token names. The
-            // window can mostly sit on one panel while the visible pill is on
-            // another, and `MonitorFromWindow` follows the window.
-            let areas = enumerate_work_areas_with_identity().unwrap_or_default();
-            // Resolved from the visible pill, the same lookup a drag save uses.
-            // Answering with the stored token instead pairs fresh geometry with the
-            // display the pill was on when it was last saved, and the next launch
-            // remaps against that panel's work area.
-            //
-            // No fallback to the remembered token: the work area below comes from
-            // the live lookup, and a saved token beside a live area names two
-            // panels. An unnamed display therefore reports no token at all, which
-            // is the honest record, and restore falls back to geometry.
-            let footprint = live_pill_footprint(state);
-            let display_id = rust_pill_shared::layout::display_id_of(
-                &areas,
-                visible_pill_centre((rect.x, rect.y), footprint),
-            );
-            // A gesture owns the window while it is dragged, and the rect above
-            // is where the drag has reached, not a place the user has dropped.
-            // Authorizing it would let the desktop store a mid-gesture frame
-            // before the release. The composer still gets the live geometry.
-            let persist = state.has_saved_position.get() && !gesture_owns_window(state, drag_now());
-            ipc::send(&OutMessage::PositionChanged {
-                report: rust_pill_shared::restore::PositionReport::new(
-                    persist,
-                    Some(rect),
-                    work_area_for_report(&areas, monitor, &rect, footprint),
-                    display_id,
-                ),
-            });
-        }
         InMessage::PillPlacement { placement } => {
             let code = if placement == "top" {
                 PILL_PLACEMENT_TOP
@@ -1078,7 +885,226 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         InMessage::Quit => {
             QUIT.with(|q| q.set(true));
         }
+        InMessage::Phase { .. } => on_phase(state, msg),
+        InMessage::AssistantState { .. } => on_assistant_state(state, msg),
+        InMessage::ResetPosition { .. } => on_reset_position(state, msg),
+        InMessage::ForgetPosition { .. } => on_forget_position(state, msg),
+        InMessage::RequestPosition => on_request_position(state),
     }
+}
+
+/// Advances the phase, dropping a message an older sequence already replaced.
+fn on_phase(state: &PillState, msg: InMessage) {
+    let InMessage::Phase { phase, seq } = msg else {
+        return;
+    };
+    // Phase message sequence guard: see ipc::InMessage::Phase.
+    thread_local! {
+        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+    let stale = LAST_PHASE_SEQ.with(|last| {
+        let stale = seq < last.get();
+        if !stale {
+            last.set(seq);
+        }
+        stale
+    });
+    if stale {
+        return;
+    }
+    let prev = state.phase.get();
+    state.phase.set(phase);
+    state
+        .style_tooltip_gate
+        .set_take_running(phase == Phase::Recording);
+    // A new take sweeps any banner parked above the pill (for example
+    // the retranscribing toast) so it cannot sit on the style selector
+    // for the whole take. A resume from Paused keeps toasts raised
+    // during the take, such as the cancel confirm.
+    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+        clear_flash(state);
+    }
+    if rust_pill_shared::should_clear_stage_text_on_phase(
+        prev == Phase::Loading,
+        phase == Phase::Idle,
+        phase == Phase::Loading,
+    ) {
+        *state.stage_text.borrow_mut() = None;
+    }
+    if phase == Phase::Loading && prev != Phase::Loading {
+        let offset = if reduced_motion() { 0.5 } else { 0.0 };
+        state.loading_offset.set(offset);
+    }
+    if phase == Phase::Idle && prev != Phase::Idle {
+        state.pending_levels.borrow_mut().clear();
+        state.target_level.set(0.0);
+        state.current_level.set(0.0);
+        state.wave_phase.set(0.0);
+        state.loading_offset.set(0.0);
+    }
+}
+
+/// Applies an assistant snapshot, and reloads the entry when the review changed.
+fn on_assistant_state(state: &PillState, msg: InMessage) {
+    let InMessage::AssistantState {
+        active,
+        input_mode,
+        compact,
+        conversation_id,
+        user_prompt,
+        messages,
+        streaming,
+        permissions,
+        review,
+    } = msg
+    else {
+        return;
+    };
+    let was_active = state.assistant_active.get();
+    let previous_review_id = state
+        .assistant_review
+        .borrow()
+        .as_ref()
+        .map(|r| r.id.clone());
+    let review_id = review.as_ref().map(|r| r.id.clone());
+    let review_text = review.as_ref().map(|r| r.text.clone());
+    *state.assistant_review.borrow_mut() = review.map(|review| *review);
+
+    // The entry is the review surface: a new transcript loads into it
+    // for editing, and answering the review empties it again. An
+    // unchanged id leaves the user's edits alone.
+    if review_id != previous_review_id {
+        let text = review_text.unwrap_or_default();
+        *state.entry_text.borrow_mut() = text.clone();
+        set_edit_text(&text);
+    }
+    state.assistant_active.set(active);
+    *state.assistant_input_mode.borrow_mut() = input_mode;
+    state.assistant_compact.set(compact);
+    *state.assistant_conversation_id.borrow_mut() = conversation_id;
+    *state.assistant_user_prompt.borrow_mut() = user_prompt;
+    *state.assistant_messages.borrow_mut() = messages;
+    *state.assistant_streaming.borrow_mut() = streaming;
+    *state.assistant_permissions.borrow_mut() = permissions;
+    if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+        state.should_stick.set(true);
+        state.scroll_offset.set(0.0);
+    }
+}
+
+/// Cancels the gesture and clears the stored placement, then answers the desktop.
+fn on_reset_position(state: &PillState, msg: InMessage) {
+    let InMessage::ResetPosition { strategy, ack } = msg else {
+        return;
+    };
+    let hwnd = HWND_CELL.with(|c| c.get());
+    cancel_drag_gesture(hwnd, state);
+    state.has_saved_position.set(false);
+    state.saved_display_id.set(None);
+    state
+        .saved_work_area
+        .set(rust_pill_shared::edge::MonitorRect::without_id(
+            0.0, 0.0, 0.0, 0.0,
+        ));
+    // The reset deletes the stored row, so any save still owed from the
+    // previous gesture would recreate it on the next tick -- with the
+    // position the reset just replaced.
+    state.pending_drag_position.set(false);
+    state.drag_save_due.set(None);
+    state.selector_placement.borrow_mut().reset();
+    state.crossing.borrow_mut().reset();
+    // A reset names its destination, so the anchor carries it.
+    state
+        .anchor
+        .set(rust_pill_shared::layout::Anchor::from_reset(
+            strategy == ResetStrategy::Cursor,
+        ));
+    state.dirty.set(true);
+    reposition_to_cursor_monitor(hwnd, state);
+    check_hover(hwnd, state);
+    // Record this clear before the report goes out, so the answer carries
+    // its id and the desktop retires exactly this declaration.
+    rust_pill_shared::ipc::record_applied_clear(ack);
+    let (rect, monitor) = current_pill_geometry(hwnd);
+    ipc::send(&OutMessage::PositionChanged {
+        report: rust_pill_shared::restore::PositionReport::new(false, Some(rect), monitor, None),
+    });
+}
+
+/// Stops treating the live frame as the saved position, after a clear.
+fn on_forget_position(state: &PillState, msg: InMessage) {
+    let InMessage::ForgetPosition { ack } = msg else {
+        return;
+    };
+    // A drag that is still held, or a settle that has not finished, would
+    // reach `persist_drag_position` on a later frame and publish a saved
+    // position again -- recreating the row the clear just deleted. Cancel
+    // the gesture first; a drag started after the clear still saves.
+    cancel_drag_gesture(HWND_CELL.with(Cell::get), state);
+    // Stop treating where the pill is sitting as the saved position.
+    // Local data was just cleared, and the next `RequestPosition`
+    // republishes this flag, so leaving it set would write the row back.
+    state.has_saved_position.set(false);
+    state.saved_display_id.set(None);
+    state
+        .saved_work_area
+        .set(rust_pill_shared::edge::MonitorRect::without_id(
+            0.0, 0.0, 0.0, 0.0,
+        ));
+    // A pending final position is a save the user did not ask for and the
+    // clear has just made wrong, so it must not survive into the destroy.
+    state.pending_drag_position.set(false);
+    // A retry parked against the old position is the same hazard one
+    // tick later: it would republish `has_saved_position` and recreate
+    // the row the clear just removed.
+    state.drag_save_due.set(None);
+    // Clearing local data drops the stored position without moving the
+    // pill, so placement must leave the window exactly where it is.
+    state
+        .anchor
+        .set(rust_pill_shared::layout::Anchor::from_forget());
+    // This clear answers with the report the reloaded window's
+    // `RequestPosition` asks for, so the id is held for the reports that
+    // follow.
+    rust_pill_shared::ipc::record_applied_clear(ack);
+}
+
+/// Reports the geometry, and marks it storable only when it describes a drop.
+fn on_request_position(state: &PillState) {
+    let hwnd = HWND_CELL.with(|c| c.get());
+    let (rect, monitor) = current_pill_geometry(hwnd);
+    // The desktop stores this report over the record it already holds, so
+    // the work area has to describe the display the token names. The
+    // window can mostly sit on one panel while the visible pill is on
+    // another, and `MonitorFromWindow` follows the window.
+    let areas = enumerate_work_areas_with_identity().unwrap_or_default();
+    // Resolved from the visible pill, the same lookup a drag save uses.
+    // Answering with the stored token instead pairs fresh geometry with the
+    // display the pill was on when it was last saved, and the next launch
+    // remaps against that panel's work area.
+    //
+    // No fallback to the remembered token: the work area below comes from
+    // the live lookup, and a saved token beside a live area names two
+    // panels. An unnamed display therefore reports no token at all, which
+    // is the honest record, and restore falls back to geometry.
+    let footprint = live_pill_footprint(state);
+    let display_id = rust_pill_shared::layout::display_id_of(
+        &areas,
+        visible_pill_centre((rect.x, rect.y), footprint),
+    );
+    // A gesture owns the window while it is dragged, and the rect above
+    // is where the drag has reached, not a place the user has dropped.
+    // Authorizing it would let the desktop store a mid-gesture frame
+    // before the release. The composer still gets the live geometry.
+    let persist = state.has_saved_position.get() && !gesture_owns_window(state, drag_now());
+    ipc::send(&OutMessage::PositionChanged {
+        report: rust_pill_shared::restore::PositionReport::new(
+            persist,
+            Some(rect),
+            work_area_for_report(&areas, monitor, &rect, footprint),
+            display_id,
+        ),
+    });
 }
 
 /// Advances all pill animations by `dt` seconds: audio levels, springs

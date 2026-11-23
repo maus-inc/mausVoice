@@ -822,10 +822,6 @@ extern "C" fn tick_callback(_this: &Object, _sel: Sel, _timer: id) {
 /// Runs one frame of the pill loop: processes queued IPC messages, advances
 /// the springs/animations, and repaints when the state changed.
 fn perform_tick() {
-    // Phase message sequence guard: see ipc::InMessage::Phase.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
     APP_CTX.with(|cell| {
         let borrow = cell.borrow();
         let Some(ctx) = borrow.as_ref() else { return };
@@ -843,379 +839,422 @@ fn perform_tick() {
         // Process IPC messages
         let rx = ctx.receiver.borrow();
         while let Ok(msg) = rx.try_recv() {
-            match msg {
-                InMessage::Phase { phase, seq } => {
-                    let stale = LAST_PHASE_SEQ.with(|last| {
-                        let stale = seq < last.get();
-                        if !stale {
-                            last.set(seq);
-                        }
-                        stale
-                    });
-                    if stale {
-                        continue;
-                    }
-                    let prev = ctx.state.phase.get();
-                    ctx.state.phase.set(phase);
-                    ctx.state
-                        .style_tooltip_gate
-                        .set_take_running(phase == Phase::Recording);
-                    // A new take sweeps any banner parked above the pill (for
-                    // example the retranscribing toast) so it cannot sit on the
-                    // style selector for the whole take. A resume from Paused
-                    // keeps toasts raised during the take, such as the cancel
-                    // confirm.
-                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                        clear_flash(&ctx.state);
-                    }
-                    if rust_pill_shared::should_clear_stage_text_on_phase(
-                        prev == Phase::Loading,
-                        phase == Phase::Idle,
-                        phase == Phase::Loading,
-                    ) {
-                        *ctx.state.stage_text.borrow_mut() = None;
-                    }
-                    if phase == Phase::Loading && prev != Phase::Loading {
-                        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                        ctx.state.loading_offset.set(offset);
-                    }
-                    if phase == Phase::Idle && prev != Phase::Idle {
-                        ctx.state.pending_levels.borrow_mut().clear();
-                        ctx.state.target_level.set(0.0);
-                        ctx.state.current_level.set(0.0);
-                        ctx.state.wave_phase.set(0.0);
-                        ctx.state.loading_offset.set(0.0);
-                    }
-                }
-                InMessage::Levels { levels } => {
-                    *ctx.state.pending_levels.borrow_mut() = levels;
-                }
-                InMessage::StyleInfo { count, name } => {
-                    ctx.state.style_count.set(count);
-                    *ctx.state.style_name.borrow_mut() = name;
-                }
-                InMessage::Toast {
-                    message,
-                    toast_type,
-                    duration,
-                    action,
-                    action_label,
-                    reject_action,
-                    reject_action_label,
-                } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state
-                        .flash_is_error
-                        .set(toast_type.as_deref() == Some("error"));
-                    ctx.state.flash_visible.set(true);
-                    ctx.state
-                        .flash_timer
-                        .set(duration.unwrap_or(FLASH_DURATION));
-                    *ctx.state.flash_action.borrow_mut() = action;
-                    *ctx.state.flash_action_label.borrow_mut() = action_label;
-                    *ctx.state.flash_reject_action.borrow_mut() = reject_action;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
-                }
-                InMessage::DismissToast => {
-                    clear_flash(&ctx.state);
-                }
-                InMessage::Fireworks { message } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state.flash_is_error.set(false);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
-                    *ctx.state.flash_reject_action.borrow_mut() = None;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
-                    ctx.state.flash_visible.set(true);
-                    ctx.state
-                        .flash_timer
-                        .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
-
-                    rust_pill_shared::fireworks::Fireworks {
-                        active: &ctx.state.fireworks_active,
-                        elapsed: &ctx.state.fireworks_elapsed,
-                        next_launch: &ctx.state.fireworks_next_launch,
-                        rockets: &ctx.state.fireworks_rockets,
-                    }
-                    .restart(reduced_motion());
-                }
-                InMessage::Flame { message } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state.flash_is_error.set(false);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
-                    *ctx.state.flash_reject_action.borrow_mut() = None;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
-                    ctx.state.flash_visible.set(true);
-                    ctx.state
-                        .flash_timer
-                        .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
-
-                    ctx.state.flame_active.set(true);
-                    ctx.state.flame_elapsed.set(0.0);
-                    ctx.state.flame_tongues.borrow_mut().clear();
-                }
-                InMessage::FlashBlue => {
-                    ctx.state.flash_blue_active.set(true);
-                    ctx.state.flash_blue_elapsed.set(0.0);
-                }
-                InMessage::BroadcastTranscript { text } => {
-                    *ctx.state.transcript_text.borrow_mut() = text;
-                    ctx.state.transcript_time_since_update.set(0.0);
-                    ctx.state.transcript_has_message.set(true);
-                }
-                InMessage::StageText { text } => {
-                    let stage = rust_pill_shared::active_stage_text(text.as_deref());
-                    *ctx.state.stage_text.borrow_mut() = stage.map(str::to_owned);
-                }
-                InMessage::Visibility { visibility } => {
-                    ctx.state.visibility.set(visibility);
-                }
-                InMessage::WindowSize { ref size } => {
-                    let mode = WindowMode::from_str(size);
-                    ctx.state.window_mode.set(mode);
-                }
-                InMessage::AssistantState {
-                    active,
-                    input_mode,
-                    compact,
-                    conversation_id,
-                    user_prompt,
-                    messages,
-                    streaming,
-                    permissions,
-                    review,
-                } => {
-                    let was_active = ctx.state.assistant_active.get();
-                    let previous_review_id = ctx
-                        .state
-                        .assistant_review
-                        .borrow()
-                        .as_ref()
-                        .map(|r| r.id.clone());
-                    let review_id = review.as_ref().map(|r| r.id.clone());
-                    let review_text = review.as_ref().map(|r| r.text.clone());
-                    *ctx.state.assistant_review.borrow_mut() = review.map(|review| *review);
-
-                    // The entry is the review surface: a new transcript loads
-                    // into it for editing, and answering the review empties it
-                    // again. An unchanged id leaves the user's edits alone.
-                    if review_id != previous_review_id {
-                        let text = review_text.unwrap_or_default();
-                        *ctx.state.entry_text.borrow_mut() = text.clone();
-                        set_entry_text(&text);
-                    }
-                    ctx.state.assistant_active.set(active);
-                    *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
-                    ctx.state.assistant_compact.set(compact);
-                    *ctx.state.assistant_conversation_id.borrow_mut() = conversation_id;
-                    *ctx.state.assistant_user_prompt.borrow_mut() = user_prompt;
-                    *ctx.state.assistant_messages.borrow_mut() = messages;
-                    *ctx.state.assistant_streaming.borrow_mut() = streaming;
-                    *ctx.state.assistant_permissions.borrow_mut() = permissions;
-
-                    if (active && !was_active)
-                        || (review_id.is_some() && review_id != previous_review_id)
-                    {
-                        ctx.state.should_stick.set(true);
-                        ctx.state.scroll_offset.set(0.0);
-                    }
-                }
-                InMessage::ResetPosition { strategy, ack } => {
-                    // Cancel ownership, not a normal release: no final sample
-                    // or old drop may re-arm/overwrite this reset.
-                    ctx.state.dragging.set(false);
-                    ctx.state.pointer_down.set(false);
-                    ctx.state.long_press_active.set(false);
-                    ctx.state.long_press_elapsed.set(0.0);
-                    ctx.state.drag_cancelled.set(true);
-                    ctx.state.has_saved_position.set(false);
-                    ctx.state.saved_display_id.set(None);
-                    ctx.state
-                        .saved_work_area
-                        .set(rust_pill_shared::edge::MonitorRect::without_id(
-                            0.0, 0.0, 0.0, 0.0,
-                        ));
-                    // A save still owed from the cancelled gesture would publish the
-                    // pre-reset origin once the guard expires, recreating the row the
-                    // reset just dropped -- the same hazard the other two pills clear
-                    // here.
-                    ctx.state.drag_save_due.set(None);
-                    // The recorded drop belongs to the gesture being cancelled. Left
-                    // behind, the next drag's write would consume it and save a place
-                    // this gesture already moved away from.
-                    ctx.state.drop_frame.set(None);
-                    ctx.state.drag_motion.borrow_mut().reset();
-                    // A cancelled gesture has no drop to record, and a drag hold
-                    // left armed has no end time: every later placement and
-                    // reconciliation would be refused.
-                    ctx.state.save_guard.borrow_mut().drag_cancelled();
-                    ctx.state.selector_placement.borrow_mut().reset();
-                    ctx.state.crossing.borrow_mut().reset();
-                    ctx.state
-                        .anchor
-                        .set(rust_pill_shared::layout::Anchor::from_reset(
-                            strategy == ResetStrategy::Cursor,
-                        ));
-                    reposition_window(ctx.window, &ctx.state, dt, now);
-                    // Record this clear before the report goes out, so the answer
-                    // carries its id and the desktop retires exactly this
-                    // declaration, not a later clear's.
-                    rust_pill_shared::ipc::record_applied_clear(ack);
-                    let (rect, monitor) = unsafe { pill_geometry(ctx.window, &ctx.state) };
-                    ipc::send(&OutMessage::PositionChanged {
-                        report: rust_pill_shared::restore::PositionReport::new(
-                            false,
-                            Some(rect),
-                            monitor,
-                            None,
-                        ),
-                    });
-                }
-                InMessage::ForgetPosition { ack } => {
-                    // A drag still held, or a settle that has not finished, would
-                    // reach `persist_drag_position` on a later frame and publish a
-                    // saved position again -- recreating the row the clear just
-                    // deleted. Cancel the gesture first, the same as the other two
-                    // pills; a drag started after the clear still saves normally.
-                    ctx.state.dragging.set(false);
-                    ctx.state.pointer_down.set(false);
-                    ctx.state.long_press_active.set(false);
-                    ctx.state.drag_cancelled.set(true);
-                    ctx.state.drag_motion.borrow_mut().reset();
-                    ctx.state.save_guard.borrow_mut().drag_cancelled();
-                    // Stop treating where the pill is sitting as the saved position.
-                    // Local data was just cleared, and the next `RequestPosition`
-                    // republishes this flag, so leaving it set would write the row back.
-                    ctx.state.has_saved_position.set(false);
-                    ctx.state.saved_display_id.set(None);
-                    ctx.state
-                        .saved_work_area
-                        .set(rust_pill_shared::edge::MonitorRect::without_id(
-                            0.0, 0.0, 0.0, 0.0,
-                        ));
-                    // A clear drops the record without moving the window, and it also
-                    // cancels any placement still owed: a pill the user has been
-                    // looking at must not follow the pointer because a database was
-                    // wiped.
-                    ctx.state.drag_save_due.set(None);
-                    // The recorded drop belongs to the gesture being cancelled. Left
-                    // behind, the next drag's write would consume it and save a place
-                    // this gesture already moved away from.
-                    ctx.state.drop_frame.set(None);
-                    ctx.state
-                        .anchor
-                        .set(rust_pill_shared::layout::Anchor::from_forget());
-                    // This clear answers with the report the reloaded window's
-                    // `RequestPosition` asks for, so the id is held for the reports
-                    // that follow.
-                    rust_pill_shared::ipc::record_applied_clear(ack);
-                }
-                InMessage::RequestPosition => {
-                    let (rect, monitor) = unsafe { pill_geometry(ctx.window, &ctx.state) };
-                    // A gesture owns the window while it is dragged, and the
-                    // frame read here is the one the drag has reached, not a
-                    // place the user has dropped. Authorizing it would let the
-                    // desktop store a mid-gesture frame before the release. The
-                    // composer still gets the live geometry to place against.
-                    // A drop whose save is still owed is the record that has to
-                    // reach the store, and the stored origin beside it is the
-                    // pre-drop one, so nothing is storable while it is pending.
-                    let persist = ctx.state.has_saved_position.get()
-                        && ctx.state.drag_save_due.get().is_none()
-                        && !gesture_owns_window(&ctx.state, drag_now());
-                    ipc::send(&OutMessage::PositionChanged {
-                        report: rust_pill_shared::restore::PositionReport::new(
-                            persist,
-                            Some(rect),
-                            monitor,
-                            ctx.state.saved_display_id.get(),
-                        ),
-                    });
-                }
-                InMessage::Quit => {
-                    ctx.quit.set(true);
-                }
-            }
+            apply_message(ctx, msg, dt, now);
         }
         drop(rx);
 
         if ctx.quit.get() {
-            unsafe {
-                if ctx.embedded {
-                    let _: () = msg_send![ctx.window, orderOut:nil];
-                } else {
-                    let app: id = msg_send![class!(NSApplication), sharedApplication];
-                    let _: () = msg_send![app, terminate:nil];
-                }
-            }
+            quit_app(ctx);
             return;
         }
 
-        // A mouseUp can be missed (another app steals the event, the session
-        // locks). Poll the real button state so a released button can never
-        // leave hover pinned open — the same backstop the Windows pill uses.
-        release_pointer_if_button_up(&ctx.state, ctx.window);
-
-        // Compute hover from actual mouse position over pill area
-        update_hover(ctx.view, ctx);
-
-        tick(&ctx.state, ctx.window, dt);
-
-        // Show/hide entry for typing mode
-        let is_typing = ctx.state.is_typing();
-        unsafe {
-            let entry = ctx.entry;
-            let entry_hidden: BOOL = msg_send![entry, isHidden];
-            if is_typing && entry_hidden != NO {
-                let _: () = msg_send![entry, setHidden:NO];
-                let _: () = msg_send![ctx.window, makeKeyWindow];
-                let _: () = msg_send![ctx.window, makeFirstResponder:entry];
-            } else if !is_typing && entry_hidden == NO {
-                let _: () = msg_send![entry, setHidden:YES];
-                let _: () = msg_send![ctx.window, resignKeyWindow];
-            }
-
-            // Sync entry text to state. `controlTextDidChange:` already does
-            // this on every keystroke; this covers changes the delegate does
-            // not see, such as a paste routed by the system.
-            if is_typing {
-                *ctx.state.entry_text.borrow_mut() = field_string(entry);
-            }
-        }
-
-        // Visibility
-        let should_show = rust_pill_shared::should_show_pill(
-            ctx.state.visibility.get().into(),
-            ctx.state.phase.get() != Phase::Idle,
-            ctx.state.owns_panel(),
-        );
-        unsafe {
-            if should_show {
-                let _: () = msg_send![ctx.window, orderFront:nil];
-            } else {
-                let _: () = msg_send![ctx.window, orderOut:nil];
-            }
-        }
-
-        // The notification is the primary signal, but macOS can drop it while the
-        // app is not frontmost, and a screen that sleeps and wakes within one run
-        // loop turn can produce no notification at all. A cheap signature of the
-        // arrangement catches what the notification misses, only later.
-        unsafe {
-            poll_display_layout(ctx.window, &ctx.state, now);
-        }
-
-        // Reposition window: follow cursor when dragging, auto-center otherwise
-        reposition_window(ctx.window, &ctx.state, dt, now);
-        // Reset/rehome must finish before the detector seeds its next sample.
-        tick_spatial_feedback(ctx.window, &ctx.state, dt, now);
-
-        // Request redraw
-        unsafe {
-            let _: () = msg_send![ctx.view, setNeedsDisplay:YES];
-        }
+        finish_frame(ctx, dt, now);
     });
+}
+
+/// Applies one queued IPC message.
+///
+/// A message whose arm carries its own branching lives in its own function, so
+/// this match stays one arm per message and each decision is read on its own.
+fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
+    match msg {
+        InMessage::Phase { .. } => on_phase(ctx, msg),
+        InMessage::Levels { levels } => {
+            *ctx.state.pending_levels.borrow_mut() = levels;
+        }
+        InMessage::StyleInfo { count, name } => {
+            ctx.state.style_count.set(count);
+            *ctx.state.style_name.borrow_mut() = name;
+        }
+        InMessage::Toast {
+            message,
+            toast_type,
+            duration,
+            action,
+            action_label,
+            reject_action,
+            reject_action_label,
+        } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state
+                .flash_is_error
+                .set(toast_type.as_deref() == Some("error"));
+            ctx.state.flash_visible.set(true);
+            ctx.state
+                .flash_timer
+                .set(duration.unwrap_or(FLASH_DURATION));
+            *ctx.state.flash_action.borrow_mut() = action;
+            *ctx.state.flash_action_label.borrow_mut() = action_label;
+            *ctx.state.flash_reject_action.borrow_mut() = reject_action;
+            *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
+        }
+        InMessage::DismissToast => {
+            clear_flash(&ctx.state);
+        }
+        InMessage::Fireworks { message } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state.flash_is_error.set(false);
+            *ctx.state.flash_action.borrow_mut() = None;
+            *ctx.state.flash_action_label.borrow_mut() = None;
+            *ctx.state.flash_reject_action.borrow_mut() = None;
+            *ctx.state.flash_reject_action_label.borrow_mut() = None;
+            ctx.state.flash_visible.set(true);
+            ctx.state
+                .flash_timer
+                .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
+
+            rust_pill_shared::fireworks::Fireworks {
+                active: &ctx.state.fireworks_active,
+                elapsed: &ctx.state.fireworks_elapsed,
+                next_launch: &ctx.state.fireworks_next_launch,
+                rockets: &ctx.state.fireworks_rockets,
+            }
+            .restart(reduced_motion());
+        }
+        InMessage::Flame { message } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state.flash_is_error.set(false);
+            *ctx.state.flash_action.borrow_mut() = None;
+            *ctx.state.flash_action_label.borrow_mut() = None;
+            *ctx.state.flash_reject_action.borrow_mut() = None;
+            *ctx.state.flash_reject_action_label.borrow_mut() = None;
+            ctx.state.flash_visible.set(true);
+            ctx.state
+                .flash_timer
+                .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
+
+            ctx.state.flame_active.set(true);
+            ctx.state.flame_elapsed.set(0.0);
+            ctx.state.flame_tongues.borrow_mut().clear();
+        }
+        InMessage::FlashBlue => {
+            ctx.state.flash_blue_active.set(true);
+            ctx.state.flash_blue_elapsed.set(0.0);
+        }
+        InMessage::BroadcastTranscript { text } => {
+            *ctx.state.transcript_text.borrow_mut() = text;
+            ctx.state.transcript_time_since_update.set(0.0);
+            ctx.state.transcript_has_message.set(true);
+        }
+        InMessage::StageText { text } => {
+            let stage = rust_pill_shared::active_stage_text(text.as_deref());
+            *ctx.state.stage_text.borrow_mut() = stage.map(str::to_owned);
+        }
+        InMessage::Visibility { visibility } => {
+            ctx.state.visibility.set(visibility);
+        }
+        InMessage::WindowSize { ref size } => {
+            let mode = WindowMode::from_str(size);
+            ctx.state.window_mode.set(mode);
+        }
+        InMessage::AssistantState { .. } => on_assistant_state(ctx, msg),
+        InMessage::ResetPosition { .. } => on_reset_position(ctx, msg, dt, now),
+        InMessage::ForgetPosition { .. } => on_forget_position(ctx, msg),
+        InMessage::RequestPosition => on_request_position(ctx),
+        InMessage::Quit => {
+            ctx.quit.set(true);
+        }
+    }
+}
+
+/// Advances the phase, dropping a message an older sequence already replaced.
+fn on_phase(ctx: &AppContext, msg: InMessage) {
+    let InMessage::Phase { phase, seq } = msg else {
+        return;
+    };
+    // Phase message sequence guard: see ipc::InMessage::Phase.
+    thread_local! {
+        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+    let stale = LAST_PHASE_SEQ.with(|last| {
+        let stale = seq < last.get();
+        if !stale {
+            last.set(seq);
+        }
+        stale
+    });
+    if stale {
+        return;
+    }
+    let prev = ctx.state.phase.get();
+    ctx.state.phase.set(phase);
+    ctx.state
+        .style_tooltip_gate
+        .set_take_running(phase == Phase::Recording);
+    // A new take sweeps any banner parked above the pill (for
+    // example the retranscribing toast) so it cannot sit on the
+    // style selector for the whole take. A resume from Paused
+    // keeps toasts raised during the take, such as the cancel
+    // confirm.
+    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+        clear_flash(&ctx.state);
+    }
+    if rust_pill_shared::should_clear_stage_text_on_phase(
+        prev == Phase::Loading,
+        phase == Phase::Idle,
+        phase == Phase::Loading,
+    ) {
+        *ctx.state.stage_text.borrow_mut() = None;
+    }
+    if phase == Phase::Loading && prev != Phase::Loading {
+        let offset = if reduced_motion() { 0.5 } else { 0.0 };
+        ctx.state.loading_offset.set(offset);
+    }
+    if phase == Phase::Idle && prev != Phase::Idle {
+        ctx.state.pending_levels.borrow_mut().clear();
+        ctx.state.target_level.set(0.0);
+        ctx.state.current_level.set(0.0);
+        ctx.state.wave_phase.set(0.0);
+        ctx.state.loading_offset.set(0.0);
+    }
+}
+
+/// Applies an assistant snapshot, and reloads the entry when the review changed.
+fn on_assistant_state(ctx: &AppContext, msg: InMessage) {
+    let InMessage::AssistantState {
+        active,
+        input_mode,
+        compact,
+        conversation_id,
+        user_prompt,
+        messages,
+        streaming,
+        permissions,
+        review,
+    } = msg
+    else {
+        return;
+    };
+    let was_active = ctx.state.assistant_active.get();
+    let previous_review_id = ctx
+        .state
+        .assistant_review
+        .borrow()
+        .as_ref()
+        .map(|r| r.id.clone());
+    let review_id = review.as_ref().map(|r| r.id.clone());
+    let review_text = review.as_ref().map(|r| r.text.clone());
+    *ctx.state.assistant_review.borrow_mut() = review.map(|review| *review);
+
+    // The entry is the review surface: a new transcript loads
+    // into it for editing, and answering the review empties it
+    // again. An unchanged id leaves the user's edits alone.
+    if review_id != previous_review_id {
+        let text = review_text.unwrap_or_default();
+        *ctx.state.entry_text.borrow_mut() = text.clone();
+        set_entry_text(&text);
+    }
+    ctx.state.assistant_active.set(active);
+    *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
+    ctx.state.assistant_compact.set(compact);
+    *ctx.state.assistant_conversation_id.borrow_mut() = conversation_id;
+    *ctx.state.assistant_user_prompt.borrow_mut() = user_prompt;
+    *ctx.state.assistant_messages.borrow_mut() = messages;
+    *ctx.state.assistant_streaming.borrow_mut() = streaming;
+    *ctx.state.assistant_permissions.borrow_mut() = permissions;
+
+    if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+        ctx.state.should_stick.set(true);
+        ctx.state.scroll_offset.set(0.0);
+    }
+}
+
+/// Cancels the gesture and clears the stored placement, then answers the desktop.
+fn on_reset_position(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
+    let InMessage::ResetPosition { strategy, ack } = msg else {
+        return;
+    };
+    // Cancel ownership, not a normal release: no final sample
+    // or old drop may re-arm/overwrite this reset.
+    ctx.state.dragging.set(false);
+    ctx.state.pointer_down.set(false);
+    ctx.state.long_press_active.set(false);
+    ctx.state.long_press_elapsed.set(0.0);
+    ctx.state.drag_cancelled.set(true);
+    ctx.state.has_saved_position.set(false);
+    ctx.state.saved_display_id.set(None);
+    ctx.state
+        .saved_work_area
+        .set(rust_pill_shared::edge::MonitorRect::without_id(
+            0.0, 0.0, 0.0, 0.0,
+        ));
+    // A save still owed from the cancelled gesture would publish the
+    // pre-reset origin once the guard expires, recreating the row the
+    // reset just dropped -- the same hazard the other two pills clear
+    // here.
+    ctx.state.drag_save_due.set(None);
+    // The recorded drop belongs to the gesture being cancelled. Left
+    // behind, the next drag's write would consume it and save a place
+    // this gesture already moved away from.
+    ctx.state.drop_frame.set(None);
+    ctx.state.drag_motion.borrow_mut().reset();
+    // A cancelled gesture has no drop to record, and a drag hold
+    // left armed has no end time: every later placement and
+    // reconciliation would be refused.
+    ctx.state.save_guard.borrow_mut().drag_cancelled();
+    ctx.state.selector_placement.borrow_mut().reset();
+    ctx.state.crossing.borrow_mut().reset();
+    ctx.state
+        .anchor
+        .set(rust_pill_shared::layout::Anchor::from_reset(
+            strategy == ResetStrategy::Cursor,
+        ));
+    reposition_window(ctx.window, &ctx.state, dt, now);
+    // Record this clear before the report goes out, so the answer
+    // carries its id and the desktop retires exactly this
+    // declaration, not a later clear's.
+    rust_pill_shared::ipc::record_applied_clear(ack);
+    let (rect, monitor) = unsafe { pill_geometry(ctx.window, &ctx.state) };
+    ipc::send(&OutMessage::PositionChanged {
+        report: rust_pill_shared::restore::PositionReport::new(false, Some(rect), monitor, None),
+    });
+}
+
+/// Stops treating the live frame as the saved position, after a clear.
+fn on_forget_position(ctx: &AppContext, msg: InMessage) {
+    let InMessage::ForgetPosition { ack } = msg else {
+        return;
+    };
+    // A drag still held, or a settle that has not finished, would
+    // reach `persist_drag_position` on a later frame and publish a
+    // saved position again -- recreating the row the clear just
+    // deleted. Cancel the gesture first, the same as the other two
+    // pills; a drag started after the clear still saves normally.
+    ctx.state.dragging.set(false);
+    ctx.state.pointer_down.set(false);
+    ctx.state.long_press_active.set(false);
+    ctx.state.drag_cancelled.set(true);
+    ctx.state.drag_motion.borrow_mut().reset();
+    ctx.state.save_guard.borrow_mut().drag_cancelled();
+    // Stop treating where the pill is sitting as the saved position.
+    // Local data was just cleared, and the next `RequestPosition`
+    // republishes this flag, so leaving it set would write the row back.
+    ctx.state.has_saved_position.set(false);
+    ctx.state.saved_display_id.set(None);
+    ctx.state
+        .saved_work_area
+        .set(rust_pill_shared::edge::MonitorRect::without_id(
+            0.0, 0.0, 0.0, 0.0,
+        ));
+    // A clear drops the record without moving the window, and it also
+    // cancels any placement still owed: a pill the user has been
+    // looking at must not follow the pointer because a database was
+    // wiped.
+    ctx.state.drag_save_due.set(None);
+    // The recorded drop belongs to the gesture being cancelled. Left
+    // behind, the next drag's write would consume it and save a place
+    // this gesture already moved away from.
+    ctx.state.drop_frame.set(None);
+    ctx.state
+        .anchor
+        .set(rust_pill_shared::layout::Anchor::from_forget());
+    // This clear answers with the report the reloaded window's
+    // `RequestPosition` asks for, so the id is held for the reports
+    // that follow.
+    rust_pill_shared::ipc::record_applied_clear(ack);
+}
+
+/// Reports the geometry, and marks it storable only when it describes a drop.
+fn on_request_position(ctx: &AppContext) {
+    let (rect, monitor) = unsafe { pill_geometry(ctx.window, &ctx.state) };
+    // A gesture owns the window while it is dragged, and the
+    // frame read here is the one the drag has reached, not a
+    // place the user has dropped. Authorizing it would let the
+    // desktop store a mid-gesture frame before the release. The
+    // composer still gets the live geometry to place against.
+    // A drop whose save is still owed is the record that has to
+    // reach the store, and the stored origin beside it is the
+    // pre-drop one, so nothing is storable while it is pending.
+    let persist = ctx.state.has_saved_position.get()
+        && ctx.state.drag_save_due.get().is_none()
+        && !gesture_owns_window(&ctx.state, drag_now());
+    ipc::send(&OutMessage::PositionChanged {
+        report: rust_pill_shared::restore::PositionReport::new(
+            persist,
+            Some(rect),
+            monitor,
+            ctx.state.saved_display_id.get(),
+        ),
+    });
+}
+
+/// Ends the process, or hides the embedded window.
+fn quit_app(ctx: &AppContext) {
+    unsafe {
+        if ctx.embedded {
+            let _: () = msg_send![ctx.window, orderOut:nil];
+        } else {
+            let app: id = msg_send![class!(NSApplication), sharedApplication];
+            let _: () = msg_send![app, terminate:nil];
+        }
+    }
+}
+
+/// Advances hover, animation, entry visibility and layout, then requests a redraw.
+fn finish_frame(ctx: &AppContext, dt: f64, now: f64) {
+    // A mouseUp can be missed (another app steals the event, the session
+    // locks). Poll the real button state so a released button can never
+    // leave hover pinned open — the same backstop the Windows pill uses.
+    release_pointer_if_button_up(&ctx.state, ctx.window);
+
+    // Compute hover from actual mouse position over pill area
+    update_hover(ctx.view, ctx);
+
+    tick(&ctx.state, ctx.window, dt);
+
+    // Show/hide entry for typing mode
+    let is_typing = ctx.state.is_typing();
+    unsafe {
+        let entry = ctx.entry;
+        let entry_hidden: BOOL = msg_send![entry, isHidden];
+        if is_typing && entry_hidden != NO {
+            let _: () = msg_send![entry, setHidden:NO];
+            let _: () = msg_send![ctx.window, makeKeyWindow];
+            let _: () = msg_send![ctx.window, makeFirstResponder:entry];
+        } else if !is_typing && entry_hidden == NO {
+            let _: () = msg_send![entry, setHidden:YES];
+            let _: () = msg_send![ctx.window, resignKeyWindow];
+        }
+
+        // Sync entry text to state. `controlTextDidChange:` already does
+        // this on every keystroke; this covers changes the delegate does
+        // not see, such as a paste routed by the system.
+        if is_typing {
+            *ctx.state.entry_text.borrow_mut() = field_string(entry);
+        }
+    }
+
+    // Visibility
+    let should_show = rust_pill_shared::should_show_pill(
+        ctx.state.visibility.get().into(),
+        ctx.state.phase.get() != Phase::Idle,
+        ctx.state.owns_panel(),
+    );
+    unsafe {
+        if should_show {
+            let _: () = msg_send![ctx.window, orderFront:nil];
+        } else {
+            let _: () = msg_send![ctx.window, orderOut:nil];
+        }
+    }
+
+    // The notification is the primary signal, but macOS can drop it while the
+    // app is not frontmost, and a screen that sleeps and wakes within one run
+    // loop turn can produce no notification at all. A cheap signature of the
+    // arrangement catches what the notification misses, only later.
+    unsafe {
+        poll_display_layout(ctx.window, &ctx.state, now);
+    }
+
+    // Reposition window: follow cursor when dragging, auto-center otherwise
+    reposition_window(ctx.window, &ctx.state, dt, now);
+    // Reset/rehome must finish before the detector seeds its next sample.
+    tick_spatial_feedback(ctx.window, &ctx.state, dt, now);
+
+    // Request redraw
+    unsafe {
+        let _: () = msg_send![ctx.view, setNeedsDisplay:YES];
+    }
 }
 
 // ── Hover detection ──────────────────────────────────────────────

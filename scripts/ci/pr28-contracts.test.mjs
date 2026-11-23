@@ -1478,12 +1478,11 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // owns the window the geometry is where the pointer is, not where the user
     // dropped the pill, so the flag has to be withheld: a report that authorizes
     // the save stores a frame the user never chose.
+    // Each platform answers the request in its own handler, so the guard is read
+    // from the function rather than from a match arm.
     const handlers = [["gtkPill", scope("gtkPill", "fn on_request_position(")]];
     for (const name of ["windowsPill", "macPill"]) {
-      const text = source[name];
-      const at = text.indexOf("InMessage::RequestPosition => {");
-      const next = text.indexOf("InMessage::", at + 1);
-      handlers.push([name, at < 0 ? "" : text.slice(at, next)]);
+      handlers.push([name, handlerBody(pathOf.get(name), "RequestPosition")]);
     }
     for (const [name, handler] of handlers) {
       assert.ok(handler.length > 0, `${name}: no RequestPosition handler`);
@@ -2719,9 +2718,7 @@ describe("native gesture adapter contracts", () => {
   }
 
   it("cancels Windows gesture ownership before resetting its position", () => {
-    const reset = source.windowsPill
-      .split("InMessage::ResetPosition { strategy, ack } => {")[1]
-      .split("InMessage::RequestPosition")[0];
+    const reset = handlerBody(pathOf.get("windowsPill"), "ResetPosition");
     assert.match(reset, /cancel_drag_gesture\(hwnd, state\)/);
     assert.ok(
       reset.indexOf("cancel_drag_gesture") <
@@ -3848,11 +3845,13 @@ describe("native gesture adapter contracts", () => {
   });
 
   it("samples macOS crossing geometry after rehoming rather than before", () => {
-    const perform = source.macPill
-      .split("fn perform_tick()")[1]
+    // The frame's ordering lives in `finish_frame`, which `perform_tick` calls
+    // once the queued messages are applied.
+    const frame = source.macPill
+      .split("fn finish_frame(")[1]
       .split("fn end_drag(")[0];
-    const reposition = perform.indexOf("reposition_window(");
-    const spatial = perform.indexOf("tick_spatial_feedback(");
+    const reposition = frame.indexOf("reposition_window(");
+    const spatial = frame.indexOf("tick_spatial_feedback(");
     assert.ok(reposition >= 0 && spatial > reposition);
   });
 
