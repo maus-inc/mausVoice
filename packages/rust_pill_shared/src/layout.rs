@@ -100,11 +100,21 @@ pub fn display_identity(stable_name: &str) -> Option<u64> {
 /// change, only notice it late, so it backs up the events rather than replacing
 /// them.
 ///
-/// The signature is ordered by geometry, so a renumbered but identical
-/// arrangement hashes the same: a display's platform id is allowed to change
-/// under the pill without that being a layout change.
+/// Each entry carries the display's stable token as well as its rectangle,
+/// because which physical display occupies a rectangle is part of the
+/// arrangement. Two panels can swap places without either rectangle moving, and
+/// a signature that only saw the rectangles would leave the pill's recorded
+/// display pointing at the panel that used to be there, so the next launch
+/// would restore it onto the other panel. The token is the durable one from
+/// [`display_identity`], not a platform handle, so a renumbered but otherwise
+/// unchanged display does not read as a change. An unnamed display feeds a
+/// marker instead, which keeps two unnamed displays from colliding with a named
+/// one at the same rectangle.
+///
+/// The entries are ordered, so the order the platform reports them in does not
+/// matter.
 pub fn layout_signature(areas: &[MonitorRect]) -> u64 {
-    let mut sorted: Vec<(i64, i64, i64, i64)> = areas
+    let mut sorted: Vec<(i64, i64, i64, i64, Option<u64>)> = areas
         .iter()
         .filter(|area| {
             area.x.is_finite()
@@ -118,16 +128,17 @@ pub fn layout_signature(areas: &[MonitorRect]) -> u64 {
                 area.y.round() as i64,
                 area.width.round() as i64,
                 area.height.round() as i64,
+                area.id,
             )
         })
         .collect();
     sorted.sort_unstable();
     sorted.dedup();
 
-    // FNV-1a over the rounded rects. Any stable hash would do; this needs no
-    // dependency, cannot panic, and is trivially reproducible in a test. The
-    // count is folded in first so "no displays" and "one display at the origin"
-    // cannot collide through an empty payload.
+    // FNV-1a over the rounded rects and their tokens. Any stable hash would do;
+    // this needs no dependency, cannot panic, and is trivially reproducible in a
+    // test. The count is folded in first so "no displays" and "one display at
+    // the origin" cannot collide through an empty payload.
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let mut feed = |value: i64| {
         for byte in value.to_le_bytes() {
@@ -136,11 +147,21 @@ pub fn layout_signature(areas: &[MonitorRect]) -> u64 {
         }
     };
     feed(sorted.len() as i64);
-    for (x, y, width, height) in sorted {
+    for (x, y, width, height, id) in sorted {
         feed(x);
         feed(y);
         feed(width);
         feed(height);
+        // `Some` and `None` have to differ, and two `Some`s have to differ by
+        // their value, so the marker is fed separately rather than as a value
+        // that could collide with a token.
+        match id {
+            Some(id) => {
+                feed(1);
+                feed(id as i64);
+            }
+            None => feed(0),
+        }
     }
     hash
 }
@@ -1124,11 +1145,31 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_layout_signature_ignores_display_order_and_platform_ids() {
+    fn the_layout_signature_ignores_display_order_but_not_which_display_is_where() {
         let a = display(0.0, 0.0, 1920.0, 1040.0, Some(1));
         let b = display(1920.0, 0.0, 2560.0, 1400.0, Some(2));
-        let reordered = [display(1920.0, 0.0, 2560.0, 1400.0, Some(9)), a];
-        assert_eq!(layout_signature(&[a, b]), layout_signature(&reordered));
+        let reordered = [b, a];
+        assert_eq!(
+            layout_signature(&[a, b]),
+            layout_signature(&reordered),
+            "the order the platform reports displays in is not part of the layout"
+        );
+        // Two panels swap places in the arrangement without either rectangle
+        // moving. The pill's recorded display has to be refreshed, or the next
+        // launch restores it onto the panel that used to be there.
+        assert_ne!(
+            layout_signature(&[a, b]),
+            layout_signature(&[
+                display(0.0, 0.0, 1920.0, 1040.0, Some(2)),
+                display(1920.0, 0.0, 2560.0, 1400.0, Some(1)),
+            ])
+        );
+        // A display that cannot be named must not read as the named one at the
+        // same rectangle, in either direction.
+        assert_ne!(
+            layout_signature(&[a]),
+            layout_signature(&[rect(0.0, 0.0, 1920.0, 1040.0)])
+        );
     }
 
     #[test]
