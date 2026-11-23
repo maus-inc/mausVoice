@@ -146,8 +146,15 @@ const handlerBody = (path, variant) => {
   if (start !== -1) {
     const indent = /^ */.exec(lines[start])[0].length;
     const next = new RegExp(`^ {0,${indent}}InMessage::[A-Z]`);
+    // The match closes before another arm appears when this one is last, and the
+    // text after that brace is not part of the arm. Without the stop, the arm ran
+    // to the end of the file and a handler defined below it read as a call.
+    const closes = new RegExp(`^ {0,${indent}}}`);
     let end = start + 1;
-    while (end < lines.length && !next.test(lines[end])) end += 1;
+    while (end < lines.length && !next.test(lines[end])) {
+      if (closes.test(lines[end])) break;
+      end += 1;
+    }
     armText = lines.slice(start, end).join("\n");
   }
   const fnName = `on_${snake}`;
@@ -159,7 +166,8 @@ const handlerBody = (path, variant) => {
     // A call in a comment is not a call. An arm that stopped calling its handler
     // but kept the old call in a `//` comment reads as a handler to `includes()`,
     // and every guard built on the arm then passes over an arm that does nothing.
-    if (!armText.replace(/\/\/[^\n]*/g, "").includes(`${fnName}(`)) return "";
+    const executable = armText.replace(/\/\/[^\n]*/g, "");
+    if (!new RegExp(`(?<!fn )${fnName}\\(`).test(executable)) return "";
     const fnStart = text.lastIndexOf("\n", fnAt) + 1;
     let depth = 0;
     for (let i = text.indexOf("{", fnAt); i < text.length; i += 1) {
@@ -835,11 +843,26 @@ describe("PR28 ring-alpha render-loop policy", () => {
       pos.indexOf("pub async fn clear_saved_position("),
       pos.indexOf("pub fn saved_position_argument("),
     );
-    const withdrawals = (clear.match(/withdraw_erase\(declaration\)/g) ?? [])
-      .length;
-    assert.ok(
-      withdrawals >= 2,
-      "a failed clear leaves its declaration set and drops every later save",
+    // Per branch, not a count. A duplicate in one branch would satisfy a count
+    // while the other branch lost its withdrawal, and that branch is the one that
+    // leaves the declaration set and drops every later save.
+    for (const marker of ["else {", "Err(err) => {"]) {
+      const at = clear.indexOf(marker);
+      assert.ok(at >= 0, `the clear has no ${marker} exit to inspect`);
+      assert.match(
+        balancedBlock(clear, clear.indexOf("{", at)),
+        /withdraw_erase\(declaration\)/,
+        `the ${marker} exit leaves its declaration set and drops every later save`,
+      );
+    }
+    // The successful clear keeps its declaration: the report that follows spends
+    // it, and retracting it first would let a publish land behind the wipe.
+    const okAt = clear.indexOf("Ok(()) =>");
+    assert.ok(okAt >= 0, "the clear has no success arm to inspect");
+    assert.doesNotMatch(
+      clear.slice(okAt, clear.indexOf("Err(err)", okAt)),
+      /withdraw_erase/,
+      "the successful clear retracts the declaration its own report spends",
     );
     // The declaration precedes the delete, which is what keeps a publish queued
     // behind the clear from landing after it. Both have to be present before the
@@ -895,11 +918,19 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // next drag, the write `take()`s it and stores the previous drop instead.
     const app = source.macApp;
     // Three cancellations -- reset, forget and a drag starting -- each clears it.
-    const clears = (app.match(/drop_frame\.set\(None\)/g) ?? []).length;
-    assert.ok(
-      clears >= 3,
-      "a cancelled or replaced gesture keeps the previous drop, so the next save stores it",
-    );
+    // Checked per handler, because a count lets one handler drop its clear while
+    // another keeps two, and the handler that lost it still stores the old drop.
+    for (const marker of [
+      "fn on_reset_position(",
+      "fn on_forget_position(",
+      "fn tick_long_press(",
+    ]) {
+      assert.match(
+        scope("macApp", marker),
+        /drop_frame\.set\(None\)/,
+        `${marker} keeps the previous drop, so the next save stores it`,
+      );
+    }
     // Each cancellation clears it next to the deadline it belongs to.
     assert.match(
       app,
@@ -1187,7 +1218,13 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // turns a reset that never happened into one that can never happen.
     const app = source.macApp;
     const spend = app.indexOf(".after_placement()");
-    const bail = app.indexOf("let Some((screen, frame)) = target else {");
+    // The bail that governs this spend, not the first one in the file: the launch
+    // placement runs the same rule higher up, and pairing the spend with that bail
+    // made the ordering assertion true for the wrong reason.
+    const bail = app.lastIndexOf(
+      "let Some((screen, frame)) = target else {",
+      spend,
+    );
     assert.ok(
       spend > 0 && bail > 0,
       "the reset spend or the bail is not recognisable",
@@ -1195,6 +1232,27 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.ok(
       spend > bail,
       "macOS: the cursor reset is spent before the placement can fail",
+    );
+    // The bail is the only refusal on this path: macOS applies the frame without a
+    // return value. What the spend needs is that no other exit sits between the two
+    // and that it lands before the placement it describes, so a later path that
+    // returns early cannot consume the reset without placing the pill.
+    // From the end of the bail's own block, because the bail's body is a `return`.
+    const afterBail = app.indexOf("};", bail) + 2;
+    // Comments stripped: this region explains the rule in prose that says
+    // "return", and only code can exit.
+    assert.doesNotMatch(
+      app.slice(afterBail, spend).replace(/\/\/[^\n]*/g, ""),
+      /\breturn\b/,
+      "macOS: a placement path returns between the bail and the spend",
+    );
+    const resolveAt = app.indexOf(
+      "resolve_placement(state, screen, frame",
+      spend,
+    );
+    assert.ok(
+      resolveAt > spend,
+      "macOS: the cursor reset is spent after the placement it belongs to",
     );
   });
 
@@ -1742,7 +1800,10 @@ describe("PR28 fork-workflow secret isolation", () => {
     );
     assert.match(
       source.integrationWorkflow,
-      /if:\s*\|\s*github\.event_name == 'push' \|\|\s*\(github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository\)/,
+      // The condition is the contract, not the YAML scalar style. A block scalar
+      // and a single-line `if:` express the same guard, and the fixtures above
+      // already accept both.
+      /if:\s*(?:\|\s*)?github\.event_name == 'push' \|\|\s*\(github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository\)/,
     );
   });
 });
@@ -3303,10 +3364,31 @@ describe("native gesture adapter contracts", () => {
         refusalAt >= 0,
         `${name}: the guard's refusal is not recognisable`,
       );
+      const refusal = balancedBlock(save, save.indexOf("{", refusalAt));
       assert.match(
-        balancedBlock(save, save.indexOf("{", refusalAt)),
+        refusal,
         /return;/,
         `${name}: the refusal does not stop the save`,
+      );
+      // A `return` that only fires when the drop record is absent lets the branch
+      // fall through to the store with a record present, and `/return;/` alone
+      // would pass. The refusal has to keep the drop owed and store nothing.
+      assert.match(
+        refusal,
+        /drag_save_due\.set\(/,
+        `${name}: the refusal does not keep the drop owed`,
+      );
+      assert.doesNotMatch(
+        refusal,
+        /saved_x\.set\(|upsert_pill_position/,
+        `${name}: the refusal stores the frame it refused`,
+      );
+      // Windows stores through `store_recorded_drop`, macOS and GTK set the origin
+      // in place, so the tail is checked for either shape.
+      assert.match(
+        save.slice(save.indexOf("{", refusalAt) + refusal.length),
+        /saved_x\.set\(|store_/,
+        `${name}: a permitted save never records the origin`,
       );
     }
     // A failed or partial enumeration must not read as an unplugged display.
