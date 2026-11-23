@@ -30,6 +30,17 @@ for example because the base ref is invalid. Read warnings and diagnostics,
 including stderr. Do not use `--brief` or `fallow review` as the gate because
 review exits 0 even when it reports a failing verdict.
 
+Three config facts decide what the gate can see. `ignoreDependencies` takes a
+flat list of package names or globs and applies to the whole workspace, so a
+name added there stops being reported as unused in every package, not just the
+one that needs it. Per-workspace unused declarations therefore stay as
+findings unless the declaration is removed or the usage becomes visible to the
+analyser. `ignorePatterns` drops files from analysis, which removes their
+dead-code and complexity findings but does not remove `diff-risk` findings for
+the same paths, because diff risk reads the diff itself. A `diff-risk` finding
+records `counts_in_total: false`, so the `added-suppression` warnings never
+fail the gate on their own.
+
 The docs homepage uses named, decorative card artwork elements instead of
 position-dependent selectors. The docs contract and built-homepage tests check
 that each card keeps its intended artwork and that the elements do not add a

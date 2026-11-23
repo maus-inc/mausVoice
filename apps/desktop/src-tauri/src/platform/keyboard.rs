@@ -872,7 +872,7 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
         // comment above this branch argues from the case where another spawn wins, so it
         // is written as though that can happen.
         let mut guard = lock(child_store());
-        if guard.as_ref().map(|c| c.id()) == Some(id) {
+        if guard.as_ref().map(Child::id) == Some(id) {
             {
                 let mut stdin_guard = lock(child_stdin_store());
                 *stdin_guard = None;
@@ -893,7 +893,7 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
 /// be tested without a process, which is the point: the id comparison inside it is exactly
 /// the part a later edit could get wrong with nothing else failing.
 fn published_child_id() -> Option<u32> {
-    lock(child_store()).as_ref().map(|c| c.id())
+    lock(child_store()).as_ref().map(Child::id)
 }
 
 /// Whether a spawn that recorded `epoch_at_spawn` should throw away the child it just

@@ -1,4 +1,4 @@
-use crate::constants::*;
+use crate::constants::{EXPANDED_PILL_WIDTH, MIN_PILL_WIDTH, PILL_AREA_HEIGHT};
 use crate::ipc::{self, OutMessage};
 use crate::state::{ClickAction, PillState};
 
