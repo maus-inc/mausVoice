@@ -309,13 +309,21 @@ pub(crate) fn write_window_position(
     }
     let owed = state.x11_drop_owed.borrow_mut().take();
     let (rect, live_monitor) = crate::pill::pill_geometry(window, state);
-    // A refusal that could not name a monitor retains the origin without one, and
-    // the desktop ignores a report without a monitor rect, so the drop would never
-    // be stored. The origin and the monitor have to describe one frame, so a
-    // record without a monitor is completed from the window as it is now, and only
-    // when a display contains it. Storing the retained origin against a surviving
-    // display's work area would record an off-display origin as an exact match for
-    // a panel the drop was never on.
+    // A refusal that could not name a monitor retained the origin without one, so
+    // the record needs a display the window stands on now. When neither exists
+    // there is no pair to report yet: put the record back and keep the retry
+    // armed. Writing the next frame instead would store an origin the user never
+    // dropped, and dropping the record would leave the store holding the position
+    // from before the drag.
+    if live_monitor.is_none() && owed.as_ref().is_some_and(|drop| drop.monitor.is_none()) {
+        *state.x11_drop_owed.borrow_mut() = owed;
+        state.drag_save_due.set(Some(now));
+        return;
+    }
+    // A record without a monitor is completed from the window as it is now, so the
+    // origin and the monitor describe one frame. Pairing the retained origin with
+    // a surviving display's work area would record an off-display origin as an
+    // exact match for a panel the drop was never on.
     let (monitor, display_id) = match &owed {
         Some(drop) => match drop.monitor {
             Some(area) => (
@@ -327,15 +335,7 @@ pub(crate) fn write_window_position(
                 }),
                 drop.display_id,
             ),
-            None => match live_monitor {
-                Some(_) => (live_monitor, display_id_at(window, state)),
-                None => {
-                    // No display contains the window either, so there is no pair to
-                    // report yet. The drop stays owed and the retry stays armed.
-                    state.drag_save_due.set(Some(now));
-                    return;
-                }
-            },
+            None => (live_monitor, display_id_at(window, state)),
         },
         None => (live_monitor, display_id_at(window, state)),
     };
