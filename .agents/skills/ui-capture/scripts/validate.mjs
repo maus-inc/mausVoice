@@ -22,7 +22,7 @@
  * captions, too few frames), so a wrapper can refuse to attach a bad GIF.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 const log = (line = "") => process.stdout.write(`${line}\n`);

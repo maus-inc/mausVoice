@@ -59,7 +59,6 @@ const bundledUsable = () => {
 
 const sparticuzPath = () => {
   try {
-    const mod = require("@sparticuz/chromium");
     const resolved = execFileSync(
       process.execPath,
       ["-e", "require('@sparticuz/chromium').default.executablePath().then((p)=>process.stdout.write(p))"],
@@ -170,25 +169,18 @@ const main = async () => {
   let stopped = false;
 
   // The capture loop runs concurrently with the storyboard so frames land
-  // during mouse moves and CSS transitions, not only between steps. The
-  // `busy` flag serialises screenshot calls: Playwright queues them, and
-  // overlapping calls would drift the cadence.
+  // during mouse moves and CSS transitions, not only between steps. One
+  // screenshot is taken per tick and awaited, so ticks never overlap.
   const captureLoop = (async () => {
-    let busy = false;
     while (!stopped) {
       const tick = Date.now();
-      if (!busy) {
-        busy = true;
-        try {
-          const buf = await page.screenshot({ type: "jpeg", quality: board.quality ?? 90 });
-          writeFileSync(framePath(frameIndex), buf);
-          frameIndex++;
-        } catch {
-          // A screenshot can fail if the page is mid-navigation; the next
-          // tick retries. A persistent failure shows up as a short timeline.
-        } finally {
-          busy = false;
-        }
+      try {
+        const buf = await page.screenshot({ type: "jpeg", quality: board.quality ?? 90 });
+        writeFileSync(framePath(frameIndex), buf);
+        frameIndex++;
+      } catch {
+        // A screenshot can fail if the page is mid-navigation; the next
+        // tick retries. A persistent failure shows up as a short timeline.
       }
       const elapsed = Date.now() - tick;
       const wait = Math.max(0, frameInterval - elapsed);

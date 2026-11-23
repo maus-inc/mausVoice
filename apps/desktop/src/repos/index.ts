@@ -33,7 +33,6 @@ import {
 import { BaseApiKeyRepo, LocalApiKeyRepo } from "./api-key.repo";
 import { BaseAppTargetRepo, LocalAppTargetRepo } from "./app-target.repo";
 import { BaseAuthRepo, PersonalAuthRepo } from "./auth.repo";
-import { BaseChatMessageRepo, LocalChatMessageRepo } from "./chat-message.repo";
 import {
   BaseConversationRepo,
   LocalConversationRepo,
@@ -182,9 +181,7 @@ export const getConversationRepo = (): BaseConversationRepo => {
   return new LocalConversationRepo();
 };
 
-export const getChatMessageRepo = (): BaseChatMessageRepo => {
-  return new LocalChatMessageRepo();
-};
+export { getChatMessageRepo } from "./chat-message.repo";
 
 export const getToolRepo = (): ToolRepo => {
   return new ToolRepo();

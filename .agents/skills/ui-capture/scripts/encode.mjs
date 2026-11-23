@@ -18,9 +18,8 @@
  *   <captureDir>/out.gif, out.mp4, contact-sheet.png, encode-report.json
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 
 const log = (line = "") => process.stdout.write(`${line}\n`);
 

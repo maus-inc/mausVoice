@@ -1875,7 +1875,3 @@ export const REGISTRY: RegistryEntry[] = [
 export const entryById = (id: string) => REGISTRY.find((e) => e.id === id);
 export const entriesByCategory = (c: CategoryId) =>
   REGISTRY.filter((e) => e.category === c);
-
-/** Every registry entry whose demo renders the real component vs a recreation. */
-const REUSED = REGISTRY.filter((e) => e.status === "reused");
-const RECREATED = REGISTRY.filter((e) => e.status === "recreated");
