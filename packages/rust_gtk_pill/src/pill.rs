@@ -1039,6 +1039,7 @@ fn initial_state(backend: Backend, restored_position: Option<ParkedWindow>) -> R
         restored_position: Cell::new(restored_position),
         x11_release_persisted: Cell::new(false),
         drag_save_due: Cell::new(None),
+        x11_drop_owed: RefCell::new(None),
         x11_drag_applied: Cell::new((UNAPPLIED_ORIGIN, UNAPPLIED_ORIGIN)),
         anchor: Cell::new(rust_pill_shared::layout::Anchor::LaunchAtCursor),
         drag_draw_offset_x: Cell::new(0.0),
@@ -1776,6 +1777,9 @@ fn publish_saved_geometry(window: &gtk::Window, state: &PillState) {
 
 fn persist_drag_position(window: &gtk::Window, state: &PillState) {
     if state.backend.get() == Backend::X11 {
+        // A new settle owns the only drop that may still be owed. Anything
+        // retained from an earlier gesture that never completed is superseded.
+        state.x11_drop_owed.borrow_mut().take();
         let (x, y) = state.x11_drag_applied.get();
         x11::persist_window_position(window, state, x as f64, y as f64);
         return;

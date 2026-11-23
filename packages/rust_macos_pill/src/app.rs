@@ -73,19 +73,40 @@ unsafe fn screen_visible_frame(screen: id) -> NSRect {
     msg_send![screen, visibleFrame]
 }
 
+/// The centre of the pill as it is drawn, in window-local top-down points.
+///
+/// The window is a canvas larger than the pill: the content is inset by
+/// `content_offset` and the pill sits inside that, at a position the animation
+/// moves. A point picked from the window alone is a point on the canvas, not on
+/// the pill, and a canvas straddling two displays makes the two disagree.
+fn pill_drop_point(state: &PillState, frame: NSRect) -> (f64, f64) {
+    let (dw, dh) = (state.draw_width.get(), state.draw_height.get());
+    if dw > 0.0 && dh > 0.0 {
+        let (ox, oy) = state.content_offset();
+        let (px, py, pw, ph) = draw::pill_position(state, dw, dh);
+        (ox + px + pw / 2.0, oy + py + ph / 2.0)
+    } else {
+        // Nothing has been drawn yet, so the window centre is where the pill
+        // will be painted.
+        (frame.size.width / 2.0, frame.size.height / 2.0)
+    }
+}
+
 /// The screen the pill's drop belongs to, or the window's own screen.
 ///
 /// `[NSWindow screen]` answers the screen holding the largest part of the
 /// window, and the pill's window is a canvas several times the size of the
 /// visible pill. A canvas straddling two displays can therefore be attributed
 /// to the one the pill is not on, and the saved record would name that
-/// display's work area and token. The pill is drawn at the bottom centre of the
-/// canvas, so that is the point the drop is resolved from.
-unsafe fn screen_for_drop(window: id) -> id {
+/// display's work area and token. The point resolved here is the centre of the
+/// pill's painted rect, so the answer follows the pill across a display edge
+/// rather than following the canvas.
+unsafe fn screen_for_drop(window: id, state: &PillState) -> id {
     let frame = window_frame(window);
+    let (cx, cy) = pill_drop_point(state, frame);
     let point = NSPoint::new(
-        frame.origin.x + frame.size.width / 2.0,
-        frame.origin.y + MARGIN_BOTTOM as f64,
+        frame.origin.x + cx,
+        frame.origin.y + frame.size.height - cy,
     );
     let list = screens();
     let count: usize = msg_send![list, count];
@@ -237,11 +258,11 @@ unsafe fn primary_top_for(window: id) -> f64 {
 /// Reads the pill window's screen rect and the visible frame of the monitor it
 /// lives on, already flipped into Tauri's top-down coordinate space, so the
 /// desktop can anchor the composer next to the real pill.
-unsafe fn pill_geometry(window: id) -> (Rect, Option<Rect>) {
+unsafe fn pill_geometry(window: id, state: &PillState) -> (Rect, Option<Rect>) {
     let frame = window_frame(window);
     // The pill's own screen, not the one holding the largest part of the
     // canvas, for the reason `screen_for_drop` gives.
-    let screen = screen_for_drop(window);
+    let screen = screen_for_drop(window, state);
 
     // `NSScreen.screens` can be EMPTY -- briefly when every display disconnects, the lid
     // closes, or the display sleeps. `objectAtIndex:0` on an empty array raises
@@ -986,7 +1007,7 @@ fn perform_tick() {
                     // carries its id and the desktop retires exactly this
                     // declaration, not a later clear's.
                     rust_pill_shared::ipc::record_applied_clear(ack);
-                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+                    let (rect, monitor) = unsafe { pill_geometry(ctx.window, &ctx.state) };
                     ipc::send(&OutMessage::PositionChanged {
                         report: rust_pill_shared::restore::PositionReport::new(
                             false,
@@ -1035,7 +1056,7 @@ fn perform_tick() {
                     rust_pill_shared::ipc::record_applied_clear(ack);
                 }
                 InMessage::RequestPosition => {
-                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+                    let (rect, monitor) = unsafe { pill_geometry(ctx.window, &ctx.state) };
                     ipc::send(&OutMessage::PositionChanged {
                         report: rust_pill_shared::restore::PositionReport::new(
                             ctx.state.has_saved_position.get(),
@@ -1163,8 +1184,8 @@ fn end_drag(state: &PillState, _window: id, now: f64) {
 /// shape mirrors [`pill_geometry`]: the monitor is `None` when the window is on
 /// no screen, because a window-sized rect standing in for a work area would be
 /// stored as the place the pill was parked.
-unsafe fn drop_display_for(window: id) -> (Option<Rect>, Option<u64>, f64) {
-    let screen = screen_for_drop(window);
+unsafe fn drop_display_for(window: id, state: &PillState) -> (Option<Rect>, Option<u64>, f64) {
+    let screen = screen_for_drop(window, state);
     let primary_top = primary_top_for(window);
     let monitor = if (screen as *mut std::ffi::c_void).is_null() {
         None
@@ -1235,7 +1256,7 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
         // macOS improvised. The retained drop is consumed by the successful save
         // and cleared when a new gesture starts.
         if state.drop_frame.get().is_none() {
-            let (monitor, display_id, primary_top) = unsafe { drop_display_for(window) };
+            let (monitor, display_id, primary_top) = unsafe { drop_display_for(window, state) };
             state.drop_frame.set(Some(DropRecord {
                 frame: unsafe { frame_tuple(window_frame(window)) },
                 monitor,
@@ -1260,7 +1281,7 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
             record.primary_top,
         ),
         None => unsafe {
-            let (monitor, display_id, primary_top) = drop_display_for(window);
+            let (monitor, display_id, primary_top) = drop_display_for(window, state);
             (window_frame(window), monitor, display_id, primary_top)
         },
     };
@@ -1472,7 +1493,7 @@ fn tick_spatial_feedback(window: id, state: &PillState, dt: f64, now: f64) {
     // pill exactly when the strip above no longer fits it. Draw and hit
     // testing read the blend back every frame, so both track the animation.
     let space_above = unsafe {
-        let (rect, monitor) = pill_geometry(window);
+        let (rect, monitor) = pill_geometry(window, state);
         let (_, oy) = state.content_offset();
         let (_, pill_y, _, _) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());

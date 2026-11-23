@@ -98,6 +98,18 @@ impl WindowMode {
     }
 }
 
+/// A drop a refused save still owes, read at the instant of the release.
+///
+/// The retry runs after the display hold, and reconciliation moves the window
+/// in between. Retaining the origin and the display it landed on keeps the
+/// retry writing the user's drop instead of the frame the layout chose.
+pub(crate) struct OwedDrop {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) monitor: Option<rust_pill_shared::edge::MonitorRect>,
+    pub(crate) display_id: Option<u64>,
+}
+
 pub(crate) struct PillState {
     pub(crate) phase: Cell<Phase>,
     pub(crate) visibility: Cell<Visibility>,
@@ -304,6 +316,14 @@ pub(crate) struct PillState {
     /// when no save is owed. The release is reported once per settle, so a refused
     /// save has to be retried from the frame loop or the drop is lost.
     pub(crate) drag_save_due: Cell<Option<f64>>,
+    /// The drop a refused save still owes, read at the release.
+    ///
+    /// The retry runs after the hold, and display reconciliation moves the
+    /// window in the meantime: `x11_drag_applied` then names the frame the
+    /// layout chose, not the one the user dropped. The origin, the monitor and
+    /// its token are retained here so the retry writes the drop, the way the
+    /// Windows and macOS paths do. Cleared when a new gesture settles.
+    pub(crate) x11_drop_owed: RefCell<Option<OwedDrop>>,
     // Last window origin the frame tick applied during an X11 drag, so steady
     // frames skip the X round trip. Seeded out of range to force the first move.
     pub(crate) x11_drag_applied: Cell<(i32, i32)>,

@@ -9,7 +9,7 @@ use gtk::prelude::*;
 
 use crate::constants::MARGIN_BOTTOM;
 use crate::ipc::{self, OutMessage};
-use crate::state::{PillState, WindowMode};
+use crate::state::{OwedDrop, PillState, WindowMode};
 use rust_pill_shared::drag::{DragBounds, DragFrame, DragPhase};
 
 type XDisplay = c_void;
@@ -282,17 +282,53 @@ pub(crate) fn write_window_position(
         //
         // The release is still the user's, and it is reported once per settle, so
         // the deadline is what stops the drop from being lost outright.
+        //
+        // Only the first refusal records. The retry runs every frame while the
+        // hold lasts, and reconciliation is not held with it: a later refusal
+        // would overwrite the drop with the frame the layout forced. The origin,
+        // the monitor and its token are read here, together, so the retry writes
+        // one drop rather than three values from three instants.
+        if state.x11_drop_owed.borrow().is_none() {
+            let (_, monitor) = crate::pill::pill_geometry(window, state);
+            *state.x11_drop_owed.borrow_mut() = Some(OwedDrop {
+                x,
+                y,
+                monitor: monitor.map(|area| {
+                    rust_pill_shared::edge::MonitorRect::without_id(
+                        area.x,
+                        area.y,
+                        area.width,
+                        area.height,
+                    )
+                }),
+                display_id: display_id_at(window, state),
+            });
+        }
         state.drag_save_due.set(due);
         return;
     }
+    let owed = state.x11_drop_owed.borrow_mut().take();
+    let (x, y) = owed.as_ref().map_or((x, y), |drop| (drop.x, drop.y));
     state.saved_x.set(x);
     state.saved_y.set(y);
     state.has_saved_position.set(true);
     // The pending release has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
-    state.saved_display_id.set(display_id_at(window, state));
+    let (rect, live_monitor) = crate::pill::pill_geometry(window, state);
+    let (monitor, display_id) = match &owed {
+        Some(drop) => (
+            drop.monitor.map(|area| crate::ipc::Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: area.height,
+            }),
+            drop.display_id,
+        ),
+        None => (live_monitor, display_id_at(window, state)),
+    };
+    state.saved_display_id.set(display_id);
     state.x11_release_persisted.set(true);
-    let (rect, monitor) = crate::pill::pill_geometry(window, state);
     if let Some(area) = monitor {
         // The retained area has to be the one the drop landed on. Leaving the
         // previous display's rectangle here makes the next disconnect measure
