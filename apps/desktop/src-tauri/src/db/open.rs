@@ -270,7 +270,7 @@ pub fn quarantine_sqlite_file(path: &Path) -> std::io::Result<PathBuf> {
     if path.exists() {
         moves.push((path.to_path_buf(), dest.clone()));
     }
-    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+    if let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) {
         for suffix in SQLITE_SIDECARS {
             let side = path.with_file_name(format!("{name}{suffix}"));
             if side.exists() {
@@ -318,7 +318,9 @@ pub fn delete_quarantined_databases(parent_or_db: &Path) -> std::io::Result<usiz
 
 async fn connect_pool(path: &Path) -> Result<SqlitePool, OpenError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| OpenError::Other(err.to_string()))?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| OpenError::Other(err.to_string()))?;
     }
     SqlitePoolOptions::new()
         .max_connections(5)
@@ -436,136 +438,22 @@ const RETIRED_CONSOLIDATION_ERA_VERSIONS: &[(i64, &str)] = &[
     (87, "eleven_labs_keyterms_enabled"),
 ];
 
+struct AppliedMigrations {
+    descriptions: std::collections::HashMap<i64, String>,
+    checksums: std::collections::HashMap<i64, Vec<u8>>,
+}
+
 async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
-            version BIGINT PRIMARY KEY,
-            description TEXT NOT NULL,
-            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            success BOOLEAN NOT NULL,
-            checksum BLOB NOT NULL,
-            execution_time BIGINT NOT NULL
-        )",
-    )
-    .execute(pool)
-    .await
-    .map_err(|err| classify_sqlx("create _sqlx_migrations", err))?;
+    ensure_migration_ledger(pool).await?;
+    reject_failed_migration(pool).await?;
 
-    let failed: Option<i64> = sqlx::query_scalar(
-        "SELECT version FROM _sqlx_migrations WHERE success = false ORDER BY version LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|err| classify_sqlx("read failed migrations", err))?;
-    if let Some(version) = failed {
-        // `Other`, not `Integrity`: the file is readable, this build just cannot
-        // say how far it got. `Integrity` quarantines, which would move a
-        // working database aside for a ledger disagreement.
-        return Err(OpenError::Other(format!(
-            "migration {version} previously failed; the database needs recovery before it can be opened"
-        )));
-    }
-
-    let applied =
-        sqlx::query("SELECT version, description, checksum FROM _sqlx_migrations ORDER BY version")
-            .fetch_all(pool)
-            .await
-            .map_err(|err| classify_sqlx("read applied migrations", err))?;
-
-    let mut applied_checksums = std::collections::HashMap::new();
-    let mut applied_descriptions = std::collections::HashMap::new();
-    for row in applied {
-        let version: i64 = row.get("version");
-        let description: String = row.get("description");
-        let checksum: Vec<u8> = row.get("checksum");
-        applied_descriptions.insert(version, description);
-        applied_checksums.insert(version, checksum);
-    }
-
-    let configured: std::collections::HashSet<i64> = migrations()
-        .into_iter()
-        .filter(|migration| matches!(migration.kind, tauri_plugin_sql::MigrationKind::Up))
-        .map(|migration| migration.version)
-        .collect();
-    let mut retired: Vec<i64> = Vec::new();
-    for version in applied_checksums.keys() {
-        if !configured.contains(version) {
-            // The individual migrations that the 0.1.6 release folded into the
-            // single post-0.1.5 consolidation step (69). Databases written by
-            // intermediate builds recorded those steps individually; that
-            // schema is already part of this build's target, so those rows are
-            // retired below instead of failing the open as a downgrade. Only
-            // the versions a real build actually shipped are listed, so any
-            // other unconfigured version keeps the strict behavior: a database
-            // from a genuinely newer release must surface loudly, not be
-            // rewritten underneath it.
-            // Match the description too. The number alone is ambiguous: other
-            // long-lived branches put unrelated migrations at 076-079, and
-            // retiring one of those rows would erase the record of a schema
-            // this build knows nothing about.
-            let description = applied_descriptions
-                .get(version)
-                .map(String::as_str)
-                .unwrap_or_default();
-            if RETIRED_CONSOLIDATION_ERA_VERSIONS
-                .iter()
-                .any(|(retired, name)| retired == version && *name == description)
-            {
-                retired.push(*version);
-                continue;
-            }
-            // A version recorded in `_sqlx_migrations` that this build does not
-            // ship means the database was written by a newer release (a normal
-            // downgrade/rollback). The file is perfectly readable, so this is
-            // not corruption: classify it as `Other` so the failure is surfaced
-            // to the user instead of `Integrity`, which would quarantine the
-            // file and silently discard the user's transcriptions, keys and
-            // preferences.
-            return Err(OpenError::Other(format!(
-                "migration {version} is recorded but is not in the current migration set; \
-                 the database was likely created by a newer version of the app"
-            )));
-        }
-    }
-    retired.sort_unstable();
-    for migration in migrations() {
-        if !matches!(migration.kind, tauri_plugin_sql::MigrationKind::Up) {
-            continue;
-        }
-        let version = migration.version;
-        if let Some(stored) = applied_checksums.get(&version) {
-            if !migration_checksum_matches(version, stored, migration.sql) {
-                // A modified migration file is a disagreement about what this
-                // build's history should have been, not damage to the database.
-                // Quarantining here would discard a perfectly readable file and
-                // open an empty one in its place, so this surfaces for repair.
-                //
-                // Two of the three accepted sources hash this build's own text, so for every
-                // version but 069 neither matching means the file really did change.
-                //
-                // 069 is worth separating, because the two ways it behaves are different and
-                // read as one claim when stated together. An UNRECOGNISED digest still lands
-                // here: a 069 row holding something none of the three arms produce -- a third
-                // edit's digest, or one written by hand -- is refused exactly like any other
-                // migration, which is the point of refusing rather than quarantining.
-                //
-                // What the superseded list gives up is narrower, and is the only case here that
-                // is not detected: a database already carrying one of those two digests is
-                // still accepted by a build where 069 has since been edited a THIRD time,
-                // because the list decides on the version and a fixed table and never
-                // re-derives from the text. `is_superseded_checksum` says so where the list is.
-                return Err(OpenError::Other(format!(
-                    "migration {version} ({}) was previously applied but has been modified; \
-                     the database is readable but its history does not match this build",
-                    migration.description
-                )));
-            }
-        }
-    }
+    let applied = read_applied_migrations(pool).await?;
+    let mut retired = collect_retired_versions(&applied)?;
+    verify_applied_checksums(&applied.checksums)?;
 
     for migration in migrations() {
         if !matches!(migration.kind, tauri_plugin_sql::MigrationKind::Up)
-            || applied_checksums.contains_key(&migration.version)
+            || applied.checksums.contains_key(&migration.version)
         {
             continue;
         }
@@ -621,32 +509,187 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         }
     }
 
-    // Already-consolidated profiles may retain old ledger rows, and retiring
-    // them only drops the record of steps whose schema 069 already established.
-    //
-    // This does NOT re-validate the retired rows, and it cannot: a retired
-    // version is by definition absent from `migrations()`, which is the set the
-    // checksum loop above iterates, and its SQL is no longer shipped (071-087
-    // were folded into 069). There is no expected checksum left to compare the
-    // stored one against, so re-adding those files purely to validate rows that
-    // are about to be deleted would reintroduce the migration history this
-    // consolidation exists to remove. What is checked for these rows is the
-    // (version, description) match in `RETIRED_CONSOLIDATION_ERA_VERSIONS`,
-    // which they must pass to reach this point.
-    if !retired.is_empty() {
-        let mut transaction = pool
-            .begin()
-            .await
-            .map_err(|err| classify_sqlx("begin retirement transaction", err))?;
-        retire_consolidated_migrations(&mut transaction, &retired)
-            .await
-            .map_err(|err| classify_sqlx("retire consolidated migrations", err))?;
-        transaction
-            .commit()
-            .await
-            .map_err(|err| classify_sqlx("commit retirement transaction", err))?;
-    }
+    retire_versions(pool, &retired).await
+}
 
+async fn ensure_migration_ledger(pool: &SqlitePool) -> Result<(), OpenError> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
+            version BIGINT PRIMARY KEY,
+            description TEXT NOT NULL,
+            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            success BOOLEAN NOT NULL,
+            checksum BLOB NOT NULL,
+            execution_time BIGINT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|err| classify_sqlx("create _sqlx_migrations", err))?;
+    Ok(())
+}
+
+async fn reject_failed_migration(pool: &SqlitePool) -> Result<(), OpenError> {
+    let failed: Option<i64> = sqlx::query_scalar(
+        "SELECT version FROM _sqlx_migrations WHERE success = false ORDER BY version LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| classify_sqlx("read failed migrations", err))?;
+    if let Some(version) = failed {
+        // `Other`, not `Integrity`: the file is readable, this build just cannot
+        // say how far it got. `Integrity` quarantines, which would move a
+        // working database aside for a ledger disagreement.
+        return Err(OpenError::Other(format!(
+            "migration {version} previously failed; the database needs recovery before it can be opened"
+        )));
+    }
+    Ok(())
+}
+
+async fn read_applied_migrations(pool: &SqlitePool) -> Result<AppliedMigrations, OpenError> {
+    let applied =
+        sqlx::query("SELECT version, description, checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(pool)
+            .await
+            .map_err(|err| classify_sqlx("read applied migrations", err))?;
+
+    let mut migrations = AppliedMigrations {
+        descriptions: std::collections::HashMap::new(),
+        checksums: std::collections::HashMap::new(),
+    };
+    for row in applied {
+        let version: i64 = row.get("version");
+        let description: String = row.get("description");
+        let checksum: Vec<u8> = row.get("checksum");
+        migrations.descriptions.insert(version, description);
+        migrations.checksums.insert(version, checksum);
+    }
+    Ok(migrations)
+}
+
+/// Ledger rows for the migrations the 0.1.6 release folded into step 69.
+///
+/// The individual migrations that release folded into the single post-0.1.5
+/// consolidation step (69) were recorded individually by intermediate builds.
+/// That schema is already part of this build's target, so those rows are retired
+/// instead of failing the open as a downgrade. Only the versions a real build
+/// actually shipped are listed, so any other unconfigured version keeps the
+/// strict behavior: a database from a genuinely newer release must surface
+/// loudly, not be rewritten underneath it.
+///
+/// The description is matched too. The number alone is ambiguous: other
+/// long-lived branches put unrelated migrations at 076-079, and retiring one of
+/// those rows would erase the record of a schema this build knows nothing about.
+fn collect_retired_versions(applied: &AppliedMigrations) -> Result<Vec<i64>, OpenError> {
+    let configured: std::collections::HashSet<i64> = migrations()
+        .into_iter()
+        .filter(|migration| matches!(migration.kind, tauri_plugin_sql::MigrationKind::Up))
+        .map(|migration| migration.version)
+        .collect();
+    let mut retired: Vec<i64> = Vec::new();
+    for version in applied.checksums.keys() {
+        if configured.contains(version) {
+            continue;
+        }
+        let description = applied
+            .descriptions
+            .get(version)
+            .map(String::as_str)
+            .unwrap_or_default();
+        if RETIRED_CONSOLIDATION_ERA_VERSIONS
+            .iter()
+            .any(|(retired, name)| retired == version && *name == description)
+        {
+            retired.push(*version);
+            continue;
+        }
+        // A version recorded in `_sqlx_migrations` that this build does not
+        // ship means the database was written by a newer release (a normal
+        // downgrade/rollback). The file is perfectly readable, so this is
+        // not corruption: classify it as `Other` so the failure is surfaced
+        // to the user instead of `Integrity`, which would quarantine the
+        // file and silently discard the user's transcriptions, keys and
+        // preferences.
+        return Err(OpenError::Other(format!(
+            "migration {version} is recorded but is not in the current migration set; \
+             the database was likely created by a newer version of the app"
+        )));
+    }
+    retired.sort_unstable();
+    Ok(retired)
+}
+
+fn verify_applied_checksums(
+    applied_checksums: &std::collections::HashMap<i64, Vec<u8>>,
+) -> Result<(), OpenError> {
+    for migration in migrations() {
+        if !matches!(migration.kind, tauri_plugin_sql::MigrationKind::Up) {
+            continue;
+        }
+        let version = migration.version;
+        let Some(stored) = applied_checksums.get(&version) else {
+            continue;
+        };
+        if migration_checksum_matches(version, stored, migration.sql) {
+            continue;
+        }
+        // A modified migration file is a disagreement about what this
+        // build's history should have been, not damage to the database.
+        // Quarantining here would discard a perfectly readable file and
+        // open an empty one in its place, so this surfaces for repair.
+        //
+        // Two of the three accepted sources hash this build's own text, so for every
+        // version but 069 neither matching means the file really did change.
+        //
+        // 069 is worth separating, because the two ways it behaves are different and
+        // read as one claim when stated together. An UNRECOGNISED digest still lands
+        // here: a 069 row holding something none of the three arms produce -- a third
+        // edit's digest, or one written by hand -- is refused exactly like any other
+        // migration, which is the point of refusing rather than quarantining.
+        //
+        // What the superseded list gives up is narrower, and is the only case here that
+        // is not detected: a database already carrying one of those two digests is
+        // still accepted by a build where 069 has since been edited a THIRD time,
+        // because the list decides on the version and a fixed table and never
+        // re-derives from the text. `is_superseded_checksum` says so where the list is.
+        return Err(OpenError::Other(format!(
+            "migration {version} ({}) was previously applied but has been modified; \
+             the database is readable but its history does not match this build",
+            migration.description
+        )));
+    }
+    Ok(())
+}
+
+/// Drop ledger rows for retired migrations, after every pending migration has run.
+///
+/// Already-consolidated profiles may retain old ledger rows, and retiring them
+/// only drops the record of steps whose schema 069 already established.
+///
+/// This does NOT re-validate the retired rows, and it cannot: a retired version
+/// is by definition absent from `migrations()`, which is the set the checksum
+/// loop above iterates, and its SQL is no longer shipped (071-087 were folded
+/// into 069). There is no expected checksum left to compare the stored one
+/// against, so re-adding those files purely to validate rows that are about to
+/// be deleted would reintroduce the migration history this consolidation exists
+/// to remove. What is checked for these rows is the (version, description) match
+/// in `RETIRED_CONSOLIDATION_ERA_VERSIONS`, which they must pass to reach here.
+async fn retire_versions(pool: &SqlitePool, retired: &[i64]) -> Result<(), OpenError> {
+    if retired.is_empty() {
+        return Ok(());
+    }
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|err| classify_sqlx("begin retirement transaction", err))?;
+    retire_consolidated_migrations(&mut transaction, retired)
+        .await
+        .map_err(|err| classify_sqlx("retire consolidated migrations", err))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|err| classify_sqlx("commit retirement transaction", err))?;
     Ok(())
 }
 

@@ -100,5 +100,7 @@
   ],
   "duplicates": {
     "ignore": ["packages/desktop-native-apis/src/bindings.ts"]
-  }
+  },
+  "ignoreDependencies": ["@maus-inc/typescript-config"],
+  "ignorePatterns": [".agents/**"]
 }

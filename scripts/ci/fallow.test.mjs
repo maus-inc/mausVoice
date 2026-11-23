@@ -155,39 +155,30 @@ test("architecture detects a cyclic fixture", (t) => {
 });
 
 // Cycles the consolidated base already had when the recorder-ownership work
-// landed on top of it. They all pass through the `sessions/index.ts` barrel,
-// `utils/user.utils.ts`, or the `agents/index.ts` barrel; breaking them is a
-// separate refactor of that layout, not part of this branch.
+// landed on top of it, reconciled with the base's type-module move.
+//
+// The base moved the transcription preference types out of `utils/user.utils.ts`
+// and broke eleven cycles through that module, so their entries are gone. The
+// same move exposed six routes through `tools/paste.tool.ts` and
+// `actions/pending-paste-review.actions.ts`, which close back through
+// `actions/chat.actions.ts`. They are recorded here rather than broken in this
+// branch because the edge to remove is the one from `pending-paste-review` to
+// the chat action module, and that belongs to the base's layout refactor. The
+// base is red on this same guard at e49e00604 (run 45170314516).
 //
 // The gate is "no new cycles": anything observed that is not listed here fails,
 // and an entry is deleted as soon as its cycle is broken. The cycle the
-// recording-ownership modules could have introduced — `native-recording-session.ts`
-// importing `recorded-audio.utils.ts` while that module imported it back — was
+// recording-ownership modules could have introduced, `native-recording-session.ts`
+// importing `recorded-audio.utils.ts` while that module imported it back, was
 // removed by moving `invokeStopRecording` onto the session module.
 const INHERITED_CYCLES = [
+  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/agent-configs.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
   "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts",
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
-  // The same action-to-session cycle, reported along its other two routes:
-  // `local-transcription-session.ts` calls `transcribeAudio`, and
-  // `prompt.utils.ts` reaches `user.utils.ts` first. Both were hidden while the
-  // shorter route through `types/transcription-session.types.ts` existed, and
-  // surface when that type import moves to a leaf module.
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts",
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/batch-transcription-session.ts",
-  "apps/desktop/src/actions/transcribe.actions.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts",
-  "apps/desktop/src/sessions/assemblyai-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/azure-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/azure-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/deepgram-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/deepgram-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/elevenlabs-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/elevenlabs-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/gladia-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/gladia-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/sessions/index.ts",
-  "apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts -> apps/desktop/src/utils/prompt.utils.ts -> apps/desktop/src/utils/user.utils.ts",
-  "apps/desktop/src/sessions/index.ts -> apps/desktop/src/sessions/local-transcription-session.ts -> apps/desktop/src/utils/user.utils.ts",
-  "apps/desktop/src/sessions/index.ts -> apps/desktop/src/utils/user.utils.ts",
+  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts -> apps/desktop/src/actions/tool.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/repos/tool.repo.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
+  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts -> apps/desktop/src/actions/tool.actions.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
+  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/repos/tool.repo.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
+  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/agents/index.ts -> apps/desktop/src/agents/run-agent.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
+  "apps/desktop/src/actions/chat.actions.ts -> apps/desktop/src/repos/index.ts -> apps/desktop/src/repos/tool.repo.ts -> apps/desktop/src/tools/index.ts -> apps/desktop/src/tools/paste.tool.ts -> apps/desktop/src/actions/pending-paste-review.actions.ts",
   "apps/desktop/src/utils/feature.utils.ts -> apps/desktop/src/utils/user.utils.ts -> apps/desktop/src/utils/keyboard.utils.ts",
   "apps/desktop/src/utils/keyboard.utils.ts -> apps/desktop/src/utils/user.utils.ts",
 ];
