@@ -3,7 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n/intl";
 import { createId } from "../utils/id.utils";
 import { nowIso } from "../utils/date.utils";
-import { createChatMessage, updateChatMessage } from "./chat.actions";
+import {
+  createChatMessage,
+  updateChatMessage,
+} from "../utils/chat-message.utils";
 
 export const PENDING_PASTE_REVIEW_TYPE = "pending-paste-review";
 

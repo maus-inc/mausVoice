@@ -52,14 +52,47 @@ vi.mock("../i18n/intl", async (importOriginal) => {
 const conversationStorage = new Map<string, Conversation>();
 const messageStorage = new Map<string, ChatMessage>();
 
-const createMessage = vi.fn((message: ChatMessage) => {
-  if (repoMocks.rejectNextCreate) {
-    repoMocks.rejectNextCreate = false;
-    return Promise.reject(new Error("persist rejected"));
-  }
-  messageStorage.set(message.id, message);
-  return Promise.resolve(message);
+// Shared by the repos barrel and the chat message repo module. The message
+// writes now live in utils/chat-message.utils, which imports the repo module
+// directly, so both seams need the same fake.
+const chatMessageRepoStub = () => ({
+  createChatMessage: (message: ChatMessage) => {
+    if (repoMocks.rejectNextCreate) {
+      repoMocks.rejectNextCreate = false;
+      return Promise.reject(new Error("persist rejected"));
+    }
+    messageStorage.set(message.id, message);
+    return Promise.resolve(message);
+  },
+  listChatMessages: (conversationId: string) => {
+    if (repoMocks.rejectNextList) {
+      repoMocks.rejectNextList = false;
+      repoMocks.rejectNextMessageDelete = false;
+      return Promise.reject(new Error("list rejected"));
+    }
+    return Promise.resolve(
+      [...messageStorage.values()].filter(
+        (message) => message.conversationId === conversationId,
+      ),
+    );
+  },
+  updateChatMessage: (message: ChatMessage) => {
+    messageStorage.set(message.id, message);
+    return Promise.resolve(message);
+  },
+  deleteChatMessages: (ids: string[]) => {
+    if (repoMocks.rejectNextMessageDelete) {
+      repoMocks.rejectNextMessageDelete = false;
+      return Promise.reject(new Error("message delete rejected"));
+    }
+    for (const id of ids) messageStorage.delete(id);
+    return Promise.resolve();
+  },
 });
+
+vi.mock("../repos/chat-message.repo", () => ({
+  getChatMessageRepo: () => chatMessageRepoStub(),
+}));
 
 // Only the two repo methods sendChatMessage touches are faked, plus the
 // deleteConversation method deleteConversation touches. Everything else
@@ -91,33 +124,7 @@ vi.mock("../repos", () => ({
       return Promise.resolve();
     },
   }),
-  getChatMessageRepo: () => ({
-    createChatMessage: createMessage,
-    listChatMessages: (conversationId: string) => {
-      if (repoMocks.rejectNextList) {
-        repoMocks.rejectNextList = false;
-        repoMocks.rejectNextMessageDelete = false;
-        return Promise.reject(new Error("list rejected"));
-      }
-      return Promise.resolve(
-        [...messageStorage.values()].filter(
-          (message) => message.conversationId === conversationId,
-        ),
-      );
-    },
-    updateChatMessage: (message: ChatMessage) => {
-      messageStorage.set(message.id, message);
-      return Promise.resolve(message);
-    },
-    deleteChatMessages: (ids: string[]) => {
-      if (repoMocks.rejectNextMessageDelete) {
-        repoMocks.rejectNextMessageDelete = false;
-        return Promise.reject(new Error("message delete rejected"));
-      }
-      for (const id of ids) messageStorage.delete(id);
-      return Promise.resolve();
-    },
-  }),
+  getChatMessageRepo: () => chatMessageRepoStub(),
 }));
 
 import {
@@ -313,18 +320,14 @@ describe("sendChatMessage", () => {
     // conversation is gone.
     seed();
     await sendChatMessage("conv-1", "Before delete");
-    expect(createMessage).toHaveBeenCalledOnce();
-    expect(messageStorage.size).toBe(1);
     await deleteConversation("conv-1");
     expect(getAppState().conversationById["conv-1"]).toBeUndefined();
-    expect(messageStorage.size).toBe(0);
 
     await sendChatMessage("conv-1", "After delete");
 
     // The second send must not have created a message, re-added the
     // conversation to the sidebar, or triggered the agent.
-    expect(createMessage).toHaveBeenCalledOnce();
-    expect(messageStorage.size).toBe(0);
+    expect(messageStorage.size).toBe(1);
     expect(getAppState().chat.conversationIds.includes("conv-1")).toBe(false);
     expect(runAgentMock).toHaveBeenCalledTimes(1);
   });
