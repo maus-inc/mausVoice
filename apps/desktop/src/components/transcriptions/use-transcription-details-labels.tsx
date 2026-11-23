@@ -10,7 +10,7 @@ import {
   formatTranscriptionModeLabel,
 } from "./transcription-details-copy";
 
-export const formatModelSizeLabel = (modelSize?: string | null): ReactNode => {
+const formatModelSizeLabel = (modelSize?: string | null): ReactNode => {
   const value = modelSize?.trim();
   if (!value) {
     return <FormattedMessage defaultMessage="Unknown" />;
@@ -19,7 +19,7 @@ export const formatModelSizeLabel = (modelSize?: string | null): ReactNode => {
   return value.charAt(0).toUpperCase() + value.slice(1);
 };
 
-export const resolveApiKeyLabel = (
+const resolveApiKeyLabel = (
   records: AppState["apiKeyById"],
   apiKeyId: string | null | undefined,
   noneLabel: string,
@@ -42,7 +42,7 @@ export const resolveApiKeyLabel = (
   return record.name;
 };
 
-export const formatTextOrUnknown = (value?: string | null): ReactNode => {
+const formatTextOrUnknown = (value?: string | null): ReactNode => {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? (
     trimmed
@@ -51,7 +51,7 @@ export const formatTextOrUnknown = (value?: string | null): ReactNode => {
   );
 };
 
-export const formatDurationLabel = (ms?: number | null): string | null => {
+const formatDurationLabel = (ms?: number | null): string | null => {
   if (ms == null) {
     return null;
   }

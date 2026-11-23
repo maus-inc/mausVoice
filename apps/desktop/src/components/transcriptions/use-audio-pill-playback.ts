@@ -41,7 +41,7 @@ const isAbortError = (error: unknown): boolean =>
   "name" in error &&
   (error as { name?: string }).name === "AbortError";
 
-export type AudioPillPlaybackState = {
+type AudioPillPlaybackState = {
   isPlaying: boolean;
   isLoading: boolean;
   playbackProgress: number;

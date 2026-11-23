@@ -10,7 +10,7 @@ import {
   WAVEFORM_BAR_MIN_WIDTH,
 } from "../../utils/audio-playback.utils";
 
-export const getDesiredBarCount = (width: number): number => {
+const getDesiredBarCount = (width: number): number => {
   if (width <= 0) {
     return DEFAULT_WAVEFORM_BAR_COUNT;
   }
@@ -24,7 +24,7 @@ export const getDesiredBarCount = (width: number): number => {
   );
 };
 
-export const getWaveformBars = (
+const getWaveformBars = (
   values: number[],
   barCount: number,
 ): number[] =>
@@ -32,7 +32,7 @@ export const getWaveformBars = (
     ? values
     : Array.from({ length: barCount }, () => MIN_WAVEFORM_BAR_VALUE);
 
-export const getBarWidth = (width: number, barCount: number): number => {
+const getBarWidth = (width: number, barCount: number): number => {
   if (width <= 0 || barCount === 0) {
     return WAVEFORM_BAR_MIN_WIDTH;
   }
