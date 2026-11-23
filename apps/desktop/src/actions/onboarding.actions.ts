@@ -29,8 +29,8 @@ import {
   getTranscriptionPrefs,
   setCurrentUser,
   setUserPreferences,
-  TranscriptionPrefs,
 } from "../utils/user.utils";
+import type { TranscriptionPrefs } from "../types/transcription-prefs.types";
 import { showErrorSnackbar } from "./app.actions";
 import { clearLocalStorageValue } from "./local-storage.actions";
 import { refreshMember } from "./member.actions";

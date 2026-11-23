@@ -336,18 +336,6 @@ importers:
       '@emotion/styled':
         specifier: ^11.14.1
         version: 11.14.1(@emotion/react@11.14.0(@types/react@19.2.18)(react@19.2.8))(@types/react@19.2.18)(react@19.2.8)
-      '@maus-inc/desktop-native-apis':
-        specifier: workspace:*
-        version: link:../../packages/desktop-native-apis
-      '@maus-inc/desktop-utils':
-        specifier: workspace:*
-        version: link:../../packages/desktop-utils
-      '@maus-inc/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      '@maus-inc/utilities':
-        specifier: workspace:*
-        version: link:../../packages/utilities
       '@mui/icons-material':
         specifier: ^9.3.1
         version: 9.3.1(@mui/material@9.3.1(@emotion/react@11.14.0(@types/react@19.2.18)(react@19.2.8))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.2.18)(react@19.2.8))(@types/react@19.2.18)(react@19.2.8))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(@types/react@19.2.18)(react@19.2.8)
@@ -357,18 +345,12 @@ importers:
       '@mui/system':
         specifier: ^9.3.0
         version: 9.3.0(@emotion/react@11.14.0(@types/react@19.2.18)(react@19.2.8))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.2.18)(react@19.2.8))(@types/react@19.2.18)(react@19.2.8))(@types/react@19.2.18)(react@19.2.8)
-      '@tauri-apps/api':
-        specifier: ~2.10.1
-        version: 2.10.1
       framer-motion:
         specifier: ^12.38.0
         version: 12.38.0(@emotion/is-prop-valid@1.4.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       lucide:
         specifier: ^1.31.0
         version: 1.31.0
-      morphicons:
-        specifier: ^1.7.0
-        version: 1.7.0(react@19.2.8)
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -384,9 +366,6 @@ importers:
       react-router-dom:
         specifier: ^6.30.4
         version: 6.30.4(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      react-virtuoso:
-        specifier: ^4.18.11
-        version: 4.18.11(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     devDependencies:
       '@types/react':
         specifier: 19.2.18

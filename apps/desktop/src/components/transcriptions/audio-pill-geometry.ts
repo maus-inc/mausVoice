@@ -24,10 +24,7 @@ const getDesiredBarCount = (width: number): number => {
   );
 };
 
-const getWaveformBars = (
-  values: number[],
-  barCount: number,
-): number[] =>
+const getWaveformBars = (values: number[], barCount: number): number[] =>
   values.length
     ? values
     : Array.from({ length: barCount }, () => MIN_WAVEFORM_BAR_VALUE);

@@ -22,7 +22,7 @@ type WarningRow = {
   postProcessFallback?: boolean | null;
 };
 
-export const resolveCategoryWarning = (
+const resolveCategoryWarning = (
   warning: string,
   postProcessFailed: boolean | null | undefined,
   postProcessFallback: boolean | null | undefined,
