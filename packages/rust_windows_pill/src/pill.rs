@@ -997,7 +997,7 @@ fn on_reset_position(state: &PillState, msg: InMessage) {
     let InMessage::ResetPosition { strategy, ack } = msg else {
         return;
     };
-    let hwnd = HWND_CELL.with(|c| c.get());
+    let hwnd = HWND_CELL.with(Cell::get);
     cancel_drag_gesture(hwnd, state);
     state.has_saved_position.set(false);
     state.saved_display_id.set(None);
@@ -1071,7 +1071,7 @@ fn on_forget_position(state: &PillState, msg: InMessage) {
 
 /// Reports the geometry, and marks it storable only when it describes a drop.
 fn on_request_position(state: &PillState) {
-    let hwnd = HWND_CELL.with(|c| c.get());
+    let hwnd = HWND_CELL.with(Cell::get);
     let (rect, monitor) = current_pill_geometry(hwnd);
     // The desktop stores this report over the record it already holds, so
     // the work area has to describe the display the token names. The
@@ -2142,7 +2142,7 @@ fn default_pill_y(work_area_top: i32, work_area_height: i32, win_h: i32, scale: 
         1.0
     };
     let margin = (MARGIN_BOTTOM as f64 * scale).round() as i32;
-    let placement = PILL_PLACEMENT.with(|c| c.get());
+    let placement = PILL_PLACEMENT.with(Cell::get);
     if placement == PILL_PLACEMENT_TOP {
         let offset = ((WINDOW_H_TYPING - DICTATION_WINDOW_HEIGHT) as f64 * scale).round() as i32;
         work_area_top + margin - offset

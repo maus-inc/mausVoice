@@ -48,6 +48,11 @@ Read the newest `YYYY-MM-DD.md` in this directory first.
   those archives from GitHub Releases when `MAUSVOICE_ORT_DYLIB_PATH` and
   `SHERPA_ONNX_ARCHIVE_DIR` are unset, which fails where that host is blocked.
   Verify a "no such payload exists" claim against the remote branch first.
+- 329 lock protocol: the local-data write gate is taken before
+  `lock_clear_delivery`, never after. `clear_saved_position(app, &guard)` takes
+  the caller's guard. Reversing it deadlocks a reset against a local-data clear.
+- A `reviewThreads(first:100)` query undercounts big PRs (329 has 256 threads).
+  Always paginate before reporting an unresolved count.
 - `pnpm run check-types` needs `pnpm run build` first for `apps/preview`.
 - `pnpm run test` fails 3 `apps/desktop` files without `GROQ_API_KEY` (pre-existing).
 - Run cargo clippy detached (`setsid`); the foreground tmux session can die.
