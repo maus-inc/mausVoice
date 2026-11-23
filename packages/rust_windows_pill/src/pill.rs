@@ -2575,9 +2575,9 @@ fn ctrl_backspace(edit: HWND) {
 
 fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     let is_typing = state.is_typing();
-    let container = EDIT_CONTAINER.with(|c| c.get());
+    let container = EDIT_CONTAINER.with(Cell::get);
     let label = EDIT_LABEL_HWND.with(Cell::get);
-    let edit = EDIT_HWND.with(|e| e.get());
+    let edit = EDIT_HWND.with(Cell::get);
 
     if !is_typing {
         unsafe {
@@ -2722,7 +2722,7 @@ fn to_edit_control_text(text: &str) -> String {
 }
 
 fn set_edit_text(text: &str) {
-    let edit = EDIT_HWND.with(|e| e.get());
+    let edit = EDIT_HWND.with(Cell::get);
     let wide: Vec<u16> = to_edit_control_text(text)
         .encode_utf16()
         .chain(std::iter::once(0))
