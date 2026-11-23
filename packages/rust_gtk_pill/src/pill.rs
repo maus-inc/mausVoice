@@ -1594,7 +1594,14 @@ fn reconcile_display_layout(
             // retained rectangle is what the next disconnect measures the
             // carry-over fraction against. Refresh it even when the origin did
             // not move, and publish, because the desktop keeps the last report.
-            if state.has_saved_position.get() && !gesture_owns_window(state, now) {
+            // A drop whose save is still owed is the record that has to reach the
+            // store, and refreshing the retained area first pairs that drop with a
+            // work area it was not dropped in. The retry writes the drop with its
+            // own retained area, and the next poll reconciles from what it stored.
+            if state.has_saved_position.get()
+                && state.drag_save_due.get().is_none()
+                && !gesture_owns_window(state, now)
+            {
                 let area = rust_pill_shared::layout::work_area_of(areas, footprint_centre)
                     .unwrap_or(parked.display);
                 let display = rust_pill_shared::layout::display_id_of(areas, footprint_centre);
@@ -1633,7 +1640,10 @@ fn reconcile_display_layout(
             // frame the layout forced, not a drop the user made. Publishing it
             // would replace the last completed drop before release, and the
             // release writes the drop through the guarded writer below.
-            if !state.has_saved_position.get() || gesture_owns_window(state, now) {
+            if !state.has_saved_position.get()
+                || state.drag_save_due.get().is_some()
+                || gesture_owns_window(state, now)
+            {
                 return true;
             }
             state.saved_x.set(x.round());

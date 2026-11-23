@@ -75,6 +75,34 @@ const scopeOf = (relativePath, marker) => {
   return collapse(lines.slice(start, end + 1).join("\n"));
 };
 
+// The index just past a Rust string or line comment that starts at `i`, or `i`
+// when no literal starts there. Brace counting that walks raw text treats a
+// brace inside `"reset }"` as the end of the enclosing function, so a guard then
+// reads a truncated body and fails over code that is correct. Raw strings are
+// not handled: none of the scanned files use one inside a handler.
+const skipRustLiteral = (text, i, skipComments) => {
+  const ch = text[i];
+  // Only on raw text. A collapsed body has no newline to end a comment, so
+  // skipping to one would swallow the rest of the function.
+  if (skipComments && ch === "/" && text[i + 1] === "/") {
+    const end = text.indexOf("\n", i);
+    return end === -1 ? text.length : end;
+  }
+  // Only double-quoted strings. An apostrophe is a lifetime far more often than
+  // a char literal in this code, and treating `&'static` as an opening quote
+  // swallows the rest of the file. A `'{'` char literal is not handled for the
+  // same reason, and none appears in a scanned handler.
+  if (ch !== '"') return i;
+  for (let j = i + 1; j < text.length; j += 1) {
+    if (text[j] === "\\") {
+      j += 1;
+    } else if (text[j] === ch) {
+      return j + 1;
+    }
+  }
+  return text.length;
+};
+
 // The text inside the brace-delimited block whose opening `{` is at
 // `openIndex`. A pattern with `[\s\S]*?` can cross the block's closing brace and
 // match a `return` from a later branch, so a guard that cares whether *this*
@@ -82,6 +110,11 @@ const scopeOf = (relativePath, marker) => {
 const balancedBlock = (text, openIndex) => {
   let depth = 0;
   for (let i = openIndex; i < text.length; i += 1) {
+    const skip = skipRustLiteral(text, i, false);
+    if (skip > i) {
+      i = skip - 1;
+      continue;
+    }
     if (text[i] === "{") depth += 1;
     else if (text[i] === "}") {
       depth -= 1;
@@ -123,10 +156,18 @@ const handlerBody = (path, variant) => {
     // A named handler only counts while an arm still calls it. A function left
     // behind by a removed arm reads as a handler while the runtime ignores the
     // message, so every guard built on it would pass over dead code.
-    if (!armText.includes(`${fnName}(`)) return "";
+    // A call in a comment is not a call. An arm that stopped calling its handler
+    // but kept the old call in a `//` comment reads as a handler to `includes()`,
+    // and every guard built on the arm then passes over an arm that does nothing.
+    if (!armText.replace(/\/\/[^\n]*/g, "").includes(`${fnName}(`)) return "";
     const fnStart = text.lastIndexOf("\n", fnAt) + 1;
     let depth = 0;
     for (let i = text.indexOf("{", fnAt); i < text.length; i += 1) {
+      const skip = skipRustLiteral(text, i, true);
+      if (skip > i) {
+        i = skip - 1;
+        continue;
+      }
       if (text[i] === "{") depth += 1;
       else if (text[i] === "}") {
         depth -= 1;
@@ -1309,6 +1350,28 @@ describe("PR28 ring-alpha render-loop policy", () => {
         src.match(/fn gesture_owns_window/g)?.length,
         1,
         `${name}: the ownership rule is not one function`,
+      );
+    }
+  });
+
+  it("keeps every GTK reconcile arm off the record a pending drop owes", () => {
+    // A settled drop whose save is deferred is the record that has to reach the
+    // store, and `drag_save_due` is what says so. A reconcile arm that adopts the
+    // layout-forced frame while that save is owed pairs the drop with a work area
+    // it was not dropped in, or stores the forced origin over it, and the user's
+    // drop is the record that loses.
+    const src = source.gtkPill;
+    const arm = (marker) => {
+      const at = src.indexOf(marker);
+      assert.ok(at > 0, `gtkPill: the ${marker} arm is not recognisable`);
+      const end = src.indexOf("Relocation::", at + 20);
+      return src.slice(at, end > 0 ? end : at + 4000);
+    };
+    for (const marker of ["Relocation::Keep", "Relocation::Move"]) {
+      assert.match(
+        arm(marker),
+        /drag_save_due/,
+        `gtkPill: ${marker} adopts a frame while a drop save is owed`,
       );
     }
   });
@@ -3588,7 +3651,7 @@ describe("native gesture adapter contracts", () => {
         // `report` or a rename of it, which is the same binding.
         assert.match(
           pattern[1],
-          /^\s*report\s*(:\s*\w+)?\s*$/,
+          /^\s*report\s*(:\s*\w+)?\s*,?\s*$/,
           `${file}: destructures the published position into loose fields again`,
         );
         assert.doesNotMatch(
@@ -4276,6 +4339,42 @@ describe("pill position persistence gate", () => {
     // A refused gate is the clear working as intended, so it is not logged as a
     // failure the user should worry about.
     assert.match(store, /current_write_generation\(\)\.is_none\(\)/);
+    // The guard has to live through the write, not just be taken near it. An
+    // inner block that closed before the upsert would satisfy every check above
+    // while leaving the write ungated, which is the race the gate exists to stop.
+    const guard =
+      /let (\w+) = crate::db::local_data_write_gate::lock_local_data_write\(Some\(generation\)\)/.exec(
+        store,
+      );
+    assert.ok(guard, "the store never binds the write gate");
+    assert.notStrictEqual(
+      guard[1],
+      "_",
+      "an underscore binding drops the write gate immediately",
+    );
+    const upsertAt = store.indexOf("upsert_pill_position");
+    assert.ok(upsertAt >= 0, "the store never writes the row");
+    assert.ok(
+      store.indexOf(guard[0]) < upsertAt,
+      "the write gate has to be taken before the write",
+    );
+    assert.doesNotMatch(
+      store.slice(0, upsertAt),
+      new RegExp(`drop\\(${guard[1]}\\)`),
+      "the write gate is dropped before the write",
+    );
+    let depth = 0;
+    for (const char of store.slice(
+      store.indexOf(guard[0]) + guard[0].length,
+      upsertAt,
+    )) {
+      if (char === "{") depth += 1;
+      if (char === "}") depth -= 1;
+      assert.ok(
+        depth >= 0,
+        "the write gate's scope closes before the write, so the write is ungated",
+      );
+    }
   });
 
   it("forgets the stored position when the user resets it", () => {
