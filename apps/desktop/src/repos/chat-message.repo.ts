@@ -92,3 +92,7 @@ export class LocalChatMessageRepo extends BaseChatMessageRepo {
     );
   }
 }
+
+export const getChatMessageRepo = (): BaseChatMessageRepo => {
+  return new LocalChatMessageRepo();
+};
