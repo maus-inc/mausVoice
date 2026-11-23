@@ -1353,7 +1353,7 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
             let (monitor, display_id, primary_top) =
                 unsafe { drop_display_for_frame_point(frame, point, window) };
             state.drop_frame.set(Some(DropRecord {
-                frame: unsafe { frame_tuple(frame) },
+                frame: frame_tuple(frame),
                 point,
                 monitor,
                 display_id,
