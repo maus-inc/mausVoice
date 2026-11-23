@@ -172,14 +172,14 @@ pub fn run(receiver: Receiver<InMessage>) {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
-            if QUIT.with(|q| q.get()) {
+            if QUIT.with(Cell::get) {
                 break;
             }
 
             on_anim_tick(hwnd);
 
             let elapsed = Instant::now()
-                .duration_since(LAST_TICK.with(|c| c.get()).unwrap_or_else(Instant::now));
+                .duration_since(LAST_TICK.with(Cell::get).unwrap_or_else(Instant::now));
             if let Some(remaining) = frame_interval.checked_sub(elapsed) {
                 std::thread::sleep(remaining);
             }
@@ -340,7 +340,7 @@ fn on_anim_tick(hwnd: HWND) {
         });
     });
 
-    if QUIT.with(|q| q.get()) {
+    if QUIT.with(Cell::get) {
         unsafe {
             DestroyWindow(hwnd).ok();
         }
@@ -410,7 +410,7 @@ fn on_cursor_tick(hwnd: HWND) {
 }
 
 fn maybe_reassert_topmost(hwnd: HWND, now: Instant) {
-    let last = LAST_TOPMOST_REASSERT.with(|cell| cell.get());
+    let last = LAST_TOPMOST_REASSERT.with(Cell::get);
     if !should_reassert_topmost(last, now) {
         return;
     }
@@ -463,7 +463,7 @@ fn reduced_motion() -> bool {
         }
     });
     if !stale {
-        return REDUCED_MOTION_CACHED.with(|c| c.get());
+        return REDUCED_MOTION_CACHED.with(Cell::get);
     }
     let off = REDUCED_MOTION_CACHED
         .with(|cache| update_reduced_motion_cache(cache, query_client_area_animation()));
@@ -619,7 +619,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             }
         }
         InMessage::ResetPosition { strategy } => {
-            let hwnd = HWND_CELL.with(|c| c.get());
+            let hwnd = HWND_CELL.with(Cell::get);
             cancel_drag_gesture(hwnd, state);
             state.has_saved_position.set(false);
             state.selector_placement.borrow_mut().reset();
@@ -636,7 +636,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             });
         }
         InMessage::RequestPosition => {
-            let hwnd = HWND_CELL.with(|c| c.get());
+            let hwnd = HWND_CELL.with(Cell::get);
             let (rect, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
                 has_saved_position: state.has_saved_position.get(),
@@ -1122,7 +1122,7 @@ fn update_visibility(hwnd: HWND, state: &PillState) {
 
 fn update_typing_focus(_hwnd: HWND, state: &PillState) {
     let is_typing = state.is_typing();
-    let was_typing = TYPING_ACTIVE.with(|t| t.get());
+    let was_typing = TYPING_ACTIVE.with(Cell::get);
 
     if is_typing && !was_typing {
         TYPING_ACTIVE.with(|t| t.set(true));
@@ -1305,7 +1305,7 @@ fn default_pill_x(work_area_left: i32, work_area_width: i32, win_w: i32) -> f64 
 }
 
 fn default_pill_y(work_area_top: i32, work_area_height: i32, win_h: i32) -> i32 {
-    let placement = PILL_PLACEMENT.with(|c| c.get());
+    let placement = PILL_PLACEMENT.with(Cell::get);
     if placement == PILL_PLACEMENT_TOP {
         work_area_top + MARGIN_BOTTOM - (WINDOW_H_TYPING - DICTATION_WINDOW_HEIGHT)
     } else {
@@ -1788,7 +1788,7 @@ fn tick_long_press(state: &PillState, dt: f64) {
         // Compare in screen coords — convert start position to screen coords
         // The start position is in window-relative coords, so get window origin
         let mut rect = RECT::default();
-        let _ = GetWindowRect(HWND_CELL.with(|c| c.get()), &mut rect);
+        let _ = GetWindowRect(HWND_CELL.with(Cell::get), &mut rect);
         let start_screen_x = rect.left as f64 + state.long_press_start_x.get();
         let start_screen_y = rect.top as f64 + state.long_press_start_y.get();
         let dx = cursor.x as f64 - start_screen_x;
@@ -1820,7 +1820,7 @@ fn tick_long_press(state: &PillState, dt: f64) {
 
             // Anchor the drag to the point the user grabbed so the pill does
             // not jump to have its centre snap under the cursor.
-            let hwnd = HWND_CELL.with(|c| c.get());
+            let hwnd = HWND_CELL.with(Cell::get);
             let mut rect = RECT::default();
             let _ = GetWindowRect(hwnd, &mut rect);
 
@@ -2133,7 +2133,7 @@ unsafe extern "system" fn edit_container_proc(
             let hdc = HDC(wparam.0 as *mut std::ffi::c_void);
             SetTextColor(hdc, COLORREF(EDIT_TEXT_COLOR));
             SetBkMode(hdc, TRANSPARENT);
-            let brush = EDIT_BG_BRUSH.with(|b| b.get());
+            let brush = EDIT_BG_BRUSH.with(Cell::get);
             LRESULT(brush.0 as isize)
         }
         WM_COMMAND => {
@@ -2171,7 +2171,7 @@ fn handle_window_review_key(key: usize) -> ReviewKey {
 /// Intercepts messages for the Edit control before TranslateMessage/DispatchMessage.
 /// Returns true if the message was consumed and should not be dispatched.
 fn handle_edit_message(msg: &MSG) -> bool {
-    let edit = EDIT_HWND.with(|e| e.get());
+    let edit = EDIT_HWND.with(Cell::get);
     if msg.hwnd != edit {
         return false;
     }
@@ -2267,8 +2267,8 @@ fn ctrl_backspace(edit: HWND) {
 
 fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     let is_typing = state.is_typing();
-    let container = EDIT_CONTAINER.with(|c| c.get());
-    let edit = EDIT_HWND.with(|e| e.get());
+    let container = EDIT_CONTAINER.with(Cell::get);
+    let edit = EDIT_HWND.with(Cell::get);
 
     if !is_typing {
         unsafe {
@@ -2342,7 +2342,7 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
 }
 
 fn get_edit_text() -> String {
-    let edit = EDIT_HWND.with(|e| e.get());
+    let edit = EDIT_HWND.with(Cell::get);
     unsafe {
         let len = GetWindowTextLengthW(edit);
         if len == 0 {
@@ -2355,7 +2355,7 @@ fn get_edit_text() -> String {
 }
 
 fn set_edit_text(text: &str) {
-    let edit = EDIT_HWND.with(|e| e.get());
+    let edit = EDIT_HWND.with(Cell::get);
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         let _ = SetWindowTextW(edit, PCWSTR(wide.as_ptr()));
@@ -2367,8 +2367,8 @@ pub(crate) fn clear_edit_control() {
 }
 
 pub(crate) fn focus_edit_control() {
-    let container = EDIT_CONTAINER.with(|c| c.get());
-    let edit = EDIT_HWND.with(|e| e.get());
+    let container = EDIT_CONTAINER.with(Cell::get);
+    let edit = EDIT_HWND.with(Cell::get);
     unsafe {
         let _ = SetForegroundWindow(container);
         let _ = SetFocus(Some(edit));
@@ -2545,11 +2545,11 @@ mod tests {
         LAST_TOPMOST_REASSERT.with(|c| c.set(None));
 
         maybe_reassert_topmost(HWND(std::ptr::null_mut()), Instant::now());
-        let after_first = TOPMOST_REASSERT_COUNT.with(|c| c.get());
+        let after_first = TOPMOST_REASSERT_COUNT.with(Cell::get);
         assert_eq!(after_first, 1, "first tick should fire reassert");
 
         maybe_reassert_topmost(HWND(std::ptr::null_mut()), Instant::now());
-        let after_second = TOPMOST_REASSERT_COUNT.with(|c| c.get());
+        let after_second = TOPMOST_REASSERT_COUNT.with(Cell::get);
         assert_eq!(
             after_second, 1,
             "immediate second tick should be throttled by interval"

@@ -487,146 +487,16 @@ pub(crate) fn open_audio_file_for_read(
 pub fn load_audio_samples(file: &mut std::fs::File) -> io::Result<(Vec<f32>, u32)> {
     let mut reader = WavReader::new(file).map_err(map_hound_error)?;
     let spec = reader.spec();
-
-    if spec.sample_rate == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Audio file missing sample rate",
-        ));
-    }
-
-    if spec.channels == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Audio file missing channel information",
-        ));
-    }
+    validate_wav_spec(&spec)?;
 
     let channels = spec.channels as usize;
-    let capacity = reader.duration() as usize / channels.max(1);
+    let capacity = reader.duration() as usize / channels;
     let mut samples = Vec::with_capacity(capacity);
 
     match spec.sample_format {
-        SampleFormat::Float => {
-            if channels == 1 {
-                for sample in reader.samples::<f32>() {
-                    let value = sample.map_err(|err| {
-                        io::Error::new(io::ErrorKind::InvalidData, err.to_string())
-                    })?;
-                    if value.is_finite() {
-                        samples.push(value);
-                    }
-                }
-            } else {
-                let mut frame = Vec::with_capacity(channels);
-                let mut iter = reader.samples::<f32>();
-
-                loop {
-                    frame.clear();
-                    for _ in 0..channels {
-                        match iter.next() {
-                            Some(Ok(value)) => frame.push(value),
-                            Some(Err(err)) => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    err.to_string(),
-                                ));
-                            }
-                            None => {
-                                if frame.is_empty() {
-                                    break;
-                                } else {
-                                    return Err(io::Error::new(
-                                        io::ErrorKind::UnexpectedEof,
-                                        "Audio frame truncated",
-                                    ));
-                                }
-                            }
-                        }
-                    }
-
-                    if frame.is_empty() {
-                        break;
-                    }
-
-                    let mut sum = 0.0f32;
-                    let mut count = 0usize;
-                    for value in &frame {
-                        if value.is_finite() {
-                            sum += *value;
-                            count += 1;
-                        }
-                    }
-
-                    if count > 0 {
-                        samples.push(sum / count as f32);
-                    }
-                }
-            }
-        }
+        SampleFormat::Float => collect_float_samples(&mut reader, channels, &mut samples)?,
         SampleFormat::Int => {
-            if spec.bits_per_sample != 16 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Unsupported PCM bit depth: {}", spec.bits_per_sample),
-                ));
-            }
-
-            let scale = i16::MAX as f32;
-
-            if channels == 1 {
-                for sample in reader.samples::<i16>() {
-                    let value = sample.map_err(|err| {
-                        io::Error::new(io::ErrorKind::InvalidData, err.to_string())
-                    })? as f32
-                        / scale;
-                    samples.push(value.clamp(-1.0, 1.0));
-                }
-            } else {
-                let mut frame = Vec::with_capacity(channels);
-                let mut iter = reader.samples::<i16>();
-
-                loop {
-                    frame.clear();
-                    for _ in 0..channels {
-                        match iter.next() {
-                            Some(Ok(value)) => frame.push(value),
-                            Some(Err(err)) => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    err.to_string(),
-                                ));
-                            }
-                            None => {
-                                if frame.is_empty() {
-                                    break;
-                                } else {
-                                    return Err(io::Error::new(
-                                        io::ErrorKind::UnexpectedEof,
-                                        "Audio frame truncated",
-                                    ));
-                                }
-                            }
-                        }
-                    }
-
-                    if frame.is_empty() {
-                        break;
-                    }
-
-                    let mut sum = 0.0f32;
-                    let mut count = 0usize;
-
-                    for value in &frame {
-                        sum += (*value as f32) / scale;
-                        count += 1;
-                    }
-
-                    if count > 0 {
-                        samples.push((sum / count as f32).clamp(-1.0, 1.0));
-                    }
-                }
-            }
+            collect_int_samples(&mut reader, spec.bits_per_sample, channels, &mut samples)?
         }
     }
 
@@ -638,6 +508,105 @@ pub fn load_audio_samples(file: &mut std::fs::File) -> io::Result<(Vec<f32>, u32
     }
 
     Ok((samples, spec.sample_rate))
+}
+
+fn validate_wav_spec(spec: &WavSpec) -> io::Result<()> {
+    if spec.sample_rate == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Audio file missing sample rate",
+        ));
+    }
+    if spec.channels == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Audio file missing channel information",
+        ));
+    }
+    Ok(())
+}
+
+fn collect_float_samples<R: std::io::Read>(
+    reader: &mut WavReader<R>,
+    channels: usize,
+    samples: &mut Vec<f32>,
+) -> io::Result<()> {
+    if channels == 1 {
+        for sample in reader.samples::<f32>() {
+            let value = sample.map_err(map_hound_error)?;
+            if value.is_finite() {
+                samples.push(value);
+            }
+        }
+        return Ok(());
+    }
+    fold_frames(reader.samples::<f32>(), channels, |frame| {
+        let mut sum = 0.0f32;
+        let mut count = 0usize;
+        for value in frame {
+            if value.is_finite() {
+                sum += *value;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            samples.push(sum / count as f32);
+        }
+    })
+}
+
+fn collect_int_samples<R: std::io::Read>(
+    reader: &mut WavReader<R>,
+    bits_per_sample: u16,
+    channels: usize,
+    samples: &mut Vec<f32>,
+) -> io::Result<()> {
+    if bits_per_sample != 16 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Unsupported PCM bit depth: {bits_per_sample}"),
+        ));
+    }
+    let scale = i16::MAX as f32;
+    if channels == 1 {
+        for sample in reader.samples::<i16>() {
+            let value = sample.map_err(map_hound_error)? as f32 / scale;
+            samples.push(value.clamp(-1.0, 1.0));
+        }
+        return Ok(());
+    }
+    fold_frames(reader.samples::<i16>(), channels, |frame| {
+        let sum: f32 = frame.iter().map(|value| *value as f32 / scale).sum();
+        samples.push((sum / frame.len() as f32).clamp(-1.0, 1.0));
+    })
+}
+
+/// Read the samples in whole `channels`-wide frames and hand each one to `fold`.
+/// A frame cut short by the end of the file is an error, because the caller would
+/// otherwise get a sample count that silently dropped the tail.
+fn fold_frames<T, I, F>(mut iter: I, channels: usize, mut fold: F) -> io::Result<()>
+where
+    I: Iterator<Item = hound::Result<T>>,
+    F: FnMut(&[T]),
+{
+    let mut frame = Vec::with_capacity(channels);
+    loop {
+        frame.clear();
+        for _ in 0..channels {
+            match iter.next() {
+                Some(Ok(value)) => frame.push(value),
+                Some(Err(err)) => return Err(map_hound_error(err)),
+                None if frame.is_empty() => return Ok(()),
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "Audio frame truncated",
+                    ));
+                }
+            }
+        }
+        fold(&frame);
+    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,10 @@ import { ApiKeyProvider } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getAppState } from "../store";
 import { TranscriptionSession } from "../types/transcription-session.types";
-import { ApiTranscriptionPrefs, TranscriptionPrefs } from "../utils/user.utils";
+import type {
+  ApiTranscriptionPrefs,
+  TranscriptionPrefs,
+} from "../types/transcription-prefs.types";
 import { AssemblyAITranscriptionSession } from "./assemblyai-transcription-session";
 import { AzureTranscriptionSession } from "./azure-transcription-session";
 import { BatchTranscriptionSession } from "./batch-transcription-session";
