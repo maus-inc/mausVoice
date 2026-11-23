@@ -1227,6 +1227,14 @@ describe("PR28 ring-alpha render-loop policy", () => {
         /PositionChanged|publish_current_position\(/,
         `${name}: an adopted move is never published, so a restart restores the old origin`,
       );
+      // The guard, not just the message: narrowed to `origin_moved`, a work area
+      // or display that changed under a stationary window stays unpublished, and
+      // the next restore remaps against a rectangle the display no longer has.
+      assert.match(
+        arm,
+        /if origin_moved \|\| area_changed \{/,
+        `${name}: a changed work area or display is never published`,
+      );
     }
   });
 
