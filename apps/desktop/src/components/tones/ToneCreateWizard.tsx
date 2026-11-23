@@ -1,19 +1,10 @@
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Button,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Stack,
-  Step,
-  StepButton,
-  StepLabel,
-  Stepper,
-  TextField,
-  Typography,
   useMediaQuery,
   useTheme,
 } from "@mui/material";
@@ -37,13 +28,10 @@ import { BusyButtonLabel } from "../common/BusyButtonLabel";
 import { ToneCreateDiscard } from "./ToneCreateDiscard";
 import { ToneBasicsFields } from "./ToneBasicsFields";
 import { ToneCreateReview } from "./ToneCreateReview";
-import {
-  PREVIEW_SAMPLE_MESSAGE,
-  countLabel,
-  MAX_OUTPUT_LEN,
-  MAX_EXAMPLE_LEN,
-  MAX_PROMPT_LEN,
-} from "./tone-form.utils";
+import { ToneTuneFields } from "./ToneTuneFields";
+import { ToneWizardStepper } from "./ToneWizardStepper";
+import { hasWizardDraft } from "./tone-wizard-draft";
+import { PREVIEW_SAMPLE_MESSAGE } from "./tone-form.utils";
 
 export const ToneCreateWizard = ({ onClose }: { onClose: () => void }) => {
   const intl = useIntl();
@@ -76,10 +64,11 @@ export const ToneCreateWizard = ({ onClose }: { onClose: () => void }) => {
       mounted.current = false;
     };
   }, []);
-  const hasDraft =
-    Boolean(
-      name || category || outputLength || exampleInputOutput || promptTemplate,
-    ) || sampleText !== initialSampleText.current;
+  const hasDraft = hasWizardDraft(
+    { name, category, outputLength, exampleInputOutput, promptTemplate },
+    sampleText,
+    initialSampleText.current,
+  );
   const requestClose = () => {
     if (savePending.current) return;
     if (hasDraft) setDiscardOpen(true);
@@ -225,25 +214,12 @@ export const ToneCreateWizard = ({ onClose }: { onClose: () => void }) => {
           dividers
           sx={{ minHeight: "min(380px, max(0px, calc(100dvh - 220px)))" }}
         >
-          <Stepper activeStep={step} sx={{ mb: 3 }}>
-            {[
-              intl.formatMessage({ defaultMessage: "Define" }),
-              intl.formatMessage({ defaultMessage: "Tune" }),
-              intl.formatMessage({ defaultMessage: "Test and review" }),
-            ].map((label, index) =>
-              index <= maxReached ? (
-                <Step key={label} completed={index < step}>
-                  <StepButton disabled={isSaving} onClick={() => goTo(index)}>
-                    {label}
-                  </StepButton>
-                </Step>
-              ) : (
-                <Step key={label} completed={false}>
-                  <StepLabel>{label}</StepLabel>
-                </Step>
-              ),
-            )}
-          </Stepper>
+          <ToneWizardStepper
+            step={step}
+            maxReached={maxReached}
+            disabled={isSaving}
+            onGoTo={goTo}
+          />
 
           {step === 0 && (
             <Stack spacing={3} sx={{ pt: 1 }}>
@@ -257,81 +233,16 @@ export const ToneCreateWizard = ({ onClose }: { onClose: () => void }) => {
           )}
 
           {step === 1 && (
-            <Stack spacing={3} sx={{ pt: 1 }}>
-              <TextField
-                inputRef={promptRef}
-                label={<FormattedMessage defaultMessage="Prompt" />}
-                value={promptTemplate}
-                onChange={(event) => setPromptTemplate(event.target.value)}
-                multiline
-                rows={5}
-                fullWidth
-                required
-                error={promptTemplate.length > 0 && !trimmedPrompt}
-                helperText={
-                  promptTemplate.length > 0 && !trimmedPrompt ? (
-                    <FormattedMessage defaultMessage="Describe how the style should sound." />
-                  ) : (
-                    countLabel(promptTemplate, MAX_PROMPT_LEN)
-                  )
-                }
-                placeholder={intl.formatMessage({
-                  defaultMessage:
-                    "Make it sound like a professional but friendly email. Use jargon and fun words.",
-                })}
-                slotProps={{ htmlInput: { maxLength: MAX_PROMPT_LEN } }}
-              />
-              <TextField
-                label={<FormattedMessage defaultMessage="Output length" />}
-                value={outputLength}
-                onChange={(event) => setOutputLength(event.target.value)}
-                fullWidth
-                helperText={countLabel(outputLength, MAX_OUTPUT_LEN)}
-                placeholder={intl.formatMessage({
-                  defaultMessage: "1–3 sentences",
-                })}
-                slotProps={{ htmlInput: { maxLength: MAX_OUTPUT_LEN } }}
-              />
-              <TextField
-                label={
-                  <FormattedMessage defaultMessage="Example input and output" />
-                }
-                value={exampleInputOutput}
-                onChange={(event) => setExampleInputOutput(event.target.value)}
-                multiline
-                rows={3}
-                fullWidth
-                helperText={countLabel(exampleInputOutput, MAX_EXAMPLE_LEN)}
-                placeholder={intl.formatMessage({
-                  defaultMessage: "Input: ... Output: ...",
-                })}
-                slotProps={{ htmlInput: { maxLength: MAX_EXAMPLE_LEN } }}
-              />
-              <Accordion disableGutters>
-                <AccordionSummary>
-                  <Typography variant="subtitle2">
-                    <FormattedMessage defaultMessage="Writing tips" />
-                  </Typography>
-                </AccordionSummary>
-                <AccordionDetails>
-                  <Typography variant="body2" color="text.secondary">
-                    <FormattedMessage defaultMessage="Name the voice first, then the rules. One sentence of example output beats a paragraph of adjectives. Mention what to avoid only when the model keeps doing it." />
-                  </Typography>
-                </AccordionDetails>
-              </Accordion>
-              <Accordion disableGutters>
-                <AccordionSummary>
-                  <Typography variant="subtitle2">
-                    <FormattedMessage defaultMessage="Advanced" />
-                  </Typography>
-                </AccordionSummary>
-                <AccordionDetails>
-                  <Typography variant="body2" color="text.secondary">
-                    <FormattedMessage defaultMessage="The prompt runs as the style instruction on every post-processing pass, with your category, length, and example appended as guidance. Keep it under a paragraph so it stays cheap and predictable." />
-                  </Typography>
-                </AccordionDetails>
-              </Accordion>
-            </Stack>
+            <ToneTuneFields
+              promptRef={promptRef}
+              promptTemplate={promptTemplate}
+              trimmedPrompt={trimmedPrompt}
+              outputLength={outputLength}
+              exampleInputOutput={exampleInputOutput}
+              onPromptChange={setPromptTemplate}
+              onOutputLengthChange={setOutputLength}
+              onExampleChange={setExampleInputOutput}
+            />
           )}
 
           {step === 2 && (
