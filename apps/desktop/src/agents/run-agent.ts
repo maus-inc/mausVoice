@@ -598,6 +598,26 @@ function createAgentTools(
   }));
 }
 
+/**
+ * Run one tool call, turning a thrown error into the failure shape the agent
+ * loop reports. A tool that throws is a failed call, never a failed run.
+ */
+async function runTool(
+  info: ToolInfo,
+  params: Record<string, unknown>,
+  conversationId: string,
+) {
+  try {
+    const result = await executeTool(info.id, params, { conversationId });
+    return { success: true, result };
+  } catch (err) {
+    return {
+      success: false,
+      failureReason: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 async function executeWithPermission(
   info: ToolInfo,
   params: Record<string, unknown>,
@@ -612,15 +632,7 @@ async function executeWithPermission(
   const permissionScope = `conversation:${conversationId}`;
 
   if (tool.getAlwaysAllow(params, permissionScope)) {
-    try {
-      const result = await executeTool(info.id, params, { conversationId });
-      return { success: true, result };
-    } catch (err) {
-      return {
-        success: false,
-        failureReason: err instanceof Error ? err.message : String(err),
-      };
-    }
+    return runTool(info, params, conversationId);
   }
 
   const permissionParams = { ...params, reason };
@@ -652,15 +664,7 @@ async function executeWithPermission(
   );
 
   if (resolution === "allowed" && isActive()) {
-    try {
-      const result = await executeTool(info.id, params, { conversationId });
-      return { success: true, result };
-    } catch (err) {
-      return {
-        success: false,
-        failureReason: err instanceof Error ? err.message : String(err),
-      };
-    }
+    return runTool(info, params, conversationId);
   }
 
   return { success: false, failureReason: "Tool call was denied by user" };

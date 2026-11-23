@@ -112,6 +112,7 @@ test("manual entry points cover computed aliases and operational tools", () => {
   for (const path of [
     "scripts/ci/check-gitleaks-config.test.mjs",
     "apps/desktop/webdriver/specs/app.render.spec.ts",
+    "apps/desktop/webdriver/specs/contracts.spec.ts",
     "apps/docs/scripts/make-card-ascii.mjs",
     "docs/assets/badges/source/generate-badges.mjs",
   ]) {
