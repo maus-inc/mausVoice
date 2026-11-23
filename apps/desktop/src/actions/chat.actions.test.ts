@@ -323,11 +323,15 @@ describe("sendChatMessage", () => {
     await deleteConversation("conv-1");
     expect(getAppState().conversationById["conv-1"]).toBeUndefined();
 
+    // The delete cascades to the conversation's messages, so storage is
+    // empty before the second send is even attempted.
+    expect(messageStorage.size).toBe(0);
+
     await sendChatMessage("conv-1", "After delete");
 
     // The second send must not have created a message, re-added the
     // conversation to the sidebar, or triggered the agent.
-    expect(messageStorage.size).toBe(1);
+    expect(messageStorage.size).toBe(0);
     expect(getAppState().chat.conversationIds.includes("conv-1")).toBe(false);
     expect(runAgentMock).toHaveBeenCalledTimes(1);
   });
