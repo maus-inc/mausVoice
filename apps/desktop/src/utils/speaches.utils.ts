@@ -1,4 +1,7 @@
-import { HttpError } from "@maus-inc/utilities";
+import {
+  buildTranscriptionFormData,
+  throwHttpError,
+} from "@maus-inc/utilities";
 import { secureFetch as fetch } from "./secure-fetch.utils";
 
 export const SPEACHES_DEFAULT_URL = "http://localhost:8000";
@@ -28,11 +31,13 @@ export const speachesTestIntegration = async ({
   if (!response.ok) {
     // The status is carried as data, not as prose, so a retry policy can read a
     // terminal 4xx as terminal and honour a rate-limit hint on a 429 or 503.
-    throw new HttpError(
-      response.status,
-      `Speaches returned an error (status ${response.status}). Check your configuration.`,
-      { retryAfter: response.headers.get("retry-after") },
-    );
+    await throwHttpError(response, {
+      // The message never uses the body, and this probe has no abort signal, so
+      // an unread body is better than an unbounded read against a stalled server.
+      body: "",
+      message: () =>
+        `Speaches returned an error (status ${response.status}). Check your configuration.`,
+    });
   }
 
   return true;
@@ -63,16 +68,13 @@ export const speachesTranscribeAudio = async ({
 }: SpeachesTranscriptionArgs): Promise<SpeachesTranscribeAudioOutput> => {
   const url = baseUrl.replace(/\/$/, "");
 
-  const formData = new FormData();
-  const file = new Blob([blob], { type: `audio/${ext}` });
-  formData.append("file", file, `audio.${ext}`);
-  formData.append("model", model);
-  if (prompt) {
-    formData.append("prompt", prompt);
-  }
-  if (language && language !== "auto") {
-    formData.append("language", language);
-  }
+  const formData = buildTranscriptionFormData({
+    blob,
+    ext,
+    model,
+    prompt,
+    language,
+  });
 
   const response = await fetch(`${url}/v1/audio/transcriptions`, {
     method: "POST",
@@ -81,15 +83,10 @@ export const speachesTranscribeAudio = async ({
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "Unknown error");
-    // The status travels on the error as data so the shared retry policy stops
-    // on a terminal status and waits out a `Retry-After` hint. The message is
-    // unchanged, so callers and the settings snackbar read exactly as before.
-    throw new HttpError(
-      response.status,
-      `Speaches transcription failed: ${response.status} - ${errorText}`,
-      { retryAfter: response.headers.get("retry-after") },
-    );
+    await throwHttpError(response, {
+      message: (errorText) =>
+        `Speaches transcription failed: ${response.status} - ${errorText}`,
+    });
   }
 
   const data = (await response.json()) as { text?: string };

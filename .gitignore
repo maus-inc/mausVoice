@@ -153,3 +153,7 @@ reports/pr*/
 
 # Background job output from a shell session, never a source file.
 nohup.out
+# Agent sandbox state and local artifacts
+.local/
+.openhands/artifacts/
+.openhands/memory/

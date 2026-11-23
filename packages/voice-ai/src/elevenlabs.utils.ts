@@ -1,4 +1,5 @@
-import { HttpError, retry, countWords } from "@maus-inc/utilities";
+import { retry, countWords, throwHttpError } from "@maus-inc/utilities";
+import { probeProviderEndpoint } from "./provider-probe.utils";
 import type { CustomFetch } from "./types";
 
 export type ElevenLabsTestIntegrationArgs = {
@@ -8,24 +9,14 @@ export type ElevenLabsTestIntegrationArgs = {
 
 export const elevenlabsTestIntegration = async ({
   apiKey,
-  customFetch = fetch,
-}: ElevenLabsTestIntegrationArgs): Promise<boolean> => {
-  const response = await customFetch("https://api.elevenlabs.io/v1/user", {
-    method: "GET",
-    headers: { "xi-api-key": apiKey },
+  customFetch,
+}: ElevenLabsTestIntegrationArgs): Promise<boolean> =>
+  probeProviderEndpoint({
+    label: "ElevenLabs",
+    url: "https://api.elevenlabs.io/v1/user",
+    init: { method: "GET", headers: { "xi-api-key": apiKey } },
+    customFetch,
   });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new HttpError(
-      response.status,
-      detail
-        ? `ElevenLabs responded ${response.status}: ${detail}`
-        : `ElevenLabs responded with status ${response.status}`,
-      { retryAfter: response.headers.get("retry-after") },
-    );
-  }
-  return true;
-};
 
 export type ElevenLabsTranscriptionArgs = {
   apiKey: string;
@@ -84,12 +75,10 @@ export const elevenlabsTranscribeAudio = async ({
       );
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
-        throw new HttpError(
-          response.status,
-          `ElevenLabs API request failed with status ${response.status}: ${errorText}`,
-          { retryAfter: response.headers.get("retry-after") },
-        );
+        await throwHttpError(response, {
+          message: (errorText) =>
+            `ElevenLabs API request failed with status ${response.status}: ${errorText}`,
+        });
       }
 
       const data = (await response.json()) as { text?: string };
