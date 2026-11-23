@@ -17,6 +17,17 @@ import dayjs from "dayjs";
 import { detectLocale, matchSupportedLocale } from "../i18n";
 import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
 import { createTranscriptionSession } from "../sessions";
+import type {
+  ApiTranscriptionPrefs,
+  LocalTranscriptionPrefs,
+  TranscriptionPrefs,
+} from "../types/transcription-prefs.types";
+
+export type {
+  ApiTranscriptionPrefs,
+  LocalTranscriptionPrefs,
+  TranscriptionPrefs,
+};
 import type { AppState } from "../state/app.state";
 import { applyAiPreferences } from "./ai.utils";
 import { registerUsers } from "./app.utils";
@@ -247,28 +258,6 @@ export const setUserPreferences = (
   draft.userPrefs = normalized;
   applyAiPreferences(draft, normalized);
 };
-
-type BaseTranscriptionPrefs = {
-  warnings: string[];
-};
-
-export type LocalTranscriptionPrefs = BaseTranscriptionPrefs & {
-  mode: "local";
-  gpuEnumerationEnabled: boolean;
-  transcriptionDevice: string | null;
-  transcriptionModelSize: string | null;
-};
-
-export type ApiTranscriptionPrefs = BaseTranscriptionPrefs & {
-  mode: "api";
-  provider: ApiKeyProvider;
-  apiKeyId: string;
-  apiKeyValue: string;
-  transcriptionModel: string | null;
-};
-
-export type TranscriptionPrefs =
-  LocalTranscriptionPrefs | ApiTranscriptionPrefs;
 
 /**
  * Providers with an implemented batch transcription route — i.e. parity with
