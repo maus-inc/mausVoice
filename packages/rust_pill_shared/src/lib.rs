@@ -1046,7 +1046,14 @@ impl RingPaint {
             distances,
             total_len,
             head_len,
-            wave_phase: input.wave_phase,
+            // A static outline must not shimmer: the glimmer term reads this
+            // phase, so pinning it keeps every frame's segment alpha identical
+            // while the outline holds still and fades.
+            wave_phase: if input.static_outline {
+                0.0
+            } else {
+                input.wave_phase
+            },
             arm_t: input.ring.arm_t(),
         })
     }
@@ -1915,6 +1922,18 @@ impl RingState {
         RingAnim::default().apply_to(self);
     }
 
+    /// Holds the outline complete and still, so only its opacity moves.
+    ///
+    /// The elapsed time starts at the end of the fill and the fade timer is
+    /// restarted, because `reset_ring` seeds it at its end, which paints
+    /// nothing. `locate_active` still expires, so the saved visibility resumes.
+    fn hold_static_outline(&self) {
+        self.locate_elapsed.set(LOCATE_FILL_SECONDS);
+        self.release_progress.set(1.0);
+        self.release_elapsed.set(0.0);
+        self.alpha.set(1.0);
+    }
+
     /// Begins a locate replay from a clean ring. A second trigger restarts the
     /// sweep instead of inheriting the previous fade, and a live pointer
     /// gesture wins so the replay never wipes an in-progress press.
@@ -1927,23 +1946,12 @@ impl RingState {
             return;
         }
         self.locate_active.set(true);
-        // Reduced motion skips the sweep entirely: the elapsed time starts at
-        // the end of the fill so the outline is drawn complete and only the
-        // fade runs. The indication still ends on its own and the saved
-        // visibility setting resumes, because `locate_active` still expires.
-        self.locate_elapsed.set(if gesture.reduced_motion {
-            LOCATE_FILL_SECONDS
-        } else {
-            0.0
-        });
+        // Reduced motion skips the sweep entirely: the outline is drawn
+        // complete and only the fade runs.
+        self.locate_elapsed.set(0.0);
         self.reset_ring();
         if gesture.reduced_motion {
-            // `reset_ring` seeds the fade timer at its end, which paints
-            // nothing. Restart it so the complete outline is held and then
-            // fades over the same window a full sweep would have used.
-            self.release_progress.set(1.0);
-            self.release_elapsed.set(0.0);
-            self.alpha.set(1.0);
+            self.hold_static_outline();
         }
     }
 
@@ -1956,6 +1964,15 @@ impl RingState {
         // every pointer-down frame would also zero `press_elapsed` and `arm_t`
         // for an ordinary hold or drag, freezing the ring ramp and the arm.
         let was_locating = self.locate_active.get();
+        // A preference change mid-replay has to stop the sweep now, not on the
+        // next trigger: snap to the same complete outline a replay started
+        // under reduced motion shows, before this frame advances the fill.
+        if self.locate_active.get()
+            && gesture.reduced_motion
+            && locate_held(self.locate_elapsed.get())
+        {
+            self.hold_static_outline();
+        }
         let cancelled = locate_yields_to_pointer(
             gesture.pointer_down,
             gesture.long_press_active,
@@ -4727,6 +4744,69 @@ mod tests {
         assert!(later.alpha < first.alpha, "the opacity fade still runs");
         assert_eq!((later.ox, later.oy), (first.ox, first.oy));
         assert_eq!((later.ow, later.oh), (first.ow, first.oh));
+    }
+
+    #[test]
+    fn a_static_outline_keeps_one_glimmer_whatever_the_wave_does() {
+        let ring = RingState::new();
+        ring.start_locate(reduced_motion_gesture());
+
+        let segment_alphas = |static_outline: bool, wave_phase: f64| {
+            let mut input = paint_input(&ring, static_outline);
+            input.wave_phase = wave_phase;
+            let plan = RingPaint::resolve(&input).expect("visible");
+            let points: Vec<(f64, f64, f64)> = plan
+                .path
+                .iter()
+                .zip(&plan.distances)
+                .map(|(point, dist)| (point.0, point.1, *dist))
+                .collect();
+            comet_segments(&points, &plan, (1.0, 1.0, 1.0))
+                .map(|segment| segment.rgba[3])
+                .collect::<Vec<_>>()
+        };
+
+        let still = segment_alphas(true, 0.0);
+        assert!(!still.is_empty(), "the outline must paint segments");
+        assert_eq!(
+            segment_alphas(true, 1.7),
+            still,
+            "a static outline must not shimmer with the wave phase"
+        );
+        assert_ne!(
+            segment_alphas(false, 1.7),
+            segment_alphas(false, 0.0),
+            "the same phases must still differ while the outline sweeps"
+        );
+    }
+
+    #[test]
+    fn enabling_reduced_motion_mid_replay_freezes_the_outline_immediately() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        for _ in 0..10 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        let sweeping = RingPaint::resolve(&paint_input(&ring, false)).expect("visible");
+        assert!(sweeping.progress < 1.0, "the sweep must be in flight");
+
+        ring.tick(reduced_motion_gesture(), 1.0 / 60.0);
+        let frozen = RingPaint::resolve(&paint_input(&ring, true)).expect("visible");
+        assert_eq!(frozen.progress, 1.0, "the outline completes at once");
+        assert!(
+            !pulse_is_running(ring.arm_pulse()),
+            "the confirmation pulse must not arm under reduced motion"
+        );
+
+        for _ in 0..10 {
+            ring.tick(reduced_motion_gesture(), 1.0 / 60.0);
+        }
+        let later = RingPaint::resolve(&paint_input(&ring, true)).expect("still fading");
+        assert!(later.alpha < frozen.alpha, "the opacity fade still runs");
+        assert_eq!(
+            (later.ox, later.oy, later.ow, later.oh),
+            (frozen.ox, frozen.oy, frozen.ow, frozen.oh)
+        );
     }
 
     #[test]
