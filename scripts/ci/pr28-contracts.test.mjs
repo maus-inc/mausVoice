@@ -815,6 +815,40 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
   });
 
+  it("takes the write gate before the delivery order on every reset path", () => {
+    // The local-data clear holds the write gate for the whole wipe and then takes
+    // the delivery order to send its forget. A reset that took the delivery order
+    // first and then waited for the gate is the other half of an ABBA deadlock:
+    // the reset waits for a gate the clear holds, the clear waits for a delivery
+    // order the reset holds, and both operations stop until the app restarts.
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const reset = scope(name, "pub async fn notify_reset_position");
+      const gateAt = reset.indexOf("lock_local_data_write");
+      const deliveryAt = reset.indexOf("lock_clear_delivery");
+      assert.ok(gateAt >= 0, `${name}: the reset never takes the write gate`);
+      assert.ok(
+        deliveryAt >= 0,
+        `${name}: the reset never takes the delivery order`,
+      );
+      assert.ok(
+        gateAt < deliveryAt,
+        `${name}: the reset waits for the write gate while holding the delivery order, which deadlocks against a local-data clear`,
+      );
+      // The clear itself must not re-acquire the gate under the delivery order,
+      // which would deadlock the reset path against itself.
+      const clear = scope("pillPosition", "pub async fn clear_saved_position");
+      assert.ok(
+        !clear.includes("lock_local_data_write"),
+        "pillPosition: the clear takes the write gate again under the delivery order",
+      );
+      assert.match(
+        clear,
+        /_gate: &crate::db::local_data_write_gate::LocalDataWriteGuard/,
+        "pillPosition: the clear does not take the caller's write gate",
+      );
+    }
+  });
+
   it("clears the retained drop with the gesture it belongs to", () => {
     // `drop_frame` belongs to one gesture. Left behind by a reset, a forget or the
     // next drag, the write `take()`s it and stores the previous drop instead.
@@ -3202,7 +3236,10 @@ describe("native gesture adapter contracts", () => {
       const refusalAt = save.indexOf(
         "if !state.save_guard.borrow().allows_save(now) {",
       );
-      assert.ok(refusalAt >= 0, `${name}: the guard's refusal is not recognisable`);
+      assert.ok(
+        refusalAt >= 0,
+        `${name}: the guard's refusal is not recognisable`,
+      );
       assert.match(
         balancedBlock(save, save.indexOf("{", refusalAt)),
         /return;/,
@@ -3489,14 +3526,14 @@ describe("native gesture adapter contracts", () => {
     // `let ... else` and bails on `None`.
     assert.match(
       source.pillPosition,
-      /pub async fn clear_saved_position\(app: &tauri::AppHandle\) -> Option<u64>/,
+      /pub async fn clear_saved_position\(\s*app: &tauri::AppHandle,\s*_gate: &crate::db::local_data_write_gate::LocalDataWriteGuard,\s*\) -> Option<u64>/,
     );
     // Matched through the brace to the `return`, not just to the call: an `if`
     // whose failure branch logged and carried on would satisfy a bare match while
     // the reset moved the pill anyway, which is the exact outcome the guard exists
     // to prevent. The branch has to leave the function.
     const bails =
-      /let Some\(declaration\) = crate::pill_position::clear_saved_position\(app\)\.await else \{\s*return\b/;
+      /let Some\(declaration\) = crate::pill_position::clear_saved_position\(app, &\w+\)\.await else \{\s*return\b/;
     for (const [name, marker] of [
       ["pillProcess", "pub async fn notify_reset_position"],
     ]) {
@@ -3750,41 +3787,65 @@ describe("native gesture adapter contracts", () => {
   it("gates the position delete in the clear path", () => {
     // Clearing the row is a local-data write like any other. Ungated, it can
     // race a save that is already queued and the row comes back after the wipe.
+    //
+    // The gate is the caller's, not the clear's. The clear runs while the reset
+    // path holds the delivery order, and a gate acquired there would be taken in
+    // the other order from the local-data clear, which holds the gate and then
+    // takes the delivery order for its own forget. That is an ABBA deadlock, so
+    // the reset paths take the gate first and hand it in.
     const clear = scope("pillPosition", "pub async fn clear_saved_position(");
-    const guard = /let (\w+) = [\w:]*lock_local_data_write\(None\)/.exec(clear);
-    assert.ok(guard, "the clear never takes the write gate");
-    assert.notStrictEqual(
-      guard[1],
-      "_",
-      "an underscore binding drops the write gate immediately",
+    assert.match(
+      clear,
+      /_gate: &crate::db::local_data_write_gate::LocalDataWriteGuard/,
+      "the clear does not run under the caller's write gate",
+    );
+    assert.ok(
+      !clear.includes("lock_local_data_write"),
+      "the clear takes the write gate again under the delivery order",
     );
     const deleteAt = clear.indexOf("clear_pill_position");
     assert.ok(deleteAt >= 0, "the clear never deletes the row");
-    assert.ok(
-      clear.indexOf(guard[0]) < deleteAt,
-      "the write gate has to be taken before the delete",
-    );
-    assert.doesNotMatch(
-      clear.slice(0, deleteAt),
-      new RegExp(`drop\\(${guard[1]}\\)`),
-      "the write gate is dropped before the delete",
-    );
-    // An explicit `drop` is not the only way to release the gate: a block that
-    // closes between the binding and the delete releases it too, and that leaves
-    // the same gap with no `drop` for the check above to find. The delete has to
-    // sit inside the scope the gate was taken in.
-    const between = clear.slice(
-      clear.indexOf(guard[0]) + guard[0].length,
-      deleteAt,
-    );
-    let depth = 0;
-    for (const char of between) {
-      if (char === "{") depth += 1;
-      if (char === "}") depth -= 1;
-      assert.ok(
-        depth >= 0,
-        "the write gate's scope closes before the delete, so the delete is ungated",
+
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const reset = scope(name, "pub async fn notify_reset_position");
+      const guard =
+        /let Ok\((\w+)\) = crate::db::local_data_write_gate::lock_local_data_write\(None\)/.exec(
+          reset,
+        );
+      assert.ok(guard, `${name}: the reset never takes the write gate`);
+      assert.notStrictEqual(
+        guard[1],
+        "_",
+        `${name}: an underscore binding drops the write gate immediately`,
       );
+      const callAt = reset.indexOf("clear_saved_position");
+      assert.ok(callAt >= 0, `${name}: the reset never clears the record`);
+      assert.ok(
+        reset.indexOf(guard[0]) < callAt,
+        `${name}: the write gate has to be taken before the delete`,
+      );
+      assert.doesNotMatch(
+        reset.slice(0, callAt),
+        new RegExp(`drop\\(${guard[1]}\\)`),
+        `${name}: the write gate is dropped before the delete`,
+      );
+      // An explicit `drop` is not the only way to release the gate: a block that
+      // closes between the binding and the delete releases it too, and that
+      // leaves the same gap with no `drop` for the check above to find. The
+      // delete has to sit inside the scope the gate was taken in.
+      const between = reset.slice(
+        reset.indexOf(guard[0]) + guard[0].length,
+        callAt,
+      );
+      let depth = 0;
+      for (const char of between) {
+        if (char === "{") depth += 1;
+        if (char === "}") depth -= 1;
+        assert.ok(
+          depth >= 0,
+          `${name}: the write gate's scope closes before the delete, so the delete is ungated`,
+        );
+      }
     }
   });
 

@@ -432,10 +432,18 @@ pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Re
     // guards: the window moves, the user sees it move, and the next launch
     // undoes it. Failing leaves the pill where it is, which is recoverable.
 
+    // The write gate first, then the delivery order. The local-data clear holds
+    // the gate and takes the delivery order for its own forget, so this path
+    // taking them the other way round is an ABBA deadlock: the reset waits for a
+    // gate the clear holds, and the clear waits for a delivery order the reset
+    // holds, and neither finishes.
+    let Ok(_write) = crate::db::local_data_write_gate::lock_local_data_write(None).await else {
+        return Err("Could not clear the pill's stored position, so it was not reset".to_string());
+    };
     // Held across the clear and the send, so arrival order at the pill matches
     // declaration order. Released on every path, including the failures.
     let _delivery = crate::pill_position::lock_clear_delivery().await;
-    let Some(declaration) = crate::pill_position::clear_saved_position(app).await else {
+    let Some(declaration) = crate::pill_position::clear_saved_position(app, &_write).await else {
         return Err("Could not clear the pill's stored position, so it was not reset".to_string());
     };
     match app.try_state::<std::sync::Arc<PillProcess>>() {

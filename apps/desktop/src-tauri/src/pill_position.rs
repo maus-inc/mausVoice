@@ -347,12 +347,24 @@ fn erase_is_undeclared() -> bool {
 /// Runs on the same path that tells the pill to re-home, so a reset that the
 /// user confirms is not undone by the next launch.
 ///
+/// Takes the write gate the caller already holds rather than acquiring it here.
+/// The caller holds the delivery order across this call and the send that
+/// follows, and the local-data clear holds the write gate across its own
+/// declare-and-deliver pair, so the two locks have to be taken in the same
+/// order everywhere: the write gate first, the delivery order second. Acquiring
+/// the gate under the delivery order here is the other order, and a reset that
+/// interleaves with a local-data clear then waits on a lock the clear waits for
+/// in return.
+///
 /// Returns the declaration id when the record is gone, so the caller can hand it
 /// to the pill and have the pill's answer retire exactly this declaration. `None`
 /// when the record could not be cleared; a reset that reports success while the row
 /// survives moves the window and then restores the old spot next launch, so the
 /// caller has to be able to tell the difference.
-pub async fn clear_saved_position(app: &tauri::AppHandle) -> Option<u64> {
+pub async fn clear_saved_position(
+    app: &tauri::AppHandle,
+    _gate: &crate::db::local_data_write_gate::LocalDataWriteGuard,
+) -> Option<u64> {
     // Set before the delete, not after: a publish queued behind this call has to
     // find the latch already closed when it runs.
     let declaration = mark_position_erased();
@@ -363,15 +375,7 @@ pub async fn clear_saved_position(app: &tauri::AppHandle) -> Option<u64> {
         return None;
     };
     let pool = database.pool();
-    // Awaited rather than `block_on`, because the reset command runs on the main
-    // thread and the write gate is held for the whole of a local-data clear.
-    // Blocking there would freeze the UI for the length of the clear.
-    let cleared = async {
-        let _guard = crate::db::local_data_write_gate::lock_local_data_write(None).await?;
-        pill_position_queries::clear_pill_position(pool).await
-    }
-    .await;
-    match cleared {
+    match pill_position_queries::clear_pill_position(pool).await {
         Ok(()) => Some(declaration),
         Err(err) => {
             // Nothing is stored if local data is being cleared right now, which is

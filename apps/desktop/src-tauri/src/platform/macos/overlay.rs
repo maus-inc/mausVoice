@@ -239,8 +239,14 @@ pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Re
     // forget it before it tells the pill to re-home. A clear that failed would
     // leave that record to undo the reset on the next launch, so it is reported
     // rather than swallowed.
+    // The write gate first, then the delivery order, which is the order the
+    // local-data clear uses for its own forget. The other order lets a reset and
+    // a clear wait on each other's lock and never finish.
+    let Ok(_write) = crate::db::local_data_write_gate::lock_local_data_write(None).await else {
+        return Err("Could not clear the pill's stored position, so it was not reset".to_string());
+    };
     let _delivery = crate::pill_position::lock_clear_delivery().await;
-    let Some(declaration) = crate::pill_position::clear_saved_position(app).await else {
+    let Some(declaration) = crate::pill_position::clear_saved_position(app, &_write).await else {
         return Err("Could not clear the pill's stored position, so it was not reset".to_string());
     };
     let strategy = if strategy == "cursor" {
