@@ -1835,7 +1835,7 @@ fn monitor_display_id(monitor: HMONITOR) -> Option<u64> {
     rust_pill_shared::layout::display_identity(&monitor_device_name(monitor))
 }
 
-/// Where the window is created: the stored position when there is one, else the/// Where the window is created: the stored position when there is one, else the
+/// Where the window is created: the stored position when there is one, else the
 /// default corner of the monitor the pointer is on.
 ///
 /// Resolving this before `CreateWindowExW` is what makes a restore invisible.

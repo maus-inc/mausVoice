@@ -260,16 +260,24 @@ pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Re
                 strategy,
                 ack: Some(declaration),
             })
-            .inspect_err(|_err| {
+            .inspect_err(|err| {
                 // `send` retires the pill when the channel is closed, so no
                 // report will ever answer this declaration. It has to go back
                 // now, or the latch stays closed and every later drag is
                 // dropped for the rest of the process.
                 crate::pill_position::withdraw_erase(declaration);
-            }),
+                log::warn!("Reset the stored pill position with a failed delivery: {err}");
+            })
+            // The row is already gone, which is the durable half of a reset: the
+            // next launch starts at the default corner whether or not the pill
+            // hears about it, so a failed delivery is not a failed reset. The
+            // same rule is spelled out in `pill_process`, and reporting the
+            // failure here would ask the user to retry an action that took effect.
+            .map(|_| ()),
         None => {
             crate::pill_position::withdraw_erase(declaration);
-            Err("Reset position requested with no managed macOS pill".to_string())
+            log::debug!("Reset the stored pill position with no managed macOS pill");
+            Ok(())
         }
     }
 }
