@@ -842,8 +842,16 @@ describe("PR28 ring-alpha render-loop policy", () => {
     const state = source.macState;
     assert.match(
       state,
-      /pub\(crate\) struct DropRecord \{[\s\S]{0,200}?monitor: Option<Rect>,[\s\S]{0,80}?display_id: Option<u64>/,
+      /pub\(crate\) struct DropRecord \{[\s\S]{0,700}?monitor: Option<Rect>,[\s\S]{0,120}?display_id: Option<u64>/,
       "macOS: the retained drop carries no display, so the retry must read the live screen",
+    );
+    // The pill centre is retained beside the frame. The live centre moves with the
+    // panel and hover state, and a retry that recomputed it could resolve a
+    // different display than the one the user dropped on.
+    assert.match(
+      state,
+      /pub\(crate\) struct DropRecord \{[\s\S]{0,450}?point: \(f64, f64\),/,
+      "macOS: the retained drop recomputes its centre from live state",
     );
     const write = scope("macApp", "fn write_drag_position(");
     // The retained record is read whole, and its monitor and display go into the
@@ -863,14 +871,14 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // describe different panels, and the flip basis is captured with them.
     assert.match(
       write,
-      /let \(monitor, display_id, primary_top\) =\s*unsafe \{ drop_display_for\(window, state\) \};/,
+      /let point = pill_drop_point\(state, frame\);[\s\S]{0,300}?drop_display_for_frame_point\(frame, point, window\)/,
       "macOS: the display is not captured with the frame",
     );
     // A drop captured while no screen resolved is completed from its own frame
     // rather than consumed unresolved, which the desktop would ignore.
     assert.match(
       write,
-      /Some\(record\) if record\.monitor\.is_none\(\) => \{[\s\S]{0,900}?drop_display_for_frame\(frame, state\)/,
+      /Some\(record\) if record\.monitor\.is_none\(\) => \{[\s\S]{0,1600}?drop_display_for_frame\(frame, record\.point\)/,
       "macOS: an unresolved drop is consumed instead of completed or kept owed",
     );
   });
@@ -1451,10 +1459,12 @@ describe("PR28 ring-alpha render-loop policy", () => {
       /if reset_placement \{\s*state\.anchor\.set\(state\.anchor\.get\(\)\.after_placement\(\)\);/,
       "macOS: a cursor-reset is never spent, so the pill keeps chasing the pointer",
     );
+    // Windows spends it after the placement lands, so a refused move keeps the
+    // request pending instead of dropping it on the floor.
     assert.match(
       source.windowsPill,
-      /anchor\.follows_pointer\(\)\s*\{[\s\S]{0,600}?anchor\.after_placement\(\)/,
-      "windowsPill: a cursor-reset is never spent",
+      /if move_window\(hwnd, x, y, current\.left, current\.top\) \{[\s\S]{0,500}?anchor\.get\(\)\.after_placement\(\)/,
+      "windowsPill: a cursor-reset is spent without the move landing",
     );
     assert.match(
       source.gtkPill,
@@ -1500,8 +1510,16 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // would describe a window the user never released.
     assert.match(
       source.windowsPill,
-      /state\.drop_record\.set\(Some\(drop_record_at\(\(x, y\), \(width, height\), state\)\)\)/,
+      /state\s*\.drop_record\s*\.set\(Some\(drop_record_at\(origin, \(width, height\), state\)\)\)/,
       "windowsPill: the settle never records the drop origin and size",
+    );
+    // The origin is the frame the move applied, not the one it asked for: a move
+    // across a DPI seam lands where `WM_DPICHANGED` put the window, and recording
+    // the requested origin would name a frame the pill does not occupy.
+    assert.match(
+      source.windowsPill,
+      /let \(origin, width, height\) = if settled_ok \{\s*\(\s*\(settled\.left, settled\.top\)/,
+      "windowsPill: the drop origin is the requested frame, not the applied one",
     );
     // The size is read after the final move, because a DPI change delivered by
     // that move resizes the window before it returns.
@@ -3754,6 +3772,23 @@ describe("native gesture adapter contracts", () => {
       new RegExp(`drop\\(${guard[1]}\\)`),
       "the write gate is dropped before the delete",
     );
+    // An explicit `drop` is not the only way to release the gate: a block that
+    // closes between the binding and the delete releases it too, and that leaves
+    // the same gap with no `drop` for the check above to find. The delete has to
+    // sit inside the scope the gate was taken in.
+    const between = clear.slice(
+      clear.indexOf(guard[0]) + guard[0].length,
+      deleteAt,
+    );
+    let depth = 0;
+    for (const char of between) {
+      if (char === "{") depth += 1;
+      if (char === "}") depth -= 1;
+      assert.ok(
+        depth >= 0,
+        "the write gate's scope closes before the delete, so the delete is ungated",
+      );
+    }
   });
 
   it("seeds the Windows state from the position it created the window at", () => {
