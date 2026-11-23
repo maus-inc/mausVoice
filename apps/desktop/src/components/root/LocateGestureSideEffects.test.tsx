@@ -111,6 +111,25 @@ describe("LocateGestureSideEffects", () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
+  it("does not count a hold that spans a disabled window as a tap", () => {
+    // Alt stays down while the gesture is switched off and on, so its release
+    // never reports the hold's real start. That release must not seed a pair
+    // for the short tap after it to complete.
+    const spy = vi.spyOn(performance, "now");
+    for (const value of [0, 10, 200, 280, 320, 380]) {
+      spy.mockReturnValueOnce(value);
+    }
+    setModifier("alt");
+    setKeys(["Alt"]);
+    setModifier("none");
+    setModifier("alt");
+    setKeys([]);
+    setKeys(["Alt"]);
+    setKeys([]);
+    spy.mockRestore();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("does not send on the Wayland bridge strategy", () => {
     setModifier("alt");
     act(() => {
