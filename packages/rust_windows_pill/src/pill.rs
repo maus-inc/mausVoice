@@ -260,7 +260,16 @@ unsafe fn on_wm_displaychange(hwnd: HWND) -> LRESULT {
             // A second enumeration inside it could describe a different
             // arrangement than the one this message was answered for.
             if let Some(areas) = enumerate_work_areas_with_identity() {
-                reconcile_display_layout(hwnd, state, &areas);
+                if reconcile_display_layout(hwnd, state, &areas) {
+                    // The arrangement this message handled is the baseline now.
+                    // Left unrecorded, a layout that returns to the polled one
+                    // before the next poll compares equal and is never looked at,
+                    // so the placement this message chose would survive.
+                    state.layout_poll.borrow_mut().seed(
+                        drag_now(),
+                        rust_pill_shared::layout::layout_signature(&areas),
+                    );
+                }
             }
         }
     });
@@ -315,7 +324,12 @@ unsafe fn on_wm_dpichanged(hwnd: HWND, lparam: LPARAM) -> LRESULT {
                 state.dirty.set(true);
             }
             if let Some(areas) = enumerate_work_areas_with_identity() {
-                reconcile_display_layout(hwnd, state, &areas);
+                if reconcile_display_layout(hwnd, state, &areas) {
+                    state.layout_poll.borrow_mut().seed(
+                        drag_now(),
+                        rust_pill_shared::layout::layout_signature(&areas),
+                    );
+                }
             }
         }
     });
@@ -1973,12 +1987,32 @@ fn reconcile_display_layout(
                 return true;
             }
             // The move was the pill's, so the persisted position follows it.
-            state.saved_x.set(x);
-            state.saved_y.set(y);
+            // A move across a DPI seam delivers `WM_DPICHANGED`, which puts the
+            // window at the rectangle Windows suggested and rescales it. The
+            // origin this call asked for is then not where the window is, and the
+            // footprint read before the move is not the one it draws. Both come
+            // from the window as it is now, so the record, the token and the
+            // report all describe one frame.
+            let mut applied = RECT::default();
+            // SAFETY: the call only writes the struct it is given.
+            let applied_ok = unsafe { GetWindowRect(hwnd, &mut applied).is_ok() }
+                && applied.right > applied.left
+                && applied.bottom > applied.top;
+            let (applied_x, applied_y) = if applied_ok {
+                (applied.left, applied.top)
+            } else {
+                (x, y)
+            };
+            let (applied_offset, applied_size) = live_pill_footprint(state);
+            state.saved_x.set(applied_x);
+            state.saved_y.set(applied_y);
             state.has_saved_position.set(true);
             // Nearest when containment fails, so a pill moved to a shared edge keeps
             // naming the display it is on instead of losing the token.
-            let moved_centre = visible_pill_centre((x as f64, y as f64), (offset, size));
+            let moved_centre = visible_pill_centre(
+                (applied_x as f64, applied_y as f64),
+                (applied_offset, applied_size),
+            );
             state
                 .saved_display_id
                 .set(rust_pill_shared::layout::display_id_of(areas, moved_centre));
@@ -1990,7 +2024,12 @@ fn reconcile_display_layout(
                 report: rust_pill_shared::restore::PositionReport::new(
                     true,
                     Some(published),
-                    work_area_for_report(areas, monitor, &published, (offset, size)),
+                    work_area_for_report(
+                        areas,
+                        monitor,
+                        &published,
+                        (applied_offset, applied_size),
+                    ),
                     state.saved_display_id.get(),
                 ),
             });
@@ -2154,16 +2193,6 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             state
                 .anchor
                 .set(rust_pill_shared::layout::Anchor::ResetAtCurrent);
-        } else if anchor.follows_pointer() {
-            // A cursor-reset is spent by being carried out: this lookup succeeded,
-            // so the pill is now homed on the monitor the request named. Left as
-            // `ResetAtCursor`, every later tick reads `follows_pointer` again and
-            // the pill follows the cursor across displays for the rest of the
-            // process -- the chasing a reset exists to end.
-            //
-            // The rule lives in the shared model so the three pills cannot spend
-            // different amounts of it.
-            state.anchor.set(anchor.after_placement());
         }
         let wa = info.rcWork;
         let wa_w = wa.right - wa.left;
@@ -2195,7 +2224,15 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         // A move to where the window already is is skipped inside `move_window`,
         // so this is the same call the drag path makes rather than a second copy
         // of its flags.
-        let _ = move_window(hwnd, x, y, current.left, current.top);
+        if move_window(hwnd, x, y, current.left, current.top) {
+            // A cursor reset is spent by being carried out, and only then. Spending
+            // it on the lookup alone would drop the request when the move was
+            // refused, leaving the pill on the display it was asked to leave.
+            //
+            // The rule lives in the shared model so the three pills cannot spend
+            // different amounts of it.
+            state.anchor.set(state.anchor.get().after_placement());
+        }
     }
 }
 

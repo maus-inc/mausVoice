@@ -308,17 +308,14 @@ pub(crate) fn write_window_position(
         return;
     }
     let owed = state.x11_drop_owed.borrow_mut().take();
-    let (x, y) = owed.as_ref().map_or((x, y), |drop| (drop.x, drop.y));
-    state.saved_x.set(x);
-    state.saved_y.set(y);
-    state.has_saved_position.set(true);
-    // The pending release has been recorded, so no retry is owed.
-    state.drag_save_due.set(None);
     let (rect, live_monitor) = crate::pill::pill_geometry(window, state);
-    // A refusal that could not name a monitor retains the origin without one,
-    // and the desktop ignores a report without a monitor rect, so the drop would
-    // never be stored. The live pair is the fallback: the origin stays the
-    // drop's, and the monitor is the one the window is on now.
+    // A refusal that could not name a monitor retains the origin without one, and
+    // the desktop ignores a report without a monitor rect, so the drop would never
+    // be stored. The origin and the monitor have to describe one frame, so a
+    // record without a monitor is completed from the window as it is now, and only
+    // when a display contains it. Storing the retained origin against a surviving
+    // display's work area would record an off-display origin as an exact match for
+    // a panel the drop was never on.
     let (monitor, display_id) = match &owed {
         Some(drop) => match drop.monitor {
             Some(area) => (
@@ -330,10 +327,34 @@ pub(crate) fn write_window_position(
                 }),
                 drop.display_id,
             ),
-            None => (live_monitor, display_id_at(window, state)),
+            None => match live_monitor {
+                Some(_) => (live_monitor, display_id_at(window, state)),
+                None => {
+                    // No display contains the window either, so there is no pair to
+                    // report yet. The drop stays owed and the retry stays armed.
+                    state.drag_save_due.set(Some(now));
+                    return;
+                }
+            },
         },
         None => (live_monitor, display_id_at(window, state)),
     };
+    let (mut x, mut y) = owed.as_ref().map_or((x, y), |drop| (drop.x, drop.y));
+    if owed.as_ref().is_some_and(|drop| drop.monitor.is_none()) {
+        // The drop's own display could not be resolved, so the frame the window
+        // stands in now is the one this record describes, origin and monitor
+        // together.
+        let (applied_x, applied_y) = state.x11_drag_applied.get();
+        if applied_x != crate::pill::UNAPPLIED_ORIGIN {
+            x = applied_x as f64;
+            y = applied_y as f64;
+        }
+    }
+    state.saved_x.set(x);
+    state.saved_y.set(y);
+    state.has_saved_position.set(true);
+    // The pending release has been recorded, so no retry is owed.
+    state.drag_save_due.set(None);
     state.saved_display_id.set(display_id);
     state.x11_release_persisted.set(true);
     if let Some(area) = monitor {

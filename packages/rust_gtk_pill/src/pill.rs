@@ -406,19 +406,31 @@ fn on_forget_position(ack: Option<u64>, state_tick: &Rc<PillState>) {
 /// report must not authorize a save the user has not made: the release writes
 /// the drop through the guarded writer.
 fn on_request_position(state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
-    let (saved_rect, monitor) = pill_geometry(win_tick, state_tick);
-    let (rect, persist) = match (
-        gesture_owns_window(state_tick, drag_clock_now()),
-        live_pill_rect(win_tick, state_tick),
-    ) {
-        (true, Some(live)) => (Some(live), false),
-        // A drop whose save is still owed is the record that has to reach the
-        // store, and the stored origin beside it is the pre-drop one. Reporting
-        // that pair as storable would write an origin the window has left.
-        _ => (
-            saved_rect,
-            state_tick.has_saved_position.get() && state_tick.drag_save_due.get().is_none(),
-        ),
+    let (saved_rect, live_monitor) = pill_geometry(win_tick, state_tick);
+    let saved_monitor = saved_work_area_rect(state_tick);
+    // A record is storable only when every field in it describes one placement.
+    // The saved origin beside the live monitor is the drop paired with whatever
+    // display reconciliation moved the window to, so a storable reply carries the
+    // record's own work area, and a reply that has no work area to carry is not
+    // storable at all.
+    //
+    // A drop whose save is still owed is the record that has to reach the store,
+    // and the stored origin beside it is the pre-drop one, so nothing is
+    // storable while it is pending either.
+    let persist = state_tick.has_saved_position.get()
+        && saved_monitor.is_some()
+        && state_tick.drag_save_due.get().is_none()
+        && !gesture_owns_window(state_tick, drag_clock_now());
+    let (rect, monitor) = if persist {
+        (saved_rect, saved_monitor)
+    } else {
+        // Not storable, so the reply describes where the window is now: the
+        // composer places against this, and a stored origin it has left would
+        // put the pill on the wrong display.
+        (
+            live_pill_rect(win_tick, state_tick).or(saved_rect),
+            live_monitor,
+        )
     };
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(
@@ -430,6 +442,22 @@ fn on_request_position(state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
     });
 }
 
+/// The retained work area as a report rect, or `None` when no placement has been
+/// stored yet.
+fn saved_work_area_rect(state: &PillState) -> Option<Rect> {
+    let area = state.saved_work_area.get();
+    if area.width > 0.0 && area.height > 0.0 {
+        Some(Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height,
+        })
+    } else {
+        None
+    }
+}
+
 /// The pill's live rectangle in root pixels, from the origin the last move
 /// applied, or `None` where the window's origin is not queryable.
 fn live_pill_rect(window: &gtk::Window, state: &PillState) -> Option<Rect> {
@@ -439,6 +467,11 @@ fn live_pill_rect(window: &gtk::Window, state: &PillState) -> Option<Rect> {
     let (w, h) = window.size();
     let scale = x11::x11_root_scale(window);
     let (x, y) = state.x11_drag_applied.get();
+    if x == UNAPPLIED_ORIGIN {
+        // No move has been applied, so the latch holds its sentinel rather than an
+        // origin. Reporting that as a rect would name a frame that does not exist.
+        return None;
+    }
     Some(Rect {
         x: x as f64,
         y: y as f64,

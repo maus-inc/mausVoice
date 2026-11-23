@@ -523,7 +523,16 @@ extern "C" fn screen_parameters_changed(_this: &Object, _sel: Sel, _notification
             // alone is what keeps its position intact for when one comes back.
             return;
         };
-        reconcile_display_layout(ctx.window, &ctx.state, &areas, primary_top);
+        if reconcile_display_layout(ctx.window, &ctx.state, &areas, primary_top) {
+            // The arrangement this callback handled is the baseline now. Left
+            // unrecorded, a layout that returns to the polled one before the next
+            // poll compares equal and is never looked at, so the placement this
+            // callback chose for the other arrangement would survive.
+            ctx.state.layout_poll.borrow_mut().seed(
+                drag_now(),
+                rust_pill_shared::layout::layout_signature(&areas),
+            );
+        }
     });
 }
 
@@ -1380,14 +1389,30 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
             let (monitor, display_id, primary_top) =
                 unsafe { drop_display_for_frame(frame, record.point) };
             if monitor.is_none() {
-                // Still nowhere to report. The record stays owed and the retry
-                // stays armed, or a display coming back would never be told
-                // about this drop: `due` is `None` once the holds have passed.
-                state.drop_frame.set(Some(record));
-                state.drag_save_due.set(due.or(Some(now)));
-                return;
+                // The retained point is on no display: its panel went away and the
+                // pill has been relocated onto a surviving one. Storing the
+                // unreachable drop would restore the pill off-screen, so the frame
+                // and display the window stands in now are what the record
+                // describes, together.
+                let (live_monitor, live_id, live_top) = unsafe { drop_display_for(window, state) };
+                if live_monitor.is_none() {
+                    // No display contains the window either, so there is no pair to
+                    // report yet. The record stays owed and the retry stays armed,
+                    // or a display coming back would never be told about this drop:
+                    // `due` is `None` once the holds have passed.
+                    state.drop_frame.set(Some(record));
+                    state.drag_save_due.set(due.or(Some(now)));
+                    return;
+                }
+                (
+                    unsafe { window_frame(window) },
+                    live_monitor,
+                    live_id,
+                    live_top,
+                )
+            } else {
+                (frame, monitor, display_id, primary_top)
             }
-            (frame, monitor, display_id, primary_top)
         }
         Some(record) => (
             frame_from_tuple(record.frame),
