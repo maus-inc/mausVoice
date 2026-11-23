@@ -92,6 +92,10 @@ impl WindowMode {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DropRecord {
     pub(crate) frame: (f64, f64, f64, f64),
+    /// The pill centre inside the frame at the drop. Retained because the live
+    /// centre moves with the panel and hover state, and a retry that recomputed
+    /// it could resolve a different display than the one the user dropped on.
+    pub(crate) point: (f64, f64),
     /// `None` when the window was on no screen at the drop, so the report carries
     /// no monitor rather than a fabricated one.
     pub(crate) monitor: Option<Rect>,

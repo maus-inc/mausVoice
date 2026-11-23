@@ -315,16 +315,23 @@ pub(crate) fn write_window_position(
     // The pending release has been recorded, so no retry is owed.
     state.drag_save_due.set(None);
     let (rect, live_monitor) = crate::pill::pill_geometry(window, state);
+    // A refusal that could not name a monitor retains the origin without one,
+    // and the desktop ignores a report without a monitor rect, so the drop would
+    // never be stored. The live pair is the fallback: the origin stays the
+    // drop's, and the monitor is the one the window is on now.
     let (monitor, display_id) = match &owed {
-        Some(drop) => (
-            drop.monitor.map(|area| crate::ipc::Rect {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: area.height,
-            }),
-            drop.display_id,
-        ),
+        Some(drop) => match drop.monitor {
+            Some(area) => (
+                Some(crate::ipc::Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: area.height,
+                }),
+                drop.display_id,
+            ),
+            None => (live_monitor, display_id_at(window, state)),
+        },
         None => (live_monitor, display_id_at(window, state)),
     };
     state.saved_display_id.set(display_id);

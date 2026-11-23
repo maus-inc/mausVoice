@@ -339,6 +339,9 @@ fn on_reset_position(
     // A save still owed from the previous gesture would publish the
     // pre-reset origin and recreate the row the reset just deleted.
     state_tick.drag_save_due.set(None);
+    // The payload that save would write is the same pre-reset origin, and
+    // keeping it would stop the next refusal recording its own drop.
+    state_tick.x11_drop_owed.borrow_mut().take();
     // A reset is a placement the user asked for, so the pill is due
     // one even though nothing is stored.
     state_tick
@@ -382,6 +385,8 @@ fn on_forget_position(ack: Option<u64>, state_tick: &Rc<PillState>) {
     // hazard one frame later: it would publish the flag back as
     // true and recreate the row the clear just removed.
     state_tick.drag_save_due.set(None);
+    // The retained drop is the same pre-clear origin, so it goes too.
+    state_tick.x11_drop_owed.borrow_mut().take();
     // A clear drops the record without moving the window, and it
     // cancels any placement still owed.
     state_tick
@@ -407,7 +412,13 @@ fn on_request_position(state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
         live_pill_rect(win_tick, state_tick),
     ) {
         (true, Some(live)) => (Some(live), false),
-        _ => (saved_rect, state_tick.has_saved_position.get()),
+        // A drop whose save is still owed is the record that has to reach the
+        // store, and the stored origin beside it is the pre-drop one. Reporting
+        // that pair as storable would write an origin the window has left.
+        _ => (
+            saved_rect,
+            state_tick.has_saved_position.get() && state_tick.drag_save_due.get().is_none(),
+        ),
     };
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(

@@ -256,7 +256,12 @@ unsafe fn on_wm_displaychange(hwnd: HWND) -> LRESULT {
     // burst from being stored as a user choice.
     STATE.with(|s| {
         if let Some(ref state) = *s.borrow() {
-            reconcile_display_layout(hwnd, state);
+            // The arrangement is read once here and handed to the reconciliation.
+            // A second enumeration inside it could describe a different
+            // arrangement than the one this message was answered for.
+            if let Some(areas) = enumerate_work_areas_with_identity() {
+                reconcile_display_layout(hwnd, state, &areas);
+            }
         }
     });
     LRESULT(0)
@@ -309,7 +314,9 @@ unsafe fn on_wm_dpichanged(hwnd: HWND, lparam: LPARAM) -> LRESULT {
                 // still drawn at the old one.
                 state.dirty.set(true);
             }
-            reconcile_display_layout(hwnd, state);
+            if let Some(areas) = enumerate_work_areas_with_identity() {
+                reconcile_display_layout(hwnd, state, &areas);
+            }
         }
     });
     LRESULT(0)
@@ -649,8 +656,10 @@ fn poll_display_layout(hwnd: HWND, state: &PillState) {
         .layout_poll
         .borrow_mut()
         .observe(now, rust_pill_shared::layout::layout_signature(&areas));
+    // The same snapshot the signature was taken from, so the reconciliation
+    // handles exactly the arrangement the poll committed.
     if outcome == rust_pill_shared::layout::PollOutcome::Changed
-        && !reconcile_display_layout(hwnd, state)
+        && !reconcile_display_layout(hwnd, state, &areas)
     {
         // Reconciling against this snapshot was impossible, so the change is not
         // handled. Left committed, the next poll would compare equal and the pill
@@ -1500,14 +1509,20 @@ fn check_hover(hwnd: HWND, state: &PillState) {
 /// both want the identical flags. A move to where the window already is is skipped
 /// outright: on Windows a redundant position change costs a message that the rest
 /// of the pill has to spend work filtering out.
-fn move_window(hwnd: HWND, x: i32, y: i32, current_x: i32, current_y: i32) {
+///
+/// Returns whether the window ended up at the requested origin.
+///
+/// A refusal has to be visible to the caller: a reconciliation that cannot move
+/// the window has not handled the layout change, and the poll has to retry it
+/// instead of committing a signature for a frame that never happened.
+fn move_window(hwnd: HWND, x: i32, y: i32, current_x: i32, current_y: i32) -> bool {
     if x == current_x && y == current_y {
-        return;
+        return true;
     }
     // SAFETY: repositioning our own window; the flags keep size, z order and
     // activation untouched.
     unsafe {
-        let _ = SetWindowPos(
+        SetWindowPos(
             hwnd,
             None,
             x,
@@ -1515,7 +1530,8 @@ fn move_window(hwnd: HWND, x: i32, y: i32, current_x: i32, current_y: i32) {
             0,
             0,
             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-        );
+        )
+        .is_ok()
     }
 }
 
@@ -1793,7 +1809,11 @@ fn gesture_owns_window(state: &PillState, now: f64) -> bool {
 /// 4. Adopt the resolved origin as the saved position. The move was the pill's
 ///    own, not a drag, so the stored record has to follow it or the next launch
 ///    would restore the stranded origin.
-fn reconcile_display_layout(hwnd: HWND, state: &PillState) -> bool {
+fn reconcile_display_layout(
+    hwnd: HWND,
+    state: &PillState,
+    areas: &[rust_pill_shared::edge::MonitorRect],
+) -> bool {
     let now = drag_now();
     state.save_guard.borrow_mut().layout_changed(now);
     if state.dragging.get() {
@@ -1805,11 +1825,6 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) -> bool {
             .layout_changed_during_drag(now);
     }
 
-    let Some(areas) = enumerate_work_areas_with_identity() else {
-        // A partial or failed enumeration is not evidence of a missing display,
-        // and it is not an arrangement this call handled: the poll retries.
-        return false;
-    };
     let mut rect = RECT::default();
     let mut window_rect = RECT::default();
     // SAFETY: both calls only write the struct they are given.
@@ -1835,7 +1850,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) -> bool {
     // thing the user sees rather than the transparent canvas corner.
     let footprint_centre = visible_pill_centre((rect.left as f64, rect.top as f64), (offset, size));
     let Some(parked) = rust_pill_shared::layout::describe_parked(
-        &areas,
+        areas,
         (rect.left as f64, rect.top as f64),
         (win_w as f64, win_h as f64),
         footprint_centre,
@@ -1847,7 +1862,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) -> bool {
 
     let relocation = rust_pill_shared::layout::reconcile(
         parked,
-        &areas,
+        areas,
         (win_w as f64, win_h as f64),
         |_work, _window| (offset, size),
         // Clamp against the footprint the renderer is actually drawing, not one
@@ -1883,8 +1898,8 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) -> bool {
             // token always name one display.
             let centre = visible_pill_centre((cur_x as f64, cur_y as f64), (offset, size));
             let live_area =
-                rust_pill_shared::layout::work_area_of(&areas, centre).unwrap_or(parked.display);
-            let display = rust_pill_shared::layout::display_id_of(&areas, centre);
+                rust_pill_shared::layout::work_area_of(areas, centre).unwrap_or(parked.display);
+            let display = rust_pill_shared::layout::display_id_of(areas, centre);
             let saved = state.has_saved_position.get();
             let origin_moved =
                 saved && (cur_x != state.saved_x.get() || cur_y != state.saved_y.get());
@@ -1937,7 +1952,12 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) -> bool {
         }
         rust_pill_shared::layout::Relocation::Move { x, y } => {
             let (x, y) = (x.round() as i32, y.round() as i32);
-            move_window(hwnd, x, y, rect.left, rect.top);
+            if !move_window(hwnd, x, y, rect.left, rect.top) {
+                // The window is still where the layout left it, so the change is
+                // not handled: the poll defers the previous signature and clamps
+                // again on its next tick.
+                return false;
+            }
             // A forget or a reset leaves the pill deliberately unsaved: the move
             // still has to happen, but it must not write the row back.
             // A stored position has to exist to be kept: a relocation is not a
@@ -1961,11 +1981,8 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) -> bool {
             let moved_centre = visible_pill_centre((x as f64, y as f64), (offset, size));
             state
                 .saved_display_id
-                .set(rust_pill_shared::layout::display_id_of(
-                    &areas,
-                    moved_centre,
-                ));
-            if let Some(area) = rust_pill_shared::layout::work_area_of(&areas, moved_centre) {
+                .set(rust_pill_shared::layout::display_id_of(areas, moved_centre));
+            if let Some(area) = rust_pill_shared::layout::work_area_of(areas, moved_centre) {
                 state.saved_work_area.set(area);
             }
             let (published, monitor) = current_pill_geometry(hwnd);
@@ -1973,7 +1990,7 @@ fn reconcile_display_layout(hwnd: HWND, state: &PillState) -> bool {
                 report: rust_pill_shared::restore::PositionReport::new(
                     true,
                     Some(published),
-                    work_area_for_report(&areas, monitor, &published, (offset, size)),
+                    work_area_for_report(areas, monitor, &published, (offset, size)),
                     state.saved_display_id.get(),
                 ),
             });
@@ -2178,7 +2195,7 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         // A move to where the window already is is skipped inside `move_window`,
         // so this is the same call the drag path makes rather than a second copy
         // of its flags.
-        move_window(hwnd, x, y, current.left, current.top);
+        let _ = move_window(hwnd, x, y, current.left, current.top);
     }
 }
 
@@ -2612,7 +2629,7 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
     });
     let x = output.x.round() as i32;
     let y = output.y.round() as i32;
-    move_window(hwnd, x, y, current.left, current.top);
+    let _ = move_window(hwnd, x, y, current.left, current.top);
     if settling && output.settled {
         // Final frame of the gesture: this origin is the drop. Recorded before the
         // save so a refusal keeps the place the user released at, not the one the
@@ -2631,20 +2648,27 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
         let settled_ok = unsafe { GetWindowRect(hwnd, &mut settled).is_ok() }
             && settled.right > settled.left
             && settled.bottom > settled.top;
-        let (width, height) = if settled_ok {
+        // The origin comes from the same read as the size when it is available:
+        // a move across a DPI seam delivers `WM_DPICHANGED`, which places the
+        // window at the suggested origin, and that is not always the requested
+        // one. Recording the requested origin would name a frame the window does
+        // not occupy.
+        let (origin, width, height) = if settled_ok {
             (
+                (settled.left, settled.top),
                 (settled.right - settled.left) as f64,
                 (settled.bottom - settled.top) as f64,
             )
         } else {
             (
+                (x, y),
                 (current.right - current.left) as f64,
                 (current.bottom - current.top) as f64,
             )
         };
         state
             .drop_record
-            .set(Some(drop_record_at((x, y), (width, height), state)));
+            .set(Some(drop_record_at(origin, (width, height), state)));
         persist_drag_position(hwnd, state);
     } else if settling || dragging {
         // The frame loop owns the window, but its position is not final yet. Mark
