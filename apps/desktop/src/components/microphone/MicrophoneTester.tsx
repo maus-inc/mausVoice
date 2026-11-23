@@ -325,7 +325,7 @@ export const MicrophoneTester = ({
         }
       }
     },
-    [setSyncedTestState, updatePreviewUrl],
+    [intl, setSyncedTestState, showPreviewOutcome, updatePreviewUrl],
   );
 
   const handleTogglePreview = useCallback(() => {
