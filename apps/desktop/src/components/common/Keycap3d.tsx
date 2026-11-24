@@ -267,6 +267,46 @@ const KeycapCanvas = ({
   />
 );
 
+const hasLegendPart = (part: React.ReactNode) =>
+  part !== undefined && part !== null;
+
+const legendTransform = (
+  layout: KeycapLayout,
+  faceProjection: number[],
+  showFallback: boolean,
+) =>
+  showFallback
+    ? "translate(-50%, -50%)"
+    : `translate(${layout.faceCentreX}px, ${layout.faceCentreY}px) matrix3d(${faceProjection.join(", ")}) translate(-50%, -50%)`;
+
+const legendSx = ({
+  layout,
+  legendSize,
+  faceProjection,
+  showFallback,
+}: {
+  layout: KeycapLayout;
+  legendSize: number;
+  faceProjection: number[];
+  showFallback: boolean;
+}): SystemStyleObject<Theme> => ({
+  position: "absolute",
+  left: "50%",
+  top: "50%",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  transform: legendTransform(layout, faceProjection, showFallback),
+  transformOrigin: "0 0",
+  fontFamily: keycapLabel.fontFamily,
+  visibility: "visible",
+  lineHeight: 1,
+  whiteSpace: "nowrap",
+  color: showFallback ? "text.primary" : keycapLabel.color,
+  textShadow: showFallback ? "none" : `0 1px 1px ${keycapLabel.shadowColor}`,
+  fontSize: legendSize,
+});
+
 const KeycapLegend = ({
   label,
   sublabel,
@@ -282,40 +322,14 @@ const KeycapLegend = ({
   faceProjection: number[];
   showFallback: boolean;
 }) => {
-  if (
-    (label === undefined || label === null) &&
-    (sublabel === undefined || sublabel === null)
-  ) {
-    return null;
-  }
-  const transform = showFallback
-    ? "translate(-50%, -50%)"
-    : `translate(${layout.faceCentreX}px, ${layout.faceCentreY}px) matrix3d(${faceProjection.join(", ")}) translate(-50%, -50%)`;
+  if (!hasLegendPart(label) && !hasLegendPart(sublabel)) return null;
   return (
     <Box
       component="span"
       data-keycap-part="label"
-      sx={{
-        position: "absolute",
-        left: "50%",
-        top: "50%",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        transform,
-        transformOrigin: "0 0",
-        fontFamily: keycapLabel.fontFamily,
-        visibility: "visible",
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-        color: showFallback ? "text.primary" : keycapLabel.color,
-        textShadow: showFallback
-          ? "none"
-          : `0 1px 1px ${keycapLabel.shadowColor}`,
-        fontSize: legendSize,
-      }}
+      sx={legendSx({ layout, legendSize, faceProjection, showFallback })}
     >
-      {sublabel !== undefined && sublabel !== null && (
+      {hasLegendPart(sublabel) && (
         <Box
           component="span"
           data-keycap-part="sublabel"
@@ -328,7 +342,7 @@ const KeycapLegend = ({
           {sublabel}
         </Box>
       )}
-      {label !== undefined && label !== null && (
+      {hasLegendPart(label) && (
         <Box
           component="span"
           data-keycap-part="glyph"
