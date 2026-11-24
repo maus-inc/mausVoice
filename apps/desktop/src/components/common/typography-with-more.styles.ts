@@ -20,10 +20,12 @@ const normalizeSxProp = (
   sx: TypographyProps["sx"],
 ): TypographyProps["sx"] => (shouldClamp ? { ...baseClampStyles, ...sx } : sx);
 
+type CssSpacing = number | string;
+
 /** Padding that keeps the clamped text clear of the inline toggle. */
 const clampPaddingAdjustments = (
-  clampPaddingRight: number | string | undefined,
-  inlineToggleRight: number | string | undefined,
+  clampPaddingRight: CssSpacing | undefined,
+  inlineToggleRight: CssSpacing | undefined,
 ) => [
   { pr: clampPaddingRight ?? 6 },
   ...(inlineToggleRight === undefined
@@ -41,8 +43,8 @@ export const resolveTypographySx = ({
   clampStyles: Record<string, unknown>;
   shouldClamp: boolean;
   sx: TypographyProps["sx"];
-  clampPaddingRight: number | string | undefined;
-  inlineToggleRight: number | string | undefined;
+  clampPaddingRight: CssSpacing | undefined;
+  inlineToggleRight: CssSpacing | undefined;
 }) => {
   const normalized = normalizeSxProp(clampStyles, shouldClamp, sx);
   if (!shouldClamp) return normalized;
@@ -112,14 +114,8 @@ const resolveToggleMetrics = (
     (theme.typography as Record<string, any>)[variantKey] ??
     theme.typography.body2;
   return {
-    fontSize:
-      options.fontSize !== undefined
-        ? options.fontSize
-        : variantStyles.fontSize,
-    lineHeight:
-      options.lineHeight !== undefined
-        ? options.lineHeight
-        : (variantStyles.lineHeight ?? 1.35),
+    fontSize: options.fontSize ?? variantStyles.fontSize,
+    lineHeight: options.lineHeight ?? variantStyles.lineHeight ?? 1.35,
     textPrimary: theme.vars?.palette.text.primary ?? theme.palette.text.primary,
     textSecondary:
       theme.vars?.palette.text.secondary ?? theme.palette.text.secondary,

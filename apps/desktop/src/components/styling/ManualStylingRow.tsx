@@ -15,7 +15,8 @@ import {
   Typography,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useMemo, useRef, useState } from "react";
+import type { Tone } from "@maus-inc/types";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { deleteTone, openToneEditorDialog } from "../../actions/tone.actions";
 import {
@@ -52,8 +53,239 @@ const formatPromptForPreview = (prompt: string) => {
     .replace(/^[.\s]+/, "");
 };
 
+const describeTone = (tone: Tone | undefined): string =>
+  tone?.description || formatPromptForPreview(tone?.promptTemplate ?? "-");
+
 export type ManualStylingRowProps = {
   id: string;
+};
+
+type ToneRowAction = {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+};
+
+const useToneRowActions = ({
+  intl,
+  canEdit,
+  canDeselect,
+  onEdit,
+  onViewPrompt,
+  onDeselect,
+  onDelete,
+}: {
+  intl: ReturnType<typeof useIntl>;
+  canEdit: boolean;
+  canDeselect: boolean;
+  onEdit: () => void;
+  onViewPrompt: () => void;
+  onDeselect: () => void;
+  onDelete: () => void;
+}): ToneRowAction[] =>
+  useMemo(() => {
+    const actions: ToneRowAction[] = [];
+    if (canEdit) {
+      actions.push({
+        id: "edit",
+        label: intl.formatMessage({ defaultMessage: "Edit" }),
+        icon: <Pencil size={16} strokeWidth={1.9} />,
+        onClick: onEdit,
+      });
+    }
+    actions.push({
+      id: "view-prompt",
+      label: intl.formatMessage({ defaultMessage: "View full prompt" }),
+      icon: <Info size={16} strokeWidth={1.9} />,
+      onClick: onViewPrompt,
+    });
+    if (canDeselect) {
+      actions.push({
+        id: "deselect",
+        label: intl.formatMessage({ defaultMessage: "Deselect style" }),
+        icon: <CircleMinus size={16} strokeWidth={1.9} />,
+        onClick: onDeselect,
+      });
+    }
+    if (canEdit) {
+      actions.push({
+        id: "delete",
+        label: intl.formatMessage({ defaultMessage: "Delete" }),
+        icon: <Trash2 size={16} strokeWidth={1.9} />,
+        onClick: onDelete,
+        danger: true,
+      });
+    }
+    return actions;
+  }, [canDeselect, canEdit, intl, onDelete, onDeselect, onEdit, onViewPrompt]);
+
+const toContextMenuItems = (actions: ToneRowAction[]): ContextMenuItem[] =>
+  actions.flatMap((action) => {
+    const item: ContextMenuItem = {
+      label: action.label,
+      icon: action.icon,
+      onClick: action.onClick,
+      ...(action.danger ? { danger: true } : {}),
+    };
+    return action.danger
+      ? [{ kind: "divider" } as ContextMenuItem, item]
+      : [item];
+  });
+
+const toMenuItems = (actions: ToneRowAction[]): MenuPopoverItem[] =>
+  actions.map((action) => ({
+    id: action.id,
+    kind: "listItem",
+    title: action.label,
+    leading: action.icon,
+    danger: action.danger,
+    onClick: ({ close }) => {
+      close();
+      action.onClick();
+    },
+  }));
+
+const useToneRowDelete = (id: string) => {
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const deletePending = useRef(false);
+
+  const handleDeleteRequest = useCallback(() => {
+    setDeleteConfirmOpen(true);
+  }, []);
+
+  const handleDeleteCancel = useCallback(() => {
+    if (!deletePending.current) setDeleteConfirmOpen(false);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (deletePending.current) return;
+    deletePending.current = true;
+    const restoreFocus = prepareStyleDeleteFocus(id);
+    setIsDeleting(true);
+    try {
+      await deleteTone(id);
+      setDeleteConfirmOpen(false);
+      restoreFocus();
+    } catch {
+      // deleteTone already logged and surfaced the snackbar; keep the dialog
+      // open so the user can retry or cancel.
+    } finally {
+      deletePending.current = false;
+      setIsDeleting(false);
+    }
+  }, [id]);
+
+  return {
+    deleteConfirmOpen,
+    isDeleting,
+    requestDelete: handleDeleteRequest,
+    cancelDelete: handleDeleteCancel,
+    confirmDelete: handleDeleteConfirm,
+  };
+};
+
+const openContextMenu = (
+  event: React.MouseEvent,
+  ctxMenu: ReturnType<typeof useContextMenu>,
+  items: ContextMenuItem[],
+): void => {
+  // Yield right-clicks on editable text to the provider's clipboard menu.
+  if (isEditableTarget(event.target)) return;
+  ctxMenu.handleContextMenu(event.nativeEvent, items);
+};
+
+const ToneDeleteDialog = ({
+  isOpen,
+  isDeleting,
+  onCancel,
+  onConfirm,
+}: {
+  isOpen: boolean;
+  isDeleting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) => (
+  <ConfirmDialog
+    isOpen={isOpen}
+    title={<FormattedMessage defaultMessage="Delete style" />}
+    content={
+      <FormattedMessage defaultMessage="Are you sure you want to delete this style?" />
+    }
+    onCancel={onCancel}
+    onConfirm={onConfirm}
+    confirmLabel={<FormattedMessage defaultMessage="Delete" />}
+    cancelButtonProps={{ autoFocus: true }}
+    confirmButtonProps={{ color: "error" }}
+    busy={isDeleting}
+  />
+);
+
+const ToneRowTrailing = ({
+  isGlobal,
+  toneName,
+  intl,
+  menuItems,
+}: {
+  isGlobal: boolean;
+  toneName: string | undefined;
+  intl: ReturnType<typeof useIntl>;
+  menuItems: MenuPopoverItem[];
+}) => {
+  const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
+  return (
+    <Stack
+      direction="row"
+      spacing={0.5}
+      onClick={stopPropagation}
+      onMouseDown={stopPropagation}
+      sx={{
+        alignItems: "center",
+      }}
+    >
+      {isGlobal && (
+        <Tooltip
+          disableInteractive
+          title={
+            <FormattedMessage defaultMessage="This style is managed by your organization." />
+          }
+        >
+          <span>
+            <IconButton size="small" disabled>
+              <Globe size={16} strokeWidth={1.9} />
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
+      <MenuPopoverBuilder items={menuItems}>
+        {({ ref, open, isOpen }) => (
+          <IconButton
+            ref={ref}
+            aria-label={intl.formatMessage(
+              { defaultMessage: "More options for {title}" },
+              {
+                title:
+                  toneName?.trim() ||
+                  intl.formatMessage({ defaultMessage: "Style" }),
+              },
+            )}
+            aria-haspopup="menu"
+            aria-expanded={isOpen}
+            data-manual-style-more=""
+            onClick={(e) => {
+              e.stopPropagation();
+              open();
+            }}
+            size="small"
+          >
+            <EllipsisVertical size={16} strokeWidth={1.9} />
+          </IconButton>
+        )}
+      </MenuPopoverBuilder>
+    </Stack>
+  );
 };
 
 export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
@@ -87,194 +319,47 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
   const isGlobal = tone?.isGlobal === true;
   const isSystem = tone?.isSystem === true;
   const canEdit = !isGlobal && !isSystem;
-  const hasPrompt = Boolean(tone?.promptTemplate);
   const canDeselect = activeToneCount > 1;
   const ctxMenu = useContextMenu();
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const deletePending = useRef(false);
+  const {
+    deleteConfirmOpen,
+    isDeleting,
+    requestDelete: handleDeleteRequest,
+    cancelDelete: handleDeleteCancel,
+    confirmDelete: handleDeleteConfirm,
+  } = useToneRowDelete(id);
 
-  const handleDeleteRequest = useCallback(() => {
-    setDeleteConfirmOpen(true);
-  }, []);
-
-  const handleDeleteCancel = useCallback(() => {
-    if (!deletePending.current) setDeleteConfirmOpen(false);
-  }, []);
-
-  const handleDeleteConfirm = useCallback(async () => {
-    if (deletePending.current) return;
-    deletePending.current = true;
-    const restoreFocus = prepareStyleDeleteFocus(id);
-    setIsDeleting(true);
-    try {
-      await deleteTone(id);
-      setDeleteConfirmOpen(false);
-      restoreFocus();
-    } catch {
-      // deleteTone already logged and surfaced the snackbar; keep the dialog
-      // open so the user can retry or cancel.
-    } finally {
-      deletePending.current = false;
-      setIsDeleting(false);
-    }
-  }, [id]);
-
-  // Context actions must honor the same managed/system-tone restrictions as
-  // the overflow menu. The repository deletion command is not a permission
-  // boundary, so exposing Delete here would otherwise bypass the UI policy.
-  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
-    const items: ContextMenuItem[] = [];
-    if (canEdit) {
-      items.push({
-        label: intl.formatMessage({ defaultMessage: "Edit" }),
-        icon: <Pencil size={16} strokeWidth={1.9} />,
-        onClick: handleEdit,
-      });
-    }
-    items.push({
-      label: intl.formatMessage({ defaultMessage: "View full prompt" }),
-      icon: <Info size={16} strokeWidth={1.9} />,
-      onClick: handleViewPrompt,
-    });
-    if (canDeselect) {
-      items.push({
-        label: intl.formatMessage({ defaultMessage: "Deselect style" }),
-        icon: <CircleMinus size={16} strokeWidth={1.9} />,
-        onClick: handleDeselect,
-      });
-    }
-    if (canEdit) {
-      items.push(
-        { kind: "divider" },
-        {
-          label: intl.formatMessage({ defaultMessage: "Delete" }),
-          icon: <Trash2 size={16} strokeWidth={1.9} />,
-          danger: true,
-          onClick: handleDeleteRequest,
-        },
-      );
-    }
-    return items;
-  }, [
-    canEdit,
-    canDeselect,
-    handleDeleteRequest,
-    handleDeselect,
-    handleEdit,
-    handleViewPrompt,
+  // One descriptor list feeds both affordances, so the menu and the context
+  // menu cannot drift apart on which actions a tone allows.
+  const rowActions = useToneRowActions({
     intl,
-  ]);
-
-  const menuItems = useMemo((): MenuPopoverItem[] => {
-    const items: MenuPopoverItem[] = [];
-    if (canEdit) {
-      items.push({
-        id: "edit",
-        kind: "listItem",
-        title: <FormattedMessage defaultMessage="Edit" />,
-        leading: <Pencil size={16} strokeWidth={1.9} />,
-        onClick: ({ close }) => {
-          close();
-          handleEdit();
-        },
-      });
-    }
-    items.push({
-      id: "view-prompt",
-      kind: "listItem",
-      title: <FormattedMessage defaultMessage="View full prompt" />,
-      leading: <Info size={16} strokeWidth={1.9} />,
-      onClick: ({ close }) => {
-        close();
-        handleViewPrompt();
-      },
-    });
-    if (canDeselect) {
-      items.push({
-        id: "deselect",
-        kind: "listItem",
-        title: <FormattedMessage defaultMessage="Deselect style" />,
-        leading: <CircleMinus size={16} strokeWidth={1.9} />,
-        onClick: ({ close }) => {
-          close();
-          handleDeselect();
-        },
-      });
-    }
-    return items;
-  }, [
     canEdit,
     canDeselect,
-    hasPrompt,
-    handleEdit,
-    handleViewPrompt,
-    handleDeselect,
-  ]);
-
-  const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
+    onEdit: handleEdit,
+    onViewPrompt: handleViewPrompt,
+    onDeselect: handleDeselect,
+    onDelete: handleDeleteRequest,
+  });
+  const contextMenuItems = useMemo(
+    () => toContextMenuItems(rowActions),
+    [rowActions],
+  );
+  const menuItems = useMemo(() => toMenuItems(rowActions), [rowActions]);
 
   const trailing = (
-    <Stack
-      direction="row"
-      spacing={0.5}
-      onClick={stopPropagation}
-      onMouseDown={stopPropagation}
-      sx={{
-        alignItems: "center",
-      }}
-    >
-      {isGlobal && (
-        <Tooltip
-          disableInteractive
-          title={
-            <FormattedMessage defaultMessage="This style is managed by your organization." />
-          }
-        >
-          <span>
-            <IconButton size="small" disabled>
-              <Globe size={16} strokeWidth={1.9} />
-            </IconButton>
-          </span>
-        </Tooltip>
-      )}
-      <MenuPopoverBuilder items={menuItems}>
-        {({ ref, open, isOpen }) => (
-          <IconButton
-            ref={ref}
-            aria-label={intl.formatMessage(
-              { defaultMessage: "More options for {title}" },
-              {
-                title:
-                  tone?.name?.trim() ||
-                  intl.formatMessage({ defaultMessage: "Style" }),
-              },
-            )}
-            aria-haspopup="menu"
-            aria-expanded={isOpen}
-            data-manual-style-more=""
-            onClick={(e) => {
-              e.stopPropagation();
-              open();
-            }}
-            size="small"
-          >
-            <EllipsisVertical size={16} strokeWidth={1.9} />
-          </IconButton>
-        )}
-      </MenuPopoverBuilder>
-    </Stack>
+    <ToneRowTrailing
+      isGlobal={isGlobal}
+      toneName={tone?.name}
+      intl={intl}
+      menuItems={menuItems}
+    />
   );
 
   return (
     <Box
       component="div"
       data-manual-style-row={id}
-      onContextMenu={(e) => {
-        // Yield right-clicks on editable text to the provider's clipboard menu.
-        if (isEditableTarget(e.target)) return;
-        ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
-      }}
+      onContextMenu={(e) => openContextMenu(e, ctxMenu, contextMenuItems)}
     >
       <ListTile
         onClick={handleSelect}
@@ -302,26 +387,18 @@ export const ManualStylingRow = ({ id }: ManualStylingRowProps) => {
               overflow: "hidden",
             }}
           >
-            {tone?.description ||
-              formatPromptForPreview(tone?.promptTemplate ?? "-")}
+            {describeTone(tone)}
           </Typography>
         }
         trailing={trailing}
         sx={{ backgroundColor: "level1", mb: 1, borderRadius: 1 }}
       />
       {ctxMenu.renderMenu()}
-      <ConfirmDialog
+      <ToneDeleteDialog
         isOpen={deleteConfirmOpen}
-        title={<FormattedMessage defaultMessage="Delete style" />}
-        content={
-          <FormattedMessage defaultMessage="Are you sure you want to delete this style?" />
-        }
+        isDeleting={isDeleting}
         onCancel={handleDeleteCancel}
         onConfirm={handleDeleteConfirm}
-        confirmLabel={<FormattedMessage defaultMessage="Delete" />}
-        cancelButtonProps={{ autoFocus: true }}
-        confirmButtonProps={{ color: "error" }}
-        busy={isDeleting}
       />
     </Box>
   );

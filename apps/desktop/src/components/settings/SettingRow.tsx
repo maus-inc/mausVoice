@@ -247,42 +247,83 @@ export const SettingRow = ({
 
   if (interactive) {
     return (
-      <Box
-        id={anchorId}
-        component="button"
-        type="button"
-        onClick={handleClick}
+      <InteractiveSettingRow
+        anchorId={anchorId}
         disabled={disabled}
-        sx={[rowSx, interactiveSx, ...(highlight ? [highlightSx] : [])]}
+        highlight={highlight}
+        onClick={handleClick}
       >
         {body}
-      </Box>
+      </InteractiveSettingRow>
     );
   }
 
   return (
-    <Box
-      id={anchorId}
-      sx={[
-        rowSx,
-        // Wide controls must not squeeze their explanation into a narrow
-        // column. Let them move below it when the card runs out of room.
-        ...(control && !icon
-          ? [
-              {
-                flexWrap: "wrap" as const,
-                "& > div:first-of-type": { flexBasis: "min(200px, 100%)" },
-                "& > :last-child": { maxWidth: "100%", ml: "auto" },
-              },
-            ]
-          : []),
-        ...(highlight ? [highlightSx] : []),
-      ]}
+    <StaticSettingRow
+      anchorId={anchorId}
+      highlight={highlight}
+      wrapsWideControl={Boolean(control && !icon)}
     >
       {body}
-    </Box>
+    </StaticSettingRow>
   );
 };
+
+type SettingRowShellProps = {
+  anchorId: string;
+  highlight: boolean;
+  children: ReactNode;
+};
+
+const InteractiveSettingRow = ({
+  anchorId,
+  disabled,
+  highlight,
+  onClick,
+  children,
+}: SettingRowShellProps & {
+  disabled: boolean | undefined;
+  onClick: () => void;
+}) => (
+  <Box
+    id={anchorId}
+    component="button"
+    type="button"
+    onClick={onClick}
+    disabled={disabled}
+    sx={[rowSx, interactiveSx, ...(highlight ? [highlightSx] : [])]}
+  >
+    {children}
+  </Box>
+);
+
+const StaticSettingRow = ({
+  anchorId,
+  highlight,
+  wrapsWideControl,
+  children,
+}: SettingRowShellProps & { wrapsWideControl: boolean }) => (
+  <Box
+    id={anchorId}
+    sx={[
+      rowSx,
+      // Wide controls must not squeeze their explanation into a narrow column.
+      // Let them move below it when the card runs out of room.
+      ...(wrapsWideControl
+        ? [
+            {
+              flexWrap: "wrap" as const,
+              "& > div:first-of-type": { flexBasis: "min(200px, 100%)" },
+              "& > :last-child": { maxWidth: "100%", ml: "auto" },
+            },
+          ]
+        : []),
+      ...(highlight ? [highlightSx] : []),
+    ]}
+  >
+    {children}
+  </Box>
+);
 
 export type SettingToggleRowProps = {
   settingKey: string;

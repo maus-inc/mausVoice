@@ -406,6 +406,33 @@ describe("redactProviderMessage", () => {
     expect(compared).toBeGreaterThan(80_000);
   });
 
+  // Every other element of each axis, wrapped in each pair of the junk shapes the
+  // sweep exists to survive. Built flat so the cartesian product reads as a product
+  // rather than as seven nested loops.
+  const WRAPPERS = ["", "upstream said: ", ' {"body": "', "} ", " error "];
+  const REAL_LABELS = ["api_key", "API-KEY", "apikey"];
+
+  const wrappedRedactionShapes = (): string[] => {
+    const everyOther = (values: readonly string[]): string[] =>
+      values.filter((_value, position) => position % 2 === 0);
+    const cores = REAL_LABELS.flatMap((label) =>
+      everyOther(BEFORE_SEPARATOR).flatMap((before) =>
+        everyOther(SEPARATORS).flatMap((separator) =>
+          everyOther(AFTER_SEPARATOR).flatMap((after) =>
+            everyOther(VALUES).map(
+              (value) => `${label}${before}${separator}${after}${value}`,
+            ),
+          ),
+        ),
+      ),
+    );
+    return cores.flatMap((core) =>
+      WRAPPERS.flatMap((prefix) =>
+        WRAPPERS.map((suffix) => `${prefix}${core}${suffix}`),
+      ),
+    );
+  };
+
   it("redacts the same shapes surrounded by other text", () => {
     // The junk around an assignment matters as much as the assignment: it is
     // what proves the scanner finds the same value with the document's own text
@@ -424,39 +451,19 @@ describe("redactProviderMessage", () => {
     // The sweep above keeps the strict two-sided equality over all 80,190
     // unwrapped shapes, and the named tests in this file are what pin the other
     // direction -- that prose around a secret survives.
-    const WRAPPERS = ["", "upstream said: ", ' {"body": "', "} ", " error "];
-    const REAL_LABELS = ["api_key", "API-KEY", "apikey"];
-    const everyOther = (values: readonly string[]): string[] =>
-      values.filter((_value, position) => position % 2 === 0);
     let compared = 0;
     let hidMore = 0;
-    for (const label of REAL_LABELS) {
-      for (const before of everyOther(BEFORE_SEPARATOR)) {
-        for (const separator of everyOther(SEPARATORS)) {
-          for (const after of everyOther(AFTER_SEPARATOR)) {
-            for (const value of everyOther(VALUES)) {
-              const core = `${label}${before}${separator}${after}${value}`;
-              for (const prefix of WRAPPERS) {
-                for (const suffix of WRAPPERS) {
-                  compared += 1;
-                  const message = `${prefix}${core}${suffix}`;
-                  const shipped =
-                    providerErrorUtils.redactProviderMessage(message);
-                  const revealedByShip = shipped.split(MARKER).join("");
-                  const revealedByPattern = referenceRedact(message)
-                    .split(MARKER)
-                    .join("");
-                  expect(
-                    isSubsequence(revealedByShip, revealedByPattern),
-                    `shipped scrubber revealed more than the pattern on ${JSON.stringify(message)}`,
-                  ).toBe(true);
-                  if (shipped !== referenceRedact(message)) hidMore += 1;
-                }
-              }
-            }
-          }
-        }
-      }
+    for (const message of wrappedRedactionShapes()) {
+      compared += 1;
+      const shipped = providerErrorUtils.redactProviderMessage(message);
+      const reference = referenceRedact(message);
+      const revealedByShip = shipped.split(MARKER).join("");
+      const revealedByPattern = reference.split(MARKER).join("");
+      expect(
+        isSubsequence(revealedByShip, revealedByPattern),
+        `shipped scrubber revealed more than the pattern on ${JSON.stringify(message)}`,
+      ).toBe(true);
+      if (shipped !== reference) hidMore += 1;
     }
     expect(compared).toBeGreaterThan(15_000);
     // The relationship above has to be able to differ at all, or it would be a

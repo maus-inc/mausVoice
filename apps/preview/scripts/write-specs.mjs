@@ -9,6 +9,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import prettier from "prettier";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "specs");
@@ -487,8 +488,7 @@ Patch-only. Persist: edit \`ConfirmDialog.tsx\` → all direct call sites. Radii
 Anchor menu of ListTile rows + dividers + hover submenus + generic builders.
 
 ## Visual tokens
-Popover paper: level1, radius 14, hairline, premiumSurface.hover. Anchor bottom-center → transform top-center; mousedown stops propagation. Submenu: fixed box at parent rect right, zIndex 1300, paper fill, overflow hidden, shape radius; items role=menuitem.
-
+Popover paper uses the shared chrome-menu radius, hairline, rest shadow and background; it scrolls vertically when needed. The default anchor is bottom-center → top-center, and mousedown stops propagation. A submenu anchors to the right of its parent and uses the same paper styling.
 ## Motion
 MUI popover enter/exit; submenu opens on mouseenter, closes on mouseleave (hide-timer ref present).
 
@@ -496,8 +496,7 @@ MUI popover enter/exit; submenu opens on mouseenter, closes on mouseleave (hide-
 open / closed / submenu open / item activation (closes via injected close).
 
 ## Accessibility
-role=menuitem wrappers; ListTile rows are buttons. UNKNOWN: arrow-key traversal across submenu tiers is not implemented in source (hover-driven) — flag as a11y gap.
-
+Action rows expose the menuitem role on the focusable control itself; checked style rows expose menuitemcheckbox and their current state. A separate edit action is a sibling, not a nested control. Actions that open a dialog can wait for the menu's exit and trigger-focus restoration before opening it; New style and Edit style use this handoff. Opening focuses the first action. Up/Down wrap between actions; Home/End move to the ends, Enter/Space activate, Tab closes, and Escape restores the trigger through MUI Popover. A keyboard-opened submenu focuses its first action; ArrowLeft closes it. After keyboard navigation, a stationary pointer does not add a second hover highlight; moving the pointer restores hover feedback. Generic builder content retains its own semantics. Native screen-reader behavior has not been verified.
 ## Live-spec mapping
 Popover radius live. Item/menu logic patch-only → seven call sites.
 `,
@@ -506,16 +505,15 @@ Popover radius live. Item/menu logic patch-only → seven call sites.
     "context-menu",
     `# ContextMenu · useContextMenu (\`context-menu\`)
 
-- Status: **reused** — real component/hook/provider from \`${D}/components/common/ContextMenu.tsx\`.
-- Source of truth: \`${D}/components/common/ContextMenu.tsx\`.
+- Status: **reused** — real component/hook/provider from \`${D}/components/common/\`.
+- Source of truth: \`ContextMenu.tsx\` (provider), \`ContextMenuSurface.tsx\` (surface), \`useContextMenu.tsx\` (hook), and \`context-menu.constants.ts\`.
 - Used in: ChatMessageBubble, ConversationListItem, DictionaryRow, Root (provider), ManualStylingRow, TranscriptRow.
 
 ## Purpose
 Right-click menus with viewport clamping, clipboard menu on editables (provider), focus restoration.
 
 ## Visual tokens
-Constants in source (MENU_OFFSET, PADDING, MENU_MIN_WIDTH, MENU_MAX_HEIGHT, ITEM_HEIGHT — read exact numbers in file). Items: label + optional icon + accelerator; danger = error.main; disabled dimmed. Portal to body at zIndex 1400.
-
+Constants in \`context-menu.constants.ts\` (MENU_OFFSET, PADDING, MENU_MIN_WIDTH, MENU_MAX_HEIGHT, ITEM_HEIGHT). The surface is capped to the viewport and positioned using its measured dimensions. Items: label + optional icon + accelerator; danger = error.main; disabled dimmed. Portal to body at zIndex 1400.
 ## Motion
 Instant open at cursor + offset; no enter animation in source. Closes on click-away, external scroll, blur, Esc.
 
@@ -523,10 +521,9 @@ Instant open at cursor + offset; no enter animation in source. Closes on click-a
 default / empty list (falls through to native menu) / danger / disabled / divider / autoFocus.
 
 ## Accessibility
-Menu auto-focuses; arrows/Enter navigate (actionable indices skip dividers); Esc captured + focus restored only when the dismissal keeps focus in-page (click-away/scroll do NOT steal focus back); outgoing focus target prefers the right-clicked element.
-
+Menu auto-focuses without scrolling the page; arrows/Enter navigate (actionable indices skip dividers); Esc captured + focus restored only when the dismissal keeps focus in-page (click-away/scroll do NOT steal focus back); outgoing focus target prefers the right-clicked element. Keyboard navigation reveals the active item within a scrolling menu and suppresses a stale hover highlight until the pointer moves. Scroll dismissal starts after the opening frame, so a previously queued scroll does not close the menu as it opens.
 ## Live-spec mapping
-Patch-only (constants + handlers in source). Persist: edit \`ContextMenu.tsx\` → six call sites.
+Patch-only (constants + handlers in source). Changes apply to all call sites.
 `,
   ],
   [
@@ -1165,7 +1162,18 @@ Docs-only slice. Persist: edit \`MicrophoneSelector.tsx\` → MicCheckForm + Mic
   ],
 ];
 
-for (const [id, md] of SPECS) {
-  writeFileSync(join(root, `${id}.md`), `${md}\n`);
-}
+// The specs are markdown that `format:check` covers, so the generator formats its
+// own output. Without this a regenerated spec differs from the committed one by
+// heading spacing, table padding and the trailing newline.
+const rendered = await Promise.all(
+  SPECS.map(async ([id, md]) => {
+    const file = join(root, `${id}.md`);
+    const formatted = await prettier.format(md, {
+      parser: "markdown",
+      filepath: file,
+    });
+    return [file, formatted];
+  }),
+);
+for (const [file, text] of rendered) writeFileSync(file, text);
 console.log(`wrote ${SPECS.length} spec files to ${root}`);

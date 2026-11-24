@@ -206,25 +206,31 @@ function quotedKeyMatches(text, end, expected) {
  * presence check that also fired on the word `keywords` appearing in prose would be its own
  * kind of wrong.
  */
+const skipWhitespace = (line, from) => {
+  let i = from;
+  while (line[i] === " " || line[i] === "\t") i += 1;
+  return i;
+};
+
+const assignsAt = (line, from) => line[skipWhitespace(line, from)] === "=";
+
+// A quoted key IS the bare key as far as a TOML parser is concerned, and gitleaks decodes
+// the config into a map, so `'keywords' = [...]` populates `Rule.Keywords` exactly as
+// `keywords = [...]` does. Line-anchored on purpose: the surrounding `description` string
+// is free text, and a presence check that also fired on the word appearing in prose would
+// be its own kind of wrong.
+function lineAssignsKeywords(line) {
+  const start = skipWhitespace(line, 0);
+  if (line.startsWith("keywords", start)) {
+    return assignsAt(line, start + "keywords".length);
+  }
+  if (!isTomlQuote(line[start])) return false;
+  const span = quotedKeySpan(line, start);
+  return span.key === "keywords" && assignsAt(line, span.end);
+}
+
 function hasKeywordsAssignment(text) {
-  return text.split("\n").some((line) => {
-    let i = 0;
-    while (line[i] === " " || line[i] === "\t") i += 1;
-    if (line.startsWith("keywords", i)) {
-      let j = i + "keywords".length;
-      while (line[j] === " " || line[j] === "\t") j += 1;
-      if (line[j] === "=") return true;
-    }
-    if (isTomlQuote(line[i])) {
-      const span = quotedKeySpan(line, i);
-      if (span.key === "keywords") {
-        let j = span.end;
-        while (line[j] === " " || line[j] === "\t") j += 1;
-        if (line[j] === "=") return true;
-      }
-    }
-    return false;
-  });
+  return text.split("\n").some(lineAssignsKeywords);
 }
 
 function isBareUseDefaultKey(text, cursor) {
@@ -384,24 +390,8 @@ export function updaterRulePattern(rules) {
   return section.slice(valueStart + delimiter, end - delimiter).trim();
 }
 
-function main() {
-  // Comments are stripped up front so a `useDefault = false` or `[allowlist]`
-  // mention inside a `#` remark can neither trip nor mask a check.
-  const raw = stripTomlComments(readFileSync(configPath, "utf8"));
-
-  // What this guard does NOT inspect, so nobody reads its success line as more than it
-  // is: `[allowlist] paths`. An entry there can exempt key-shaped files just as
-  // effectively as naming the preamble outright -- `'''keys/.*'''` covers every key
-  // file in a directory -- and this guard would report that config as clean. It checks the
-  // two preamble STRINGS and the shape of the `[[rules]]` block, nothing else.
-  //
-  // That is a deliberate boundary rather than an oversight. The allowlist lives on the base
-  // branch, which is the copy the scan trusts, so a pull request cannot widen it against
-  // itself: changing it takes a change to the base branch, reviewed on its own. The gate
-  // this guard backs would not get stronger by second-guessing a list it does not own.
-
+function assertAllowlistIsNotExempting(allowlist) {
   // (a) The preamble must NOT be exempted by the global allowlist.
-  const allowlist = section(raw, "[allowlist]", "[[rules]]");
   for (const marker of [PREAMBLE, PREAMBLE_B64]) {
     if (allowlist.includes(marker)) {
       fail(
@@ -410,7 +400,6 @@ function main() {
       );
     }
   }
-
   // (d) `useDefault` must NOT be nested inside the [allowlist] section.
   if (allowlist.includes("useDefault")) {
     fail(
@@ -418,7 +407,9 @@ function main() {
         "ignores it. Remove it from [allowlist].",
     );
   }
+}
 
+function assertExtendEnablesBuiltIns(raw) {
   // A custom -c config replaces the built-ins unless [extend] explicitly
   // enables them. Merely omitting useDefault=false is not sufficient.
   // Gitleaks v8.18.0 README: Configuration / [extend].
@@ -435,7 +426,9 @@ function main() {
       "gitleaks.toml: explicitly set [extend] useDefault = true so the custom updater rule supplements the built-in detectors.",
     );
   }
+}
 
+function updaterRuleRegex(raw) {
   // (b) The preamble MUST be present as a real detection rule's regex.
   const rules = rulesSection(raw);
   if (rules === null) {
@@ -462,7 +455,6 @@ function main() {
       );
     }
   }
-
   // (c) The [[rules]] block must have NO `keywords` key. A keyword pre-filter is
   // matched against the file's lowercased text before the regex runs, so a keyword
   // that a real key file does not contain suppresses the rule entirely -- which is
@@ -474,43 +466,65 @@ function main() {
         "of a real key. Remove it.",
     );
   }
+  return rulePattern;
+}
 
-  // Prove the rule regex (captured via the [^']* pattern from the prior
-  // SonarCloud fixes) actually fires on a fixture containing the preamble,
-  // so real Gitleaks would exit non-zero on such a file.
+// Two fixtures, both shaped like something that actually gets committed.
+//
+// The first is what `tauri signer generate` writes: a plaintext untrusted-comment
+// line, then base64 of the key payload. The previous fixture was
+// `<plaintext line>\n<base64 of the preamble>\n<junk>`, a shape no tool produces
+// and which the previous rule matched -- so it proved the rule matched the
+// fixture rather than that it matched a key.
+const REAL_KEY_FIXTURE =
+  "untrusted comment: rsign encrypted secret key\n" +
+  "RWQ5aGF1c2VmaWtlc2VjcmV0a2V5bWF0ZXJpYWxmb3J1cHRlci0y\n";
+
+function assertRuleMatchesCommittedKeys(rulePattern) {
   let re;
   try {
     re = new RegExp(rulePattern);
   } catch (err) {
     fail(`gitleaks.toml: rule regex is not valid: ${err.message}`);
   }
-
-  // Two fixtures, both shaped like something that actually gets committed.
-  //
-  // The first is what `tauri signer generate` writes: a plaintext untrusted-comment
-  // line, then base64 of the key payload. The previous fixture was
-  // `<plaintext line>\n<base64 of the preamble>\n<junk>`, a shape no tool produces
-  // and which the previous rule matched -- so it proved the rule matched the
-  // fixture rather than that it matched a key.
-  const realKey =
-    "untrusted comment: rsign encrypted secret key\n" +
-    "RWQ5aGF1c2VmaWtlc2VjcmV0a2V5bWF0ZXJpYWxmb3J1cHRlci0y\n";
-  // The second is that same file base64-wrapped whole, as a CI artifact carries it.
-  const wrappedKey = Buffer.from(realKey, "utf8").toString("base64") + "\n";
+  // The second fixture is that same file base64-wrapped whole, as a CI artifact
+  // carries it.
+  const wrappedKey =
+    Buffer.from(REAL_KEY_FIXTURE, "utf8").toString("base64") + "\n";
   for (const [label, fixture] of [
-    ["a key file", realKey],
+    ["a key file", REAL_KEY_FIXTURE],
     ["a base64-wrapped key file", wrappedKey],
   ]) {
     if (!re.test(fixture)) {
       fail(
         `gitleaks.toml: the configured rule does NOT match ${label} shaped like a ` +
-          "committed Tauri updater signing key — key commits would slip through.",
+          "committed Tauri updater signing key, so key commits would slip through.",
       );
     }
   }
+}
+
+function main() {
+  // Comments are stripped up front so a `useDefault = false` or `[allowlist]`
+  // mention inside a `#` remark can neither trip nor mask a check.
+  const raw = stripTomlComments(readFileSync(configPath, "utf8"));
+
+  // What this guard does NOT inspect, so nobody reads its success line as more than it
+  // is: `[allowlist] paths`. An entry there can exempt key-shaped files just as
+  // effectively as naming the preamble outright -- `'''keys/.*'''` covers every key
+  // file in a directory -- and this guard would report that config as clean. It checks the
+  // two preamble STRINGS and the shape of the `[[rules]]` block, nothing else.
+  //
+  // That is a deliberate boundary rather than an oversight. The allowlist lives on the base
+  // branch, which is the copy the scan trusts, so a pull request cannot widen it against
+  // itself: changing it takes a change to the base branch, reviewed on its own. The gate
+  // this guard backs would not get stronger by second-guessing a list it does not own.
+  assertAllowlistIsNotExempting(section(raw, "[allowlist]", "[[rules]]"));
+  assertExtendEnablesBuiltIns(raw);
+  assertRuleMatchesCommittedKeys(updaterRuleRegex(raw));
 
   console.log(
-    "OK: gitleaks.toml config-structure guard passed — the updater private-key " +
+    "OK: gitleaks.toml config-structure guard passed: the updater private-key " +
       "preamble is a detection rule (not an allowlist exemption), has no " +
       "`keywords` pre-filter, and [extend] explicitly enables the default rule set.",
   );

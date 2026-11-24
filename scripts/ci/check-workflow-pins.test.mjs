@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -81,59 +87,68 @@ function leadingSpaces(line) {
   return /^ */.exec(line)[0].length;
 }
 
+// The lines belonging to a `uses:` step: everything indented at least as deep,
+// up to the next step or job.
+function stepBodyLines(lines, usesIndex) {
+  const usesIndent = leadingSpaces(lines[usesIndex]);
+  const body = [];
+  for (let index = usesIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() === "") {
+      body.push(line);
+      continue;
+    }
+    const indent = leadingSpaces(line);
+    // `with:` is a sibling of `uses:` at the same indent. A less-indented
+    // line is the next step or job. Another `uses:` at this indent is the
+    // next step and must not leak into this step's cache flags.
+    if (indent < usesIndent) break;
+    if (indent === usesIndent && USES_KEY_RE.test(line)) break;
+    body.push(line);
+  }
+  return body;
+}
+
+function collectPins(file, lines, pins, setupNodeSteps) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = PIN_RE.exec(lines[index]);
+    if (!match) {
+      if (USES_KEY_RE.test(lines[index])) {
+        pins.push({
+          file,
+          line: index + 1,
+          pin: null,
+          comment: null,
+          unparsed: lines[index].trim(),
+        });
+      }
+      continue;
+    }
+
+    pins.push({ file, line: index + 1, pin: match[1], comment: match[2] });
+    if (!match[1].startsWith("actions/setup-node@")) continue;
+
+    const stepLines = stepBodyLines(lines, index);
+    setupNodeSteps.push({
+      file,
+      line: index + 1,
+      hasCachePnpm: stepLines.some((l) => /^\s*cache:\s*pnpm\s*$/.test(l)),
+      hasPackageManagerCacheFalse: stepLines.some((l) =>
+        /^\s*package-manager-cache:\s*false\s*$/.test(l),
+      ),
+    });
+  }
+}
+
 function collectWorkflowFacts(dir = WORKFLOW_DIR) {
   const pins = [];
   const setupNodeSteps = [];
 
   // Both suffixes: GitHub accepts either, so a workflow saved as `.yaml` would
   // otherwise carry an unpinned action past this guard entirely.
-  for (const file of readdirSync(dir).filter((f) =>
-    /\.ya?ml$/.test(f),
-  )) {
-      const lines = readFileSync(join(dir, file), "utf8").split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const match = PIN_RE.exec(lines[i]);
-      if (!match) {
-        if (USES_KEY_RE.test(lines[i])) {
-          pins.push({
-            file,
-            line: i + 1,
-            pin: null,
-            comment: null,
-            unparsed: lines[i].trim(),
-          });
-        }
-        continue;
-      }
-
-      pins.push({ file, line: i + 1, pin: match[1], comment: match[2] });
-      if (!match[1].startsWith("actions/setup-node@")) continue;
-
-      const usesIndent = leadingSpaces(lines[i]);
-      const stepLines = [];
-      for (let j = i + 1; j < lines.length; j++) {
-        if (lines[j].trim() === "") {
-          stepLines.push(lines[j]);
-          continue;
-        }
-        const indent = leadingSpaces(lines[j]);
-        // `with:` is a sibling of `uses:` at the same indent. A less-indented
-        // line is the next step or job. Another `uses:` at this indent is the
-        // next step and must not leak into this step's cache flags.
-        if (indent < usesIndent) break;
-        if (indent === usesIndent && USES_KEY_RE.test(lines[j])) break;
-        stepLines.push(lines[j]);
-      }
-
-      setupNodeSteps.push({
-        file,
-        line: i + 1,
-        hasCachePnpm: stepLines.some((l) => /^\s*cache:\s*pnpm\s*$/.test(l)),
-        hasPackageManagerCacheFalse: stepLines.some((l) =>
-          /^\s*package-manager-cache:\s*false\s*$/.test(l),
-        ),
-      });
-    }
+  for (const file of readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))) {
+    const lines = readFileSync(join(dir, file), "utf8").split("\n");
+    collectPins(file, lines, pins, setupNodeSteps);
   }
 
   return { pins, setupNodeSteps };
@@ -221,7 +236,9 @@ describe("GitHub Actions pin guard", () => {
     // Asserting every row's runtime against the two that exist gives it a subject: eleven
     // rows today, and a `node20` row would now fail here rather than being invisible.
     const badRuntime = Object.entries(VERIFIED_ACTION_PINS)
-      .filter(([, [, , runtime]]) => runtime !== "node24" && runtime !== "composite")
+      .filter(
+        ([, [, , runtime]]) => runtime !== "node24" && runtime !== "composite",
+      )
       .map(([name, [pin, , runtime]]) => `${name} ${pin} declares ${runtime}`);
     assert.deepEqual(
       badRuntime,
@@ -229,7 +246,6 @@ describe("GitHub Actions pin guard", () => {
       "every pinned action must run on node24 or be a composite action; a node20 pin will " +
         "fail once GitHub removes the Node 20 runtime (2026-09-16)",
     );
-
   });
 
   it("labels every pin with the version comment that matches the map", () => {

@@ -8,7 +8,7 @@ import { goToOnboardingPage } from "../../actions/onboarding.actions";
 import { getHotkeyRepo } from "../../repos";
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
-import { registerHotkeys } from "../../utils/app.utils";
+import { upsertHotkey } from "../../utils/app.utils";
 import { createId } from "../../utils/id.utils";
 import {
   beginOnboardingHotkeyWrite,
@@ -165,13 +165,10 @@ export const KeybindingsForm = () => {
     beginOnboardingHotkeyWrite(newValue.id, primaryHotkey);
     markOptimisticHotkeyWrite(newValue.actionName, newValue.id);
     const revision = onboardingHotkeyRevision(newValue.id);
-    produceAppState((draft) => {
-      registerHotkeys(draft, [newValue]);
-      if (!draft.settings.hotkeyIds.includes(newValue.id)) {
-        draft.settings.hotkeyIds.push(newValue.id);
-      }
-      draft.settings.hotkeysStatus = "success";
-    }, releaseWrite.lease);
+    produceAppState(
+      (draft) => upsertHotkey(draft, newValue),
+      releaseWrite.lease,
+    );
     enqueueHotkeyWrite(async () => {
       try {
         try {

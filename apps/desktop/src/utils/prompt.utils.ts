@@ -190,6 +190,42 @@ export const estimateTokenCount = (value: string): number => {
   return tokens;
 };
 
+const countTermWords = (term: string): number =>
+  term.split(/\s+/).filter(Boolean).length;
+
+const termFitsLimits = (trimmed: string, budget: VocabularyBudget): boolean => {
+  const length = codePointLength(trimmed);
+  return (
+    length > 0 &&
+    length <= (budget.maxTermLength ?? Infinity) &&
+    countTermWords(trimmed) <= (budget.maxWordsPerTerm ?? Infinity)
+  );
+};
+
+type VocabularyTally = {
+  capped: string[];
+  characters: number;
+  words: number;
+  estimatedTokens: number;
+};
+
+const termFitsBudget = (
+  { capped, characters, words, estimatedTokens }: VocabularyTally,
+  trimmed: string,
+  budget: VocabularyBudget,
+): boolean => {
+  const separator = capped.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
+  const separatorTokens = capped.length > 0 ? estimateTokenCount(", ") : 0;
+  const termTokens = estimateTokenCount(trimmed);
+  return (
+    capped.length < budget.maxEntries &&
+    characters + separator + codePointLength(trimmed) <= budget.maxCharacters &&
+    words + countTermWords(trimmed) <= (budget.maxWords ?? Infinity) &&
+    estimatedTokens + separatorTokens + termTokens <=
+      (budget.maxEstimatedTokens ?? Infinity)
+  );
+};
+
 export const capVocabularyTerms = (
   terms: string[],
   budget: VocabularyBudget,
@@ -199,45 +235,40 @@ export const capVocabularyTerms = (
   characters: number;
   estimatedTokens: number;
 } => {
-  const capped: string[] = [];
-  let characters = 0;
-  let estimatedTokens = 0;
-  let words = 0;
+  const tally: VocabularyTally = {
+    capped: [],
+    characters: 0,
+    words: 0,
+    estimatedTokens: 0,
+  };
   let truncated = false;
-
-  const wordCount = (term: string) => term.split(/\s+/).filter(Boolean).length;
 
   for (const term of terms) {
     const trimmed = term.trim();
     const length = codePointLength(trimmed);
-    const fitsTermLimits =
-      length > 0 &&
-      length <= (budget.maxTermLength ?? Infinity) &&
-      wordCount(trimmed) <= (budget.maxWordsPerTerm ?? Infinity);
-    if (!fitsTermLimits) {
+    if (!termFitsLimits(trimmed, budget)) {
       truncated = truncated || length > 0;
       continue;
     }
-    const separator = capped.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
-    const separatorTokens = capped.length > 0 ? estimateTokenCount(", ") : 0;
-    const termTokens = estimateTokenCount(trimmed);
-    if (
-      capped.length >= budget.maxEntries ||
-      characters + separator + length > budget.maxCharacters ||
-      words + wordCount(trimmed) > (budget.maxWords ?? Infinity) ||
-      estimatedTokens + separatorTokens + termTokens >
-        (budget.maxEstimatedTokens ?? Infinity)
-    ) {
+    if (!termFitsBudget(tally, trimmed, budget)) {
       truncated = true;
       break;
     }
-    capped.push(trimmed);
-    characters += separator + length;
-    words += wordCount(trimmed);
-    estimatedTokens += separatorTokens + termTokens;
+    const separator = tally.capped.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
+    const separatorTokens =
+      tally.capped.length > 0 ? estimateTokenCount(", ") : 0;
+    tally.capped.push(trimmed);
+    tally.characters += separator + length;
+    tally.words += countTermWords(trimmed);
+    tally.estimatedTokens += separatorTokens + estimateTokenCount(trimmed);
   }
 
-  return { terms: capped, truncated, characters, estimatedTokens };
+  return {
+    terms: tally.capped,
+    truncated,
+    characters: tally.characters,
+    estimatedTokens: tally.estimatedTokens,
+  };
 };
 
 /**

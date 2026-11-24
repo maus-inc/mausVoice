@@ -51,27 +51,14 @@ const languageOptions = (
   ] satisfies DictationLanguageCode[]
 ).map((code) => ({ code, label: getRenderSafeLanguageLabel(code) }));
 
-export default function TranscriptionsPage() {
-  const intl = useIntl();
-  const styleLabelId = useId();
-  const languageLabelId = useId();
-  const transcriptionIds = useAppStore(
-    (state) => state.transcriptions.transcriptionIds,
-  );
-  const transcriptionCreatedAtSignature = useAppStore((state) =>
-    state.transcriptions.transcriptionIds
-      .map((id) => `${id}:${state.transcriptionById[id]?.createdAt ?? ""}`)
-      .join("|"),
-  );
-  const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
-  const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
-  const tones = useAppStore((state) =>
-    getSortedToneIds(state)
-      .map((id) => getRec(state.toneById, id))
-      .filter((tone): tone is Tone => Boolean(tone)),
-  );
+// The `: string` annotation is the exhaustiveness net for this switch. With
+// it, adding a member to `ThreadDayGroup` without a label here is TS2366 at
+// this line; without it the inferred type silently becomes `string |
+// undefined`, which renders as a missing heading rather than a build error.
+const useImportDialogState = (
+  defaultLanguage: Parameters<typeof toSelectableDictationLanguage>[0],
+) => {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const importDialogTitleId = useDialogTitleId();
   const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] =
     useState<DictationLanguageCode>(
@@ -94,7 +81,23 @@ export default function TranscriptionsPage() {
     prevImportDialogOpen.current = importDialogOpen;
   }, [importDialogOpen]);
 
-  const dayLabelById = useMemo(() => {
+  return {
+    importDialogOpen,
+    setImportDialogOpen,
+    selectedToneId,
+    setSelectedToneId,
+    selectedLanguage,
+    setSelectedLanguage,
+    isImporting,
+    setIsImporting,
+  };
+};
+
+const useTranscriptionDayLabels = (
+  transcriptionIds: string[],
+  transcriptionCreatedAtSignature: string,
+): Map<string, ThreadDayGroup | null> =>
+  useMemo(() => {
     const labels = new Map<string, ThreadDayGroup | null>();
     const occupied = new Set<ThreadDayGroup>();
     let previous: ThreadDayGroup | null = null;
@@ -113,20 +116,57 @@ export default function TranscriptionsPage() {
     return labels;
   }, [transcriptionIds, transcriptionCreatedAtSignature]);
 
-  // The `: string` annotation is the exhaustiveness net for this switch. With
-  // it, adding a member to `ThreadDayGroup` without a label here is TS2366 at
-  // this line; without it the inferred type silently becomes `string |
-  // undefined`, which renders as a missing heading rather than a build error.
-  const groupLabel = (group: ThreadDayGroup): string => {
-    switch (group) {
-      case "today":
-        return intl.formatMessage({ defaultMessage: "Today" });
-      case "yesterday":
-        return intl.formatMessage({ defaultMessage: "Yesterday" });
-      case "earlier":
-        return intl.formatMessage({ defaultMessage: "Earlier" });
-    }
-  };
+const threadGroupLabel = (
+  intl: ReturnType<typeof useIntl>,
+  group: ThreadDayGroup,
+): string => {
+  switch (group) {
+    case "today":
+      return intl.formatMessage({ defaultMessage: "Today" });
+    case "yesterday":
+      return intl.formatMessage({ defaultMessage: "Yesterday" });
+    case "earlier":
+      return intl.formatMessage({ defaultMessage: "Earlier" });
+  }
+};
+
+export default function TranscriptionsPage() {
+  const intl = useIntl();
+  const styleLabelId = useId();
+  const languageLabelId = useId();
+  const transcriptionIds = useAppStore(
+    (state) => state.transcriptions.transcriptionIds,
+  );
+  const transcriptionCreatedAtSignature = useAppStore((state) =>
+    state.transcriptions.transcriptionIds
+      .map((id) => `${id}:${state.transcriptionById[id]?.createdAt ?? ""}`)
+      .join("|"),
+  );
+  const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
+  const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
+  const tones = useAppStore((state) =>
+    getSortedToneIds(state)
+      .map((id) => getRec(state.toneById, id))
+      .filter((tone): tone is Tone => Boolean(tone)),
+  );
+  const {
+    importDialogOpen,
+    setImportDialogOpen,
+    selectedToneId,
+    setSelectedToneId,
+    selectedLanguage,
+    setSelectedLanguage,
+    isImporting,
+    setIsImporting,
+  } = useImportDialogState(defaultLanguage);
+  const importDialogTitleId = useDialogTitleId();
+
+  const dayLabelById = useTranscriptionDayLabels(
+    transcriptionIds,
+    transcriptionCreatedAtSignature,
+  );
+
+  const groupLabel = (group: ThreadDayGroup) => threadGroupLabel(intl, group);
 
   const handleImport = async () => {
     setIsImporting(true);

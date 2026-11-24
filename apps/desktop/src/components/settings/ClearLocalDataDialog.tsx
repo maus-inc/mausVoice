@@ -59,24 +59,7 @@ const describeClearFailure = (error: unknown, intl: IntlShape): string => {
   });
 };
 
-export const ClearLocalDataDialog = () => {
-  const intl = useIntl();
-  const open = useAppStore((state) => state.settings.clearLocalDataDialogOpen);
-  const [confirmationValue, setConfirmationValue] = useState("");
-  const [isClearing, setIsClearing] = useState(false);
-  const clearInFlight = useRef(false);
-  const confirmationRef = useRef<HTMLInputElement | null>(null);
-
-  // The field someone has to type into gets the focus, spelled out here rather
-  // than as an `autoFocus` attribute: the attribute fires as markup and cannot
-  // be deferred, so it races anything else that moves focus in the same commit.
-  // This mirrors ContextMenu's "focus after commit, not via autoFocus" rule.
-  useEffect(() => {
-    if (open) {
-      confirmationRef.current?.focus();
-    }
-  }, [open]);
-
+const useLocalDataClearState = () => {
   const [clearStarted, setClearStarted] = useState(false);
   const [recoveryRequired, setRecoveryRequired] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -98,6 +81,49 @@ export const ClearLocalDataDialog = () => {
       draft.settings.clearLocalDataDialogOpen = true;
     });
   }, []);
+
+  return {
+    clearStarted,
+    setClearStarted,
+    recoveryRequired,
+    setRecoveryRequired,
+    errorMessage,
+    setErrorMessage,
+    errorRef,
+    clearStartedRef,
+    releaseClearRef,
+  };
+};
+
+export const ClearLocalDataDialog = () => {
+  const intl = useIntl();
+  const open = useAppStore((state) => state.settings.clearLocalDataDialogOpen);
+  const [confirmationValue, setConfirmationValue] = useState("");
+  const [isClearing, setIsClearing] = useState(false);
+  const clearInFlight = useRef(false);
+  const confirmationRef = useRef<HTMLInputElement | null>(null);
+
+  // The field someone has to type into gets the focus, spelled out here rather
+  // than as an `autoFocus` attribute: the attribute fires as markup and cannot
+  // be deferred, so it races anything else that moves focus in the same commit.
+  // This mirrors ContextMenu's "focus after commit, not via autoFocus" rule.
+  useEffect(() => {
+    if (open) {
+      confirmationRef.current?.focus();
+    }
+  }, [open]);
+
+  const {
+    clearStarted,
+    setClearStarted,
+    recoveryRequired,
+    setRecoveryRequired,
+    errorMessage,
+    setErrorMessage,
+    errorRef,
+    clearStartedRef,
+    releaseClearRef,
+  } = useLocalDataClearState();
 
   const close = () => {
     if (clearInFlight.current || clearStartedRef.current) return;
