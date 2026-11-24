@@ -617,7 +617,16 @@ const applyDecision = async (
   editedText: string | null,
 ): Promise<void> => {
   const current = openReview(id);
-  if (!current || current.busy) return;
+  if (!current) return;
+  // Cancel wins over an Open that is still saving. The pill sends it while the
+  // hand-off is in flight, and the busy guard used to drop it, so a save that
+  // then succeeded opened Chats after the person had cancelled.
+  if (action === "cancel" && current.openSavePending) {
+    current.openSaveController?.abort();
+    settle(id, null, "cancel");
+    return;
+  }
+  if (current.busy) return;
   current.busy = true;
   clearReviewTimeout();
   const session = current.session;
