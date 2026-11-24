@@ -175,7 +175,12 @@ const handlerBody = (path, variant) => {
     // but kept the old call in a `//` comment reads as a handler to `includes()`,
     // and every guard built on the arm then passes over an arm that does nothing.
     const executable = armText.replace(/\/\/[^\n]*/g, "");
-    if (!new RegExp(`(?<!fn )${fnName}\\(`).test(executable)) return "";
+    // The arm may handle the message inline while a same-named helper exists for
+    // something else. Then the arm is the handler, and returning an empty string
+    // failed a correct file; the caller reads the arm instead.
+    if (!new RegExp(`(?<!fn )${fnName}\\(`).test(executable)) {
+      return collapse(armText);
+    }
     const fnStart = text.lastIndexOf("\n", fnAt) + 1;
     let depth = 0;
     for (let i = text.indexOf("{", fnAt); i < text.length; i += 1) {
