@@ -264,16 +264,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
       return null;
     }
 
-    const finalStatus = await this.getModelStatus(model, true);
-    if (!finalStatus.downloaded || !finalStatus.valid) {
-      throw new Error(
-        finalStatus.validationError ||
-          `Model '${model}' failed validation (${this.mode.toUpperCase()})`,
-      );
-    }
-
-    this.markModelReady(model);
-    return finalStatus;
+    return await this.requireValidModel(model);
   }
 
   async pauseDownload(
@@ -572,15 +563,27 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     const download = await this.downloadModelInternal(model);
     this.assertDownloadCompleted(model, download);
 
-    const finalStatus = await this.getModelStatus(model, true);
-    if (!finalStatus.downloaded || !finalStatus.valid) {
+    await this.requireValidModel(model);
+  }
+
+  /// Re-reads the model status after a download, marks the model ready and
+  /// returns the status, throwing when the download did not validate.
+  ///
+  /// Both download paths need the identical check, and the error text names the
+  /// sidecar mode, so it lives here instead of in each caller.
+  private async requireValidModel(
+    model: LocalWhisperModel,
+  ): Promise<LocalSidecarModelStatus> {
+    const status = await this.getModelStatus(model, true);
+    if (!status.downloaded || !status.valid) {
       throw new Error(
-        finalStatus.validationError ||
+        status.validationError ||
           `Model '${model}' failed validation (${this.mode.toUpperCase()})`,
       );
     }
 
     this.markModelReady(model);
+    return status;
   }
 
   private markModelReady(model: LocalWhisperModel): void {
