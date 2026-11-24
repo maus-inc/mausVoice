@@ -294,10 +294,16 @@ const useWindowMetrics = (platform: Platform) => {
       setCompact(isCompactWidth(width, platform));
       setHideWordmark(isWordmarkHidden(width, platform));
     };
-    applyWidth(node.getBoundingClientRect().width);
+    // A width of 0 means layout has not run yet, not that the bar is
+    // genuinely zero-wide: applying it here would be indistinguishable from
+    // a real measurement to `isCompactWidth`/`isWordmarkHidden`. Skipping it
+    // keeps the roomy initial render (the state's own default) until
+    // `ResizeObserver`'s mandatory first callback reports the laid-out size.
+    const initialWidth = node.getBoundingClientRect().width;
+    if (initialWidth > 0) applyWidth(initialWidth);
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width;
-      if (width !== undefined) applyWidth(width);
+      if (width !== undefined && width > 0) applyWidth(width);
     });
     observer.observe(node);
     return () => observer.disconnect();
@@ -868,17 +874,40 @@ const CaptionButtons = ({
     </Stack>
   );
 };
-const titleBarSx = (dark: boolean, trafficLights: boolean, compact: boolean) =>
-  ({
+/**
+ * Horizontal bar padding on each side.
+ *
+ * Traffic lights sit inset from both edges by the same amount; caption
+ * buttons sit flush against the right window edge (like native Windows
+ * chrome, where the NorthEast resize grip overlaps the close button's outer
+ * corner) and only the left edge gets padding. Written as a two-branch
+ * function rather than a nested ternary so each platform's rule reads as its
+ * own statement.
+ */
+const titleBarInlinePadding = (
+  trafficLights: boolean,
+  compact: boolean,
+): { pl: number; pr: number } => {
+  if (trafficLights) {
+    const inset = compact ? 1.25 : 1.5;
+    return { pl: inset, pr: inset };
+  }
+  return { pl: compact ? 0.75 : 1, pr: 0 };
+};
+
+const titleBarSx = (
+  dark: boolean,
+  trafficLights: boolean,
+  compact: boolean,
+) => {
+  const { pl, pr } = titleBarInlinePadding(trafficLights, compact);
+  return {
     height: TITLE_BAR_HEIGHT,
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
-    pl: trafficLights ? (compact ? 1.25 : 1.5) : compact ? 0.75 : 1,
-    // Caption buttons sit flush against the right window edge (like native
-    // Windows chrome); the NorthEast resize grip overlaps the close button's
-    // outer corner.
-    pr: trafficLights ? (compact ? 1.25 : 1.5) : 0,
+    pl,
+    pr,
     position: "relative",
     zIndex: 20,
     // Same wash as the navigation rail, so the bar and the rail read as one
@@ -889,7 +918,22 @@ const titleBarSx = (dark: boolean, trafficLights: boolean, compact: boolean) =>
     WebkitBackdropFilter: "blur(18px) saturate(1.2)",
     borderBottom: dark ? hairline.dark(0.05) : hairline.light(0.06),
     boxShadow: dark ? titleBarShadow.dark : titleBarShadow.light,
-  }) as const;
+  } as const;
+};
+
+/**
+ * Left-cluster inset, mirroring the bar's own left padding one notch lighter
+ * so the theme toggle sits closer to the window edge than the bar padding
+ * alone would place it. Same two-branch shape as `titleBarInlinePadding`, for
+ * the same reason.
+ */
+const leftClusterInlinePadding = (
+  trafficLights: boolean,
+  compact: boolean,
+): number => {
+  if (trafficLights) return compact ? 0.75 : 1;
+  return compact ? 0.25 : 0.5;
+};
 
 const leftClusterSx = (
   trafficLights: boolean,
@@ -906,7 +950,7 @@ const leftClusterSx = (
     // `outlineOffset` in `theme.ts`.
     position: "relative",
     zIndex: 1,
-    pl: trafficLights ? (compact ? 0.75 : 1) : compact ? 0.25 : 0.5,
+    pl: leftClusterInlinePadding(trafficLights, compact),
     color: "text.primary",
     opacity: focused ? 1 : 0.6,
     pointerEvents: "none",
