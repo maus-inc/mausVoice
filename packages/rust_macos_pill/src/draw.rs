@@ -2205,12 +2205,8 @@ fn paint_ring_body(ctx: &Ctx, state: &PillState, frame: &RingFrame) {
         }
         let env =
             rust_pill_shared::ring_envelope(d, frame.head_len, frame.progress, frame.total_len);
-        let glim = rust_pill_shared::ring_glimmer(
-            d,
-            frame.total_len,
-            frame.wave_phase,
-            frame.progress,
-        );
+        let glim =
+            rust_pill_shared::ring_glimmer(d, frame.total_len, frame.wave_phase, frame.progress);
         let a = (env * glim * lift).clamp(0.0, 1.0) * frame.alpha;
         if a < rust_pill_shared::RING_SEGMENT_ALPHA_CUTOFF {
             continue;
@@ -2248,15 +2244,7 @@ fn paint_ring_body(ctx: &Ctx, state: &PillState, frame: &RingFrame) {
     }
 }
 
-fn paint_ring_pulse(
-    ctx: &Ctx,
-    state: &PillState,
-    ox: f64,
-    oy: f64,
-    ow: f64,
-    oh: f64,
-    r: f64,
-) {
+fn paint_ring_pulse(ctx: &Ctx, state: &PillState, ox: f64, oy: f64, ow: f64, oh: f64, r: f64) {
     let t = rust_pill_shared::pulse_progress(state.arm_pulse.get());
     for delay in [0.0, rust_pill_shared::RING_PULSE_ECHO_DELAY] {
         let tt = ((t - delay) / (1.0 - delay)).clamp(0.0, 1.0);

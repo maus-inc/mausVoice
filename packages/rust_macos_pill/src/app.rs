@@ -706,9 +706,7 @@ fn handle_in_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
             *ctx.state.assistant_streaming.borrow_mut() = streaming;
             *ctx.state.assistant_permissions.borrow_mut() = permissions;
 
-            if (active && !was_active)
-                || (review_id.is_some() && review_id != previous_review_id)
-            {
+            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
                 ctx.state.should_stick.set(true);
                 ctx.state.scroll_offset.set(0.0);
             }
@@ -1686,10 +1684,12 @@ fn region_for(
     seam_point: (f64, f64),
 ) -> rust_pill_shared::edge::DragRegion {
     if dragging {
-        state
-            .drag_motion
-            .borrow_mut()
-            .resolve_drag_region(full, work_area, monitor_frames, seam_point)
+        state.drag_motion.borrow_mut().resolve_drag_region(
+            full,
+            work_area,
+            monitor_frames,
+            seam_point,
+        )
     } else {
         rust_pill_shared::edge::drag_region(full, work_area, monitor_frames, seam_point)
     }
@@ -1759,8 +1759,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             ph,
             win_h,
         };
-        let (anchor_x, anchor_y) =
-            resolve_anchor(state, mouse_loc, win_frame.origin, &footprint);
+        let (anchor_x, anchor_y) = resolve_anchor(state, mouse_loc, win_frame.origin, &footprint);
 
         // Resolve monitor bounds in Cocoa's global point space. A connected
         // neighbor opens only its shared edge; the visible frame remains the
@@ -1845,10 +1844,10 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             && !state.assistant_active.get()
         {
             (
-                clamp_frame.x - fx,
-                clamp_frame.y - win_h + fy + ph,
-                clamp_frame.right() - fx - pw,
-                clamp_frame.bottom() - win_h + fy,
+                clamp_frame.x - footprint.fx,
+                clamp_frame.y - win_h + footprint.fy + ph,
+                clamp_frame.right() - footprint.fx - pw,
+                clamp_frame.bottom() - win_h + footprint.fy,
             )
         } else {
             (
@@ -1867,7 +1866,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         if dragging {
             bounds.apply_shared_seam_bounds(
                 drag_region,
-                (fx + pw / 2.0, win_h - fy - ph / 2.0),
+                (footprint.fx + pw / 2.0, win_h - footprint.fy - ph / 2.0),
                 edge_mask,
             );
         }
