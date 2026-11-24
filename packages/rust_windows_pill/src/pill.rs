@@ -1237,26 +1237,29 @@ fn tick_transcript(state: &PillState, dt: f64) {
     }
 }
 
+/// Whether a locate replay is the only reason this window is on screen.
+///
+/// Nothing in such a window was meant to receive a click, so the whole window
+/// is click-through and every pointer affordance inside it is unreachable.
+fn locate_only(state: &PillState) -> bool {
+    rust_pill_shared::locate_is_the_only_reason_shown(
+        state.visibility.get().into(),
+        state.phase.get() != Phase::Idle,
+        state.owns_panel(),
+        state.ring.locate_active(),
+    )
+}
+
 fn update_visibility(hwnd: HWND, state: &PillState) {
-    let is_active = state.phase.get() != Phase::Idle;
-    let owns_panel = state.owns_panel();
-    let locating = state.ring.locate_active();
     let should_show = rust_pill_shared::should_show_pill(
         state.visibility.get().into(),
-        is_active,
-        owns_panel,
-        locating,
+        state.phase.get() != Phase::Idle,
+        state.owns_panel(),
+        state.ring.locate_active(),
     );
-    // A locate replay can be the only reason this window is on screen, and
-    // nothing in it was meant to receive a click. Without this the pill
-    // swallows a click aimed at the app underneath and starts dictation.
-    let locate_only = rust_pill_shared::locate_is_the_only_reason_shown(
-        state.visibility.get().into(),
-        is_active,
-        owns_panel,
-        locating,
-    );
-    set_click_through(hwnd, locate_only);
+    // Without this the pill swallows a click aimed at the app underneath and
+    // starts dictation.
+    set_click_through(hwnd, locate_only(state));
 
     unsafe {
         if should_show {
@@ -1307,6 +1310,17 @@ fn update_typing_focus(_hwnd: HWND, state: &PillState) {
 /// Recomputes whether the cursor is over the pill, tooltip, or assistant
 /// panel and syncs the hovered state (and the hover IPC message) on change.
 fn check_hover(hwnd: HWND, state: &PillState) {
+    // Hover is polled from the cursor position, so a click-through window
+    // still sees it. Left alone, the pill would expand under the pointer and
+    // offer the style selector to someone who cannot click either.
+    if locate_only(state) {
+        if state.hovered.replace(false) {
+            state.dirty.set(true);
+            ipc::send(&OutMessage::Hover { hovered: false });
+        }
+        return;
+    }
+
     let mut cursor = POINT::default();
     unsafe {
         let _ = GetCursorPos(&mut cursor);

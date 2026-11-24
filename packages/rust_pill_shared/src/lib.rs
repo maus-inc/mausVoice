@@ -1957,7 +1957,8 @@ impl RingState {
     /// The keyboard trigger reaches this. `apps/desktop/DESIGN.md` states that
     /// keyboard-invoked actions never animate, and a locate is an explicit
     /// request whose whole content is the outline, so the outline appears
-    /// complete, holds, and fades. The pointer long-press keeps its sweep.
+    /// complete, holds at full opacity, and clears when its window ends. The
+    /// pointer long-press keeps its sweep and its fade.
     pub fn start_locate_still(&self, gesture: RingGesture) {
         self.start_locate_with(gesture, true);
     }
@@ -1991,6 +1992,7 @@ impl RingState {
         // every pointer-down frame would also zero `press_elapsed` and `arm_t`
         // for an ordinary hold or drag, freezing the ring ramp and the arm.
         let was_locating = self.locate_active.get();
+        let still_replay = self.locate_still.get();
         // A preference change mid-replay has to stop the sweep now, not on the
         // next trigger: snap to the same complete outline a replay started
         // under reduced motion shows, before this frame advances the fill.
@@ -2025,7 +2027,10 @@ impl RingState {
         }
 
         let locating = step.active;
-        let held = (locating && locate_held(step.elapsed))
+        // A still replay holds its complete outline for the whole window. It
+        // has no sweep to finish, so waiting for `locate_held` to end would
+        // fade the outline from the first frame the person looks at it.
+        let held = (locating && (locate_held(step.elapsed) || still_replay))
             || gesture.dragging
             || (gesture.long_press_active && gesture.long_press_elapsed > LONG_PRESS_HOLD_DELAY);
 
@@ -2072,6 +2077,19 @@ impl RingState {
             },
             if locating { 0.0 } else { LONG_PRESS_HOLD_DELAY },
         );
+
+        // A still replay holds at full opacity from its first frame. The rise
+        // ramp exists for a press that has to travel to full, and a keyboard
+        // trigger has nothing to wait for. It ends with a cut, not a fade,
+        // because DESIGN.md keeps keyboard-invoked actions still.
+        if still_replay && locating {
+            anim.alpha = 1.0;
+        }
+        if still_replay && was_locating && !locating {
+            anim.alpha = 0.0;
+            anim.release_progress = 0.0;
+            anim.release_elapsed = 0.0;
+        }
 
         anim.apply_to(self);
 
@@ -4789,14 +4807,42 @@ mod tests {
         let first = RingPaint::resolve(&paint_input(&ring, static_outline)).expect("visible");
         assert_eq!(first.alpha, 1.0, "no sweep to wait for");
 
+        // Every frame of the window shows the same complete outline. A fade
+        // here would dim the outline from the first frame the person looks at
+        // it, and DESIGN.md keeps keyboard-invoked actions still.
         for _ in 0..10 {
             ring.tick(idle_gesture(), 1.0 / 60.0);
+            let frame = RingPaint::resolve(&paint_input(&ring, static_outline)).expect("visible");
+            assert_eq!(
+                frame.alpha, first.alpha,
+                "the outline holds at full opacity"
+            );
+            assert_eq!((frame.ox, frame.oy), (first.ox, first.oy));
+            assert_eq!((frame.ow, frame.oh), (first.ow, first.oh));
         }
-        let later = RingPaint::resolve(&paint_input(&ring, static_outline)).expect("still fading");
+    }
 
-        assert!(later.alpha < first.alpha, "the opacity fade still runs");
-        assert_eq!((later.ox, later.oy), (first.ox, first.oy));
-        assert_eq!((later.ow, later.oh), (first.ow, first.oh));
+    #[test]
+    fn a_keyboard_locate_cuts_its_outline_when_the_window_ends() {
+        let ring = RingState::new();
+        ring.start_locate_still(idle_gesture());
+
+        let mut frames = 0;
+        let mut cleared = false;
+        while !cleared && frames < 600 {
+            let alpha_before = ring.alpha();
+            let frame = ring.tick(idle_gesture(), 1.0 / 60.0);
+            if frame.cleared {
+                cleared = true;
+            } else {
+                assert_eq!(ring.alpha(), alpha_before, "no fade while it holds");
+            }
+            frames += 1;
+        }
+
+        assert!(cleared, "the frame that ends the window reports the clear");
+        assert_eq!(ring.alpha(), 0.0, "the outline cuts rather than fades");
+        assert_eq!(ring.release_progress(), 0.0);
     }
 
     #[test]

@@ -15,7 +15,7 @@ Detect the gesture in TypeScript from the `keys_held` snapshots the listener alr
 
 Send `{"type":"locate"}` through the existing `sync_native_pill_assistant` command. The pill draws the long-press ring through the shared `advance_ring` driver, with no pointer state. The request is visual only and never starts a recording, moves the pill, or writes the visibility preference.
 
-The trigger is a keyboard command, and `apps/desktop/DESIGN.md` says keyboard-invoked actions never animate, so the replay holds a complete outline for its window and fades it. `RingState::start_locate_still` is that path, and the pointer long-press keeps its sweep.
+The trigger is a keyboard command, and `apps/desktop/DESIGN.md` says keyboard-invoked actions never animate, so the replay holds a complete outline at full opacity for its window and then clears it. There is no sweep, no rise ramp and no fade. `RingState::start_locate_still` is that path, and the pointer long-press keeps its sweep and its fade.
 
 Hide the setting when `hotkeyStrategy` is `bridge`. The row is unavailable on Wayland because the gesture cannot be detected there, and offering a dropdown that does nothing would be worse than leaving it out.
 

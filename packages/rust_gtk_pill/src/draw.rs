@@ -66,10 +66,15 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
 
         draw_cancel_button(cr, state, ww, wh);
         draw_pause_resume_button(cr, state, ww, wh);
+    }
 
-        // Painted outside the pill body so a locate replay still outlines a
-        // window whose body is the typing panel or an open transcript review.
-        // The shared painter returns early while no ring is on screen.
+    // Long-press and locate outline. The ring alpha stays pinned for the whole
+    // hold and eases out after release, so the outline survives the press→drag
+    // hand-off and never vanishes under an inflated pill. It draws with the
+    // assistant panel open too, because a locate replay answers "where is the
+    // pill" and the long-press ring is the only feedback for a hold that arms a
+    // drag, which the panel does not disable.
+    if state.ring.alpha() > 0.0 || rust_pill_shared::pulse_is_running(state.ring.arm_pulse()) {
         paint_pill_attached(cr, state, ww, wh, |cr| {
             let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
             draw_long_press_ring(cr, rx, ry, pill_w, pill_h, state);
