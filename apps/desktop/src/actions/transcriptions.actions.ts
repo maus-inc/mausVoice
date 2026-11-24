@@ -1518,40 +1518,46 @@ const buildMemoryTranscription = (processed: ProcessedAudio): Transcription => {
     createdByUserId: getMyEffectiveUserId(getAppState()),
     transcript: postProcessResult.transcript ?? "",
     isDeleted: false,
-    rawTranscript: transcribeResult.rawTranscript ?? null,
+    rawTranscript: orNull(transcribeResult.rawTranscript),
     sanitizedTranscript,
-    modelSize: transcribeResult.metadata?.modelSize ?? null,
-    inferenceDevice: transcribeResult.metadata?.inferenceDevice ?? null,
-    transcriptionPrompt: transcribeResult.metadata?.transcriptionPrompt ?? null,
-    postProcessPrompt: postProcessResult.metadata.postProcessPrompt ?? null,
-    transcriptionApiKeyId:
-      transcribeResult.metadata?.transcriptionApiKeyId ?? null,
-    postProcessApiKeyId: postProcessResult.metadata.postProcessApiKeyId ?? null,
-    transcriptionMode: transcribeResult.metadata?.transcriptionMode ?? null,
+    modelSize: orNull(transcribeResult.metadata?.modelSize),
+    inferenceDevice: orNull(transcribeResult.metadata?.inferenceDevice),
+    transcriptionPrompt: orNull(transcribeResult.metadata?.transcriptionPrompt),
+    postProcessPrompt: orNull(postProcessResult.metadata.postProcessPrompt),
+    transcriptionApiKeyId: orNull(
+      transcribeResult.metadata?.transcriptionApiKeyId,
+    ),
+    postProcessApiKeyId: orNull(postProcessResult.metadata.postProcessApiKeyId),
+    transcriptionMode: orNull(transcribeResult.metadata?.transcriptionMode),
     postProcessMode: postProcessResult.metadata?.postProcessMode ?? null,
-    postProcessDevice: postProcessResult.metadata.postProcessDevice ?? null,
-    postProcessModel: postProcessResult.metadata.postProcessModel ?? null,
-    postProcessProvider: postProcessResult.metadata.postProcessProvider ?? null,
-    postProcessFailed: postProcessResult.metadata.postProcessFailed ?? null,
-    postProcessEditFailed:
-      postProcessResult.metadata.postProcessEditFailed ?? null,
-    postProcessEditFailureCount:
-      postProcessResult.metadata.postProcessEditFailureCount ?? null,
-    postProcessEditAutoRetryUsed:
-      postProcessResult.metadata.postProcessEditAutoRetryUsed ?? null,
+    postProcessDevice: orNull(postProcessResult.metadata.postProcessDevice),
+    postProcessModel: orNull(postProcessResult.metadata.postProcessModel),
+    postProcessProvider: orNull(postProcessResult.metadata.postProcessProvider),
+    postProcessFailed: orNull(postProcessResult.metadata.postProcessFailed),
+    postProcessEditFailed: orNull(
+      postProcessResult.metadata.postProcessEditFailed,
+    ),
+    postProcessEditFailureCount: orNull(
+      postProcessResult.metadata.postProcessEditFailureCount,
+    ),
+    postProcessEditAutoRetryUsed: orNull(
+      postProcessResult.metadata.postProcessEditAutoRetryUsed,
+    ),
     // Retry context is written only when a recovery pass claims the row.
     postProcessEditRetryToneId: null,
     postProcessEditRetryLanguageCode: null,
-    postProcessFallback: postProcessResult.metadata.postProcessFallback ?? null,
-    postProcessError: postProcessResult.metadata.postProcessError ?? null,
+    postProcessFallback: orNull(postProcessResult.metadata.postProcessFallback),
+    postProcessError: orNull(postProcessResult.metadata.postProcessError),
     warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
     audio: undefined,
     remoteStatus: null,
     remoteDeviceId: null,
-    transcriptionDurationMs:
-      transcribeResult.metadata?.transcriptionDurationMs ?? null,
-    postprocessDurationMs:
-      postProcessResult.metadata.postprocessDurationMs ?? null,
+    transcriptionDurationMs: orNull(
+      transcribeResult.metadata?.transcriptionDurationMs,
+    ),
+    postprocessDurationMs: orNull(
+      postProcessResult.metadata.postprocessDurationMs,
+    ),
   };
 };
 

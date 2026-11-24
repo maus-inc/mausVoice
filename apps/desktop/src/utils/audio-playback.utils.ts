@@ -249,6 +249,29 @@ const releaseUnownedContext = (context: AudioContext): void => {
   context.close().catch(() => undefined);
 };
 
+const awaitClosingContext = async (generation: number): Promise<void> => {
+  if (!closingContext) return;
+  await closingContext;
+  if (generation === playbackGeneration) {
+    closingContext = null;
+  }
+};
+
+const hasPlayableDuration = (
+  buffer: AudioBuffer,
+  startRatio: number,
+): boolean => buffer.duration > 0 && startRatio < 1;
+
+// Best-effort, like the context close: a teardown that throws must not replace
+// the failure the caller is about to be told about.
+const releaseOwnedPlayback = (): void => {
+  try {
+    stopActivePlayback("stopped");
+  } catch {
+    // no-op
+  }
+};
+
 export const playWebAudio = async (
   transcriptionId: string,
   data: { samples: number[]; sampleRate: number },
@@ -269,12 +292,7 @@ export const playWebAudio = async (
   // would make every call supersede its own request.
   stopActivePlayback("replaced");
   const generation = ++playbackGeneration;
-  if (closingContext) {
-    await closingContext;
-    if (generation === playbackGeneration) {
-      closingContext = null;
-    }
-  }
+  await awaitClosingContext(generation);
 
   // Pending callers do not own activePlayback yet, so notify them explicitly.
   if (isPlaybackSuperseded(generation, signal)) {
@@ -329,7 +347,7 @@ export const playWebAudio = async (
     };
 
     const startRatio = clampPlaybackProgress(startProgress);
-    if (buffer.duration <= 0 || startRatio >= 1) {
+    if (!hasPlayableDuration(buffer, startRatio)) {
       onProgress(1);
       stopActivePlayback("ended");
       return;
@@ -353,13 +371,7 @@ export const playWebAudio = async (
     // caller recovers from the rejection by showing an error snackbar, so
     // nothing else would come back for it.
     if (ownedByActivePlayback) {
-      // Best-effort, like the close below: a teardown that throws must not
-      // replace the failure the caller is about to be told about.
-      try {
-        stopActivePlayback("stopped");
-      } catch {
-        // no-op
-      }
+      releaseOwnedPlayback();
     }
     throw error;
   } finally {
