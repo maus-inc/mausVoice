@@ -55,6 +55,44 @@ const languageOptions = (
 // it, adding a member to `ThreadDayGroup` without a label here is TS2366 at
 // this line; without it the inferred type silently becomes `string |
 // undefined`, which renders as a missing heading rather than a build error.
+const useImportDialogState = (
+  defaultLanguage: Parameters<typeof toSelectableDictationLanguage>[0],
+) => {
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguage] =
+    useState<DictationLanguageCode>(
+      toSelectableDictationLanguage(defaultLanguage),
+    );
+  const [isImporting, setIsImporting] = useState(false);
+
+  const prevImportDialogOpen = useRef(false);
+  useEffect(() => {
+    if (importDialogOpen && !prevImportDialogOpen.current) {
+      const state = useAppStore.getState();
+      const firstTone = getSortedToneIds(state)
+        .map((id) => getRec(state.toneById, id))
+        .find((tone): tone is Tone => Boolean(tone));
+      setSelectedToneId(firstTone?.id ?? null);
+      setSelectedLanguage(
+        toSelectableDictationLanguage(getMyDictationLanguage(state)),
+      );
+    }
+    prevImportDialogOpen.current = importDialogOpen;
+  }, [importDialogOpen]);
+
+  return {
+    importDialogOpen,
+    setImportDialogOpen,
+    selectedToneId,
+    setSelectedToneId,
+    selectedLanguage,
+    setSelectedLanguage,
+    isImporting,
+    setIsImporting,
+  };
+};
+
 const useTranscriptionDayLabels = (
   transcriptionIds: string[],
   transcriptionCreatedAtSignature: string,
@@ -111,29 +149,17 @@ export default function TranscriptionsPage() {
       .map((id) => getRec(state.toneById, id))
       .filter((tone): tone is Tone => Boolean(tone)),
   );
-  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const {
+    importDialogOpen,
+    setImportDialogOpen,
+    selectedToneId,
+    setSelectedToneId,
+    selectedLanguage,
+    setSelectedLanguage,
+    isImporting,
+    setIsImporting,
+  } = useImportDialogState(defaultLanguage);
   const importDialogTitleId = useDialogTitleId();
-  const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
-  const [selectedLanguage, setSelectedLanguage] =
-    useState<DictationLanguageCode>(
-      toSelectableDictationLanguage(defaultLanguage),
-    );
-  const [isImporting, setIsImporting] = useState(false);
-
-  const prevImportDialogOpen = useRef(false);
-  useEffect(() => {
-    if (importDialogOpen && !prevImportDialogOpen.current) {
-      const state = useAppStore.getState();
-      const firstTone = getSortedToneIds(state)
-        .map((id) => getRec(state.toneById, id))
-        .find((tone): tone is Tone => Boolean(tone));
-      setSelectedToneId(firstTone?.id ?? null);
-      setSelectedLanguage(
-        toSelectableDictationLanguage(getMyDictationLanguage(state)),
-      );
-    }
-    prevImportDialogOpen.current = importDialogOpen;
-  }, [importDialogOpen]);
 
   const dayLabelById = useTranscriptionDayLabels(
     transcriptionIds,
