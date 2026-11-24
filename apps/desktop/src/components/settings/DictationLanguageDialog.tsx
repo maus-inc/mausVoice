@@ -129,23 +129,15 @@ type LanguageRow = {
   hotkeyKeys: string[];
 };
 
-export const DictationLanguageDialog = () => {
-  const titleId = useId();
-  const descriptionId = useId();
-  const open = useAppStore(
-    (state) => state.settings.dictationLanguageDialogOpen,
-  );
-
+const useLanguageDraft = (open: boolean) => {
   const storePrimaryLanguage = useAppStore((state) => {
     const user = getMyUser(state);
     return user?.preferredLanguage ?? getDetectedSystemLocale();
   });
-
   const storePrimaryHotkeyKeys = useAppStore((state) => {
     const combos = getHotkeyCombosForAction(state, DICTATE_HOTKEY);
     return combos[0] ?? [];
   });
-
   const storeAdditionalEntries = useAppStore(getAdditionalLanguageEntries);
 
   const [rows, setRows] = useState<LanguageRow[]>([]);
@@ -177,6 +169,41 @@ export const DictationLanguageDialog = () => {
     ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  return {
+    storePrimaryLanguage,
+    rows,
+    setRows,
+    isSaving,
+    setIsSaving,
+    saveFailed,
+    setSaveFailed,
+    contentRef,
+    saveInFlight,
+    initialLanguage,
+    hotkeySnapshot,
+  };
+};
+
+export const DictationLanguageDialog = () => {
+  const titleId = useId();
+  const descriptionId = useId();
+  const open = useAppStore(
+    (state) => state.settings.dictationLanguageDialogOpen,
+  );
+  const {
+    storePrimaryLanguage,
+    rows,
+    setRows,
+    isSaving,
+    setIsSaving,
+    saveFailed,
+    setSaveFailed,
+    contentRef,
+    saveInFlight,
+    initialLanguage,
+    hotkeySnapshot,
+  } = useLanguageDraft(open);
 
   const handleClose = () => {
     if (saveInFlight.current) return;
