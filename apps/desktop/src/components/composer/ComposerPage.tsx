@@ -170,11 +170,20 @@ const useVoiceEdit = ({
     void recorderRef.current?.toggle();
   };
 
+  const handleTextChange = (next: string) => {
+    userEditedRef.current = true;
+    setText(next);
+  };
+
+  const handleUndo = () => {
+    setText(undoText ?? "");
+    setUndoText(null);
+  };
+
   return {
     text,
     setText,
     undoText,
-    setUndoText,
     instruction,
     setInstruction,
     isEditing,
@@ -186,6 +195,8 @@ const useVoiceEdit = ({
     userEditedRef,
     applyEdit,
     toggleVoiceInstruction,
+    handleTextChange,
+    handleUndo,
   };
 };
 
@@ -254,6 +265,42 @@ const useVoiceInstructionRecorder = ({
     };
   }, [speechRecognitionSupported]);
 };
+
+const ComposerShell = ({ children }: { children: React.ReactNode }) => (
+  <Box
+    sx={{
+      minHeight: "100vh",
+      bgcolor: "background.default",
+      p: { xs: 2, sm: 3 },
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+    }}
+  >
+    <Paper
+      elevation={8}
+      sx={{
+        width: "100%",
+        maxWidth: 640,
+        borderRadius: 3,
+        p: { xs: 2, sm: 3 },
+      }}
+    >
+      <Stack spacing={2}>{children}</Stack>
+    </Paper>
+  </Box>
+);
+
+const ComposerHeader = () => (
+  <Box>
+    <Typography variant="h6" sx={{ fontWeight: 700 }}>
+      <FormattedMessage defaultMessage="Review transcript" />
+    </Typography>
+    <Typography variant="body2" color="text.secondary">
+      <FormattedMessage defaultMessage="Edit the text before inserting it." />
+    </Typography>
+  </Box>
+);
 
 const ComposerTranscriptSection = ({
   intl,
@@ -446,6 +493,140 @@ const ComposerActions = ({
   </Stack>
 );
 
+const useVoiceRecorderMessages = (intl: ReturnType<typeof useIntl>) => {
+  // Held in a ref and refreshed in an effect (never during render) so a locale
+  // change while the composer is open updates the recorder's unsupported
+  // message without a render-phase ref write.
+  const unsupportedMessageRef = useRef(
+    intl.formatMessage({
+      defaultMessage: "Voice editing is not supported on this platform",
+    }),
+  );
+  const recordingUnavailableMessageRef = useRef(
+    intl.formatMessage({
+      defaultMessage: "Could not start recording. Please try again.",
+    }),
+  );
+  useEffect(() => {
+    unsupportedMessageRef.current = intl.formatMessage({
+      defaultMessage: "Voice editing is not supported on this platform",
+    });
+    recordingUnavailableMessageRef.current = intl.formatMessage({
+      defaultMessage: "Could not start recording. Please try again.",
+    });
+  }, [intl]);
+  return { unsupportedMessageRef, recordingUnavailableMessageRef };
+};
+
+const useComposerPeekText = ({
+  intl,
+  requestId,
+  setText,
+  setEditError,
+  userEditedRef,
+}: {
+  intl: ReturnType<typeof useIntl>;
+  requestId: string;
+  setText: (value: string) => void;
+  setEditError: (value: string | null) => void;
+  userEditedRef: React.RefObject<boolean>;
+}) => {
+  useEffect(() => {
+    let active = true;
+    // Signal the host process that the webview is alive and responsive.
+    // The host (reviewTextInComposer) uses this to cancel its 15s blank-
+    // page safety net. Emit on every mount so a re-render that re-runs
+    // this effect does not strand the host's safety timer.
+    emit("composer-ready", { requestId }).catch(() => undefined);
+    void invoke<string | null>("composer_peek_text", { requestId })
+      .then((initialText) => {
+        if (active && !userEditedRef.current) setText(initialText ?? "");
+      })
+      .catch(() => {
+        if (active) {
+          setEditError(
+            intl.formatMessage({
+              defaultMessage: "Unable to load transcript.",
+            }),
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [intl, requestId]);
+};
+
+const useComposerFinish = ({
+  intl,
+  requestId,
+  text,
+  recorderRef,
+  setEditError,
+  mountedRef,
+}: {
+  intl: ReturnType<typeof useIntl>;
+  requestId: string;
+  text: string;
+  recorderRef: React.RefObject<VoiceInstructionRecorder | null>;
+  setEditError: (value: string | null) => void;
+  mountedRef: React.RefObject<boolean>;
+}) => {
+  const finish = useCallback(
+    async (accepted: boolean) => {
+      recorderRef.current?.dispose();
+      try {
+        await emit("composer-result", {
+          requestId,
+          accepted,
+          text: accepted ? text : "",
+        });
+        await closeComposerWindow();
+      } catch (error) {
+        getLogger().error("Failed to emit composer result");
+        if (mountedRef.current) {
+          setEditError(
+            error instanceof Error
+              ? error.message
+              : intl.formatMessage({
+                  defaultMessage: "Unable to send composer result.",
+                }),
+          );
+        }
+      }
+    },
+    [intl, requestId, text],
+  );
+
+  const cancel = useCallback(() => {
+    finish(false).catch(() => undefined);
+  }, [finish]);
+  const insert = useCallback(() => {
+    finish(true).catch(() => undefined);
+  }, [finish]);
+
+  useEscapeToCancel(finish);
+
+  return { cancel, insert };
+};
+
+const useEscapeToCancel = (finish: (accepted: boolean) => Promise<void>) => {
+  // Esc cancels the composer, matching the window close-request path which is
+  // already wired to Cancel (composer.utils.ts). This completes the keyboard
+  // loop opened by the auto-focused transcript field and Cmd/Ctrl+Enter to apply.
+  // `finish` is declared above this effect so its dependency array does not read
+  // a `const` that is still in the temporal dead zone during render.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        void finish(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [finish]);
+};
+
 export const ComposerPage = () => {
   const intl = useIntl();
   const disabledReasonId = useId();
@@ -479,27 +660,9 @@ export const ComposerPage = () => {
     disabledReason,
   } = useVoiceEditAvailability(intl);
 
-  // Held in a ref and refreshed in an effect (never during render) so a locale
-  // change while the composer is open updates the recorder's unsupported
-  // message without a render-phase ref write.
-  const unsupportedMessageRef = useRef(
-    intl.formatMessage({
-      defaultMessage: "Voice editing is not supported on this platform",
-    }),
-  );
-  const recordingUnavailableMessageRef = useRef(
-    intl.formatMessage({
-      defaultMessage: "Could not start recording. Please try again.",
-    }),
-  );
-  useEffect(() => {
-    unsupportedMessageRef.current = intl.formatMessage({
-      defaultMessage: "Voice editing is not supported on this platform",
-    });
-    recordingUnavailableMessageRef.current = intl.formatMessage({
-      defaultMessage: "Could not start recording. Please try again.",
-    });
-  }, [intl]);
+  const { unsupportedMessageRef, recordingUnavailableMessageRef } =
+    useVoiceRecorderMessages(intl);
+
   useEffect(() => {
     transcriptRef.current?.focus();
   }, []);
@@ -508,7 +671,6 @@ export const ComposerPage = () => {
     text,
     setText,
     undoText,
-    setUndoText,
     instruction,
     setInstruction,
     isEditing,
@@ -519,6 +681,8 @@ export const ComposerPage = () => {
     recorderRef,
     applyEdit,
     toggleVoiceInstruction,
+    handleTextChange,
+    handleUndo,
     userEditedRef,
   } = useVoiceEdit({ intl, mountedRef });
 
@@ -533,143 +697,56 @@ export const ComposerPage = () => {
     onError: setEditError,
   });
 
-  useEffect(() => {
-    let active = true;
-    // Signal the host process that the webview is alive and responsive.
-    // The host (reviewTextInComposer) uses this to cancel its 15s blank-
-    // page safety net. Emit on every mount so a re-render that re-runs
-    // this effect does not strand the host's safety timer.
-    emit("composer-ready", { requestId }).catch(() => undefined);
-    void invoke<string | null>("composer_peek_text", { requestId })
-      .then((initialText) => {
-        if (active && !userEditedRef.current) setText(initialText ?? "");
-      })
-      .catch(() => {
-        if (active) {
-          setEditError(
-            intl.formatMessage({
-              defaultMessage: "Unable to load transcript.",
-            }),
-          );
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [intl, requestId]);
+  useComposerPeekText({
+    intl,
+    requestId,
+    setText,
+    setEditError,
+    userEditedRef,
+  });
 
-  const finish = useCallback(
-    async (accepted: boolean) => {
-      recorderRef.current?.dispose();
-      try {
-        await emit("composer-result", {
-          requestId,
-          accepted,
-          text: accepted ? text : "",
-        });
-        await closeComposerWindow();
-      } catch (error) {
-        getLogger().error("Failed to emit composer result");
-        if (mountedRef.current) {
-          setEditError(
-            error instanceof Error
-              ? error.message
-              : intl.formatMessage({
-                  defaultMessage: "Unable to send composer result.",
-                }),
-          );
-        }
-      }
-    },
-    [intl, requestId, text],
-  );
-
-  // Esc cancels the composer, matching the window close-request path which is
-  // already wired to Cancel (composer.utils.ts). This completes the keyboard
-  // loop opened by the auto-focused transcript field and Cmd/Ctrl+Enter to apply.
-  // `finish` is declared above this effect so its dependency array does not read
-  // a `const` that is still in the temporal dead zone during render.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        void finish(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [finish]);
+  const { cancel, insert } = useComposerFinish({
+    intl,
+    requestId,
+    text,
+    recorderRef,
+    setEditError,
+    mountedRef,
+  });
 
   return (
-    <Box
-      sx={{
-        minHeight: "100vh",
-        bgcolor: "background.default",
-        p: { xs: 2, sm: 3 },
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <Paper
-        elevation={8}
-        sx={{
-          width: "100%",
-          maxWidth: 640,
-          borderRadius: 3,
-          p: { xs: 2, sm: 3 },
-        }}
-      >
-        <Stack spacing={2}>
-          <Box>
-            <Typography variant="h6" sx={{ fontWeight: 700 }}>
-              <FormattedMessage defaultMessage="Review transcript" />
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              <FormattedMessage defaultMessage="Edit the text before inserting it." />
-            </Typography>
-          </Box>
-          <ComposerTranscriptSection
-            intl={intl}
-            transcriptRef={transcriptRef}
-            text={text}
-            onTextChange={(next) => {
-              userEditedRef.current = true;
-              setText(next);
-            }}
-            editError={editError}
-            sessionOriginal={sessionOriginal}
-            undoText={undoText}
-            isEditing={isEditing}
-            onUndo={() => {
-              setText(undoText ?? "");
-              setUndoText(null);
-            }}
-          />
-          <ComposerVoiceEditSection
-            intl={intl}
-            disabledReasonId={disabledReasonId}
-            instruction={instruction}
-            onInstructionChange={setInstruction}
-            onApply={applyEdit}
-            isListening={isListening}
-            onToggleVoice={toggleVoiceInstruction}
-            isEditing={isEditing}
-            hasGenerationProvider={hasGenerationProvider}
-            voiceInstructionSupported={voiceInstructionSupported}
-            disabledReason={disabledReason}
-          />
-          <ComposerActions
-            isEditing={isEditing}
-            text={text}
-            onCancel={() => {
-              finish(false).catch(() => undefined);
-            }}
-            onInsert={() => {
-              finish(true).catch(() => undefined);
-            }}
-          />
-        </Stack>
-      </Paper>
-    </Box>
+    <ComposerShell>
+      <ComposerHeader />
+      <ComposerTranscriptSection
+        intl={intl}
+        transcriptRef={transcriptRef}
+        text={text}
+        onTextChange={handleTextChange}
+        editError={editError}
+        sessionOriginal={sessionOriginal}
+        undoText={undoText}
+        isEditing={isEditing}
+        onUndo={handleUndo}
+      />
+      <ComposerVoiceEditSection
+        intl={intl}
+        disabledReasonId={disabledReasonId}
+        instruction={instruction}
+        onInstructionChange={setInstruction}
+        onApply={applyEdit}
+        isListening={isListening}
+        onToggleVoice={toggleVoiceInstruction}
+        isEditing={isEditing}
+        hasGenerationProvider={hasGenerationProvider}
+        voiceInstructionSupported={voiceInstructionSupported}
+        disabledReason={disabledReason}
+      />
+      <ComposerActions
+        isEditing={isEditing}
+        text={text}
+        onCancel={cancel}
+        onInsert={insert}
+      />
+    </ComposerShell>
   );
 };
