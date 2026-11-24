@@ -1103,20 +1103,11 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         let content_x = panel_x + PANEL_CONTENT_SIDE_INSET;
         let content_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0;
 
-        let scroll_bottom = if is_typing {
-            py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
-        } else {
-            py + panel_h
-        };
-        let scroll_h = (scroll_bottom - py).max(0.0);
+        let (scroll_h, bottom_pad, scroll_bottom) =
+            expanded_scroll_metrics(is_typing, py, panel_h, review_actions_h);
         state.viewport_height.set(scroll_h);
 
         let top_pad = PANEL_TRANSCRIPT_TOP_OFFSET + SCROLL_TOP_PAD;
-        let bottom_pad = if is_typing {
-            SCROLL_BOTTOM_PAD
-        } else {
-            PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT + SCROLL_BOTTOM_PAD
-        };
 
         draw_transcript(
             gfx, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad,
@@ -1399,6 +1390,27 @@ fn draw_message_text(
         y += 20.0;
     }
     y
+}
+
+/// The transcript band of the expanded panel shrinks while the input row is up,
+/// and the padding below it changes with it, so the two are computed together.
+fn expanded_scroll_metrics(
+    is_typing: bool,
+    py: f64,
+    panel_h: f64,
+    review_actions_h: f64,
+) -> (f64, f64, f64) {
+    let scroll_bottom = if is_typing {
+        py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
+    } else {
+        py + panel_h
+    };
+    let bottom_pad = if is_typing {
+        SCROLL_BOTTOM_PAD
+    } else {
+        PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT + SCROLL_BOTTOM_PAD
+    };
+    ((scroll_bottom - py).max(0.0), bottom_pad, scroll_bottom)
 }
 
 #[allow(clippy::too_many_arguments)]
