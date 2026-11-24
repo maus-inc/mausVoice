@@ -353,18 +353,10 @@ fn paint_ring_body(cr: &cairo::Context, state: &PillState, frame: &RingFrame) {
         if d > frame.head_len {
             break;
         }
-        let env = rust_pill_shared::ring_envelope(
-            d,
-            frame.head_len,
-            frame.progress,
-            frame.total_len,
-        );
-        let glim = rust_pill_shared::ring_glimmer(
-            d,
-            frame.total_len,
-            frame.wave_phase,
-            frame.progress,
-        );
+        let env =
+            rust_pill_shared::ring_envelope(d, frame.head_len, frame.progress, frame.total_len);
+        let glim =
+            rust_pill_shared::ring_glimmer(d, frame.total_len, frame.wave_phase, frame.progress);
         let a = (env * glim * lift).clamp(0.0, 1.0) * frame.alpha;
         if a < rust_pill_shared::RING_SEGMENT_ALPHA_CUTOFF {
             continue;
