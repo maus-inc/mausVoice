@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { expect, test, vi } from "vitest";
 import {
   getGroqGentextRepo,
   getWritingStyle,
@@ -6,7 +6,6 @@ import {
   postProcessResolution,
 } from "../helpers/eval.utils";
 import { withTimeout } from "../../src/utils/timeout.utils";
-import { hasGroqApiKey } from "../helpers/env.utils";
 
 vi.mock("../../src/i18n/intl", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/i18n/intl")>();
