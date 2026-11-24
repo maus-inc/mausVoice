@@ -179,6 +179,55 @@ export class PauseChunkedPretranscriber {
     this.analyzeFrames();
   }
 
+  private enqueueSpanSamples(
+    samples: Float32Array,
+    start: number,
+  ): {
+    prefixResult: Promise<PretranscribedChunk> | null;
+    tailResult: Promise<PretranscribedChunk> | null;
+  } | null {
+    // The listener attaches after capture starts, so the samples before
+    // `streamStart` never arrived on the live stream. They are still in the
+    // final recording, so transcribe them as a leading span instead of
+    // returning a transcript that silently starts mid-sentence.
+    const prefix = start > 0 ? samples.subarray(0, start) : null;
+    if (prefix && prefix.length > this.minChunkSamples) return null;
+    const prefixResult = prefix ? this.enqueue(prefix.slice()) : null;
+    const tail = samples.subarray(start + this.committedOffset);
+    const tailResult = tail.length > 0 ? this.enqueue(tail.slice()) : null;
+    return { prefixResult, tailResult };
+  }
+
+  private async collectChunks({
+    prefixResult,
+    tailResult,
+  }: {
+    prefixResult: Promise<PretranscribedChunk> | null;
+    tailResult: Promise<PretranscribedChunk> | null;
+  }): Promise<PretranscribedChunk[] | null> {
+    try {
+      return await Promise.all([
+        ...(prefixResult ? [prefixResult] : []),
+        ...this.results,
+        ...(tailResult ? [tailResult] : []),
+      ]);
+    } catch {
+      // `Promise.all` rejects on the first failure, so the spans that had not
+      // settled yet are still running. Cancel and wait for them, or the
+      // fallback request overlaps requests the user is still billed for.
+      return null;
+    }
+  }
+
+  private buildResult(chunks: PretranscribedChunk[]): PretranscriptionResult {
+    return {
+      text: joinTranscriptSpans(chunks.map((chunk) => chunk.text)),
+      metadata: mergeSpanMetadata(chunks),
+      warnings: Array.from(new Set(chunks.flatMap((chunk) => chunk.warnings))),
+      chunkCount: chunks.length,
+    };
+  }
+
   async finish(
     audio: StopRecordingResponse,
   ): Promise<PretranscriptionResult | null> {
@@ -201,37 +250,12 @@ export class PauseChunkedPretranscriber {
     // prefix or the tail would only delay that fallback.
     if (this.failed) return this.doom();
 
-    // The listener attaches after capture starts, so the samples before
-    // `streamStart` never arrived on the live stream. They are still in the
-    // final recording, so transcribe them as a leading span instead of
-    // returning a transcript that silently starts mid-sentence.
-    const prefix = start > 0 ? samples.subarray(0, start) : null;
-    if (prefix && prefix.length > this.minChunkSamples) return this.doom();
-    const prefixResult = prefix ? this.enqueue(prefix.slice()) : null;
+    const spans = this.enqueueSpanSamples(samples, start);
+    if (!spans) return this.doom();
+    const chunks = await this.collectChunks(spans);
+    if (!chunks || this.failed || this.disposed) return this.doom();
 
-    const tail = samples.subarray(start + this.committedOffset);
-    const tailResult = tail.length > 0 ? this.enqueue(tail.slice()) : null;
-    let chunks: PretranscribedChunk[];
-    try {
-      chunks = await Promise.all([
-        ...(prefixResult ? [prefixResult] : []),
-        ...this.results,
-        ...(tailResult ? [tailResult] : []),
-      ]);
-    } catch {
-      // `Promise.all` rejects on the first failure, so the spans that had not
-      // settled yet are still running. Cancel and wait for them, or the
-      // fallback request overlaps requests the user is still billed for.
-      return this.doom();
-    }
-    if (this.failed || this.disposed) return this.doom();
-
-    return {
-      text: joinTranscriptSpans(chunks.map((chunk) => chunk.text)),
-      metadata: mergeSpanMetadata(chunks),
-      warnings: Array.from(new Set(chunks.flatMap((chunk) => chunk.warnings))),
-      chunkCount: chunks.length,
-    };
+    return this.buildResult(chunks);
   }
 
   /**

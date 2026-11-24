@@ -1475,22 +1475,16 @@ export type ImportAudioParams = {
  * Returns false when the native picker is cancelled so the UI can retain its
  * pending Style/Language selections.
  */
-export const importAudioFile = async ({
-  toneId,
-  languageCode,
-}: ImportAudioParams): Promise<boolean> => {
-  const audio = await getTranscriptionRepo().importAudioFile();
-  if (!audio) return false;
-  const processed = await processAudio({
-    samples: audio.samples,
-    sampleRate: audio.sampleRate,
-    toneId,
-    languageCode,
-  });
+type StoreInput = Parameters<typeof storeTranscription>[0];
+type StoreOutcome = Awaited<ReturnType<typeof storeTranscription>>;
+
+const buildStoreInput = (
+  audio: { samples: number[] | Float32Array; sampleRate: number },
+  processed: ProcessedAudio,
+): StoreInput => {
   const { transcribeResult, sanitizedTranscript, postProcessResult } =
     processed;
-
-  const output = await storeTranscription({
+  return {
     audio: { samples: audio.samples, sampleRate: audio.sampleRate },
     rawTranscript: transcribeResult.rawTranscript ?? null,
     sanitizedTranscript,
@@ -1498,93 +1492,111 @@ export const importAudioFile = async ({
     transcriptionMetadata: transcribeResult.metadata,
     postProcessMetadata: postProcessResult.metadata,
     warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
+  };
+};
+
+const scheduleRetryForImport = async (
+  output: StoreOutcome,
+  { toneId, languageCode }: ImportAudioParams,
+): Promise<void> => {
+  if (!output.transcription) return;
+  // The scheduler returns once its claim is written and the delivery is
+  // timed, so waiting here only covers the durable marker, never the pass.
+  await scheduleAutomaticPostProcessEditRetry({
+    transcription: output.transcription,
+    toneId,
+    languageCode,
   });
+};
 
-  if (output.transcription) {
-    // The scheduler returns once its claim is written and the delivery is
-    // timed, so waiting here only covers the durable marker, never the pass.
-    await scheduleAutomaticPostProcessEditRetry({
-      transcription: output.transcription,
-      toneId,
-      languageCode,
-    });
-  }
+const buildMemoryTranscription = (processed: ProcessedAudio): Transcription => {
+  const { transcribeResult, sanitizedTranscript, postProcessResult } =
+    processed;
+  return {
+    id: createId(),
+    createdAt: dayjs().toISOString(),
+    createdByUserId: getMyEffectiveUserId(getAppState()),
+    transcript: postProcessResult.transcript ?? "",
+    isDeleted: false,
+    rawTranscript: transcribeResult.rawTranscript ?? null,
+    sanitizedTranscript,
+    modelSize: transcribeResult.metadata?.modelSize ?? null,
+    inferenceDevice: transcribeResult.metadata?.inferenceDevice ?? null,
+    transcriptionPrompt: transcribeResult.metadata?.transcriptionPrompt ?? null,
+    postProcessPrompt: postProcessResult.metadata.postProcessPrompt ?? null,
+    transcriptionApiKeyId:
+      transcribeResult.metadata?.transcriptionApiKeyId ?? null,
+    postProcessApiKeyId: postProcessResult.metadata.postProcessApiKeyId ?? null,
+    transcriptionMode: transcribeResult.metadata?.transcriptionMode ?? null,
+    postProcessMode: postProcessResult.metadata?.postProcessMode ?? null,
+    postProcessDevice: postProcessResult.metadata.postProcessDevice ?? null,
+    postProcessModel: postProcessResult.metadata.postProcessModel ?? null,
+    postProcessProvider: postProcessResult.metadata.postProcessProvider ?? null,
+    postProcessFailed: postProcessResult.metadata.postProcessFailed ?? null,
+    postProcessEditFailed:
+      postProcessResult.metadata.postProcessEditFailed ?? null,
+    postProcessEditFailureCount:
+      postProcessResult.metadata.postProcessEditFailureCount ?? null,
+    postProcessEditAutoRetryUsed:
+      postProcessResult.metadata.postProcessEditAutoRetryUsed ?? null,
+    // Retry context is written only when a recovery pass claims the row.
+    postProcessEditRetryToneId: null,
+    postProcessEditRetryLanguageCode: null,
+    postProcessFallback: postProcessResult.metadata.postProcessFallback ?? null,
+    postProcessError: postProcessResult.metadata.postProcessError ?? null,
+    warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
+    audio: undefined,
+    remoteStatus: null,
+    remoteDeviceId: null,
+    transcriptionDurationMs:
+      transcribeResult.metadata?.transcriptionDurationMs ?? null,
+    postprocessDurationMs:
+      postProcessResult.metadata.postprocessDurationMs ?? null,
+  };
+};
 
-  const persistenceAllowed = isPersistenceAllowed();
+// An incognito import keeps a memory row, so its transcript stays available for
+// this session. Returns whether a session row actually exists afterwards.
+const recordSessionRowForImport = (
+  processed: ProcessedAudio,
+  output: StoreOutcome,
+): boolean => {
+  if (output.transcription || isPersistenceAllowed()) return false;
+  const memoryRecord = buildMemoryTranscription(processed);
   let memoryRowRecorded = false;
-  if (!output.transcription && !persistenceAllowed) {
-    const memoryRecord: Transcription = {
-      id: createId(),
-      createdAt: dayjs().toISOString(),
-      createdByUserId: getMyEffectiveUserId(getAppState()),
-      transcript: postProcessResult.transcript ?? "",
-      isDeleted: false,
-      rawTranscript: transcribeResult.rawTranscript ?? null,
-      sanitizedTranscript,
-      modelSize: transcribeResult.metadata?.modelSize ?? null,
-      inferenceDevice: transcribeResult.metadata?.inferenceDevice ?? null,
-      transcriptionPrompt:
-        transcribeResult.metadata?.transcriptionPrompt ?? null,
-      postProcessPrompt: postProcessResult.metadata.postProcessPrompt ?? null,
-      transcriptionApiKeyId:
-        transcribeResult.metadata?.transcriptionApiKeyId ?? null,
-      postProcessApiKeyId:
-        postProcessResult.metadata.postProcessApiKeyId ?? null,
-      transcriptionMode: transcribeResult.metadata?.transcriptionMode ?? null,
-      postProcessMode: postProcessResult.metadata.postProcessMode ?? null,
-      postProcessDevice: postProcessResult.metadata.postProcessDevice ?? null,
-      postProcessModel: postProcessResult.metadata.postProcessModel ?? null,
-      postProcessProvider:
-        postProcessResult.metadata.postProcessProvider ?? null,
-      postProcessFailed: postProcessResult.metadata.postProcessFailed ?? null,
-      postProcessEditFailed:
-        postProcessResult.metadata.postProcessEditFailed ?? null,
-      postProcessEditFailureCount:
-        postProcessResult.metadata.postProcessEditFailureCount ?? null,
-      postProcessEditAutoRetryUsed:
-        postProcessResult.metadata.postProcessEditAutoRetryUsed ?? null,
-      // Retry context is written only when a recovery pass claims the row.
-      postProcessEditRetryToneId: null,
-      postProcessEditRetryLanguageCode: null,
-      postProcessFallback:
-        postProcessResult.metadata.postProcessFallback ?? null,
-      postProcessError: postProcessResult.metadata.postProcessError ?? null,
-      warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
-      audio: undefined,
-      remoteStatus: null,
-      remoteDeviceId: null,
-      transcriptionDurationMs:
-        transcribeResult.metadata?.transcriptionDurationMs ?? null,
-      postprocessDurationMs:
-        postProcessResult.metadata.postprocessDurationMs ?? null,
-    };
-    // A local-data clear can open while an import is in flight. The row is
-    // written under a synchronous write lease, which the clear gate blocks,
-    // so a clearing session is never repopulated, and the row counts as
-    // present only when the write actually ran.
-    withLocalDataWriteSync((lease) => {
-      markTranscriptionSessionOnly(memoryRecord.id);
-      produceAppState((draft) => {
-        draft.transcriptionById[memoryRecord.id] = memoryRecord;
-        // The History page and the recent list render from transcriptionIds,
-        // so a record written only by id is invisible and the session-
-        // availability wording would point at a row the user cannot find.
-        draft.transcriptions.transcriptionIds = [
-          memoryRecord.id,
-          ...draft.transcriptions.transcriptionIds,
-        ];
-      }, lease);
-      memoryRowRecorded = true;
-    });
-  }
+  // A local-data clear can open while an import is in flight. The row is
+  // written under a synchronous write lease, which the clear gate blocks,
+  // so a clearing session is never repopulated, and the row counts as
+  // present only when the write actually ran.
+  withLocalDataWriteSync((lease) => {
+    markTranscriptionSessionOnly(memoryRecord.id);
+    produceAppState((draft) => {
+      draft.transcriptionById[memoryRecord.id] = memoryRecord;
+      // The History page and the recent list render from transcriptionIds,
+      // so a record written only by id is invisible and the session-
+      // availability wording would point at a row the user cannot find.
+      draft.transcriptions.transcriptionIds = [
+        memoryRecord.id,
+        ...draft.transcriptions.transcriptionIds,
+      ];
+    }, lease);
+    memoryRowRecorded = true;
+  });
+  return memoryRowRecorded;
+};
 
+const announceImportOutcome = (
+  processed: ProcessedAudio,
+  output: StoreOutcome,
+  memoryRowRecorded: boolean,
+): void => {
+  const { postProcessResult } = processed;
   const canRecoverFromHistory = output.transcription !== null;
-  // An incognito import keeps a memory row, so its transcript stays available
-  // for this session. An import the store rejected while persistence was
-  // allowed, or one whose memory write the clear gate blocked, leaves no row
-  // anywhere, and the wording must not claim otherwise. The feedback module
-  // only reads hasSessionRow when canRecoverFromHistory is false, which is
-  // exactly when memoryRowRecorded says whether a session row exists.
+  // An import the store rejected while persistence was allowed, or one whose
+  // memory write the clear gate blocked, leaves no row anywhere, and the
+  // wording must not claim otherwise. The feedback module only reads
+  // hasSessionRow when canRecoverFromHistory is false, which is exactly when
+  // memoryRowRecorded says whether a session row exists.
   const feedback = getPostProcessFeedback(
     postProcessResult.metadata,
     "audio-import",
@@ -1597,11 +1609,33 @@ export const importAudioFile = async ({
   const messages = [feedback?.message, truncationMessage].filter(
     (message): message is string => Boolean(message),
   );
-  if (messages.length > 0) {
-    showSnackbar(messages.join(" "), {
-      mode: feedback?.severity ?? "info",
-      action: feedback ? getFeedbackSnackbarAction(feedback) : undefined,
-    });
-  }
+  if (messages.length === 0) return;
+  showSnackbar(messages.join(" "), {
+    mode: feedback?.severity ?? "info",
+    action: feedback ? getFeedbackSnackbarAction(feedback) : undefined,
+  });
+};
+
+export const importAudioFile = async ({
+  toneId,
+  languageCode,
+}: ImportAudioParams): Promise<boolean> => {
+  const audio = await getTranscriptionRepo().importAudioFile();
+  if (!audio) return false;
+  const processed = await processAudio({
+    samples: audio.samples,
+    sampleRate: audio.sampleRate,
+    toneId,
+    languageCode,
+  });
+  const output = await storeTranscription(
+    buildStoreInput(
+      { samples: audio.samples, sampleRate: audio.sampleRate },
+      processed,
+    ),
+  );
+  await scheduleRetryForImport(output, { toneId, languageCode });
+  const memoryRowRecorded = recordSessionRowForImport(processed, output);
+  announceImportOutcome(processed, output, memoryRowRecorded);
   return true;
 };

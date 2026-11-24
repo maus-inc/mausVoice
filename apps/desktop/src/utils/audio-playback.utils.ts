@@ -226,6 +226,29 @@ const markStage = (name: string) => {
   }
 };
 
+const isPlaybackSuperseded = (
+  generation: number,
+  signal?: AbortSignal,
+): boolean => generation !== playbackGeneration || Boolean(signal?.aborted);
+
+const buildPlaybackSource = (
+  context: AudioContext,
+  data: { samples: number[]; sampleRate: number },
+): { buffer: AudioBuffer; source: AudioBufferSourceNode } => {
+  markStage("mv-audio:buffer-build");
+  const floatSamples = getFloatSamples(data);
+  const buffer = context.createBuffer(1, floatSamples.length, data.sampleRate);
+  buffer.getChannelData(0).set(floatSamples);
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  source.connect(context.destination);
+  return { buffer, source };
+};
+
+const releaseUnownedContext = (context: AudioContext): void => {
+  context.close().catch(() => undefined);
+};
+
 export const playWebAudio = async (
   transcriptionId: string,
   data: { samples: number[]; sampleRate: number },
@@ -254,7 +277,7 @@ export const playWebAudio = async (
   }
 
   // Pending callers do not own activePlayback yet, so notify them explicitly.
-  if (generation !== playbackGeneration || signal?.aborted) {
+  if (isPlaybackSuperseded(generation, signal)) {
     onStop("replaced");
     return;
   }
@@ -277,24 +300,12 @@ export const playWebAudio = async (
     }
 
     // Same reasoning as the exit above: superseded after `resume()`, before ownership.
-    if (generation !== playbackGeneration || signal?.aborted) {
+    if (isPlaybackSuperseded(generation, signal)) {
       onStop("replaced");
       return;
     }
 
-    const channelCount = 1;
-    markStage("mv-audio:buffer-build");
-    const floatSamples = getFloatSamples(data);
-    const buffer = context.createBuffer(
-      channelCount,
-      floatSamples.length,
-      data.sampleRate,
-    );
-    buffer.getChannelData(0).set(floatSamples);
-
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(context.destination);
+    const { buffer, source } = buildPlaybackSource(context, data);
 
     const playback: ActiveWebAudioPlayback = {
       transcriptionId,
@@ -353,7 +364,7 @@ export const playWebAudio = async (
     throw error;
   } finally {
     if (!ownedByActivePlayback) {
-      context.close().catch(() => undefined);
+      releaseUnownedContext(context);
     }
   }
 };
