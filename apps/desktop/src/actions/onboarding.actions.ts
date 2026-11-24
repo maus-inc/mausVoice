@@ -313,12 +313,6 @@ export const resetOnboarding = () => {
   });
 };
 
-export const setOnboardingIsMac = (isMac: boolean) => {
-  produceAppState((draft) => {
-    draft.onboarding.isMac = isMac;
-  });
-};
-
 export const setDidSignUpWithAccount = (didSignUp: boolean) => {
   produceAppState((draft) => {
     draft.onboarding.didSignUpWithAccount = didSignUp;

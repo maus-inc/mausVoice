@@ -39,9 +39,7 @@ const isCompositorTriggerAction = (actionName: string): boolean =>
 export const getAdditionalLanguageActionName = (language: string): string =>
   `${ADDITIONAL_LANGUAGE_HOTKEY_PREFIX}${language}`;
 
-export const getAdditionalLanguageCode = (
-  actionName: string,
-): string | null => {
+const getAdditionalLanguageCode = (actionName: string): string | null => {
   if (!actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX)) {
     return null;
   }
@@ -72,7 +70,7 @@ type PlatformHotkeyCombos = {
   linux: string[][];
 };
 
-export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
+const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
   [DICTATE_HOTKEY]: {
     macos: [["Function"]],
     windows: [["MetaLeft", "ControlLeft"]],
@@ -95,10 +93,6 @@ export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
     windows: [["LeftArrow"]],
     linux: [["LeftArrow"]],
   },
-};
-
-export const getHasDefaultHotkeyForAction = (actionName: string): boolean => {
-  return Boolean(DEFAULT_HOTKEY_COMBOS[actionName]);
 };
 
 export const getDefaultHotkeyCombosForAction = (
@@ -201,7 +195,7 @@ export const getStyleSwitchActionNamesForKey = (
   );
 };
 
-export const isHoldActionHotkey = (actionName: string): boolean => {
+const isHoldActionHotkey = (actionName: string): boolean => {
   return (
     actionName === DICTATE_HOTKEY ||
     actionName === AGENT_DICTATE_HOTKEY ||
