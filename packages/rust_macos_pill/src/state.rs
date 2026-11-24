@@ -1,8 +1,10 @@
+pub(crate) use rust_pill_shared::indicator::DictationIndicator;
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{
-    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
-};
+pub(crate) use rust_pill_shared::fireworks::{Rocket, RocketPhase};
+pub(crate) use rust_pill_shared::flame::FlameTongue;
+
+use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Rect, Visibility};
 
 use crate::constants::*;
 
@@ -74,65 +76,39 @@ impl WindowMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum RocketPhase {
-    Rising,
-    Exploding,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Spark {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) life: f64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Rocket {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) trail: Vec<(f64, f64)>,
-    pub(crate) fuse: f64,
-    pub(crate) phase: RocketPhase,
-    pub(crate) num_sparks: usize,
-    pub(crate) launch_index: usize,
-    pub(crate) sparks: Vec<Spark>,
-    pub(crate) trail_alpha: f64,
-    pub(crate) color: (f64, f64, f64),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FlameTongue {
-    pub(crate) t: f64,
-    pub(crate) height: f64,
-    pub(crate) width: f64,
-    pub(crate) phase: f64,
-    pub(crate) speed: f64,
+/// A drop a save guard deferred, held until the retry may write it.
+///
+/// The rectangle and the display it belonged to are captured together, at the
+/// moment the gesture ended, so a reconciliation that moves the window during the
+/// hold cannot make the retry pair the retained rectangle with a panel the drop
+/// was never on. `frame` is in Cocoa's bottom-up space, because that is what the
+/// idle tick parks the window with; `monitor` and `display_id` are in the
+/// desktop's top-down space, because that is what the record stores.
+///
+/// `primary_top` is the basis `monitor` was flipped against, kept so the retry
+/// flips `frame` against the same line. Re-reading it at the retry would convert
+/// a frame captured against one primary top with another, so a primary-display
+/// height change during the hold would publish a rectangle offset from the
+/// `monitor` beside it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DropRecord {
+    pub(crate) frame: (f64, f64, f64, f64),
+    /// The pill centre inside the frame at the drop. Retained because the live
+    /// centre moves with the panel and hover state, and a retry that recomputed
+    /// it could resolve a different display than the one the user dropped on.
+    pub(crate) point: (f64, f64),
+    /// `None` when the window was on no screen at the drop, so the report carries
+    /// no monitor rather than a fabricated one.
+    pub(crate) monitor: Option<Rect>,
+    pub(crate) display_id: Option<u64>,
+    pub(crate) primary_top: f64,
 }
 
 #[derive(Debug, Clone)]
 
 pub(crate) struct PillState {
-    pub(crate) phase: Cell<Phase>,
     pub(crate) visibility: Cell<Visibility>,
-    pub(crate) expand_t: Cell<f64>,
-    pub(crate) expand_velocity: Cell<f64>,
-    pub(crate) hovered: Cell<bool>,
-    pub(crate) wave_phase: Cell<f64>,
-    pub(crate) current_level: Cell<f64>,
-    pub(crate) target_level: Cell<f64>,
-    pub(crate) loading_offset: Cell<f64>,
-    pub(crate) pending_levels: RefCell<Vec<f32>>,
-    pub(crate) style_count: Cell<u32>,
-    pub(crate) style_name: RefCell<String>,
-    pub(crate) tooltip_t: Cell<f64>,
-    pub(crate) tooltip_velocity: Cell<f64>,
-    pub(crate) tooltip_width: Cell<f64>,
-    pub(crate) style_tooltip_gate: rust_pill_shared::StyleTooltipGate,
+    pub(crate) indicator: DictationIndicator<Phase>,
     pub(crate) ui_scale: f64,
 
     // Window sizing
@@ -212,7 +188,6 @@ pub(crate) struct PillState {
     pub(crate) transcript_time_since_update: Cell<f64>,
     pub(crate) transcript_opacity: Cell<f64>,
     pub(crate) transcript_has_message: Cell<bool>,
-    pub(crate) stage_text: RefCell<Option<String>>,
 
     // Long-press balloon pop + drag
     pub(crate) long_press_active: Cell<bool>,
@@ -238,15 +213,56 @@ pub(crate) struct PillState {
     pub(crate) selector_placement: RefCell<rust_pill_shared::placement::SelectorPlacement>,
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
-    pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+    /// Stable token of the display the saved position belongs to, or `None` when
+    /// it could not be named. Published with the position so the stored record
+    /// can name the display rather than only its rectangle.
+    pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// A stored record the startup pass could not resolve because no display was
+    /// connected yet. The frame tick applies it as soon as one is, and a reset or a
+    /// clear spends it first.
+    pub(crate) pending_restore: RefCell<Option<rust_pill_shared::restore::ParkedWindow>>,
+    /// The work area the saved position was clamped into, kept so a pill whose
+    /// panel is unplugged remaps from the geometry it was saved against rather
+    /// than from the survivor it happens to be nearest to.
+    pub(crate) saved_work_area: Cell<rust_pill_shared::edge::MonitorRect>,
+    /// When a drop that the display-change hold refused may be written, or `None`
+    /// when no save is owed. The drag controller reports `settled` exactly once,
+    /// so a refused save has to be retried from here or the drop is lost.
+    pub(crate) drag_save_due: Cell<Option<f64>>,
+    /// The window frame the gesture ended at, kept while a guarded save is owed,
+    /// together with the display it was on when it landed.
+    ///
+    /// The retry runs after a delay, and the pill's own reconciliation can move the
+    /// window in between. `saved_x`/`saved_y` still describe the position from
+    /// before the drop, so they cannot answer where it landed; this can.
+    ///
+    /// A whole frame rather than an origin, because the report needs the frame
+    /// flipped into the desktop's top-down space while `saved_x`/`saved_y` need the
+    /// origin in Cocoa's bottom-up one. Keeping one value and deriving both is what
+    /// stops the two from describing different places. The display is retained with
+    /// it for the same reason: reading the live screen at retry time would pair the
+    /// retained rectangle with the panel reconciliation moved the window onto, so a
+    /// restart would restore the drop against the wrong monitor.
+    pub(crate) drop_frame: Cell<Option<DropRecord>>,
+    /// Holds position saves until the display layout has been steady, so a frame
+    /// macOS forced during a display change is never stored as the user's
+    /// position. See rust_pill_shared::layout::SaveGuard.
+    pub(crate) save_guard: RefCell<rust_pill_shared::layout::SaveGuard>,
+    /// The display-arrangement signature this pill last reconciled against, and
+    /// when it last looked. `didChangeScreenParameters` is the primary signal;
+    /// the poll covers a notification that arrives while the app is not
+    /// frontmost, which macOS can drop.
+    pub(crate) layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>,
     /// True once the pill has been placed at least once. A brand-new window
     /// sits at (0, 0) before its first layout, so an origin check alone would
     /// mistake a legitimately-placed window for "never positioned" and keep
     /// chasing the cursor; this flag lets the first placement follow the cursor
     /// and then stays put.
     pub(crate) first_placement_done: Cell<bool>,
+    /// Why this pill has no stored position and where a due placement goes.
+    pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
 
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,
@@ -254,27 +270,9 @@ pub(crate) struct PillState {
     pub(crate) drag_label_t: Cell<f64>,
     pub(crate) drag_label_velocity: Cell<f64>,
 
-    // Master alpha for the long-press outline. Driven by the tick: pinned at
-    // 1 while the gesture is held, eased to 0 over LONG_PRESS_RING_FADE after
-    // release, so the outline never fades under an active press.
-    pub(crate) ring_alpha: Cell<f64>,
-
-    // Ring fill level captured at release; the post-release fade animates from
-    // this level rather than snapping to a complete outline.
-    pub(crate) ring_release_progress: Cell<f64>,
-
-    // Time since the current press began / since the last release, driving the
-    // ring's eased fade-in and fade-out.
-    pub(crate) press_elapsed: Cell<f64>,
-    pub(crate) release_elapsed: Cell<f64>,
-
-    // 0..1 arm state, ramped after the long press completes. Lifts the ring's
-    // brightness and retires the comet head.
-    pub(crate) arm_t: Cell<f64>,
-
-    // Seconds since the gesture armed, or -1 when no pulse is running. Drives
-    // the expanding confirmation halo.
-    pub(crate) arm_pulse: Cell<f64>,
+    // The long-press outline and the locate replay. Owned by the shared crate so
+    // the field list and the tick exist once for all three platforms.
+    pub(crate) ring: rust_pill_shared::RingState,
 
     // True from press until release, regardless of whether the long press or
     // drag survived. The move threshold cancels `long_press_active` before
@@ -346,5 +344,22 @@ impl PillState {
             (WINDOW_W_TYPING as f64 - dw) / 2.0,
             WINDOW_H_TYPING as f64 - dh,
         )
+    }
+}
+
+rust_pill_shared::impl_ring_host!(
+    PillState,
+    SPRING_STIFFNESS,
+    fn reduced_motion(&self) -> bool {
+        crate::app::reduced_motion()
+    }
+);
+
+// Native paint and input code read the same indicator that receives phase IPC.
+impl std::ops::Deref for PillState {
+    type Target = DictationIndicator<Phase>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.indicator
     }
 }

@@ -12,6 +12,9 @@ node_modules
 !.claude/skills
 .venv
 .worktrees/
+# Analysis cache written by the fallow tool. It holds absolute paths from the
+# machine that produced it, so it is never committed.
+.fallow/
 
 # Local env files
 .env
@@ -148,6 +151,8 @@ reports/pr*/
 # left stale. One copy now, with the reason recorded so the next append is a
 # merge rather than a copy.
 
+# Background job output from a shell session, never a source file.
+nohup.out
 # Agent sandbox state and local artifacts
 .local/
 .openhands/artifacts/

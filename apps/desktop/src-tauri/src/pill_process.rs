@@ -20,6 +20,10 @@ pub struct PillProcess {
     // A failed nonblocking write or flag restoration can invalidate framing.
     // Closing the pipe prevents a later control message following a partial line.
     stdin: Mutex<Option<ChildStdin>>,
+    // Set when the stdout reader returns. The managed state outlives the child --
+    // nothing removes it -- so this flag, not the presence of the state, is what
+    // tells a caller whether a report can still arrive.
+    reader_running: std::sync::atomic::AtomicBool,
 }
 
 /// Monotonic sequence number for phase messages. A rapid loading -> idle
@@ -220,6 +224,14 @@ pub fn try_spawn_pill(app: &tauri::AppHandle, pill_path: &std::path::Path) -> bo
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
 
+    // The position the user left the pill at, handed over before the first
+    // frame. The line protocol on stdin is only read once the window exists, so
+    // an argument is the only way to place the window correctly rather than
+    // moving it after the user has already seen it in the default corner.
+    if let Some(argument) = crate::pill_position::saved_position_argument(app) {
+        command.arg(argument);
+    }
+
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -262,6 +274,7 @@ pub fn try_spawn_pill(app: &tauri::AppHandle, pill_path: &std::path::Path) -> bo
     let process = std::sync::Arc::new(PillProcess {
         _child: Mutex::new(child),
         stdin: Mutex::new(Some(stdin)),
+        reader_running: std::sync::atomic::AtomicBool::new(true),
     });
 
     if !publish_pill_process(app, process) {
@@ -358,6 +371,22 @@ pub fn notify_pill_window_size(app: &tauri::AppHandle, size: &PillWindowSize) {
     }
 }
 
+/// Whether a report from the pill can still arrive.
+///
+/// True covers a pill whose stdin has already failed, because its stdout reader
+/// can still be draining lines it read before the failure, and one of those can
+/// be a saved-position report. That is the window a local-data clear has to treat
+/// as unsafe.
+///
+/// False once that reader has returned. The managed state is never removed, so
+/// the presence of `PillProcess` says only that one was spawned at some point; a
+/// pill that crashed earlier would otherwise read as live forever and block every
+/// later clear.
+pub fn pill_is_running(app: &tauri::AppHandle) -> bool {
+    app.try_state::<std::sync::Arc<PillProcess>>()
+        .is_some_and(|pill| pill.reader_running.load(Ordering::Acquire))
+}
+
 pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
         if let Err(err) = pill.send(payload) {
@@ -377,15 +406,80 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
+/// Tell the pill to stop treating its current spot as saved, without moving it.
+///
+/// Sent after a local-data clear wipes the stored row. The pill keeps the
+/// position it is sitting at in memory, and the reloaded window asks for it, so
+/// without this the row is written straight back. `ack` is the declaration the
+/// pill's answer retires; the caller withdraws it when this returns an error, so a
+/// clear that never reached the pill cannot close the latch forever.
+pub fn notify_forget_position(app: &tauri::AppHandle, ack: Option<u64>) -> Result<(), String> {
+    let ack = ack.map_or_else(String::new, |id| format!(r#","ack":{id}"#));
     match app.try_state::<std::sync::Arc<PillProcess>>() {
-        Some(pill) => {
-            let msg = format!(r#"{{"type":"reset_position","strategy":"{strategy}"}}"#);
-            pill.send(&msg)
-                .map_err(|err| format!("failed to reset pill position: {err}"))
-        }
-        None => Err("Reset position requested with no managed pill process".to_string()),
+        Some(pill) => pill
+            .send(&format!(r#"{{"type":"forget_position"{ack}}}"#))
+            .map_err(|err| format!("failed to forget the pill position: {err}")),
+        None => Err("Pill position forgotten with no managed pill process".to_string()),
     }
+}
+
+pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
+    // The stored record is what the next launch restores, so a reset has to
+    // forget it before it tells the pill to re-home. Otherwise the pill moves
+    // back to the default corner now and returns to the old spot next launch.
+    //
+    // A reset that reports success while the row survives is the failure this
+    // guards: the window moves, the user sees it move, and the next launch
+    // undoes it. Failing leaves the pill where it is, which is recoverable.
+
+    // The write gate first, then the delivery order. The local-data clear holds
+    // the gate and takes the delivery order for its own forget, so this path
+    // taking them the other way round is an ABBA deadlock: the reset waits for a
+    // gate the clear holds, and the clear waits for a delivery order the reset
+    // holds, and neither finishes.
+    let Ok(_write) = crate::db::local_data_write_gate::lock_local_data_write(None).await else {
+        return Err("Could not clear the pill's stored position, so it was not reset".to_string());
+    };
+    // Held across the clear and the send, so arrival order at the pill matches
+    // declaration order. Released on every path, including the failures.
+    let _delivery = crate::pill_position::lock_clear_delivery().await;
+    let Some(declaration) = crate::pill_position::clear_saved_position(app, &_write).await else {
+        return Err("Could not clear the pill's stored position, so it was not reset".to_string());
+    };
+    // The row is gone by now, which is the durable half of a reset: the next launch
+    // starts at the default corner whether or not the pill hears about it. So a
+    // delivery failure is logged, not reported as a failed reset, because the user
+    // would otherwise be told to retry an action that already took effect.
+    let send_failed = match app.try_state::<std::sync::Arc<PillProcess>>() {
+        // No process is the same outcome as a failed send: the row is gone and
+        // there is nothing on screen to move.
+        None => {
+            log::debug!("Reset the stored pill position with no managed pill process");
+            None
+        }
+        Some(pill) => {
+            // Serialised rather than interpolated: the strategy reaches this
+            // function as a string, and the pill deserialises it into an enum
+            // that accepts only `current` and `cursor`. Building the record by
+            // hand meant any other value produced a message the pill rejected
+            // after the row was already gone.
+            let msg = serde_json::json!({
+                "type": "reset_position",
+                "strategy": strategy,
+                "ack": declaration,
+            })
+            .to_string();
+            pill.send(&msg).err()
+        }
+    };
+    if let Some(err) = send_failed {
+        // The pill will never answer this declaration, so it has to go back now.
+        // Left outstanding it closes the latch for the rest of the process and
+        // every later drag is dropped silently.
+        crate::pill_position::withdraw_erase(declaration);
+        log::warn!("Reset the stored pill position but could not tell the pill to re-home: {err}");
+    }
+    Ok(())
 }
 
 pub fn resolve_pill_binary_in_resources(
@@ -489,6 +583,16 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                 }
             }
         }
+        // Clear the liveness flag before withdrawing, so a clear that reads the
+        // flag while this reader is finishing sees a dead pill rather than one
+        // that will never answer. Both orders leave the latch consistent: the
+        // withdrawal below opens it either way.
+        if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
+            pill.reader_running.store(false, Ordering::Release);
+        }
+        // The pill is gone, so no report can answer a declaration still waiting
+        // on it. `send` returning Ok only proved the frame reached the pipe.
+        crate::pill_position::withdraw_all_erases();
         log::info!("Pill overlay process stdout closed");
     });
 }
@@ -531,6 +635,14 @@ pub(crate) enum PillEvent {
         has_saved_position: bool,
         rect: Option<serde_json::Value>,
         monitor: Option<serde_json::Value>,
+        /// The pill's stable token for the display it is parked on, when it could
+        /// name one. Carried through to the stored record so the next launch can
+        /// recognise that display rather than only its rectangle.
+        display_id: Option<u64>,
+        /// The newest clear the pill has applied, echoed from the id the desktop
+        /// sent with that clear. Retires exactly the declarations at or below it,
+        /// so an earlier clear's answer cannot retract a later clear's declaration.
+        ack: Option<u64>,
     },
 }
 
@@ -734,10 +846,20 @@ pub(crate) fn parse_pill_event(line: &str) -> Option<PillEvent> {
                 .unwrap_or(false);
             let rect = val.get("rect").cloned().filter(|v| v.is_object());
             let monitor = val.get("monitor").cloned().filter(|v| v.is_object());
+            // A token that is not a number is treated as absent rather than
+            // guessed at: an unnamed display falls back to geometry, which is
+            // what every build before this one did.
+            let display_id = val.get("display_id").and_then(|v| v.as_u64());
+            // A report may carry the id of the clear it answers. A missing or
+            // non-numeric one is treated as absent, which retires nothing, so a
+            // malformed field cannot open the latch.
+            let ack = val.get("ack").and_then(|v| v.as_u64());
             Some(PillEvent::PositionChanged {
                 has_saved_position,
                 rect,
                 monitor,
+                display_id,
+                ack,
             })
         }
         _ => None,
@@ -816,12 +938,17 @@ fn dispatch_pill_event(app: &tauri::AppHandle, event: PillEvent) {
             has_saved_position,
             rect,
             monitor,
+            display_id,
+            ack,
         } => {
-            let payload = serde_json::json!({
-                "hasSavedPosition": has_saved_position,
-                "rect": rect,
-                "monitor": monitor,
-            });
+            let payload = crate::pill_position::apply_published_position(
+                app,
+                has_saved_position,
+                rect,
+                monitor,
+                display_id,
+                ack,
+            );
             let _ = app.emit_to("main", "pill-position-changed", payload);
         }
     }
@@ -1769,7 +1896,35 @@ mod pill_publish_tests {
         ReapOnDrop(Arc::new(PillProcess {
             _child: Mutex::new(child),
             stdin: Mutex::new(Some(stdin)),
+            reader_running: std::sync::atomic::AtomicBool::new(true),
         }))
+    }
+
+    /// The managed state outlives the child, so the presence of `PillProcess`
+    /// cannot be what tells a clear whether a report can still arrive. A pill that
+    /// crashed before the clear would otherwise read as live forever and reject
+    /// every later attempt.
+    #[test]
+    fn a_finished_reader_reads_as_not_running() {
+        let process = pill_process();
+        assert!(
+            process
+                .0
+                .reader_running
+                .load(std::sync::atomic::Ordering::Acquire),
+            "a freshly spawned pill must read as live, because its reader is draining"
+        );
+        process
+            .0
+            .reader_running
+            .store(false, std::sync::atomic::Ordering::Release);
+        assert!(
+            !process
+                .0
+                .reader_running
+                .load(std::sync::atomic::Ordering::Acquire),
+            "a reader that returned must read as dead, or every later clear is blocked"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -1886,6 +2041,7 @@ mod pill_publish_tests {
         let process = ReapOnDrop(Arc::new(PillProcess {
             _child: Mutex::new(child),
             stdin: Mutex::new(Some(stdin)),
+            reader_running: std::sync::atomic::AtomicBool::new(true),
         }));
         let level = r#"{"type":"levels","levels":[0.5]}"#;
         let phase = r#"{"type":"phase","phase":"idle"}"#;

@@ -8,6 +8,7 @@ import { DictationSideEffects } from "./DictationSideEffects";
 import { ElevationDeclinedDialog } from "./ElevationDeclinedDialog";
 import { EditWatchSideEffects } from "./EditWatchSideEffects";
 import { KeyPressSideEffects } from "./KeyPressSideEffects";
+import { LocateGestureSideEffects } from "./LocateGestureSideEffects";
 import { MigratorSideEffects } from "./MigratorSideEffects";
 import { SessionSideEffects } from "./SessionSideEffects";
 import { LoadingApp } from "./LoadingApp";
@@ -30,6 +31,7 @@ export const AppWithLoading = () => {
       {elevationReady && (
         <>
           {hotkeyStrategy === "bridge" && <KeyPressSideEffects />}
+          <LocateGestureSideEffects />
           <UpdateDialog />
           <MigratorSideEffects />
           <DictationSideEffects />

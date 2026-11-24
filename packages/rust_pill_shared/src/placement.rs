@@ -173,7 +173,10 @@ pub fn decide_side(current: SelectorSide, space_above: f64, tooltip_h: f64) -> S
 /// inside the window. Platforms add this to their window height once at
 /// creation (not per flip) and leave content math untouched, so the pill
 /// never moves and the blend animates inside room that is already there.
-pub fn below_slot_extra(tooltip_h: f64) -> f64 {
+///
+/// `const` so a platform can size its fixed drawing canvas at compile time from
+/// the same formula, rather than restating the arithmetic in a constant.
+pub const fn below_slot_extra(tooltip_h: f64) -> f64 {
     PLACEMENT_GAP + tooltip_h.max(0.0) + BELOW_SLOT_MARGIN
 }
 

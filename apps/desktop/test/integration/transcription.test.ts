@@ -7,7 +7,7 @@ import {
   TranscribeSegmentInput,
 } from "../../src/repos/transcribe-audio.repo";
 import { getStringSimilarity } from "../../src/utils/string.utils";
-import { getGroqApiKey } from "../helpers/env.utils";
+import { getGroqApiKey, hasGroqApiKey } from "../helpers/env.utils";
 
 /**
  * Parses a WAV file buffer and returns audio samples as Float32Array.
@@ -134,7 +134,7 @@ class TestGroqTranscribeAudioRepo extends GroqTranscribeAudioRepo {
   }
 }
 
-describe("Groq Transcription Integration", () => {
+describe.skipIf(!hasGroqApiKey())("Groq Transcription Integration", () => {
   const assetsDir = resolve(__dirname, "../assets");
   const audioPath = resolve(assetsDir, "transcript-0.wav");
   const expectedTextPath = resolve(assetsDir, "transcript-0.txt");

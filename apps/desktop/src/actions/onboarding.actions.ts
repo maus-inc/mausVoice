@@ -313,12 +313,6 @@ export const resetOnboarding = () => {
   });
 };
 
-export const setOnboardingIsMac = (isMac: boolean) => {
-  produceAppState((draft) => {
-    draft.onboarding.isMac = isMac;
-  });
-};
-
 export const setDidSignUpWithAccount = (didSignUp: boolean) => {
   produceAppState((draft) => {
     draft.onboarding.didSignUpWithAccount = didSignUp;
@@ -402,6 +396,7 @@ const createOnboardingPreferences = (
   alwaysRequestAdminOnStartup: false,
   handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
   inDictationStyleSwitchingEnabled: false,
+  pillLocateGestureModifier: "none",
   hallucinationFilterEnabled: true,
   fastStyleShortDictationsEnabled: true,
   reviewBeforeInsert: null,

@@ -90,14 +90,12 @@ import {
 } from "./dictation-recording-intake";
 import { createSystemVolumeDim } from "./dictation-volume-dim";
 import {
+  attemptSurvivedNoClear,
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
 } from "./recording-start-gate";
-import {
-  getLocalDataClearGeneration,
-  isLocalDataClearRequested,
-} from "../../utils/local-data-write-gate";
+import { getLocalDataClearGeneration } from "../../utils/local-data-write-gate";
 import type {
   OverlayPhase,
   OverlayResolvePermissionPayload,
@@ -2234,8 +2232,7 @@ export const DictationSideEffects = () => {
         let chunkAdmission: { ownerId: string; generation: number } | null =
           null;
         const isCurrentStart = () =>
-          !isLocalDataClearRequested() &&
-          clearGeneration === getLocalDataClearGeneration() &&
+          attemptSurvivedNoClear(clearGeneration) &&
           isRecordingStartCurrent(
             operationId,
             recordingOperationRef.current,

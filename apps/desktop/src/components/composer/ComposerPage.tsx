@@ -285,8 +285,7 @@ export const ComposerPage = () => {
     disabledReason,
   } = useVoiceEditAvailability(intl);
 
-  const { unsupportedMessageRef, recordingUnavailableMessageRef } =
-    useVoiceRecorderMessages(intl);
+  const { intlRef } = useVoiceRecorderMessages(intl);
 
   useEffect(() => {
     transcriptRef.current?.focus();
@@ -313,8 +312,7 @@ export const ComposerPage = () => {
 
   useVoiceInstructionRecorder({
     speechRecognitionSupported,
-    unsupportedMessageRef,
-    recordingUnavailableMessageRef,
+    intlRef,
     recorderRef,
     onListeningChange: setIsListening,
     onTranscript: (spoken) =>

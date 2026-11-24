@@ -1,42 +1,13 @@
+pub(crate) use rust_pill_shared::indicator::DictationIndicator;
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{
-    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
-};
+pub(crate) use rust_pill_shared::fireworks::{Rocket, RocketPhase};
+pub(crate) use rust_pill_shared::flame::FlameTongue;
+
+use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Visibility};
 
 use crate::constants::*;
 use crate::pill::Backend;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum RocketPhase {
-    Rising,
-    Exploding,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Spark {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) life: f64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Rocket {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) trail: Vec<(f64, f64)>,
-    pub(crate) fuse: f64,
-    pub(crate) phase: RocketPhase,
-    pub(crate) num_sparks: usize,
-    pub(crate) launch_index: usize,
-    pub(crate) sparks: Vec<Spark>,
-    pub(crate) trail_alpha: f64,
-    pub(crate) color: (f64, f64, f64),
-}
 
 #[derive(Debug, Clone)]
 pub(crate) enum ClickAction {
@@ -100,15 +71,6 @@ impl ClickRegion {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct FlameTongue {
-    pub(crate) t: f64,
-    pub(crate) height: f64,
-    pub(crate) width: f64,
-    pub(crate) phase: f64,
-    pub(crate) speed: f64,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowMode {
     Dictation,
@@ -137,23 +99,20 @@ impl WindowMode {
     }
 }
 
+/// A drop a refused save still owes, read at the instant of the release.
+///
+/// The retry runs after the display hold, and reconciliation moves the window
+/// in between. Retaining the origin and the display it landed on keeps the
+/// retry writing the user's drop instead of the frame the layout chose.
+pub(crate) struct OwedDrop {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) monitor: Option<rust_pill_shared::edge::MonitorRect>,
+    pub(crate) display_id: Option<u64>,
+}
+
 pub(crate) struct PillState {
-    pub(crate) phase: Cell<Phase>,
     pub(crate) visibility: Cell<Visibility>,
-    pub(crate) expand_t: Cell<f64>,
-    pub(crate) expand_velocity: Cell<f64>,
-    pub(crate) hovered: Cell<bool>,
-    pub(crate) wave_phase: Cell<f64>,
-    pub(crate) current_level: Cell<f64>,
-    pub(crate) target_level: Cell<f64>,
-    pub(crate) loading_offset: Cell<f64>,
-    pub(crate) pending_levels: RefCell<Vec<f32>>,
-    pub(crate) style_count: Cell<u32>,
-    pub(crate) style_name: RefCell<String>,
-    pub(crate) tooltip_t: Cell<f64>,
-    pub(crate) tooltip_velocity: Cell<f64>,
-    pub(crate) tooltip_width: Cell<f64>,
-    pub(crate) style_tooltip_gate: rust_pill_shared::StyleTooltipGate,
 
     // Window sizing
     pub(crate) window_mode: Cell<WindowMode>,
@@ -232,7 +191,6 @@ pub(crate) struct PillState {
     pub(crate) transcript_time_since_update: Cell<f64>,
     pub(crate) transcript_opacity: Cell<f64>,
     pub(crate) transcript_has_message: Cell<bool>,
-    pub(crate) stage_text: RefCell<Option<String>>,
 
     // Long-press drag state
     pub(crate) long_press_active: Cell<bool>,
@@ -246,27 +204,9 @@ pub(crate) struct PillState {
     pub(crate) inflate_velocity: Cell<f64>,
     pub(crate) drag_label_t: Cell<f64>,
     pub(crate) drag_label_velocity: Cell<f64>,
-    // Master alpha for the long-press outline. Pinned at 1 while the gesture is
-    // held, eased to 0 over LONG_PRESS_RING_FADE after release, so the outline
-    // never fades under an active press.
-    pub(crate) ring_alpha: Cell<f64>,
-
-    // Ring fill level captured at release; the post-release fade animates from
-    // this level rather than snapping to a complete outline.
-    pub(crate) ring_release_progress: Cell<f64>,
-
-    // Time since the current press began / since the last release, driving the
-    // ring's eased fade-in and fade-out.
-    pub(crate) press_elapsed: Cell<f64>,
-    pub(crate) release_elapsed: Cell<f64>,
-
-    // 0..1 arm state, ramped after the long press completes. Lifts the ring's
-    // brightness and retires the comet head.
-    pub(crate) arm_t: Cell<f64>,
-
-    // Seconds since the gesture armed, or -1 when no pulse is running. Drives
-    // the expanding confirmation halo.
-    pub(crate) arm_pulse: Cell<f64>,
+    // The long-press outline and the locate replay. Owned by the shared crate so
+    // the field list and the tick exist once for all three platforms.
+    pub(crate) ring: rust_pill_shared::RingState,
 
     // True from press until release, regardless of whether the long press or
     // drag survived. The move threshold cancels `long_press_active` before
@@ -311,16 +251,51 @@ pub(crate) struct PillState {
     // ends so the toplevel stays parked until the user moves it again.
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
-    pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
+    /// Stable token of the display the saved position belongs to, or `None` when
+    /// GDK could not name it. Published with the position so the stored record
+    /// can name the display rather than only its rectangle.
+    pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// The work area the saved position was clamped into, kept so a pill whose
+    /// panel is unplugged remaps from the geometry it was saved against instead
+    /// of from the survivor it happens to be nearest to. Written beside
+    /// `saved_display_id`; both describe the same drop.
+    pub(crate) saved_work_area: Cell<rust_pill_shared::edge::MonitorRect>,
+    /// Holds position saves until the display layout has been steady, so a frame
+    /// the X server or the window manager forced during a RandR change is never
+    /// stored as the user's position. See rust_pill_shared::layout::SaveGuard.
+    pub(crate) save_guard: RefCell<rust_pill_shared::layout::SaveGuard>,
+    /// The display-arrangement signature this pill last reconciled against, and
+    /// when it last looked. The RandR event is the primary signal; the poll covers
+    /// a change that lands before the event is selected or while the window is
+    /// unmapped.
+    pub(crate) layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>,
+    /// Position the host stored for this pill in a previous session, already
+    /// parsed. Taken once during realize and resolved against the monitors that
+    /// are connected then; see `rust_pill_shared::restore`.
+    pub(crate) restored_position: Cell<Option<rust_pill_shared::restore::ParkedWindow>>,
     // Set by explicit release-settle or interruption persistence; consumed by
     // the slow timer so a later cursor poll cannot overwrite the saved point.
     // The slow-timer fallback itself does not set this flag.
     pub(crate) x11_release_persisted: Cell<bool>,
+    /// When a drop that the display-change hold refused may be written, or `None`
+    /// when no save is owed. The release is reported once per settle, so a refused
+    /// save has to be retried from the frame loop or the drop is lost.
+    pub(crate) drag_save_due: Cell<Option<f64>>,
+    /// The drop a refused save still owes, read at the release.
+    ///
+    /// The retry runs after the hold, and display reconciliation moves the
+    /// window in the meantime: `x11_drag_applied` then names the frame the
+    /// layout chose, not the one the user dropped. The origin, the monitor and
+    /// its token are retained here so the retry writes the drop, the way the
+    /// Windows and macOS paths do. Cleared when a new gesture settles.
+    pub(crate) x11_drop_owed: RefCell<Option<OwedDrop>>,
     // Last window origin the frame tick applied during an X11 drag, so steady
     // frames skip the X round trip. Seeded out of range to force the first move.
     pub(crate) x11_drag_applied: Cell<(i32, i32)>,
+    /// Why this pill has no stored position and where a due placement goes.
+    pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
     // PlainWayland draws the pill on a maximized overlay window, so dragging
     // translates the pill's draw position rather than moving the toplevel.
     pub(crate) drag_draw_offset_x: Cell<f64>,
@@ -333,6 +308,7 @@ pub(crate) struct PillState {
     pub(crate) alloc_width: Cell<f64>,
     pub(crate) alloc_height: Cell<f64>,
 
+    pub(crate) indicator: DictationIndicator<Phase>,
     // Active backend, so draw-side positioning can stay backend aware.
     pub(crate) backend: Cell<Backend>,
 }
@@ -421,10 +397,34 @@ fn content_origin(aw: f64, ah: f64, dw: f64, dh: f64, below_slot: f64) -> (f64, 
             content_canvas_height(ah, below_slot) - dh - MARGIN_BOTTOM as f64,
         )
     } else {
+        // Before the first size-allocate the allocation cells are still zero, so
+        // this branch stands in for the size the window is about to have. It has
+        // to agree with the allocated branch or a caller that runs at realize --
+        // the X11 restore does -- lands MARGIN_BOTTOM pixels high. The X11
+        // selector slot cancels in the vertical term (it is added to the height
+        // and subtracted again as `below_slot`), so the typing height alone is
+        // the correct stand-in.
         (
             (WINDOW_W_TYPING as f64 - dw) / 2.0,
-            WINDOW_H_TYPING as f64 - dh,
+            WINDOW_H_TYPING as f64 - dh - MARGIN_BOTTOM as f64,
         )
+    }
+}
+
+rust_pill_shared::impl_ring_host!(
+    PillState,
+    SPRING_STIFFNESS,
+    fn reduced_motion(&self) -> bool {
+        crate::pill::reduced_motion()
+    }
+);
+
+// Native paint and input code read the same indicator that receives phase IPC.
+impl std::ops::Deref for PillState {
+    type Target = DictationIndicator<Phase>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.indicator
     }
 }
 
@@ -463,5 +463,30 @@ mod tests {
             content_origin(1000.0, 800.0, 200.0, 100.0, 0.0),
             (400.0, 700.0 - MARGIN_BOTTOM as f64)
         );
+    }
+
+    #[test]
+    fn pre_allocation_origin_matches_the_allocated_origin() {
+        // The fallback stands in for the size the window is about to have, so it
+        // must agree with the allocated branch once that size is known. The X11
+        // restore runs at realize and reads the fallback; a mismatch parks the
+        // pill off by the difference. Covered for both the X11 slot and none.
+        let dw = 200.0;
+        let dh = 100.0;
+        for slot in [
+            0.0,
+            rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT),
+        ] {
+            assert_eq!(
+                content_origin(0.0, 0.0, dw, dh, slot),
+                content_origin(
+                    WINDOW_W_TYPING as f64,
+                    WINDOW_H_TYPING as f64 + slot,
+                    dw,
+                    dh,
+                    slot,
+                ),
+            );
+        }
     }
 }

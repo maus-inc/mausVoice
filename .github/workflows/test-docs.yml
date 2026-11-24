@@ -10,6 +10,7 @@ on:
       - "sitemap.xml"
       - "robots.txt"
       - "llms.txt"
+      - "setup-toolchain.sh"
       - "scripts/ci/pr28-contracts.test.mjs"
       - "scripts/ci/pr37-contracts.test.mjs"
       - "scripts/ci/release-shell-contracts.test.mjs"
@@ -18,6 +19,15 @@ on:
       - "scripts/ci/updater-manifest.test.mjs"
       - "scripts/ci/build-changelog.mjs"
       - "scripts/ci/build-changelog.test.mjs"
+      # `pr28-contracts` and `pr37-contracts` read the pill crates, the Tauri
+      # platform adapters and desktop sources to prove native contracts. Without
+      # these entries a refactor that moves the code they assert on changes no
+      # path here, so the workflow never runs and the guard only reports its
+      # drift the next time somebody edits docs. That is how a ring refactor
+      # broke eight of them silently.
+      - "packages/**"
+      - "apps/desktop/**"
+      - ".github/workflows/test-desktop-integration.yml"
       - ".github/workflows/release.yml"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"

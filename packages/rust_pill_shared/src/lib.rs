@@ -10,14 +10,24 @@ pub mod clock;
 pub mod deform;
 pub mod drag;
 pub mod edge;
+pub mod fireworks;
+pub mod flame;
 pub mod hover;
+pub mod indicator;
 pub mod ipc;
+pub mod layout;
+pub mod level;
+pub mod messages;
 pub mod placement;
+pub mod restore;
+pub mod review_key;
 pub mod spring;
 pub mod text_fit;
 
 use std::cell::{Cell, RefCell};
 use std::f64::consts::FRAC_PI_2;
+
+use messages::Phase;
 
 /// Build the perimeter of an axis-aligned rounded rectangle as an ordered
 /// list of `(x, y)` points. The path traces clockwise starting from the
@@ -158,16 +168,40 @@ pub fn safety_notice_top(
 /// decision. Both put something on the pill that the user has to answer, so
 /// they override the preference: hiding the pill would leave the user with no
 /// way to respond and the desktop waiting forever.
+///
+/// `indication_active` is the locate replay. It overrides every preference for
+/// the length of the animation, then the pill returns to the preference state
+/// without writing it. That is the only way a hidden pill can answer a
+/// request to show where it is.
 pub const fn should_show_pill(
     preference: PillVisibility,
     is_active: bool,
     owns_surface: bool,
+    indication_active: bool,
 ) -> bool {
+    if indication_active {
+        return true;
+    }
     match preference {
         PillVisibility::Hidden => owns_surface,
         PillVisibility::WhileActive => is_active || owns_surface,
         PillVisibility::Persistent => true,
     }
+}
+
+/// Whether the pill is on screen only because a locate indication is running.
+///
+/// A locate replays the outline without the user asking to interact, so a pill
+/// that would otherwise be hidden must stay click-through while it is the sole
+/// reason the window is mapped. Otherwise a click aimed at the app underneath
+/// lands on the pill and starts dictation.
+pub const fn locate_is_the_only_reason_shown(
+    preference: PillVisibility,
+    is_active: bool,
+    owns_surface: bool,
+    indication_active: bool,
+) -> bool {
+    indication_active && !should_show_pill(preference, is_active, owns_surface, false)
 }
 
 /// Maximum character budget for the review card transcript preview.
@@ -290,6 +324,9 @@ pub enum RoundedRectArcSteps {
     /// Use exactly `n` segments per corner.
     Exact(usize),
 }
+
+/// Corner radius cap of the resting pill, before drag inflation.
+pub const EXPANDED_RADIUS: f64 = 16.0;
 
 /// How much the pill inflates when the long-press completes and drag begins,
 /// expressed as a scale factor applied to BOTH axes about the pill's centre.
@@ -888,6 +925,417 @@ pub struct RingHeadDisc {
     pub alpha: f64,
 }
 
+/// Top-left corner and size of the pill window content, in the platform's
+/// own drawing space.
+#[derive(Debug, Clone, Copy)]
+pub struct PillRect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl PillRect {
+    pub fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
+        Self { x, y, w, h }
+    }
+}
+
+/// Everything a renderer needs to paint one frame of the long-press ring,
+/// resolved from the ring state before any platform drawing call.
+///
+/// The three renderers used to compute this identically and then diverge only
+/// in the drawing primitives, so the computation lives here and the crates
+/// keep just the stroking. `None` from [`RingPaint::resolve`] means the ring
+/// is fully faded and nothing should be painted this frame.
+#[derive(Debug, Clone)]
+pub struct RingPaint {
+    /// Master opacity for the outline layers.
+    pub alpha: f64,
+    /// True while the arm-confirmation halo is still expanding.
+    pub pulsing: f64,
+    /// Sweep progress, 0..=1.
+    pub progress: f64,
+    /// The outline rectangle, already inset and drifted outward.
+    pub ox: f64,
+    pub oy: f64,
+    pub ow: f64,
+    pub oh: f64,
+    /// Corner radius of the outline rectangle.
+    pub r: f64,
+    /// The traced perimeter and its cumulative arc lengths.
+    pub path: Vec<(f64, f64)>,
+    pub distances: Vec<f64>,
+    pub total_len: f64,
+    /// How far along the perimeter the comet has travelled.
+    pub head_len: f64,
+    /// Phase driving the travelling glimmer.
+    pub wave_phase: f64,
+    /// Arm ramp, 0..=1.
+    pub arm_t: f64,
+}
+
+/// Per-frame inputs the ring geometry needs from a platform's pill state.
+#[derive(Debug, Clone, Copy)]
+pub struct RingPaintInput<'a> {
+    /// Ring opacity and locate state, read through the host's `RingHost`.
+    pub ring: &'a RingState,
+    /// True when the outline must keep its geometry while it fades. A locate
+    /// replay under reduced motion still fades out, but nothing may move.
+    pub static_outline: bool,
+    pub dragging: bool,
+    pub long_press_active: bool,
+    pub long_press_elapsed: f64,
+    pub inflate: f64,
+    pub wave_phase: f64,
+    /// Top-left corner and size of the pill itself.
+    pub pill_x: f64,
+    pub pill_y: f64,
+    pub pill_w: f64,
+    pub pill_h: f64,
+    /// Corner radius of the pill, before the outline inset is added.
+    pub pill_radius: f64,
+    pub hold_delay: f64,
+    pub hold_duration: f64,
+}
+
+impl RingPaint {
+    /// Resolve one frame, or `None` when the ring is invisible and not pulsing.
+    pub fn resolve(input: &RingPaintInput<'_>) -> Option<Self> {
+        let alpha = input.ring.alpha();
+        let pulsing = if pulse_is_running(input.ring.arm_pulse()) {
+            pulse_progress(input.ring.arm_pulse())
+        } else {
+            0.0
+        };
+        if alpha <= 0.0 && pulsing <= 0.0 {
+            return None;
+        }
+
+        let progress = if input.dragging {
+            1.0
+        } else if input.long_press_active {
+            hold_progress(
+                input.long_press_elapsed,
+                input.hold_delay,
+                input.hold_duration,
+            )
+        } else {
+            input.ring.release_progress()
+        };
+
+        let drift = if input.dragging || input.long_press_active || input.static_outline {
+            0.0
+        } else {
+            ring_release_drift(input.ring.release_elapsed())
+        };
+        let inset = 2.0 + drift;
+        let ox = input.pill_x - inset;
+        let oy = input.pill_y - inset;
+        let ow = input.pill_w + inset * 2.0;
+        let oh = input.pill_h + inset * 2.0;
+        let r = (input.pill_radius + inset).min(oh / 2.0);
+
+        let path = rounded_rectangle_perimeter(ox, oy, ow, oh, r, RoundedRectArcSteps::Auto);
+        let (distances, total_len) = path_distances(&path);
+        let head_len = total_len * progress.clamp(0.0, 1.0);
+
+        Some(Self {
+            alpha,
+            pulsing,
+            progress,
+            ox,
+            oy,
+            ow,
+            oh,
+            r,
+            path,
+            distances,
+            total_len,
+            head_len,
+            // A static outline must not shimmer: the glimmer term reads this
+            // phase, so pinning it keeps every frame's segment alpha identical
+            // while the outline holds still and fades.
+            wave_phase: if input.static_outline {
+                0.0
+            } else {
+                input.wave_phase
+            },
+            arm_t: input.ring.arm_t(),
+        })
+    }
+
+    /// One halo ring of the arm pulse: its perimeter, stroke width and alpha.
+    ///
+    /// `delay` selects the leading halo (`0.0`) or the trailing echo
+    /// ([`RING_PULSE_ECHO_DELAY`]); the echo is half strength.
+    pub fn pulse_halo(&self, delay: f64) -> Option<RingHalo> {
+        let tt = ((self.pulsing - delay) / (1.0 - delay)).clamp(0.0, 1.0);
+        if tt <= 0.0 {
+            return None;
+        }
+        let eased = ease_out_cubic(tt);
+        let spread = RING_PULSE_SPREAD * eased;
+        let path = rounded_rectangle_perimeter(
+            self.ox - spread,
+            self.oy - spread,
+            self.ow + spread * 2.0,
+            self.oh + spread * 2.0,
+            self.r + spread,
+            RoundedRectArcSteps::Auto,
+        );
+        let echo = if delay > 0.0 { 0.5 } else { 1.0 };
+        Some(RingHalo {
+            path,
+            width: 2.2 + (0.5 - 2.2) * eased,
+            alpha: RING_PULSE_ALPHA * (1.0 - eased).powf(1.8) * echo,
+        })
+    }
+}
+
+/// The drawing primitives the shared ring painter needs from a backend.
+///
+/// The ring's layer order, the per-segment comet shading and the pulse halos
+/// used to be reimplemented per platform and drifted; the loop now lives in
+/// [`paint_ring`] and each backend only supplies these primitives.
+pub trait RingPainter {
+    /// Start a stroked path in `rgba` at `width`.
+    fn begin_stroke(&mut self, rgba: [f64; 4], width: f64);
+    fn move_to(&mut self, x: f64, y: f64);
+    fn line_to(&mut self, x: f64, y: f64);
+    fn stroke(&mut self);
+    /// Fill a circle in `rgba`.
+    fn fill_circle(&mut self, cx: f64, cy: f64, radius: f64, rgba: [f64; 4]);
+    /// Paint many segments that each carry their own colour and width.
+    ///
+    /// Takes an iterator so the shared painter never has to materialise the
+    /// shaded segments in a buffer of its own.
+    fn shaded_segments<I: Iterator<Item = RingSegment>>(&mut self, segments: I);
+}
+
+/// One per-segment comet piece, already shaded by the shared envelope.
+#[derive(Debug, Clone, Copy)]
+pub struct RingSegment {
+    pub x1: f64,
+    pub y1: f64,
+    pub x2: f64,
+    pub y2: f64,
+    pub rgba: [f64; 4],
+    pub width: f64,
+}
+
+/// Paints one resolved ring frame through a backend's primitives.
+///
+/// `points` is the caller's reusable resample buffer, filled here. `outline`
+/// is the ring colour; the shadow and underlay layers are always black.
+pub fn paint_ring<P: RingPainter>(
+    painter: &mut P,
+    plan: &RingPaint,
+    points: &mut Vec<(f64, f64, f64)>,
+    outline: (f64, f64, f64),
+) {
+    if plan.alpha > 0.0 {
+        paint_outline(painter, &plan.path, outline, 0.085 * plan.alpha, 1.0);
+    }
+
+    if plan.alpha > 0.0 && plan.head_len > 0.0 {
+        paint_comet(painter, plan, points, outline);
+    }
+
+    if plan.pulsing > 0.0 {
+        for delay in [0.0, RING_PULSE_ECHO_DELAY] {
+            if let Some(halo) = plan.pulse_halo(delay) {
+                paint_outline(painter, &halo.path, outline, halo.alpha, halo.width);
+            }
+        }
+    }
+}
+
+/// Strokes a whole path once in `rgba` at `width`.
+fn paint_outline<P: RingPainter>(
+    painter: &mut P,
+    path: &[(f64, f64)],
+    outline: (f64, f64, f64),
+    alpha: f64,
+    width: f64,
+) {
+    let Some(first) = path.first() else {
+        return;
+    };
+    painter.begin_stroke([outline.0, outline.1, outline.2, alpha], width);
+    painter.move_to(first.0, first.1);
+    for p in &path[1..] {
+        painter.line_to(p.0, p.1);
+    }
+    painter.stroke();
+}
+
+/// Paints the travelling comet: shadow halos, dark underlay discs, the shaded
+/// core segments, and the silver head.
+fn paint_comet<P: RingPainter>(
+    painter: &mut P,
+    plan: &RingPaint,
+    points: &mut Vec<(f64, f64, f64)>,
+    outline: (f64, f64, f64),
+) {
+    resample_perimeter(
+        &plan.path,
+        &plan.distances,
+        plan.total_len,
+        RING_SEGMENT_PX,
+        points,
+    );
+    let Some(layers) = RingLayers::new(
+        points,
+        plan.head_len,
+        plan.total_len,
+        plan.progress,
+        plan.arm_t,
+        plan.alpha,
+    ) else {
+        return;
+    };
+
+    for (width, layer_alpha) in layers.shadow_passes() {
+        painter.begin_stroke([0.0, 0.0, 0.0, layer_alpha], width);
+        painter.move_to(points[0].0, points[0].1);
+        for p in &points[1..=layers.head_index] {
+            painter.line_to(p.0, p.1);
+        }
+        painter.stroke();
+    }
+
+    for disc in layers.underlay_discs() {
+        painter.fill_circle(disc.cx, disc.cy, disc.radius, [0.0, 0.0, 0.0, disc.alpha]);
+    }
+
+    painter.shaded_segments(comet_segments(points, plan, outline));
+
+    for disc in layers.head_discs() {
+        painter.fill_circle(
+            disc.cx,
+            disc.cy,
+            disc.radius,
+            [outline.0, outline.1, outline.2, disc.alpha],
+        );
+    }
+}
+
+/// Shades each resampled point up to the comet head, dropping segments too
+/// faint to see.
+fn comet_segments<'a>(
+    points: &'a [(f64, f64, f64)],
+    plan: &'a RingPaint,
+    outline: (f64, f64, f64),
+) -> impl Iterator<Item = RingSegment> + 'a {
+    let lift = 1.0 + RING_ARM_LIFT * plan.arm_t;
+    points
+        .windows(2)
+        .take_while(move |w| w[1].2 <= plan.head_len)
+        .filter_map(move |w| {
+            let (x1, y1, _) = w[0];
+            let (x2, y2, d) = w[1];
+            let env = ring_envelope(d, plan.head_len, plan.progress, plan.total_len);
+            let glim = ring_glimmer(d, plan.total_len, plan.wave_phase, plan.progress);
+            let a = (env * glim * lift).clamp(0.0, 1.0) * plan.alpha;
+            (a >= RING_SEGMENT_ALPHA_CUTOFF).then_some(RingSegment {
+                x1,
+                y1,
+                x2,
+                y2,
+                rgba: [outline.0, outline.1, outline.2, a],
+                width: RING_CORE_WIDTH + RING_WIDTH_SWELL * env * (1.0 - 0.35 * plan.arm_t),
+            })
+        })
+}
+
+/// Resolve and paint one frame of the ring in a single call.
+///
+/// This is the whole per-frame entry point a platform renderer needs: it
+/// resolves the geometry from the host's own state, then hands it to
+/// [`paint_ring`]. The pill corner radius and hold ramp come from the shared
+/// pill geometry, so a renderer only passes the rectangle and its buffers.
+/// Returns `false` when the ring is invisible this frame.
+pub fn paint_ring_frame<P: RingPainter, H: RingHost + ?Sized>(
+    painter: &mut P,
+    host: &H,
+    pill: PillRect,
+    outline: (f64, f64, f64),
+) -> bool {
+    let inflate = host.inflate();
+    let radius = pill_radius(pill.w, pill.h, inflate);
+    let Some(plan) = host.ring_paint(pill, radius, LONG_PRESS_HOLD_DELAY, LONG_PRESS_DURATION)
+    else {
+        return false;
+    };
+    let mut points = host.ring_points().borrow_mut();
+    paint_ring(painter, &plan, &mut points, outline);
+    true
+}
+
+/// Corner radius of the pill for a given inflate factor.
+pub fn pill_radius(pill_w: f64, pill_h: f64, inflate: f64) -> f64 {
+    let cap = EXPANDED_RADIUS * (1.0 + inflate * DRAG_INFLATE_SCALE);
+    (pill_w.min(pill_h) * 0.5).min(cap)
+}
+
+/// Implements [`RingPainter`] for a cairo-style context wrapper.
+///
+/// GTK and macOS both drive a context with the same `move_to`/`line_to`/
+/// `arc`/`fill`/`stroke` surface, so the adapter is written once here and
+/// instantiated per backend. The wrapper must expose the context as field
+/// `0`; Cairo's `Result`-returning `stroke`/`fill` are discarded uniformly.
+#[macro_export]
+macro_rules! impl_cairo_ring_painter {
+    ($ty:ty, $tau:expr) => {
+        impl $crate::RingPainter for $ty {
+            fn begin_stroke(&mut self, rgba: [f64; 4], width: f64) {
+                self.0.set_line_width(width);
+                self.0.set_source_rgba(rgba[0], rgba[1], rgba[2], rgba[3]);
+                self.0.new_sub_path();
+            }
+
+            fn move_to(&mut self, x: f64, y: f64) {
+                self.0.move_to(x, y);
+            }
+
+            fn line_to(&mut self, x: f64, y: f64) {
+                self.0.line_to(x, y);
+            }
+
+            fn stroke(&mut self) {
+                let _ = self.0.stroke();
+            }
+
+            fn fill_circle(&mut self, cx: f64, cy: f64, radius: f64, rgba: [f64; 4]) {
+                self.0.set_source_rgba(rgba[0], rgba[1], rgba[2], rgba[3]);
+                self.0.new_sub_path();
+                self.0.arc(cx, cy, radius, 0.0, $tau);
+                let _ = self.0.fill();
+            }
+
+            fn shaded_segments<I: Iterator<Item = $crate::RingSegment>>(&mut self, segments: I) {
+                for s in segments {
+                    self.0.set_line_width(s.width);
+                    self.0
+                        .set_source_rgba(s.rgba[0], s.rgba[1], s.rgba[2], s.rgba[3]);
+                    self.0.move_to(s.x1, s.y1);
+                    self.0.line_to(s.x2, s.y2);
+                    let _ = self.0.stroke();
+                }
+            }
+        }
+    };
+}
+
+/// One expanding halo of the arm-confirmation pulse.
+#[derive(Debug, Clone)]
+pub struct RingHalo {
+    pub path: Vec<(f64, f64)>,
+    pub width: f64,
+    pub alpha: f64,
+}
+
 /// The shadow and head layers of one ring frame, resolved once from the
 /// resampled perimeter.
 ///
@@ -1053,6 +1501,16 @@ pub fn ring_release_drift(release_elapsed: f64) -> f64 {
     RING_RELEASE_DRIFT * ease_out_cubic(release_elapsed / LONG_PRESS_RING_FADE)
 }
 
+/// Whether the outline must hold its geometry while it fades.
+///
+/// Only a locate replay under reduced motion qualifies. The replay is
+/// decorative, so the fade stays and the expansion does not. A pointer release
+/// keeps its drift, because that movement is the affordance the person just
+/// made.
+pub const fn ring_outline_is_static(locate_active: bool, reduced_motion: bool) -> bool {
+    locate_active && reduced_motion
+}
+
 /// The pill must be at least this expanded before the style tooltip appears,
 /// so the tooltip never floats above a still-collapsing pill.
 pub const STYLE_TOOLTIP_EXPAND_T: f64 = 0.3;
@@ -1154,6 +1612,52 @@ pub fn flash_banner_target(flash_visible: bool, has_action: bool, tooltip_reveal
     } else {
         0.0
     }
+}
+
+/// The banner state every pill advances each frame: the dismiss timer that
+/// clears it, and the spring that fades it in and out.
+pub struct FlashTick<'a> {
+    pub visible: &'a Cell<bool>,
+    pub timer: &'a Cell<f64>,
+    pub t: &'a Cell<f64>,
+    pub velocity: &'a Cell<f64>,
+    pub action: &'a RefCell<Option<String>>,
+    pub action_label: &'a RefCell<Option<String>>,
+    pub reject_action: &'a RefCell<Option<String>>,
+    pub reject_action_label: &'a RefCell<Option<String>>,
+    pub tooltip_revealed: bool,
+    pub stiffness: f64,
+}
+
+/// Advances the banner timer and its fade spring for one frame.
+pub fn tick_flash(flash: &FlashTick<'_>, delta_seconds: f64) {
+    if flash.visible.get() {
+        let remaining = flash.timer.get() - delta_seconds;
+        if remaining <= 0.0 {
+            clear_flash_state(
+                flash.visible,
+                flash.timer,
+                flash.action,
+                flash.action_label,
+                flash.reject_action,
+                flash.reject_action_label,
+            );
+        } else {
+            flash.timer.set(remaining);
+        }
+    }
+    let target = flash_banner_target(
+        flash.visible.get(),
+        flash.action.borrow().is_some() || flash.reject_action.borrow().is_some(),
+        flash.tooltip_revealed,
+    );
+    spring::spring_01(
+        flash.t,
+        flash.velocity,
+        target,
+        flash.stiffness,
+        delta_seconds,
+    );
 }
 
 /// Whether a toast's buttons should take clicks at the given banner opacity.
@@ -1284,6 +1788,656 @@ pub struct RingAnim {
     pub arm_pulse: f64,
 }
 
+impl RingAnim {
+    /// Copies every field onto a sink. The three pill crates store the ring as
+    /// individual `Cell`s, so each implements [`RingSink`] once and this becomes
+    /// the only place that knows the field list. A new ring field then reaches
+    /// all three crates instead of three hand-written blocks.
+    pub fn apply_to(self, sink: &impl RingSink) {
+        sink.set_alpha(self.alpha);
+        sink.set_release_progress(self.release_progress);
+        sink.set_press_elapsed(self.press_elapsed);
+        sink.set_release_elapsed(self.release_elapsed);
+        sink.set_arm_t(self.arm_t);
+        sink.set_arm_pulse(self.arm_pulse);
+    }
+}
+
+/// Write side of a ring frame, implemented by each pill crate's state struct.
+pub trait RingSink {
+    fn set_alpha(&self, value: f64);
+    fn set_release_progress(&self, value: f64);
+    fn set_press_elapsed(&self, value: f64);
+    fn set_release_elapsed(&self, value: f64);
+    fn set_arm_t(&self, value: f64);
+    fn set_arm_pulse(&self, value: f64);
+}
+
+/// Total hold time before the drag gesture arms. Tuned to the 350-600ms band so
+/// the gesture feels deliberate without making the user wait.
+pub const LONG_PRESS_DURATION: f64 = 0.45;
+
+/// Grace period before any long-press affordance is drawn. A normal click is
+/// far shorter than this, so quick taps never flash the progress outline.
+pub const LONG_PRESS_HOLD_DELAY: f64 = 0.12;
+
+/// Distance the pointer may travel before the hold stops counting as a press. A
+/// normal click stays far inside this, so a small hand tremor never cancels the
+/// ring.
+pub const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
+
+/// How far the long-press outline has filled, from 0 to 1.
+///
+/// The ramp only starts once [`LONG_PRESS_HOLD_DELAY`] has elapsed, so a quick
+/// click never renders a partially filled outline, and it reaches 1.0 exactly
+/// when the gesture arms at [`LONG_PRESS_DURATION`]. Each platform crate
+/// carried its own copy of this wrapper before the pills shared one.
+pub fn long_press_progress(elapsed: f64) -> f64 {
+    hold_progress(elapsed, LONG_PRESS_HOLD_DELAY, LONG_PRESS_DURATION)
+}
+
+/// Silver-white with a very slight cool tint, so the ring reads as a neutral
+/// grab affordance and stays distinct from the blue commit flash.
+pub const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
+
+/// The pointer and long-press flags the ring driver reads, passed in by each
+/// crate so the shared driver never reaches into platform state.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RingGesture {
+    pub pointer_down: bool,
+    pub long_press_active: bool,
+    pub long_press_elapsed: f64,
+    pub dragging: bool,
+    /// The platform's reduced-motion preference. A locate replay is a
+    /// decorative sweep, so under reduced motion it shows a static outline
+    /// instead of animating, matching how the long-press trigger arms a still
+    /// border flash rather than deforming.
+    pub reduced_motion: bool,
+}
+
+/// What a [`RingState::tick`] frame did that the platform may need to act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingFrame {
+    /// The ring finished fading or its pulse just ended. A platform that only
+    /// repaints on demand must invalidate once more, or the last painted frame
+    /// lingers as a ghost.
+    pub cleared: bool,
+}
+
+/// The long-press ring and the locate replay, as one shared record.
+///
+/// Each pill crate used to hold these eight `Cell`s itself and drive them from
+/// its own copy of the tick, so the field list, the cancel rule and the locate
+/// lifecycle existed three times. Owning them here means a new ring field or a
+/// change to the replay reaches every platform at once.
+#[derive(Debug, Clone)]
+pub struct RingState {
+    alpha: Cell<f64>,
+    release_progress: Cell<f64>,
+    press_elapsed: Cell<f64>,
+    release_elapsed: Cell<f64>,
+    arm_t: Cell<f64>,
+    arm_pulse: Cell<f64>,
+    locate_active: Cell<bool>,
+    locate_elapsed: Cell<f64>,
+    /// The replay was invoked from the keyboard, so it holds a complete outline
+    /// instead of sweeping. `DESIGN.md` says keyboard-invoked actions never
+    /// animate, and a locate is the one indication whose whole content is the
+    /// outline, so it still shows, just without motion.
+    locate_still: Cell<bool>,
+}
+
+impl Default for RingState {
+    fn default() -> Self {
+        let seed = RingAnim::default();
+        Self {
+            alpha: Cell::new(seed.alpha),
+            release_progress: Cell::new(seed.release_progress),
+            press_elapsed: Cell::new(seed.press_elapsed),
+            release_elapsed: Cell::new(seed.release_elapsed),
+            arm_t: Cell::new(seed.arm_t),
+            arm_pulse: Cell::new(seed.arm_pulse),
+            locate_active: Cell::new(false),
+            locate_elapsed: Cell::new(0.0),
+            locate_still: Cell::new(false),
+        }
+    }
+}
+
+impl RingState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn alpha(&self) -> f64 {
+        self.alpha.get()
+    }
+
+    pub fn release_progress(&self) -> f64 {
+        self.release_progress.get()
+    }
+
+    pub fn release_elapsed(&self) -> f64 {
+        self.release_elapsed.get()
+    }
+
+    pub fn arm_t(&self) -> f64 {
+        self.arm_t.get()
+    }
+
+    pub fn arm_pulse(&self) -> f64 {
+        self.arm_pulse.get()
+    }
+
+    /// True while a locate replay is in flight, so the pill stays on screen.
+    pub fn locate_active(&self) -> bool {
+        self.locate_active.get()
+    }
+
+    /// True while the in-flight replay holds a still outline.
+    pub fn locate_still(&self) -> bool {
+        self.locate_still.get()
+    }
+
+    /// Starts the arm-confirmation pulse from outside the tick.
+    pub fn arm(&self) {
+        self.arm_pulse.set(pulse_armed());
+    }
+
+    /// Drops every ring field back to its idle frame without touching the
+    /// locate timer.
+    fn reset_ring(&self) {
+        RingAnim::default().apply_to(self);
+    }
+
+    /// Holds the outline complete and still, so only its opacity moves.
+    ///
+    /// The elapsed time starts at the end of the fill and the fade timer is
+    /// restarted, because `reset_ring` seeds it at its end, which paints
+    /// nothing. `locate_active` still expires, so the saved visibility resumes.
+    fn hold_static_outline(&self) {
+        self.locate_elapsed.set(LOCATE_FILL_SECONDS);
+        self.release_progress.set(1.0);
+        self.release_elapsed.set(0.0);
+        self.alpha.set(1.0);
+    }
+
+    /// Begins a locate replay from a clean ring. A second trigger restarts the
+    /// sweep instead of inheriting the previous fade, and a live pointer
+    /// gesture wins so the replay never wipes an in-progress press.
+    pub fn start_locate(&self, gesture: RingGesture) {
+        self.start_locate_with(gesture, false);
+    }
+
+    /// Begins a locate replay that holds a complete outline and never sweeps.
+    ///
+    /// The keyboard trigger reaches this. `apps/desktop/DESIGN.md` states that
+    /// keyboard-invoked actions never animate, and a locate is an explicit
+    /// request whose whole content is the outline, so the outline appears
+    /// complete, holds at full opacity, and clears when its window ends. The
+    /// pointer long-press keeps its sweep and its fade.
+    pub fn start_locate_still(&self, gesture: RingGesture) {
+        self.start_locate_with(gesture, true);
+    }
+
+    fn start_locate_with(&self, gesture: RingGesture, still: bool) {
+        if locate_yields_to_pointer(
+            gesture.pointer_down,
+            gesture.long_press_active,
+            gesture.dragging,
+        ) {
+            return;
+        }
+        self.locate_active.set(true);
+        self.locate_still.set(still);
+        // Reduced motion skips the sweep entirely: the outline is drawn
+        // complete and only the fade runs. A keyboard trigger does the same,
+        // because a still outline is what the design rule requires there.
+        self.locate_elapsed.set(0.0);
+        self.reset_ring();
+        if still || gesture.reduced_motion {
+            self.hold_static_outline();
+        }
+    }
+
+    /// Advances the locate replay and the ring by one frame.
+    pub fn tick(&self, gesture: RingGesture, delta_seconds: f64) -> RingFrame {
+        let previous_alpha = self.alpha.get();
+        let was_pulsing = pulse_is_running(self.arm_pulse.get());
+
+        // Only a replay the pointer interrupts may clear the ring. Resetting on
+        // every pointer-down frame would also zero `press_elapsed` and `arm_t`
+        // for an ordinary hold or drag, freezing the ring ramp and the arm.
+        let was_locating = self.locate_active.get();
+        let still_replay = self.locate_still.get();
+        // A preference change mid-replay has to stop the sweep now, not on the
+        // next trigger: snap to the same complete outline a replay started
+        // under reduced motion shows, before this frame advances the fill.
+        if self.locate_active.get()
+            && gesture.reduced_motion
+            && locate_held(self.locate_elapsed.get())
+        {
+            self.hold_static_outline();
+        }
+        let cancelled = locate_yields_to_pointer(
+            gesture.pointer_down,
+            gesture.long_press_active,
+            gesture.dragging,
+        );
+        let previous_locate_elapsed = self.locate_elapsed.get();
+        let step = advance_locate(
+            self.locate_active.get(),
+            previous_locate_elapsed,
+            delta_seconds,
+            cancelled,
+        );
+        if step.arm_pulse {
+            self.arm_pulse.set(pulse_armed());
+        }
+        self.locate_active.set(step.active);
+        self.locate_elapsed.set(step.elapsed);
+        if !step.active {
+            self.locate_still.set(false);
+        }
+        if cancelled && was_locating {
+            self.reset_ring();
+        }
+
+        let locating = step.active;
+        // A still replay holds its complete outline for the whole window. It
+        // has no sweep to finish, so waiting for `locate_held` to end would
+        // fade the outline from the first frame the person looks at it.
+        let held = (locating && (locate_held(step.elapsed) || still_replay))
+            || gesture.dragging
+            || (gesture.long_press_active && gesture.long_press_elapsed > LONG_PRESS_HOLD_DELAY);
+
+        // A frame that crosses the fill boundary completes the sweep before the
+        // fade starts. `advance_ring` only stores progress while held, so
+        // without this the outline would fade from the last held frame's
+        // partial sweep, and the fade and pulse would consume the whole frame
+        // instead of only the time left after the sweep ended.
+        let crossing =
+            locating && locate_held(previous_locate_elapsed) && !locate_held(step.elapsed);
+
+        let mut anim = RingAnim {
+            alpha: self.alpha.get(),
+            release_progress: if crossing {
+                1.0
+            } else {
+                self.release_progress.get()
+            },
+            press_elapsed: self.press_elapsed.get(),
+            release_elapsed: self.release_elapsed.get(),
+            arm_t: self.arm_t.get(),
+            arm_pulse: self.arm_pulse.get(),
+        };
+
+        advance_ring(
+            &mut anim,
+            RingTick {
+                held,
+                dragging: gesture.dragging,
+                progress: if locating {
+                    locate_progress(step.elapsed)
+                } else {
+                    hold_progress(
+                        gesture.long_press_elapsed,
+                        LONG_PRESS_HOLD_DELAY,
+                        LONG_PRESS_DURATION,
+                    )
+                },
+                delta_seconds: if crossing {
+                    (step.elapsed - LOCATE_FILL_SECONDS).max(0.0)
+                } else {
+                    delta_seconds
+                },
+            },
+            if locating { 0.0 } else { LONG_PRESS_HOLD_DELAY },
+        );
+
+        // A still replay holds at full opacity from its first frame. The rise
+        // ramp exists for a press that has to travel to full, and a keyboard
+        // trigger has nothing to wait for. It ends with a cut, not a fade,
+        // because DESIGN.md keeps keyboard-invoked actions still.
+        if still_replay && locating {
+            anim.alpha = 1.0;
+        }
+        if still_replay && was_locating && !locating {
+            anim.alpha = 0.0;
+            anim.release_progress = 0.0;
+            anim.release_elapsed = 0.0;
+        }
+
+        anim.apply_to(self);
+
+        RingFrame {
+            cleared: (previous_alpha > 0.0 && anim.alpha == 0.0)
+                || (was_pulsing && !pulse_is_running(anim.arm_pulse)),
+        }
+    }
+}
+
+impl RingSink for RingState {
+    fn set_alpha(&self, value: f64) {
+        self.alpha.set(value);
+    }
+    fn set_release_progress(&self, value: f64) {
+        self.release_progress.set(value);
+    }
+    fn set_press_elapsed(&self, value: f64) {
+        self.press_elapsed.set(value);
+    }
+    fn set_release_elapsed(&self, value: f64) {
+        self.release_elapsed.set(value);
+    }
+    fn set_arm_t(&self, value: f64) {
+        self.arm_t.set(value);
+    }
+    fn set_arm_pulse(&self, value: f64) {
+        self.arm_pulse.set(value);
+    }
+}
+
+/// The per-frame drag affordances every pill animates: the inflate that grows
+/// the pill while a hold arms, the drag label that fades in with it, and the
+/// ring tick that owns the long-press and locate replay.
+///
+/// The three ports animated these in three separate `tick` bodies that had
+/// drifted apart only in comment text, so the sequence lives here once.
+pub struct DragTick<'a> {
+    pub inflate_t: &'a Cell<f64>,
+    pub inflate_velocity: &'a Cell<f64>,
+    pub drag_label_t: &'a Cell<f64>,
+    pub drag_label_velocity: &'a Cell<f64>,
+    pub long_press_active: bool,
+    pub long_press_elapsed: f64,
+    pub dragging: bool,
+}
+
+/// The pause/cancel affordances and the transcript auto-scroll that follow the
+/// drag tick. Identical in all three ports, so it lives here once.
+pub struct HoldTail<'a> {
+    pub phase: Phase,
+    pub hovered: bool,
+    pub assistant_active: bool,
+    pub assistant_compact: bool,
+    pub pause_t: &'a Cell<f64>,
+    pub pause_velocity: &'a Cell<f64>,
+    pub cancel_t: &'a Cell<f64>,
+    pub cancel_velocity: &'a Cell<f64>,
+    pub scroll_offset: &'a Cell<f64>,
+    pub content_height: f64,
+    pub viewport_height: f64,
+    pub should_stick: bool,
+    pub stiffness: f64,
+}
+
+/// Advances the pause crossfade, the cancel/pause controls and the transcript
+/// auto-scroll for one frame.
+pub fn tick_hold_tail(tail: &HoldTail<'_>, delta_seconds: f64) {
+    let pause = if tail.phase == Phase::Paused {
+        1.0
+    } else {
+        0.0
+    };
+    spring::spring_01(
+        tail.pause_t,
+        tail.pause_velocity,
+        pause,
+        tail.stiffness,
+        delta_seconds,
+    );
+
+    let show_controls = !tail.assistant_active
+        && match tail.phase {
+            // Hover-revealed while recording, pinned open while paused.
+            Phase::Recording => tail.hovered,
+            Phase::Paused => true,
+            // Post-recording processing: neither control can act on the take.
+            Phase::Idle | Phase::Loading => false,
+        };
+    spring::spring_01(
+        tail.cancel_t,
+        tail.cancel_velocity,
+        if show_controls { 1.0 } else { 0.0 },
+        tail.stiffness * 2.0,
+        delta_seconds,
+    );
+
+    if tail.should_stick && tail.assistant_active && !tail.assistant_compact {
+        tail.scroll_offset
+            .set((tail.content_height - tail.viewport_height).max(0.0));
+    }
+}
+
+/// Advances the drag affordances for one frame.
+pub fn tick_drag(tick: &DragTick<'_>, delta_seconds: f64) {
+    // The target ramps up partway through the hold, not at the arm moment, so
+    // the pill is already growing while the ring fills.
+    let inflate = inflate_target(
+        hold_progress(
+            tick.long_press_elapsed,
+            LONG_PRESS_HOLD_DELAY,
+            LONG_PRESS_DURATION,
+        ),
+        tick.long_press_active,
+        tick.dragging,
+    );
+    spring::spring_01(
+        tick.inflate_t,
+        tick.inflate_velocity,
+        inflate,
+        DRAG_INFLATE_STIFFNESS,
+        delta_seconds,
+    );
+
+    let label = if tick.dragging || tick.long_press_active {
+        1.0
+    } else {
+        0.0
+    };
+    spring::spring_01(
+        tick.drag_label_t,
+        tick.drag_label_velocity,
+        label,
+        LABEL_SPRING_STIFFNESS,
+        delta_seconds,
+    );
+}
+
+/// A pill state that owns a [`RingState`] and can describe the pointer gesture
+/// around it.
+///
+/// Each crate's state has the ring in a different shape (extra `Cell`s, a
+/// `dirty` flag, a `RefCell`-wrapped controller), so the tick cannot be a free
+/// function over one struct. The trait carries the two-line bodies that would
+/// otherwise be copied into every crate, and each platform supplies only the
+/// accessors it already has.
+pub trait RingHost {
+    fn ring(&self) -> &RingState;
+    fn ring_gesture(&self) -> RingGesture;
+
+    /// The platform's reduced-motion preference, read when a locate replay
+    /// starts so the shared controller can skip the decorative sweep.
+    fn reduced_motion(&self) -> bool;
+
+    /// Advances the ring and the locate replay for one frame.
+    fn tick_ring(&self, delta_seconds: f64) -> RingFrame {
+        let frame = self.ring().tick(self.ring_gesture(), delta_seconds);
+        if frame.cleared {
+            self.ring_cleared();
+        }
+        frame
+    }
+
+    /// Called on the frame that clears the ring.
+    ///
+    /// Hosts that repaint continuously have nothing to do. A host that only
+    /// repaints on demand must dirty its surface here: once the ring and its
+    /// pulse stop moving it reports no further motion, so without this the
+    /// last painted state lingers as a ghost.
+    fn ring_cleared(&self) {}
+
+    /// Begins a locate replay from a clean ring.
+    ///
+    /// The modifier double-tap is the only caller, so this is the keyboard
+    /// trigger and it holds a still outline.
+    fn begin_locate(&self) {
+        self.ring().start_locate_still(self.ring_gesture());
+    }
+
+    /// Advances the drag affordances and the ring for one frame.
+    fn tick_hold_and_ring(&self, delta_seconds: f64) {
+        tick_drag(&self.drag_tick(), delta_seconds);
+        self.tick_ring(delta_seconds);
+        tick_hold_tail(&self.hold_tail(), delta_seconds);
+    }
+
+    /// The drag affordance state this host animates each frame.
+    fn drag_tick(&self) -> DragTick<'_>;
+
+    /// The pause/cancel and scroll state this host animates each frame.
+    fn hold_tail(&self) -> HoldTail<'_>;
+
+    /// Advances the banner timer and its fade spring for one frame.
+    fn tick_flash(&self, tooltip_revealed: bool, delta_seconds: f64) {
+        tick_flash(&self.flash_tick(tooltip_revealed), delta_seconds);
+    }
+
+    /// The banner state this host animates each frame.
+    fn flash_tick(&self, tooltip_revealed: bool) -> FlashTick<'_>;
+
+    /// Current drag-inflate amount, which scales the pill's corner radius.
+    fn inflate(&self) -> f64;
+
+    /// Reusable buffer the ring painter fills each frame.
+    fn ring_points(&self) -> &std::cell::RefCell<Vec<(f64, f64, f64)>>;
+
+    /// Resolves one frame of ring geometry from this pill's state.
+    ///
+    /// The per-platform `impl_ring_host!` provides the field access; the
+    /// renderers only pass the pill rectangle and hold-ramp constants.
+    fn ring_paint(
+        &self,
+        pill: PillRect,
+        pill_radius: f64,
+        hold_delay: f64,
+        hold_duration: f64,
+    ) -> Option<RingPaint>;
+}
+
+/// Implements [`RingHost`] for a pill state whose gesture fields carry the
+/// same names in every crate.
+///
+/// The three `PillState` structs are platform-specific, but the four fields the
+/// ring needs are not, so the impl is generated instead of copied.
+#[macro_export]
+macro_rules! impl_ring_host {
+    ($ty:ty, $stiffness:expr $(, $extra:item)*) => {
+        impl $crate::RingHost for $ty {
+            $($extra)*
+
+            fn ring(&self) -> &$crate::RingState {
+                &self.ring
+            }
+
+            fn ring_gesture(&self) -> $crate::RingGesture {
+                $crate::RingGesture {
+                    pointer_down: self.pointer_down.get(),
+                    long_press_active: self.long_press_active.get(),
+                    long_press_elapsed: self.long_press_elapsed.get(),
+                    dragging: self.dragging.get(),
+                    reduced_motion: $crate::RingHost::reduced_motion(self),
+                }
+            }
+
+            fn inflate(&self) -> f64 {
+                self.inflate_t.get()
+            }
+
+            fn drag_tick(&self) -> $crate::DragTick<'_> {
+                $crate::DragTick {
+                    inflate_t: &self.inflate_t,
+                    inflate_velocity: &self.inflate_velocity,
+                    drag_label_t: &self.drag_label_t,
+                    drag_label_velocity: &self.drag_label_velocity,
+                    long_press_active: self.long_press_active.get(),
+                    long_press_elapsed: self.long_press_elapsed.get(),
+                    dragging: self.dragging.get(),
+                }
+            }
+
+            fn hold_tail(&self) -> $crate::HoldTail<'_> {
+                $crate::HoldTail {
+                    phase: self.phase.get(),
+                    hovered: self.hovered.get(),
+                    assistant_active: self.assistant_active.get(),
+                    assistant_compact: self.assistant_compact.get(),
+                    pause_t: &self.pause_t,
+                    pause_velocity: &self.pause_velocity,
+                    cancel_t: &self.cancel_t,
+                    cancel_velocity: &self.cancel_velocity,
+                    scroll_offset: &self.scroll_offset,
+                    content_height: self.content_height.get(),
+                    viewport_height: self.viewport_height.get(),
+                    should_stick: self.should_stick.get(),
+                    stiffness: $stiffness,
+                }
+            }
+
+            fn flash_tick(&self, tooltip_revealed: bool) -> $crate::FlashTick<'_> {
+                $crate::FlashTick {
+                    visible: &self.flash_visible,
+                    timer: &self.flash_timer,
+                    t: &self.flash_t,
+                    velocity: &self.flash_velocity,
+                    action: &self.flash_action,
+                    action_label: &self.flash_action_label,
+                    reject_action: &self.flash_reject_action,
+                    reject_action_label: &self.flash_reject_action_label,
+                    tooltip_revealed,
+                    stiffness: $stiffness,
+                }
+            }
+
+            fn ring_points(&self) -> &std::cell::RefCell<Vec<(f64, f64, f64)>> {
+                &self.ring_points
+            }
+
+            /// Resolve the ring paint plan from this pill's own state, so each
+            /// platform's renderer only supplies the pill rectangle it already
+            /// computed and the hold-ramp constants.
+            fn ring_paint(
+                &self,
+                pill: $crate::PillRect,
+                pill_radius: f64,
+                hold_delay: f64,
+                hold_duration: f64,
+            ) -> Option<$crate::RingPaint> {
+                $crate::RingPaint::resolve(&$crate::RingPaintInput {
+                    ring: &self.ring,
+                    static_outline: $crate::ring_outline_is_static(
+                        self.ring.locate_active(),
+                        $crate::RingHost::reduced_motion(self) || self.ring.locate_still(),
+                    ),
+                    dragging: self.dragging.get(),
+                    long_press_active: self.long_press_active.get(),
+                    long_press_elapsed: self.long_press_elapsed.get(),
+                    inflate: self.inflate_t.get(),
+                    wave_phase: self.wave_phase.get(),
+                    pill_x: pill.x,
+                    pill_y: pill.y,
+                    pill_w: pill.w,
+                    pill_h: pill.h,
+                    pill_radius,
+                    hold_delay,
+                    hold_duration,
+                })
+            }
+        }
+    };
+}
+
 impl Default for RingAnim {
     fn default() -> Self {
         Self {
@@ -1325,6 +2479,93 @@ pub fn pulse_armed() -> f64 {
 /// True while a confirmation pulse is running, given a raw `arm_pulse`.
 pub fn pulse_is_running(arm_pulse: f64) -> bool {
     arm_pulse >= 0.0
+}
+
+/// Time the locate outline takes to sweep the pill once. It is longer than the
+/// long-press fill because it starts without the press delay, and a deliberate
+/// double-tap is already a confirmed request.
+pub const LOCATE_FILL_SECONDS: f64 = 0.45;
+
+/// Whether a locate indication started `elapsed` seconds ago is still running.
+///
+/// The window covers the sweep plus the longer of the release fade and the
+/// confirmation pulse, so the shared visibility policy keeps a hidden pill on
+/// screen until every layer has finished.
+pub fn locate_active(elapsed: f64) -> bool {
+    let tail = if RING_PULSE_DURATION > LONG_PRESS_RING_FADE {
+        RING_PULSE_DURATION
+    } else {
+        LONG_PRESS_RING_FADE
+    };
+    (0.0..LOCATE_FILL_SECONDS + tail).contains(&elapsed)
+}
+
+/// Whether the locate ring is still sweeping rather than fading out.
+pub fn locate_held(elapsed: f64) -> bool {
+    elapsed < LOCATE_FILL_SECONDS
+}
+
+/// Fill progress for the locate indication, using the long-press ramp with no
+/// press delay. The renderer receives the same value shape a real hold sends.
+pub fn locate_progress(elapsed: f64) -> f64 {
+    hold_progress(elapsed, 0.0, LOCATE_FILL_SECONDS)
+}
+
+/// Whether a live pointer gesture owns the ring, so a locate replay must yield.
+///
+/// The three pill crates keep these as their own flags, so they pass them in
+/// rather than re-deriving the priority. A press, a hold in progress and a drag
+/// all outrank a replay, which keeps a locate from wiping a gesture the person
+/// is already making.
+pub const fn locate_yields_to_pointer(
+    pointer_down: bool,
+    long_press_active: bool,
+    dragging: bool,
+) -> bool {
+    pointer_down || long_press_active || dragging
+}
+
+/// One frame of the locate replay, resolved from the current state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LocateStep {
+    pub active: bool,
+    pub elapsed: f64,
+    /// True on the frame the sweep completes and the confirmation pulse starts.
+    pub arm_pulse: bool,
+}
+
+/// Advances the locate replay. A pointer gesture cancels it before any ring
+/// state is written, so the three pill crates share one rule for the cancel,
+/// the fill crossing and the end of the window.
+pub fn advance_locate(
+    active: bool,
+    elapsed: f64,
+    delta_seconds: f64,
+    cancelled: bool,
+) -> LocateStep {
+    if !active || cancelled {
+        return LocateStep {
+            active: false,
+            elapsed: 0.0,
+            arm_pulse: false,
+        };
+    }
+
+    let next = elapsed + delta_seconds.max(0.0);
+    let arm_pulse = elapsed < LOCATE_FILL_SECONDS && next >= LOCATE_FILL_SECONDS;
+    if !locate_active(next) {
+        return LocateStep {
+            active: false,
+            elapsed: 0.0,
+            arm_pulse,
+        };
+    }
+
+    LocateStep {
+        active: true,
+        elapsed: next,
+        arm_pulse,
+    }
 }
 
 /// Advances one frame of ring animation.
@@ -1627,6 +2868,54 @@ mod tests {
             let g = ring_glimmer(d, total, 1.7, 0.8);
             assert!((0.0..=1.0).contains(&g), "glimmer out of range: {g}");
         }
+    }
+
+    fn comet_plan(alpha: f64) -> RingPaint {
+        RingPaint {
+            alpha,
+            pulsing: 0.0,
+            progress: 1.0,
+            ox: 0.0,
+            oy: 0.0,
+            ow: 0.0,
+            oh: 0.0,
+            r: 0.0,
+            path: Vec::new(),
+            distances: Vec::new(),
+            total_len: 500.0,
+            head_len: 200.0,
+            wave_phase: 0.0,
+            arm_t: 0.0,
+        }
+    }
+
+    fn comet_points() -> Vec<(f64, f64, f64)> {
+        (0..=50)
+            .map(|i| (i as f64 * 10.0, 0.0, i as f64 * 10.0))
+            .collect()
+    }
+
+    #[test]
+    fn comet_segments_stop_at_the_head() {
+        let points = comet_points();
+        let segments: Vec<_> = comet_segments(&points, &comet_plan(1.0), (1.0, 1.0, 1.0)).collect();
+        assert!(
+            !segments.is_empty(),
+            "the comet body must survive the filter"
+        );
+        assert!(
+            segments.iter().all(|s| s.x2 <= 200.0),
+            "a segment past the head was drawn",
+        );
+        assert_eq!(segments[0].x1, 0.0);
+        assert_eq!(segments[0].x2, 10.0);
+    }
+
+    #[test]
+    fn comet_segments_drop_pieces_below_the_cutoff() {
+        let points = comet_points();
+        let drawn = comet_segments(&points, &comet_plan(0.0), (1.0, 1.0, 1.0)).count();
+        assert_eq!(drawn, 0, "an invisible frame must yield no segments");
     }
 
     #[test]
@@ -2450,7 +3739,7 @@ mod tests {
             let owns_attention = is_recording_stop_safety_notice(visible, false, action);
             assert_eq!(owns_attention, expected);
             assert_eq!(
-                should_show_pill(PillVisibility::Hidden, true, owns_attention),
+                should_show_pill(PillVisibility::Hidden, true, owns_attention, false),
                 expected
             );
         }
@@ -2480,27 +3769,252 @@ mod tests {
 
     #[test]
     fn hidden_pill_stays_hidden_while_recording() {
-        assert!(!should_show_pill(PillVisibility::Hidden, true, false));
-        assert!(!should_show_pill(PillVisibility::Hidden, false, false));
+        assert!(!should_show_pill(
+            PillVisibility::Hidden,
+            true,
+            false,
+            false
+        ));
+        assert!(!should_show_pill(
+            PillVisibility::Hidden,
+            false,
+            false,
+            false
+        ));
     }
 
     #[test]
     fn hidden_pill_still_shows_when_it_owns_the_surface() {
-        assert!(should_show_pill(PillVisibility::Hidden, false, true));
-        assert!(should_show_pill(PillVisibility::Hidden, true, true));
+        assert!(should_show_pill(PillVisibility::Hidden, false, true, false));
+        assert!(should_show_pill(PillVisibility::Hidden, true, true, false));
     }
 
     #[test]
     fn while_active_shows_only_when_busy() {
-        assert!(!should_show_pill(PillVisibility::WhileActive, false, false));
-        assert!(should_show_pill(PillVisibility::WhileActive, true, false));
-        assert!(should_show_pill(PillVisibility::WhileActive, false, true));
+        assert!(!should_show_pill(
+            PillVisibility::WhileActive,
+            false,
+            false,
+            false
+        ));
+        assert!(should_show_pill(
+            PillVisibility::WhileActive,
+            true,
+            false,
+            false
+        ));
+        assert!(should_show_pill(
+            PillVisibility::WhileActive,
+            false,
+            true,
+            false
+        ));
     }
 
     #[test]
     fn persistent_always_shows() {
-        assert!(should_show_pill(PillVisibility::Persistent, false, false));
-        assert!(should_show_pill(PillVisibility::Persistent, true, false));
+        assert!(should_show_pill(
+            PillVisibility::Persistent,
+            false,
+            false,
+            false
+        ));
+        assert!(should_show_pill(
+            PillVisibility::Persistent,
+            true,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn locate_indication_reveals_a_hidden_pill_without_changing_the_preference() {
+        for preference in [
+            PillVisibility::Hidden,
+            PillVisibility::WhileActive,
+            PillVisibility::Persistent,
+        ] {
+            assert!(should_show_pill(preference, false, false, true));
+            assert!(
+                !should_show_pill(preference, false, false, false)
+                    || preference == PillVisibility::Persistent
+            );
+        }
+    }
+
+    #[test]
+    fn locate_timeline_sweeps_then_fades_inside_its_pulse_window() {
+        let tail = if RING_PULSE_DURATION > LONG_PRESS_RING_FADE {
+            RING_PULSE_DURATION
+        } else {
+            LONG_PRESS_RING_FADE
+        };
+        assert!(locate_held(0.0));
+        assert!(locate_held(LOCATE_FILL_SECONDS - 0.01));
+        assert!(!locate_held(LOCATE_FILL_SECONDS));
+        assert!(locate_active(0.0));
+        assert!(locate_active(LOCATE_FILL_SECONDS));
+        assert!(locate_active(LOCATE_FILL_SECONDS + tail - 0.01));
+        assert!(!locate_active(LOCATE_FILL_SECONDS + tail));
+        assert!(!locate_active(-0.01));
+        assert!(!locate_active(f64::NAN));
+    }
+
+    #[test]
+    fn locate_progress_fills_monotonically_and_arrives_complete() {
+        assert_eq!(locate_progress(0.0), 0.0);
+        assert!(locate_progress(0.01) > 0.0);
+        assert_eq!(locate_progress(LOCATE_FILL_SECONDS), 1.0);
+        let mut previous = 0.0;
+        for step in 0..20 {
+            let progress = locate_progress(LOCATE_FILL_SECONDS * step as f64 / 19.0);
+            assert!(progress >= previous);
+            previous = progress;
+        }
+    }
+
+    #[test]
+    fn locate_step_cancels_before_writing_ring_state() {
+        let cancelled = advance_locate(true, LOCATE_FILL_SECONDS * 0.5, 0.016, true);
+        assert_eq!(
+            cancelled,
+            LocateStep {
+                active: false,
+                elapsed: 0.0,
+                arm_pulse: false
+            }
+        );
+        let inactive = advance_locate(false, 0.0, 0.016, false);
+        assert!(!inactive.active);
+        assert_eq!(inactive.elapsed, 0.0);
+    }
+
+    #[test]
+    fn locate_step_arms_the_pulse_at_the_fill_boundary_and_ends_cleanly() {
+        let before = advance_locate(true, 0.0, 0.01, false);
+        assert!(before.active);
+        assert!(!before.arm_pulse);
+        assert!((before.elapsed - 0.01).abs() < 1e-9);
+
+        let crossing = advance_locate(true, LOCATE_FILL_SECONDS - 0.01, 0.02, false);
+        assert!(crossing.active);
+        assert!(crossing.arm_pulse);
+
+        let end = advance_locate(
+            true,
+            LOCATE_FILL_SECONDS + RING_PULSE_DURATION,
+            0.016,
+            false,
+        );
+        assert!(!end.active);
+        assert_eq!(end.elapsed, 0.0);
+    }
+
+    #[test]
+    fn pointer_gestures_outrank_a_locate_replay() {
+        assert!(!locate_yields_to_pointer(false, false, false));
+        assert!(locate_yields_to_pointer(true, false, false));
+        assert!(locate_yields_to_pointer(false, true, false));
+        assert!(locate_yields_to_pointer(false, false, true));
+    }
+
+    /// Records every ring field so `apply_to` can be checked against a frame.
+    #[derive(Default)]
+    struct RecordingRing {
+        values: RefCell<[f64; 6]>,
+    }
+
+    impl RingSink for RecordingRing {
+        fn set_alpha(&self, value: f64) {
+            self.values.borrow_mut()[0] = value;
+        }
+        fn set_release_progress(&self, value: f64) {
+            self.values.borrow_mut()[1] = value;
+        }
+        fn set_press_elapsed(&self, value: f64) {
+            self.values.borrow_mut()[2] = value;
+        }
+        fn set_release_elapsed(&self, value: f64) {
+            self.values.borrow_mut()[3] = value;
+        }
+        fn set_arm_t(&self, value: f64) {
+            self.values.borrow_mut()[4] = value;
+        }
+        fn set_arm_pulse(&self, value: f64) {
+            self.values.borrow_mut()[5] = value;
+        }
+    }
+
+    #[test]
+    fn ring_frame_reaches_every_sink_field() {
+        let frame = RingAnim {
+            alpha: 0.6,
+            release_progress: 0.5,
+            press_elapsed: 0.4,
+            release_elapsed: 0.3,
+            arm_t: 0.2,
+            arm_pulse: 0.1,
+        };
+        let sink = RecordingRing::default();
+        frame.apply_to(&sink);
+        assert_eq!(*sink.values.borrow(), [0.6, 0.5, 0.4, 0.3, 0.2, 0.1]);
+    }
+
+    #[test]
+    fn reset_frame_clears_every_sink_field_except_the_seeded_release_timer() {
+        let sink = RecordingRing {
+            values: RefCell::new([1.0; 6]),
+        };
+        RingAnim::default().apply_to(&sink);
+        let values = *sink.values.borrow();
+        assert_eq!(values[0], 0.0);
+        assert_eq!(values[1], 0.0);
+        assert_eq!(values[2], 0.0);
+        assert_eq!(values[3], LONG_PRESS_RING_FADE);
+        assert_eq!(values[4], 0.0);
+        assert!(values[5] < 0.0);
+    }
+
+    #[test]
+    fn locate_step_is_stable_across_random_frame_times_and_cancels_cleanly() {
+        let mut seed: u64 = 0x335335;
+        let mut random = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 33) as f64 / (1u64 << 31) as f64
+        };
+        let tail = if RING_PULSE_DURATION > LONG_PRESS_RING_FADE {
+            RING_PULSE_DURATION
+        } else {
+            LONG_PRESS_RING_FADE
+        };
+
+        for _ in 0..2000 {
+            let mut active = true;
+            let mut elapsed = 0.0;
+            let mut pulses = 0;
+            for _ in 0..100 {
+                let dt = random() * 0.05;
+                let step = advance_locate(active, elapsed, dt, false);
+                if step.arm_pulse {
+                    pulses += 1;
+                }
+                if !step.active {
+                    assert_eq!(step.elapsed, 0.0);
+                    break;
+                }
+                assert!(step.elapsed >= elapsed);
+                assert!(step.elapsed < LOCATE_FILL_SECONDS + tail);
+                active = step.active;
+                elapsed = step.elapsed;
+            }
+            assert!(pulses <= 1);
+
+            let cancel_at = random() * (LOCATE_FILL_SECONDS + tail);
+            let cancelled = advance_locate(true, cancel_at, random() * 0.05, true);
+            assert!(!cancelled.active);
+            assert_eq!(cancelled.elapsed, 0.0);
+            assert!(!cancelled.arm_pulse);
+        }
     }
 
     #[test]
@@ -3244,5 +4758,497 @@ mod tests {
             let restores = body.matches(".restore()").count();
             assert_eq!(saves, restores);
         }
+    }
+
+    fn idle_gesture() -> RingGesture {
+        RingGesture::default()
+    }
+
+    fn paint_input(ring: &RingState, static_outline: bool) -> RingPaintInput<'_> {
+        RingPaintInput {
+            ring,
+            static_outline,
+            dragging: false,
+            long_press_active: false,
+            long_press_elapsed: 0.0,
+            inflate: 0.0,
+            wave_phase: 0.0,
+            pill_x: 10.0,
+            pill_y: 10.0,
+            pill_w: 120.0,
+            pill_h: 32.0,
+            pill_radius: 16.0,
+            hold_delay: LONG_PRESS_HOLD_DELAY,
+            hold_duration: LONG_PRESS_DURATION,
+        }
+    }
+
+    fn reduced_motion_gesture() -> RingGesture {
+        RingGesture {
+            reduced_motion: true,
+            ..RingGesture::default()
+        }
+    }
+
+    #[test]
+    fn only_a_reduced_motion_replay_freezes_the_outline() {
+        assert!(ring_outline_is_static(true, true));
+        assert!(!ring_outline_is_static(true, false));
+        assert!(!ring_outline_is_static(false, true));
+        assert!(!ring_outline_is_static(false, false));
+    }
+
+    #[test]
+    fn a_reduced_motion_replay_fades_without_moving_the_outline() {
+        let ring = RingState::new();
+        ring.start_locate(reduced_motion_gesture());
+        let first = RingPaint::resolve(&paint_input(&ring, true)).expect("visible");
+
+        for _ in 0..10 {
+            ring.tick(reduced_motion_gesture(), 1.0 / 60.0);
+        }
+        let later = RingPaint::resolve(&paint_input(&ring, true)).expect("still fading");
+
+        assert!(later.alpha < first.alpha, "the opacity fade still runs");
+        assert_eq!((later.ox, later.oy), (first.ox, first.oy));
+        assert_eq!((later.ow, later.oh), (first.ow, first.oh));
+    }
+
+    #[test]
+    fn a_keyboard_locate_holds_a_complete_outline_from_the_first_frame() {
+        let ring = RingState::new();
+        ring.start_locate_still(idle_gesture());
+
+        let static_outline = ring_outline_is_static(ring.locate_active(), ring.locate_still());
+        assert!(static_outline, "the keyboard replay is static on its own");
+        let first = RingPaint::resolve(&paint_input(&ring, static_outline)).expect("visible");
+        assert_eq!(first.alpha, 1.0, "no sweep to wait for");
+
+        // Every frame of the window shows the same complete outline. A fade
+        // here would dim the outline from the first frame the person looks at
+        // it, and DESIGN.md keeps keyboard-invoked actions still.
+        for _ in 0..10 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+            let frame = RingPaint::resolve(&paint_input(&ring, static_outline)).expect("visible");
+            assert_eq!(
+                frame.alpha, first.alpha,
+                "the outline holds at full opacity"
+            );
+            assert_eq!((frame.ox, frame.oy), (first.ox, first.oy));
+            assert_eq!((frame.ow, frame.oh), (first.ow, first.oh));
+        }
+    }
+
+    #[test]
+    fn a_keyboard_locate_cuts_its_outline_when_the_window_ends() {
+        let ring = RingState::new();
+        ring.start_locate_still(idle_gesture());
+
+        let mut frames = 0;
+        let mut cleared = false;
+        while !cleared && frames < 600 {
+            let alpha_before = ring.alpha();
+            let frame = ring.tick(idle_gesture(), 1.0 / 60.0);
+            if frame.cleared {
+                cleared = true;
+            } else {
+                assert_eq!(ring.alpha(), alpha_before, "no fade while it holds");
+            }
+            frames += 1;
+        }
+
+        assert!(cleared, "the frame that ends the window reports the clear");
+        assert_eq!(ring.alpha(), 0.0, "the outline cuts rather than fades");
+        assert_eq!(ring.release_progress(), 0.0);
+    }
+
+    #[test]
+    fn a_pointer_locate_keeps_its_sweep() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+
+        assert!(!ring.locate_still(), "only the keyboard trigger is still");
+        assert!(!ring_outline_is_static(
+            ring.locate_active(),
+            ring.locate_still()
+        ));
+        assert!(
+            RingPaint::resolve(&paint_input(&ring, false)).is_none(),
+            "the sweep starts from an empty ring, so nothing paints yet"
+        );
+    }
+
+    #[test]
+    fn the_still_flag_clears_when_the_replay_ends() {
+        let ring = RingState::new();
+        ring.start_locate_still(idle_gesture());
+        assert!(ring.locate_still());
+
+        for _ in 0..240 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        assert!(!ring.locate_active(), "the replay expired");
+        assert!(
+            !ring.locate_still(),
+            "a later pointer replay must sweep again"
+        );
+    }
+
+    #[test]
+    fn a_static_outline_keeps_one_glimmer_whatever_the_wave_does() {
+        let ring = RingState::new();
+        ring.start_locate(reduced_motion_gesture());
+
+        let segment_alphas = |static_outline: bool, wave_phase: f64| {
+            let mut input = paint_input(&ring, static_outline);
+            input.wave_phase = wave_phase;
+            let plan = RingPaint::resolve(&input).expect("visible");
+            let points: Vec<(f64, f64, f64)> = plan
+                .path
+                .iter()
+                .zip(&plan.distances)
+                .map(|(point, dist)| (point.0, point.1, *dist))
+                .collect();
+            comet_segments(&points, &plan, (1.0, 1.0, 1.0))
+                .map(|segment| segment.rgba[3])
+                .collect::<Vec<_>>()
+        };
+
+        let still = segment_alphas(true, 0.0);
+        assert!(!still.is_empty(), "the outline must paint segments");
+        assert_eq!(
+            segment_alphas(true, 1.7),
+            still,
+            "a static outline must not shimmer with the wave phase"
+        );
+        assert_ne!(
+            segment_alphas(false, 1.7),
+            segment_alphas(false, 0.0),
+            "the same phases must still differ while the outline sweeps"
+        );
+    }
+
+    #[test]
+    fn enabling_reduced_motion_mid_replay_freezes_the_outline_immediately() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        for _ in 0..10 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        let sweeping = RingPaint::resolve(&paint_input(&ring, false)).expect("visible");
+        assert!(sweeping.progress < 1.0, "the sweep must be in flight");
+
+        ring.tick(reduced_motion_gesture(), 1.0 / 60.0);
+        let frozen = RingPaint::resolve(&paint_input(&ring, true)).expect("visible");
+        assert_eq!(frozen.progress, 1.0, "the outline completes at once");
+        assert!(
+            !pulse_is_running(ring.arm_pulse()),
+            "the confirmation pulse must not arm under reduced motion"
+        );
+
+        for _ in 0..10 {
+            ring.tick(reduced_motion_gesture(), 1.0 / 60.0);
+        }
+        let later = RingPaint::resolve(&paint_input(&ring, true)).expect("still fading");
+        assert!(later.alpha < frozen.alpha, "the opacity fade still runs");
+        assert_eq!(
+            (later.ox, later.oy, later.ow, later.oh),
+            (frozen.ox, frozen.oy, frozen.ow, frozen.oh)
+        );
+    }
+
+    #[test]
+    fn a_replayed_outline_drifts_while_it_fades_without_reduced_motion() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        for _ in 0..40 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        let early = RingPaint::resolve(&paint_input(&ring, false)).expect("fading");
+
+        for _ in 0..10 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        let later = RingPaint::resolve(&paint_input(&ring, false)).expect("still fading");
+
+        assert!(
+            later.ow > early.ow,
+            "a normal replay expands as the outline fades"
+        );
+    }
+
+    #[test]
+    fn a_locate_replay_runs_to_completion_and_arms_the_pulse() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        assert!(ring.locate_active());
+
+        let mut frames = 0;
+        let mut cleared = false;
+        // The ring finishes fading a frame or two after the replay stops being
+        // active, so keep ticking until the clearing frame is reported.
+        while !cleared && frames < 600 {
+            cleared = ring.tick(idle_gesture(), 1.0 / 60.0).cleared;
+            frames += 1;
+        }
+
+        assert!(!ring.locate_active(), "replay should end on its own");
+        assert!(frames > 1, "replay should span more than one frame");
+        assert!(cleared, "the frame that clears the ring must be reported");
+        assert_eq!(ring.alpha(), 0.0);
+        assert!(!pulse_is_running(ring.arm_pulse()));
+    }
+
+    #[test]
+    fn a_pointer_gesture_takes_the_ring_from_a_running_replay() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        ring.tick(idle_gesture(), 1.0 / 60.0);
+        assert!(ring.locate_active());
+
+        let pointer = RingGesture {
+            pointer_down: true,
+            ..RingGesture::default()
+        };
+        ring.tick(pointer, 1.0 / 60.0);
+
+        assert!(!ring.locate_active(), "a live pointer cancels the replay");
+        assert_eq!(ring.alpha(), 0.0, "and the ring restarts from clean");
+    }
+
+    #[test]
+    fn a_replay_never_starts_over_an_active_pointer_gesture() {
+        let ring = RingState::new();
+        ring.start_locate(RingGesture {
+            long_press_active: true,
+            ..RingGesture::default()
+        });
+        assert!(!ring.locate_active());
+    }
+
+    #[test]
+    fn a_second_locate_restarts_the_sweep_instead_of_inheriting_the_fade() {
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        for _ in 0..40 {
+            ring.tick(idle_gesture(), 1.0 / 60.0);
+        }
+        assert!(ring.alpha() > 0.0, "mid-replay the ring is visible");
+
+        ring.start_locate(idle_gesture());
+        assert_eq!(ring.alpha(), 0.0, "a fresh trigger clears the old fade");
+        assert!(ring.locate_active());
+    }
+
+    #[test]
+    fn a_held_long_press_lifts_the_ring_and_release_fades_it_out() {
+        let ring = RingState::new();
+        let held = RingGesture {
+            pointer_down: true,
+            long_press_active: true,
+            long_press_elapsed: LONG_PRESS_HOLD_DELAY + 0.2,
+            ..RingGesture::default()
+        };
+        for _ in 0..30 {
+            ring.tick(held, 1.0 / 60.0);
+        }
+        assert!(ring.alpha() > 0.0, "a held press shows the ring");
+
+        let released = RingGesture::default();
+        let mut cleared = false;
+        for _ in 0..600 {
+            if ring.tick(released, 1.0 / 60.0).cleared {
+                cleared = true;
+                break;
+            }
+        }
+        assert!(cleared, "release must fade the ring back out");
+        assert_eq!(ring.alpha(), 0.0);
+    }
+    #[test]
+    fn a_held_long_press_raises_the_ring_across_frames() {
+        // The pointer stays down for the whole hold, so every frame is a
+        // pointer-down frame. Clearing the ring on those frames would reset
+        // `press_elapsed` and freeze alpha one frame into the ramp.
+        let ring = RingState::new();
+        let held = RingGesture {
+            pointer_down: true,
+            long_press_active: true,
+            long_press_elapsed: LONG_PRESS_HOLD_DELAY + 0.2,
+            ..RingGesture::default()
+        };
+        let mut samples = Vec::new();
+        for _ in 0..20 {
+            ring.tick(held, 1.0 / 60.0);
+            samples.push(ring.alpha());
+        }
+        assert!(
+            samples[19] > samples[1] + 0.05,
+            "alpha must rise across held frames, got {samples:?}"
+        );
+    }
+
+    #[test]
+    fn a_drag_raises_the_arm_ramp_across_frames() {
+        let ring = RingState::new();
+        let drag = RingGesture {
+            pointer_down: true,
+            dragging: true,
+            ..RingGesture::default()
+        };
+        let mut samples = Vec::new();
+        for _ in 0..20 {
+            ring.tick(drag, 1.0 / 60.0);
+            samples.push(ring.arm_t());
+        }
+        assert!(
+            samples[19] > samples[1] + 0.05,
+            "arm_t must rise across drag frames, got {samples:?}"
+        );
+    }
+
+    #[test]
+    fn an_armed_pulse_survives_the_pointer_frame_that_holds_it() {
+        // Windows and macOS arm the pulse before the shared tick in the same
+        // frame, so a pointer-down reset here would wipe it before it plays.
+        let ring = RingState::new();
+        ring.arm_pulse.set(pulse_armed());
+        ring.tick(
+            RingGesture {
+                pointer_down: true,
+                long_press_active: true,
+                long_press_elapsed: LONG_PRESS_HOLD_DELAY + 0.2,
+                ..RingGesture::default()
+            },
+            1.0 / 60.0,
+        );
+        assert!(
+            pulse_is_running(ring.arm_pulse()),
+            "an armed pulse must survive a held-pointer tick"
+        );
+    }
+
+    #[test]
+    fn the_fill_boundary_frame_commits_the_complete_sweep() {
+        // Advance in uneven steps so one frame straddles LOCATE_FILL_SECONDS.
+        // The outline must be complete on that frame, and the fade must begin
+        // from there rather than from the previous frame's partial sweep.
+        let ring = RingState::new();
+        ring.start_locate(idle_gesture());
+        let step = 1.0 / 30.0;
+        let mut previous = 0.0;
+        let mut crossed = false;
+        for _ in 0..40 {
+            let before = ring.release_progress();
+            ring.tick(idle_gesture(), step);
+            let elapsed = previous + step;
+            if previous < LOCATE_FILL_SECONDS && elapsed >= LOCATE_FILL_SECONDS {
+                assert!(
+                    (ring.release_progress() - 1.0).abs() < 1e-9,
+                    "the crossing frame must commit a full sweep, got {} (was {before})",
+                    ring.release_progress()
+                );
+                crossed = true;
+                break;
+            }
+            previous = elapsed;
+        }
+        assert!(crossed, "the loop must observe the fill boundary");
+    }
+    #[test]
+    fn a_locate_only_window_is_click_through_but_a_visible_pill_is_not() {
+        // Hidden and idle: the locate is the only reason the window is mapped.
+        assert!(locate_is_the_only_reason_shown(
+            PillVisibility::Hidden,
+            false,
+            false,
+            true
+        ));
+        // Persistent is on screen anyway, so the locate changes nothing.
+        assert!(!locate_is_the_only_reason_shown(
+            PillVisibility::Persistent,
+            false,
+            false,
+            true
+        ));
+        // WhileActive during a take would be visible without the locate.
+        assert!(!locate_is_the_only_reason_shown(
+            PillVisibility::WhileActive,
+            true,
+            false,
+            true
+        ));
+        // WhileActive and idle: locate is again the only reason.
+        assert!(locate_is_the_only_reason_shown(
+            PillVisibility::WhileActive,
+            false,
+            false,
+            true
+        ));
+        // A surface the pill owns keeps its own click handling.
+        assert!(!locate_is_the_only_reason_shown(
+            PillVisibility::Hidden,
+            false,
+            true,
+            true
+        ));
+        // No indication running means this predicate never applies.
+        assert!(!locate_is_the_only_reason_shown(
+            PillVisibility::Hidden,
+            false,
+            false,
+            false
+        ));
+    }
+    #[test]
+    fn a_reduced_motion_locate_skips_the_sweep_but_still_ends() {
+        let ring = RingState::new();
+        ring.start_locate(RingGesture {
+            reduced_motion: true,
+            ..RingGesture::default()
+        });
+        assert!(ring.locate_active());
+        // Tick once: a full-motion replay would overwrite progress with a
+        // partial sweep here. Under reduced motion the outline must still be
+        // complete, so there is nothing to animate and only the fade runs.
+        let reduced = RingGesture {
+            reduced_motion: true,
+            ..RingGesture::default()
+        };
+        ring.tick(reduced, 1.0 / 60.0);
+        assert!(
+            (ring.release_progress() - 1.0).abs() < 1e-9,
+            "reduced motion must not sweep, got {}",
+            ring.release_progress()
+        );
+        assert!(ring.alpha() > 0.99, "the outline is held, not fading yet");
+
+        let mut frames = 0;
+        let mut cleared = false;
+        while !cleared && frames < 600 {
+            cleared = ring
+                .tick(
+                    RingGesture {
+                        reduced_motion: true,
+                        ..RingGesture::default()
+                    },
+                    1.0 / 60.0,
+                )
+                .cleared;
+            frames += 1;
+        }
+        assert!(cleared, "the reduced-motion indication must still finish");
+        assert!(!ring.locate_active());
+    }
+
+    #[test]
+    fn a_full_motion_locate_starts_the_sweep_from_zero() {
+        let ring = RingState::new();
+        ring.start_locate(RingGesture {
+            reduced_motion: false,
+            ..RingGesture::default()
+        });
+        assert!(ring.locate_active());
+        assert_eq!(ring.release_progress(), 0.0);
     }
 }

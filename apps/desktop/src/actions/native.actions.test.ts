@@ -6,6 +6,7 @@ const { nativeRepoMock, snackbarMock, loggerMock } = vi.hoisted(() => {
   const nativeRepoMock = {
     requestAdminRelaunch: vi.fn(),
     quitApp: vi.fn(() => Promise.resolve(undefined)),
+    locatePill: vi.fn(() => Promise.resolve(undefined)),
   };
   const snackbarMock = {
     showErrorSnackbar: vi.fn(),
@@ -45,7 +46,8 @@ vi.mock("../i18n", () => ({
   }),
 }));
 
-const { requestAdminRelaunch, quitApp } = await import("./native.actions");
+const { requestAdminRelaunch, quitApp, locatePill } =
+  await import("./native.actions");
 
 const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
 
@@ -154,5 +156,21 @@ describe("quitApp", () => {
     expect(loggerMock.error).toHaveBeenCalledWith(
       expect.stringContaining("nope"),
     );
+  });
+});
+
+describe("locatePill", () => {
+  it("delegates to the native pill command", async () => {
+    await locatePill();
+    expect(nativeRepoMock.locatePill).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs a failure instead of surfacing it", async () => {
+    nativeRepoMock.locatePill.mockRejectedValueOnce(new Error("no pill"));
+    await expect(locatePill()).resolves.toBeUndefined();
+    expect(loggerMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("no pill"),
+    );
+    expect(snackbarMock.showErrorSnackbar).not.toHaveBeenCalled();
   });
 });

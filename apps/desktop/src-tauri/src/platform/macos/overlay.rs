@@ -102,8 +102,14 @@ pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {
     let (in_tx, in_rx) = mpsc::channel::<InMessage>();
     let (out_tx, out_rx) = mpsc::channel::<OutMessage>();
 
+    // The pill is linked into this process, so it gets the stored position
+    // directly instead of through a spawn argument. It applies the position
+    // before its first frame, so a restore is never a visible jump.
+    let saved_position = crate::pill_position::read_saved_position_record(app)
+        .and_then(|record| rust_pill_shared::restore::ParkedWindow::decode(&record));
+
     // Start the pill on the main thread (Tauri setup runs on main thread)
-    rust_macos_pill::start(out_tx, in_rx);
+    rust_macos_pill::start(out_tx, in_rx, saved_position);
 
     let pill = std::sync::Arc::new(MacosPill {
         sender: Mutex::new(Some(in_tx)),
@@ -202,15 +208,77 @@ pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
+/// Whether the linked pill is still reachable.
+///
+/// The channel sender is taken when the pill retires, so a `Some` sender is the
+/// only evidence that a message can still reach it.
+pub fn pill_is_running(app: &tauri::AppHandle) -> bool {
+    app.try_state::<std::sync::Arc<MacosPill>>()
+        .is_some_and(|pill| {
+            pill.sender
+                .lock()
+                .map(|sender| sender.is_some())
+                .unwrap_or(false)
+        })
+}
+
+/// Tell the linked pill to stop treating its current spot as saved, without
+/// moving it. Sent after a local-data clear so the reloaded window cannot write
+/// the cleared position straight back. `ack` is the declaration the pill's answer
+/// retires; the caller withdraws it when this returns an error, so a clear that
+/// never reached the pill cannot close the latch forever.
+pub fn notify_forget_position(app: &tauri::AppHandle, ack: Option<u64>) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<MacosPill>>() {
+        Some(pill) => pill.send(InMessage::ForgetPosition { ack }),
+        None => Err("Pill position forgotten with no managed macOS pill".to_string()),
+    }
+}
+
+pub async fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
+    // The stored record is what the next launch restores, so a reset has to
+    // forget it before it tells the pill to re-home. A clear that failed would
+    // leave that record to undo the reset on the next launch, so it is reported
+    // rather than swallowed.
+    // The write gate first, then the delivery order, which is the order the
+    // local-data clear uses for its own forget. The other order lets a reset and
+    // a clear wait on each other's lock and never finish.
+    let Ok(_write) = crate::db::local_data_write_gate::lock_local_data_write(None).await else {
+        return Err("Could not clear the pill's stored position, so it was not reset".to_string());
+    };
+    let _delivery = crate::pill_position::lock_clear_delivery().await;
+    let Some(declaration) = crate::pill_position::clear_saved_position(app, &_write).await else {
+        return Err("Could not clear the pill's stored position, so it was not reset".to_string());
+    };
     let strategy = if strategy == "cursor" {
         ResetStrategy::Cursor
     } else {
         ResetStrategy::Current
     };
     match app.try_state::<std::sync::Arc<MacosPill>>() {
-        Some(pill) => pill.send(InMessage::ResetPosition { strategy }),
-        None => Err("Reset position requested with no managed macOS pill".to_string()),
+        Some(pill) => {
+            if let Err(err) = pill.send(InMessage::ResetPosition {
+                strategy,
+                ack: Some(declaration),
+            }) {
+                // `send` retires the pill when the channel is closed, so no
+                // report will ever answer this declaration. It has to go back
+                // now, or the latch stays closed and every later drag is
+                // dropped for the rest of the process.
+                crate::pill_position::withdraw_erase(declaration);
+                log::warn!("Reset the stored pill position with a failed delivery: {err}");
+            }
+            // The row is already gone, which is the durable half of a reset: the
+            // next launch starts at the default corner whether or not the pill
+            // hears about it, so a failed delivery is not a failed reset. The
+            // same rule is spelled out in `pill_process`, and reporting the
+            // failure here would ask the user to retry an action that took effect.
+            Ok(())
+        }
+        None => {
+            crate::pill_position::withdraw_erase(declaration);
+            log::debug!("Reset the stored pill position with no managed macOS pill");
+            Ok(())
+        }
     }
 }
 
@@ -306,22 +374,31 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     crate::system::audio_feedback::play_thock(&kind);
                 }
                 OutMessage::Hover { .. } => {}
-                OutMessage::PositionChanged {
-                    has_saved_position,
-                    rect,
-                    monitor,
-                } => {
+                OutMessage::PositionChanged { report } => {
+                    // The four fields are one record on the wire, so they are read
+                    // as one: a variant that carried them separately could be
+                    // destructured into a position with no display, or a display
+                    // with no position.
+                    let has_saved_position = report.has_saved_position;
+                    let (rect, monitor) = (report.rect, report.monitor);
+                    let display_id = report.display.display_id;
+                    // The newest clear the pill has applied, echoed from the id this
+                    // desktop sent with the clear. `None` retires nothing.
+                    let ack = report.ack;
                     let rect_json = rect.map(|r| {
                         serde_json::json!({ "x": r.x, "y": r.y, "width": r.width, "height": r.height })
                     });
                     let monitor_json = monitor.map(|m| {
                         serde_json::json!({ "x": m.x, "y": m.y, "width": m.width, "height": m.height })
                     });
-                    let payload = serde_json::json!({
-                        "hasSavedPosition": has_saved_position,
-                        "rect": rect_json,
-                        "monitor": monitor_json,
-                    });
+                    let payload = crate::pill_position::apply_published_position(
+                        &app,
+                        has_saved_position,
+                        rect_json,
+                        monitor_json,
+                        display_id,
+                        ack,
+                    );
                     let _ = app.emit_to("main", "pill-position-changed", payload);
                 }
             }

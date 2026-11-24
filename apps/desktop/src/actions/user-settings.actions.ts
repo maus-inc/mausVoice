@@ -1,5 +1,9 @@
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
-import { Nullable, UpdateChannel } from "@maus-inc/types";
+import {
+  Nullable,
+  PillLocateGestureModifier,
+  UpdateChannel,
+} from "@maus-inc/types";
 import { getIntl } from "../i18n";
 import { getAppState } from "../store";
 import { normalizeDictationLimitMinutes } from "../utils/dictation-limit.utils";
@@ -237,6 +241,20 @@ export const setInDictationStyleSwitchingEnabled = async (
     getIntl().formatMessage({
       defaultMessage:
         "Failed to save in-dictation style switching preference. Please try again.",
+    }),
+  );
+};
+
+export const setPillLocateGestureModifier = async (
+  modifier: PillLocateGestureModifier,
+): Promise<void> => {
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.pillLocateGestureModifier = modifier;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save pill position gesture preference. Please try again.",
     }),
   );
 };

@@ -54,5 +54,6 @@ knowledge_base:
       - "AGENTS.md"
       - "CONTRIBUTING.md"
       - "COMMIT.md"
+      - "CODING_STANDARDS.md"
       - "REVIEW.md"
       - "FULL-REVIEW.md"

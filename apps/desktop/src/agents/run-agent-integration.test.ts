@@ -1,3 +1,4 @@
+import type { ChatMessage } from "@maus-inc/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { produce } from "immer";
 import { INITIAL_APP_STATE } from "../state/app.state";
@@ -137,33 +138,28 @@ const setupAgentMocks = () => {
 
 describe("runAgent continues after a tool call when the desktop side effect rejects", () => {
   it("isolates a rejected chat-message persistence so the loop yields the next event", async () => {
-    const chatMessageById: Record<string, unknown> = {};
-    const chatMessageIdsByConversationId: Record<string, string[]> = {
-      "c-1": [],
-    };
-    getAppStateMock.mockReturnValue({
-      chatMessageById,
-      chatMessageIdsByConversationId,
-      agentStateByConversationId: {},
-      toolInfoById: {},
-    });
-    produceAppStateMock.mockImplementation(() => undefined);
+    const live = structuredClone(INITIAL_APP_STATE);
+    getAppStateMock.mockReturnValue(live);
+    produceAppStateMock.mockImplementation((apply: (draft: AppState) => void) =>
+      apply(live),
+    );
     humanizeScrubMock.mockImplementation((text: string) => text);
     setupAgentMocks();
 
-    let repoCreateCalls = 0;
-    getChatMessageRepoCreateMock.mockImplementation(() => {
-      repoCreateCalls += 1;
-      return Promise.reject(
-        new Error("The resource id 'chat-msg-1' is invalid"),
-      );
+    const saved: ChatMessage[] = [];
+    getChatMessageRepoCreateMock.mockImplementation((message: ChatMessage) => {
+      if (message.metadata?.type === "tool-result") {
+        return Promise.reject(
+          new Error("The resource id 'chat-msg-1' is invalid"),
+        );
+      }
+      saved.push(message);
+      return Promise.resolve(message);
     });
 
-    // The AgentLoop yields: tool-call-start, tool-call-result, text-delta,
-    // finish. The test asserts runAgent processes all four despite the
-    // persistence rejection in the middle.
     loopRunMock.mockImplementation(() =>
       agentLoopRun([
+        { type: "iteration-start", iteration: 0 },
         {
           type: "tool-call-start",
           toolCallId: "t-1",
@@ -177,6 +173,7 @@ describe("runAgent continues after a tool call when the desktop side effect reje
           result: "ok",
           isError: false,
         },
+        { type: "iteration-start", iteration: 1 },
         {
           type: "text-delta",
           text: "done",
@@ -198,10 +195,11 @@ describe("runAgent continues after a tool call when the desktop side effect reje
       }),
     ).resolves.toBeUndefined();
 
-    // The desktop adapter invoked the repo's createChatMessage once
-    // (for the tool result). The rejection must NOT have escaped
-    // runAgent — the loop must have continued and resolved normally.
-    expect(repoCreateCalls).toBe(1);
+    expect(saved.at(-1)).toMatchObject({
+      conversationId: "c-1",
+      role: "assistant",
+      content: "done",
+    });
 
     // The rejection was logged with the side-effect label and the
     // conversation + tool-call ids so post-mortem inspection can map it

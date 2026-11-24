@@ -700,6 +700,10 @@ async resetKeyListenerState() : Promise<void> {
  * default centre-bottom of a monitor. `strategy` selects which monitor:
  * `"current"` (the monitor the pill lives on, the historical default) or
  * `"cursor"` (the monitor under the mouse).
+ * 
+ * Async so the main thread does not wait on the local-data write gate: the
+ * clear can be queued behind a whole local-data wipe, which holds that gate for
+ * its duration.
  */
 async resetPillPosition(strategy: string | null) : Promise<Result<null, string>> {
     try {
@@ -1527,7 +1531,12 @@ pillPlacement?: string;
  * Delay (ms) between a hands-free stop and the actual paste/type
  * action. NULL disables the delay (immediate paste on stop).
  */
-handsFreeDelayMs?: number | null; inDictationStyleSwitchingEnabled?: boolean; hallucinationFilterEnabled?: boolean; 
+handsFreeDelayMs?: number | null; inDictationStyleSwitchingEnabled?: boolean; 
+/**
+ * Which modifier double-tap replays the pill outline. Accepted values are
+ * "none", "alt", "shift" and "control"; the default disables the gesture.
+ */
+pillLocateGestureModifier?: string; hallucinationFilterEnabled?: boolean; 
 /**
  * Style short dictations with the deterministic local transforms instead
  * of the configured provider. Default on.

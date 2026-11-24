@@ -8,14 +8,11 @@ import {
 } from "../../actions/onboarding.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
-import {
-  getLocalDataClearGeneration,
-  isLocalDataClearRequested,
-} from "../../utils/local-data-write-gate";
+import { isLocalDataClearRequested } from "../../utils/local-data-write-gate";
 import { AudioWaveform } from "../common/AudioWaveform";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
 import {
-  invokeGuardedRecordingStart,
+  runGuardedRecordingStart,
   subscribeRecordingAbortForClear,
 } from "../root/recording-start-gate";
 import {
@@ -24,8 +21,8 @@ import {
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 import {
-  discardNativeRecording,
-  stopNativeRecording,
+  stopAdmittedRecording,
+  type NativeRecordingHandle,
 } from "../../utils/native-recording-session";
 
 type RecordingState = "idle" | "starting" | "recording" | "stopping";
@@ -40,6 +37,7 @@ const useMicCheckRecording = (preferredMicrophone: string | null) => {
   const mountedRef = useRef(true);
   const opIdRef = useRef(0);
   const recordingStateRef = useRef(recordingState);
+  const handleRef = useRef<NativeRecordingHandle | null>(null);
   recordingStateRef.current = recordingState;
 
   const setSyncedRecordingState = useCallback((next: RecordingState) => {
@@ -49,46 +47,23 @@ const useMicCheckRecording = (preferredMicrophone: string | null) => {
     }
   }, []);
 
-  const startRecording = useCallback(async () => {
-    if (
-      isGlobalRecording ||
-      recordingStateRef.current !== "idle" ||
-      isLocalDataClearRequested()
-    ) {
-      return;
-    }
-
-    const opId = ++opIdRef.current;
-    const clearGeneration = getLocalDataClearGeneration();
-    setSyncedRecordingState("starting");
-
-    try {
-      await invokeGuardedRecordingStart(preferredMicrophone ?? null);
-      if (
-        !mountedRef.current ||
-        opId !== opIdRef.current ||
-        isLocalDataClearRequested() ||
-        clearGeneration !== getLocalDataClearGeneration()
-      ) {
-        await discardNativeRecording();
-        if (opId === opIdRef.current) {
-          setSyncedRecordingState("idle");
-        }
-        return;
-      }
-      setSyncedRecordingState("recording");
-    } catch (error) {
-      if (
-        !isLocalDataClearRequested() &&
-        clearGeneration === getLocalDataClearGeneration()
-      ) {
-        console.error("Failed to start recording", error);
-      }
-      if (opId === opIdRef.current) {
-        setSyncedRecordingState("idle");
-      }
-    }
-  }, [isGlobalRecording, preferredMicrophone, setSyncedRecordingState]);
+  const startRecording = useCallback(
+    () =>
+      runGuardedRecordingStart({
+        isBlocked: () =>
+          isGlobalRecording || recordingStateRef.current !== "idle",
+        ownership: {
+          isMounted: () => mountedRef.current,
+          currentOpId: () => opIdRef.current,
+        },
+        opIdRef,
+        handleRef,
+        preferredMicrophone,
+        setState: setSyncedRecordingState,
+        onError: (error) => console.error("Failed to start recording", error),
+      }),
+    [isGlobalRecording, preferredMicrophone, setSyncedRecordingState],
+  );
 
   const stopRecording = useCallback(async () => {
     const currentState = recordingStateRef.current;
@@ -99,8 +74,15 @@ const useMicCheckRecording = (preferredMicrophone: string | null) => {
     opIdRef.current += 1;
     setSyncedRecordingState("stopping");
 
+    // Stop the recording this form admitted. A global stop would reach whatever
+    // session is current, which a later start may own. The admission is retained
+    // before capture starts, so this reaches the device even while the start reply
+    // is still pending; the bumped op id keeps a late reply from publishing over
+    // the stop.
+    const handle = handleRef.current;
+    handleRef.current = null;
     try {
-      await stopNativeRecording();
+      await stopAdmittedRecording(handle);
     } catch (error) {
       console.error("Failed to stop recording", error);
     } finally {

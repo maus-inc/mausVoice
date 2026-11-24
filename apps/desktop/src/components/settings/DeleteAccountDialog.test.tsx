@@ -233,28 +233,29 @@ describe("DeleteAccountDialog", () => {
     });
     expect(mocks.signOut).not.toHaveBeenCalled();
   });
-  it("wipes local data and keeps cleanup pending if the recorder cannot stop", async () => {
-    await startLiveRecording();
-    mocks.invoke.mockImplementation((command: unknown) =>
-      command === "stop_recording"
-        ? Promise.reject(new Error("recorder still active"))
-        : command === "recording_generation"
-          ? Promise.resolve(1)
-          : command === "start_recording"
-            ? Promise.resolve({ sampleRate: 16_000 })
-            : Promise.resolve(),
-    );
-    render();
-    await submit();
-    expect(mocks.invoke).toHaveBeenCalledWith("stop_key_listener");
-    expect(mocks.invoke).toHaveBeenCalledWith(
-      "stop_recording",
-      expect.anything(),
-    );
-    expect(mocks.invoke).toHaveBeenCalledWith("clear_local_data");
-    expect(mocks.invoke).not.toHaveBeenCalledWith("complete_local_data_clear");
-    expect(getAppState().local.profileImageByUserId).toEqual({});
-    expect(snackbarMessages()).toEqual([DELETED_BUT_LEFT_BEHIND]);
-    expect(getAppState().settings.deleteAccountDialog).toBe(true);
-  });
+  it.each([true, false])(
+    "finishes deletion only on confirmed release after stop fails (released: %s)",
+    async (released) => {
+      await startLiveRecording();
+      mocks.invoke.mockImplementation((command: unknown) => {
+        if (command === "stop_recording")
+          return Promise.reject(new Error("audio unavailable"));
+        if (command === "discard_recording" && !released)
+          return Promise.reject(new Error("device held"));
+        return Promise.resolve();
+      });
+      render();
+      await submit();
+      const commands = mocks.invoke.mock.calls.map(([command]) => command);
+      expect(commands).toContain("discard_recording");
+      expect(commands).toContain("clear_local_data");
+      expect(commands.includes("complete_local_data_clear")).toBe(released);
+      expect(getAppState().local.profileImageByUserId).toEqual({});
+      expect(snackbarMessages()).toEqual(
+        released ? [] : [DELETED_BUT_LEFT_BEHIND],
+      );
+      expect(getAppState().settings.deleteAccountDialog).toBe(!released);
+      expect(mocks.deleteMyAccount).toHaveBeenCalledTimes(1);
+    },
+  );
 });

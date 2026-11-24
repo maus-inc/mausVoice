@@ -179,16 +179,14 @@ export const useVoiceEdit = ({
 
 export const useVoiceInstructionRecorder = ({
   speechRecognitionSupported,
-  unsupportedMessageRef,
-  recordingUnavailableMessageRef,
+  intlRef,
   recorderRef,
   onListeningChange,
   onTranscript,
   onError,
 }: {
   speechRecognitionSupported: boolean;
-  unsupportedMessageRef: React.RefObject<string>;
-  recordingUnavailableMessageRef: React.RefObject<string>;
+  intlRef: React.RefObject<ReturnType<typeof useIntl>>;
   recorderRef: React.RefObject<VoiceInstructionRecorder | null>;
   onListeningChange: (listening: boolean) => void;
   onTranscript: (spoken: string) => void;
@@ -224,8 +222,18 @@ export const useVoiceInstructionRecorder = ({
         }
       },
       speechRecognitionSupported,
-      unsupportedMessage: () => unsupportedMessageRef.current,
-      recordingUnavailableMessage: () => recordingUnavailableMessageRef.current,
+      unsupportedMessage: () =>
+        intlRef.current.formatMessage({
+          defaultMessage: "Voice editing is not supported on this platform",
+        }),
+      recordingUnavailableMessage: (operation) =>
+        operation === "stop"
+          ? intlRef.current.formatMessage({
+              defaultMessage: "Failed to stop recording",
+            })
+          : intlRef.current.formatMessage({
+              defaultMessage: "Could not start recording. Please try again.",
+            }),
       onListeningChange,
       onTranscript,
       onError,
@@ -244,28 +252,12 @@ export const useVoiceInstructionRecorder = ({
 };
 
 export const useVoiceRecorderMessages = (intl: ReturnType<typeof useIntl>) => {
-  // Held in a ref and refreshed in an effect (never during render) so a locale
-  // change while the composer is open updates the recorder's unsupported
-  // message without a render-phase ref write.
-  const unsupportedMessageRef = useRef(
-    intl.formatMessage({
-      defaultMessage: "Voice editing is not supported on this platform",
-    }),
-  );
-  const recordingUnavailableMessageRef = useRef(
-    intl.formatMessage({
-      defaultMessage: "Could not start recording. Please try again.",
-    }),
-  );
+  // A locale change updates recorder errors without replacing a live recorder.
+  const intlRef = useRef(intl);
   useEffect(() => {
-    unsupportedMessageRef.current = intl.formatMessage({
-      defaultMessage: "Voice editing is not supported on this platform",
-    });
-    recordingUnavailableMessageRef.current = intl.formatMessage({
-      defaultMessage: "Could not start recording. Please try again.",
-    });
+    intlRef.current = intl;
   }, [intl]);
-  return { unsupportedMessageRef, recordingUnavailableMessageRef };
+  return { intlRef };
 };
 
 export const useComposerPeekText = ({

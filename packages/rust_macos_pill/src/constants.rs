@@ -9,6 +9,10 @@ pub(crate) const MARGIN_BOTTOM: i32 = 8;
 
 pub(crate) const PILL_AREA_HEIGHT: f64 = 48.0;
 
+/// Gap between the collapsed pill's bottom edge and the window's bottom edge.
+/// Shared by the draw path and the restore, so a restored pill sits exactly
+/// where the idle tick would put it.
+pub(crate) const COLLAPSED_BOTTOM_INSET: f64 = 6.0;
 pub(crate) const MIN_PILL_WIDTH: f64 = 48.0;
 pub(crate) const MIN_PILL_HEIGHT: f64 = 6.0;
 pub(crate) const EXPANDED_PILL_WIDTH: f64 = 120.0;
@@ -31,14 +35,9 @@ pub(crate) const TOOLTIP_RADIUS: f64 = 12.0;
 pub(crate) const TOOLTIP_FIXED_WIDTH: f64 = 172.0;
 
 // ── Waveform — ported from AudioWaveform.tsx ──────────────────────
-pub(crate) const LEVEL_SMOOTHING: f64 = 0.18;
-pub(crate) const TARGET_DECAY_PER_FRAME: f64 = 0.985;
-pub(crate) const WAVE_BASE_PHASE_STEP: f64 = 0.11;
-pub(crate) const WAVE_PHASE_GAIN: f64 = 0.32;
 pub(crate) const MIN_AMPLITUDE: f64 = 0.03;
 pub(crate) const MAX_AMPLITUDE: f64 = 1.3;
 pub(crate) const STROKE_WIDTH: f64 = 1.6;
-pub(crate) const PROCESSING_BASE_LEVEL: f64 = 0.16;
 
 pub(crate) struct WaveConfig {
     pub(crate) frequency: f64,
@@ -127,8 +126,8 @@ pub(crate) const WINDOW_H_TYPING: i32 = 362;
 // ── Flash message / toast ────────────────────────────────────────
 pub(crate) const FLASH_DURATION: f64 = 2.5;
 pub(crate) const FLASH_HEIGHT: f64 = 32.0;
-pub(crate) const FLASH_RADIUS: f64 = 12.0;
 pub(crate) const FLASH_GAP: f64 = 6.0;
+pub(crate) const FLASH_RADIUS: f64 = 12.0;
 pub(crate) const FLASH_PADDING_H: f64 = 16.0;
 pub(crate) const FLASH_MIN_SCALE: f64 = 0.5;
 pub(crate) const FLASH_ACTION_GAP: f64 = 8.0;
@@ -137,121 +136,7 @@ pub(crate) const FLASH_ACTION_HEIGHT: f64 = 22.0;
 pub(crate) const FLASH_ACTION_RADIUS: f64 = 6.0;
 
 // ── Fireworks ────────────────────────────────────────────────────
-pub(crate) const FIREWORKS_TOTAL_DURATION: f64 = 7.0;
-pub(crate) const FIREWORKS_GRAVITY: f64 = 40.0;
-pub(crate) const FIREWORKS_SPARK_BASE_SPEED: f64 = 85.0;
-pub(crate) const FIREWORKS_SPARK_LIFE: f64 = 1.1;
-pub(crate) const FIREWORKS_SPARK_DRAG: f64 = 1.2;
-pub(crate) const FIREWORKS_TRAIL_MAX: usize = 15;
-pub(crate) const FIREWORKS_TRAIL_FADE_RATE: f64 = 2.0;
-pub(crate) const FIREWORKS_ROCKET_LINE_WIDTH: f64 = 1.8;
-pub(crate) const FIREWORKS_SPARK_LINE_WIDTH: f64 = 1.2;
-pub(crate) const FIREWORKS_HEAD_SIZE: f64 = 4.0;
-
-pub(crate) struct FireworkLaunch {
-    pub(crate) time: f64,
-    pub(crate) angle_deg: f64,
-    pub(crate) speed: f64,
-    pub(crate) fuse: f64,
-    pub(crate) num_sparks: usize,
-}
-
-pub(crate) const FIREWORK_COLORS: &[(f64, f64, f64)] = &[
-    (1.0, 0.4, 0.3),  // coral red
-    (0.3, 0.8, 1.0),  // sky blue
-    (1.0, 0.85, 0.2), // gold
-    (0.4, 1.0, 0.5),  // green
-    (1.0, 0.5, 0.9),  // pink
-    (0.5, 0.6, 1.0),  // lavender
-    (1.0, 0.65, 0.2), // orange
-    (0.3, 1.0, 0.9),  // cyan
-    (1.0, 0.35, 0.5), // hot pink
-    (0.7, 0.5, 1.0),  // purple
-];
-
-pub(crate) const FIREWORK_LAUNCHES: &[FireworkLaunch] = &[
-    FireworkLaunch {
-        time: 0.2,
-        angle_deg: -25.0,
-        speed: 140.0,
-        fuse: 0.50,
-        num_sparks: 12,
-    },
-    FireworkLaunch {
-        time: 0.8,
-        angle_deg: 30.0,
-        speed: 125.0,
-        fuse: 0.55,
-        num_sparks: 10,
-    },
-    FireworkLaunch {
-        time: 1.5,
-        angle_deg: -15.0,
-        speed: 150.0,
-        fuse: 0.45,
-        num_sparks: 14,
-    },
-    FireworkLaunch {
-        time: 2.2,
-        angle_deg: 40.0,
-        speed: 115.0,
-        fuse: 0.60,
-        num_sparks: 12,
-    },
-    FireworkLaunch {
-        time: 3.0,
-        angle_deg: -35.0,
-        speed: 130.0,
-        fuse: 0.50,
-        num_sparks: 11,
-    },
-    FireworkLaunch {
-        time: 3.7,
-        angle_deg: 20.0,
-        speed: 145.0,
-        fuse: 0.50,
-        num_sparks: 13,
-    },
-    FireworkLaunch {
-        time: 4.5,
-        angle_deg: -40.0,
-        speed: 120.0,
-        fuse: 0.55,
-        num_sparks: 10,
-    },
-    FireworkLaunch {
-        time: 5.2,
-        angle_deg: 15.0,
-        speed: 150.0,
-        fuse: 0.45,
-        num_sparks: 14,
-    },
-    FireworkLaunch {
-        time: 5.9,
-        angle_deg: -30.0,
-        speed: 125.0,
-        fuse: 0.50,
-        num_sparks: 12,
-    },
-    FireworkLaunch {
-        time: 6.4,
-        angle_deg: 35.0,
-        speed: 140.0,
-        fuse: 0.55,
-        num_sparks: 11,
-    },
-];
-
 // ── Flame ───────────────────────────────────────────────────────
-pub(crate) const FLAME_TOTAL_DURATION: f64 = 5.0;
-pub(crate) const FLAME_TONGUE_COUNT: usize = 5;
-pub(crate) const FLAME_MIN_HEIGHT: f64 = 90.0;
-pub(crate) const FLAME_MAX_HEIGHT: f64 = 150.0;
-pub(crate) const FLAME_MIN_WIDTH: f64 = 36.0;
-pub(crate) const FLAME_MAX_WIDTH: f64 = 60.0;
-pub(crate) const FLAME_SWAY: f64 = 6.0;
-pub(crate) const FLAME_SPEED_BASE: f64 = 4.5;
-
 // ── Thinking shimmer ──────────────────────────────────────────────
 pub(crate) const SHIMMER_SPEED: f64 = 0.01;
 
@@ -273,28 +158,12 @@ pub(crate) const TRANSCRIPT_RADIUS: f64 = 10.0;
 pub(crate) const TRANSCRIPT_FONT_SIZE: f64 = 12.0;
 pub(crate) const TRANSCRIPT_MAX_WIDTH: f64 = 440.0;
 
-// ── Long-press balloon pop + drag ─────────────────────────────────
-/// Total hold time before the drag gesture arms. Tuned to the 350-600ms band
-/// so the gesture feels deliberate without making the user wait.
-pub(crate) const LONG_PRESS_DURATION: f64 = 0.45;
-/// Grace period before any long-press affordance is drawn. A normal click is
-/// far shorter than this, so quick taps never flash the progress outline.
-pub(crate) const LONG_PRESS_HOLD_DELAY: f64 = 0.12;
-pub(crate) const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
-// Silver-white with a very slight cool tint — reads as a neutral "grab" affordance
-// and stays distinct from the blue commit flash (`FLASH_BLUE_COLOR`).
-pub(crate) const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);
-#[allow(dead_code)]
-pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
-
-/// How much the pill inflates when the long-press completes and drag begins,
-/// expressed as a scale factor applied to BOTH axes about the pill's centre.
-/// A uniform scale keeps the pill's aspect ratio intact and reads as a subtle
-/// "lift" — 0.18 adds roughly 18 % to each axis, which is noticeable without
-/// making the pill look cartoonishly large.
-// (Definition lives in `rust_pill_shared`; re-exported below.)
-// Ring + drag tuning constants live in `rust_pill_shared` so every platform
-// draws the long-press ring from one source of truth.
-pub(crate) use rust_pill_shared::{DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS};
+// Long-press timing, pointer travel, ring colour and the drag inflation scale
+// live in `rust_pill_shared`, so every platform draws the gesture from one
+// source of truth.
 
 // Particle physics constants
+
+pub(crate) use rust_pill_shared::{
+    DRAG_INFLATE_STIFFNESS, LONG_PRESS_DURATION, LONG_PRESS_MOVE_THRESHOLD,
+};

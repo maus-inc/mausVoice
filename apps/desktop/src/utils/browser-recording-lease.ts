@@ -1,13 +1,13 @@
+import {
+  finishAbandonedNativeDiscard,
+  isSafeGeneration,
+  type RecordingInvoke,
+} from "./native-recording-session";
 import { createId } from "./id.utils";
 import {
   acquireLocalBrowserRecording,
   releaseLocalBrowserRecording,
 } from "./local-recording-activity";
-
-type RecordingInvoke = (
-  command: string,
-  args?: Record<string, unknown>,
-) => Promise<unknown>;
 
 /** Reserves native ownership until the browser recognizer has ended. */
 export class BrowserRecordingLease {
@@ -22,30 +22,40 @@ export class BrowserRecordingLease {
   constructor(private readonly invokeFn: RecordingInvoke) {}
 
   async acquire(): Promise<void> {
+    const releasing = finishAbandonedNativeDiscard();
+    if (releasing) await releasing;
     if (this.stopped || !acquireLocalBrowserRecording(this.invokeFn, this)) {
       throw new Error("A recording is already in progress");
     }
     this.acquired = true;
     this.acquiring = true;
     try {
-      const generation = await this.invokeFn("recording_generation", {
-        ownerId: this.ownerId,
-      });
-      if (!Number.isSafeInteger(generation) || (generation as number) < 0)
-        throw new Error("Invalid recording generation");
-      this.admissionToken = generation as number;
-      if (this.stopped) throw new Error("Recording start was cancelled");
-      await this.invokeFn("claim_browser_recording", {
-        ownerId: this.ownerId,
-        generation,
-      });
-      if (this.stopped) throw new Error("Recording start was cancelled");
+      await this.claimNativeSlot();
     } catch (error) {
       void this.release().catch(() => undefined);
       throw error;
     } finally {
       await this.finishAcquisition();
     }
+  }
+
+  private requireActiveStart(): void {
+    if (this.stopped) throw new Error("Recording start was cancelled");
+  }
+
+  private async claimNativeSlot(): Promise<void> {
+    const generation = await this.invokeFn("recording_generation", {
+      ownerId: this.ownerId,
+    });
+    if (!isSafeGeneration(generation))
+      throw new Error("Invalid recording generation");
+    this.admissionToken = generation;
+    this.requireActiveStart();
+    await this.invokeFn("claim_browser_recording", {
+      ownerId: this.ownerId,
+      generation,
+    });
+    this.requireActiveStart();
   }
 
   private async finishAcquisition(): Promise<void> {

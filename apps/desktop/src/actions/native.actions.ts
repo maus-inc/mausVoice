@@ -61,3 +61,17 @@ export async function quitApp(): Promise<void> {
     );
   }
 }
+
+/**
+ * Asks the pill to replay its locate outline so the person can find it.
+ *
+ * A failure is logged only: the highlight is a convenience, and a snackbar for
+ * a missed outline would be louder than the thing that failed.
+ */
+export async function locatePill(): Promise<void> {
+  try {
+    await getNativeRepo().locatePill();
+  } catch (error) {
+    getLogger().error(`Pill locate failed: ${error}`);
+  }
+}

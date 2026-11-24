@@ -110,4 +110,13 @@ describe("settings routes", () => {
     expect(target.page).toBe("shortcuts");
     expect(target.setting?.key).toBe("hotkey_shortcuts");
   });
+
+  it("resolves the pill locate setting to the appearance pill group", () => {
+    const key = "show_pill_position_with_modifier_double_tap";
+    const target = resolveSettingsTarget({ setting: key, section: null }, {});
+    expect(target.page).toBe("appearance");
+    expect(target.setting?.key).toBe(key);
+    expect(target.setting?.group).toBe("pill");
+    expect(target.setting?.page).toBe("appearance");
+  });
 });

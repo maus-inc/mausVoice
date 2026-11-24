@@ -258,6 +258,19 @@ export const SETTING_ENTRIES: SettingEntry[] = [
   ...settingsForGroup("appearance", "pill", {
     dictation_pill_visibility: ["pill", "show pill", "hide pill"],
     pill_placement: ["pill position", "top", "bottom", "anchor"],
+    show_pill_position_with_modifier_double_tap: [
+      "find pill",
+      "locate pill",
+      "alt",
+      "alternate",
+      "option",
+      "shift",
+      "ctrl",
+      "control",
+      "double tap",
+      "off",
+      "disabled",
+    ],
     reset_pill_position: ["pill monitor", "move pill"],
   }),
   ...settingsForGroup("appearance", "menu_bar", {

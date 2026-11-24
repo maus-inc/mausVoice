@@ -2,7 +2,7 @@ import os from "os";
 import fs from "fs";
 import http from "http";
 import path from "path";
-import { spawn, spawnSync } from "child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "url";
 import chromedriver from "chromedriver";
 import { preview as createPreviewServer } from "vite";
@@ -62,7 +62,7 @@ if (!npmCliPath) {
 }
 
 const runNpm = (args) =>
-  spawnSync(process.execPath, [npmCliPath, ...args], {
+  execFileSync(process.execPath, [npmCliPath, ...args], {
     cwd: projectRoot,
     stdio: "inherit",
   });

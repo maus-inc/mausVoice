@@ -1,27 +1,8 @@
 use crate::constants::*;
-use crate::gfx::{Gfx, ShadedSegment};
+use crate::gfx::Gfx;
 use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
-use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
-
-thread_local! {
-    /// The comet's shaded segments, kept between frames.
-    ///
-    /// `resample_perimeter` writes into a caller-owned buffer precisely so the render path does
-    /// not allocate -- its own doc says so -- and the ring honours that by writing into
-    /// `state.ring_points`. The comet then discarded that and built a fresh
-    /// `Vec::with_capacity(points.len())` every frame: roughly 138 segments at 60 Hz, about
-    /// 11 KB of short-lived heap traffic per frame on the UI thread, on the one backend that
-    /// cannot be profiled from Linux.
-    ///
-    /// Thread-local rather than a `PillState` field: the draw runs on the UI thread and
-    /// `ShadedSegment` lives in `gfx`, so a field would put a rendering type into the state
-    /// struct for nothing. Taken out and put back rather than borrowed across the loop, so a
-    /// frame that bails out midway simply loses the buffer and the next one allocates --
-    /// slower, never wrong.
-    static COMET_SHADED: std::cell::RefCell<Vec<ShadedSegment>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
+use rust_pill_shared::{DRAG_INFLATE_SCALE, LONG_PRESS_OUTLINE_COLOR};
 
 /// Paints the whole pill window: begins the Direct2D frame, clears, then
 /// draws the pill, panel, transcript, and overlays in z-order.
@@ -75,16 +56,18 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
         }
 
         draw_cancel_button(gfx, state, ww, wh);
+    }
 
-        // Long-press outline indicator. `ring_alpha` stays pinned for the whole
-        // hold and eases out after release, so the outline survives the
-        // press→drag hand-off and never vanishes under an inflated pill.
-        if state.ring_alpha.get() > 0.0 || rust_pill_shared::pulse_is_running(state.arm_pulse.get())
-        {
-            paint_pill_attached(gfx, state, ww, wh, |gfx| {
-                draw_long_press_ring(gfx, state, ww, wh);
-            });
-        }
+    // Long-press and locate outline. The ring alpha stays pinned for the whole
+    // hold and eases out after release, so the outline survives the press→drag
+    // hand-off and never vanishes under an inflated pill. It draws with the
+    // assistant panel open too, because a locate replay answers "where is the
+    // pill" and the long-press ring is the only feedback for a hold that arms a
+    // drag, which the panel does not disable. GTK draws it the same way.
+    if state.ring.alpha() > 0.0 || rust_pill_shared::pulse_is_running(state.ring.arm_pulse()) {
+        paint_pill_attached(gfx, state, ww, wh, |gfx| {
+            draw_long_press_ring(gfx, state, ww, wh);
+        });
     }
 
     gfx.restore();
@@ -120,8 +103,8 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
         let panel_bottom = wh - PANEL_BOTTOM_MARGIN;
         panel_bottom - PILL_BOTTOM_INSET - base_h
     } else {
-        // Collapsed: hug the bottom (4px); expanded: rise to centered position
-        let collapsed_bottom = 4.0;
+        // Collapsed: hug the bottom; expanded: rise to the centered position
+        let collapsed_bottom = COLLAPSED_BOTTOM_INSET;
         let expanded_bottom = (PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0;
         let bottom_offset = lerp(collapsed_bottom, expanded_bottom, expand_t);
         wh - bottom_offset - base_h
@@ -822,7 +805,8 @@ fn draw_flame(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let usable = pill_w - inset * 2.0;
 
     let fade_in = (elapsed / 0.3).clamp(0.0, 1.0);
-    let fade_out = ((FLAME_TOTAL_DURATION - elapsed) / 0.8).clamp(0.0, 1.0);
+    let fade_out =
+        ((rust_pill_shared::flame::FLAME_TOTAL_DURATION - elapsed) / 0.8).clamp(0.0, 1.0);
     let alpha = fade_in * fade_out;
     if alpha < 0.01 {
         return;
@@ -835,8 +819,8 @@ fn draw_flame(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         let w = tongue.width * (0.85 + 0.15 * flicker);
         let hw = w / 2.0;
 
-        let sway =
-            tongue.phase.sin() * FLAME_SWAY + (tongue.phase * 1.7 + 1.0).sin() * FLAME_SWAY * 0.4;
+        let sway = tongue.phase.sin() * rust_pill_shared::flame::FLAME_SWAY
+            + (tongue.phase * 1.7 + 1.0).sin() * rust_pill_shared::flame::FLAME_SWAY * 0.4;
 
         let base_x = pill_x + inset + usable * tongue.t;
         let cx = base_x + sway * 0.3;
@@ -999,18 +983,18 @@ fn draw_fireworks(gfx: &Gfx, state: &PillState) {
                     rocket.trail[i].0,
                     rocket.trail[i].1,
                     [rc, gc, bc, alpha],
-                    FIREWORKS_ROCKET_LINE_WIDTH,
+                    rust_pill_shared::fireworks::FIREWORKS_ROCKET_LINE_WIDTH,
                 );
             }
         }
 
         if rocket.phase == RocketPhase::Rising {
-            let hs = FIREWORKS_HEAD_SIZE / 2.0;
+            let hs = rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE / 2.0;
             gfx.fill_rounded_rect(
                 rocket.x - hs,
                 rocket.y - hs,
-                FIREWORKS_HEAD_SIZE,
-                FIREWORKS_HEAD_SIZE,
+                rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE,
+                rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE,
                 hs,
                 [rc, gc, bc, 0.95],
             );
@@ -1034,7 +1018,7 @@ fn draw_fireworks(gfx: &Gfx, state: &PillState) {
                 spark.x,
                 spark.y,
                 [rc, gc, bc, alpha],
-                FIREWORKS_SPARK_LINE_WIDTH,
+                rust_pill_shared::fireworks::FIREWORKS_SPARK_LINE_WIDTH,
             );
         }
     }
@@ -2268,291 +2252,69 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 
 /// Draws the long-press progress ring around the pill, kept at full
 /// completion while dragging so the outline reads as a drag affordance.
-/// Opacity is owned by `state.ring_alpha` (pinned while held, eased out after
+/// Opacity is owned by the ring state (pinned while held, eased out after
 /// release), never by the press-progress ramp.
-fn ring_progress(state: &PillState) -> f64 {
-    if state.dragging.get() {
-        return 1.0;
-    }
-    if state.long_press_active.get() {
-        return long_press_progress(state.long_press_elapsed.get());
-    }
-    state.ring_release_progress.get()
+/// Direct2D adapter for the shared ring painter.
+///
+/// D2D has no cheap per-frame path object for a single-colour stroke, so the
+/// shared painter's `begin_stroke`/`move_to`/`line_to`/`stroke` calls are
+/// accumulated into a polyline and drawn in one `DrawGeometry` per stroke.
+struct D2DRing<'a> {
+    gfx: &'a Gfx,
+    rgba: [f64; 4],
+    width: f64,
+    path: Vec<(f64, f64, f64)>,
 }
 
-fn ring_drift(state: &PillState) -> f64 {
-    if state.dragging.get() || state.long_press_active.get() {
-        return 0.0;
-    }
-    rust_pill_shared::ring_release_drift(state.release_elapsed.get())
-}
-
-struct RingFrame<'a> {
-    path: &'a [(f64, f64)],
-    distances: &'a [f64],
-    total_len: f64,
-    head_len: f64,
-    progress: f64,
-    wave_phase: f64,
-    arm_t: f64,
-    alpha: f64,
-}
-
-fn paint_ring_track(gfx: &Gfx, path: &[(f64, f64)], alpha: f64) {
-    if alpha <= 0.0 {
-        return;
-    }
-    let track_col = [
-        LONG_PRESS_OUTLINE_COLOR.0,
-        LONG_PRESS_OUTLINE_COLOR.1,
-        LONG_PRESS_OUTLINE_COLOR.2,
-        0.085 * alpha,
-    ];
-    let track: Vec<(f64, f64, f64, f64)> = path
-        .windows(2)
-        .map(|w| (w[0].0, w[0].1, w[1].0, w[1].1))
-        .collect();
-    gfx.draw_line_batch(&track, track_col, 1.0);
-}
-
-fn paint_ring_comet(gfx: &Gfx, points: &[(f64, f64, f64)], frame: &RingFrame) {
-    let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * frame.arm_t;
-    // Reused across frames; see `COMET_SHADED`. `mem::take` leaves an empty Vec
-    // in the cell, so nothing is aliased while the loop fills this one.
-    let mut shaded: Vec<ShadedSegment> =
-        COMET_SHADED.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
-    shaded.clear();
-    shaded.reserve(points.len());
-    for w in points.windows(2) {
-        let (x1, y1, _) = w[0];
-        let (x2, y2, d) = w[1];
-        if d > frame.head_len {
-            break;
+impl<'a> D2DRing<'a> {
+    fn new(gfx: &'a Gfx) -> Self {
+        Self {
+            gfx,
+            rgba: [0.0; 4],
+            width: 0.0,
+            path: Vec::new(),
         }
-        let env =
-            rust_pill_shared::ring_envelope(d, frame.head_len, frame.progress, frame.total_len);
-        let glim =
-            rust_pill_shared::ring_glimmer(d, frame.total_len, frame.wave_phase, frame.progress);
-        let a = (env * glim * lift).clamp(0.0, 1.0) * frame.alpha;
-        if a < rust_pill_shared::RING_SEGMENT_ALPHA_CUTOFF {
-            continue;
-        }
-        shaded.push(ShadedSegment {
-            x1,
-            y1,
-            x2,
-            y2,
-            rgba: [
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                a,
-            ],
-            width: rust_pill_shared::RING_CORE_WIDTH
-                + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * frame.arm_t),
-        });
-    }
-    gfx.draw_line_shaded(&shaded);
-    COMET_SHADED.with(|cell| *cell.borrow_mut() = shaded);
-}
-
-fn paint_ring_body(gfx: &Gfx, state: &PillState, frame: &RingFrame) {
-    if frame.alpha <= 0.0 || frame.head_len <= 0.0 {
-        return;
-    }
-    // One resampled perimeter drives the shadow, the comet and the head, so the
-    // layers can never drift apart and no geometry is built more than once per
-    // frame.
-    let mut points = state.ring_points.borrow_mut();
-    rust_pill_shared::resample_perimeter(
-        frame.path,
-        frame.distances,
-        frame.total_len,
-        rust_pill_shared::RING_SEGMENT_PX,
-        &mut points,
-    );
-
-    // Degenerate geometry cannot occur with the shared perimeter (this block is
-    // only entered when `head_len > 0`), but the shadow slice and head
-    // placement below must never index an empty buffer, which `RingLayers::new`
-    // reports as `None`.
-    let Some(layers) = rust_pill_shared::RingLayers::new(
-        &points,
-        frame.head_len,
-        frame.total_len,
-        frame.progress,
-        frame.arm_t,
-        frame.alpha,
-    ) else {
-        return;
-    };
-
-    // Shadow layer: a soft dark halo behind the silver ring so it stays
-    // readable on light backdrops. Direct2D has no cheap blur on the render
-    // path, so the ring path is stroked several times with growing widths and
-    // shrinking alphas. The passes sum to a falloff that is darkest right under
-    // the ring and gone within a few pixels. Widths, alphas and the arc's
-    // extent all come from the shared plan; only the stroking is platform code.
-    for (width, layer_alpha) in layers.shadow_passes() {
-        gfx.stroke_polyline(
-            &points[..=layers.head_index],
-            [0.0, 0.0, 0.0, layer_alpha],
-            width,
-        );
-    }
-
-    // Dark underlay beneath the comet head so the soft silver blob also
-    // separates from a light backdrop; mirrors the head's disc shading.
-    for disc in layers.underlay_discs() {
-        gfx.fill_circle(disc.cx, disc.cy, disc.radius, [0.0, 0.0, 0.0, disc.alpha]);
-    }
-
-    // Primary layer: the comet. Brightness is envelope x glimmer evaluated per
-    // evenly-spaced segment, the portable stand-in for a gradient along a path,
-    // which Direct2D cannot stroke directly.
-    paint_ring_comet(gfx, &points, frame);
-
-    // Secondary layer: the soft head. Concentric discs approximate a radial
-    // falloff without allocating a gradient every frame. It dissolves and
-    // blooms before completion so nothing bright is left at the seam, and once
-    // it has, the shared plan yields no discs.
-    for disc in layers.head_discs() {
-        gfx.fill_circle(
-            disc.cx,
-            disc.cy,
-            disc.radius,
-            [
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                disc.alpha,
-            ],
-        );
     }
 }
 
-fn paint_ring_pulse(gfx: &Gfx, state: &PillState, ox: f64, oy: f64, ow: f64, oh: f64, r: f64) {
-    let t = rust_pill_shared::pulse_progress(state.arm_pulse.get());
-    for delay in [0.0, rust_pill_shared::RING_PULSE_ECHO_DELAY] {
-        let tt = ((t - delay) / (1.0 - delay)).clamp(0.0, 1.0);
-        if tt <= 0.0 {
-            continue;
-        }
-        let e = rust_pill_shared::ease_out_cubic(tt);
-        let spread = rust_pill_shared::RING_PULSE_SPREAD * e;
-        let halo = rounded_rectangle_perimeter(
-            ox - spread,
-            oy - spread,
-            ow + spread * 2.0,
-            oh + spread * 2.0,
-            r + spread,
-            RoundedRectArcSteps::Auto,
-        );
-        let echo = if delay > 0.0 { 0.5 } else { 1.0 };
-        let col = [
-            LONG_PRESS_OUTLINE_COLOR.0,
-            LONG_PRESS_OUTLINE_COLOR.1,
-            LONG_PRESS_OUTLINE_COLOR.2,
-            rust_pill_shared::RING_PULSE_ALPHA * (1.0 - e).powf(1.8) * echo,
-        ];
-        let segs: Vec<(f64, f64, f64, f64)> = halo
-            .windows(2)
-            .map(|w| (w[0].0, w[0].1, w[1].0, w[1].1))
-            .collect();
-        gfx.draw_line_batch(&segs, col, 2.2 + (0.5 - 2.2) * e);
+impl rust_pill_shared::RingPainter for D2DRing<'_> {
+    fn begin_stroke(&mut self, rgba: [f64; 4], width: f64) {
+        self.rgba = rgba;
+        self.width = width;
+        self.path.clear();
+    }
+
+    fn move_to(&mut self, x: f64, y: f64) {
+        self.path.push((x, y, 0.0));
+    }
+
+    fn line_to(&mut self, x: f64, y: f64) {
+        self.path.push((x, y, 0.0));
+    }
+
+    fn stroke(&mut self) {
+        self.gfx.stroke_polyline(&self.path, self.rgba, self.width);
+    }
+
+    fn fill_circle(&mut self, cx: f64, cy: f64, radius: f64, rgba: [f64; 4]) {
+        self.gfx.fill_circle(cx, cy, radius, rgba);
+    }
+
+    fn shaded_segments<I: Iterator<Item = rust_pill_shared::RingSegment>>(&mut self, segments: I) {
+        // The backend strokes the shared segment type directly, so the ring's
+        // per-frame segments reach the rasteriser without a copy.
+        self.gfx.draw_line_shaded(segments);
     }
 }
 
 fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
-    let alpha = state.ring_alpha.get();
-    let pulsing = rust_pill_shared::pulse_is_running(state.arm_pulse.get());
-    if alpha <= 0.0 && !pulsing {
-        return;
-    }
-
-    let progress = ring_progress(state);
-    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
-    // The ring drifts outward slightly as it fades, so it dissolves away from
-    // the pill rather than collapsing onto it.
-    let inset = 2.0 + ring_drift(state);
-    let ox = pill_x - inset;
-    let oy = pill_y - inset;
-    let ow = pill_w + inset * 2.0;
-    let oh = pill_h + inset * 2.0;
-    let r = (radius + inset).min(oh / 2.0);
-
-    // Shared perimeter construction, identical geometry on every platform so
-    // the long-press ring traces the same path across Linux, macOS and Windows.
-    let path = rounded_rectangle_perimeter(ox, oy, ow, oh, r, RoundedRectArcSteps::Auto);
-    let (distances, total_len) = path_distances(&path);
-    let head_len = total_len * progress.clamp(0.0, 1.0);
-
-    // Ambient layer: the unfilled track, so the ring reads as a path being
-    // travelled rather than a line appearing out of nothing.
-    paint_ring_track(gfx, &path, alpha);
-
-    let frame = RingFrame {
-        path: &path,
-        distances: &distances,
-        total_len,
-        head_len,
-        progress,
-        wave_phase: state.wave_phase.get(),
-        arm_t: state.arm_t.get(),
-        alpha,
-    };
-    paint_ring_body(gfx, state, &frame);
-
-    // Confirmation layer: an expanding halo the moment the gesture arms, with a
-    // trailing echo. This is the payoff the old ring never gave.
-    if pulsing {
-        paint_ring_pulse(gfx, state, ox, oy, ow, oh, r);
-    }
-}
-
-/// Progress of the long-press gesture, in `0.0..=1.0`.
-///
-/// The ramp only starts once `LONG_PRESS_HOLD_DELAY` has elapsed, so a quick
-/// click never renders a partially-filled outline, and reaches 1.0 exactly when
-/// the gesture arms at `LONG_PRESS_DURATION`.
-pub(crate) fn long_press_progress(elapsed: f64) -> f64 {
-    rust_pill_shared::hold_progress(elapsed, LONG_PRESS_HOLD_DELAY, LONG_PRESS_DURATION)
-}
-
-#[cfg(test)]
-mod long_press_tests {
-    use super::*;
-
-    #[test]
-    fn no_progress_before_hold_delay() {
-        assert_eq!(long_press_progress(0.0), 0.0);
-        assert_eq!(long_press_progress(LONG_PRESS_HOLD_DELAY), 0.0);
-    }
-
-    #[test]
-    fn quick_click_never_shows_progress() {
-        // A typical click is well under the hold delay.
-        assert_eq!(long_press_progress(0.05), 0.0);
-    }
-
-    #[test]
-    fn completes_exactly_at_duration() {
-        assert_eq!(long_press_progress(LONG_PRESS_DURATION), 1.0);
-    }
-
-    #[test]
-    fn saturates_after_duration() {
-        assert_eq!(long_press_progress(LONG_PRESS_DURATION * 4.0), 1.0);
-    }
-
-    #[test]
-    fn ramps_monotonically_between_delay_and_duration() {
-        let mid = (LONG_PRESS_HOLD_DELAY + LONG_PRESS_DURATION) / 2.0;
-        let p = long_press_progress(mid);
-        assert!(p > 0.0 && p < 1.0, "expected partial progress, got {p}");
-        assert!(long_press_progress(mid) <= long_press_progress(mid + 0.01));
-    }
+    let (x, y, w, h) = pill_position(state, ww, wh);
+    rust_pill_shared::paint_ring_frame(
+        &mut D2DRing::new(gfx),
+        state,
+        rust_pill_shared::PillRect::new(x, y, w, h),
+        LONG_PRESS_OUTLINE_COLOR,
+    );
 }
 
 /// Horizontal gap between the pill edge and its side controls.
