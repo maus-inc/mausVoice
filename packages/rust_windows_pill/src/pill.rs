@@ -478,6 +478,36 @@ fn update_reduced_motion_cache(cache: &Cell<bool>, queried_animation: Option<boo
     cache.get()
 }
 
+/// The entry is the review surface: a new transcript loads into it for editing,
+/// and answering the review empties it again. An unchanged id leaves the user's
+/// edits alone.
+fn reload_entry_for_review(
+    state: &PillState,
+    review_id: Option<&str>,
+    previous_review_id: Option<&str>,
+    review_text: Option<String>,
+) {
+    if review_id == previous_review_id {
+        return;
+    }
+    let text = review_text.unwrap_or_default();
+    *state.entry_text.borrow_mut() = text.clone();
+    set_edit_text(&text);
+}
+
+fn stick_on_new_assistant_content(
+    state: &PillState,
+    active: bool,
+    was_active: bool,
+    review_id: Option<&str>,
+    previous_review_id: Option<&str>,
+) {
+    if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+        state.should_stick.set(true);
+        state.scroll_offset.set(0.0);
+    }
+}
+
 fn clear_flash(state: &PillState) {
     rust_pill_shared::clear_flash_state(
         &state.flash_visible,
@@ -597,14 +627,12 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             let review_text = review.as_ref().map(|r| r.text.clone());
             *state.assistant_review.borrow_mut() = review.map(|review| *review);
 
-            // The entry is the review surface: a new transcript loads into it
-            // for editing, and answering the review empties it again. An
-            // unchanged id leaves the user's edits alone.
-            if review_id != previous_review_id {
-                let text = review_text.unwrap_or_default();
-                *state.entry_text.borrow_mut() = text.clone();
-                set_edit_text(&text);
-            }
+            reload_entry_for_review(
+                state,
+                review_id.as_deref(),
+                previous_review_id.as_deref(),
+                review_text,
+            );
             state.assistant_active.set(active);
             *state.assistant_input_mode.borrow_mut() = input_mode;
             state.assistant_compact.set(compact);
@@ -613,10 +641,13 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             *state.assistant_messages.borrow_mut() = messages;
             *state.assistant_streaming.borrow_mut() = streaming;
             *state.assistant_permissions.borrow_mut() = permissions;
-            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
-                state.should_stick.set(true);
-                state.scroll_offset.set(0.0);
-            }
+            stick_on_new_assistant_content(
+                state,
+                active,
+                was_active,
+                review_id.as_deref(),
+                previous_review_id.as_deref(),
+            );
         }
         InMessage::ResetPosition { strategy } => {
             let hwnd = HWND_CELL.with(Cell::get);

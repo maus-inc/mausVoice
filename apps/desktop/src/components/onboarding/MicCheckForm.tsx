@@ -22,23 +22,11 @@ import {
 } from "./OnboardingCommon";
 import { type NativeRecordingHandle } from "../../utils/native-recording-session";
 
-export const MicCheckForm = () => {
-  const theme = useTheme();
+type RecordingState = "idle" | "starting" | "recording" | "stopping";
 
-  const [recordingState, setRecordingState] = useState<
-    "idle" | "starting" | "recording" | "stopping"
-  >("idle");
-  const [showMicSelector, setShowMicSelector] = useState(false);
-  const preferredMicrophone = useAppStore(
-    (state) => state.onboarding.preferredMicrophone,
-  );
-
-  const audioLevels = useAppStore((state) => state.audioLevels);
+const useMicCheckRecording = (preferredMicrophone: string | null) => {
+  const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const overlayPhase = useAppStore((state) => state.overlayPhase);
-  const didSignUpWithAccount = useAppStore(
-    (state) => state.onboarding.didSignUpWithAccount,
-  );
-
   const isGlobalRecording =
     overlayPhase === "recording" || overlayPhase === "loading";
   const isRecording = recordingState === "recording";
@@ -49,15 +37,12 @@ export const MicCheckForm = () => {
   const handleRef = useRef<NativeRecordingHandle | null>(null);
   recordingStateRef.current = recordingState;
 
-  const setSyncedRecordingState = useCallback(
-    (next: "idle" | "starting" | "recording" | "stopping") => {
-      recordingStateRef.current = next;
-      if (mountedRef.current) {
-        setRecordingState(next);
-      }
-    },
-    [],
-  );
+  const setSyncedRecordingState = useCallback((next: RecordingState) => {
+    recordingStateRef.current = next;
+    if (mountedRef.current) {
+      setRecordingState(next);
+    }
+  }, []);
 
   const startRecording = useCallback(
     () =>
@@ -134,20 +119,40 @@ export const MicCheckForm = () => {
   }, []);
 
   useEffect(() => {
+    if (isGlobalRecording && (isRecording || isStarting)) {
+      void stopRecording();
+    }
+  }, [isGlobalRecording, isRecording, isStarting, stopRecording]);
+
+  return { recordingState, startRecording, stopRecording };
+};
+
+export const MicCheckForm = () => {
+  const theme = useTheme();
+
+  const [showMicSelector, setShowMicSelector] = useState(false);
+  const preferredMicrophone = useAppStore(
+    (state) => state.onboarding.preferredMicrophone,
+  );
+
+  const audioLevels = useAppStore((state) => state.audioLevels);
+  const didSignUpWithAccount = useAppStore(
+    (state) => state.onboarding.didSignUpWithAccount,
+  );
+  const { recordingState, startRecording, stopRecording } =
+    useMicCheckRecording(preferredMicrophone);
+  const isRecording = recordingState === "recording";
+  const isStarting = recordingState === "starting";
+
+  useEffect(() => {
     if (!showMicSelector) {
       void startRecording();
     }
 
     return () => {
-      void stopRecordingRef.current();
+      void stopRecording();
     };
   }, [showMicSelector, preferredMicrophone]);
-
-  useEffect(() => {
-    if (isGlobalRecording && (isRecording || isStarting)) {
-      void stopRecording();
-    }
-  }, [isGlobalRecording, isRecording, isStarting, stopRecording]);
 
   const handleChangeMicrophone = async () => {
     trackButtonClick("onboarding_try_another_mic");

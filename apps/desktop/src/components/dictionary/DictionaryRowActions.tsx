@@ -44,7 +44,7 @@ export const DictionaryRowActions = ({
       )}
       onClick={(event) => {
         // A second click at the same location may now hit the next row.
-        if (event.detail <= 1) void onDelete();
+        if (event.detail <= 1) onDelete();
       }}
       size="small"
     >

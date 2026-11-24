@@ -23,6 +23,74 @@ const isNearBottom = (node: HTMLDivElement) =>
   node.scrollHeight - node.clientHeight - node.scrollTop <=
   AUTO_SCROLL_THRESHOLD_PX;
 
+const useStickToBottom = ({
+  conversationId,
+  messageCount,
+}: {
+  conversationId: string;
+  messageCount: number;
+}) => {
+  const [stuck, setStuck] = useState(true);
+  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
+
+  const scrollToBottom = useCallback(() => {
+    const node = scrollViewportRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const node = scrollViewportRef.current;
+    if (!node) return;
+    shouldStickToBottomRef.current = isNearBottom(node);
+    setStuck(shouldStickToBottomRef.current);
+  }, []);
+
+  useEffect(() => {
+    shouldStickToBottomRef.current = true;
+    const frameId = requestAnimationFrame(scrollToBottom);
+    return () => cancelAnimationFrame(frameId);
+  }, [conversationId, scrollToBottom]);
+
+  useEffect(() => {
+    if (shouldStickToBottomRef.current) {
+      scrollToBottom();
+    }
+  }, [messageCount, scrollToBottom]);
+
+  useEffect(() => {
+    const contentNode = contentRef.current;
+    const viewportNode = scrollViewportRef.current;
+    if (!contentNode || !viewportNode || typeof ResizeObserver === "undefined")
+      return;
+
+    const observer = new ResizeObserver(() => {
+      if (shouldStickToBottomRef.current) {
+        requestAnimationFrame(scrollToBottom);
+      }
+    });
+
+    observer.observe(contentNode);
+    observer.observe(viewportNode);
+
+    return () => observer.disconnect();
+  }, [conversationId, scrollToBottom]);
+
+  return {
+    stuck,
+    scrollViewportRef,
+    contentRef,
+    handleScroll,
+    scrollToBottom,
+    pinToBottom: () => {
+      shouldStickToBottomRef.current = true;
+      setStuck(true);
+    },
+  };
+};
+
 export const ConversationLayout = ({
   conversationId,
   compact = false,
@@ -52,58 +120,18 @@ export const ConversationLayout = ({
     [toolPermissions, conversationId],
   );
   const [sending, setSending] = useState(false);
-  const [stuck, setStuck] = useState(true);
-  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const shouldStickToBottomRef = useRef(true);
-
-  const scrollToBottom = useCallback(() => {
-    const node = scrollViewportRef.current;
-    if (!node) return;
-    node.scrollTop = node.scrollHeight;
-  }, []);
-
-  const handleScroll = useCallback(() => {
-    const node = scrollViewportRef.current;
-    if (!node) return;
-    shouldStickToBottomRef.current = isNearBottom(node);
-    setStuck(shouldStickToBottomRef.current);
-  }, []);
-
-  useEffect(() => {
-    shouldStickToBottomRef.current = true;
-    const frameId = requestAnimationFrame(scrollToBottom);
-    return () => cancelAnimationFrame(frameId);
-  }, [conversationId, scrollToBottom]);
-
-  useEffect(() => {
-    if (shouldStickToBottomRef.current) {
-      scrollToBottom();
-    }
-  }, [messageIds.length, scrollToBottom]);
-
-  useEffect(() => {
-    const contentNode = contentRef.current;
-    const viewportNode = scrollViewportRef.current;
-    if (!contentNode || !viewportNode || typeof ResizeObserver === "undefined")
-      return;
-
-    const observer = new ResizeObserver(() => {
-      if (shouldStickToBottomRef.current) {
-        requestAnimationFrame(scrollToBottom);
-      }
-    });
-
-    observer.observe(contentNode);
-    observer.observe(viewportNode);
-
-    return () => observer.disconnect();
-  }, [conversationId, scrollToBottom]);
+  const {
+    stuck,
+    scrollViewportRef,
+    contentRef,
+    handleScroll,
+    scrollToBottom,
+    pinToBottom,
+  } = useStickToBottom({ conversationId, messageCount: messageIds.length });
 
   const handlePrompt = async (text: string) => {
     if (sending) return;
-    shouldStickToBottomRef.current = true;
-    setStuck(true);
+    pinToBottom();
     setSending(true);
     try {
       await sendChatMessage(conversationId, text);
@@ -116,8 +144,7 @@ export const ConversationLayout = ({
   };
 
   const handleSent = () => {
-    shouldStickToBottomRef.current = true;
-    setStuck(true);
+    pinToBottom();
   };
 
   return (
@@ -230,8 +257,7 @@ export const ConversationLayout = ({
             variant="contained"
             startIcon={<ArrowDownwardRounded />}
             onClick={() => {
-              shouldStickToBottomRef.current = true;
-              setStuck(true);
+              pinToBottom();
               scrollToBottom();
             }}
             sx={{ zIndex: 1 }}

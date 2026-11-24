@@ -293,6 +293,8 @@ const ifConditionAt = (text, indent) => {
  *     hardcoded 6 spaces could not see those, and would then attribute the secret to the header,
  *     where only a job-level `if:` can gate it -- so a guarded job read as an unguarded one.
  */
+const indentOf = (line) => line.length - line.trimStart().length;
+
 const splitJob = (jobBody) => {
   const header = [];
   const steps = [];
@@ -310,6 +312,12 @@ const splitJob = (jobBody) => {
     }
   };
 
+  const startsStep = (line) => {
+    if (!/^ *- /.test(line)) return false;
+    const indent = indentOf(line);
+    return indent <= 6 && (stepIndent === null || indent === stepIndent);
+  };
+
   for (const line of jobBody.split("\n")) {
     if (/^ {4}steps:/.test(line)) {
       flush();
@@ -317,20 +325,15 @@ const splitJob = (jobBody) => {
       header.push(line);
       continue;
     }
-    const indent = line.length - line.trimStart().length;
-    const startsStep =
-      /^ *- /.test(line) &&
-      indent <= 6 &&
-      (stepIndent === null || indent === stepIndent);
-    if (inSteps && startsStep) {
-      if (stepIndent === null) stepIndent = indent;
+    if (inSteps && startsStep(line)) {
+      if (stepIndent === null) stepIndent = indentOf(line);
       flush();
       step = [line];
       continue;
     }
     // A non-blank line at 4 columns or shallower, that is not a step, is the job's next key. This
     // is what ends the step list, and dropping it lets a later `env:` value read as a job gate.
-    if (inSteps && line.trim() !== "" && indent <= 4) {
+    if (inSteps && line.trim() !== "" && indentOf(line) <= 4) {
       flush();
       inSteps = false;
     }

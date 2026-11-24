@@ -204,6 +204,89 @@ type CurrentAppInfoResponse = {
   iconBase64: string;
 };
 
+const uploadAppIcon = async (
+  appInfo: CurrentAppInfoResponse,
+  appTargetId: string,
+  lease: Parameters<Parameters<typeof enqueueAppTargetWrite>[0]>[0],
+): Promise<string | undefined> => {
+  if (!appInfo.iconBase64) return undefined;
+  const targetPath = buildAppIconPath(getAppState(), appTargetId);
+  try {
+    await getLogger().stopwatch("upload_app_icon", async () => {
+      await getStorageRepo().uploadData(
+        { path: targetPath, data: decodeBase64Icon(appInfo.iconBase64 ?? "") },
+        lease,
+      );
+    });
+    return targetPath;
+  } catch (uploadError) {
+    console.error("Failed to upload app icon", uploadError);
+    return undefined;
+  }
+};
+
+const persistRegisteredAppTarget = async (
+  appTargetId: string,
+  appName: string,
+  iconPath: string | undefined,
+  lease: Parameters<Parameters<typeof enqueueAppTargetWrite>[0]>[0],
+): Promise<void> => {
+  await getLogger().stopwatch("upsert_app_target", () =>
+    enqueueAppTargetWrite(async (writeLease) => {
+      await reconcileAppTarget(appTargetId, writeLease);
+      // An edit or another registration may have completed during the icon
+      // upload. Preserve the latest fields, including explicit nulls.
+      const latest = getRec(getAppState().appTargetById, appTargetId);
+      const defaultPasteKeybind =
+        getMyUserPreferences(getAppState())?.pasteKeybind ?? null;
+      await persistAppTarget(
+        {
+          id: appTargetId,
+          name: appName,
+          toneId: latest?.toneId ?? null,
+          iconPath: iconPath ?? latest?.iconPath ?? null,
+          pasteKeybind: latest
+            ? (latest.pasteKeybind ?? null)
+            : defaultPasteKeybind,
+          insertionMethod: latest?.insertionMethod ?? null,
+          typingSpeedMs: latest?.typingSpeedMs ?? null,
+        },
+        writeLease,
+      );
+    }, lease),
+  );
+};
+
+const registerAppTargetIfNeeded = async (
+  appInfo: CurrentAppInfoResponse,
+  appTargetId: string,
+  appName: string,
+): Promise<void> => {
+  const existingApp = getRec(getAppState().appTargetById, appTargetId);
+  if (existingApp?.iconPath) return;
+  const releaseWrite = beginLocalDataWrite();
+  if (!releaseWrite) return;
+  try {
+    const iconPath = await uploadAppIcon(
+      appInfo,
+      appTargetId,
+      releaseWrite.lease,
+    );
+    try {
+      await persistRegisteredAppTarget(
+        appTargetId,
+        appName,
+        iconPath,
+        releaseWrite.lease,
+      );
+    } catch (error) {
+      console.error("Failed to upsert app target", error);
+    }
+  } finally {
+    releaseWrite();
+  }
+};
+
 export const tryRegisterCurrentAppTarget = async (): Promise<
   Nullable<AppTarget>
 > => {
@@ -213,7 +296,6 @@ export const tryRegisterCurrentAppTarget = async (): Promise<
 
   const appName = appInfo.appName?.trim() ?? "";
   const appTargetId = normalizeAppTargetId(appName);
-  const existingApp = getRec(getAppState().appTargetById, appTargetId);
 
   // Surface the current foreground app on the tray menu so the user knows what
   // "Register current app" will act on before they click it.
@@ -223,63 +305,7 @@ export const tryRegisterCurrentAppTarget = async (): Promise<
     },
   );
 
-  const shouldRegisterAppTarget = !existingApp || !existingApp.iconPath;
-  if (shouldRegisterAppTarget) {
-    const releaseWrite = beginLocalDataWrite();
-    if (releaseWrite) {
-      try {
-        let iconPath: string | undefined;
-        if (appInfo.iconBase64) {
-          const targetPath = buildAppIconPath(getAppState(), appTargetId);
-          try {
-            await getLogger().stopwatch("upload_app_icon", async () => {
-              await getStorageRepo().uploadData(
-                {
-                  path: targetPath,
-                  data: decodeBase64Icon(appInfo.iconBase64),
-                },
-                releaseWrite.lease,
-              );
-            });
-            iconPath = targetPath;
-          } catch (uploadError) {
-            console.error("Failed to upload app icon", uploadError);
-          }
-        }
-
-        try {
-          await getLogger().stopwatch("upsert_app_target", () =>
-            enqueueAppTargetWrite(async (lease) => {
-              await reconcileAppTarget(appTargetId, lease);
-              // An edit or another registration may have completed during the
-              // icon upload. Preserve the latest fields, including explicit nulls.
-              const latest = getRec(getAppState().appTargetById, appTargetId);
-              const defaultPasteKeybind =
-                getMyUserPreferences(getAppState())?.pasteKeybind ?? null;
-              await persistAppTarget(
-                {
-                  id: appTargetId,
-                  name: appName,
-                  toneId: latest?.toneId ?? null,
-                  iconPath: iconPath ?? latest?.iconPath ?? null,
-                  pasteKeybind: latest
-                    ? (latest.pasteKeybind ?? null)
-                    : defaultPasteKeybind,
-                  insertionMethod: latest?.insertionMethod ?? null,
-                  typingSpeedMs: latest?.typingSpeedMs ?? null,
-                },
-                lease,
-              );
-            }, releaseWrite.lease),
-          );
-        } catch (error) {
-          console.error("Failed to upsert app target", error);
-        }
-      } finally {
-        releaseWrite();
-      }
-    }
-  }
+  await registerAppTargetIfNeeded(appInfo, appTargetId, appName);
 
   return getRec(getAppState().appTargetById, appTargetId) ?? null;
 };
