@@ -43,8 +43,8 @@ export const resolveTypographySx = ({
   clampStyles: Record<string, unknown>;
   shouldClamp: boolean;
   sx: TypographyProps["sx"];
-  clampPaddingRight: number | string | undefined;
-  inlineToggleRight: number | string | undefined;
+  clampPaddingRight: CssSpacing | undefined;
+  inlineToggleRight: CssSpacing | undefined;
 }) => {
   const normalized = normalizeSxProp(clampStyles, shouldClamp, sx);
   if (!shouldClamp) return normalized;
