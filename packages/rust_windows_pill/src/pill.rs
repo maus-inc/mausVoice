@@ -1300,52 +1300,6 @@ fn on_request_position(state: &PillState) {
     });
 }
 
-/// Advances all pill animations by `dt` seconds: audio levels, springs
-/// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
-/// cancel controls, drag inflate), and the fireworks/flame/flash/transcript
-/// sub-tickers.
-/// Advances the banner timer and its fade spring for one frame.
-fn tick_flash_banner(state: &PillState, dt: f64, tooltip_target: f64) {
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - dt;
-        if remaining <= 0.0 {
-            clear_flash(state);
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
-    let flash_target = rust_pill_shared::flash_banner_target(
-        state.flash_visible.get(),
-        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
-        tooltip_target > 0.5,
-    );
-    rust_pill_shared::spring::spring_01(
-        &state.flash_t,
-        &state.flash_velocity,
-        flash_target,
-        SPRING_STIFFNESS,
-        dt,
-    );
-}
-
-/// Where the cancel control's spring should settle this frame.
-fn controls_target(state: &PillState) -> f64 {
-    let show_controls = !state.assistant_active.get()
-        && match state.phase.get() {
-            // Hover-revealed while recording, pinned open while paused.
-            Phase::Recording => state.hovered.get(),
-            Phase::Paused => true,
-            // Post-recording processing: neither cancel nor pause can still act
-            // on the take, so the controls fade out with the same spring.
-            Phase::Idle | Phase::Loading => false,
-        };
-    if show_controls {
-        1.0
-    } else {
-        0.0
-    }
-}
-
 fn tick(state: &PillState, dt: f64) {
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
@@ -1475,7 +1429,26 @@ fn tick(state: &PillState, dt: f64) {
     tick_transcript(state, dt);
     tick_long_press(state, dt);
 
-    tick_flash_banner(state, dt, tooltip_target);
+    if state.flash_visible.get() {
+        let remaining = state.flash_timer.get() - dt;
+        if remaining <= 0.0 {
+            clear_flash(state);
+        } else {
+            state.flash_timer.set(remaining);
+        }
+    }
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
+    rust_pill_shared::spring::spring_01(
+        &state.flash_t,
+        &state.flash_velocity,
+        flash_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
@@ -1492,7 +1465,18 @@ fn tick(state: &PillState, dt: f64) {
         dt,
     );
 
-    let cancel_target = controls_target(state);
+    // Cancel + pause controls.
+    let controls_phase = state.phase.get();
+    let show_controls = !state.assistant_active.get()
+        && match controls_phase {
+            // Hover-revealed while recording, pinned open while paused.
+            Phase::Recording => state.hovered.get(),
+            Phase::Paused => true,
+            // Post-recording processing: neither cancel nor pause can still
+            // act on the take, so the controls fade out with the same spring.
+            Phase::Idle | Phase::Loading => false,
+        };
+    let cancel_target = if show_controls { 1.0 } else { 0.0 };
     rust_pill_shared::spring::spring_01(
         &state.cancel_t,
         &state.cancel_velocity,
