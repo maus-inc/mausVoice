@@ -246,27 +246,9 @@ pub(crate) struct PillState {
     pub(crate) inflate_velocity: Cell<f64>,
     pub(crate) drag_label_t: Cell<f64>,
     pub(crate) drag_label_velocity: Cell<f64>,
-    // Master alpha for the long-press outline. Pinned at 1 while the gesture is
-    // held, eased to 0 over LONG_PRESS_RING_FADE after release, so the outline
-    // never fades under an active press.
-    pub(crate) ring_alpha: Cell<f64>,
-
-    // Ring fill level captured at release; the post-release fade animates from
-    // this level rather than snapping to a complete outline.
-    pub(crate) ring_release_progress: Cell<f64>,
-
-    // Time since the current press began / since the last release, driving the
-    // ring's eased fade-in and fade-out.
-    pub(crate) press_elapsed: Cell<f64>,
-    pub(crate) release_elapsed: Cell<f64>,
-
-    // 0..1 arm state, ramped after the long press completes. Lifts the ring's
-    // brightness and retires the comet head.
-    pub(crate) arm_t: Cell<f64>,
-
-    // Seconds since the gesture armed, or -1 when no pulse is running. Drives
-    // the expanding confirmation halo.
-    pub(crate) arm_pulse: Cell<f64>,
+    // The long-press outline and the locate replay. Owned by the shared crate so
+    // the field list and the tick exist once for all three platforms.
+    pub(crate) ring: rust_pill_shared::RingState,
 
     // True from press until release, regardless of whether the long press or
     // drag survived. The move threshold cancels `long_press_active` before
@@ -427,6 +409,14 @@ fn content_origin(aw: f64, ah: f64, dw: f64, dh: f64, below_slot: f64) -> (f64, 
         )
     }
 }
+
+rust_pill_shared::impl_ring_host!(
+    PillState,
+    SPRING_STIFFNESS,
+    fn reduced_motion(&self) -> bool {
+        crate::pill::reduced_motion()
+    }
+);
 
 #[cfg(test)]
 mod tests {

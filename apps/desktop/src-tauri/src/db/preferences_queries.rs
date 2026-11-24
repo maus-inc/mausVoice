@@ -56,6 +56,7 @@ const USER_PREFERENCES_COLUMNS: &[&str] = &[
     "pill_placement",
     "hands_free_delay_ms",
     "in_dictation_style_switching_enabled",
+    "pill_locate_gesture_modifier",
     "hallucination_filter_enabled",
     "fast_style_short_dictations_enabled",
     "review_before_insert",
@@ -197,6 +198,7 @@ pub async fn upsert_user_preferences(
     .bind(&preferences.pill_placement)
     .bind(preferences.hands_free_delay_ms)
     .bind(preferences.in_dictation_style_switching_enabled)
+    .bind(&preferences.pill_locate_gesture_modifier)
     .bind(preferences.hallucination_filter_enabled)
     .bind(preferences.fast_style_short_dictations_enabled)
     .bind(preferences.review_before_insert)
@@ -383,6 +385,9 @@ fn user_preferences_from_row(row: SqliteRow) -> UserPreferences {
             .try_get::<i64, _>("in_dictation_style_switching_enabled")
             .map(|v| v != 0)
             .unwrap_or(false),
+        pill_locate_gesture_modifier: row
+            .try_get::<String, _>("pill_locate_gesture_modifier")
+            .unwrap_or_else(|_| "none".to_string()),
         hallucination_filter_enabled: row
             .try_get::<i64, _>("hallucination_filter_enabled")
             .map(|v| v != 0)
@@ -680,6 +685,7 @@ mod tests {
                 "pillPlacement": "v42",
                 "handsFreeDelayMs": 1043,
                 "inDictationStyleSwitchingEnabled": true,
+                "pillLocateGestureModifier": "alt",
                 "hallucinationFilterEnabled": false,
                 "fastStyleShortDictationsEnabled": true,
                 "reviewBeforeInsert": true,

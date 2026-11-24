@@ -14,6 +14,7 @@ import {
   runEval,
   toneFromPrompt,
 } from "../helpers/eval.utils";
+import { hasGroqApiKey } from "../helpers/env.utils";
 
 vi.setConfig({ testTimeout: 30000 });
 
@@ -94,7 +95,7 @@ const runPostProcessingEval = async ({
   });
 };
 
-describe("post-processing evals", { retry: 0 }, () => {
+describe.skipIf(!hasGroqApiKey())("post-processing evals", { retry: 0 }, () => {
   describe("default style", () => {
     test("basic transcription1", async () => {
       await runPostProcessingEval({

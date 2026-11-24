@@ -38,6 +38,9 @@ export type AgentMode = PostProcessingMode | "openclaw";
 
 export type DictationPillVisibility = "hidden" | "while_active" | "persistent";
 
+/** Which modifier double-tap replays the pill's outline, or none. */
+export type PillLocateGestureModifier = "none" | "alt" | "shift" | "control";
+
 export type PillResetMonitorStrategy = "current" | "cursor";
 
 export type PillPlacement = "top" | "bottom";

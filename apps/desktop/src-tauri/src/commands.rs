@@ -2299,10 +2299,21 @@ pub async fn user_preferences_set(
     preferences: crate::domain::UserPreferences,
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::domain::UserPreferences, String> {
+    validate_pill_locate_gesture_modifier(&preferences.pill_locate_gesture_modifier)?;
     let _write_guard = acquire_local_data_write_guard().await?;
     crate::db::preferences_queries::upsert_user_preferences(database.pool(), &preferences)
         .await
         .map_err(|err| err.to_string())
+}
+
+/// Accept-list for the persisted `pill_locate_gesture_modifier`. An IPC caller
+/// could otherwise store an unsupported or oversized string and have it read
+/// back unchanged, so the value is checked at the boundary rather than trusted.
+fn validate_pill_locate_gesture_modifier(modifier: &str) -> Result<(), String> {
+    match modifier {
+        "none" | "alt" | "shift" | "control" => Ok(()),
+        other => Err(format!("invalid pill locate gesture modifier: {other:?}")),
+    }
 }
 
 #[tauri::command]
@@ -8092,6 +8103,22 @@ mod tests {
         assert!(validate_pill_placement("center").is_err());
         assert!(validate_pill_placement("").is_err());
         assert!(validate_pill_placement("TOP").is_err());
+    }
+
+    #[test]
+    fn pill_locate_gesture_modifier_accepts_the_documented_values_only() {
+        for accepted in ["none", "alt", "shift", "control"] {
+            assert!(
+                validate_pill_locate_gesture_modifier(accepted).is_ok(),
+                "{accepted} must be accepted"
+            );
+        }
+        for rejected in ["", "Alt", "meta", "controlx", " alt"] {
+            assert!(
+                validate_pill_locate_gesture_modifier(rejected).is_err(),
+                "{rejected:?} must be rejected"
+            );
+        }
     }
 
     /// `CANCEL_TYPING` and its latch are process-wide and `cargo test` runs

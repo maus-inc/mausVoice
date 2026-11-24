@@ -13,6 +13,7 @@ use crate::constants::*;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
 use crate::{draw, input, x11};
+use rust_pill_shared::{LONG_PRESS_DURATION, LONG_PRESS_MOVE_THRESHOLD};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Backend {
@@ -258,12 +259,7 @@ fn new_pill_state(backend: Backend) -> PillState {
         inflate_velocity: Cell::new(0.0),
         drag_label_t: Cell::new(0.0),
         drag_label_velocity: Cell::new(0.0),
-        ring_alpha: Cell::new(0.0),
-        ring_release_progress: Cell::new(0.0),
-        press_elapsed: Cell::new(0.0),
-        release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
-        arm_t: Cell::new(0.0),
-        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
+        ring: rust_pill_shared::RingState::new(),
         pointer_down: Cell::new(false),
         ring_points: RefCell::new(Vec::new()),
         drag_cursor_x: Cell::new(0.0),
@@ -849,6 +845,12 @@ fn handle_in_message(
                 monitor,
             });
         }
+        InMessage::Locate => {
+            rust_pill_shared::RingHost::begin_locate(&*state_tick);
+        }
+        // Only the Win32 pill anchors to a screen edge; the desktop broadcasts
+        // the preference, so accept it and ignore it here.
+        InMessage::PillPlacement { .. } => {}
         InMessage::Quit => {
             quit_tick.set(true);
         }
@@ -963,6 +965,7 @@ fn sync_window_visibility(window: &gtk::Window, state: &PillState) {
         state.visibility.get().into(),
         state.phase.get() != Phase::Idle,
         state.owns_panel(),
+        state.ring.locate_active(),
     );
     if should_show {
         window.show();
@@ -1617,78 +1620,7 @@ fn tick(state: &PillState, dt: f64) {
         state.cancel_flash.set(remaining.max(0.0));
     }
 
-    // Recording <-> paused crossfade driven by the same critically damped
-    // spring as the other pill transitions (settles, never overshoots).
-    let pause_target = if state.phase.get() == Phase::Paused {
-        1.0
-    } else {
-        0.0
-    };
-    rust_pill_shared::spring::spring_01(
-        &state.pause_t,
-        &state.pause_velocity,
-        pause_target,
-        SPRING_STIFFNESS,
-        dt,
-    );
-
-    // Cancel + pause controls.
-    let controls_phase = state.phase.get();
-    let show_controls = !state.assistant_active.get()
-        && match controls_phase {
-            // Hover-revealed while recording, pinned open while paused.
-            Phase::Recording => state.hovered.get(),
-            Phase::Paused => true,
-            // Post-recording processing: neither cancel nor pause can still
-            // act on the take, so the controls fade out with the same spring.
-            Phase::Idle | Phase::Loading => false,
-        };
-    let cancel_target = if show_controls { 1.0 } else { 0.0 };
-    rust_pill_shared::spring::spring_01(
-        &state.cancel_t,
-        &state.cancel_velocity,
-        cancel_target,
-        SPRING_STIFFNESS * 2.0,
-        dt,
-    );
-
-    // Inflate animation. The target ramps up partway through the hold (not at
-    // the arm moment), so the pill is already growing while the ring fills and
-    // arming continues that motion instead of starting a new one.
-    let hold_p = draw::long_press_progress(state.long_press_elapsed.get());
-    let inflate_target = rust_pill_shared::inflate_target(
-        hold_p,
-        state.long_press_active.get(),
-        state.dragging.get(),
-    );
-    rust_pill_shared::spring::spring_01(
-        &state.inflate_t,
-        &state.inflate_velocity,
-        inflate_target,
-        DRAG_INFLATE_STIFFNESS,
-        dt,
-    );
-
-    let drag_target = if state.dragging.get() || state.long_press_active.get() {
-        1.0
-    } else {
-        0.0
-    };
-    rust_pill_shared::spring::spring_01(
-        &state.drag_label_t,
-        &state.drag_label_velocity,
-        drag_target,
-        rust_pill_shared::LABEL_SPRING_STIFFNESS,
-        dt,
-    );
-
-    tick_ring(state, dt);
-
-    // Auto-scroll to bottom when new content arrives
-    if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
-        let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
-        state.scroll_offset.set(max_scroll);
-    }
+    rust_pill_shared::RingHost::tick_hold_and_ring(state, dt);
 }
 
 /// Audio-level meters and the waveform phase they drive: pending input levels
@@ -1761,26 +1693,7 @@ fn tick_audio_levels(state: &PillState, phase: Phase) {
 /// banner yields the strip above the pill to a revealed style tooltip, so the
 /// banner and the selector never sit on top of each other.
 fn tick_flash(state: &PillState, tooltip_revealed: bool, dt: f64) {
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - dt;
-        if remaining <= 0.0 {
-            clear_flash(state);
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
-    let flash_target = rust_pill_shared::flash_banner_target(
-        state.flash_visible.get(),
-        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
-        tooltip_revealed,
-    );
-    rust_pill_shared::spring::spring_01(
-        &state.flash_t,
-        &state.flash_velocity,
-        flash_target,
-        SPRING_STIFFNESS,
-        dt,
-    );
+    rust_pill_shared::RingHost::tick_flash(state, tooltip_revealed, dt);
 }
 
 fn tick_long_press(state: &PillState, dt: f64) {
@@ -1802,46 +1715,8 @@ fn tick_long_press(state: &PillState, dt: f64) {
         state.dragging.set(true);
         state.x11_release_persisted.set(false);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
-        state.arm_pulse.set(rust_pill_shared::pulse_armed());
+        state.ring.arm();
     }
-}
-
-/// Advances the long-press ring for one frame.
-///
-/// All the policy lives in `rust_pill_shared::advance_ring` so the three
-/// platform renderers cannot drift apart; this only marshals `Cell` state in
-/// and out of the shared struct.
-fn tick_ring(state: &PillState, dt: f64) {
-    let held = state.dragging.get()
-        || (state.long_press_active.get()
-            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
-
-    let mut anim = rust_pill_shared::RingAnim {
-        alpha: state.ring_alpha.get(),
-        release_progress: state.ring_release_progress.get(),
-        press_elapsed: state.press_elapsed.get(),
-        release_elapsed: state.release_elapsed.get(),
-        arm_t: state.arm_t.get(),
-        arm_pulse: state.arm_pulse.get(),
-    };
-
-    rust_pill_shared::advance_ring(
-        &mut anim,
-        rust_pill_shared::RingTick {
-            held,
-            dragging: state.dragging.get(),
-            progress: draw::long_press_progress(state.long_press_elapsed.get()),
-            delta_seconds: dt,
-        },
-        LONG_PRESS_HOLD_DELAY,
-    );
-
-    state.ring_alpha.set(anim.alpha);
-    state.ring_release_progress.set(anim.release_progress);
-    state.press_elapsed.set(anim.press_elapsed);
-    state.release_elapsed.set(anim.release_elapsed);
-    state.arm_t.set(anim.arm_t);
-    state.arm_pulse.set(anim.arm_pulse);
 }
 
 fn tick_fireworks(state: &PillState) {

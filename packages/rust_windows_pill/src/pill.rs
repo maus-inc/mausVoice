@@ -20,6 +20,7 @@ use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMod
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
 use rust_pill_shared::edge::MonitorRect;
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
+use rust_pill_shared::{LONG_PRESS_DURATION, LONG_PRESS_MOVE_THRESHOLD};
 
 // Issue #7: Thread-local statics are an architectural requirement, not a smell.
 // Win32 HWNDs are thread-affine — they must only be accessed on the thread that
@@ -206,12 +207,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         inflate_velocity: Cell::new(0.0),
         drag_label_t: Cell::new(0.0),
         drag_label_velocity: Cell::new(0.0),
-        ring_alpha: Cell::new(0.0),
-        ring_release_progress: Cell::new(0.0),
-        press_elapsed: Cell::new(0.0),
-        release_elapsed: Cell::new(rust_pill_shared::LONG_PRESS_RING_FADE),
-        arm_t: Cell::new(0.0),
-        arm_pulse: Cell::new(rust_pill_shared::PULSE_IDLE),
+        ring: rust_pill_shared::RingState::new(),
         pointer_down: Cell::new(false),
         ring_points: RefCell::new(Vec::new()),
         dirty: Cell::new(true),
@@ -575,7 +571,7 @@ fn query_client_area_animation() -> Option<bool> {
 
 /// True when the user turned off client-area animation effects.
 /// Re-read at most every 2 s.
-fn reduced_motion() -> bool {
+pub(crate) fn reduced_motion() -> bool {
     let now = Instant::now();
     let stale = REDUCED_MOTION_CHECKED.with(|c| {
         if let Some(prev) = c.get() {
@@ -638,6 +634,70 @@ fn clear_flash(state: &PillState) {
         &state.flash_action_label,
         &state.flash_reject_action,
         &state.flash_reject_action_label,
+    );
+}
+
+/// Raises a banner with the standard non-error chrome. The Fireworks and Flame
+/// arms differ only in their duration and the sub-animation they start, so the
+/// six shared resets live here rather than twice in the message dispatch.
+fn begin_banner(state: &PillState, message: String, duration: f64) {
+    *state.flash_message.borrow_mut() = message;
+    state.flash_is_error.set(false);
+    *state.flash_action.borrow_mut() = None;
+    *state.flash_action_label.borrow_mut() = None;
+    *state.flash_reject_action.borrow_mut() = None;
+    *state.flash_reject_action_label.borrow_mut() = None;
+    state.flash_visible.set(true);
+    state.flash_timer.set(duration);
+}
+
+/// One assistant sync, unpacked so the dispatch arm stays a single call.
+struct AssistantStateUpdate {
+    active: bool,
+    input_mode: String,
+    compact: bool,
+    conversation_id: Option<String>,
+    user_prompt: Option<String>,
+    messages: Vec<ipc::PillMessage>,
+    streaming: Option<ipc::PillStreaming>,
+    permissions: Vec<ipc::PillPermission>,
+    review: Option<Box<ipc::PillReview>>,
+}
+
+fn apply_assistant_state(state: &PillState, update: AssistantStateUpdate) {
+    let was_active = state.assistant_active.get();
+    let previous_review_id = state
+        .assistant_review
+        .borrow()
+        .as_ref()
+        .map(|r| r.id.clone());
+    let review_id = update.review.as_ref().map(|r| r.id.clone());
+    let review_text = update.review.as_ref().map(|r| r.text.clone());
+    *state.assistant_review.borrow_mut() = update.review.map(|review| *review);
+
+    // The entry is the review surface: a new transcript loads into it for
+    // editing, and answering the review empties it again. An unchanged id
+    // leaves the user's edits alone.
+    reload_entry_for_review(
+        state,
+        review_id.as_deref(),
+        previous_review_id.as_deref(),
+        review_text,
+    );
+    state.assistant_active.set(update.active);
+    *state.assistant_input_mode.borrow_mut() = update.input_mode;
+    state.assistant_compact.set(update.compact);
+    *state.assistant_conversation_id.borrow_mut() = update.conversation_id;
+    *state.assistant_user_prompt.borrow_mut() = update.user_prompt;
+    *state.assistant_messages.borrow_mut() = update.messages;
+    *state.assistant_streaming.borrow_mut() = update.streaming;
+    *state.assistant_permissions.borrow_mut() = update.permissions;
+    stick_on_new_assistant_content(
+        state,
+        update.active,
+        was_active,
+        review_id.as_deref(),
+        previous_review_id.as_deref(),
     );
 }
 
@@ -723,29 +783,14 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             clear_flash(state);
         }
         InMessage::Fireworks { message } => {
-            *state.flash_message.borrow_mut() = message;
-            state.flash_is_error.set(false);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-            *state.flash_reject_action.borrow_mut() = None;
-            *state.flash_reject_action_label.borrow_mut() = None;
-            state.flash_visible.set(true);
-            state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
+            begin_banner(state, message, FIREWORKS_TOTAL_DURATION);
             state.fireworks_active.set(true);
             state.fireworks_elapsed.set(0.0);
             state.fireworks_next_launch.set(0);
             state.fireworks_rockets.borrow_mut().clear();
         }
         InMessage::Flame { message } => {
-            *state.flash_message.borrow_mut() = message;
-            state.flash_is_error.set(false);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-            *state.flash_reject_action.borrow_mut() = None;
-            *state.flash_reject_action_label.borrow_mut() = None;
-            state.flash_visible.set(true);
-            state.flash_timer.set(FLAME_TOTAL_DURATION);
-
+            begin_banner(state, message, FLAME_TOTAL_DURATION);
             state.flame_active.set(true);
             state.flame_elapsed.set(0.0);
             state.flame_tongues.borrow_mut().clear();
@@ -753,6 +798,10 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         InMessage::FlashBlue => {
             state.flash_blue_active.set(true);
             state.flash_blue_elapsed.set(0.0);
+        }
+        InMessage::Locate => {
+            rust_pill_shared::RingHost::begin_locate(state);
+            state.dirty.set(true);
         }
         InMessage::BroadcastTranscript { text } => {
             *state.transcript_text.borrow_mut() = text;
@@ -779,39 +828,20 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             streaming,
             permissions,
             review,
-        } => {
-            let was_active = state.assistant_active.get();
-            let previous_review_id = state
-                .assistant_review
-                .borrow()
-                .as_ref()
-                .map(|r| r.id.clone());
-            let review_id = review.as_ref().map(|r| r.id.clone());
-            let review_text = review.as_ref().map(|r| r.text.clone());
-            *state.assistant_review.borrow_mut() = review.map(|review| *review);
-
-            reload_entry_for_review(
-                state,
-                review_id.as_deref(),
-                previous_review_id.as_deref(),
-                review_text,
-            );
-            state.assistant_active.set(active);
-            *state.assistant_input_mode.borrow_mut() = input_mode;
-            state.assistant_compact.set(compact);
-            *state.assistant_conversation_id.borrow_mut() = conversation_id;
-            *state.assistant_user_prompt.borrow_mut() = user_prompt;
-            *state.assistant_messages.borrow_mut() = messages;
-            *state.assistant_streaming.borrow_mut() = streaming;
-            *state.assistant_permissions.borrow_mut() = permissions;
-            stick_on_new_assistant_content(
-                state,
+        } => apply_assistant_state(
+            state,
+            AssistantStateUpdate {
                 active,
-                was_active,
-                review_id.as_deref(),
-                previous_review_id.as_deref(),
-            );
-        }
+                input_mode,
+                compact,
+                conversation_id,
+                user_prompt,
+                messages,
+                streaming,
+                permissions,
+                review,
+            },
+        ),
         InMessage::ResetPosition { strategy } => {
             let hwnd = HWND_CELL.with(Cell::get);
             cancel_drag_gesture(hwnd, state);
@@ -882,19 +912,6 @@ fn tick(state: &PillState, dt: f64) {
         &state.expand_velocity,
         expand_target,
         rust_pill_shared::PILL_EXPAND_STIFFNESS,
-        dt,
-    );
-
-    let drag_target = if state.dragging.get() || state.long_press_active.get() {
-        1.0
-    } else {
-        0.0
-    };
-    rust_pill_shared::spring::spring_01(
-        &state.drag_label_t,
-        &state.drag_label_velocity,
-        drag_target,
-        rust_pill_shared::LABEL_SPRING_STIFFNESS,
         dt,
     );
 
@@ -974,55 +991,9 @@ fn tick(state: &PillState, dt: f64) {
     tick_transcript(state, dt);
     tick_long_press(state, dt);
 
-    tick_flash_banner(state, dt, tooltip_target);
+    rust_pill_shared::RingHost::tick_flash(state, tooltip_target > 0.5, dt);
 
-    // Recording <-> paused crossfade driven by the same critically damped
-    // spring as the other pill transitions (settles, never overshoots).
-    let pause_target = if state.phase.get() == Phase::Paused {
-        1.0
-    } else {
-        0.0
-    };
-    rust_pill_shared::spring::spring_01(
-        &state.pause_t,
-        &state.pause_velocity,
-        pause_target,
-        SPRING_STIFFNESS,
-        dt,
-    );
-
-    let cancel_target = controls_target(state);
-    rust_pill_shared::spring::spring_01(
-        &state.cancel_t,
-        &state.cancel_velocity,
-        cancel_target,
-        SPRING_STIFFNESS * 2.0,
-        dt,
-    );
-
-    // Inflate animation. The target ramps up partway through the hold (not at
-    // the arm moment), so the pill is already growing while the ring fills and
-    // arming continues that motion instead of starting a new one.
-    let hold_p = draw::long_press_progress(state.long_press_elapsed.get());
-    let inflate_target = rust_pill_shared::inflate_target(
-        hold_p,
-        state.long_press_active.get(),
-        state.dragging.get(),
-    );
-    rust_pill_shared::spring::spring_01(
-        &state.inflate_t,
-        &state.inflate_velocity,
-        inflate_target,
-        DRAG_INFLATE_STIFFNESS,
-        dt,
-    );
-
-    tick_ring(state, dt);
-
-    if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
-        let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
-        state.scroll_offset.set(max_scroll);
-    }
+    rust_pill_shared::RingHost::tick_hold_and_ring(state, dt);
 }
 
 fn tick_audio_levels(state: &PillState, is_recording: bool, is_loading: bool, frame_scale: f64) {
@@ -1087,48 +1058,6 @@ fn tick_audio_levels(state: &PillState, is_recording: bool, is_loading: bool, fr
     state
         .wave_phase
         .set((state.wave_phase.get() + advance) % TAU);
-}
-
-fn tick_flash_banner(state: &PillState, dt: f64, tooltip_target: f64) {
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - dt;
-        if remaining <= 0.0 {
-            clear_flash(state);
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
-    let flash_target = rust_pill_shared::flash_banner_target(
-        state.flash_visible.get(),
-        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
-        tooltip_target > 0.5,
-    );
-    rust_pill_shared::spring::spring_01(
-        &state.flash_t,
-        &state.flash_velocity,
-        flash_target,
-        SPRING_STIFFNESS,
-        dt,
-    );
-}
-
-fn controls_target(state: &PillState) -> f64 {
-    // Cancel + pause controls.
-    let controls_phase = state.phase.get();
-    let show_controls = !state.assistant_active.get()
-        && match controls_phase {
-            // Hover-revealed while recording, pinned open while paused.
-            Phase::Recording => state.hovered.get(),
-            Phase::Paused => true,
-            // Post-recording processing: neither cancel nor pause can still
-            // act on the take, so the controls fade out with the same spring.
-            Phase::Idle | Phase::Loading => false,
-        };
-    if show_controls {
-        1.0
-    } else {
-        0.0
-    }
 }
 
 fn tick_fireworks(state: &PillState, dt: f64) {
@@ -1312,12 +1241,29 @@ fn tick_transcript(state: &PillState, dt: f64) {
     }
 }
 
+/// Whether a locate replay is the only reason this window is on screen.
+///
+/// Nothing in such a window was meant to receive a click, so the whole window
+/// is click-through and every pointer affordance inside it is unreachable.
+fn locate_only(state: &PillState) -> bool {
+    rust_pill_shared::locate_is_the_only_reason_shown(
+        state.visibility.get().into(),
+        state.phase.get() != Phase::Idle,
+        state.owns_panel(),
+        state.ring.locate_active(),
+    )
+}
+
 fn update_visibility(hwnd: HWND, state: &PillState) {
     let should_show = rust_pill_shared::should_show_pill(
         state.visibility.get().into(),
         state.phase.get() != Phase::Idle,
         state.owns_panel(),
+        state.ring.locate_active(),
     );
+    // Without this the pill swallows a click aimed at the app underneath and
+    // starts dictation.
+    set_click_through(hwnd, locate_only(state));
 
     unsafe {
         if should_show {
@@ -1326,6 +1272,25 @@ fn update_visibility(hwnd: HWND, state: &PillState) {
             }
         } else if IsWindowVisible(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+}
+
+/// Makes the whole window transparent to the mouse while `click_through` is set.
+///
+/// `WS_EX_TRANSPARENT` is honoured for hit-testing because the window is also
+/// layered, so the click reaches the window underneath instead of the pill.
+fn set_click_through(hwnd: HWND, click_through: bool) {
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let transparent = WS_EX_TRANSPARENT.0;
+        let next = if click_through {
+            style | transparent
+        } else {
+            style & !transparent
+        };
+        if next != style {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next as isize);
         }
     }
 }
@@ -1349,6 +1314,17 @@ fn update_typing_focus(_hwnd: HWND, state: &PillState) {
 /// Recomputes whether the cursor is over the pill, tooltip, or assistant
 /// panel and syncs the hovered state (and the hover IPC message) on change.
 fn check_hover(hwnd: HWND, state: &PillState) {
+    // Hover is polled from the cursor position, so a click-through window
+    // still sees it. Left alone, the pill would expand under the pointer and
+    // offer the style selector to someone who cannot click either.
+    if locate_only(state) {
+        if state.hovered.replace(false) {
+            state.dirty.set(true);
+            ipc::send(&OutMessage::Hover { hovered: false });
+        }
+        return;
+    }
+
     let mut cursor = POINT::default();
     unsafe {
         let _ = GetCursorPos(&mut cursor);
@@ -2021,7 +1997,7 @@ fn tick_long_press(state: &PillState, dt: f64) {
         *state.last_monitor_topology.borrow_mut() = None;
         state.drag_cancelled.set(false);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
-        state.arm_pulse.set(rust_pill_shared::pulse_armed());
+        state.ring.arm();
         unsafe {
             let mut cursor = POINT::default();
             let _ = GetCursorPos(&mut cursor);
@@ -2185,56 +2161,6 @@ fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
     // Recompute hover against the real cursor position, so a gesture that ended
     // without a release event does not leave the pill pinned expanded.
     check_hover(hwnd, state);
-}
-
-/// Advances the long-press ring for one frame.
-///
-/// All the policy lives in `rust_pill_shared::advance_ring` so the three
-/// platform renderers cannot drift apart; this only marshals `Cell` state in
-/// and out of the shared struct, plus the Windows-specific redraw bookkeeping.
-fn tick_ring(state: &PillState, dt: f64) {
-    let held = state.dragging.get()
-        || (state.long_press_active.get()
-            && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
-
-    let previous_alpha = state.ring_alpha.get();
-    let was_pulsing = rust_pill_shared::pulse_is_running(state.arm_pulse.get());
-
-    let mut anim = rust_pill_shared::RingAnim {
-        alpha: previous_alpha,
-        release_progress: state.ring_release_progress.get(),
-        press_elapsed: state.press_elapsed.get(),
-        release_elapsed: state.release_elapsed.get(),
-        arm_t: state.arm_t.get(),
-        arm_pulse: state.arm_pulse.get(),
-    };
-
-    rust_pill_shared::advance_ring(
-        &mut anim,
-        rust_pill_shared::RingTick {
-            held,
-            dragging: state.dragging.get(),
-            progress: draw::long_press_progress(state.long_press_elapsed.get()),
-            delta_seconds: dt,
-        },
-        LONG_PRESS_HOLD_DELAY,
-    );
-
-    state.ring_alpha.set(anim.alpha);
-    state.ring_release_progress.set(anim.release_progress);
-    state.press_elapsed.set(anim.press_elapsed);
-    state.release_elapsed.set(anim.release_elapsed);
-    state.arm_t.set(anim.arm_t);
-    state.arm_pulse.set(anim.arm_pulse);
-
-    // needs_redraw() stops reporting motion once the ring and its pulse are
-    // finished, so the frame that clears them must be dirtied explicitly —
-    // otherwise the last painted state is never erased and a ghost lingers.
-    if (previous_alpha > 0.0 && anim.alpha == 0.0)
-        || (was_pulsing && !rust_pill_shared::pulse_is_running(anim.arm_pulse))
-    {
-        state.dirty.set(true);
-    }
 }
 
 // ── Native text input overlay ────────────────────────────────────────

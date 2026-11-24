@@ -594,6 +594,19 @@ pub(crate) fn flash_click_signature(state: &PillState) -> Vec<(f64, f64, f64, f6
 pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
     let hovered = state.hovered.get();
     let is_active = state.phase.get() != Phase::Idle;
+    // A locate is the only reason this window is mapped, so nothing here was
+    // meant to receive the click. Leaving the normal region installed would let
+    // a click aimed at the app underneath land on the pill and start dictation.
+    if rust_pill_shared::locate_is_the_only_reason_shown(
+        state.visibility.get().into(),
+        is_active,
+        state.owns_panel(),
+        state.ring.locate_active(),
+    ) {
+        let empty = cairo::Region::create();
+        gdk_window.input_shape_combine_region(&empty, 0, 0);
+        return;
+    }
     // A pending review draws buttons in the panel area, so the clickable
     // region has to cover the panel even when the assistant is not running.
     if state.owns_panel() || hovered || is_active {

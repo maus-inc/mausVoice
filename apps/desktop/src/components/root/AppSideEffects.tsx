@@ -80,6 +80,7 @@ import { getIsDevMode, isWindows } from "../../utils/env.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
   getStyleSwitchActionNamesForKey,
+  listenerDeliversKeys,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
@@ -506,10 +507,7 @@ export const AppSideEffects = () => {
       }
       // Reset the failure notification once the listener genuinely recovers, so a later
       // failure episode can notify again.
-      if (
-        payload.state === "healthy_grab" ||
-        payload.state === "degraded_listen_fallback"
-      ) {
+      if (listenerDeliversKeys(payload.state)) {
         listenerFailureNotifiedRef.current = false;
       }
       if (payload.state === "failed" && !listenerFailureNotifiedRef.current) {

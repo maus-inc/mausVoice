@@ -191,6 +191,12 @@ describe("settings registry", () => {
     expect(searchSettings("pill").map((hit) => hit.entry.key)).toContain(
       "dictation_pill_visibility",
     );
+    expect(searchSettings("option").map((hit) => hit.entry.key)).toContain(
+      "show_pill_position_with_modifier_double_tap",
+    );
+    expect(searchSettings("locate").map((hit) => hit.entry.key)).toContain(
+      "show_pill_position_with_modifier_double_tap",
+    );
     expect(searchSettings("   ")).toEqual([]);
     expect(
       searchSettings("privacy and data").map((hit) => hit.entry.key),

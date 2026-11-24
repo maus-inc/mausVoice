@@ -76,6 +76,7 @@ const PATHS = [
   ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
   ["windowsState", "packages/rust_windows_pill/src/state.rs"],
   ["sharedPill", "packages/rust_pill_shared/src/lib.rs"],
+  ["sharedMessages", "packages/rust_pill_shared/src/messages.rs"],
   ["sharedHover", "packages/rust_pill_shared/src/hover.rs"],
   ["sharedDrag", "packages/rust_pill_shared/src/drag.rs"],
   ["sharedSpring", "packages/rust_pill_shared/src/spring.rs"],
@@ -490,26 +491,31 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
 describe("PR28 ring-alpha render-loop policy", () => {
   it("advances the ring every frame and invalidates on the zero crossing", () => {
     // Every platform routes its per-frame ring bookkeeping through the shared
-    // policy, so their timing cannot drift apart.
+    // policy, so their timing cannot drift apart: each pill calls the shared
+    // host tick, which owns the single `tick_ring` -> `advance_ring` path.
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /advance_ring/);
-      assert.match(pill, /fn tick_ring/);
+      assert.match(pill, /RingHost::tick_hold_and_ring\(state, dt\)/);
     }
+    assert.match(source.sharedPill, /fn tick_ring/);
+    assert.match(source.sharedPill, /advance_ring\(/);
     // GTK redraws the drawing area after updating alpha.
     assert.match(source.gtkPill, /da\.queue_draw\(\)/);
     // macOS marks the layer dirty after updating alpha.
     assert.match(source.macApp, /setNeedsDisplay:YES/);
-    // Windows must dirty the frame when the ring AND its arm pulse finish, so
-    // the final cleared frame repaints instead of leaving a ghost.
+    // The shared tick must report the frame that clears the ring AND its arm
+    // pulse, so the final cleared frame repaints instead of leaving a ghost.
     assert.match(
-      source.windowsPill,
+      source.sharedPill,
       /previous_alpha > 0\.0 && anim\.alpha == 0\.0/,
     );
     assert.match(
-      source.windowsPill,
-      /was_pulsing && !rust_pill_shared::pulse_is_running\(anim\.arm_pulse\)/,
+      source.sharedPill,
+      /was_pulsing && !pulse_is_running\(anim\.arm_pulse\)/,
     );
-    assert.match(source.windowsPill, /dirty\.set\(true\)/);
+    // Windows consumes that report through `ring_cleared`, which dirties the
+    // frame; without it the last painted state lingers.
+    assert.match(source.windowsState, /fn ring_cleared\(&self\)/);
+    assert.match(source.windowsState, /dirty\.set\(true\)/);
     // Shared fade policy stays unit-tested in the pill crate.
     assert.match(
       source.sharedPill,
@@ -538,15 +544,16 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(source.sharedPill, /head_is_fully_gone_before_completion/);
 
     for (const draw of [source.gtkDraw, source.macDraw, source.windowsDraw]) {
-      assert.match(draw, /ring_envelope/);
-      assert.match(draw, /ring_glimmer/);
-      // The head fade is centralized in rust_pill_shared::RingLayers; the
-      // draw files consume it via head_discs() (A13 refactor).
-      assert.match(draw, /head_discs\(\)/);
-      // The retired dash renderer must not linger anywhere.
+      // The ring layers come from the shared painter; each backend only
+      // supplies the drawing primitives, so no draw file reimplements them.
+      assert.match(draw, /paint_ring_frame\(/);
       assert.doesNotMatch(draw, /ring_dash_is_on/);
       assert.doesNotMatch(draw, /RING_SHIMMER_ALPHA/);
     }
+    // The envelope, glimmer and head discs live in the shared painter.
+    assert.match(source.sharedPill, /ring_envelope\(/);
+    assert.match(source.sharedPill, /ring_glimmer\(/);
+    assert.match(source.sharedPill, /head_discs\(\)/);
   });
 
   it("reuses one buffer for the resampled ring instead of allocating per frame", () => {
@@ -560,15 +567,22 @@ describe("PR28 ring-alpha render-loop policy", () => {
       assert.match(state, /ring_points:\s*RefCell<Vec<\(f64,\s*f64,\s*f64\)>>/);
     }
     for (const draw of [source.gtkDraw, source.macDraw, source.windowsDraw]) {
-      assert.match(draw, /ring_points\.borrow_mut\(\)/);
+      // Each backend hands its state to the shared painter rather than
+      // borrowing the resample buffer itself.
+      assert.match(draw, /paint_ring_frame\(/);
     }
+    // The single borrow of the caller's buffer lives in the shared painter.
+    assert.match(source.sharedPill, /ring_points\(\)\.borrow_mut\(\)/);
   });
 
   it("starts inflating mid-hold so arming continues the motion", () => {
     assert.match(source.sharedPill, /pub fn inflate_target/);
     assert.match(source.sharedPill, /inflate_starts_midway_through_the_hold/);
+    // The target is resolved once, inside the shared tick, instead of in each
+    // platform's frame loop.
+    assert.match(source.sharedPill, /inflate_target\(/);
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /rust_pill_shared::inflate_target\(/);
+      assert.match(pill, /RingHost::tick_hold_and_ring\(state, dt\)/);
       // The old binary "1.0 while dragging" target is gone.
       assert.doesNotMatch(
         pill,
@@ -639,14 +653,11 @@ describe("PR28 ring-alpha render-loop policy", () => {
   });
 
   it("confirms the arm with a pulse that survives the ring's own alpha", () => {
-    for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /arm_pulse\.set\(rust_pill_shared::pulse_armed\(\)\)/);
-      // The idle sentinel is named, never an open-coded -1.0.
-      assert.match(
-        pill,
-        /arm_pulse: Cell::new\(rust_pill_shared::PULSE_IDLE\)/,
-      );
-    }
+    // The pulse lives on the shared `RingState`, so the arm call and the idle
+    // sentinel are written once for all three platforms.
+    assert.match(source.sharedPill, /arm_pulse\.set\(pulse_armed\(\)\)/);
+    // The idle sentinel is named, never an open-coded -1.0.
+    assert.match(source.sharedPill, /arm_pulse: PULSE_IDLE/);
     // The sentinel is negative because 0.0 is a real value (the frame the pulse
     // starts), so every read goes through the named predicate rather than a
     // bare comparison that could be written backwards.
@@ -654,14 +665,20 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(source.sharedPill, /pub fn pulse_is_running/);
     assert.match(source.sharedPill, /pub fn pulse_armed/);
     // Every source must keep the pulse alive for its full duration, since it
-    // outlives the ring's own alpha. Each platform therefore needs a liveness
+    // outlives the ring's own alpha. Each backend therefore needs a liveness
     // check. Windows is the strictest case: it culls frames aggressively, so
-    // without its own check the pulse would be dropped mid-flight.
+    // without its own check the pulse would be dropped mid-flight. GTK and
+    // macOS share `RingPaint::resolve`, which returns `None` only when both the
+    // ring alpha and the pulse are gone.
+    assert.match(source.sharedPill, /fn resolve\(input: &RingPaintInput/);
+    assert.match(
+      source.sharedPill,
+      /if alpha <= 0\.0 && pulsing <= 0\.0 \{\s*return None;/,
+    );
     for (const src of [
       source.windowsState,
       source.windowsDraw,
       source.macDraw,
-      source.gtkDraw,
     ]) {
       assert.match(src, /pulse_is_running\(/);
     }
@@ -766,15 +783,17 @@ describe("PR28 native placement contracts", () => {
       source.macState,
       source.windowsState,
     ]) {
-      assert.match(state, /ring_alpha/);
-      assert.match(state, /LONG_PRESS_RING_FADE/);
+      // The ring fields are one shared record, so each pill state holds it
+      // rather than repeating the eight cells.
+      assert.match(state, /ring: rust_pill_shared::RingState/);
     }
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
       // Alpha is now advanced through the shared per-frame policy, which pins
       // it while held and eases it out after release.
-      assert.match(pill, /advance_ring/);
-      assert.match(pill, /ring_release_progress/);
+      assert.match(pill, /RingHost::tick_hold_and_ring\(state, dt\)/);
     }
+    assert.match(source.sharedPill, /release_progress: Cell<f64>/);
+    assert.match(source.sharedPill, /LONG_PRESS_RING_FADE/);
     assert.match(source.sharedPill, /pub fn ring_alpha/);
     assert.match(source.sharedPill, /ring_alpha_is_pinned_while_held/);
     assert.match(
@@ -1674,6 +1693,61 @@ describe("PR28 workflow and public-asset contracts", () => {
     assert.match(source.index, /:focus-visible/);
   });
 
+  it("triggers on every path the contract guards read", () => {
+    // The `Test Docs` workflow is what runs this file, so its `paths:` filter
+    // must cover every source a guard below reads. When a refactor moved the
+    // ring driver into `rust_pill_shared`, eight guards went red on the branch
+    // but the workflow never ran, because no path it watched had changed. The
+    // drift then surfaced much later, on an unrelated docs edit. Deriving the
+    // requirement from `PATHS` means a new source in this map that the filter
+    // does not cover fails here, in the run that would otherwise stay silent.
+    const trigger = readRaw(".github/workflows/test-docs.yml")
+      .split("\n  workflow_dispatch:")[0]
+      .split("\n    paths:")[1];
+    assert.ok(trigger, "Test Docs must keep a push `paths:` filter");
+
+    const globs = trigger
+      .split("\n")
+      .map((line) => /^\s*-\s*"([^"]+)"/.exec(line)?.[1])
+      .filter(Boolean);
+
+    const matchesGlob = (glob, path) =>
+      glob.endsWith("/**")
+        ? path.startsWith(glob.slice(0, -3) + "/")
+        : glob === path;
+
+    // A filter is a union of positive globs minus its `!` exclusions, so a path
+    // needs a positive match and no exclusion. Testing only for a positive
+    // match would pass a path a later `!` pattern takes back out.
+    const covered = (path) =>
+      globs.some((glob) => !glob.startsWith("!") && matchesGlob(glob, path)) &&
+      !globs.some(
+        (glob) => glob.startsWith("!") && matchesGlob(glob.slice(1), path),
+      );
+
+    // Every source this file reads needs a trigger entry, not only the ones in
+    // `PATHS`: several guards read a file directly, and a hand-kept map drifts
+    // from them. The literal read arguments are taken from this file's own
+    // text, so narrowing the workflow globs to exact paths fails here for the
+    // direct reads too.
+    const literalReads = Array.from(
+      readRaw("scripts/ci/pr28-contracts.test.mjs").matchAll(
+        /read(?:Raw)?\("([^"]+)"\)/g,
+      ),
+      (match) => match[1],
+    );
+    const required = new Map([
+      ...PATHS,
+      ...literalReads.map((path) => [path, path]),
+    ]);
+    for (const [label, path] of required) {
+      assert.ok(
+        covered(path),
+        `Test Docs does not trigger on ${label} (${path}); add a matching path to .github/workflows/test-docs.yml or the guards go unrun when only that source changes`,
+      );
+    }
+  });
+
   it("keeps every social metadata consumer on the checked-in asset", () => {
     const asset = resolve(repoRoot, "docs/assets/mausvoice-banner.png");
     assert.equal(statSync(asset).isFile(), true);
@@ -1837,8 +1911,13 @@ describe("native gesture adapter contracts", () => {
 
   it("advances GTK hold and ring animations with the measured frame step", () => {
     assert.match(source.gtkPill, /tick_long_press\(state, dt\)/);
-    assert.match(source.gtkPill, /tick_ring\(state, dt\)/);
-    assert.match(source.gtkPill, /delta_seconds: dt/);
+    // The ring tick moved into the shared host, which GTK calls with the same
+    // measured step, so the two cannot drift to different clocks.
+    assert.match(source.gtkPill, /RingHost::tick_hold_and_ring\(state, dt\)/);
+    assert.match(
+      source.sharedPill,
+      /fn tick_hold_and_ring\(&self, delta_seconds: f64\)/,
+    );
   });
 
   it("interrupts a running settle when a new press starts", () => {
@@ -2175,15 +2254,16 @@ describe("native gesture adapter contracts", () => {
 
 describe("native review and monitor contracts", () => {
   it("passes localized Edit captions through all three native review payloads", () => {
+    // The field is declared once on the shared `InMessage`, so a new platform
+    // cannot receive a review payload without it.
+    assert.match(
+      source.sharedMessages,
+      /#\[serde\(default\)\]\s*pub edit_label: Option<String>/,
+    );
     for (const platform of ["gtk", "macos", "windows"]) {
-      const ipc = read(`packages/rust_${platform}_pill/src/ipc.rs`);
       const draw = read(`packages/rust_${platform}_pill/src/draw.rs`).split(
         "fn draw_review_actions(",
       )[1];
-      assert.match(
-        ipc,
-        /#\[serde\(default\)\]\s*pub edit_label: Option<String>/,
-      );
       assert.match(draw, /review\.edit_label\.as_deref\(\)/);
       assert.match(draw, /edit_label,\s*ClickAction::ReviewEdit/);
       assert.doesNotMatch(draw, /"Edit",\s*ClickAction::ReviewEdit/);

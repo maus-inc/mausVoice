@@ -137,8 +137,22 @@ describe("native pill review surface", () => {
   });
 
   it("reports whether the Windows write actually reached the desktop", () => {
+    // The Windows pill writes through `rust_pill_shared::messages`, so the
+    // flush contract is asserted where the write now lives. The Windows crate
+    // has to keep routing its `send` there, or the assertion below proves
+    // nothing about the platform this test names.
     const ipc = readRepoSource("packages/rust_windows_pill/src/ipc.rs");
-    const send = extractRustBlock(ipc, "pub fn send(");
+    // Assert the direct re-export used today. A wrapper that called
+    // `write_message` and then returned `true` would satisfy a looser match
+    // while discarding the shared writer's result.
+    expect(ipc).toMatch(
+      /pub use rust_pill_shared::messages::write_message as send;/,
+    );
+
+    const messages = readRepoSource(
+      "packages/rust_pill_shared/src/messages.rs",
+    );
+    const send = extractRustBlock(messages, "pub fn write_message(");
 
     // Swallowing every write error is what made the unconditional clear
     // invisible: the caller had no way to know nobody had received the text.

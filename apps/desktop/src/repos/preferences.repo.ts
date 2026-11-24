@@ -2,6 +2,7 @@ import {
   AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillLocateGestureModifier,
   PillPlacement,
   PillResetMonitorStrategy,
   PostProcessingMode,
@@ -72,6 +73,7 @@ type LocalUserPreferences = {
   autoLearnFromEditsEnabled?: boolean;
   elevenLabsKeytermsEnabled?: boolean;
   inDictationStyleSwitchingEnabled?: boolean;
+  pillLocateGestureModifier?: Nullable<string>;
   hallucinationFilterEnabled?: boolean;
   fastStyleShortDictationsEnabled?: boolean;
   reviewBeforeInsert?: Nullable<boolean>;
@@ -91,6 +93,11 @@ type LocalUserPreferences = {
 const normalizePillResetMonitorStrategy = (
   strategy: Nullable<string> | undefined,
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
+
+const normalizePillLocateGestureModifier = (
+  value: Nullable<string> | undefined,
+): PillLocateGestureModifier =>
+  value === "alt" || value === "shift" || value === "control" ? value : "none";
 
 const normalizePillPlacement = (
   value: Nullable<string> | undefined,
@@ -233,6 +240,9 @@ const fromLocalFeaturePreferences = (preferences: LocalUserPreferences) => ({
   inDictationStyleSwitchingEnabled: orFalse(
     preferences.inDictationStyleSwitchingEnabled,
   ),
+  pillLocateGestureModifier: normalizePillLocateGestureModifier(
+    preferences.pillLocateGestureModifier,
+  ),
   hallucinationFilterEnabled: orTrue(preferences.hallucinationFilterEnabled),
   fastStyleShortDictationsEnabled:
     preferences.fastStyleShortDictationsEnabled ?? true,
@@ -320,6 +330,7 @@ const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
   elevenLabsKeytermsEnabled: preferences.elevenLabsKeytermsEnabled,
   inDictationStyleSwitchingEnabled:
     preferences.inDictationStyleSwitchingEnabled,
+  pillLocateGestureModifier: preferences.pillLocateGestureModifier,
   hallucinationFilterEnabled: preferences.hallucinationFilterEnabled,
   fastStyleShortDictationsEnabled: preferences.fastStyleShortDictationsEnabled,
   reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),

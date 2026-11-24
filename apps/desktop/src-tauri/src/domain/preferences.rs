@@ -105,6 +105,10 @@ pub struct UserPreferences {
     pub hands_free_delay_ms: Option<i64>,
     #[serde(default)]
     pub in_dictation_style_switching_enabled: bool,
+    /// Which modifier double-tap replays the pill outline. Accepted values are
+    /// "none", "alt", "shift" and "control"; the default disables the gesture.
+    #[serde(default = "default_pill_locate_gesture_modifier")]
+    pub pill_locate_gesture_modifier: String,
     #[serde(default = "default_hallucination_filter_enabled")]
     pub hallucination_filter_enabled: bool,
     /// Style short dictations with the deterministic local transforms instead
@@ -190,6 +194,10 @@ fn default_preserve_audio_on_failure() -> bool {
 
 fn default_pill_placement() -> String {
     "bottom".to_string()
+}
+
+fn default_pill_locate_gesture_modifier() -> String {
+    "none".to_string()
 }
 
 #[cfg(test)]

@@ -56,20 +56,6 @@ fn color(r: f64, g: f64, b: f64, a: f64) -> D2D1_COLOR_F {
     }
 }
 
-/// One stroke of the long-press ring: a segment with its own colour and width.
-///
-/// A named struct rather than a tuple because every segment carries six values
-/// and `clippy::type_complexity` rightly rejects the tuple form.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ShadedSegment {
-    pub(crate) x1: f64,
-    pub(crate) y1: f64,
-    pub(crate) x2: f64,
-    pub(crate) y2: f64,
-    pub(crate) rgba: [f64; 4],
-    pub(crate) width: f64,
-}
-
 fn centered_scale(current: Matrix3x2, cx: f64, cy: f64, sx: f64, sy: f64) -> Matrix3x2 {
     Matrix3x2::scale_around(sx as f32, sy as f32, vec2(cx, cy)) * current
 }
@@ -398,46 +384,26 @@ impl Gfx {
         }
     }
 
-    /// Draw many segments that share one colour/width in a single call, so the
-    /// brush and stroke style are created once instead of per segment.
-    pub(crate) fn draw_line_batch(
-        &self,
-        segments: &[(f64, f64, f64, f64)],
-        rgba: [f64; 4],
-        width: f64,
-    ) {
-        if segments.is_empty() {
-            return;
-        }
-        let brush = self.brush(rgba);
-        let style = self.round_stroke_style();
-        unsafe {
-            for &(x1, y1, x2, y2) in segments {
-                self.rt.DrawLine(
-                    vec2(x1, y1),
-                    vec2(x2, y2),
-                    &brush,
-                    width as f32,
-                    style.as_ref(),
-                );
-            }
-        }
-    }
-
     /// Draw many segments that each carry their own colour and width.
     ///
     /// Used by the long-press ring, where every segment has a different alpha.
     /// The brush and stroke style are COM objects, so creating a pair per
     /// segment would mean hundreds of allocations per frame; instead both are
     /// created once and the brush colour is mutated in place.
-    pub(crate) fn draw_line_shaded(&self, segments: &[ShadedSegment]) {
-        if segments.is_empty() {
+    pub(crate) fn draw_line_shaded<I: IntoIterator<Item = rust_pill_shared::RingSegment>>(
+        &self,
+        segments: I,
+    ) {
+        let mut segments = segments.into_iter();
+        // An empty frame must not pay for the brush, and a lazy iterator cannot
+        // be asked for its length up front.
+        let Some(first) = segments.next() else {
             return;
-        }
+        };
         let brush = self.brush([1.0, 1.0, 1.0, 1.0]);
         let style = self.round_stroke_style();
         unsafe {
-            for seg in segments {
+            for seg in std::iter::once(first).chain(segments) {
                 let [r, g, b, a] = seg.rgba;
                 brush.SetColor(&color(r, g, b, a));
                 self.rt.DrawLine(

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { AppState } from "../state/app.state";
+import { AppState, type KeyboardListenerHealth } from "../state/app.state";
 import { useAppStore } from "../store";
 import { getEffectiveStylingMode } from "./feature.utils";
 import { getPlatform } from "./platform.utils";
@@ -296,6 +296,17 @@ const KEYCAP_LABELS: Readonly<Record<string, string>> = {
 
 const keycapLabel = (pretty: string): string =>
   Object.hasOwn(KEYCAP_LABELS, pretty) ? KEYCAP_LABELS[pretty] : pretty;
+
+/**
+ * Whether the native listener is currently delivering key snapshots.
+ *
+ * Only these two health states mean a tap can actually be observed. The grab
+ * path is the healthy one, and the listen fallback still reports keys even when
+ * the tap could not be installed. Every other state is stopped, starting, or
+ * failed, so anything that advertises a key gesture must not offer it.
+ */
+export const listenerDeliversKeys = (health: KeyboardListenerHealth): boolean =>
+  health === "healthy_grab" || health === "degraded_listen_fallback";
 
 export const getKeycapLegend = (key: string): KeycapLegend => {
   const side = MODIFIER_SIDE_RE.exec(key)?.[1];

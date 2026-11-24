@@ -2,6 +2,7 @@ import type {
   AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillLocateGestureModifier,
   PillPlacement,
   PillResetMonitorStrategy,
   PostProcessingMode,
@@ -53,6 +54,8 @@ export type UserPreferences = {
   handsFreeDelayMs: Nullable<number>;
   /** Optional opt-in for activation-key + arrow style cycling while dictating. */
   inDictationStyleSwitchingEnabled: boolean;
+  /** Which modifier double-tap replays the pill outline; "none" disables it. */
+  pillLocateGestureModifier: PillLocateGestureModifier;
   /** Suppress common silence hallucinations before post-processing. */
   hallucinationFilterEnabled: boolean;
   /**
