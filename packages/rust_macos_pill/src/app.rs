@@ -551,7 +551,7 @@ extern "C" fn tick_callback(_this: &Object, _sel: Sel, _timer: id) {
 }
 
 /// Applies a single desktop message to the native pill state.
-fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
+fn handle_in_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
     // Phase message sequence guard: see ipc::InMessage::Phase.
     thread_local! {
         static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -765,16 +765,6 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
     }
 }
 
-/// Drains IPC messages before the current animation frame is advanced.
-fn process_pending_messages(ctx: &AppContext, dt: f64, now: f64) {
-    // Process IPC messages
-    let rx = ctx.receiver.borrow();
-    while let Ok(msg) = rx.try_recv() {
-        apply_message(ctx, msg, dt, now);
-    }
-    drop(rx);
-}
-
 /// Runs one frame of the pill loop and repaints when state has changed.
 fn perform_tick() {
     APP_CTX.with(|cell| {
@@ -791,7 +781,12 @@ fn perform_tick() {
             (now - prev).clamp(0.001, 0.05)
         };
 
-        process_pending_messages(ctx, dt, now);
+        // Process IPC messages
+        let rx = ctx.receiver.borrow();
+        while let Ok(msg) = rx.try_recv() {
+            handle_in_message(ctx, msg, dt, now);
+        }
+        drop(rx);
 
         if ctx.quit.get() {
             unsafe {
@@ -807,7 +802,7 @@ fn perform_tick() {
 
         // A mouseUp can be missed (another app steals the event, the session
         // locks). Poll the real button state so a released button can never
-        // leave hover pinned open — the same backstop the Windows pill uses.
+        // leave hover pinned open, the same backstop the Windows pill uses.
         release_pointer_if_button_up(&ctx.state, ctx.window);
 
         // Compute hover from actual mouse position over pill area
@@ -815,54 +810,8 @@ fn perform_tick() {
 
         tick(&ctx.state, ctx.window, dt);
 
-        // The review editor sits in the transcript body; follow-ups retain
-        // their compact composer at the bottom. Keep its geometry and opacity
-        // on the panel's spring so the native control enters with the surface.
-        let is_typing = ctx.state.is_typing();
-        let is_review = ctx.state.assistant_review.borrow().is_some();
-        unsafe {
-            let entry = ctx.entry;
-            let container = ctx.entry_container;
-            if is_typing {
-                let mut frame = typing_entry_frame(is_review);
-                frame.origin.y += (1.0 - ctx.state.panel_open_t.get()) * 12.0;
-                let _: () = msg_send![container, setFrame:frame];
-                let _: () = msg_send![container, setAlphaValue:ctx.state.panel_open_t.get()];
-                let border_type = if is_review { 2u64 } else { 0u64 };
-                let draws_background = if is_review { YES } else { NO };
-                let _: () = msg_send![container, setBorderType:border_type];
-                let _: () = msg_send![container, setDrawsBackground:draws_background];
-            }
-            let container_hidden: BOOL = msg_send![container, isHidden];
-            if is_typing && container_hidden != NO {
-                let _: () = msg_send![container, setHidden:NO];
-                let _: () = msg_send![ctx.window, makeKeyWindow];
-                let _: () = msg_send![ctx.window, makeFirstResponder:entry];
-            } else if !is_typing && container_hidden == NO {
-                let _: () = msg_send![container, setHidden:YES];
-                let _: () = msg_send![ctx.window, resignKeyWindow];
-            }
-
-            // `textDidChange:` mirrors every edit; this frame read also covers
-            // system-routed paste and other changes that bypass keystrokes.
-            if is_typing {
-                *ctx.state.entry_text.borrow_mut() = field_string(entry);
-            }
-        }
-
-        // Visibility
-        let should_show = rust_pill_shared::should_show_pill(
-            ctx.state.visibility.get().into(),
-            ctx.state.phase.get() != Phase::Idle,
-            ctx.state.owns_panel(),
-        );
-        unsafe {
-            if should_show {
-                let _: () = msg_send![ctx.window, orderFront:nil];
-            } else {
-                let _: () = msg_send![ctx.window, orderOut:nil];
-            }
-        }
+        sync_entry_visibility(ctx);
+        sync_window_visibility(ctx);
 
         // Reposition window: follow cursor when dragging, auto-center otherwise
         reposition_window(ctx.window, &ctx.state, dt, now);
@@ -874,6 +823,61 @@ fn perform_tick() {
             let _: () = msg_send![ctx.view, setNeedsDisplay:YES];
         }
     });
+}
+
+fn sync_entry_visibility(ctx: &AppContext) {
+    // The review editor sits in the transcript body; follow-ups retain their
+    // compact composer at the bottom. Keep its geometry and opacity on the
+    // panel's spring so the native control enters with the surface.
+    let is_typing = ctx.state.is_typing();
+    let is_review = ctx.state.assistant_review.borrow().is_some();
+    unsafe {
+        let entry = ctx.entry;
+        let container = ctx.entry_container;
+        if is_typing {
+            let mut frame = typing_entry_frame(is_review);
+            frame.origin.y += (1.0 - ctx.state.panel_open_t.get()) * 12.0;
+            let _: () = msg_send![container, setFrame:frame];
+            let _: () = msg_send![container, setAlphaValue:ctx.state.panel_open_t.get()];
+            let border_type = if is_review { 2u64 } else { 0u64 };
+            let draws_background = if is_review { YES } else { NO };
+            let _: () = msg_send![container, setBorderType:border_type];
+            let _: () = msg_send![container, setDrawsBackground:draws_background];
+        }
+        // The bordered container is what the review editor draws into, so it is
+        // the view that has to be hidden outside typing mode.
+        let container_hidden: BOOL = msg_send![container, isHidden];
+        if is_typing && container_hidden != NO {
+            let _: () = msg_send![container, setHidden:NO];
+            let _: () = msg_send![ctx.window, makeKeyWindow];
+            let _: () = msg_send![ctx.window, makeFirstResponder:entry];
+        } else if !is_typing && container_hidden == NO {
+            let _: () = msg_send![container, setHidden:YES];
+            let _: () = msg_send![ctx.window, resignKeyWindow];
+        }
+
+        // Sync entry text to state. `controlTextDidChange:` already does this
+        // on every keystroke; this covers changes the delegate does not see,
+        // such as a paste routed by the system.
+        if is_typing {
+            *ctx.state.entry_text.borrow_mut() = field_string(entry);
+        }
+    }
+}
+
+fn sync_window_visibility(ctx: &AppContext) {
+    let should_show = rust_pill_shared::should_show_pill(
+        ctx.state.visibility.get().into(),
+        ctx.state.phase.get() != Phase::Idle,
+        ctx.state.owns_panel(),
+    );
+    unsafe {
+        if should_show {
+            let _: () = msg_send![ctx.window, orderFront:nil];
+        } else {
+            let _: () = msg_send![ctx.window, orderOut:nil];
+        }
+    }
 }
 
 // ── Hover detection ──────────────────────────────────────────────
@@ -1115,69 +1119,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     let hovered = state.hovered.get();
     let frame_scale = dt * 60.0; // Scale factor relative to 60fps baseline
 
-    // Audio levels (frame-rate independent)
-    if is_recording {
-        let levels = std::mem::take(&mut *state.pending_levels.borrow_mut());
-        if !levels.is_empty() {
-            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
-            let avg = sum / levels.len() as f64;
-            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
-            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
-            let boosted = (combined.sqrt() * 1.35).min(1.0);
-            let target = state.target_level.get();
-            let mix = 1.0 - 0.25_f64.powf(frame_scale);
-            state
-                .target_level
-                .set((target * (1.0 - mix) + boosted * mix).min(1.0));
-        }
-    } else {
-        // Levels queued while not recording are stale. Without this they stay in
-        // the mailbox until the next recording starts and are then folded into
-        // that recording's first frame, so a burst of audio captured while the
-        // pill sat idle or loading moves the meter before any of it was spoken.
-        // Same guard as `rust_windows_pill::pill`.
-        state.pending_levels.borrow_mut().clear();
-        if is_loading {
-            let target = state.target_level.get();
-            state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
-        } else {
-            state.target_level.set(0.0);
-            state
-                .current_level
-                .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
-            if state.current_level.get() < 0.0002 {
-                state.current_level.set(0.0);
-            }
-        }
-    }
-
-    let current = state.current_level.get();
-    let target = state.target_level.get();
-    let smoothing = 1.0 - (1.0 - LEVEL_SMOOTHING).powf(frame_scale);
-    let new_current = current + (target - current) * smoothing;
-    state.current_level.set(if new_current < 0.0002 {
-        0.0
-    } else {
-        new_current
-    });
-
-    let decay = TARGET_DECAY_PER_FRAME.powf(frame_scale);
-    let decayed = target * decay;
-    state
-        .target_level
-        .set(if decayed < 0.0005 { 0.0 } else { decayed });
-
-    let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording {
-        PROCESSING_BASE_LEVEL
-    } else {
-        0.0
-    };
-    let effective_level = level.max(base_level);
-    let advance = (WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level) * frame_scale;
-    state
-        .wave_phase
-        .set((state.wave_phase.get() + advance) % TAU);
+    tick_audio_levels(state, is_recording, is_loading, frame_scale);
 
     // Pill expand/collapse (spring) — snappier than tooltip/panel so the
     // primary affordance feels instant. See PILL_EXPAND_STIFFNESS.
@@ -1293,27 +1235,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     // Long-press balloon pop + drag
     tick_long_press(state, window, dt);
 
-    // Flash message timer
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - dt;
-        if remaining <= 0.0 {
-            clear_flash(state);
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
-    let flash_target = rust_pill_shared::flash_banner_target(
-        state.flash_visible.get(),
-        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
-        tooltip_target > 0.5,
-    );
-    rust_pill_shared::spring::spring_01(
-        &state.flash_t,
-        &state.flash_velocity,
-        flash_target,
-        SPRING_STIFFNESS,
-        dt,
-    );
+    tick_flash_banner(state, dt, tooltip_target);
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
@@ -1330,18 +1252,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
         dt,
     );
 
-    // Cancel + pause controls.
-    let controls_phase = state.phase.get();
-    let show_controls = !state.assistant_active.get()
-        && match controls_phase {
-            // Hover-revealed while recording, pinned open while paused.
-            Phase::Recording => state.hovered.get(),
-            Phase::Paused => true,
-            // Post-recording processing: neither cancel nor pause can still
-            // act on the take, so the controls fade out with the same spring.
-            Phase::Idle | Phase::Loading => false,
-        };
-    let cancel_target = if show_controls { 1.0 } else { 0.0 };
+    let cancel_target = controls_target(state);
     rust_pill_shared::spring::spring_01(
         &state.cancel_t,
         &state.cancel_velocity,
@@ -1386,6 +1297,111 @@ fn tick(state: &PillState, window: id, dt: f64) {
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
         state.scroll_offset.set(max_scroll);
+    }
+}
+
+fn tick_audio_levels(state: &PillState, is_recording: bool, is_loading: bool, frame_scale: f64) {
+    if is_recording {
+        let levels = std::mem::take(&mut *state.pending_levels.borrow_mut());
+        if !levels.is_empty() {
+            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
+            let avg = sum / levels.len() as f64;
+            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
+            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
+            let boosted = (combined.sqrt() * 1.35).min(1.0);
+            let target = state.target_level.get();
+            let mix = 1.0 - 0.25_f64.powf(frame_scale);
+            state
+                .target_level
+                .set((target * (1.0 - mix) + boosted * mix).min(1.0));
+        }
+    } else {
+        // Levels queued while not recording are stale. Without this they stay in
+        // the mailbox until the next recording starts and are then folded into
+        // that recording's first frame, so a burst of audio captured while the
+        // pill sat idle or loading moves the meter before any of it was spoken.
+        // Same guard as `rust_windows_pill::pill`.
+        state.pending_levels.borrow_mut().clear();
+        if is_loading {
+            let target = state.target_level.get();
+            state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+        } else {
+            state.target_level.set(0.0);
+            state
+                .current_level
+                .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
+            if state.current_level.get() < 0.0002 {
+                state.current_level.set(0.0);
+            }
+        }
+    }
+
+    let current = state.current_level.get();
+    let target = state.target_level.get();
+    let smoothing = 1.0 - (1.0 - LEVEL_SMOOTHING).powf(frame_scale);
+    let new_current = current + (target - current) * smoothing;
+    state.current_level.set(if new_current < 0.0002 {
+        0.0
+    } else {
+        new_current
+    });
+
+    let decay = TARGET_DECAY_PER_FRAME.powf(frame_scale);
+    let decayed = target * decay;
+    state
+        .target_level
+        .set(if decayed < 0.0005 { 0.0 } else { decayed });
+
+    let level = state.current_level.get();
+    let base_level = if is_loading && !is_recording {
+        PROCESSING_BASE_LEVEL
+    } else {
+        0.0
+    };
+    let effective_level = level.max(base_level);
+    let advance = (WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level) * frame_scale;
+    state
+        .wave_phase
+        .set((state.wave_phase.get() + advance) % TAU);
+}
+
+fn tick_flash_banner(state: &PillState, dt: f64, tooltip_target: f64) {
+    if state.flash_visible.get() {
+        let remaining = state.flash_timer.get() - dt;
+        if remaining <= 0.0 {
+            clear_flash(state);
+        } else {
+            state.flash_timer.set(remaining);
+        }
+    }
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
+    rust_pill_shared::spring::spring_01(
+        &state.flash_t,
+        &state.flash_velocity,
+        flash_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
+}
+
+fn controls_target(state: &PillState) -> f64 {
+    let show_controls = !state.assistant_active.get()
+        && match state.phase.get() {
+            // Hover-revealed while recording, pinned open while paused.
+            Phase::Recording => state.hovered.get(),
+            Phase::Paused => true,
+            // Post-recording processing: neither cancel nor pause can still act
+            // on the take, so the controls fade out with the same spring.
+            Phase::Idle | Phase::Loading => false,
+        };
+    if show_controls {
+        1.0
+    } else {
+        0.0
     }
 }
 
@@ -1677,6 +1693,87 @@ fn tick_ring(state: &PillState, dt: f64) {
 
 // ── Window positioning ────────────────────────────────────────────
 
+struct Footprint {
+    fx: f64,
+    fy: f64,
+    pw: f64,
+    ph: f64,
+    win_h: f64,
+}
+
+impl Footprint {
+    /// View is flipped y-down; screen origin is bottom-left (y-up).
+    fn center(&self, origin_x: f64, origin_y: f64) -> (f64, f64) {
+        (
+            origin_x + self.fx + self.pw / 2.0,
+            origin_y + self.win_h - self.fy - self.ph / 2.0,
+        )
+    }
+}
+
+fn region_for(
+    state: &PillState,
+    dragging: bool,
+    full: rust_pill_shared::edge::MonitorRect,
+    work_area: rust_pill_shared::edge::MonitorRect,
+    monitor_frames: &[rust_pill_shared::edge::MonitorRect],
+    seam_point: (f64, f64),
+) -> rust_pill_shared::edge::DragRegion {
+    if dragging {
+        state.drag_motion.borrow_mut().resolve_drag_region(
+            full,
+            work_area,
+            monitor_frames,
+            seam_point,
+        )
+    } else {
+        rust_pill_shared::edge::drag_region(full, work_area, monitor_frames, seam_point)
+    }
+}
+
+/// A drag uses the cursor screen and settles on its drop screen. Everything else
+/// belongs to the screen the pill actually lives on. Resolving the screen from
+/// the live cursor here is what made a pinned pill hop monitors (and clamp into
+/// the wrong visible frame) whenever the pointer crossed a screen edge.
+fn resolve_anchor(
+    state: &PillState,
+    mouse_loc: NSPoint,
+    win_origin: NSPoint,
+    footprint: &Footprint,
+) -> (f64, f64) {
+    let dragging = state.dragging.get();
+    let settling = state.drag_motion.borrow().is_settling();
+    // The pill's first placement (before any saved position) should follow the
+    // cursor's screen once; afterwards it stays put even if it happens to sit at
+    // (0, 0), so a legitimately-placed window is never chased.
+    let first_placement = !state.first_placement_done.get();
+    // A reset with the "cursor" strategy re-homes onto the screen under the
+    // pointer exactly once; the strategy is consumed so later ticks keep the
+    // pill where it landed instead of chasing the cursor.
+    let reset_to_cursor =
+        !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
+
+    if dragging || settling || (!state.has_saved_position.get() && first_placement) {
+        // First placement at the cursor: mark it done so subsequent ticks keep
+        // the window where it landed instead of re-chasing the cursor.
+        if !dragging && !settling && !state.has_saved_position.get() {
+            state.first_placement_done.set(true);
+            state.reset_strategy.set(ResetStrategy::Current);
+        }
+        state
+            .drag_motion
+            .borrow()
+            .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
+    } else if reset_to_cursor {
+        state.reset_strategy.set(ResetStrategy::Current);
+        (mouse_loc.x, mouse_loc.y)
+    } else if state.has_saved_position.get() {
+        footprint.center(state.saved_x.get(), state.saved_y.get())
+    } else {
+        footprint.center(win_origin.x, win_origin.y)
+    }
+}
+
 fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
     unsafe {
         let mouse_loc = mouse_location();
@@ -1687,51 +1784,19 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let win_w = win_frame.size.width;
         let win_h = win_frame.size.height;
 
-        // A drag uses the cursor screen and settles on its drop screen. Everything else
-        // belongs to the screen the pill actually lives on — resolving the
-        // screen from the live cursor here is what made a pinned pill hop
-        // monitors (and clamp into the wrong visible frame) whenever the
-        // pointer crossed a screen edge.
         let dragging = state.dragging.get();
         let settling = state.drag_motion.borrow().is_settling();
-        // The pill's first placement (before any saved position) should follow
-        // the cursor's screen once; afterwards it stays put even if it happens
-        // to sit at (0, 0), so a legitimately-placed window is never chased.
-        let first_placement = !state.first_placement_done.get();
         let (px, py, pw, ph) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
-        let fx = cox + px;
-        let fy = coy + py;
-        // View is flipped y-down; screen origin is bottom-left (y-up).
-        let footprint_center = |origin_x: f64, origin_y: f64| {
-            (origin_x + fx + pw / 2.0, origin_y + win_h - fy - ph / 2.0)
+        let footprint = Footprint {
+            fx: cox + px,
+            fy: coy + py,
+            pw,
+            ph,
+            win_h,
         };
-        // A reset with the "cursor" strategy re-homes onto the screen under
-        // the pointer exactly once; the strategy is consumed so later ticks
-        // keep the pill where it landed instead of chasing the cursor.
-        let reset_to_cursor =
-            !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
-        let (anchor_x, anchor_y) =
-            if dragging || settling || (!state.has_saved_position.get() && first_placement) {
-                // First placement at the cursor: mark it done so subsequent ticks
-                // keep the window where it landed instead of re-chasing the cursor.
-                if !dragging && !settling && !state.has_saved_position.get() {
-                    state.first_placement_done.set(true);
-                    state.reset_strategy.set(ResetStrategy::Current);
-                }
-                state
-                    .drag_motion
-                    .borrow()
-                    .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
-            } else if reset_to_cursor {
-                state.reset_strategy.set(ResetStrategy::Current);
-                (mouse_loc.x, mouse_loc.y)
-            } else if state.has_saved_position.get() {
-                footprint_center(state.saved_x.get(), state.saved_y.get())
-            } else {
-                footprint_center(win_frame.origin.x, win_frame.origin.y)
-            };
+        let (anchor_x, anchor_y) = resolve_anchor(state, mouse_loc, win_frame.origin, &footprint);
 
         // Resolve monitor bounds in Cocoa's global point space. A connected
         // neighbor opens only its shared edge; the visible frame remains the
@@ -1759,22 +1824,15 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 let visible = screen_visible_frame(screen);
                 let full = ns_rect_to_monitor_rect(frame);
                 let work_area = ns_rect_to_monitor_rect(visible);
-                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
-                let region = if dragging {
-                    state.drag_motion.borrow_mut().resolve_drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                } else {
-                    rust_pill_shared::edge::drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                };
+                let seam_point = footprint.center(win_frame.origin.x, win_frame.origin.y);
+                let region = region_for(
+                    state,
+                    dragging,
+                    full,
+                    work_area,
+                    &monitor_frames,
+                    seam_point,
+                );
                 chosen = Some((visible, region.bounds, region.edge_mask));
                 break;
             }
@@ -1790,22 +1848,15 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 let visible = screen_visible_frame(primary);
                 let full = ns_rect_to_monitor_rect(frame);
                 let work_area = ns_rect_to_monitor_rect(visible);
-                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
-                let region = if dragging {
-                    state.drag_motion.borrow_mut().resolve_drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                } else {
-                    rust_pill_shared::edge::drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                };
+                let seam_point = footprint.center(win_frame.origin.x, win_frame.origin.y);
+                let region = region_for(
+                    state,
+                    dragging,
+                    full,
+                    work_area,
+                    &monitor_frames,
+                    seam_point,
+                );
                 (visible, region.bounds, region.edge_mask)
             }
             None => return,
@@ -1830,10 +1881,10 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             && !state.assistant_active.get()
         {
             (
-                clamp_frame.x - fx,
-                clamp_frame.y - win_h + fy + ph,
-                clamp_frame.right() - fx - pw,
-                clamp_frame.bottom() - win_h + fy,
+                clamp_frame.x - footprint.fx,
+                clamp_frame.y - win_h + footprint.fy + ph,
+                clamp_frame.right() - footprint.fx - pw,
+                clamp_frame.bottom() - win_h + footprint.fy,
             )
         } else {
             (
@@ -1852,7 +1903,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         if dragging {
             bounds.apply_shared_seam_bounds(
                 drag_region,
-                (fx + pw / 2.0, win_h - fy - ph / 2.0),
+                (footprint.fx + pw / 2.0, win_h - footprint.fy - ph / 2.0),
                 edge_mask,
             );
         }
