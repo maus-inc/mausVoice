@@ -1,29 +1,18 @@
-import { ArrowRight, Globe, Trash2 } from "lucide-react";
-import { IconButton, Stack, TextField, Tooltip } from "@mui/material";
+import { Trash2 } from "lucide-react";
+import { Stack } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ChangeEvent,
-} from "react";
-import { FormattedMessage, useIntl } from "react-intl";
-import { showErrorSnackbar } from "../../actions/app.actions";
-import { getAppState, produceAppState, useAppStore } from "../../store";
-import { beginLocalDataWrite } from "../../utils/local-data-write-gate";
-import { focusAfterDictionaryDelete } from "./dictionary-delete-focus";
-import { restoreDictionaryOrder } from "./restore-dictionary-order";
-import {
-  deleteDictionaryTerm,
-  updateDictionaryTerm,
-} from "../../utils/term-mutation-queue";
+import { useMemo } from "react";
+import { useIntl } from "react-intl";
+import { useAppStore } from "../../store";
 import {
   isEditableTarget,
   useContextMenu,
   type ContextMenuItem,
 } from "../common/ContextMenu";
+import { DictionaryRowActions } from "./DictionaryRowActions";
+import { DictionaryTermFields } from "./DictionaryTermFields";
+import { useDictionaryDraft } from "./use-dictionary-draft";
+import { useDictionaryTermWrites } from "./use-dictionary-term-writes";
 
 export type DictionaryRowProps = {
   id: string;
@@ -32,125 +21,16 @@ export type DictionaryRowProps = {
 export const DictionaryRow = ({ id }: DictionaryRowProps) => {
   const intl = useIntl();
   const term = useAppStore((state) => getRec(state.termById, id));
-  const [sourceValue, setSourceValue] = useState(term?.sourceValue ?? "");
-  const [destinationValue, setDestinationValue] = useState(
-    term?.destinationValue ?? "",
-  );
+  const draft = useDictionaryDraft(term);
   const isReplacement = term?.isReplacement ?? true;
   const isGlobal = term?.isGlobal ?? false;
-
-  const lastSource = useRef(term?.sourceValue ?? "");
-  const lastDestination = useRef(term?.destinationValue ?? "");
-  useEffect(() => {
-    const nextSource = term?.sourceValue ?? "";
-    const nextDestination = term?.destinationValue ?? "";
-    // Do not overwrite a newer, still-uncommitted draft when a previous
-    // request succeeds or rolls back.
-    const previousSource = lastSource.current;
-    const previousDestination = lastDestination.current;
-    setSourceValue((value) => (value === previousSource ? nextSource : value));
-    setDestinationValue((value) =>
-      value === previousDestination ? nextDestination : value,
-    );
-    lastSource.current = nextSource;
-    lastDestination.current = nextDestination;
-  }, [term?.sourceValue, term?.destinationValue]);
-
-  const handleFieldChange =
-    (field: "source" | "destination") =>
-    (event: ChangeEvent<HTMLInputElement>) => {
-      if (field === "source") {
-        setSourceValue(event.target.value);
-      } else {
-        setDestinationValue(event.target.value);
-      }
-    };
-
-  const handleCommit = useCallback(async () => {
-    if (
-      !term ||
-      !sourceValue.trim() ||
-      (isReplacement && !destinationValue.trim())
-    ) {
-      return;
-    }
-
-    if (
-      term.sourceValue === sourceValue &&
-      term.destinationValue === destinationValue
-    ) {
-      return;
-    }
-
-    const write = beginLocalDataWrite();
-    if (!write) return;
-    try {
-      const previousTerm = term;
-      const updatedTerm = {
-        ...term,
-        sourceValue,
-        destinationValue,
-      };
-
-      produceAppState((draft) => {
-        draft.termById[id] = updatedTerm;
-      }, write.lease);
-
-      await updateDictionaryTerm(
-        previousTerm,
-        updatedTerm,
-        (saved, error) => {
-          if (getAppState().termById[id] === updatedTerm) {
-            produceAppState((draft) => {
-              draft.termById[id] = saved;
-            }, write.lease);
-          }
-          showErrorSnackbar(error);
-        },
-        write.lease,
-      );
-    } finally {
-      write();
-    }
-  }, [destinationValue, id, isReplacement, sourceValue, term]);
-
-  const handleDelete = useCallback(async () => {
-    if (!term) {
-      return;
-    }
-
-    const write = beginLocalDataWrite();
-    if (!write) return;
-    try {
-      const previousTerm = term;
-      const previousIds = [...getAppState().dictionary.termIds];
-      focusAfterDictionaryDelete(id);
-
-      produceAppState((draft) => {
-        delete draft.termById[id];
-        draft.dictionary.termIds = draft.dictionary.termIds.filter(
-          (termId) => termId !== id,
-        );
-      }, write.lease);
-
-      await deleteDictionaryTerm(
-        previousTerm,
-        (saved, error) => {
-          produceAppState((draft) => {
-            // Restore only this deletion, without reverting other edits or removals
-            // that completed while the request was pending.
-            draft.termById[id] ??= saved;
-            restoreDictionaryOrder(draft.dictionary.termIds, previousIds, id);
-          }, write.lease);
-          showErrorSnackbar(error);
-        },
-        write.lease,
-      );
-    } finally {
-      write();
-    }
-  }, [id, term]);
-
+  const { handleCommit, handleDelete } = useDictionaryTermWrites({
+    id,
+    term,
+    sourceValue: draft.sourceValue,
+    destinationValue: draft.destinationValue,
+    isReplacement,
+  });
   const ctxMenu = useContextMenu();
 
   // Global terms are organization-managed. Keep the right-click surface in
@@ -199,94 +79,17 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           "& > .MuiIconButton-root, & > span": { mt: "4px" },
         }}
       >
-        <TextField
-          variant="outlined"
-          size="small"
-          placeholder={
-            isReplacement
-              ? intl.formatMessage({ defaultMessage: "Original" })
-              : intl.formatMessage({ defaultMessage: "Glossary term" })
-          }
-          value={sourceValue}
-          onChange={handleFieldChange("source")}
-          onBlur={handleCommit}
-          disabled={isGlobal}
-          sx={{ flex: 1 }}
-          error={!isGlobal && sourceValue.trim() === ""}
-          helperText={
-            !isGlobal && !sourceValue.trim() ? (
-              <FormattedMessage defaultMessage="Required. Changes not saved." />
-            ) : undefined
-          }
-          slotProps={{
-            htmlInput: {
-              "aria-label": isReplacement
-                ? intl.formatMessage({ defaultMessage: "Original" })
-                : intl.formatMessage({ defaultMessage: "Glossary term" }),
-            },
-          }}
+        <DictionaryTermFields
+          draft={draft}
+          isReplacement={isReplacement}
+          isGlobal={isGlobal}
+          onCommit={handleCommit}
         />
-        {isReplacement ? (
-          <>
-            <ArrowRight size={16} strokeWidth={1.9} aria-hidden />
-            <TextField
-              variant="outlined"
-              size="small"
-              placeholder={intl.formatMessage({
-                defaultMessage: "Replacement",
-              })}
-              value={destinationValue}
-              onChange={handleFieldChange("destination")}
-              onBlur={handleCommit}
-              disabled={isGlobal}
-              multiline
-              minRows={1}
-              sx={{ flex: 1, "& textarea": { lineHeight: 1.5 } }}
-              error={!isGlobal && destinationValue.trim() === ""}
-              helperText={
-                !isGlobal && !destinationValue.trim() ? (
-                  <FormattedMessage defaultMessage="Required. Changes not saved." />
-                ) : undefined
-              }
-              slotProps={{
-                htmlInput: {
-                  "aria-label": intl.formatMessage({
-                    defaultMessage: "Replacement",
-                  }),
-                },
-              }}
-            />
-          </>
-        ) : null}
-        {isGlobal ? (
-          <Tooltip
-            disableInteractive
-            title={
-              <FormattedMessage defaultMessage="This term is managed by your organization." />
-            }
-          >
-            <span>
-              <IconButton size="small" disabled>
-                <Globe size={16} strokeWidth={1.9} />
-              </IconButton>
-            </span>
-          </Tooltip>
-        ) : (
-          <IconButton
-            data-dictionary-delete
-            aria-label={intl.formatMessage(
-              { defaultMessage: "Delete dictionary item {term}" },
-              { term: term.sourceValue },
-            )}
-            onClick={(event) => {
-              // A second click at the same location may now hit the next row.
-              if (event.detail <= 1) void handleDelete();
-            }}
-            size="small"
-          >
-            <Trash2 size={16} strokeWidth={1.9} />
-          </IconButton>
-        )}
+        <DictionaryRowActions
+          isGlobal={isGlobal}
+          termSourceValue={term.sourceValue}
+          onDelete={handleDelete}
+        />
       </Stack>
     </>
   );

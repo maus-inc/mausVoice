@@ -22,6 +22,45 @@ export const MAX_HISTORY_PERSIST_QUEUE = 4;
 export const isHistoryPersistQueueFull = (): boolean =>
   queueDepth >= MAX_HISTORY_PERSIST_QUEUE;
 
+export type PersistBeforeDeliveryInput = {
+  /** The caller supplied a write hook, so the row can be started early. */
+  hasPersistenceHook: boolean;
+  reviewBeforeInsert: boolean;
+  remoteDeviceId: string | null;
+  insertionMethod: string;
+  handsFreeDelayMs: number;
+  activeSimulatedTypingCount: number;
+  queueFull: boolean;
+};
+
+/**
+ * Decides whether the History row can be written while delivery runs instead
+ * of after it settles.
+ *
+ * Review-before-insert can still edit the text and a remote target records its
+ * delivery outcome on the row, so both keep the serial path. Simulated typing
+ * can take the length of the transcript and a hands-free delay holds delivery
+ * open for seconds, so those also stay serial: the stop path re-reads Incognito
+ * after delivery settles, and a mode change during the wait must not race a
+ * write that already started.
+ */
+export const shouldPersistBeforeDelivery = ({
+  hasPersistenceHook,
+  reviewBeforeInsert,
+  remoteDeviceId,
+  insertionMethod,
+  handsFreeDelayMs,
+  activeSimulatedTypingCount,
+  queueFull,
+}: PersistBeforeDeliveryInput): boolean =>
+  hasPersistenceHook &&
+  !reviewBeforeInsert &&
+  remoteDeviceId === null &&
+  insertionMethod !== "type" &&
+  handsFreeDelayMs <= 0 &&
+  activeSimulatedTypingCount === 0 &&
+  !queueFull;
+
 export const snapshotStopRecordingAudio = (
   audio: StopRecordingResponse,
 ): StopRecordingResponse => {

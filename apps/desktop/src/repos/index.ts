@@ -23,13 +23,13 @@ import {
 import { isGeminiTranscribeModel } from "@maus-inc/voice-ai";
 import {
   ApiGenerativePrefs,
-  ApiTranscriptionPrefs,
   GenerativePrefs,
   getAgentModePrefs,
   getGenerativePrefs,
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../utils/user.utils";
+import type { ApiTranscriptionPrefs } from "../types/transcription-prefs.types";
 import { BaseApiKeyRepo, LocalApiKeyRepo } from "./api-key.repo";
 import { BaseAppTargetRepo, LocalAppTargetRepo } from "./app-target.repo";
 import { BaseAuthRepo, PersonalAuthRepo } from "./auth.repo";
