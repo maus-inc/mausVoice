@@ -2,11 +2,14 @@ import { LoadingButton } from "@mui/lab";
 import { Alert, Box, Button, Stack, useTheme } from "@mui/material";
 import { Nullable } from "@maus-inc/types";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import type { StopRecordingResponse } from "../../types/transcription-session.types";
 import { isLocalDataClearRequested } from "../../utils/local-data-write-gate";
-import { type NativeRecordingHandle } from "../../utils/native-recording-session";
+import {
+  stopAdmittedRecording,
+  type NativeRecordingHandle,
+} from "../../utils/native-recording-session";
 import { AudioWaveform } from "../common/AudioWaveform";
 import {
   runGuardedRecordingStart,
@@ -202,17 +205,22 @@ const publishPreviewOutcome = ({
   createPreviewUrl: createPreview,
   updatePreviewUrl,
   setTestError,
+  intl,
 }: {
   response: StopRecordingResponse;
   createPreviewUrl: typeof createPreviewUrl;
   updatePreviewUrl: (url: string | null) => void;
   setTestError: (message: string | null) => void;
+  intl: IntlShape;
 }): void => {
   const url = createPreview(response.samples, response.sampleRate ?? 0);
   if (response.captureFailed) {
     updatePreviewUrl(url ?? null);
     setTestError(
-      "The microphone stopped partway through. The preview is shorter than the test.",
+      intl.formatMessage({
+        defaultMessage:
+          "The microphone stopped partway through. The preview is shorter than the test.",
+      }),
     );
     return;
   }
@@ -222,7 +230,10 @@ const publishPreviewOutcome = ({
   }
   updatePreviewUrl(null);
   setTestError(
-    "We didn't detect any audio. Try speaking while the test is running.",
+    intl.formatMessage({
+      defaultMessage:
+        "We didn't detect any audio. Try speaking while the test is running.",
+    }),
   );
 };
 
@@ -231,6 +242,7 @@ const usePreviewAudio = ({
 }: {
   setTestError: (message: string | null) => void;
 }) => {
+  const intl = useIntl();
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const previewUrlRef = useRef<string | null>(null);
@@ -294,10 +306,14 @@ const usePreviewAudio = ({
       })
       .catch((error) => {
         console.error("Failed to play recorded preview", error);
-        setTestError("Unable to play the recorded preview.");
+        setTestError(
+          intl.formatMessage({
+            defaultMessage: "Unable to play the recorded preview.",
+          }),
+        );
         setIsPreviewPlaying(false);
       });
-  }, []);
+  }, [intl]);
 
   return {
     previewUrl,
@@ -362,6 +378,71 @@ const useMicrophoneTestLifecycle = ({
   }, [clearPreviewUrl]);
 };
 
+/** Reports what a stopped test captured, and why it is not a clean take. */
+const settleMicrophoneTestStop = async ({
+  handle,
+  opts,
+  showPreviewOutcome,
+  updatePreviewUrl,
+  setTestError,
+  intl,
+}: {
+  handle: NativeRecordingHandle | null;
+  opts?: { silent?: boolean };
+  showPreviewOutcome: (response: StopRecordingResponse) => void;
+  updatePreviewUrl: (url: string | null) => void;
+  setTestError: (message: string) => void;
+  intl: IntlShape;
+}) => {
+  const reportOutcome = !opts?.silent && !isLocalDataClearRequested();
+  try {
+    const response = await stopAdmittedRecording(handle);
+    if (reportOutcome) {
+      showPreviewOutcome(response);
+    } else {
+      updatePreviewUrl(null);
+    }
+  } catch (error) {
+    console.error("Failed to stop microphone test", error);
+    if (reportOutcome) {
+      setTestError(
+        intl.formatMessage({
+          defaultMessage: "Unable to stop microphone test. Please try again.",
+        }),
+      );
+    }
+  }
+};
+
+/** Both buttons stay inert while the tester or a recording owns the mic. */
+const testButtonState = ({
+  testState,
+  isGlobalRecording,
+  disabled,
+}: {
+  testState: MicTestState;
+  isGlobalRecording: boolean;
+  disabled: boolean;
+}) => ({
+  disableStartButton:
+    disabled ||
+    isGlobalRecording ||
+    testState === "starting" ||
+    testState === "recording",
+  disableStopButton: disabled || testState === "stopping",
+});
+
+/** Clears the live meter once the tester owns no recording again. */
+const finishMicrophoneTestStop = (
+  setTestState: (state: MicTestState) => void,
+) => {
+  setTestState("idle");
+  if (isLocalDataClearRequested()) return;
+  produceAppState((draft) => {
+    draft.audioLevels = [];
+  });
+};
+
 const useMicrophoneTest = ({
   preferredMicrophone,
   disabled,
@@ -371,6 +452,7 @@ const useMicrophoneTest = ({
 }) => {
   const overlayPhase = useAppStore((state) => state.overlayPhase);
   const audioLevels = useAppStore((state) => state.audioLevels);
+  const intl = useIntl();
   const [testState, setTestState] = useState<MicTestState>("idle");
   const [testError, setTestError] = useState<string | null>(null);
 
@@ -424,13 +506,19 @@ const useMicrophoneTest = ({
         onError: (error, stillOwns) => {
           console.error("Failed to start microphone test", error);
           if (stillOwns) {
-            setTestError("Unable to start microphone test. Please try again.");
+            setTestError(
+              intl.formatMessage({
+                defaultMessage:
+                  "Unable to start microphone test. Please try again.",
+              }),
+            );
           }
         },
       }),
     [
       clearPreviewUrl,
       disabled,
+      intl,
       isGlobalRecording,
       preferredMicrophone,
       setSyncedTestState,
@@ -449,8 +537,9 @@ const useMicrophoneTest = ({
         createPreviewUrl,
         updatePreviewUrl,
         setTestError,
+        intl,
       }),
-    [createPreviewUrl, setTestError, updatePreviewUrl],
+    [createPreviewUrl, intl, setTestError, updatePreviewUrl],
   );
 
   const handleStopTest = useCallback(
@@ -463,45 +552,23 @@ const useMicrophoneTest = ({
       opIdRef.current += 1;
       setSyncedTestState("stopping");
 
-      // Stop the recording this tester admitted. A global stop would reach
-      // whatever session is current, which a later start may own. The admission
-      // is retained before capture starts, so this reaches the device even while
-      // the start reply is still pending; the bumped op id keeps a late reply
-      // from publishing over the stop.
+      // A global stop would reach whatever session is current, which a later
+      // start may own. This admission is retained before capture starts, so it
+      // reaches the device even while the start reply is still pending, and the
+      // bumped op id keeps a late reply from publishing over the stop.
       const handle = handleRef.current;
       handleRef.current = null;
-      try {
-        const response = handle
-          ? await handle.stop()
-          : { samples: [] as number[], sampleRate: 0 };
-
-        if (!opts?.silent && !isLocalDataClearRequested()) {
-          showPreviewOutcome(response);
-        } else {
-          updatePreviewUrl(null);
-        }
-      } catch (error) {
-        console.error("Failed to stop microphone test", error);
-        // A rejected stop can leave the device open, and this handle is the
-        // only reference to it, so release it instead of dropping it.
-        if (handle) {
-          void handle.discard().catch((cause) => {
-            console.error("Failed to discard the microphone test", cause);
-          });
-        }
-        if (!opts?.silent && !isLocalDataClearRequested()) {
-          setTestError("Unable to stop microphone test. Please try again.");
-        }
-      } finally {
-        setSyncedTestState("idle");
-        if (!isLocalDataClearRequested()) {
-          produceAppState((draft) => {
-            draft.audioLevels = [];
-          });
-        }
-      }
+      await settleMicrophoneTestStop({
+        handle,
+        opts,
+        showPreviewOutcome,
+        updatePreviewUrl,
+        setTestError,
+        intl,
+      });
+      finishMicrophoneTestStop(setSyncedTestState);
     },
-    [setSyncedTestState, showPreviewOutcome, updatePreviewUrl],
+    [intl, setSyncedTestState, showPreviewOutcome, updatePreviewUrl],
   );
 
   useMicrophoneTestLifecycle({
@@ -514,9 +581,11 @@ const useMicrophoneTest = ({
     handleStopTest,
   });
 
-  const disableStartButton =
-    disabled || isGlobalRecording || isTestLoading || isTestRunning;
-  const disableStopButton = disabled || isTestStopping;
+  const { disableStartButton, disableStopButton } = testButtonState({
+    testState,
+    isGlobalRecording,
+    disabled,
+  });
 
   return {
     audioLevels,

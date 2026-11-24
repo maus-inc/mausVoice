@@ -20,7 +20,10 @@ import {
   DualPaneLayout,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
-import { type NativeRecordingHandle } from "../../utils/native-recording-session";
+import {
+  stopAdmittedRecording,
+  type NativeRecordingHandle,
+} from "../../utils/native-recording-session";
 
 type RecordingState = "idle" | "starting" | "recording" | "stopping";
 
@@ -79,16 +82,9 @@ const useMicCheckRecording = (preferredMicrophone: string | null) => {
     const handle = handleRef.current;
     handleRef.current = null;
     try {
-      if (handle) await handle.stop();
+      await stopAdmittedRecording(handle);
     } catch (error) {
       console.error("Failed to stop recording", error);
-      // A rejected stop can leave the device open, and this handle is the only
-      // reference to it, so release it instead of dropping it.
-      if (handle) {
-        void handle.discard().catch((cause) => {
-          console.error("Failed to discard the mic check recording", cause);
-        });
-      }
     } finally {
       setSyncedRecordingState("idle");
       if (!isLocalDataClearRequested()) {

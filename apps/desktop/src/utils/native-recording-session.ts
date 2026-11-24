@@ -367,6 +367,31 @@ const beginNativeRecordingOwned = async (
   }
 };
 
+/**
+ * Stop the recording a surface admitted, releasing the device when the stop is
+ * rejected.
+ *
+ * A rejected stop can leave the capture open, and the handle is the only
+ * reference to it, so dropping it would hold the microphone for the rest of the
+ * session. The original error still reaches the caller.
+ */
+export const stopAdmittedRecording = async (
+  handle: NativeRecordingHandle | null,
+): Promise<StopRecordingResponse> => {
+  if (!handle) return EMPTY_RESULT();
+  try {
+    return await handle.stop();
+  } catch (error) {
+    void handle.discard().catch((cause) => {
+      getLogger().warning(
+        "Failed to release a capture after a failed stop",
+        cause,
+      );
+    });
+    throw error;
+  }
+};
+
 /** Stop this webview's current recording when the caller has no handle. */
 export const stopNativeRecording = (
   invokeFn?: RecordingInvoke,
