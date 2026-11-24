@@ -73,8 +73,10 @@
           "from": "desktop",
           "callee": [
             "eval",
+            "window.eval",
             "globalThis.eval",
             "Function",
+            "window.Function",
             "globalThis.Function"
           ]
         },
@@ -82,8 +84,10 @@
           "from": "preview",
           "callee": [
             "eval",
+            "window.eval",
             "globalThis.eval",
             "Function",
+            "window.Function",
             "globalThis.Function"
           ]
         },
@@ -91,8 +95,10 @@
           "from": "shared",
           "callee": [
             "eval",
+            "window.eval",
             "globalThis.eval",
             "Function",
+            "window.Function",
             "globalThis.Function"
           ]
         }
