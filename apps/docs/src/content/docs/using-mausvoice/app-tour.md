@@ -19,4 +19,4 @@ The activity chart groups dictations by the device's local calendar date. The da
 
 An internal `/dashboard/apps` route also exists, but it is currently a placeholder for future MCP/integration work and is not presented as a finished user feature.
 
-The native recording pill is a separate platform window/process. It remains visible over other applications when supported, reflects recording state, and can be repositioned. Closing or hiding the main dashboard does not turn the pill into an editor; dictated text still targets the application with focus.
+The native recording pill is a separate platform window/process. It remains visible over other applications when supported, reflects recording state, and can be repositioned. Closing or hiding the main dashboard does not change where dictated text goes, because delivery still targets the application with focus. With **Review before insert** on, the pill opens an editable review panel before delivery, and that panel is the one place the pill does accept edits. [The review guide](../guides/transcript-review/) covers it.

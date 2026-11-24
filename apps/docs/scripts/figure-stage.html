@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <title>mausVoice figure stage</title>
+    <link rel="stylesheet" href="../src/styles/guides.css" />
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        background: var(--mv-canvas);
+        font-family:
+          "Satoshi", system-ui, -apple-system, "Segoe UI", sans-serif;
+        display: grid;
+        gap: 24px;
+        width: max-content;
+      }
+
+      .fig {
+        position: relative;
+        width: 780px;
+        padding: 14px;
+        background: var(--mv-canvas);
+        box-sizing: border-box;
+      }
+
+      .frame {
+        border-radius: 16px;
+        border: 1px solid var(--mv-hairline);
+        background: var(--mv-canvas);
+        box-shadow: var(--mv-shadow);
+        overflow: hidden;
+      }
+
+      .panel {
+        padding: 20px 22px;
+        color: var(--mv-ink);
+      }
+
+      .panel__title {
+        margin: 0 0 2px;
+        font-size: 16px;
+        font-weight: 650;
+      }
+
+      .panel__sub {
+        margin: 0 0 16px;
+        font-size: 13px;
+        color: var(--mv-ink-soft);
+        max-width: 70ch;
+      }
+
+      .panel__sub--tight {
+        margin-bottom: 0;
+      }
+
+      .keys {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .key {
+        min-width: 34px;
+        height: 30px;
+        padding: 0 10px;
+        border-radius: 8px;
+        border: 1px solid var(--mv-hairline);
+        background: var(--mv-surface);
+        display: inline-grid;
+        place-items: center;
+        font-size: 12px;
+        color: var(--mv-ink);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .chips {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        padding: 0 10px;
+        border-radius: 999px;
+        border: 1px solid var(--mv-hairline);
+        background: var(--mv-surface);
+        font-size: 12px;
+        color: var(--mv-ink-soft);
+      }
+
+      .chip--on {
+        background: var(--mv-raised);
+        color: var(--mv-ink);
+        border-color: var(--mv-accent);
+      }
+
+      .arrow {
+        font-size: 13px;
+        color: var(--mv-ink-faint);
+      }
+
+      .stack {
+        display: grid;
+        gap: 10px;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .row--between {
+        justify-content: space-between;
+      }
+
+      .setting {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid var(--mv-hairline);
+        background: var(--mv-surface);
+      }
+
+      .setting__name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--mv-ink);
+      }
+
+      .setting__desc {
+        font-size: 12px;
+        color: var(--mv-ink-soft);
+        margin-top: 2px;
+        max-width: 52ch;
+      }
+
+      .toggle {
+        width: 34px;
+        height: 20px;
+        border-radius: 999px;
+        background: var(--mv-elevated);
+        border: 1px solid var(--mv-hairline);
+        position: relative;
+        flex: 0 0 auto;
+      }
+
+      .toggle::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: var(--mv-surface);
+        border: 1px solid var(--mv-hairline);
+      }
+
+      .toggle--on {
+        background: var(--mv-ink);
+      }
+
+      .toggle--on::after {
+        left: auto;
+        right: 2px;
+        background: var(--mv-canvas);
+        border-color: transparent;
+      }
+
+      .toast {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-radius: 12px;
+        background: var(--mv-surface);
+        border: 1px solid var(--mv-hairline);
+        box-shadow: var(--mv-shadow);
+        font-size: 12px;
+        color: var(--mv-ink);
+      }
+
+      .timer {
+        font-variant-numeric: tabular-nums;
+        font-size: 12px;
+        color: var(--mv-ink-soft);
+        border: 1px solid var(--mv-hairline);
+        border-radius: 999px;
+        padding: 3px 8px;
+      }
+
+      .caption {
+        font-size: 12px;
+        color: var(--mv-ink-faint);
+        margin-top: 8px;
+      }
+
+      .caption--inline {
+        margin: 0;
+      }
+
+      .tooltip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 9px;
+        border-radius: 8px;
+        background: var(--mv-ink);
+        color: var(--mv-canvas);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.2);
+      }
+
+      .meter {
+        flex: 1;
+        height: 3px;
+        border-radius: 999px;
+        background: var(--mv-raised);
+        margin: 0 16px;
+        overflow: hidden;
+      }
+
+      .meter span {
+        display: block;
+        width: 38%;
+        height: 100%;
+        background: var(--mv-accent);
+      }
+
+      .wave {
+        display: flex;
+        gap: 3px;
+        align-items: center;
+        height: 28px;
+      }
+
+      .wave span {
+        width: 4px;
+        border-radius: 999px;
+        background: var(--mv-accent);
+      }
+
+      .pill-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 34px;
+        padding: 40px 16px 32px;
+      }
+
+      .pill-col {
+        display: grid;
+        gap: 10px;
+        justify-items: center;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ===================== dictation ===================== -->
+
+    <section class="fig" data-figure="dictation-pill-states">
+      <div class="frame">
+        <div class="pill-row">
+          <div class="pill-col">
+            <span class="mv-pill mv-anchor" data-n="1"><span class="mv-pill__glyph mv-pill__glyph--recording mv-pill__glyph--pulse"></span>Listening</span>
+            <span class="caption caption--inline">Recording</span>
+          </div>
+          <div class="pill-col">
+            <span class="mv-pill mv-anchor" data-n="2"><span class="mv-pill__glyph mv-pill__glyph--pulse"></span>Transcribing</span>
+            <span class="caption caption--inline">Transcribing</span>
+          </div>
+          <div class="pill-col">
+            <span class="mv-pill mv-anchor" data-n="3"><span class="mv-pill__glyph"></span>Inserted</span>
+            <span class="caption caption--inline">Done</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="dictation-delivery">
+      <div class="frame">
+        <div class="mv-window">
+          <div class="mv-window__bar">
+            <span class="mv-window__dot mv-window__dot--live"></span>
+            <span class="mv-window__dot"></span>
+            <span class="mv-window__dot"></span>
+            <span class="mv-window__title">Another application</span>
+          </div>
+          <div class="mv-window__body">
+            <nav class="mv-rail" aria-hidden="true">
+              <span class="mv-rail__item mv-rail__item--active"><span class="mv-rail__glyph"></span>Home</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>History</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>Dictionary</span>
+            </nav>
+            <div class="mv-canvas">
+              <h3 class="mv-canvas__heading">Draft message</h3>
+              <p class="mv-canvas__sub">The focused field receives the transcript</p>
+              <div class="mv-review__entry mv-anchor" data-n="1" style="min-height: 92px;">
+                Send the updated invoice to the client by Friday, and copy me on the message.<span style="display:inline-block;width:1px;height:14px;background:var(--mv-ink);vertical-align:-2px;margin-left:2px;"></span>
+              </div>
+              <div style="margin-top: 18px; display:flex; align-items:center; gap: 12px;">
+                <span class="mv-pill mv-anchor mv-anchor--right" data-n="2"><span class="mv-pill__glyph"></span>Inserted</span>
+                <span class="caption caption--inline">The pill reports the result, then returns to idle.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="dictation-controls">
+      <div class="frame">
+        <div class="panel" style="display: grid; gap: 22px; justify-items: center;">
+          <div class="mv-pill__controls">
+            <span class="mv-pill__control mv-anchor" data-n="1">II</span>
+            <span class="mv-pill"><span class="mv-pill__glyph mv-pill__glyph--recording mv-pill__glyph--pulse"></span>Listening</span>
+            <span class="mv-pill__control mv-anchor mv-anchor--right" data-n="2">×</span>
+          </div>
+          <span class="mv-pill__note">Pause and resume sit on the left. Cancel sits on the right. Both are fully outside the pill body.</span>
+          <span class="mv-pill mv-anchor" data-n="3"><span class="mv-pill__glyph"></span>Cancelled</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="dictation-step-1-hold">
+      <div class="frame panel">
+        <p class="panel__title">Hold to dictate</p>
+        <p class="panel__sub">Platform defaults. A saved custom binding replaces the default for that action.</p>
+        <div class="row" style="gap: 34px; flex-wrap: wrap;">
+          <div class="stack" style="gap: 6px;">
+            <span class="caption caption--inline">macOS</span>
+            <div class="keys"><span class="key mv-anchor mv-anchor--below" data-n="1">Fn</span></div>
+          </div>
+          <div class="stack" style="gap: 6px;">
+            <span class="caption caption--inline">Windows</span>
+            <div class="keys"><span class="key">Win</span><span class="arrow">+</span><span class="key mv-anchor mv-anchor--below" data-n="2">Ctrl</span></div>
+          </div>
+          <div class="stack" style="gap: 6px;">
+            <span class="caption caption--inline">Linux</span>
+            <div class="keys"><span class="key">Ctrl</span><span class="arrow">+</span><span class="key">Alt</span><span class="arrow">+</span><span class="key mv-anchor mv-anchor--below" data-n="3">Space</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="dictation-step-2-speak">
+      <div class="frame panel">
+        <div class="row row--between">
+          <div class="stack" style="gap: 6px;">
+            <span class="panel__title">Capture is live</span>
+            <span class="panel__sub panel__sub--tight">The selected microphone streams while the shortcut stays held.</span>
+          </div>
+          <span class="mv-pill mv-anchor mv-anchor--right" data-n="1"><span class="mv-pill__glyph mv-pill__glyph--recording mv-pill__glyph--pulse"></span>Listening</span>
+        </div>
+        <div class="wave mv-anchor mv-anchor--below" data-n="2" style="margin-top: 18px;">
+          <span style="height: 8px"></span><span style="height: 18px"></span><span style="height: 12px"></span><span style="height: 24px"></span><span style="height: 16px"></span><span style="height: 22px"></span><span style="height: 10px"></span><span style="height: 20px"></span><span style="height: 14px"></span><span style="height: 26px"></span><span style="height: 12px"></span><span style="height: 18px"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="dictation-step-3-release">
+      <div class="frame panel">
+        <div class="row row--between">
+          <div class="stack" style="gap: 6px;">
+            <span class="panel__title">Release ends capture</span>
+            <span class="panel__sub panel__sub--tight">Audio goes to the active engine: the local sidecar or the selected API provider.</span>
+          </div>
+          <span class="mv-pill mv-anchor mv-anchor--right" data-n="1"><span class="mv-pill__glyph mv-pill__glyph--pulse"></span>Transcribing</span>
+        </div>
+        <div class="chips mv-anchor" data-n="2" style="margin-top: 16px;">
+          <span class="chip chip--on">Whisper sidecar</span>
+          <span class="chip">Parakeet</span>
+          <span class="chip">Canary</span>
+          <span class="chip">SenseVoice</span>
+          <span class="chip">API provider</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="dictation-step-4-process">
+      <div class="frame panel">
+        <p class="panel__title">Processing runs in a fixed order</p>
+        <p class="panel__sub">Each stage can change the text. The order is why a replacement applies before post-processing, not after.</p>
+        <div class="row" style="gap: 8px; flex-wrap: wrap;">
+          <span class="chip mv-anchor" data-n="1">Dictionary</span><span class="arrow">→</span>
+          <span class="chip">Silence filter</span><span class="arrow">→</span>
+          <span class="chip">Spoken commands</span><span class="arrow">→</span>
+          <span class="chip">Symbols</span><span class="arrow">→</span>
+          <span class="chip chip--on mv-anchor" data-n="2">Post-processing</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="dictation-step-5-deliver">
+      <div class="frame panel">
+        <div class="row row--between" style="margin-bottom: 14px;">
+          <div class="stack" style="gap: 6px;">
+            <span class="panel__title">Delivery targets the focused field</span>
+            <span class="panel__sub panel__sub--tight">Paste uses the clipboard. Simulated typing sends keystrokes.</span>
+          </div>
+          <span class="mv-pill mv-anchor mv-anchor--right" data-n="2"><span class="mv-pill__glyph"></span>Inserted</span>
+        </div>
+        <div class="mv-review__entry mv-anchor" data-n="1">
+          Send the updated invoice to the client by Friday, and copy me on the message.
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== transcript review ===================== -->
+
+    <section class="fig" data-figure="review-panel">
+      <div class="frame">
+        <div class="panel" style="display: grid; justify-items: center;">
+          <div class="mv-review" style="width: 620px;">
+            <div class="mv-review__entry mv-anchor" data-n="1">Send the updated invoice to the client by Friday, and copy me on the message.</div>
+            <div class="mv-review__actions">
+              <span class="mv-review__button mv-review__button--primary mv-anchor" data-n="2">Insert</span>
+              <span class="mv-review__button mv-anchor" data-n="3">Copy</span>
+              <span class="mv-review__button mv-anchor" data-n="4">Open</span>
+              <span class="mv-review__button mv-review__button--quiet mv-anchor" data-n="5">Cancel</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="review-queue">
+      <div class="frame panel">
+        <div class="stack">
+          <div class="row row--between">
+            <span class="panel__title mv-anchor" data-n="1">Open review</span>
+            <span class="timer">4:12</span>
+          </div>
+          <div class="mv-review__entry">Send the updated invoice to the client by Friday.</div>
+          <div class="row row--between mv-anchor" data-n="2" style="opacity: 0.75; border: 1px dashed var(--mv-hairline); border-radius: 12px; padding: 12px 14px;">
+            <span style="font-size: 13px;">Second transcript, waiting</span>
+            <span class="chip">Queued</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="review-expiry">
+      <div class="frame panel">
+        <div class="stack" style="gap: 14px;">
+          <div class="row row--between">
+            <span class="panel__title">Unanswered review</span>
+            <span class="timer mv-anchor mv-anchor--right" data-n="1">0:00</span>
+          </div>
+          <div class="toast mv-anchor" data-n="2">
+            <span style="width: 8px; height: 8px; border-radius: 999px; background: var(--mv-accent);"></span>
+            The review expired. Nothing was inserted. The transcript is in History.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="review-step-1-open">
+      <div class="frame panel">
+        <div class="row row--between">
+          <div class="stack" style="gap: 6px;">
+            <span class="panel__title">The panel opens after processing</span>
+            <span class="panel__sub panel__sub--tight">Before insertion, and only when Review before insert is on.</span>
+          </div>
+          <span class="mv-pill mv-anchor mv-anchor--right" data-n="1"><span class="mv-pill__glyph"></span>Review transcript</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="review-step-2-edit">
+      <div class="frame panel">
+        <p class="panel__title">Edit in place</p>
+        <p class="panel__sub">The entry holds the processed text and is multiline. Edit keeps the panel open and records the changed text.</p>
+        <div class="mv-review__entry mv-anchor" data-n="1">Send the updated invoice to the client by Friday, and copy me on the message.<span style="display:inline-block;width:1px;height:14px;background:var(--mv-ink);vertical-align:-2px;margin-left:2px;"></span></div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="review-step-3-decide">
+      <div class="frame panel">
+        <p class="panel__title">Four decisions, one insert</p>
+        <p class="panel__sub">Insert delivers. Copy and Open move the text elsewhere. Cancel inserts nothing.</p>
+        <div class="mv-review__actions">
+          <span class="mv-review__button mv-review__button--primary mv-anchor" data-n="1">Insert</span>
+          <span class="mv-review__button mv-anchor" data-n="2">Copy</span>
+          <span class="mv-review__button mv-anchor" data-n="3">Open</span>
+          <span class="mv-review__button mv-review__button--quiet mv-anchor" data-n="4">Cancel</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="review-step-4-cancel">
+      <div class="frame panel">
+        <div class="row row--between">
+          <div class="stack" style="gap: 6px;">
+            <span class="panel__title">Cancel wins over a pending Open save</span>
+            <span class="panel__sub panel__sub--tight">The save is aborted and the review settles as cancelled, so Chats cannot open behind you.</span>
+          </div>
+          <span class="chip chip--on mv-anchor mv-anchor--right" data-n="2">Open saving…</span>
+        </div>
+        <div class="mv-review__actions" style="margin-top: 16px;">
+          <span class="mv-review__button mv-review__button--quiet mv-anchor" data-n="1" style="border-color: var(--mv-accent);">Cancel</span>
+          <span class="chip">Aborts the save</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== home activity ===================== -->
+
+    <section class="fig" data-figure="home-heatmap">
+      <div class="frame">
+        <div class="mv-window">
+          <div class="mv-window__bar">
+            <span class="mv-window__dot mv-window__dot--live"></span>
+            <span class="mv-window__dot"></span>
+            <span class="mv-window__dot"></span>
+            <span class="mv-window__title">mausVoice</span>
+          </div>
+          <div class="mv-window__body">
+            <nav class="mv-rail" aria-hidden="true">
+              <span class="mv-rail__item mv-rail__item--active"><span class="mv-rail__glyph"></span>Home</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>History</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>Dictionary</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>Styles</span>
+            </nav>
+            <div class="mv-canvas">
+              <h3 class="mv-canvas__heading">Home</h3>
+              <p class="mv-canvas__sub">Your dictation activity, by local date</p>
+              <div class="mv-row--metrics mv-anchor" data-n="5" style="margin-bottom: 12px;">
+                <div class="mv-card"><div class="mv-card__label">Current streak</div><div class="mv-card__value">6 days</div></div>
+                <div class="mv-card"><div class="mv-card__label">Words this month</div><div class="mv-card__value">4,182</div></div>
+              </div>
+              <div id="heatmap-host"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="home-states">
+      <div class="frame panel">
+        <div class="stack" style="gap: 12px;">
+          <div class="row row--between mv-anchor" data-n="1" style="border: 1px solid var(--mv-hairline); border-radius: 12px; padding: 12px 14px;">
+            <span class="caption caption--inline">Loading</span>
+            <span class="meter"><span></span></span>
+            <span class="caption caption--inline">Loading daily activity</span>
+          </div>
+          <div class="row row--between mv-anchor" data-n="2" style="border: 1px solid var(--mv-hairline); border-radius: 12px; padding: 12px 14px;">
+            <span class="caption caption--inline">Empty</span>
+            <span style="font-size: 12px; color: var(--mv-ink-soft);">Your dictation activity will appear here.</span>
+          </div>
+          <div class="row row--between mv-anchor" data-n="3" style="border: 1px solid var(--mv-hairline); border-radius: 12px; padding: 12px 14px;">
+            <span class="caption caption--inline">Error</span>
+            <span style="font-size: 12px; color: var(--mv-ink-soft);">Daily activity could not be loaded.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="home-step-1-week">
+      <div class="frame panel">
+        <p class="panel__title">Monday first, one column per week</p>
+        <p class="panel__sub">Seven rows. Every other weekday is labelled, so the rail stays quiet at ten-pixel cells.</p>
+        <div class="row" style="gap: 10px; align-items: flex-start;">
+          <div class="mv-heat__days mv-anchor mv-anchor--below" data-n="1"><span>M</span><span></span><span>W</span><span></span><span>F</span><span></span><span>S</span></div>
+          <div id="week-host" class="mv-anchor" data-n="2"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="home-step-2-read">
+      <div class="frame panel">
+        <p class="panel__title">Read one day</p>
+        <p class="panel__sub">Hover scales the cell to 1.35 and outlines it. The tooltip states the date and the word count.</p>
+        <div class="row" style="gap: 18px; align-items: center;">
+          <span class="mv-heat__cell mv-heat__cell--3 mv-anchor" data-n="1" style="width: 14px; height: 14px; transform: scale(1.35); outline: 1px solid var(--mv-ink);"></span>
+          <span class="tooltip mv-anchor" data-n="2">Jan 14, 2026: 312 words</span>
+          <span class="caption caption--inline">Today carries a standing outline. Future dates carry none and cannot be hovered.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="home-step-3-summary">
+      <div class="frame panel">
+        <div class="row row--between">
+          <div class="stack" style="gap: 4px;">
+            <span class="panel__title">Summary and legend</span>
+            <span class="panel__sub panel__sub--tight">Active days and total words exclude future dates.</span>
+          </div>
+          <div class="mv-legend mv-anchor mv-anchor--below" data-n="1" style="margin: 0;">
+            <span>Less</span>
+            <span class="mv-legend__swatch" style="background: var(--mv-heat-0)"></span>
+            <span class="mv-legend__swatch" style="background: var(--mv-heat-1)"></span>
+            <span class="mv-legend__swatch" style="background: var(--mv-heat-4)"></span>
+            <span>More</span>
+          </div>
+        </div>
+        <div class="row mv-anchor" data-n="2" style="gap: 10px; margin-top: 16px;">
+          <span class="chip">148 active days</span>
+          <span class="chip">62,410 words</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== assistant ===================== -->
+
+    <section class="fig" data-figure="assistant-chats">
+      <div class="frame">
+        <div class="mv-window">
+          <div class="mv-window__bar">
+            <span class="mv-window__dot mv-window__dot--live"></span>
+            <span class="mv-window__dot"></span>
+            <span class="mv-window__dot"></span>
+            <span class="mv-window__title">mausVoice</span>
+          </div>
+          <div class="mv-window__body">
+            <nav class="mv-rail" aria-hidden="true">
+              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>Home</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>History</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>Dictionary</span>
+              <span class="mv-rail__item mv-rail__item--active mv-anchor" data-n="1"><span class="mv-rail__glyph"></span>Chats</span>
+            </nav>
+            <div class="mv-canvas">
+              <h3 class="mv-canvas__heading">Chats</h3>
+              <p class="mv-canvas__sub">Assistant conversations</p>
+              <div class="mv-card mv-anchor" data-n="2" style="margin-bottom: 10px;">
+                <div class="mv-card__label">Today</div>
+                <div style="font-size: 13px; margin-top: 4px;">Summarize the page I am looking at and draft a reply.</div>
+                <div style="font-size: 12px; color: var(--mv-ink-soft); margin-top: 6px;">Pasted a 4-line reply into the focused field after approval.</div>
+              </div>
+              <div class="mv-card" style="border-style: dashed;">
+                <div class="mv-card__label">Pending</div>
+                <div style="font-size: 13px; margin-top: 4px;">Reviewed text saved from the pill. Copy it into the app you want.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="assistant-permission">
+      <div class="frame panel" style="display: grid; justify-items: center;">
+        <div class="mv-review" style="width: 560px;">
+          <div class="mv-card__label mv-anchor" data-n="1">Tool request</div>
+          <div style="font-size: 13px; margin-top: 6px;">Paste the drafted reply into the focused field.</div>
+          <div class="mv-review__actions">
+            <span class="mv-review__button mv-review__button--quiet mv-anchor" data-n="2">Deny</span>
+            <span class="mv-review__button mv-review__button--primary">Allow</span>
+            <span class="mv-review__button">Always allow</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="assistant-open">
+      <div class="frame panel">
+        <div class="stack" style="gap: 14px;">
+          <div class="row row--between">
+            <span class="panel__title">Open from an agent's Paste</span>
+            <span class="mv-pill mv-anchor mv-anchor--right" data-n="1"><span class="mv-pill__glyph"></span>Review transcript</span>
+          </div>
+          <div class="mv-card mv-anchor" data-n="2" style="border-style: dashed;">
+            <div class="mv-card__label">Saved to Chats</div>
+            <div style="font-size: 13px; margin-top: 4px;">Reviewed text, waiting for you to copy it into the target app.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="assistant-step-1-settings">
+      <div class="frame panel">
+        <p class="panel__title">Settings → AI and processing → Assistant mode</p>
+        <p class="panel__sub">The dialog carries a Beta chip and three rows.</p>
+        <div class="stack">
+          <div class="setting mv-anchor" data-n="1"><div><div class="setting__name">Assistant hotkey</div><div class="setting__desc">Press this key combination to start assistant mode.</div></div><span class="key">⌘</span></div>
+          <div class="setting mv-anchor" data-n="2"><div><div class="setting__name">Assistant mode</div><div class="setting__desc">Off by default. This capture shows it enabled.</div></div><span class="toggle toggle--on"></span></div>
+          <div class="setting mv-anchor" data-n="3"><div><div class="setting__name">Power mode</div><div class="setting__desc">Adds the terminal tool after a warning and a restart.</div></div><span class="toggle"></span></div>
+        </div>
+      </div>
+    </section>
+
+
+    <section class="fig" data-figure="assistant-step-2-provider">
+      <div class="frame panel">
+        <p class="panel__title">Give the assistant a generative credential</p>
+        <p class="panel__sub">Off leaves the assistant without an LLM backend. The assistant provider is separate from transcription and post-processing.</p>
+        <div class="stack">
+          <div class="setting mv-anchor" data-n="1"><div><div class="setting__name">Assistant provider</div><div class="setting__desc">Select the API provider the assistant sends commands to.</div></div><span class="chips"><span class="chip">Off</span><span class="chip chip--on">API</span></span></div>
+          <div class="setting mv-anchor" data-n="2"><div><div class="setting__name">Credential</div><div class="setting__desc">Only providers that support generative text appear here.</div></div><span class="chip">Groq · llama-3.3-70b</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="assistant-step-2-hotkey">
+      <div class="frame panel">
+        <div class="row row--between">
+          <div class="stack" style="gap: 6px;">
+            <span class="panel__title">Hold the assistant hotkey</span>
+            <span class="panel__sub panel__sub--tight">The command is transcribed with the active transcription settings, then sent as a chat message.</span>
+          </div>
+          <span class="mv-pill mv-anchor mv-anchor--right" data-n="1"><span class="mv-pill__glyph mv-pill__glyph--recording mv-pill__glyph--pulse"></span>Listening</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="assistant-step-3-tools">
+      <div class="frame panel">
+        <p class="panel__title">Tools stay visible</p>
+        <p class="panel__sub">Each permissioned step names the tool and the reason. A conversation can take several steps.</p>
+        <div class="stack">
+          <div class="setting mv-anchor" data-n="1"><div><div class="setting__name">Read the focused field</div><div class="setting__desc">Allowed once</div></div><span class="chip">Allow</span></div>
+          <div class="setting mv-anchor" data-n="2"><div><div class="setting__name">Paste the drafted reply</div><div class="setting__desc">Waiting for your decision</div></div><span class="chip chip--on">Pending</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="assistant-step-4-open">
+      <div class="frame panel">
+        <div class="stack" style="gap: 12px;">
+          <div class="row row--between">
+            <span class="panel__title">Open keeps the text</span>
+            <span class="chip chip--on mv-anchor mv-anchor--right" data-n="1">Saved to Chats</span>
+          </div>
+          <div class="mv-review__entry mv-anchor" data-n="2">Reviewed text, waiting for you to copy it into the target app.</div>
+        </div>
+      </div>
+    </section>
+
+
+    <section class="fig" data-figure="assistant-step-5-copy">
+      <div class="frame panel">
+        <div class="stack" style="gap: 12px;">
+          <div class="row row--between">
+            <span class="panel__title">Copy from the pending card</span>
+            <span class="chip">Pending</span>
+          </div>
+          <div class="mv-review__entry mv-anchor" data-n="1">Reviewed text, waiting for you to copy it into the target app.</div>
+          <div class="row mv-anchor" data-n="2" style="gap: 10px;">
+            <span class="mv-review__button mv-review__button--primary">Copy text</span>
+            <span class="caption caption--inline">Nothing is retried in the background after you copy.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const theme = params.get("theme") === "dark" ? "dark" : "light";
+      document.documentElement.dataset.theme = theme;
+
+      const buildGrid = (weeks) => {
+        const grid = document.createElement("div");
+        grid.className = "mv-heat__grid";
+        for (let index = 0; index < weeks * 7; index += 1) {
+          const sample = (index * 37 + 11) % 13;
+          const intensity =
+            sample < 4 ? 0 : sample < 6 ? 1 : sample < 8 ? 2 : sample < 10 ? 3 : 4;
+          const cell = document.createElement("span");
+          cell.className = "mv-heat__cell";
+          if (intensity > 0) cell.classList.add(`mv-heat__cell--${intensity}`);
+          if (index >= weeks * 7 - 4) cell.classList.add("mv-heat__cell--future");
+          if (index === weeks * 7 - 12) cell.classList.add("mv-heat__cell--focus");
+          grid.appendChild(cell);
+        }
+        return grid;
+      };
+
+      const heatHost = document.getElementById("heatmap-host");
+      if (heatHost) {
+        const wrap = document.createElement("div");
+        wrap.className = "mv-heat";
+        const days = document.createElement("div");
+        days.className = "mv-heat__days mv-anchor mv-anchor--below";
+        days.dataset.n = "1";
+        days.innerHTML = ["M", "", "W", "", "F", "", "S"]
+          .map((label) => `<span>${label}</span>`)
+          .join("");
+        wrap.appendChild(days);
+        const grid = buildGrid(26);
+        grid.classList.add("mv-anchor");
+        grid.dataset.n = "2";
+        wrap.appendChild(grid);
+        heatHost.appendChild(wrap);
+
+        const legend = document.createElement("div");
+        legend.className = "mv-legend mv-anchor mv-anchor--below";
+        legend.dataset.n = "3";
+        legend.innerHTML =
+          '<span>Less</span><span class="mv-legend__swatch" style="background: var(--mv-heat-0)"></span><span class="mv-legend__swatch" style="background: var(--mv-heat-1)"></span><span class="mv-legend__swatch" style="background: var(--mv-heat-4)"></span><span>More</span>';
+        heatHost.appendChild(legend);
+
+        const summary = document.createElement("div");
+        summary.className = "mv-anchor";
+        summary.dataset.n = "4";
+        summary.style.cssText = "display:flex;gap:10px;margin-top:10px;";
+        summary.innerHTML =
+          '<span class="chip">148 active days</span><span class="chip">62,410 words</span>';
+        heatHost.appendChild(summary);
+      }
+
+      const weekHost = document.getElementById("week-host");
+      if (weekHost) weekHost.appendChild(buildGrid(9));
+    </script>
+  </body>
+</html>

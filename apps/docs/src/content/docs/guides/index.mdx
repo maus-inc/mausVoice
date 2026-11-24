@@ -1,0 +1,80 @@
+---
+title: "Visual guides"
+description: "Annotated, step-by-step walkthroughs of the surfaces that changed most in 0.1.6."
+sidebar:
+  order: 0
+---
+
+import Figure from "../../../components/guides/Figure.astro";
+import Steps from "../../../components/guides/Steps.astro";
+import Step from "../../../components/guides/Step.astro";
+import Callout from "../../../components/guides/Callout.astro";
+
+The reference pages state what a control does. These guides show you where it sits, what it looks like at each stage, and what happens next. Every figure is a capture of the shipped interface, in the theme you are reading, with numbered markers keyed to the list beneath it.
+
+## How to read a figure
+
+<Figure
+  id="dictation-pill-states"
+  alt="The native pill in its recording, transcribing, and done states"
+  title="One figure, three states"
+  caption="Markers are keyed to the list under the figure. The list is the accessible copy of everything the markers point at."
+  annotations={[
+    { n: 1, title: "Recording", detail: "Capture is live. The status dot uses the danger tint and pulses until you release the shortcut." },
+    { n: 2, title: "Transcribing", detail: "The audio is being converted, locally or through the selected provider." },
+    { n: 3, title: "Done", detail: "The text has been delivered. The pill reports the result, then returns to idle." },
+  ]}
+/>
+
+Three conventions apply to every guide in this section.
+
+- A marker sits on the element it describes, at that element's top-left corner. A marker with a line under it marks a region rather than a control.
+- The figure caption states the precondition. A review panel, for example, only appears when **Review before insert** is on.
+- Light and dark are captured separately. If a colour or hairline looks wrong in one theme, the other theme shows what the value was meant to be.
+
+## The guides
+
+<Steps>
+  <Step
+    title="The dictation lifecycle"
+    image="dictation-step-1-hold"
+    alt="The platform default hold-to-dictate shortcuts"
+  >
+    From holding the shortcut to text appearing in the focused field, with the pill state at each stage, the two side controls, and the cancel path. [Open the dictation guide](/mausVoice/docs/guides/dictation/).
+  </Step>
+  <Step
+    title="Review before insert"
+    image="review-step-3-decide"
+    alt="The Insert, Copy, Open, and Cancel decisions in the review panel"
+  >
+    The pill's editable panel, the five decisions, the five-minute expiry, and the queue that keeps a second transcript from overwriting the first. [Open the review guide](/mausVoice/docs/guides/transcript-review/).
+  </Step>
+  <Step
+    title="Home activity"
+    image="home-step-2-read"
+    alt="A heatmap cell with its date and word-count tooltip"
+  >
+    The 53-week heatmap cell by cell, the three visual levels in the legend, the tooltip, the empty and future states, and the summary a screen reader gets. [Open the Home guide](/mausVoice/docs/guides/home-activity/).
+  </Step>
+  <Step
+    title="Assistant mode and Chats"
+    image="assistant-step-1-settings"
+    alt="The Assistant hotkey, Assistant mode, and Power mode rows"
+  >
+    The beta assistant, its permission prompts, power mode, and what an Open decision does to an agent's Paste. [Open the assistant guide](/mausVoice/docs/guides/assistant-and-chats/).
+  </Step>
+</Steps>
+
+<Callout title="Why captured figures and not one screenshot">
+  A single screenshot freezes one window size, one theme, and one version. These figures are captured per theme from the same tokens the app draws with, they stay legible at any width, and the capture script lives beside them, so a surface change is a one-command refresh rather than a scavenger hunt for a stale image.
+</Callout>
+
+## Regenerating the figures
+
+The figures are generated from `apps/docs/scripts/figure-stage.html` by `apps/docs/scripts/capture-guides.mjs`. The script drives headless Chromium over the DevTools protocol and writes both themes into `apps/docs/public/guides/`.
+
+```bash
+pnpm --filter docs figures
+```
+
+Run it after any change to a surface the guides show. The stage file and the captures are committed together, so a review can diff what changed.

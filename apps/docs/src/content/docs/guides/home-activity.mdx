@@ -1,0 +1,99 @@
+---
+title: "Home activity"
+description: "Read the daily-word heatmap cell by cell, including the legend, the tooltip, the empty and future states, and the summary a screen reader gets."
+sidebar:
+  order: 3
+---
+
+import Figure from "../../../components/guides/Figure.astro";
+import Steps from "../../../components/guides/Steps.astro";
+import Step from "../../../components/guides/Step.astro";
+import Callout from "../../../components/guides/Callout.astro";
+
+Home is the default dashboard. It shows the current streak, words this month, lifetime words, recent dictations, and a daily activity heatmap for the past 53 calendar weeks. Dictation speed appears when recent saved recordings include audio-duration data.
+
+The heatmap is the part people ask about, because its colour scale is compressed on purpose and its range is longer than it looks. This page reads it left to right.
+
+## The heatmap
+
+<Figure
+  id="home-heatmap"
+  alt="The Home dashboard with the daily-word heatmap, metrics, legend, and summary"
+  title="Anatomy of the daily-word heatmap"
+  caption="The capture shows a shortened range for legibility. The shipped grid runs 53 weeks, Monday first."
+  annotations={[
+    { n: 1, title: "Weekday rail", detail: "Seven rows, Monday at the top. Only every other label is drawn, so the rail stays quiet at ten-pixel cells." },
+    { n: 2, title: "One cell per local date", detail: "The colour is the word count for that date. Dates group by the device's local calendar, not UTC, so a dictation at 23:50 belongs to the day you experienced." },
+    { n: 3, title: "Latest week", detail: "The grid scrolls horizontally and opens on the most recent week. Older weeks are one scroll to the left, and resizing the window keeps the latest week in view." },
+    { n: 4, title: "Summary", detail: "Active days and total words for the visible range. Future dates are excluded from both." },
+    { n: 5, title: "Metric stack", detail: "Streak, words this month, and lifetime words sit beside the chart on a wide window and above it on a narrow one." },
+  ]}
+/>
+
+The grid is a compact year view, not a calendar. One column is one week, one row is one weekday, and the last column is the current week. That is why a date can be found by counting columns from the right rather than by looking for a month label, because there are no month labels.
+
+## Read a single day
+
+<Steps>
+  <Step
+    title="Start from the weekday rail"
+    image="home-step-1-week"
+    alt="The weekday rail beside the week columns"
+  >
+    Monday is the top row. The rail labels Monday, Wednesday, Friday, and Saturday, and leaves the rows between them blank. The blank rows are still real days. A cell is never missing, it is only unlabelled, so a gap in the colour pattern means a day with no words, not a day that did not exist.
+  </Step>
+  <Step
+    title="Hover a dated cell"
+    image="home-step-2-read"
+    alt="A heatmap cell scaled up with its date and word-count tooltip"
+  >
+    Hovering a dated cell scales it to 1.35 and outlines it for 150ms, and the tooltip states the date and the count in one line, for example "Jan 14, 2026: 312 words". Today's cell carries a standing outline, so the current day is findable without hovering. Touch has no hover state, and reduced motion removes the scale. The cells are informational, not controls, so they never take focus and never open a panel.
+  </Step>
+  <Step
+    title="Read the legend and the summary together"
+    image="home-step-3-summary"
+    alt="The Less to More legend beside the active-days and total-words summary"
+  >
+    The legend runs Less to More with three swatches, and the grid is drawn in three visual levels: no words, 1 to 499 words, and 500 or more words. Two days with very different counts can therefore share a colour. The summary is the precise number: active days and total words for the visible range, with future dates excluded. Read the legend for shape and the summary for totals.
+  </Step>
+</Steps>
+
+## The three states the grid can be in
+
+<Figure
+  id="home-states"
+  alt="The loading, empty, and error states of the activity heatmap"
+  title="Loading, empty, and error"
+  caption="The rest of Home keeps working in every one of these states."
+  annotations={[
+    { n: 1, title: "Loading", detail: "A progress bar labelled Loading daily activity. The daily totals are still being read." },
+    { n: 2, title: "Empty", detail: "Your dictation activity will appear here. No saved activity in the range, which is what a fresh install shows." },
+    { n: 3, title: "Error", detail: "Daily activity could not be loaded. The local read failed, and retrying means reopening Home." },
+  ]}
+/>
+
+A date in the future is drawn as a transparent cell with no tooltip and no pointer events. It cannot be inspected, and it never looks busier than it is.
+
+## Accessibility
+
+The chart does not rely on colour alone. The summary states active days and total words as text, the legend states the direction of the scale, and the same data is exposed as a list of daily word counts for a screen reader. A cell's description has the same shape as its tooltip, so a sighted reader and a screen-reader user get the same sentence.
+
+## Layout
+
+On a wide window the heatmap sits between two vertical metric stacks. On a narrower window the metrics move into two columns above the heatmap. The chart is part of the Home flow, not a separate side panel, and the shell does not add a duplicate hotkey card beside it.
+
+The dashboard uses the available routed canvas without adding a shell-side panel. That is why resizing the window moves the metrics and leaves the chart in place rather than reflowing the whole page.
+
+## Where the counts come from
+
+Words are counted as the transcription is saved. Existing history can be backfilled once, and the backfill only walks records that existed before the feature, so a new recording is never counted twice. A dictation in Incognito mode skips the saved transcription row. When **Include incognito in stats** is on, the word count is still recorded on a best-effort basis, without saving the text. With the option off, the heatmap does not move.
+
+<Callout title="What is stored">
+  The dashboard keeps one row per local date with a word count. It never copies transcript text into the activity records. Deleting a transcription does not rewrite past totals, matching how the existing profile counters behave.
+</Callout>
+
+## Related pages
+
+- [App tour](/mausVoice/docs/using-mausvoice/app-tour/) for the rest of the Home surface.
+- [History](/mausVoice/docs/using-mausvoice/history/) for the rows the counts come from.
+- [Incognito mode](/mausVoice/docs/configuration/incognito-mode/) for what is skipped and what can still be counted.
