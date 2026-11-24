@@ -310,60 +310,60 @@ export class AgentLoop {
    * in one message (the V8 delegation chain holds roughly three thousand), and
    * the whole batch is bounded by the response that produced it.
    */
+  private async *runSingleToolCall(
+    tc: LlmToolCall,
+    history: LlmMessage[],
+  ): AsyncGenerator<AgentEvent> {
+    const params = parseJsonObject(tc.arguments);
+
+    yield {
+      type: "tool-call-start",
+      toolCallId: tc.id,
+      toolName: tc.name,
+      args: params ?? {},
+    };
+
+    // Once tool-call-start is emitted, always pair it with a tool-call-result
+    // (and history entry) even if abort wins mid-flight. Skipping the result
+    // leaves the assistant tool-call without a matching tool message.
+    if (!params) {
+      yield this.toolResult(
+        tc,
+        "Tool arguments must be a JSON object",
+        history,
+        true,
+      );
+      return;
+    }
+
+    const { reason, ...toolParams } = params;
+    const tool = this.config.tools.find((t) => t.name === tc.name);
+    if (!tool) {
+      yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
+      return;
+    }
+
+    const output = await this.executeTool(tool, tc.id, toolParams, reason);
+    const resultStr = output.success
+      ? stringifyToolResult(output.result)
+      : (output.failureReason ?? "Tool execution failed");
+    yield this.toolResult(tc, resultStr, history, !output.success);
+  }
+
   private async *processToolCallsFrom(
     history: LlmMessage[],
     toolCalls: LlmToolCall[],
     index: number,
   ): AsyncGenerator<AgentEvent> {
     const tc = toolCalls[index];
-    if (!tc) {
-      return;
-    }
+    if (!tc) return;
 
     if (this.aborted) {
       // Once an assistant message emits tool calls, every tool call must be paired
       // with a tool result message in history to keep provider conversational context valid.
       yield this.toolResult(tc, "Tool execution aborted", history, true);
     } else {
-      const params = parseJsonObject(tc.arguments);
-
-      yield {
-        type: "tool-call-start",
-        toolCallId: tc.id,
-        toolName: tc.name,
-        args: params ?? {},
-      };
-
-      // Once tool-call-start is emitted, always pair it with a tool-call-result
-      // (and history entry) even if abort wins mid-flight. Skipping the result
-      // leaves the assistant tool-call without a matching tool message.
-      if (!params) {
-        yield this.toolResult(
-          tc,
-          "Tool arguments must be a JSON object",
-          history,
-          true,
-        );
-      } else {
-        const { reason, ...toolParams } = params;
-        const tool = this.config.tools.find((t) => t.name === tc.name);
-
-        if (!tool) {
-          yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
-        } else {
-          const output = await this.executeTool(
-            tool,
-            tc.id,
-            toolParams,
-            reason,
-          );
-          const resultStr = output.success
-            ? stringifyToolResult(output.result)
-            : (output.failureReason ?? "Tool execution failed");
-
-          yield this.toolResult(tc, resultStr, history, !output.success);
-        }
-      }
+      yield* this.runSingleToolCall(tc, history);
     }
 
     yield* this.processToolCallsFrom(history, toolCalls, index + 1);

@@ -6,7 +6,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getHotkeyRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
-import { registerHotkeys } from "../../utils/app.utils";
+import { upsertHotkey } from "../../utils/app.utils";
 import { createId } from "../../utils/id.utils";
 import {
   enqueueHotkeyWrite,
@@ -38,6 +38,205 @@ const isSubsetOrEqualCombo = (a: string[], b: string[]) => {
   const bSet = new Set(b.map((k) => k.toLowerCase()));
   return a.every((k) => bSet.has(k.toLowerCase()));
 };
+
+const HotkeyControlsFooter = ({
+  hasConflict,
+  hasEnabledToggle,
+  hotkeysCount,
+  defaultCombos,
+  buttonLabel,
+  buttonSize,
+  onAdd,
+}: {
+  hasConflict: boolean;
+  hasEnabledToggle: boolean;
+  hotkeysCount: number;
+  defaultCombos: string[][];
+  buttonLabel: ReactNode;
+  buttonSize: "small" | "medium";
+  onAdd: () => void;
+}) => {
+  const canAdd =
+    !hasEnabledToggle && (hotkeysCount > 0 || defaultCombos.length > 0);
+  return (
+    <>
+      {hasConflict && (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "warning.main",
+            maxWidth: 220,
+            textAlign: "right",
+          }}
+        >
+          <FormattedMessage defaultMessage="This shortcut overlaps with another. One may trigger both actions." />
+        </Typography>
+      )}
+      {canAdd && (
+        <Button
+          variant="text"
+          startIcon={<Add />}
+          size={buttonSize}
+          sx={{ py: 0.5 }}
+          onClick={onAdd}
+        >
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 500,
+            }}
+          >
+            {buttonLabel}
+          </Typography>
+        </Button>
+      )}
+    </>
+  );
+};
+
+const PrimaryHotkeyActions = ({
+  hasEnabledToggle,
+  primaryHotkey,
+  defaultCombos,
+  isPrimaryUsingDefault,
+  intl,
+  onDisable,
+  onDeleteHotkey,
+  onRevertPrimary,
+}: {
+  hasEnabledToggle: boolean;
+  primaryHotkey: Hotkey | undefined;
+  defaultCombos: string[][];
+  isPrimaryUsingDefault: boolean;
+  intl: ReturnType<typeof useIntl>;
+  onDisable: () => void;
+  onDeleteHotkey: (id: string) => void;
+  onRevertPrimary: () => void;
+}) => {
+  if (hasEnabledToggle) {
+    return (
+      <IconButton
+        size="small"
+        onClick={onDisable}
+        aria-label={intl.formatMessage({ defaultMessage: "Disable hotkey" })}
+      >
+        <CancelOutlined color="disabled" />
+      </IconButton>
+    );
+  }
+  const canDelete = Boolean(primaryHotkey) && defaultCombos.length === 0;
+  const canRevert =
+    Boolean(primaryHotkey) &&
+    defaultCombos.length > 0 &&
+    !isPrimaryUsingDefault;
+  return (
+    <>
+      {canDelete && primaryHotkey && (
+        <IconButton
+          size="small"
+          aria-label={intl.formatMessage({ defaultMessage: "Delete hotkey" })}
+          onClick={() => onDeleteHotkey(primaryHotkey.id)}
+        >
+          <Close color="disabled" />
+        </IconButton>
+      )}
+      {canRevert && (
+        <IconButton
+          size="small"
+          aria-label={intl.formatMessage({
+            defaultMessage: "Revert to default hotkey",
+          })}
+          onClick={onRevertPrimary}
+        >
+          <RestartAlt color="disabled" />
+        </IconButton>
+      )}
+    </>
+  );
+};
+
+const AdditionalHotkeyList = ({
+  hasEnabledToggle,
+  additionalHotkeys,
+  titleId,
+  labelPrefix,
+  intl,
+  onUpdateHotkey,
+  onDeleteHotkey,
+}: {
+  hasEnabledToggle: boolean;
+  additionalHotkeys: Hotkey[];
+  titleId: string;
+  labelPrefix: string;
+  intl: ReturnType<typeof useIntl>;
+  onUpdateHotkey: (id: string, keys: string[]) => void;
+  onDeleteHotkey: (id: string) => void;
+}) => {
+  if (hasEnabledToggle) return null;
+  return (
+    <>
+      {additionalHotkeys.map((hotkey, index) => (
+        <AdditionalHotkeyRow
+          key={hotkey.id}
+          hotkey={hotkey}
+          index={index}
+          titleId={titleId}
+          labelPrefix={labelPrefix}
+          intl={intl}
+          onUpdateHotkey={onUpdateHotkey}
+          onDeleteHotkey={onDeleteHotkey}
+        />
+      ))}
+    </>
+  );
+};
+
+const AdditionalHotkeyRow = ({
+  hotkey,
+  index,
+  titleId,
+  labelPrefix,
+  intl,
+  onUpdateHotkey,
+  onDeleteHotkey,
+}: {
+  hotkey: Hotkey;
+  index: number;
+  titleId: string;
+  labelPrefix: string;
+  intl: ReturnType<typeof useIntl>;
+  onUpdateHotkey: (id: string, keys: string[]) => void;
+  onDeleteHotkey: (id: string) => void;
+}) => (
+  <Stack
+    direction="row"
+    spacing={1}
+    sx={{
+      alignItems: "center",
+    }}
+  >
+    <span id={`${labelPrefix}-${index}`} hidden>
+      <FormattedMessage
+        defaultMessage="Additional shortcut {number}"
+        values={{ number: index + 1 }}
+      />
+    </span>
+    <HotKey
+      ariaLabelledBy={`${titleId} ${labelPrefix}-${index}`}
+      value={hotkey.keys}
+      onChange={(keys) => onUpdateHotkey(hotkey.id, keys)}
+    />
+    <IconButton
+      size="small"
+      aria-label={intl.formatMessage({
+        defaultMessage: "Delete hotkey",
+      })}
+      onClick={() => onDeleteHotkey(hotkey.id)}
+    >
+      <Close color="disabled" />
+    </IconButton>
+  </Stack>
+);
 
 const HotkeyControls = ({
   titleId,
@@ -100,107 +299,35 @@ const HotkeyControls = ({
           value={primaryValue}
           onChange={onChangePrimary}
         />
-        {hasEnabledToggle ? (
-          <IconButton
-            size="small"
-            onClick={onDisable}
-            aria-label={intl.formatMessage({
-              defaultMessage: "Disable hotkey",
-            })}
-          >
-            <CancelOutlined color="disabled" />
-          </IconButton>
-        ) : (
-          <>
-            {primaryHotkey && defaultCombos.length === 0 && (
-              <IconButton
-                size="small"
-                aria-label={intl.formatMessage({
-                  defaultMessage: "Delete hotkey",
-                })}
-                onClick={() => onDeleteHotkey(primaryHotkey.id)}
-              >
-                <Close color="disabled" />
-              </IconButton>
-            )}
-            {primaryHotkey &&
-              defaultCombos.length > 0 &&
-              !isPrimaryUsingDefault && (
-                <IconButton
-                  size="small"
-                  aria-label={intl.formatMessage({
-                    defaultMessage: "Revert to default hotkey",
-                  })}
-                  onClick={onRevertPrimary}
-                >
-                  <RestartAlt color="disabled" />
-                </IconButton>
-              )}
-          </>
-        )}
+        <PrimaryHotkeyActions
+          hasEnabledToggle={hasEnabledToggle}
+          primaryHotkey={primaryHotkey}
+          defaultCombos={defaultCombos}
+          isPrimaryUsingDefault={isPrimaryUsingDefault}
+          intl={intl}
+          onDisable={onDisable}
+          onDeleteHotkey={onDeleteHotkey}
+          onRevertPrimary={onRevertPrimary}
+        />
       </Stack>
-      {!hasEnabledToggle &&
-        additionalHotkeys.map((hotkey, index) => (
-          <Stack
-            key={hotkey.id}
-            direction="row"
-            spacing={1}
-            sx={{
-              alignItems: "center",
-            }}
-          >
-            <span id={`${labelPrefix}-${index}`} hidden>
-              <FormattedMessage
-                defaultMessage="Additional shortcut {number}"
-                values={{ number: index + 1 }}
-              />
-            </span>
-            <HotKey
-              ariaLabelledBy={`${titleId} ${labelPrefix}-${index}`}
-              value={hotkey.keys}
-              onChange={(keys) => onUpdateHotkey(hotkey.id, keys)}
-            />
-            <IconButton
-              size="small"
-              aria-label={intl.formatMessage({
-                defaultMessage: "Delete hotkey",
-              })}
-              onClick={() => onDeleteHotkey(hotkey.id)}
-            >
-              <Close color="disabled" />
-            </IconButton>
-          </Stack>
-        ))}
-      {hasConflict && (
-        <Typography
-          variant="caption"
-          sx={{
-            color: "warning.main",
-            maxWidth: 220,
-            textAlign: "right",
-          }}
-        >
-          <FormattedMessage defaultMessage="This shortcut overlaps with another. One may trigger both actions." />
-        </Typography>
-      )}
-      {!hasEnabledToggle && (hotkeysCount > 0 || defaultCombos.length > 0) && (
-        <Button
-          variant="text"
-          startIcon={<Add />}
-          size={buttonSize}
-          sx={{ py: 0.5 }}
-          onClick={onAdd}
-        >
-          <Typography
-            variant="body2"
-            sx={{
-              fontWeight: 500,
-            }}
-          >
-            {buttonLabel}
-          </Typography>
-        </Button>
-      )}
+      <AdditionalHotkeyList
+        hasEnabledToggle={hasEnabledToggle}
+        additionalHotkeys={additionalHotkeys}
+        titleId={titleId}
+        labelPrefix={labelPrefix}
+        intl={intl}
+        onUpdateHotkey={onUpdateHotkey}
+        onDeleteHotkey={onDeleteHotkey}
+      />
+      <HotkeyControlsFooter
+        hasConflict={hasConflict}
+        hasEnabledToggle={hasEnabledToggle}
+        hotkeysCount={hotkeysCount}
+        defaultCombos={defaultCombos}
+        buttonLabel={buttonLabel}
+        buttonSize={buttonSize}
+        onAdd={onAdd}
+      />
     </Stack>
   );
 };
@@ -285,13 +412,10 @@ export const HotkeySetting = ({
     }
     try {
       markOptimisticHotkeyWrite(newValue.actionName, newValue.id);
-      produceAppState((draft) => {
-        registerHotkeys(draft, [newValue]);
-        if (!draft.settings.hotkeyIds.includes(newValue.id)) {
-          draft.settings.hotkeyIds.push(newValue.id);
-        }
-        draft.settings.hotkeysStatus = "success";
-      }, releaseWrite.lease);
+      produceAppState(
+        (draft) => upsertHotkey(draft, newValue),
+        releaseWrite.lease,
+      );
       await enqueueHotkeyWrite(async () => {
         await getHotkeyRepo().saveHotkey(newValue, releaseWrite.lease);
         setOnboardingSavedHotkey(newValue.id, newValue);

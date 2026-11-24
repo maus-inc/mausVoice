@@ -147,72 +147,61 @@ export type TranscriptionMetadata = TranscribeAudioMetadata &
     rawTranscript?: string | null;
   };
 
-/**
- * Transcribe audio samples to text.
- * This is the first step - just converts audio to raw transcript.
- */
-export const transcribeAudio = async ({
-  samples,
-  sampleRate,
-  dictationLanguage: dictationLanguageOverride,
-  hallucinationFilterEnabled: filterOverride,
-  trace,
-  toneId,
-  signal,
-}: TranscribeAudioInput): Promise<TranscribeAudioResult> => {
-  const state = getAppState();
+const resolveTranscriptionContext = async (
+  state: ReturnType<typeof getAppState>,
+  {
+    dictationLanguage: dictationLanguageOverride,
+    hallucinationFilterEnabled: filterOverride,
+  }: TranscribeAudioInput,
+) => {
   const hallucinationFilterEnabled =
     filterOverride ?? state.userPrefs?.hallucinationFilterEnabled ?? true;
-
-  const metadata: TranscribeAudioMetadata = {};
-  const warnings: string[] = [];
-
-  const {
-    repo: transcribeRepo,
-    apiKeyId: transcriptionApiKeyId,
-    warnings: transcribeWarnings,
-  } = getTranscribeAudioRepo();
-  warnings.push(...transcribeWarnings);
-
-  // Dispatch warnings (e.g. a stale provider selection) must not be lost when
-  // the transcription call itself throws: log them before the network call so
-  // they always reach the log, and attach them to the thrown error below.
-  if (warnings.length > 0) {
-    getLogger().warning(`Transcription warnings: ${warnings.join("; ")}`);
-  }
-
   const dictationLanguage = dictationLanguageOverride
     ? coerceToDictationLanguage(dictationLanguageOverride)
     : await loadMyEffectiveDictationLanguage(state);
   const whisperLanguage =
     mapDictationLanguageToWhisperLanguage(dictationLanguage);
-
-  getLogger().verbose(
-    `Transcribing audio: language=${dictationLanguage}, whisper=${whisperLanguage}, sampleRate=${sampleRate}, toneId=${toneId ?? "none"}`,
-  );
-
-  const dictionaryEntries = collectDictionaryEntries(state);
   // Best practice: transcription prompt is ONLY for glossary/domain bias (<50 tokens),
   // NOT for style formatting. Style is applied deterministically in fast-style.utils.ts
   // after transcription (universal across ALL providers).
   const transcriptionPrompt = buildLocalizedTranscriptionPrompt({
-    entries: dictionaryEntries,
+    entries: collectDictionaryEntries(state),
     dictationLanguage,
     state,
   });
+  return {
+    hallucinationFilterEnabled,
+    dictationLanguage,
+    whisperLanguage,
+    transcriptionPrompt,
+  };
+};
 
-  getLogger().verbose(
-    `Transcription prompt: ${transcriptionPrompt.length} chars, apiKeyId=${transcriptionApiKeyId ?? "none"}`,
-  );
-
-  const transcribeStart = performance.now();
-  let transcribeOutput: TranscribeAudioOutput;
+const runProviderTranscription = async (
+  repo: ReturnType<typeof getTranscribeAudioRepo>["repo"],
+  {
+    samples,
+    sampleRate,
+    signal,
+    prompt,
+    language,
+    hallucinationFilterEnabled,
+  }: {
+    samples: TranscribeAudioInput["samples"];
+    sampleRate: TranscribeAudioInput["sampleRate"];
+    signal: TranscribeAudioInput["signal"];
+    prompt: string;
+    language: ReturnType<typeof mapDictationLanguageToWhisperLanguage>;
+    hallucinationFilterEnabled: boolean;
+  },
+  warnings: string[],
+): Promise<TranscribeAudioOutput> => {
   try {
-    transcribeOutput = await transcribeRepo.transcribeAudio({
+    return await repo.transcribeAudio({
       samples,
       sampleRate,
-      prompt: transcriptionPrompt,
-      language: whisperLanguage,
+      prompt,
+      language,
       hallucinationFilterEnabled,
       signal,
     });
@@ -227,7 +216,85 @@ export const transcribeAudio = async ({
       { cause: error },
     );
   }
+};
+
+const buildTranscriptionMetadata = ({
+  transcribeOutput,
+  state,
+  transcriptionPrompt,
+  transcriptionApiKeyId,
+  durationMs,
+}: {
+  transcribeOutput: TranscribeAudioOutput;
+  state: ReturnType<typeof getAppState>;
+  transcriptionPrompt: string;
+  transcriptionApiKeyId: string | null;
+  durationMs: number;
+}): TranscribeAudioMetadata => ({
+  modelSize:
+    transcribeOutput.metadata?.modelSize ||
+    state.settings.aiTranscription.modelSize ||
+    null,
+  inferenceDevice: transcribeOutput.metadata?.inferenceDevice || null,
+  transcriptionDurationMs: Math.round(durationMs),
+  transcriptionPrompt,
+  transcriptionApiKeyId,
+  transcriptionMode: transcribeOutput.metadata?.transcriptionMode || null,
+});
+
+/**
+ * Transcribe audio samples to text.
+ * This is the first step - just converts audio to raw transcript.
+ */
+export const transcribeAudio = async (
+  input: TranscribeAudioInput,
+): Promise<TranscribeAudioResult> => {
+  const { samples, sampleRate, toneId, trace } = input;
+  const state = getAppState();
+
+  const {
+    repo: transcribeRepo,
+    apiKeyId: transcriptionApiKeyId,
+    warnings: transcribeWarnings,
+  } = getTranscribeAudioRepo();
+  const warnings: string[] = [...transcribeWarnings];
+
+  // Dispatch warnings (e.g. a stale provider selection) must not be lost when
+  // the transcription call itself throws: log them before the network call so
+  // they always reach the log, and attach them to the thrown error below.
+  if (warnings.length > 0) {
+    getLogger().warning(`Transcription warnings: ${warnings.join("; ")}`);
+  }
+
+  const {
+    hallucinationFilterEnabled,
+    dictationLanguage,
+    whisperLanguage,
+    transcriptionPrompt,
+  } = await resolveTranscriptionContext(state, input);
+
+  getLogger().verbose(
+    `Transcribing audio: language=${dictationLanguage}, whisper=${whisperLanguage}, sampleRate=${sampleRate}, toneId=${toneId ?? "none"}`,
+  );
+  getLogger().verbose(
+    `Transcription prompt: ${transcriptionPrompt.length} chars, apiKeyId=${transcriptionApiKeyId ?? "none"}`,
+  );
+
+  const transcribeStart = performance.now();
+  const transcribeOutput = await runProviderTranscription(
+    transcribeRepo,
+    {
+      samples,
+      sampleRate,
+      signal: input.signal,
+      prompt: transcriptionPrompt,
+      language: whisperLanguage,
+      hallucinationFilterEnabled,
+    },
+    warnings,
+  );
   const transcribeDuration = performance.now() - transcribeStart;
+
   warnings.push(...(transcribeOutput.warnings ?? []));
   if (transcribeOutput.warnings && transcribeOutput.warnings.length > 0) {
     getLogger().warning(
@@ -264,16 +331,13 @@ export const transcribeAudio = async ({
     `Transcription complete in ${Math.round(transcribeDuration)}ms (${rawTranscript.length} raw chars, ${sanitizedTranscript.length} sanitized chars, mode=${transcribeOutput.metadata?.transcriptionMode ?? "unknown"})`,
   );
 
-  metadata.modelSize =
-    transcribeOutput.metadata?.modelSize ||
-    state.settings.aiTranscription.modelSize ||
-    null;
-  metadata.inferenceDevice = transcribeOutput.metadata?.inferenceDevice || null;
-  metadata.transcriptionDurationMs = Math.round(transcribeDuration);
-  metadata.transcriptionPrompt = transcriptionPrompt;
-  metadata.transcriptionApiKeyId = transcriptionApiKeyId;
-  metadata.transcriptionMode =
-    transcribeOutput.metadata?.transcriptionMode || null;
+  const metadata = buildTranscriptionMetadata({
+    transcribeOutput,
+    state,
+    transcriptionPrompt,
+    transcriptionApiKeyId,
+    durationMs: transcribeDuration,
+  });
 
   markPipeline(trace, "transcribed");
 

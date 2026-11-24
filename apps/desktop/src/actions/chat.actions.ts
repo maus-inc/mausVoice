@@ -12,16 +12,16 @@ import { nowIso } from "../utils/date.utils";
 import { getIsDevMode } from "../utils/env.utils";
 import { getLogger } from "../utils/log.utils";
 import { createAsyncMutationTracker } from "../utils/async-mutation-tracker";
-import {
-  createChatMessage,
-  updateChatMessage,
-} from "../utils/chat-message.utils";
+import { createChatMessage } from "../utils/chat-message.utils";
 import {
   type LocalDataWriteLease,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
 
-export { createChatMessage, updateChatMessage };
+export {
+  createChatMessage,
+  updateChatMessage,
+} from "../utils/chat-message.utils";
 
 const conversationCreations = createAsyncMutationTracker();
 const sendQueuesByConversationId = new Map<string, Promise<void>>();

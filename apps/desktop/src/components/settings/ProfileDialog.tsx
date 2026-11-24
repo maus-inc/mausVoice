@@ -29,30 +29,36 @@ import { ProfilePhotoWell } from "./ProfilePhotoWell";
  * Edits are held until Save, so Cancel leaves both the name and the photo as
  * they were.
  */
-export const ProfileDialog = () => {
-  const intl = useIntl();
-  const open = useAppStore((state) => state.settings.profileDialogOpen);
-  const user = useMyUser();
-  const initialName = user?.name ?? "";
-  const initialImage = useMyProfileImage();
-
+const useProfileDraft = ({
+  open,
+  user,
+  initialName,
+  initialImage,
+  image,
+  imageEdited,
+  preparing,
+  resetImage,
+  cancelPendingPick,
+  syncImage,
+}: {
+  open: boolean;
+  user: ReturnType<typeof useMyUser>;
+  initialName: string;
+  initialImage: string | null;
+  image: string | null;
+  imageEdited: boolean;
+  preparing: boolean;
+  resetImage: (next: string | null) => void;
+  cancelPendingPick: () => void;
+  syncImage: (next: string | null) => void;
+}) => {
   const [name, setName] = useState(initialName);
-  const [image, setImage] = useState<string | null>(initialImage);
-  const [imageEdited, setImageEdited] = useState(false);
-  const [imageError, setImageError] = useState<AvatarReadError | null>(null);
-  const [imageStatus, setImageStatus] = useState("");
   const [saveFailed, setSaveFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const saveInFlight = useRef(false);
   const [discardOpen, setDiscardOpen] = useState(false);
-  // A pick is decoding, and there is nothing to save until it lands.
-  const [preparing, setPreparing] = useState(false);
   const wasOpen = useRef(false);
   const discardAfterExit = useRef(false);
-  // Every pick gets a ticket, and a decode only lands if its ticket is still
-  // the newest one. A large photo decodes after a smaller one picked a moment
-  // later, and the slower file must not replace the newer choice.
-  const pickTicket = useRef(0);
 
   // Re-seed when the dialog opens, and only then. It is mounted for the life of
   // the app, so without this a cancelled edit would come back the next time; and
@@ -60,24 +66,19 @@ export const ProfileDialog = () => {
   // mid-save, because saving the name updates the store this reads.
   useEffect(() => {
     if (open && !wasOpen.current) {
-      pickTicket.current += 1;
       setName(initialName);
-      setImage(initialImage);
-      setImageEdited(false);
-      setImageError(null);
-      setImageStatus("");
+      resetImage(initialImage);
       setSaveFailed(false);
       setSaving(false);
       setDiscardOpen(false);
       discardAfterExit.current = false;
-      setPreparing(false);
     }
     wasOpen.current = open;
-  }, [open, initialName, initialImage]);
+  }, [open, initialName, initialImage, resetImage]);
 
   useEffect(() => {
-    if (open && !imageEdited && !preparing) setImage(initialImage);
-  }, [open, imageEdited, preparing, initialImage]);
+    if (open && !imageEdited && !preparing) syncImage(initialImage);
+  }, [open, imageEdited, preparing, initialImage, syncImage]);
 
   const close = useCallback(() => {
     produceAppState((draft) => {
@@ -86,59 +87,9 @@ export const ProfileDialog = () => {
     // The dialog is mounted for the life of the app, so a decode that lands
     // after this would write into a draft nobody is looking at and that the
     // next open would have to undo.
-    pickTicket.current += 1;
-    setPreparing(false);
+    cancelPendingPick();
     setDiscardOpen(false);
-  }, []);
-
-  const handlePick = useCallback(
-    async (file: File | undefined) => {
-      if (!file) {
-        return;
-      }
-      const ticket = pickTicket.current + 1;
-      pickTicket.current = ticket;
-      setImageError(null);
-      setPreparing(true);
-      setImageStatus(
-        intl.formatMessage({ defaultMessage: "Preparing photo..." }),
-      );
-      const result = await readAvatarFile(file);
-      if (ticket !== pickTicket.current) {
-        // A later pick, a removal, or a close already owns the draft, and the
-        // one that owns it is the one that clears the wait.
-        return;
-      }
-      setPreparing(false);
-      if (result.ok) {
-        setImage(result.dataUrl);
-        setImageEdited(true);
-        setImageStatus(
-          intl.formatMessage({
-            defaultMessage: "New photo ready to save.",
-          }),
-        );
-        return;
-      }
-      setImageError(result.error);
-      setImageStatus("");
-    },
-    [intl],
-  );
-
-  const handleRemove = useCallback(() => {
-    // Removing is a decision about the photo the dialog will save, so it also
-    // settles any pick still decoding: without this, a slow decode would put
-    // the removed photo back a moment later.
-    pickTicket.current += 1;
-    setPreparing(false);
-    setImage(null);
-    setImageEdited(true);
-    setImageError(null);
-    setImageStatus(
-      intl.formatMessage({ defaultMessage: "Photo will be removed on save." }),
-    );
-  }, [intl]);
+  }, [cancelPendingPick]);
 
   const trimmed = useMemo(() => name.trim(), [name]);
   const canSave = useMemo(() => {
@@ -198,6 +149,157 @@ export const ProfileDialog = () => {
       saveInFlight.current = false;
     }
   }, [canSave, trimmed, initialName, image, imageEdited, initialImage, close]);
+
+  return {
+    name,
+    setName,
+    saving,
+    saveFailed,
+    discardOpen,
+    setDiscardOpen,
+    requestClose,
+    handleSave,
+    canSave,
+    discardAfterExit,
+    close,
+  };
+};
+
+const useAvatarDraft = ({
+  initialImage,
+  intl,
+}: {
+  initialImage: string | null;
+  intl: ReturnType<typeof useIntl>;
+}) => {
+  const [image, setImage] = useState<string | null>(initialImage);
+  const [imageEdited, setImageEdited] = useState(false);
+  const [imageError, setImageError] = useState<AvatarReadError | null>(null);
+  const [imageStatus, setImageStatus] = useState("");
+  // A pick is decoding, and there is nothing to save until it lands.
+  const [preparing, setPreparing] = useState(false);
+  // Every pick gets a ticket, and a decode only lands if its ticket is still
+  // the newest one. A large photo decodes after a smaller one picked a moment
+  // later, and the slower file must not replace the newer choice.
+  const pickTicket = useRef(0);
+
+  const handlePick = useCallback(
+    async (file: File | undefined) => {
+      if (!file) {
+        return;
+      }
+      const ticket = pickTicket.current + 1;
+      pickTicket.current = ticket;
+      setImageError(null);
+      setPreparing(true);
+      setImageStatus(
+        intl.formatMessage({ defaultMessage: "Preparing photo..." }),
+      );
+      const result = await readAvatarFile(file);
+      if (ticket !== pickTicket.current) {
+        // A later pick, a removal, or a close already owns the draft, and the
+        // one that owns it is the one that clears the wait.
+        return;
+      }
+      setPreparing(false);
+      if (result.ok) {
+        setImage(result.dataUrl);
+        setImageEdited(true);
+        setImageStatus(
+          intl.formatMessage({
+            defaultMessage: "New photo ready to save.",
+          }),
+        );
+        return;
+      }
+      setImageError(result.error);
+      setImageStatus("");
+    },
+    [intl],
+  );
+
+  const handleRemove = useCallback(() => {
+    // Removing is a decision about the photo the dialog will save, so it also
+    // settles any pick still decoding: without this, a slow decode would put
+    // the removed photo back a moment later.
+    pickTicket.current += 1;
+    setPreparing(false);
+    setImage(null);
+    setImageEdited(true);
+    setImageError(null);
+    setImageStatus(
+      intl.formatMessage({ defaultMessage: "Photo will be removed on save." }),
+    );
+  }, [intl]);
+
+  return {
+    image,
+    imageEdited,
+    imageError,
+    imageStatus,
+    preparing,
+    resetImage: (next: string | null) => {
+      pickTicket.current += 1;
+      setImage(next);
+      setImageEdited(false);
+      setImageError(null);
+      setImageStatus("");
+      setPreparing(false);
+    },
+    cancelPendingPick: () => {
+      pickTicket.current += 1;
+      setPreparing(false);
+    },
+    syncImage: (next: string | null) => setImage(next),
+    handlePick,
+    handleRemove,
+  };
+};
+
+export const ProfileDialog = () => {
+  const intl = useIntl();
+  const open = useAppStore((state) => state.settings.profileDialogOpen);
+  const user = useMyUser();
+  const initialName = user?.name ?? "";
+  const initialImage = useMyProfileImage();
+
+  const {
+    image,
+    imageEdited,
+    imageError,
+    imageStatus,
+    preparing,
+    resetImage,
+    cancelPendingPick,
+    syncImage,
+    handlePick,
+    handleRemove,
+  } = useAvatarDraft({ initialImage, intl });
+
+  const {
+    name,
+    setName,
+    saving,
+    saveFailed,
+    discardOpen,
+    setDiscardOpen,
+    requestClose,
+    handleSave,
+    canSave,
+    discardAfterExit,
+    close,
+  } = useProfileDraft({
+    open,
+    user,
+    initialName,
+    initialImage,
+    image,
+    imageEdited,
+    preparing,
+    resetImage,
+    cancelPendingPick,
+    syncImage,
+  });
 
   return (
     <>

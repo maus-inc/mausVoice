@@ -1,6 +1,6 @@
 use crate::constants::*;
 use crate::gfx::{Gfx, ShadedSegment};
-use crate::ipc::{Phase, PillPermission, PillStreaming};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
 use rust_pill_shared::{
     path_distances, rounded_rectangle_perimeter, transcript_viewport_layout, RoundedRectArcSteps,
@@ -1321,6 +1321,79 @@ fn draw_compact_content(
     );
 }
 
+fn draw_message_separator(gfx: &mut Gfx, index: usize, area_x: f64, y: f64, alpha: f64) -> f64 {
+    if index == 0 {
+        return y;
+    }
+    let y = y + 16.0;
+    gfx.draw_line(
+        area_x,
+        y,
+        area_x + 36.0,
+        y,
+        [1.0, 1.0, 1.0, 0.45 * alpha],
+        1.0,
+    );
+    y + 8.0
+}
+
+fn draw_tool_result_line(gfx: &mut Gfx, msg: &PillMessage, area_x: f64, y: f64, alpha: f64) -> f64 {
+    let tool_desc = msg
+        .tool_description
+        .as_deref()
+        .or(msg.tool_name.as_deref())
+        .unwrap_or("Tool");
+    let reason = msg.reason.as_deref().unwrap_or("");
+    let display = if reason.is_empty() {
+        tool_desc.to_string()
+    } else {
+        format!("{tool_desc} — {reason}")
+    };
+
+    draw_wrench_icon(gfx, area_x, y + 2.0, 12.0, 0.5 * alpha);
+    gfx.draw_text_top_left(
+        &display,
+        area_x + 18.0,
+        y,
+        12.0,
+        false,
+        false,
+        [1.0, 1.0, 1.0, 0.5 * alpha],
+    );
+    y + 18.0
+}
+
+fn draw_message_text(
+    gfx: &mut Gfx,
+    content: &str,
+    is_error: bool,
+    area_x: f64,
+    y: f64,
+    area_w: f64,
+    alpha: f64,
+) -> f64 {
+    let (r, g, b) = if is_error {
+        (1.0, 0.4, 0.4)
+    } else {
+        (1.0, 1.0, 1.0)
+    };
+    let color_alpha = if is_error { 0.94 } else { 0.92 };
+    let mut y = y;
+    for line in &wrap_text(gfx, content, area_w) {
+        gfx.draw_text_top_left(
+            line,
+            area_x,
+            y,
+            14.0,
+            false,
+            false,
+            [r, g, b, color_alpha * alpha],
+        );
+        y += 20.0;
+    }
+    y
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_transcript(
     gfx: &mut Gfx,
@@ -1377,21 +1450,8 @@ fn draw_transcript(
         );
     }
 
-    let line_height = 20.0;
-
     for (i, msg) in messages.iter().enumerate() {
-        if i > 0 {
-            y += 16.0;
-            gfx.draw_line(
-                viewport.x,
-                y,
-                viewport.x + 36.0,
-                y,
-                [1.0, 1.0, 1.0, 0.45 * alpha],
-                1.0,
-            );
-            y += 8.0;
-        }
+        y = draw_message_separator(gfx, i, viewport.x, y, alpha);
 
         if let Some(ref stream) = *streaming {
             if stream.message_id == msg.id {
@@ -1400,50 +1460,17 @@ fn draw_transcript(
         }
 
         if msg.is_tool_result {
-            let tool_desc = msg
-                .tool_description
-                .as_deref()
-                .or(msg.tool_name.as_deref())
-                .unwrap_or("Tool");
-            let reason = msg.reason.as_deref().unwrap_or("");
-            let display = if reason.is_empty() {
-                tool_desc.to_string()
-            } else {
-                format!("{tool_desc} — {reason}")
-            };
-
-            draw_wrench_icon(gfx, viewport.x, y + 2.0, 12.0, 0.5 * alpha);
-            gfx.draw_text_top_left(
-                &display,
-                viewport.x + 18.0,
-                y,
-                12.0,
-                false,
-                false,
-                [1.0, 1.0, 1.0, 0.5 * alpha],
-            );
-            y += 18.0;
+            y = draw_tool_result_line(gfx, msg, viewport.x, y, alpha);
         } else if let Some(ref content) = msg.content {
-            let (r, g, b) = if msg.is_error {
-                (1.0, 0.4, 0.4)
-            } else {
-                (1.0, 1.0, 1.0)
-            };
-            let color_alpha = if msg.is_error { 0.94 } else { 0.92 };
-
-            let lines = wrap_text(gfx, content, viewport.width);
-            for line in &lines {
-                gfx.draw_text_top_left(
-                    line,
-                    viewport.x,
-                    y,
-                    14.0,
-                    false,
-                    false,
-                    [r, g, b, color_alpha * alpha],
-                );
-                y += line_height;
-            }
+            y = draw_message_text(
+                gfx,
+                content,
+                msg.is_error,
+                viewport.x,
+                y,
+                viewport.width,
+                alpha,
+            );
         } else {
             y = draw_thinking_text(gfx, viewport.x, y, alpha, state);
         }
