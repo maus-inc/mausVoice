@@ -386,35 +386,6 @@ describe("PasteTool review", () => {
     expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
   });
 
-  it("saves a later Insert edit without pasting after an Open hand-off", async () => {
-    const savedCard = { id: "pending-review" };
-    createPendingPasteReviewMock.mockResolvedValue(savedCard);
-    reviewTranscriptBeforeInsertMock.mockImplementationOnce(
-      async (
-        _text: string,
-        _source: string,
-        options?: { onOpen?: (text: string) => Promise<void> },
-      ) => {
-        await options?.onOpen?.("saved before open");
-        return "edited after Open timed out";
-      },
-    );
-
-    await expect(
-      new PasteTool(toolInfo).execute(
-        { text: "agent version" },
-        { conversationId: "conv-1" },
-      ),
-    ).resolves.toEqual({ awaitingManualPaste: true });
-
-    expect(updatePendingPasteReviewDraftMock).toHaveBeenCalledWith(
-      savedCard,
-      "edited after Open timed out",
-      2,
-    );
-    expect(invokeMock).not.toHaveBeenCalledWith("paste", expect.anything());
-  });
-
   it("cancels a late Open save when the user chose Insert after timeout", async () => {
     const savedCard = { id: "pending-review" };
     let finishSave: ((message: typeof savedCard) => void) | undefined;

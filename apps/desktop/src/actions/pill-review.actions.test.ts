@@ -869,6 +869,37 @@ describe("reviewTranscriptOnPill", () => {
     expect(getReviewSession(id)?.status).toBe("cancelled");
   });
 
+  it("cancels an Open hand-off from the pill while its save is pending", async () => {
+    let finishSave: (() => void) | undefined;
+    let openSignal: AbortSignal | undefined;
+    const opened = vi.fn();
+    const onOpen = vi.fn((_text: string, signal?: AbortSignal) => {
+      if (!signal) throw new Error("expected the Open cancellation signal");
+      openSignal = signal;
+      return new Promise<void>((resolve) => {
+        finishSave = () => {
+          if (!signal.aborted) opened();
+          resolve();
+        };
+      });
+    });
+    const { id, pending } = await beginAssistantToolOpen(onOpen);
+    await flush(() => onOpen.mock.calls.length > 0);
+
+    // The pill's own Cancel, not the app-level dismiss: it arrives while the
+    // save is in flight and the busy guard used to drop it, so a save that
+    // then succeeded still opened Chats.
+    decide?.({ payload: { reviewId: id, action: "cancel" } });
+    await expect(pending).resolves.toBeNull();
+    expect(openSignal?.aborted).toBe(true);
+    finishSave?.();
+    await flush(() => false);
+
+    expect(opened).not.toHaveBeenCalled();
+    expect(getReviewSession(id)?.decision).toBe("cancel");
+    expect(mocks.reviewTextInComposer).not.toHaveBeenCalled();
+  });
+
   it("keeps agent Paste review open when its Open hand-off cannot be saved", async () => {
     const onOpen = vi.fn(() => Promise.reject(new Error("disk full")));
     const { id, pending } = await beginAssistantToolOpen(onOpen);
