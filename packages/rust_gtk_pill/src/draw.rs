@@ -66,6 +66,17 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
 
         draw_cancel_button(cr, state, ww, wh);
         draw_pause_resume_button(cr, state, ww, wh);
+
+        // Painted outside the pill body so a locate replay still outlines a
+        // window whose body is the typing panel or an open transcript review.
+        if state.ring_alpha.get() > 0.0
+            || rust_pill_shared::pulse_is_running(state.arm_pulse.get())
+        {
+            paint_pill_attached(cr, state, ww, wh, |cr| {
+                let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
+                draw_long_press_ring(cr, rx, ry, pill_w, pill_h, state);
+            });
+        }
     }
 
     cr.restore().ok();
@@ -222,7 +233,6 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         _ => {}
     }
 
-    draw_long_press_ring(cr, rx, ry, pill_w, pill_h, state);
     draw_cancel_flash(cr, rx, ry, pill_w, pill_h, state);
 
     state.click_regions.borrow_mut().push(ClickRegion {

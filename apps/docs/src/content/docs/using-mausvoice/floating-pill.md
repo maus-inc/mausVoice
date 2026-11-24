@@ -19,9 +19,9 @@ Use the tray menu's **Reset Pill Position** action to return to the default plac
 
 ## Find the pill
 
-The pill can sit on any display. Under Settings, Appearance, Pill, choose Alt, Shift or Control in **Show pill position with modifier double-tap**, then double-tap that key. On macOS those are the Option, Shift and Control keys. The pill replays its long-press outline at its current position, including the comet sweep and the confirmation pulse.
+The pill can sit on any display. Under Settings, Appearance, Pill, choose Alt, Shift or Control in **Show pill position with modifier double-tap**, then double-tap that key. On macOS those are the Option, Shift and Control keys. The pill draws its long-press outline at its current position, complete from the first frame, holds it, then fades it. A keyboard trigger does not play the sweep or the confirmation pulse that a pointer hold plays.
 
-The setting starts at Disabled and stays disabled after an upgrade. The gesture never starts a recording, moves the pill, or changes its saved visibility. A hidden pill appears for the animation and hides again when it ends.
+The setting starts at Disabled and stays disabled after an upgrade. The gesture never starts a recording, moves the pill, or changes its saved visibility. A hidden pill appears for the outline and hides again when it ends.
 
 On Linux, the gesture needs a global keyboard listener. An X11 session has one. A Wayland session does not, so the setting stays hidden there.
 
