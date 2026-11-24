@@ -221,7 +221,10 @@ fn dispatch_click(state: &PillState, action: &ClickAction) {
             }
             // Loading owns the current operation; another body click must not
             // emit feedback or start a second action.
-            if !rust_pill_shared::can_emit_interaction_feedback(true, state.phase.get() == Phase::Loading) {
+            if !rust_pill_shared::can_emit_interaction_feedback(
+                true,
+                state.phase.get() == Phase::Loading,
+            ) {
                 return;
             }
             // The recording chime owns the pill-body click. The desktop side
