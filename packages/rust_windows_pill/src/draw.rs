@@ -2315,11 +2315,7 @@ fn paint_ring_track(gfx: &Gfx, path: &[(f64, f64)], alpha: f64) {
     gfx.draw_line_batch(&track, track_col, 1.0);
 }
 
-fn paint_ring_comet(
-    gfx: &Gfx,
-    points: &[(f64, f64, f64)],
-    frame: &RingFrame,
-) {
+fn paint_ring_comet(gfx: &Gfx, points: &[(f64, f64, f64)], frame: &RingFrame) {
     let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * frame.arm_t;
     // Reused across frames; see `COMET_SHADED`. `mem::take` leaves an empty Vec
     // in the cell, so nothing is aliased while the loop fills this one.
@@ -2335,12 +2331,8 @@ fn paint_ring_comet(
         }
         let env =
             rust_pill_shared::ring_envelope(d, frame.head_len, frame.progress, frame.total_len);
-        let glim = rust_pill_shared::ring_glimmer(
-            d,
-            frame.total_len,
-            frame.wave_phase,
-            frame.progress,
-        );
+        let glim =
+            rust_pill_shared::ring_glimmer(d, frame.total_len, frame.wave_phase, frame.progress);
         let a = (env * glim * lift).clamp(0.0, 1.0) * frame.alpha;
         if a < rust_pill_shared::RING_SEGMENT_ALPHA_CUTOFF {
             continue;
@@ -2439,15 +2431,7 @@ fn paint_ring_body(gfx: &Gfx, state: &PillState, frame: &RingFrame) {
     }
 }
 
-fn paint_ring_pulse(
-    gfx: &Gfx,
-    state: &PillState,
-    ox: f64,
-    oy: f64,
-    ow: f64,
-    oh: f64,
-    r: f64,
-) {
+fn paint_ring_pulse(gfx: &Gfx, state: &PillState, ox: f64, oy: f64, ow: f64, oh: f64, r: f64) {
     let t = rust_pill_shared::pulse_progress(state.arm_pulse.get());
     for delay in [0.0, rust_pill_shared::RING_PULSE_ECHO_DELAY] {
         let tt = ((t - delay) / (1.0 - delay)).clamp(0.0, 1.0);

@@ -552,7 +552,7 @@ fn handle_in_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
                 stale
             });
             if stale {
-                continue;
+                return;
             }
             let prev = ctx.state.phase.get();
             ctx.state.phase.set(phase);
@@ -1749,6 +1749,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let win_h = win_frame.size.height;
 
         let dragging = state.dragging.get();
+        let settling = state.drag_motion.borrow().is_settling();
         let (px, py, pw, ph) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
