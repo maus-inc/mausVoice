@@ -93,176 +93,164 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
     let regions = state.click_regions.borrow();
     for region in regions.iter().rev() {
         if region.contains(x, y) {
-            match &region.action {
-                ClickAction::Pill => {
-                    // A pending review owns the pill surface: the transcript
-                    // must be answered (or cancelled) before a body click can
-                    // start dictation or an assistant turn again.
-                    if state.assistant_review.borrow().is_some() {
-                        return;
-                    }
-                    // Loading owns the current operation; another body click
-                    // must not emit feedback or start a second action.
-                    if !rust_pill_shared::can_emit_interaction_feedback(
-                        true,
-                        state.phase.get() == crate::ipc::Phase::Loading,
-                    ) {
-                        return;
-                    }
-                    // The recording chime owns the pill-body click. The
-                    // desktop side plays start/stop clips for the same event,
-                    // so emitting a thock here doubled the sound.
-                    if state.assistant_active.get() {
-                        ipc::send(&OutMessage::AgentTalk);
-                    } else {
-                        ipc::send(&OutMessage::Click);
-                    }
-                }
-                ClickAction::StyleForward => {
-                    send_haptic("deep");
-                    ipc::send(&OutMessage::StyleSwitch {
-                        direction: "forward".to_string(),
-                    });
-                }
-                ClickAction::StyleBackward => {
-                    send_haptic("deep");
-                    ipc::send(&OutMessage::StyleSwitch {
-                        direction: "backward".to_string(),
-                    });
-                }
-                ClickAction::AssistantClose => {
-                    // Closing the panel while a transcript is under review is
-                    // a cancel decision, not a silent dismissal: the desktop
-                    // needs an answer to release the queued reviews.
-                    let review_id = state
-                        .assistant_review
-                        .borrow()
-                        .as_ref()
-                        .map(|review| review.id.clone());
-                    match review_id {
-                        Some(review_id) => {
-                            let _ = send_review_decision(&review_id, "cancel", None);
-                        }
-                        None => {
-                            let _ = ipc::send(&OutMessage::AssistantClose);
-                        }
-                    }
-                }
-                ClickAction::ReviewInsert(id) => {
-                    // The entry is the transcript, edits included, and it
-                    // travels exactly as the user left it. An empty one has
-                    // nothing to insert, so the card simply stays up.
-                    let text = state.entry_text.borrow().clone();
-                    if !text.trim().is_empty() {
-                        send_review_decision(id, "insert", Some(text));
-                    }
-                }
-                ClickAction::ReviewCopy(id) => {
-                    let text = state.entry_text.borrow().clone();
-                    send_review_decision(id, "copy", Some(text));
-                }
-                ClickAction::ReviewEdit(id) => {
-                    let text = state.entry_text.borrow().clone();
-                    send_review_decision(id, "edit", Some(text));
-                }
-                ClickAction::ReviewCancel(id) => {
-                    let _ = send_review_decision(id, "cancel", None);
-                }
-                ClickAction::OpenInNew => {
-                    let review_id = state
-                        .assistant_review
-                        .borrow()
-                        .as_ref()
-                        .map(|review| review.id.clone());
-                    if let Some(review_id) = review_id {
-                        // The desktop receives this exact edit and settles the
-                        // review only after its caller confirms it is durable.
-                        let text = state.entry_text.borrow().clone();
-                        send_review_decision(&review_id, "open", Some(text));
-                    } else {
-                        if let Some(ref id) = *state.assistant_conversation_id.borrow() {
-                            ipc::send(&OutMessage::OpenConversation {
-                                conversation_id: id.clone(),
-                            });
-                        }
-                        ipc::send(&OutMessage::AssistantClose);
-                    }
-                }
-                ClickAction::KeyboardButton => {
-                    ipc::send(&OutMessage::EnableTypeMode);
-                }
-                ClickAction::CancelDictation => {
-                    send_haptic("deep");
-                    ipc::send(&OutMessage::CancelDictation);
-                }
-                ClickAction::PauseDictation => {
-                    ipc::send(&OutMessage::PauseDictation);
-                }
-                ClickAction::ResumeDictation => {
-                    ipc::send(&OutMessage::ResumeDictation);
-                }
-                ClickAction::PermissionAllow(id) => {
-                    ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(),
-                        status: "allowed".to_string(),
-                        always_allow: false,
-                    });
-                }
-                ClickAction::PermissionDeny(id) => {
-                    ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(),
-                        status: "denied".to_string(),
-                        always_allow: false,
-                    });
-                }
-                ClickAction::PermissionAlwaysAllow(id) => {
-                    ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(),
-                        status: "allowed".to_string(),
-                        always_allow: true,
-                    });
-                }
-                ClickAction::SendButton => {
-                    if submit_entry(state) {
-                        crate::pill::clear_edit_control();
-                    }
-                }
-                ClickAction::InputField => {
-                    crate::pill::focus_edit_control();
-                }
-                ClickAction::FlashAction => {
-                    if let Some(ref action) = *state.flash_action.borrow() {
-                        ipc::send(&OutMessage::ToastAction {
-                            action: action.clone(),
-                        });
-                    }
-                    rust_pill_shared::clear_flash_state(
-                        &state.flash_visible,
-                        &state.flash_timer,
-                        &state.flash_action,
-                        &state.flash_action_label,
-                        &state.flash_reject_action,
-                        &state.flash_reject_action_label,
-                    );
-                }
-                ClickAction::FlashReject => {
-                    if let Some(ref action) = *state.flash_reject_action.borrow() {
-                        ipc::send(&OutMessage::ToastAction {
-                            action: action.clone(),
-                        });
-                    }
-                    rust_pill_shared::clear_flash_state(
-                        &state.flash_visible,
-                        &state.flash_timer,
-                        &state.flash_action,
-                        &state.flash_action_label,
-                        &state.flash_reject_action,
-                        &state.flash_reject_action_label,
-                    );
-                }
-            }
+            dispatch_click(state, &region.action);
             return;
         }
+    }
+}
+
+fn entry_text(state: &PillState) -> String {
+    state.entry_text.borrow().clone()
+}
+
+fn pending_review_id(state: &PillState) -> Option<String> {
+    state
+        .assistant_review
+        .borrow()
+        .as_ref()
+        .map(|review| review.id.clone())
+}
+
+fn switch_style(direction: &str) {
+    send_haptic("deep");
+    ipc::send(&OutMessage::StyleSwitch {
+        direction: direction.to_string(),
+    });
+}
+
+fn close_assistant(state: &PillState) {
+    // Closing the panel while a transcript is under review is a cancel
+    // decision, not a silent dismissal: the desktop needs an answer to release
+    // the queued reviews.
+    match pending_review_id(state) {
+        Some(review_id) => {
+            let _ = send_review_decision(&review_id, "cancel", None);
+        }
+        None => {
+            let _ = ipc::send(&OutMessage::AssistantClose);
+        }
+    }
+}
+
+fn insert_review(state: &PillState, review_id: &str) {
+    // The entry is the transcript, edits included, and it travels exactly as
+    // the user left it. An empty one has nothing to insert, so the card simply
+    // stays up.
+    let text = entry_text(state);
+    if !text.trim().is_empty() {
+        send_review_decision(review_id, "insert", Some(text));
+    }
+}
+
+fn open_in_new(state: &PillState) {
+    let Some(review_id) = pending_review_id(state) else {
+        if let Some(ref id) = *state.assistant_conversation_id.borrow() {
+            ipc::send(&OutMessage::OpenConversation {
+                conversation_id: id.clone(),
+            });
+        }
+        ipc::send(&OutMessage::AssistantClose);
+        return;
+    };
+    // The desktop receives this exact edit and settles the review only after
+    // its caller confirms it is durable.
+    let text = entry_text(state);
+    send_review_decision(&review_id, "open", Some(text));
+}
+
+fn resolve_permission(permission_id: &str, status: &str, always_allow: bool) {
+    ipc::send(&OutMessage::ResolvePermission {
+        permission_id: permission_id.to_string(),
+        status: status.to_string(),
+        always_allow,
+    });
+}
+
+fn submit_send_button(state: &PillState) {
+    if submit_entry(state) {
+        crate::pill::clear_edit_control();
+    }
+}
+
+fn dismiss_flash(state: &PillState, reject: bool) {
+    let action = if reject {
+        state.flash_reject_action.borrow().as_ref().cloned()
+    } else {
+        state.flash_action.borrow().as_ref().cloned()
+    };
+    if let Some(action) = action {
+        ipc::send(&OutMessage::ToastAction { action });
+    }
+    rust_pill_shared::clear_flash_state(
+        &state.flash_visible,
+        &state.flash_timer,
+        &state.flash_action,
+        &state.flash_action_label,
+        &state.flash_reject_action,
+        &state.flash_reject_action_label,
+    );
+}
+
+fn dispatch_click(state: &PillState, action: &ClickAction) {
+    match action {
+        ClickAction::Pill => {
+            // A pending review owns the pill surface: the transcript must be
+            // answered (or cancelled) before a body click can start dictation
+            // or an assistant turn again.
+            if state.assistant_review.borrow().is_some() {
+                return;
+            }
+            // Loading owns the current operation; another body click must not
+            // emit feedback or start a second action.
+            if !rust_pill_shared::can_emit_interaction_feedback(
+                true,
+                state.phase.get() == crate::ipc::Phase::Loading,
+            ) {
+                return;
+            }
+            // The recording chime owns the pill-body click. The desktop side
+            // plays start/stop clips for the same event, so emitting a thock
+            // here doubled the sound.
+            if state.assistant_active.get() {
+                ipc::send(&OutMessage::AgentTalk);
+            } else {
+                ipc::send(&OutMessage::Click);
+            }
+        }
+        ClickAction::StyleForward => switch_style("forward"),
+        ClickAction::StyleBackward => switch_style("backward"),
+        ClickAction::AssistantClose => close_assistant(state),
+        ClickAction::ReviewInsert(id) => insert_review(state, id),
+        ClickAction::ReviewCopy(id) => {
+            send_review_decision(id, "copy", Some(entry_text(state)));
+        }
+        ClickAction::ReviewEdit(id) => {
+            send_review_decision(id, "edit", Some(entry_text(state)));
+        }
+        ClickAction::ReviewCancel(id) => {
+            let _ = send_review_decision(id, "cancel", None);
+        }
+        ClickAction::OpenInNew => open_in_new(state),
+        ClickAction::KeyboardButton => {
+            ipc::send(&OutMessage::EnableTypeMode);
+        }
+        ClickAction::CancelDictation => {
+            send_haptic("deep");
+            ipc::send(&OutMessage::CancelDictation);
+        }
+        ClickAction::PauseDictation => {
+            ipc::send(&OutMessage::PauseDictation);
+        }
+        ClickAction::ResumeDictation => {
+            ipc::send(&OutMessage::ResumeDictation);
+        }
+        ClickAction::PermissionAllow(id) => resolve_permission(id, "allowed", false),
+        ClickAction::PermissionDeny(id) => resolve_permission(id, "denied", false),
+        ClickAction::PermissionAlwaysAllow(id) => resolve_permission(id, "allowed", true),
+        ClickAction::SendButton => submit_send_button(state),
+        ClickAction::InputField => crate::pill::focus_edit_control(),
+        ClickAction::FlashAction => dismiss_flash(state, false),
+        ClickAction::FlashReject => dismiss_flash(state, true),
     }
 }
 
