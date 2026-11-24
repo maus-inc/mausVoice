@@ -36,8 +36,7 @@ const buildWizardTone = ({
   tones: Tone[];
   toneById: Record<string, Tone | undefined>;
 }): Tone => {
-  const nextSortOrder =
-    tones.length > 0 ? tones[tones.length - 1].sortOrder + 1 : 0;
+  const nextSortOrder = (tones.at(-1)?.sortOrder ?? -1) + 1;
   return {
     id: draftIdentity.id,
     name: trimmedName,

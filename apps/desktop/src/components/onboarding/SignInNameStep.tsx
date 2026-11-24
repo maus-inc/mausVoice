@@ -44,10 +44,12 @@ const decideNamePrefill = (
     ? ""
     : (auth.displayName ?? "");
   const prefillName = hasUsableDraft ? draftValue : providerName;
-  const source = hasUsableDraft
-    ? draftUserId === auth.uid
+  const draftSource =
+    draftUserId === auth.uid
       ? `owned-draft:${auth.uid}`
-      : `ownerless-draft:${auth.uid}`
+      : `ownerless-draft:${auth.uid}`;
+  const source = hasUsableDraft
+    ? draftSource
     : `provider:${auth.uid}:${providerName}`;
 
   const apply = (draft: OnboardingDraft) => {

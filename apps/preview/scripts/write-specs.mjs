@@ -1165,12 +1165,15 @@ Docs-only slice. Persist: edit \`MicrophoneSelector.tsx\` → MicCheckForm + Mic
 // The specs are markdown that `format:check` covers, so the generator formats its
 // own output. Without this a regenerated spec differs from the committed one by
 // heading spacing, table padding and the trailing newline.
-for (const [id, md] of SPECS) {
-  const file = join(root, `${id}.md`);
-  const formatted = await prettier.format(md, {
-    parser: "markdown",
-    filepath: file,
-  });
-  writeFileSync(file, formatted);
-}
+const rendered = await Promise.all(
+  SPECS.map(async ([id, md]) => {
+    const file = join(root, `${id}.md`);
+    const formatted = await prettier.format(md, {
+      parser: "markdown",
+      filepath: file,
+    });
+    return [file, formatted];
+  }),
+);
+for (const [file, text] of rendered) writeFileSync(file, text);
 console.log(`wrote ${SPECS.length} spec files to ${root}`);
