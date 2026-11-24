@@ -59,6 +59,24 @@ const getNormalizedSecondPrefixes = (
   return prefixes;
 };
 
+/// The prefix at `j`, when it is close enough in length to be worth comparing.
+///
+/// Both scans skip a candidate whose length ratio is under 0.5, then compare
+/// similarity against their own threshold, so the length filter and the
+/// similarity call live here instead of being repeated per scan.
+const similarCandidate = (
+  normalizedFirst: string,
+  normalizedSecondPrefixes: string[],
+  j: number,
+): { normalizedSecond: string; similarity: number } | null => {
+  const normalizedSecond = normalizedSecondPrefixes[j];
+  if (getLengthRatio(normalizedFirst, normalizedSecond) < 0.5) return null;
+  return {
+    normalizedSecond,
+    similarity: getStringSimilarity(normalizedFirst, normalizedSecond),
+  };
+};
+
 const findBestOverlapForSuffix = (
   best: BestOverlap | null,
   normalizedFirst: string,
@@ -68,13 +86,14 @@ const findBestOverlapForSuffix = (
   let updated = best;
 
   for (let j = 1; j < normalizedSecondPrefixes.length; j++) {
-    const normalizedSecond = normalizedSecondPrefixes[j];
+    const candidate = similarCandidate(
+      normalizedFirst,
+      normalizedSecondPrefixes,
+      j,
+    );
+    if (!candidate || candidate.similarity < SIMILARITY_THRESHOLD) continue;
 
-    // Skip if lengths are too different
-    if (getLengthRatio(normalizedFirst, normalizedSecond) < 0.5) continue;
-
-    const similarity = getStringSimilarity(normalizedFirst, normalizedSecond);
-    if (similarity < SIMILARITY_THRESHOLD) continue;
+    const { similarity } = candidate;
 
     const isExact = i === j && similarity >= EXACT_MATCH_THRESHOLD;
     const score = overlapScore(j, isExact, similarity);
@@ -150,12 +169,14 @@ const findExactMatchForSuffix = (
   i: number,
 ): number | null => {
   for (let j = 1; j < normalizedSecondPrefixes.length; j++) {
-    const normalizedSecond = normalizedSecondPrefixes[j];
+    const candidate = similarCandidate(
+      normalizedFirst,
+      normalizedSecondPrefixes,
+      j,
+    );
+    if (!candidate) continue;
 
-    if (getLengthRatio(normalizedFirst, normalizedSecond) < 0.5) continue;
-
-    const similarity = getStringSimilarity(normalizedFirst, normalizedSecond);
-    if (similarity >= EXACT_MATCH_THRESHOLD && i === j) {
+    if (candidate.similarity >= EXACT_MATCH_THRESHOLD && i === j) {
       return j;
     }
   }

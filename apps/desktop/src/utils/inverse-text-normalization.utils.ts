@@ -512,13 +512,19 @@ const applyTimeRules = (text: string): string => {
   return out;
 };
 
-const applyDateRules = (text: string): string => {
-  let out = text.replace(
-    new RegExp(
-      String.raw`\b(?:the\s+)?(${ORDINAL_WORD_SOURCE})\s+of\s+(${MONTH_SOURCE})\b`,
-      "gi",
-    ),
-    (match, day: string, month: string) => {
+/// Rewrites `day month` matches into the canonical `Month day` form.
+///
+/// The two date patterns differ only in capture order, so the lookup and the
+/// fallback live here once and each pattern supplies a capture-to-pair adapter.
+const replaceOrdinalDates = (
+  text: string,
+  source: string,
+  toDayMonth: (first: string, second: string) => [string, string],
+): string =>
+  text.replace(
+    new RegExp(source, "gi"),
+    (match, first: string, second: string) => {
+      const [day, month] = toDayMonth(first, second);
       const parsed = ORDINAL_DAYS[day.toLowerCase().replace(/[-\s]+/g, " ")];
       const canonical = MONTHS[month.toLowerCase()];
       if (parsed === undefined || !canonical) return match;
@@ -526,17 +532,17 @@ const applyDateRules = (text: string): string => {
     },
   );
 
-  out = out.replace(
-    new RegExp(
-      String.raw`\b(${UNAMBIGUOUS_MONTH_SOURCE})\s+(${ORDINAL_WORD_SOURCE})\b`,
-      "gi",
-    ),
-    (match, month: string, day: string) => {
-      const parsed = ORDINAL_DAYS[day.toLowerCase().replace(/[-\s]+/g, " ")];
-      const canonical = MONTHS[month.toLowerCase()];
-      if (parsed === undefined || !canonical) return match;
-      return `${canonical} ${parsed}`;
-    },
+const applyDateRules = (text: string): string => {
+  let out = replaceOrdinalDates(
+    text,
+    String.raw`\b(?:the\s+)?(${ORDINAL_WORD_SOURCE})\s+of\s+(${MONTH_SOURCE})\b`,
+    (day, month) => [day, month],
+  );
+
+  out = replaceOrdinalDates(
+    out,
+    String.raw`\b(${UNAMBIGUOUS_MONTH_SOURCE})\s+(${ORDINAL_WORD_SOURCE})\b`,
+    (month, day) => [day, month],
   );
 
   return out;

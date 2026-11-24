@@ -198,17 +198,18 @@ const fromLocalAiPreferences = (preferences: LocalUserPreferences) => ({
   openclawToken: orNull(preferences.openclawToken),
 });
 
-const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
-  gotStartedAt: orNull(preferences.gotStartedAt),
-  lastSeenFeature: preferences.lastSeenFeature,
-  activeDictationLanguage: orNull(preferences.activeDictationLanguage),
+/// Output preference fields both directions copy unchanged.
+///
+/// `fromLocalOutputPreferences` and `toLocalOutputPreferences` differ only in the
+/// language, limit, placement and channel defaults, so the shared block lives
+/// here instead of being written out twice and drifting apart.
+const outputPreferenceFields = (
+  preferences: UserPreferences | LocalUserPreferences,
+) => ({
   preferredMicrophone: orNull(preferences.preferredMicrophone),
   ignoreUpdateDialog: orFalse(preferences.ignoreUpdateDialog),
   incognitoModeEnabled: orFalse(preferences.incognitoModeEnabled),
   incognitoModeIncludeInStats: orFalse(preferences.incognitoModeIncludeInStats),
-  dictationLimitMinutes: normalizeDictationLimitMinutes(
-    preferences.dictationLimitMinutes,
-  ),
   dictationPillVisibility: getEffectivePillVisibility(
     preferences.dictationPillVisibility,
   ),
@@ -224,6 +225,16 @@ const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
   typingSpeedMs: orNull(preferences.typingSpeedMs),
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
+  ),
+});
+
+const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
+  ...outputPreferenceFields(preferences),
+  gotStartedAt: orNull(preferences.gotStartedAt),
+  lastSeenFeature: preferences.lastSeenFeature,
+  activeDictationLanguage: orNull(preferences.activeDictationLanguage),
+  dictationLimitMinutes: normalizeDictationLimitMinutes(
+    preferences.dictationLimitMinutes,
   ),
   pillPlacement: normalizePillPlacement(preferences.pillPlacement),
   updateChannel: normalizeUpdateChannel(preferences.updateChannel),
@@ -286,36 +297,17 @@ const toLocalAiPreferences = (preferences: UserPreferences) => ({
 });
 
 const toLocalOutputPreferences = (preferences: UserPreferences) => ({
+  ...outputPreferenceFields(preferences),
   languageSwitchEnabled: false,
   secondaryDictationLanguage: null,
   activeDictationLanguage: orValue(
     preferences.activeDictationLanguage,
     PRIMARY_LANGUAGE_SENTINEL,
   ),
-  preferredMicrophone: orNull(preferences.preferredMicrophone),
-  ignoreUpdateDialog: orFalse(preferences.ignoreUpdateDialog),
-  incognitoModeEnabled: orFalse(preferences.incognitoModeEnabled),
-  incognitoModeIncludeInStats: orFalse(preferences.incognitoModeIncludeInStats),
   dictationLimitMinutes: normalizeDictationLimitMinutes(
     orValue(preferences.dictationLimitMinutes, DEFAULT_DICTATION_LIMIT_MINUTES),
   ),
-  dictationPillVisibility: getEffectivePillVisibility(
-    preferences.dictationPillVisibility,
-  ),
-  realtimeOutputEnabled: orFalse(preferences.realtimeOutputEnabled),
-  remoteOutputEnabled: orFalse(preferences.remoteOutputEnabled),
-  remoteTargetDeviceId: orNull(preferences.remoteTargetDeviceId),
-  remoteReceiverPort: orNull(preferences.remoteReceiverPort),
-  remoteReceiverAutoStart: orFalse(preferences.remoteReceiverAutoStart),
-  dictationAudioDim: orValue(preferences.dictationAudioDim, 1.0),
-  pasteKeybind: orNull(preferences.pasteKeybind),
   useNewBackend: true,
-  menuBarIconHidden: orFalse(preferences.menuBarIconHidden),
-  insertionMethod: orNull(preferences.insertionMethod),
-  typingSpeedMs: orNull(preferences.typingSpeedMs),
-  pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
-    preferences.pillResetMonitorStrategy,
-  ),
   pillPlacement: orValue(preferences.pillPlacement, "bottom"),
   updateChannel: orValue(preferences.updateChannel, "stable"),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
