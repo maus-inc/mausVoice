@@ -1102,7 +1102,7 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         let content_x = panel_x + PANEL_CONTENT_SIDE_INSET;
         let content_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0;
 
-        let (scroll_h, bottom_pad) =
+        let (scroll_h, bottom_pad, scroll_bottom) =
             expanded_scroll_metrics(is_typing, py, panel_h, review_actions_h);
         state.viewport_height.set(scroll_h);
 
@@ -1398,7 +1398,7 @@ fn expanded_scroll_metrics(
     py: f64,
     panel_h: f64,
     review_actions_h: f64,
-) -> (f64, f64) {
+) -> (f64, f64, f64) {
     let scroll_bottom = if is_typing {
         py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
     } else {
@@ -1409,7 +1409,7 @@ fn expanded_scroll_metrics(
     } else {
         PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT + SCROLL_BOTTOM_PAD
     };
-    ((scroll_bottom - py).max(0.0), bottom_pad)
+    ((scroll_bottom - py).max(0.0), bottom_pad, scroll_bottom)
 }
 
 #[allow(clippy::too_many_arguments)]
