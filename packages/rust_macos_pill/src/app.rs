@@ -2457,7 +2457,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         if dragging {
             bounds.apply_shared_seam_bounds(
                 drag_region,
-                (footprint.fx + pw / 2.0, win_h - footprint.fy - ph / 2.0),
+                (fx + pw / 2.0, win_h - fy - ph / 2.0),
                 edge_mask,
             );
         }
