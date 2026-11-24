@@ -105,6 +105,21 @@ function sleepSync(ms) {
   busyWait(ms);
 }
 
+function describeSpawnFailure(res) {
+  const reason =
+    res?.error?.code ||
+    res?.error?.message ||
+    (res?.signal ? `signal:${res.signal}` : "") ||
+    (res?.status ?? "unknown");
+  if (res?.error?.message && reason !== res.error.message) {
+    return { reason, suffix: ` — ${res.error.message}` };
+  }
+  if (res?.signal) {
+    return { reason, suffix: ` — killed by signal ${res.signal}` };
+  }
+  return { reason, suffix: "" };
+}
+
 function tryNodeProcessSleep(ms) {
   try {
     const res = spawnSync(
@@ -117,25 +132,8 @@ function tryNodeProcessSleep(ms) {
     if (!res?.error && res?.status === 0) {
       return true;
     }
-    let reason = res?.error?.code;
-    if (!reason && res?.error?.message) {
-      reason = res.error.message;
-    }
-    if (!reason && res?.signal) {
-      reason = `signal:${res.signal}`;
-    }
-    if (!reason) {
-      reason = res?.status ?? "unknown";
-    }
-    let messageSuffix = "";
-    if (res?.error?.message && reason !== res.error.message) {
-      messageSuffix = ` — ${res.error.message}`;
-    } else if (res?.signal) {
-      messageSuffix = ` — killed by signal ${res.signal}`;
-    }
-    console.warn(
-      `[sidecar] sleepSync spawnSync failed: ${reason}${messageSuffix}`,
-    );
+    const { reason, suffix } = describeSpawnFailure(res);
+    console.warn(`[sidecar] sleepSync spawnSync failed: ${reason}${suffix}`);
     return false;
   } catch {
     return false;

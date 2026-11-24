@@ -100,35 +100,44 @@ function executedSuites(workflowsText, repoRoot) {
   const executed = new Set();
   for (const line of workflowsText.split("\n")) {
     if (/^\s*#/.test(line)) continue;
-    const command = /node\s+--test\b(.*)$/.exec(line);
-    if (!command) continue;
-    for (const raw of command[1].split(/\s+/)) {
-      const token = raw.replace(/[;"'`]+$/, "").replace(/^["'`]/, "");
-      // The suite name is the token's last path segment. Matching the tail with
-      // `[\w.-]+` instead would read `scripts/ci/*.test.mjs` as no match at all,
-      // because neither `/` nor `*` is in that class -- which is the one shape
-      // this was extended to handle.
-      const directory = token.slice(0, token.lastIndexOf("/") + 1);
-      const name = token.slice(token.lastIndexOf("/") + 1);
-      if (!name.endsWith(".test.mjs")) continue;
-      if (!name.includes("*")) {
-        executed.add(`${directory}${name}`);
-        continue;
-      }
-      // A glob stands for the suites it names, so expand it rather than
-      // recording a literal `*` no suite is called.
-      const target = resolve(repoRoot, directory);
-      if (!existsSync(target)) continue;
-      const prefix = name.slice(0, name.indexOf("*"));
-      const suffix = name.slice(name.lastIndexOf("*") + 1);
-      for (const file of readdirSync(target)) {
-        if (file.startsWith(prefix) && file.endsWith(suffix)) {
-          executed.add(`${directory}${file}`);
-        }
-      }
-    }
+    for (const suite of suitesInCommandLine(line, repoRoot))
+      executed.add(suite);
   }
   return executed;
+}
+
+function suitesInCommandLine(line, repoRoot) {
+  const command = /node\s+--test\b(.*)$/.exec(line);
+  if (!command) return [];
+  const suites = [];
+  for (const raw of command[1].split(/\s+/)) {
+    const token = raw.replace(/[;"'`]+$/, "").replace(/^["'`]/, "");
+    // The suite name is the token's last path segment. Matching the tail with
+    // `[\w.-]+` instead would read `scripts/ci/*.test.mjs` as no match at all,
+    // because neither `/` nor `*` is in that class -- which is the one shape
+    // this was extended to handle.
+    const directory = token.slice(0, token.lastIndexOf("/") + 1);
+    const name = token.slice(token.lastIndexOf("/") + 1);
+    if (!name.endsWith(".test.mjs")) continue;
+    // A glob stands for the suites it names, so expand it rather than
+    // recording a literal `*` no suite is called.
+    if (name.includes("*")) {
+      suites.push(...expandSuiteGlob(directory, name, repoRoot));
+      continue;
+    }
+    suites.push(`${directory}${name}`);
+  }
+  return suites;
+}
+
+function expandSuiteGlob(directory, name, repoRoot) {
+  const target = resolve(repoRoot, directory);
+  if (!existsSync(target)) return [];
+  const prefix = name.slice(0, name.indexOf("*"));
+  const suffix = name.slice(name.lastIndexOf("*") + 1);
+  return readdirSync(target)
+    .filter((file) => file.startsWith(prefix) && file.endsWith(suffix))
+    .map((file) => `${directory}${file}`);
 }
 
 // A `paths:` entry that names a whole directory, so it covers every suite under
@@ -199,43 +208,51 @@ function pathsEntries(text) {
     }
     // The block spelling: the key alone on its line, items on the ones below.
     if (keyed[1].trim() !== "") continue;
-    const entries = [];
-    for (let scan = index + 1; scan < lines.length; scan += 1) {
-      const line = lines[scan];
-      // A list item of this block, or a deeper one -- `paths:` at four spaces
-      // puts its items at six, and a workflow is free to indent further.
-      const item = /^\s*-\s*(.+?)\s*$/.exec(line);
-      if (item) {
-        // A comment after the entry is not part of the pattern, and it must come off
-        // BEFORE the quotes do. `!/^["']|["']$/g` only reaches a closing quote that is
-        // already at end of line, so with `- "!scripts/ci/**"  # note` the quote is
-        // interior: it survives, and the comment becomes part of the glob. The result
-        // matches nothing, so a negated entry silently stops excluding anything and
-        // this guard reports a suite as covered that the workflow does not run --
-        // the opposite of the truth, and quietly, because a broken parse leaves
-        // nothing to notice.
-        //
-        // Only a `#` that begins the comment counts. A `#` inside a quoted pattern is
-        // legal in YAML and is part of the glob, so the comment scan starts at the
-        // quote when there is one.
-        const raw = item[1];
-        const quoted = /^["']/.test(raw);
-        const cut = quoted
-          ? raw.search(/(["'])\s+#/)
-          : raw.indexOf(" #");
-        entries.push(
-          (cut >= 0 ? raw.slice(0, cut) : raw).trim().replace(/^["']|["']$/g, ""),
-        );
-        continue;
-      }
-      // A line at or left of the `paths:` key, or a non-item sibling of one,
-      // ends the block. Blanks and comments sit inside blocks and do not.
-      if (line.trim() === "" || /^\s*#/.test(line)) continue;
-      if (/^\s*-\s/.test(line) || /^\s*\S/.test(line)) break;
-    }
-    blocks.push(entries);
+    blocks.push(collectPathsBlock(lines, index + 1));
   }
   return blocks;
+}
+
+function collectPathsBlock(lines, start) {
+  const entries = [];
+  for (let scan = start; scan < lines.length; scan += 1) {
+    const line = lines[scan];
+    const entry = pathsItemEntry(line);
+    if (entry !== undefined) {
+      entries.push(entry);
+      continue;
+    }
+    // A line at or left of the `paths:` key, or a non-item sibling of one,
+    // ends the block. Blanks and comments sit inside blocks and do not.
+    if (line.trim() === "" || /^\s*#/.test(line)) continue;
+    break;
+  }
+  return entries;
+}
+
+// A list item of a `paths:` block, or a deeper one -- `paths:` at four spaces
+// puts its items at six, and a workflow is free to indent further.
+function pathsItemEntry(line) {
+  const item = /^\s*-\s*(.+?)\s*$/.exec(line);
+  if (!item) return undefined;
+  // A comment after the entry is not part of the pattern, and it must come off
+  // BEFORE the quotes do. `!/^["']|["']$/g` only reaches a closing quote that is
+  // already at end of line, so with `- "!scripts/ci/**"  # note` the quote is
+  // interior: it survives, and the comment becomes part of the glob. The result
+  // matches nothing, so a negated entry silently stops excluding anything and
+  // this guard reports a suite as covered that the workflow does not run --
+  // the opposite of the truth, and quietly, because a broken parse leaves
+  // nothing to notice.
+  //
+  // Only a `#` that begins the comment counts. A `#` inside a quoted pattern is
+  // legal in YAML and is part of the glob, so the comment scan starts at the
+  // quote when there is one.
+  const raw = item[1];
+  const quoted = /^["']/.test(raw);
+  const cut = quoted ? raw.search(/(["'])\s+#/) : raw.indexOf(" #");
+  return (cut >= 0 ? raw.slice(0, cut) : raw)
+    .trim()
+    .replace(/^["']|["']$/g, "");
 }
 
 // The suites one workflow runs that its own `paths:` filter does not name.

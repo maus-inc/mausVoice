@@ -174,6 +174,19 @@ const pluginHttpBindings = (source: string): string[] => {
  * The paren scan is naive about parens inside string literals; a range cut
  * short only widens what gets checked, which is the safe direction.
  */
+// The index of the `)` that closes the `(` at `open`, or -1 when it never closes.
+const matchingParen = (source: string, open: number): number => {
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === "(") depth += 1;
+    else if (source[index] === ")") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+};
+
 const pluginHttpArgumentRanges = (source: string): [number, number][] => {
   const ranges: [number, number][] = [];
   for (const binding of pluginHttpBindings(source)) {
@@ -183,17 +196,8 @@ const pluginHttpArgumentRanges = (source: string): [number, number][] => {
     );
     for (const call of source.matchAll(calls)) {
       const open = (call.index ?? 0) + call[0].length - 1;
-      let depth = 0;
-      for (let i = open; i < source.length; i += 1) {
-        if (source[i] === "(") depth += 1;
-        else if (source[i] === ")") {
-          depth -= 1;
-          if (depth === 0) {
-            ranges.push([open, i]);
-            break;
-          }
-        }
-      }
+      const close = matchingParen(source, open);
+      if (close !== -1) ranges.push([open, close]);
     }
   }
   return ranges;

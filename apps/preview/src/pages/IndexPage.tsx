@@ -22,7 +22,7 @@ export const IndexPage = () => {
   return (
     <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1200 }}>
       <Typography variant="headlineSmall">
-        mausVoice UI — preview &amp; specs
+        mausVoice UI preview and specs
       </Typography>
       <Typography
         variant="bodyMedium"

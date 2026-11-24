@@ -32,24 +32,32 @@ const sourceFiles = readdirSync(SRC).filter(
 
 type Site = { file: string; line: number; ctor: string };
 
+// The option object that follows a constructor on line `index`, up to its closing
+// `});` or 30 lines, whichever comes first.
+const optionWindow = (lines: string[], index: number): string[] => {
+  const window: string[] = [];
+  const limit = Math.min(index + 30, lines.length);
+  for (let scan = index; scan < limit; scan += 1) {
+    window.push(lines[scan] ?? "");
+    if (/^\s*\}\);\s*$/.test(lines[scan] ?? "")) break;
+  }
+  return window;
+};
+
 const clientSites = (): Site[] => {
   const sites: Site[] = [];
   for (const file of sourceFiles) {
     const lines = readFileSync(join(SRC, file), "utf8").split("\n");
-    for (let i = 0; i < lines.length; i += 1) {
+    for (let index = 0; index < lines.length; index += 1) {
       const ctor = /^\s*(?:return |const \w+ = )?new (\w+)\(\{/.exec(
-        lines[i] ?? "",
+        lines[index] ?? "",
       );
       if (!ctor) continue;
-      const window: string[] = [];
-      for (let j = i; j < Math.min(i + 30, lines.length); j += 1) {
-        window.push(lines[j] ?? "");
-        if (/^\s*\}\);\s*$/.test(lines[j] ?? "")) break;
-      }
       // A `fetch:` in the options object is what makes the constructor an HTTP client that
       // we own, and therefore one whose retry behaviour is this package's decision.
-      if (!window.some((w) => w.includes("fetch:"))) continue;
-      sites.push({ file, line: i + 1, ctor: ctor[1] ?? "?" });
+      if (!optionWindow(lines, index).some((w) => w.includes("fetch:")))
+        continue;
+      sites.push({ file, line: index + 1, ctor: ctor[1] ?? "?" });
     }
   }
   return sites;

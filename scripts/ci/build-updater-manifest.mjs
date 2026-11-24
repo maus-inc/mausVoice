@@ -131,52 +131,72 @@ async function collectFiles(dir) {
  *
  * @throws when a platform's bundle exists but its `.sig` is missing.
  */
+function selectSignedBundle(type, bundles, signatures) {
+  // The candidates for this type, partitioned once. The installer and the
+  // updater bundle share a prefix, so both a bare `.msi` and a `.msi.zip`
+  // match this type and only one of them is signed; picking the first match
+  // instead made the outcome depend on the order the directory walk happened
+  // to produce.
+  const candidates = bundles.filter((file) => type.match(path.basename(file)));
+  // Prefer a candidate that actually has a signature beside it.
+  const bundle = candidates.find((file) => signatures.has(`${file}.sig`));
+  if (bundle) return { bundle, unsigned: [] };
+  // No candidate at all means this platform simply produced nothing, which is
+  // normal for a matrix job that did not run. Only a candidate that exists
+  // without a signature is the error the manifest must refuse.
+  return {
+    bundle: undefined,
+    unsigned: candidates.map((file) => path.basename(file)),
+  };
+}
+
+function platformEntry(bundle, repository, tag) {
+  return {
+    signature: `${bundle}.sig`,
+    url: assetUrl(repository, tag, path.basename(bundle)),
+  };
+}
+
+// Bare fallback candidates: bareKey -> { precedence, entry }. The lowest
+// precedence installer present wins (see INSTALLER_TYPES).
+function recordBareCandidate(bareCandidates, type, entry) {
+  const existing = bareCandidates[type.bare];
+  if (!existing || type.barePrecedence < existing.precedence) {
+    bareCandidates[type.bare] = { precedence: type.barePrecedence, entry };
+  }
+}
+
+function assertAllBundlesSigned(missing) {
+  if (missing.length === 0) return;
+  throw new Error(
+    `Updater bundles are missing their .sig signature: ${missing.join(", ")}. ` +
+      "Refusing to publish a manifest the client cannot verify.",
+  );
+}
+
+/**
+ * Pairs every updater bundle with the detached signature Tauri wrote beside
+ * it and returns the `platforms` map for the manifest.
+ *
+ * @throws when a platform's bundle exists but its `.sig` is missing.
+ */
 export function buildPlatforms(files, { repository, tag }) {
   const bundles = files.filter((file) => !file.endsWith(".sig"));
   const signatures = new Set(files.filter((file) => file.endsWith(".sig")));
 
   const platforms = {};
-  // Bare fallback candidates: bareKey -> { precedence, entry }. The lowest
-  // precedence installer present wins (see INSTALLER_TYPES).
   const bareCandidates = {};
   const missing = [];
 
   for (const type of INSTALLER_TYPES) {
-    // The candidates for this type, partitioned once. The installer and the
-    // updater bundle share a prefix, so both a bare `.msi` and a `.msi.zip`
-    // match this type and only one of them is signed; picking the first match
-    // instead made the outcome depend on the order the directory walk happened
-    // to produce.
-    const candidates = bundles.filter((file) => type.match(path.basename(file)));
-    // Prefer a candidate that actually has a signature beside it.
-    const bundle = candidates.find((file) => signatures.has(`${file}.sig`));
-    if (!bundle) {
-      // No candidate at all means this platform simply produced nothing, which
-      // is normal for a matrix job that did not run. Only a candidate that
-      // exists without a signature is the error the manifest must refuse.
-      if (candidates.length > 0) {
-        missing.push(...candidates.map((file) => path.basename(file)));
-      }
-      continue;
-    }
-
-    const signaturePath = `${bundle}.sig`;
-
-    const entry = {
-      signature: signaturePath,
-      url: assetUrl(repository, tag, path.basename(bundle)),
-    };
-
+    const { bundle, unsigned } = selectSignedBundle(type, bundles, signatures);
+    missing.push(...unsigned);
+    if (!bundle) continue;
+    const entry = platformEntry(bundle, repository, tag);
     for (const key of type.keys()) {
       platforms[key] = { ...entry };
     }
-
-    if (type.bare) {
-      const existing = bareCandidates[type.bare];
-      if (!existing || type.barePrecedence < existing.precedence) {
-        bareCandidates[type.bare] = { precedence: type.barePrecedence, entry };
-      }
-    }
+    if (type.bare) recordBareCandidate(bareCandidates, type, entry);
   }
 
   // Apply the bare fallbacks last so they never clobber a per-installer key.
@@ -185,13 +205,7 @@ export function buildPlatforms(files, { repository, tag }) {
     platforms[bareKey] = { ...entry };
   }
 
-  if (missing.length > 0) {
-    throw new Error(
-      `Updater bundles are missing their .sig signature: ${missing.join(", ")}. ` +
-        "Refusing to publish a manifest the client cannot verify.",
-    );
-  }
-
+  assertAllBundlesSigned(missing);
   return platforms;
 }
 

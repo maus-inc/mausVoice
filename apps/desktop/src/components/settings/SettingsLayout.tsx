@@ -124,26 +124,10 @@ const isSearchShortcut = (event: KeyboardEvent): boolean => {
  * the app window can be narrowed to 800px and hiding navigation there left the
  * surface with none.
  */
-export const SettingsLayout = () => {
-  const intl = useIntl();
-  const location = useLocation();
-  const navigate = useNavigate();
-  const pageMatch = useMatch(`${SETTINGS_BASE_PATH}/:page`);
-  const activePage = SETTINGS_PAGES.find(
-    (page) => page.id === pageMatch?.params.page,
-  );
-  const [query, setQuery] = useState("");
-  const searchInput = useRef<HTMLInputElement | null>(null);
+const useSettingsPageChrome = (
+  activePage: ReturnType<typeof useSettingsActivePage>,
+) => {
   const rail = useRef<HTMLElement | null>(null);
-  const availability = useSettingsAvailability();
-  const hits = useMemo(
-    () => searchSettings(query, { availability, messages: intl.messages }),
-    [query, availability, intl.messages],
-  );
-
-  const clearQuery = useCallback(() => setQuery(""), []);
-  const { highlight, focusSetting, requestFocus, cancelPendingFocus } =
-    useSettingsAnchor(location.hash, activePage?.id, availability, clearQuery);
 
   useEffect(() => {
     if (activePage) rememberLastSettingsPage(activePage.id);
@@ -158,13 +142,12 @@ export const SettingsLayout = () => {
     return () => window.removeEventListener("resize", reveal);
   }, [activePage]);
 
-  // A query belongs to the page it was typed on. Without this, picking a page
-  // from the rail while a search is open leaves the results panel standing in
-  // for the page that was just chosen, because the rail only changes the route.
-  useEffect(() => {
-    setQuery("");
-  }, [location.pathname]);
+  return rail;
+};
 
+const useSearchShortcut = (
+  searchInput: React.RefObject<HTMLInputElement | null>,
+) => {
   // `/` reaches search from anywhere on the surface, which is the shortcut
   // people already expect from search boxes.
   useEffect(() => {
@@ -175,7 +158,124 @@ export const SettingsLayout = () => {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [searchInput]);
+};
+
+const useSettingsActivePage = () => {
+  const pageMatch = useMatch(`${SETTINGS_BASE_PATH}/:page`);
+  return SETTINGS_PAGES.find((page) => page.id === pageMatch?.params.page);
+};
+
+const SettingsContent = ({
+  searching,
+  hits,
+  openHit,
+  activePage,
+}: {
+  searching: boolean;
+  hits: SettingHit[];
+  openHit: (hit: SettingHit) => void;
+  activePage: ReturnType<typeof useSettingsActivePage>;
+}) => {
+  if (searching) {
+    return (
+      <>
+        <Box component="h1" sx={visuallyHidden}>
+          <FormattedMessage defaultMessage="Search settings" />
+        </Box>
+        <SettingsSearchResults hits={hits} onSelect={openHit} />
+      </>
+    );
+  }
+  // The heading travels with the page it names. Centring the page alone left
+  // the heading stranded at the top of the surface with the free space halved
+  // into two gaps, one under the heading and one under the content, which read
+  // as a broken composition rather than a centred one. As one block, the spare
+  // space becomes the margin above and below the whole thing.
+  //
+  // `auto` margins are what make that safe: they absorb free space when there
+  // is some, and resolve to zero when the page is taller than the surface, so a
+  // long page is laid out exactly as before.
+  return (
+    <Box sx={{ my: "auto", width: "100%" }}>
+      {activePage && (
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="h4" component="h1" sx={{ fontWeight: 700 }}>
+            {SETTINGS_PAGE_COPY[activePage.id].title}
+          </Typography>
+          <Typography
+            variant="body1"
+            sx={{ color: "text.secondary", mt: 1, maxWidth: "72ch" }}
+          >
+            {SETTINGS_PAGE_COPY[activePage.id].description}
+          </Typography>
+        </Box>
+      )}
+      <Outlet />
+    </Box>
+  );
+};
+
+const handleSearchKeyDown = (
+  event: React.KeyboardEvent,
+  {
+    hits,
+    setQuery,
+    openHit,
+  }: {
+    hits: SettingHit[];
+    setQuery: (query: string) => void;
+    openHit: (hit: SettingHit) => void;
+  },
+): void => {
+  // A key pressed while an input method editor is composing belongs
+  // to the IME, not to the search box: for Korean and Chinese that
+  // is how a candidate list is confirmed, and for Japanese how a
+  // conversion is committed. Chrome reports the boundary as key
+  // code 229 with an empty `key`, and the composing flag stays true
+  // on the event that ends the composition, so both are checked
+  // before anything acts on the key.
+  if (isComposingKey(event.nativeEvent)) {
+    return;
+  }
+  if (event.key === "Escape") {
+    setQuery("");
+    return;
+  }
+  // Enter opens the first result, the way a search box behaves
+  // everywhere else: the panel is one Tab away for anyone who
+  // would rather pick a different row.
+  if (event.key === "Enter" && hits.length > 0) {
+    event.preventDefault();
+    openHit(hits[0]);
+  }
+};
+
+export const SettingsLayout = () => {
+  const intl = useIntl();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activePage = useSettingsActivePage();
+  const [query, setQuery] = useState("");
+  const searchInput = useRef<HTMLInputElement | null>(null);
+  const availability = useSettingsAvailability();
+  const hits = useMemo(
+    () => searchSettings(query, { availability, messages: intl.messages }),
+    [query, availability, intl.messages],
+  );
+
+  const clearQuery = useCallback(() => setQuery(""), []);
+  const { highlight, focusSetting, requestFocus, cancelPendingFocus } =
+    useSettingsAnchor(location.hash, activePage?.id, availability, clearQuery);
+  const rail = useSettingsPageChrome(activePage);
+  useSearchShortcut(searchInput);
+
+  // A query belongs to the page it was typed on. Without this, picking a page
+  // from the rail while a search is open leaves the results panel standing in
+  // for the page that was just chosen, because the rail only changes the route.
+  useEffect(() => {
+    setQuery("");
+  }, [location.pathname]);
 
   const openHit = (hit: SettingHit) => {
     requestFocus(hit.entry.key);
@@ -235,29 +335,9 @@ export const SettingsLayout = () => {
                 cancelPendingFocus();
                 setQuery(event.target.value);
               }}
-              onKeyDown={(event) => {
-                // A key pressed while an input method editor is composing belongs
-                // to the IME, not to the search box: for Korean and Chinese that
-                // is how a candidate list is confirmed, and for Japanese how a
-                // conversion is committed. Chrome reports the boundary as key
-                // code 229 with an empty `key`, and the composing flag stays true
-                // on the event that ends the composition, so both are checked
-                // before anything acts on the key.
-                if (isComposingKey(event.nativeEvent)) {
-                  return;
-                }
-                if (event.key === "Escape") {
-                  setQuery("");
-                  return;
-                }
-                // Enter opens the first result, the way a search box behaves
-                // everywhere else: the panel is one Tab away for anyone who
-                // would rather pick a different row.
-                if (event.key === "Enter" && hits.length > 0) {
-                  event.preventDefault();
-                  openHit(hits[0]);
-                }
-              }}
+              onKeyDown={(event) =>
+                handleSearchKeyDown(event, { hits, setQuery, openHit })
+              }
               placeholder={intl.formatMessage({
                 defaultMessage: "Search settings",
               })}
@@ -319,45 +399,12 @@ export const SettingsLayout = () => {
               flexDirection: "column",
             }}
           >
-            {searching ? (
-              <>
-                <Box component="h1" sx={visuallyHidden}>
-                  <FormattedMessage defaultMessage="Search settings" />
-                </Box>
-                <SettingsSearchResults hits={hits} onSelect={openHit} />
-              </>
-            ) : (
-              // The heading travels with the page it names. Centring the page
-              // alone left the heading stranded at the top of the surface with
-              // the free space halved into two gaps — one under the heading, one
-              // under the content — which read as a broken composition rather
-              // than a centred one. As one block, the spare space becomes the
-              // margin above and below the whole thing.
-              //
-              // `auto` margins are what make that safe: they absorb free space
-              // when there is some, and resolve to zero when the page is taller
-              // than the surface, so a long page is laid out exactly as before.
-              <Box sx={{ my: "auto", width: "100%" }}>
-                {activePage && (
-                  <Box sx={{ mb: 4 }}>
-                    <Typography
-                      variant="h4"
-                      component="h1"
-                      sx={{ fontWeight: 700 }}
-                    >
-                      {SETTINGS_PAGE_COPY[activePage.id].title}
-                    </Typography>
-                    <Typography
-                      variant="body1"
-                      sx={{ color: "text.secondary", mt: 1, maxWidth: "72ch" }}
-                    >
-                      {SETTINGS_PAGE_COPY[activePage.id].description}
-                    </Typography>
-                  </Box>
-                )}
-                <Outlet />
-              </Box>
-            )}
+            <SettingsContent
+              searching={searching}
+              hits={hits}
+              openHit={openHit}
+              activePage={activePage}
+            />
           </Box>
         </Stack>
       </SettingsHighlightContext.Provider>

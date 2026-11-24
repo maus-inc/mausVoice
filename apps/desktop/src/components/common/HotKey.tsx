@@ -1,7 +1,6 @@
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import { useMemo, useRef, useState } from "react";
-import { useId } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { useAppStore } from "../../store";
 import { hotkeyRecorderStyles } from "./hotkey-recorder.styles";

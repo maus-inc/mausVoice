@@ -260,6 +260,34 @@ export function tokenizeCargoCommandLoose(line) {
  */
 const isEscapable = (ch) => /[\s'"`$\\]/.test(ch);
 
+const QUOTE_CHARS = new Set(["'", '"']);
+
+// A backslash only escapes what a POSIX shell escapes. Honouring it for every
+// backslash destroys Windows paths: cargo prints the rustc path bare there, so
+// `C:\Users\...\rustc.exe` lost every backslash (`\U` is just `U`) and argv[0]
+// stopped being a recognisable program name.
+const isShellEscape = (body, index) =>
+  body[index] === "\\" &&
+  index + 1 < body.length &&
+  isEscapable(body[index + 1]);
+
+function readQuotedWord(body, index) {
+  const quote = body[index];
+  let text = "";
+  let cursor = index + 1;
+  while (cursor < body.length && body[cursor] !== quote) {
+    // Inside single quotes a backslash is literal, so only the double-quoted case
+    // honours an escape.
+    const escaped = quote === '"' && isShellEscape(body, cursor);
+    text += escaped ? body[cursor + 1] : body[cursor];
+    cursor += escaped ? 2 : 1;
+  }
+  if (cursor >= body.length) {
+    throw new Error(`unterminated ${quote} quote in a cargo command line`);
+  }
+  return { text, next: cursor + 1 };
+}
+
 function splitCommandWords(body) {
   const words = [];
   let current = "";
@@ -267,48 +295,14 @@ function splitCommandWords(body) {
   let index = 0;
   while (index < body.length) {
     const ch = body[index];
-    if (ch === "'" || ch === '"') {
-      const startedQuote = ch;
+    if (QUOTE_CHARS.has(ch)) {
+      const quoted = readQuotedWord(body, index);
+      current += quoted.text;
       started = true;
-      index += 1;
-      while (index < body.length && body[index] !== startedQuote) {
-        // Inside single quotes a backslash is literal, so only the double-quoted case
-        // honours an escape -- and then only for the characters a POSIX shell actually
-        // escapes. Honouring it for every backslash destroys Windows paths: cargo
-        // double-quotes the rustc path there, so `C:\Users\...\rustc.exe` lost every
-        // backslash (`\U` is just `U`), argv[0] stopped being a recognisable program
-        // name, and the harness reported that cargo had printed no invocation at all.
-        // A shell leaves `\Q` alone for exactly this reason.
-        if (
-          startedQuote === '"' &&
-          body[index] === "\\" &&
-          index + 1 < body.length &&
-          isEscapable(body[index + 1])
-        ) {
-          current += body[index + 1];
-          index += 2;
-          continue;
-        }
-        current += body[index];
-        index += 1;
-      }
-      if (index >= body.length) {
-        throw new Error(`unterminated ${startedQuote} quote in a cargo command line`);
-      }
-      index += 1;
+      index = quoted.next;
       continue;
     }
-    // Same rule outside quotes as inside them: a backslash only escapes what a shell
-    // escapes. Cargo prints the rustc path BARE on windows -- `C:\Users\...\rustc.exe`
-    // -- so treating every backslash as an escape here removed each one (`\U` is just
-    // `U`), argv[0] stopped being a recognisable program name, and the harness reported
-    // that cargo had printed no invocation. This was the cause on the windows legs; the
-    // quoted case above was a second instance of the same mistake, found by the fix.
-    if (
-      ch === "\\" &&
-      index + 1 < body.length &&
-      isEscapable(body[index + 1])
-    ) {
+    if (isShellEscape(body, index)) {
       started = true;
       current += body[index + 1];
       index += 2;
@@ -427,7 +421,12 @@ export function findBuildScriptInvocation(verboseOutput) {
  * the build-dependency set changes.
  */
 export function rewriteInvocation({ env, argv }, { outBinary, test }) {
-  const droppedWithValue = new Set(["--crate-type", "--out-dir", "-o", "--emit"]);
+  const droppedWithValue = new Set([
+    "--crate-type",
+    "--out-dir",
+    "-o",
+    "--emit",
+  ]);
   // `-C\s*` rather than `-C `: cargo's `-vv` output spells these JOINED
   // (`-Cincremental=...`), and a rewrite that only recognised the spaced form
   // passed `-Cincremental=<the non-test fingerprint>` straight through while also
@@ -482,7 +481,7 @@ function capture(label, command, args, options) {
  * the parent workspace. A copy also means the probe's target directory is always
  * cold, which is what guarantees the invocation is printed at all.
  */
-function probeBuild(workDir) {
+function stageProbeCrate(workDir) {
   const crateDir = join(workDir, "crate");
   const targetDir = join(workDir, "target");
   mkdirSync(crateDir, { recursive: true });
@@ -490,7 +489,8 @@ function probeBuild(workDir) {
   copyFileSync(buildRs, join(crateDir, "build.rs"));
   for (const entry of ["src", "LICENSE", "README.md"]) {
     const from = join(patchDir, entry);
-    if (existsSync(from)) cpSync(from, join(crateDir, entry), { recursive: true });
+    if (existsSync(from))
+      cpSync(from, join(crateDir, entry), { recursive: true });
   }
   // The copied crate carries no `Cargo.lock`, so cargo picks build-dependency
   // versions itself. Left to itself it takes the newest the index offers, which is
@@ -516,69 +516,94 @@ function probeBuild(workDir) {
   // the pin in so rustup resolves the same channel here that it resolves for the rest
   // of the repository.
   stageToolchainPin(crateDir);
+  return { crateDir, targetDir, seedLock };
+}
 
-  // Ladder of attempts, most constrained first. Each rung differs in exactly one
-  // thing, so the failure that survives all of them names a single cause.
+// Ladder of attempts, most constrained first. Each rung differs in exactly one
+// thing, so the failure that survives all of them names a single cause.
+function buildAttempts() {
   const allowFetch = process.env.SHERPA_BUILD_SCRIPT_TESTS_ALLOW_FETCH === "1";
   const attempts = [
     { offline: true, seeded: true, note: "offline, workspace lockfile seeded" },
     { offline: true, seeded: false, note: "offline, no lockfile" },
   ];
   if (allowFetch) {
-    attempts.push({ offline: false, seeded: true, note: "networked (allowed), workspace lockfile seeded" });
-  }
-
-  const failures = [];
-  const homes = candidateCargoHomes();
-  let home = process.env.CARGO_HOME;
-  if (!hasCachedCrates(home)) {
-    const found = homes.find((candidate) => hasCachedCrates(candidate));
-    if (found) {
-      console.log(
-        `note: CARGO_HOME=${home ?? `${homedir()}/.cargo (default)`} holds no cached ` +
-          `crates; using ${found} instead. Set CARGO_HOME yourself to silence this.`,
-      );
-      home = found;
-    }
-  }
-
-  for (const attempt of attempts) {
-    if (!attempt.seeded) {
-      const lock = join(crateDir, "Cargo.lock");
-      if (existsSync(lock)) rmSync(lock);
-    }
-    const result = capture(
-      "cargo build -vv",
-      process.env.CARGO || "cargo",
-      [
-        "build",
-        "-vv",
-        ...(attempt.offline ? ["--offline"] : []),
-        "--target-dir",
-        targetDir,
-      ],
-      {
-        cwd: crateDir,
-        env: {
-          ...process.env,
-          ...(home ? { CARGO_HOME: home } : {}),
-          // `try_main` returns before reaching `download_prebuilt_libs` when this
-          // is set, so a cold cache cannot turn the probe into a 22 MB download.
-          DOCS_RS: "1",
-        },
-      },
-    );
-    if (result.status === 0) {
-      return { output: (result.stdout ?? "") + (result.stderr ?? ""), crateDir, targetDir };
-    }
-    failures.push({
-      note: attempt.note,
-      status: result.status,
-      log: (result.stdout ?? "") + (result.stderr ?? ""),
+    attempts.push({
+      offline: false,
+      seeded: true,
+      note: "networked (allowed), workspace lockfile seeded",
     });
   }
+  return attempts;
+}
 
-  fail(probeBuildFailureMessage(failures, { seedLock, homes, home }));
+function resolveCargoHome(homes) {
+  const inherited = process.env.CARGO_HOME;
+  if (hasCachedCrates(inherited)) return inherited;
+  const found = homes.find((candidate) => hasCachedCrates(candidate));
+  if (!found) return inherited;
+  console.log(
+    `note: CARGO_HOME=${inherited ?? `${homedir()}/.cargo (default)`} holds no cached ` +
+      `crates; using ${found} instead. Set CARGO_HOME yourself to silence this.`,
+  );
+  return found;
+}
+
+function runProbeAttempt(attempt, { crateDir, targetDir, home }) {
+  if (!attempt.seeded) {
+    const lock = join(crateDir, "Cargo.lock");
+    if (existsSync(lock)) rmSync(lock);
+  }
+  const result = capture(
+    "cargo build -vv",
+    process.env.CARGO || "cargo",
+    [
+      "build",
+      "-vv",
+      ...(attempt.offline ? ["--offline"] : []),
+      "--target-dir",
+      targetDir,
+    ],
+    {
+      cwd: crateDir,
+      env: {
+        ...process.env,
+        ...(home ? { CARGO_HOME: home } : {}),
+        // `try_main` returns before reaching `download_prebuilt_libs` when this
+        // is set, so a cold cache cannot turn the probe into a 22 MB download.
+        DOCS_RS: "1",
+      },
+    },
+  );
+  return {
+    result,
+    log: (result.stdout ?? "") + (result.stderr ?? ""),
+  };
+}
+
+function probeBuild(workDir) {
+  const staged = stageProbeCrate(workDir);
+  const homes = candidateCargoHomes();
+  const home = resolveCargoHome(homes);
+  const failures = [];
+  for (const attempt of buildAttempts()) {
+    const { result, log } = runProbeAttempt(attempt, { ...staged, home });
+    if (result.status === 0) {
+      return {
+        output: log,
+        crateDir: staged.crateDir,
+        targetDir: staged.targetDir,
+      };
+    }
+    failures.push({ note: attempt.note, status: result.status, log });
+  }
+  fail(
+    probeBuildFailureMessage(failures, {
+      seedLock: staged.seedLock,
+      homes,
+      home,
+    }),
+  );
 }
 
 /**
@@ -598,7 +623,10 @@ function probeBuild(workDir) {
  * files, so a directory that merely exists is not accepted.
  */
 function candidateCargoHomes() {
-  const candidates = [process.env.CARGO_HOME, homedir() && join(homedir(), ".cargo")];
+  const candidates = [
+    process.env.CARGO_HOME,
+    homedir() && join(homedir(), ".cargo"),
+  ];
   const targetDir = process.env.CARGO_TARGET_DIR;
   if (targetDir) {
     // A target directory is conventionally a sibling of the cargo home, or inside
@@ -609,7 +637,9 @@ function candidateCargoHomes() {
     const stat = statSync(repoRoot);
     if (typeof stat.uid === "number") {
       const passwd = readFileSync("/etc/passwd", "utf8");
-      const entry = passwd.split("\n").find((line) => line.split(":")[2] === String(stat.uid));
+      const entry = passwd
+        .split("\n")
+        .find((line) => line.split(":")[2] === String(stat.uid));
       if (entry) candidates.push(join("/home", entry.split(":")[0], ".cargo"));
     }
   } catch {
@@ -642,7 +672,10 @@ export function hasCachedCrates(home) {
   for (const hash of readdirSync(registry)) {
     const dir = join(registry, hash);
     try {
-      if (statSync(dir).isDirectory() && readdirSync(dir).some((f) => f.endsWith(".crate"))) {
+      if (
+        statSync(dir).isDirectory() &&
+        readdirSync(dir).some((f) => f.endsWith(".crate"))
+      ) {
         return true;
       }
     } catch {
@@ -702,7 +735,12 @@ function probeBuildFailureMessage(failures, { seedLock, homes, home }) {
       "SHERPA_BUILD_SCRIPT_TESTS_ALLOW_FETCH=1.",
     );
   } else {
-    lines.push("", "Full output of the last attempt is below.", "", failures.at(-1).log);
+    lines.push(
+      "",
+      "Full output of the last attempt is below.",
+      "",
+      failures.at(-1).log,
+    );
   }
   return lines.join("\n");
 }
@@ -803,7 +841,10 @@ const SHERPA_BUILD_DIR = new RegExp(`^${SHERPA_PKG_NAME}(-[0-9a-f]{8,})?$`);
  * can never be mistaken for this one, and neither can a different crate whose name
  * merely starts with this one.
  */
-export function cargoBuildScriptBinary(targetDir, hostPlatform = process.platform) {
+export function cargoBuildScriptBinary(
+  targetDir,
+  hostPlatform = process.platform,
+) {
   const buildRoot = join(targetDir, "debug", "build");
   const names = buildScriptBinaryNames(hostPlatform);
   const candidates = [];
@@ -826,9 +867,7 @@ export function cargoBuildScriptBinary(targetDir, hostPlatform = process.platfor
   return candidates[0];
 }
 
-function runHarness(workDir) {
-  const { output, crateDir, targetDir } = probeBuild(workDir);
-
+function locateBuildScriptInvocation(output) {
   let matches;
   try {
     matches = findBuildScriptInvocation(output);
@@ -866,11 +905,13 @@ function runHarness(workDir) {
         "script; expected exactly one. Refusing to guess which to replay.",
     );
   }
-  const located = matches[0];
+  return matches[0];
+}
 
-  // The whole premise: cargo builds a build script as a plain binary and runs it.
-  // If that ever stopped being true this harness would be checking the wrong
-  // thing, so it says so rather than quietly compiling something else.
+// The whole premise: cargo builds a build script as a plain binary and runs it.
+// If that ever stopped being true this harness would be checking the wrong
+// thing, so it says so rather than quietly compiling something else.
+function assertBuildScriptShape(located) {
   const crateTypeAt = located.argv.indexOf("--crate-type");
   if (crateTypeAt === -1 || located.argv[crateTypeAt + 1] !== "bin") {
     fail(
@@ -880,7 +921,9 @@ function runHarness(workDir) {
         "this harness needs revisiting rather than passing.",
     );
   }
-  const sources = located.argv.filter((arg) => arg === "build.rs" || arg === buildRs);
+  const sources = located.argv.filter(
+    (arg) => arg === "build.rs" || arg === buildRs,
+  );
   if (sources.length !== 1) {
     fail(
       "the invocation cargo printed names build.rs " +
@@ -889,25 +932,18 @@ function runHarness(workDir) {
         "checkout. Refusing to pass.",
     );
   }
+}
 
-  // WITH the executable suffix, or the replay produces a file Windows will not run.
-  //
-  // This is the same trap `buildScriptBinaryNames` exists for, one step later: the replayed
-  // rustc writes whatever `-o` says, so the name has to be the one the host will execute.
-  // Without it the Windows leg got all the way to running the tests -- 18 of them, compiled
-  // from the right source with the right externs -- and then failed with
-  //
-  //     spawnSync C:\...\sherpa-build-script-tests: ENOENT
-  //
-  // which reads like a missing file and is really a missing extension.
-  const testBinary = join(workDir, replayedTestBinaryName());
-  const rewrite = rewriteInvocation(located, { outBinary: testBinary, test: true });
-  const childEnv = { ...process.env, ...rewrite.env };
-
-  const compiled = capture("rustc --test", rewrite.argv[0], rewrite.argv.slice(1), {
-    cwd: crateDir,
-    env: childEnv,
-  });
+function compileReplayedTests(rewrite, crateDir, childEnv) {
+  const compiled = capture(
+    "rustc --test",
+    rewrite.argv[0],
+    rewrite.argv.slice(1),
+    {
+      cwd: crateDir,
+      env: childEnv,
+    },
+  );
   if (compiled.status !== 0) {
     fail(
       `could not compile the tests in ${buildRs} (exit ${compiled.status}). ` +
@@ -916,33 +952,40 @@ function runHarness(workDir) {
         (compiled.stderr ?? ""),
     );
   }
-  // Cargo's own flags, so a warning in the build script's test module is one a
-  // normal `cargo build` would never show. Left unfixed, that is how dead code in
-  // these tests survives. Matched on the build script's own path rather than on the
-  // word "warning", so an unrelated warning from the toolchain does not fail a run
-  // over code that has nothing to do with this build script.
-  const aboutBuildRs = new RegExp(`${escapeForRegExp(buildRs)}|\\bbuild\\.rs\\b`);
-  const warnings = (compiled.stderr ?? "")
+  return compiled;
+}
+
+// Cargo's own flags, so a warning in the build script's test module is one a
+// normal `cargo build` would never show. Left unfixed, that is how dead code in
+// these tests survives. Matched on the build script's own path rather than on the
+// word "warning", so an unrelated warning from the toolchain does not fail a run
+// over code that has nothing to do with this build script.
+function assertNoBuildScriptWarnings(stderr) {
+  const aboutBuildRs = new RegExp(
+    `${escapeForRegExp(buildRs)}|\\bbuild\\.rs\\b`,
+  );
+  const warnings = (stderr ?? "")
     .split("\n")
     .filter((line) => aboutBuildRs.test(line));
-  if (warnings.length > 0) {
-    fail(
-      "compiling the tests in " +
-        buildRs +
-        " produced warnings about the build script itself:\n" +
-        warnings.join("\n") +
-        "\nThe build script is compiled with cargo's flags here, so these would " +
-        "never show up in a normal `cargo build`.",
-    );
-  }
+  if (warnings.length === 0) return;
+  fail(
+    "compiling the tests in " +
+      buildRs +
+      " produced warnings about the build script itself:\n" +
+      warnings.join("\n") +
+      "\nThe build script is compiled with cargo's flags here, so these would " +
+      "never show up in a normal `cargo build`.",
+  );
+}
 
-  // `download_prebuilt_libs` refuses any archive it cannot match against a pin, and
-  // a test cannot produce a 22 MB official release tarball byte-for-byte, so
-  // `pinned_archive_digest` carries a `cfg(test)` hook that supplies one. Cargo
-  // never builds a build script under `--test`, so that hook is not supposed to be
-  // in the artifact any real build runs. Checked against the binary cargo just
-  // produced rather than asserted in a comment, because this is exactly the kind
-  // of claim that stops being true without anything failing.
+// `download_prebuilt_libs` refuses any archive it cannot match against a pin, and
+// a test cannot produce a 22 MB official release tarball byte-for-byte, so
+// `pinned_archive_digest` carries a `cfg(test)` hook that supplies one. Cargo
+// never builds a build script under `--test`, so that hook is not supposed to be
+// in the artifact any real build runs. Checked against the binary cargo just
+// produced rather than asserted in a comment, because this is exactly the kind
+// of claim that stops being true without anything failing.
+function assertOverrideMarkerExcluded(targetDir, testBinary) {
   const plainBytes = readFileSync(cargoBuildScriptBinary(targetDir));
   if (plainBytes.includes(Buffer.from(OVERRIDE_MARKER))) {
     fail(
@@ -963,14 +1006,19 @@ function runHarness(workDir) {
         "the hook it names is gone. Update both together.",
     );
   }
+}
 
-  // Strip CARGO_* so nothing the test binary inherits can be mistaken for the cache
-  // location a wiring test sets for itself.
-  const testEnv = { ...process.env };
-  for (const key of Object.keys(testEnv)) {
-    if (key.startsWith("CARGO_")) delete testEnv[key];
+// Strip CARGO_* so nothing the test binary inherits can be mistaken for the cache
+// location a wiring test sets for itself.
+function stripCargoEnv(env) {
+  const stripped = { ...env };
+  for (const key of Object.keys(stripped)) {
+    if (key.startsWith("CARGO_")) delete stripped[key];
   }
+  return stripped;
+}
 
+function listTestNames(testBinary, crateDir, testEnv) {
   const listed = capture("test binary --list", testBinary, ["--list"], {
     cwd: crateDir,
     env: testEnv,
@@ -982,23 +1030,27 @@ function runHarness(workDir) {
         (listed.stderr ?? ""),
     );
   }
-  const names = new Set(
+  return new Set(
     (listed.stdout ?? "")
       .split("\n")
       .map((line) => line.trim().replace(/: test$/, ""))
       .filter((line) => line.startsWith("tests::")),
   );
-  const missing = REQUIRED_TESTS.filter((name) => !names.has(name));
-  if (missing.length > 0) {
-    fail(
-      `the test binary built from ${buildRs} does not contain ${missing.length} of ` +
-        `the ${REQUIRED_TESTS.length} tests this harness exists to run:\n  ` +
-        missing.join("\n  ") +
-        `\nIt listed ${names.size}. A green test binary that ran fewer tests than ` +
-        "this asserts nothing about the code it was supposed to cover.",
-    );
-  }
+}
 
+function assertRequiredTestsPresent(names) {
+  const missing = REQUIRED_TESTS.filter((name) => !names.has(name));
+  if (missing.length === 0) return;
+  fail(
+    `the test binary built from ${buildRs} does not contain ${missing.length} of ` +
+      `the ${REQUIRED_TESTS.length} tests this harness exists to run:\n  ` +
+      missing.join("\n  ") +
+      `\nIt listed ${names.size}. A green test binary that ran fewer tests than ` +
+      "this asserts nothing about the code it was supposed to cover.",
+  );
+}
+
+function executeTestBinary(testBinary, testEnv) {
   const result = spawnSync(testBinary, [], {
     stdio: ["ignore", "inherit", "inherit"],
     env: testEnv,
@@ -1012,9 +1064,12 @@ function runHarness(workDir) {
         "their output is above.",
     );
   }
+}
+
+function reportHarnessSuccess(testCount) {
   console.log(
     "OK: " +
-      names.size +
+      testCount +
       " tests in " +
       buildRs +
       " -- including all " +
@@ -1022,6 +1077,40 @@ function runHarness(workDir) {
       " this harness names -- were compiled by replaying the rustc invocation " +
       "cargo printed for that build script with --test appended, and all of them ran.",
   );
+}
+
+function runHarness(workDir) {
+  const { output, crateDir, targetDir } = probeBuild(workDir);
+  const located = locateBuildScriptInvocation(output);
+  assertBuildScriptShape(located);
+
+  // WITH the executable suffix, or the replay produces a file Windows will not run.
+  //
+  // This is the same trap `buildScriptBinaryNames` exists for, one step later: the replayed
+  // rustc writes whatever `-o` says, so the name has to be the one the host will execute.
+  // Without it the Windows leg got all the way to running the tests -- 18 of them, compiled
+  // from the right source with the right externs -- and then failed with
+  //
+  //     spawnSync C:\...\sherpa-build-script-tests: ENOENT
+  //
+  // which reads like a missing file and is really a missing extension.
+  const testBinary = join(workDir, replayedTestBinaryName());
+  const rewrite = rewriteInvocation(located, {
+    outBinary: testBinary,
+    test: true,
+  });
+  const compiled = compileReplayedTests(rewrite, crateDir, {
+    ...process.env,
+    ...rewrite.env,
+  });
+  assertNoBuildScriptWarnings(compiled.stderr);
+  assertOverrideMarkerExcluded(targetDir, testBinary);
+
+  const testEnv = stripCargoEnv(process.env);
+  const names = listTestNames(testBinary, crateDir, testEnv);
+  assertRequiredTestsPresent(names);
+  executeTestBinary(testBinary, testEnv);
+  reportHarnessSuccess(names.size);
 }
 
 function escapeForRegExp(text) {

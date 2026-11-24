@@ -89,6 +89,59 @@ export function findIgnoredFiles(root, relativePaths) {
   return result.stdout.split("\0").filter(Boolean);
 }
 
+function reportHashDrift(name, entry, actual, error) {
+  if (actual === entry.computedHash) return false;
+  error(`${name}: DRIFT  tree does not match computedHash in skills-lock.json`);
+  error(`  expected ${entry.computedHash}`);
+  error(`  found    ${actual}`);
+  error(
+    `  restore upstream, or reinstall with \`npx skills add ${entry.source} -s ${name} -a universal --copy -y\``,
+  );
+  return true;
+}
+
+function reportIgnoredFiles(name, files, skillDir, root, error) {
+  const ignored = findIgnoredFiles(
+    root,
+    files.map((file) => join(relative(root, skillDir), file.relativePath)),
+  );
+  if (ignored.length === 0) return false;
+  error(
+    `${name}: IGNORED  ${ignored.length} file(s) match a .gitignore rule and would be missing from a fresh checkout`,
+  );
+  for (const path of ignored) error(`  ${path}`);
+  error(
+    `  add a scoped negation to .gitignore (such as \`!.agents/skills/*/package-lock.json\`); do not delete the file`,
+  );
+  return true;
+}
+
+function verifyLockedSkill(name, entry, skillsDir, root, error) {
+  const skillDir = join(skillsDir, name);
+  if (!existsSync(skillDir)) {
+    error(
+      `${name}: MISSING  no directory for a locked skill, run \`npx skills update\``,
+    );
+    return { checked: false, drift: true };
+  }
+  const files = listSkillFiles(skillDir);
+  const hashDrift = reportHashDrift(name, entry, hashSkillFiles(files), error);
+  const ignoredDrift = reportIgnoredFiles(name, files, skillDir, root, error);
+  return { checked: true, drift: hashDrift || ignoredDrift };
+}
+
+function reportUnrecorded(onDisk, lock, strict, log, error) {
+  const unrecorded = onDisk.filter((name) => !lock.skills?.[name]);
+  if (unrecorded.length === 0) return { unrecorded, drift: 0 };
+  const message = `${unrecorded.join(", ")}: unrecorded  project-owned skills with no lock entry`;
+  if (!strict) {
+    log(message);
+    return { unrecorded, drift: 0 };
+  }
+  error(message);
+  return { unrecorded, drift: 1 };
+}
+
 export function verifySkills(
   root,
   { strict = false, log = console.log, error = console.error } = {},
@@ -106,60 +159,18 @@ export function verifySkills(
   let checked = 0;
 
   for (const [name, entry] of locked) {
-    const skillDir = join(skillsDir, name);
-    if (!existsSync(skillDir)) {
-      error(
-        `${name}: MISSING  no directory for a locked skill, run \`npx skills update\``,
-      );
-      drift++;
-      continue;
-    }
-    const files = listSkillFiles(skillDir);
-    const actual = hashSkillFiles(files);
-    checked++;
-    let failed = false;
-    if (actual !== entry.computedHash) {
-      error(
-        `${name}: DRIFT  tree does not match computedHash in skills-lock.json`,
-      );
-      error(`  expected ${entry.computedHash}`);
-      error(`  found    ${actual}`);
-      error(
-        `  restore upstream, or reinstall with \`npx skills add ${entry.source} -s ${name} -a universal --copy -y\``,
-      );
-      failed = true;
-    }
-    const ignored = findIgnoredFiles(
-      root,
-      files.map((file) => join(relative(root, skillDir), file.relativePath)),
-    );
-    if (ignored.length > 0) {
-      error(
-        `${name}: IGNORED  ${ignored.length} file(s) match a .gitignore rule and would be missing from a fresh checkout`,
-      );
-      for (const path of ignored) error(`  ${path}`);
-      error(
-        `  add a scoped negation to .gitignore (such as \`!.agents/skills/*/package-lock.json\`); do not delete the file`,
-      );
-      failed = true;
-    }
-    if (failed) {
+    const outcome = verifyLockedSkill(name, entry, skillsDir, root, error);
+    if (outcome.checked) checked++;
+    if (outcome.drift) {
       drift++;
       continue;
     }
     log(`${name}: ok  ${entry.source}`);
   }
 
-  const unrecorded = onDisk.filter((name) => !lock.skills?.[name]);
-  if (unrecorded.length > 0) {
-    const message = `${unrecorded.join(", ")}: unrecorded  project-owned skills with no lock entry`;
-    if (strict) {
-      error(message);
-      drift++;
-    } else {
-      log(message);
-    }
-  }
+  const unrecordedOutcome = reportUnrecorded(onDisk, lock, strict, log, error);
+  drift += unrecordedOutcome.drift;
+  const { unrecorded } = unrecordedOutcome;
 
   log(
     `${checked - drift} of ${locked.length} locked skills verified, ${unrecorded.length} unrecorded${

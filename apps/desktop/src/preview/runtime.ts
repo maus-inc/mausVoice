@@ -39,6 +39,45 @@ export { PreviewOperationError };
  * `PreviewOperationError` — this list is an acknowledgement set, not a
  * silent-success catch-all.
  */
+const iconSvg = encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" rx="18" fill="#6264a7"/><path d="M18 30h44v22H18z" fill="#fff" opacity=".9"/><circle cx="30" cy="41" r="5" fill="#6264a7"/></svg>',
+);
+
+// Safe, deterministic desktop-information and configuration responses. Each one
+// answers the same way on every call, so they are one table rather than a case
+// arm each in `invokeSystem`.
+const SYSTEM_CONSTANT_RESULTS: Record<string, unknown> = {
+  request_microphone_permission: {
+    kind: "microphone",
+    state: "authorized",
+    promptShown: true,
+  },
+  request_accessibility_permission: {
+    kind: "accessibility",
+    state: "authorized",
+    promptShown: true,
+  },
+  get_version: "0.1.6-preview",
+  get_identifier: "com.mausvoice.preview",
+  get_hotkey_strategy: "bridge",
+  get_key_listener_health: "healthy_grab",
+  supports_app_detection: true,
+  supports_paste_keybinds: "per-app",
+  get_system_capabilities: { ramGb: 8, cpuCores: 8, gpus: [] },
+  get_system_volume: 0.7,
+  set_system_volume: undefined,
+  check_app_location_writable: true,
+  get_keyboard_language: "en",
+  list_microphones: [
+    { label: "Preview microphone", isDefault: true, caution: false },
+  ],
+  list_gpus: [],
+  storage_get_download_url: `data:image/svg+xml,${iconSvg}`,
+  run_native_setup: "success",
+  export_diagnostics: true,
+  export_transcription: true,
+};
+
 const SYSTEM_NO_OP_COMMANDS = new Set([
   "notify_pill_style_info",
   "open_app_settings",
@@ -147,6 +186,40 @@ type PreviewDatabase = {
 };
 
 const clone = <T>(value: T): T => structuredClone(value);
+const orNull = <T>(value: T | null | undefined): T | null => value ?? null;
+const resolveBackfillEntry = (
+  id: string,
+  transcription: WireRecord,
+  recorded: Map<string, unknown>,
+  startDate: string,
+  endDate: string,
+): { localDate: string; wordCount: number } | null => {
+  const transcript = transcription.transcript;
+  if (
+    typeof transcript !== "string" ||
+    transcript === "[Transcription Failed]"
+  ) {
+    return null;
+  }
+  if (
+    id.trim() === "" ||
+    recorded.has(id) ||
+    transcription.remoteStatus === "received"
+  ) {
+    return null;
+  }
+  const { timestamp } = transcription;
+  if (!isSafeInteger(timestamp)) return null;
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.valueOf())) return null;
+  const localDate = toLocalDateKey(date);
+  if (localDate < startDate || localDate > endDate) return null;
+  return { localDate, wordCount: countWords(transcript) };
+};
+
+const isSafeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value);
+
 const asRecord = (value: unknown): WireRecord => value as WireRecord;
 const isDenseStringArray = (value: unknown): value is string[] => {
   if (!Array.isArray(value)) return false;
@@ -316,38 +389,42 @@ const toLocalTranscription = (
   id: transcription.id,
   transcript: transcription.transcript,
   timestamp: new Date(transcription.createdAt).valueOf(),
-  audio: transcription.audio ?? null,
-  modelSize: transcription.modelSize ?? null,
-  inferenceDevice: transcription.inferenceDevice ?? null,
-  rawTranscript: transcription.rawTranscript ?? null,
-  sanitizedTranscript: transcription.sanitizedTranscript ?? null,
-  transcriptionPrompt: transcription.transcriptionPrompt ?? null,
-  postProcessPrompt: transcription.postProcessPrompt ?? null,
-  transcriptionApiKeyId: transcription.transcriptionApiKeyId ?? null,
-  postProcessApiKeyId: transcription.postProcessApiKeyId ?? null,
-  transcriptionMode: transcription.transcriptionMode ?? null,
-  postProcessMode: transcription.postProcessMode ?? null,
-  postProcessDevice: transcription.postProcessDevice ?? null,
-  postProcessModel: transcription.postProcessModel ?? null,
-  postProcessProvider: transcription.postProcessProvider ?? null,
-  postProcessFailed: transcription.postProcessFailed ?? null,
-  postProcessEditFailed: transcription.postProcessEditFailed ?? null,
-  postProcessEditFailureCount:
-    transcription.postProcessEditFailureCount ?? null,
-  postProcessEditAutoRetryUsed:
-    transcription.postProcessEditAutoRetryUsed ?? null,
-  postProcessEditRetryToneId: transcription.postProcessEditRetryToneId ?? null,
-  postProcessEditRetryLanguageCode:
-    transcription.postProcessEditRetryLanguageCode ?? null,
-  postProcessEditRetryClaimCount:
-    transcription.postProcessEditRetryClaimCount ?? null,
-  postProcessFallback: transcription.postProcessFallback ?? null,
-  postProcessError: transcription.postProcessError ?? null,
-  transcriptionDurationMs: transcription.transcriptionDurationMs ?? null,
-  postprocessDurationMs: transcription.postprocessDurationMs ?? null,
-  warnings: transcription.warnings ?? null,
-  remoteStatus: transcription.remoteStatus ?? null,
-  remoteDeviceId: transcription.remoteDeviceId ?? null,
+  audio: orNull(transcription.audio),
+  modelSize: orNull(transcription.modelSize),
+  inferenceDevice: orNull(transcription.inferenceDevice),
+  rawTranscript: orNull(transcription.rawTranscript),
+  sanitizedTranscript: orNull(transcription.sanitizedTranscript),
+  transcriptionPrompt: orNull(transcription.transcriptionPrompt),
+  postProcessPrompt: orNull(transcription.postProcessPrompt),
+  transcriptionApiKeyId: orNull(transcription.transcriptionApiKeyId),
+  postProcessApiKeyId: orNull(transcription.postProcessApiKeyId),
+  transcriptionMode: orNull(transcription.transcriptionMode),
+  postProcessMode: orNull(transcription.postProcessMode),
+  postProcessDevice: orNull(transcription.postProcessDevice),
+  postProcessModel: orNull(transcription.postProcessModel),
+  postProcessProvider: orNull(transcription.postProcessProvider),
+  postProcessFailed: orNull(transcription.postProcessFailed),
+  postProcessEditFailed: orNull(transcription.postProcessEditFailed),
+  postProcessEditFailureCount: orNull(
+    transcription.postProcessEditFailureCount,
+  ),
+  postProcessEditAutoRetryUsed: orNull(
+    transcription.postProcessEditAutoRetryUsed,
+  ),
+  postProcessEditRetryToneId: orNull(transcription.postProcessEditRetryToneId),
+  postProcessEditRetryLanguageCode: orNull(
+    transcription.postProcessEditRetryLanguageCode,
+  ),
+  postProcessEditRetryClaimCount: orNull(
+    transcription.postProcessEditRetryClaimCount,
+  ),
+  postProcessFallback: orNull(transcription.postProcessFallback),
+  postProcessError: orNull(transcription.postProcessError),
+  transcriptionDurationMs: orNull(transcription.transcriptionDurationMs),
+  postprocessDurationMs: orNull(transcription.postprocessDurationMs),
+  warnings: orNull(transcription.warnings),
+  remoteStatus: orNull(transcription.remoteStatus),
+  remoteDeviceId: orNull(transcription.remoteDeviceId),
 });
 
 const toLocalConversation = (
@@ -449,10 +526,6 @@ const NULL_GUARDED_API_KEY_FIELDS = [
   "azureRegion",
   "includeV1Path",
 ] as const;
-
-const iconSvg = encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" rx="18" fill="#6264a7"/><path d="M18 30h44v22H18z" fill="#fff" opacity=".9"/><circle cx="30" cy="41" r="5" fill="#6264a7"/></svg>',
-);
 
 class PreviewRuntime {
   private database: PreviewDatabase = toDatabase(
@@ -576,25 +649,41 @@ class PreviewRuntime {
     if (command.startsWith("hotkey_")) {
       return this.invokeHotkeyCommand(command, args);
     }
+    switch (command.split("_")[0]) {
+      case "user":
+        return this.dispatchUser(command, args);
+      case "term":
+        return this.dispatchTerm(command, args);
+      case "tone":
+        return this.dispatchTone(command, args);
+      case "api":
+        return this.dispatchApiKey(command, args);
+      case "app":
+        return this.dispatchAppTarget(command, args);
+      case "daily":
+        return this.listDailyActivity(args);
+      case "clear":
+      case "complete":
+        // The desktop command wipes the SQLite database and the managed audio
+        // directory, and the settings dialog reloads the window straight after.
+        // Emptying the preview's tables keeps that call sequence drivable from
+        // the settings page; the reload then re-seeds the active scenario, which
+        // is how every other reload in the preview behaves.
+        this.database = toDatabase(EMPTY_PREVIEW_DATA);
+        return undefined;
+      default:
+        return this.invokeHistory(command, args);
+    }
+  }
+
+  private dispatchUser(command: string, args: WireRecord): unknown {
     switch (command) {
       case "user_get_one":
         return clone(this.database.user);
-      // The desktop command wipes the SQLite database and the managed audio
-      // directory, and the settings dialog reloads the window straight after.
-      // Emptying the preview's tables keeps that call sequence drivable from
-      // the settings page; the reload then re-seeds the active scenario, which
-      // is how every other reload in the preview behaves.
-      case "clear_local_data":
-        this.database = toDatabase(EMPTY_PREVIEW_DATA);
-        return undefined;
-      case "complete_local_data_clear":
-        return undefined;
       case "user_set_one":
         return this.upsertUser(clone(asRecord(args.user)));
       case "user_record_usage":
         return this.recordUsageWords(args);
-      case "daily_activity_list":
-        return this.listDailyActivity(args);
       case "user_preferences_get":
         return clone(this.database.preferences);
       case "user_preferences_set": {
@@ -609,7 +698,13 @@ class PreviewRuntime {
         return this.updateExpansionFlags(args, false);
       case "user_preferences_compare_set_expansion_flags":
         return this.updateExpansionFlags(args, true);
+      default:
+        return this.invokeHistory(command, args);
+    }
+  }
 
+  private dispatchTerm(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "term_list":
         return getList(this.database.terms).filter(
           (term) => term.isDeleted !== true,
@@ -625,7 +720,13 @@ class PreviewRuntime {
         if (term) term.isDeleted = true;
         return undefined;
       }
+      default:
+        return this.invokeHistory(command, args);
+    }
+  }
 
+  private dispatchTone(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "tone_list":
         return getList(this.database.tones);
       case "tone_get":
@@ -638,14 +739,13 @@ class PreviewRuntime {
       case "tone_delete":
         this.database.tones.delete(String(args.id));
         return undefined;
+      default:
+        return this.invokeHistory(command, args);
+    }
+  }
 
-      case "hotkey_list":
-      case "hotkey_save":
-      case "hotkey_delete":
-      case "hotkey_replace_style_hotkeys":
-      case "hotkey_replace_dictation_language_hotkeys":
-        return this.invokeHotkeyCommand(command, args);
-
+  private dispatchApiKey(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "api_key_list":
         return getList(this.database.apiKeys);
       case "api_key_create": {
@@ -669,7 +769,13 @@ class PreviewRuntime {
       case "api_key_delete":
         this.database.apiKeys.delete(String(args.id));
         return undefined;
+      default:
+        return this.invokeHistory(command, args);
+    }
+  }
 
+  private dispatchAppTarget(command: string, args: WireRecord): unknown {
+    switch (command) {
       case "app_target_list":
         return getList(this.database.appTargets);
       case "app_target_upsert": {
@@ -680,7 +786,6 @@ class PreviewRuntime {
         this.database.appTargets.set(String(target.id), target);
         return clone(target);
       }
-
       default:
         return this.invokeHistory(command, args);
     }
@@ -688,25 +793,15 @@ class PreviewRuntime {
 
   private backfillMissingActivity(startDate: string, endDate: string): void {
     for (const [id, transcription] of this.database.transcriptions) {
-      const transcript = transcription.transcript;
-      if (
-        id.trim() === "" ||
-        this.database.dailyActivityEvents.has(id) ||
-        transcription.remoteStatus === "received" ||
-        transcript === "[Transcription Failed]" ||
-        typeof transcript !== "string"
-      ) {
-        continue;
-      }
-      const timestamp = transcription.timestamp;
-      if (typeof timestamp !== "number" || !Number.isSafeInteger(timestamp)) {
-        continue;
-      }
-      const date = new Date(timestamp);
-      if (!Number.isFinite(date.valueOf())) continue;
-      const localDate = toLocalDateKey(date);
-      if (localDate < startDate || localDate > endDate) continue;
-      const wordCount = countWords(transcript);
+      const entry = resolveBackfillEntry(
+        id,
+        transcription,
+        this.database.dailyActivityEvents,
+        startDate,
+        endDate,
+      );
+      if (!entry) continue;
+      const { localDate, wordCount } = entry;
       const dailyTotal =
         (this.database.dailyActivity.get(localDate) ?? 0) + wordCount;
       if (
@@ -1192,62 +1287,16 @@ class PreviewRuntime {
     if (command in RECORDING_COMMAND_RESULTS) {
       return clone(RECORDING_COMMAND_RESULTS[command]);
     }
-    switch (command) {
-      // Safe, deterministic desktop-information and configuration responses.
-      case "check_microphone_permission":
-        return clone(getAppState().permissions.microphone);
-      case "check_accessibility_permission":
-        return clone(getAppState().permissions.accessibility);
-      case "request_microphone_permission":
-        return { kind: "microphone", state: "authorized", promptShown: true };
-      case "request_accessibility_permission":
-        return {
-          kind: "accessibility",
-          state: "authorized",
-          promptShown: true,
-        };
-      case "get_version":
-        return "0.1.6-preview";
-      case "get_identifier":
-        return "com.mausvoice.preview";
-      case "get_hotkey_strategy":
-        return "bridge";
-      case "get_key_listener_health":
-        return "healthy_grab";
-      case "supports_app_detection":
-        return true;
-      case "supports_paste_keybinds":
-        return "per-app";
-      case "get_system_capabilities":
-        return { ramGb: 8, cpuCores: 8, gpus: [] };
-      case "get_system_volume":
-        return 0.7;
-      case "set_system_volume":
-        return undefined;
-      case "check_app_location_writable":
-        return true;
-      case "get_keyboard_language":
-        return "en";
-      case "list_microphones":
-        return [
-          {
-            label: "Preview microphone",
-            isDefault: true,
-            caution: false,
-          },
-        ];
-      case "list_gpus":
-        return [];
-      case "storage_get_download_url":
-        return `data:image/svg+xml,${iconSvg}`;
-      case "run_native_setup":
-        return "success";
-      case "export_diagnostics":
-      case "export_transcription":
-        return true;
-      default:
-        throw new PreviewOperationError(command);
+    if (command === "check_microphone_permission") {
+      return clone(getAppState().permissions.microphone);
     }
+    if (command === "check_accessibility_permission") {
+      return clone(getAppState().permissions.accessibility);
+    }
+    if (command in SYSTEM_CONSTANT_RESULTS) {
+      return clone(SYSTEM_CONSTANT_RESULTS[command]);
+    }
+    throw new PreviewOperationError(command);
   }
 }
 

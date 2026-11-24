@@ -47,10 +47,27 @@ const snapshotStyleHotkeys = (): Hotkey[] =>
     .map((hotkey) => ({ ...hotkey, keys: [...hotkey.keys] }));
 
 /** Assign one optional global shortcut to each writing style. */
-export const StyleHotkeysDialog = () => {
-  const titleId = useId();
-  const descriptionId = useId();
-  const open = useAppStore((state) => state.settings.styleHotkeysDialogOpen);
+const hasKeyConflict = (rows: StyleHotkeyRow[]): boolean => {
+  const filled = rows.filter((row) => row.keys.length > 0);
+  for (let i = 0; i < filled.length; i += 1) {
+    for (let j = i + 1; j < filled.length; j += 1) {
+      const left = new Set(filled[i].keys.map((key) => key.toLowerCase()));
+      const right = new Set(filled[j].keys.map((key) => key.toLowerCase()));
+      if (
+        left.size === right.size &&
+        [...left].every((key) => right.has(key))
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+const useStyleHotkeyDraft = (
+  open: boolean,
+  styleSelectionAvailable: boolean,
+) => {
   const toneById = useAppStore((state) => state.toneById);
   const tones = useMemo(
     () =>
@@ -59,8 +76,6 @@ export const StyleHotkeysDialog = () => {
         .sort((a, b) => a.sortOrder - b.sortOrder),
     [toneById],
   );
-  const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
-  const intl = useIntl();
   const [rows, setRows] = useState<StyleHotkeyRow[]>([]);
   // The style group as it was read when the dialog opened. Native compares it
   // against the group it is about to replace, so a shortcut another dialog
@@ -98,22 +113,36 @@ export const StyleHotkeysDialog = () => {
     }
   }, [open, styleSelectionAvailable]);
 
-  const hasConflict = useMemo(() => {
-    const filled = rows.filter((row) => row.keys.length > 0);
-    for (let i = 0; i < filled.length; i += 1) {
-      for (let j = i + 1; j < filled.length; j += 1) {
-        const left = new Set(filled[i].keys.map((key) => key.toLowerCase()));
-        const right = new Set(filled[j].keys.map((key) => key.toLowerCase()));
-        if (
-          left.size === right.size &&
-          [...left].every((key) => right.has(key))
-        ) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }, [rows]);
+  const hasConflict = useMemo(() => hasKeyConflict(rows), [rows]);
+
+  return {
+    rows,
+    setRows,
+    snapshot,
+    setSnapshot,
+    isSaving,
+    setIsSaving,
+    saveInFlight,
+    hasConflict,
+  };
+};
+
+export const StyleHotkeysDialog = () => {
+  const titleId = useId();
+  const descriptionId = useId();
+  const open = useAppStore((state) => state.settings.styleHotkeysDialogOpen);
+  const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
+  const {
+    rows,
+    setRows,
+    snapshot,
+    setSnapshot,
+    isSaving,
+    setIsSaving,
+    saveInFlight,
+    hasConflict,
+  } = useStyleHotkeyDraft(open, styleSelectionAvailable);
+  const intl = useIntl();
 
   const dismiss = () => {
     produceAppState((draft) => {

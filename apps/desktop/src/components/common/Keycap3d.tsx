@@ -1,4 +1,5 @@
 import { Box, type SxProps, type Theme } from "@mui/material";
+import type { SystemStyleObject } from "@mui/system";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   keycapGrain,
@@ -8,6 +9,7 @@ import {
 } from "../../styles/keycap";
 import {
   layoutKeycap,
+  type KeycapLayout,
   type KeycapRatios,
   type KeycapView,
 } from "./keycap3d.geometry";
@@ -106,42 +108,17 @@ const MAX_RASTER = 420;
  * The cap is presentational. Callers own the semantics, which is the contract
  * `HotkeyBadge` already relies on.
  */
-export const Keycap3d = ({
-  label,
-  sublabel,
-  size = 96,
-  view = "front",
-  pressed = false,
-  grain = keycapGrain,
-  tilt,
-  spin,
-  roll,
-  perspectiveFactor,
-  ratios,
-  sx,
-}: Keycap3dProps) => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [renderState, setRenderState] = useState<
-    "pending" | "ready" | "fallback"
-  >("pending");
-  const layout = useCapLayout(
-    size,
-    view,
-    tilt,
-    spin,
-    roll,
-    perspectiveFactor,
-    ratios,
-  );
-  const labelWidth = legendWidth(label, keycapLabel.letterSpacing);
-  const sublabelWidth =
-    legendWidth(sublabel, keycapLabelStack.letterSpacing) *
-    keycapLabelStack.scale;
-  const legendSize = fontSizeForWidth(
-    layout.faceSize,
-    Math.max(labelWidth, sublabelWidth),
-  );
-
+const useKeycapRaster = ({
+  canvasRef,
+  layout,
+  grain,
+  setRenderState,
+}: {
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  layout: KeycapLayout;
+  grain: number;
+  setRenderState: (state: "pending" | "ready" | "fallback") => void;
+}) => {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas === null) return undefined;
@@ -225,11 +202,208 @@ export const Keycap3d = ({
       canvas.removeEventListener("contextrestored", onContextRestored);
     };
   }, [layout, grain]);
+};
+
+const keycapFrameSx = ({
+  showFallback,
+  travel,
+  layout,
+}: {
+  showFallback: boolean;
+  travel: number;
+  layout: KeycapLayout;
+}): SystemStyleObject<Theme> => ({
+  position: "relative",
+  display: "inline-block",
+  width: layout.width,
+  height: layout.height,
+  flexShrink: 0,
+  userSelect: "none",
+  ...(showFallback
+    ? {
+        bgcolor: "level1",
+        border: "1px solid",
+        borderColor: "level3",
+        borderRadius: 1,
+      }
+    : {}),
+  transform: travel === 0 ? undefined : `translateY(${travel}px)`,
+  "@media (prefers-reduced-motion: reduce)": {
+    transform: "none",
+  },
+  "@media (forced-colors: active)": {
+    backgroundColor: "Canvas",
+    border: "1px solid CanvasText",
+    borderRadius: 1,
+    "& [data-keycap-part='cap']": { visibility: "hidden" },
+    "& [data-keycap-part='label']": {
+      transform: "translate(-50%, -50%)",
+      color: "CanvasText",
+      textShadow: "none",
+    },
+  },
+});
+
+const KeycapCanvas = ({
+  canvasRef,
+  layout,
+  showFallback,
+}: {
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  layout: KeycapLayout;
+  showFallback: boolean;
+}) => (
+  <Box
+    component="canvas"
+    ref={canvasRef}
+    data-keycap-part="cap"
+    aria-hidden
+    sx={{
+      display: "block",
+      width: layout.width,
+      height: layout.height,
+      visibility: showFallback ? "hidden" : "visible",
+    }}
+  />
+);
+
+const hasLegendPart = (part: React.ReactNode) =>
+  part !== undefined && part !== null;
+
+const legendTransform = (
+  layout: KeycapLayout,
+  faceProjection: number[],
+  showFallback: boolean,
+) =>
+  showFallback
+    ? "translate(-50%, -50%)"
+    : `translate(${layout.faceCentreX}px, ${layout.faceCentreY}px) matrix3d(${faceProjection.join(", ")}) translate(-50%, -50%)`;
+
+const legendSx = ({
+  layout,
+  legendSize,
+  faceProjection,
+  showFallback,
+}: {
+  layout: KeycapLayout;
+  legendSize: number;
+  faceProjection: number[];
+  showFallback: boolean;
+}): SystemStyleObject<Theme> => ({
+  position: "absolute",
+  left: "50%",
+  top: "50%",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  transform: legendTransform(layout, faceProjection, showFallback),
+  transformOrigin: "0 0",
+  fontFamily: keycapLabel.fontFamily,
+  visibility: "visible",
+  lineHeight: 1,
+  whiteSpace: "nowrap",
+  color: showFallback ? "text.primary" : keycapLabel.color,
+  textShadow: showFallback ? "none" : `0 1px 1px ${keycapLabel.shadowColor}`,
+  fontSize: legendSize,
+});
+
+const KeycapLegend = ({
+  label,
+  sublabel,
+  layout,
+  legendSize,
+  faceProjection,
+  showFallback,
+}: {
+  label: React.ReactNode;
+  sublabel: React.ReactNode;
+  layout: KeycapLayout;
+  legendSize: number;
+  faceProjection: number[];
+  showFallback: boolean;
+}) => {
+  if (!hasLegendPart(label) && !hasLegendPart(sublabel)) return null;
+  return (
+    <Box
+      component="span"
+      data-keycap-part="label"
+      sx={legendSx({ layout, legendSize, faceProjection, showFallback })}
+    >
+      {hasLegendPart(sublabel) && (
+        <Box
+          component="span"
+          data-keycap-part="sublabel"
+          sx={{
+            fontSize: `${keycapLabelStack.scale}em`,
+            letterSpacing: `${keycapLabelStack.letterSpacing}em`,
+            marginBottom: `${keycapLabelStack.gap}em`,
+          }}
+        >
+          {sublabel}
+        </Box>
+      )}
+      {hasLegendPart(label) && (
+        <Box
+          component="span"
+          data-keycap-part="glyph"
+          sx={{ letterSpacing: `${keycapLabel.letterSpacing}em` }}
+        >
+          {label}
+        </Box>
+      )}
+    </Box>
+  );
+};
+
+export const Keycap3d = ({
+  label,
+  sublabel,
+  size = 96,
+  view = "front",
+  pressed = false,
+  grain = keycapGrain,
+  tilt,
+  spin,
+  roll,
+  perspectiveFactor,
+  ratios,
+  sx,
+}: Keycap3dProps) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [renderState, setRenderState] = useState<
+    "pending" | "ready" | "fallback"
+  >("pending");
+  const layout = useCapLayout(
+    size,
+    view,
+    tilt,
+    spin,
+    roll,
+    perspectiveFactor,
+    ratios,
+  );
+  const labelWidth = legendWidth(label, keycapLabel.letterSpacing);
+  const sublabelWidth =
+    legendWidth(sublabel, keycapLabelStack.letterSpacing) *
+    keycapLabelStack.scale;
+  const legendSize = fontSizeForWidth(
+    layout.faceSize,
+    Math.max(labelWidth, sublabelWidth),
+  );
+
+  useKeycapRaster({ canvasRef, layout, grain, setRenderState });
 
   // Keep the shortcut readable while a worker is queued or stalled, not only
   // after it fails. The canvas and projected legend appear together when ready.
   const showFallback = renderState !== "ready";
   const travel = pressed ? size * keycapTravel : 0;
+  const mergedSx = useMemo(
+    () => [
+      keycapFrameSx({ showFallback, travel, layout }),
+      ...(Array.isArray(sx) ? sx : [sx]),
+    ],
+    [showFallback, travel, layout, sx],
+  );
   const [a, b, c, d] = layout.faceMatrix;
   const [wx, wy] = layout.facePerspective;
   const faceProjection = [a, b, 0, wx, c, d, 0, wy, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -239,103 +413,21 @@ export const Keycap3d = ({
       component="span"
       data-keycap-view={view}
       data-keycap-fallback={renderState === "fallback" ? "true" : undefined}
-      sx={[
-        {
-          position: "relative",
-          display: "inline-block",
-          width: layout.width,
-          height: layout.height,
-          flexShrink: 0,
-          userSelect: "none",
-          ...(showFallback
-            ? {
-                bgcolor: "level1",
-                border: "1px solid",
-                borderColor: "level3",
-                borderRadius: 1,
-              }
-            : {}),
-          transform: travel === 0 ? undefined : `translateY(${travel}px)`,
-          "@media (prefers-reduced-motion: reduce)": {
-            transform: "none",
-          },
-          "@media (forced-colors: active)": {
-            backgroundColor: "Canvas",
-            border: "1px solid CanvasText",
-            borderRadius: 1,
-            "& [data-keycap-part='cap']": { visibility: "hidden" },
-            "& [data-keycap-part='label']": {
-              transform: "translate(-50%, -50%)",
-              color: "CanvasText",
-              textShadow: "none",
-            },
-          },
-        },
-        ...(Array.isArray(sx) ? sx : [sx]),
-      ]}
+      sx={mergedSx}
     >
-      <Box
-        component="canvas"
-        ref={canvasRef}
-        data-keycap-part="cap"
-        aria-hidden
-        sx={{
-          display: "block",
-          width: layout.width,
-          height: layout.height,
-          visibility: showFallback ? "hidden" : "visible",
-        }}
+      <KeycapCanvas
+        canvasRef={canvasRef}
+        layout={layout}
+        showFallback={showFallback}
       />
-      {(label !== undefined || sublabel !== undefined) && (
-        <Box
-          component="span"
-          data-keycap-part="label"
-          sx={{
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            transform: showFallback
-              ? "translate(-50%, -50%)"
-              : `translate(${layout.faceCentreX}px, ${layout.faceCentreY}px) matrix3d(${faceProjection.join(", ")}) translate(-50%, -50%)`,
-            transformOrigin: "0 0",
-            fontFamily: keycapLabel.fontFamily,
-            visibility: "visible",
-            lineHeight: 1,
-            whiteSpace: "nowrap",
-            color: showFallback ? "text.primary" : keycapLabel.color,
-            textShadow: showFallback
-              ? "none"
-              : `0 1px 1px ${keycapLabel.shadowColor}`,
-            fontSize: legendSize,
-          }}
-        >
-          {sublabel !== undefined && sublabel !== null && (
-            <Box
-              component="span"
-              data-keycap-part="sublabel"
-              sx={{
-                fontSize: `${keycapLabelStack.scale}em`,
-                letterSpacing: `${keycapLabelStack.letterSpacing}em`,
-                marginBottom: `${keycapLabelStack.gap}em`,
-              }}
-            >
-              {sublabel}
-            </Box>
-          )}
-          {label !== undefined && label !== null && (
-            <Box
-              component="span"
-              data-keycap-part="glyph"
-              sx={{ letterSpacing: `${keycapLabel.letterSpacing}em` }}
-            >
-              {label}
-            </Box>
-          )}
-        </Box>
-      )}
+      <KeycapLegend
+        label={label}
+        sublabel={sublabel}
+        layout={layout}
+        legendSize={legendSize}
+        faceProjection={faceProjection}
+        showFallback={showFallback}
+      />
     </Box>
   );
 };

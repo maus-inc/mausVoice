@@ -36,41 +36,43 @@ export const getGladiaSampleRate = (
   );
 };
 
-export const buildGladiaCustomizations = (
-  entries: DictionaryEntries,
-): GladiaCustomizations => {
-  const replacementSources = new Set(
-    entries.replacements.map((rule) =>
-      sanitizeValue(rule.source).toLowerCase(),
-    ),
-  );
-  const values = new Map<string, string>();
-  const spellingByDestination = new Map<
-    string,
-    { destination: string; variants: Map<string, string> }
-  >();
+type SpellingByDestination = Map<
+  string,
+  { destination: string; variants: Map<string, string> }
+>;
 
+const collectGladiaVocabulary = (
+  entries: DictionaryEntries,
+  replacementSources: Set<string>,
+): {
+  values: Map<string, string>;
+  addVocabulary: (candidate: string) => void;
+} => {
+  const values = new Map<string, string>();
   const addVocabulary = (candidate: string) => {
     const sanitized = sanitizeValue(candidate);
     if (sanitized && !values.has(sanitized.toLowerCase())) {
       values.set(sanitized.toLowerCase(), sanitized);
     }
   };
-
   for (const source of entries.sources) {
     const sanitized = sanitizeValue(source);
     if (sanitized && !replacementSources.has(sanitized.toLowerCase())) {
       addVocabulary(sanitized);
     }
   }
+  return { values, addVocabulary };
+};
 
+const collectGladiaSpelling = (
+  entries: DictionaryEntries,
+  addVocabulary: (candidate: string) => void,
+): SpellingByDestination => {
+  const spellingByDestination: SpellingByDestination = new Map();
   for (const rule of entries.replacements) {
     const source = sanitizeValue(rule.source);
     const destination = sanitizeValue(rule.destination);
-    if (!source || !destination) {
-      continue;
-    }
-
+    if (!source || !destination) continue;
     addVocabulary(destination);
     const key = destination.toLowerCase();
     const current = spellingByDestination.get(key) ?? {
@@ -80,7 +82,12 @@ export const buildGladiaCustomizations = (
     current.variants.set(source.toLowerCase(), source);
     spellingByDestination.set(key, current);
   }
+  return spellingByDestination;
+};
 
+const capGladiaVocabulary = (
+  values: Map<string, string>,
+): { vocabulary: string[]; characterCount: number; warnings: string[] } => {
   const warnings: string[] = [];
   const vocabulary: string[] = [];
   let characterCount = 0;
@@ -97,8 +104,16 @@ export const buildGladiaCustomizations = (
     vocabulary.push(value);
     characterCount += value.length;
   }
+  return { vocabulary, characterCount, warnings };
+};
 
+const capGladiaSpelling = (
+  spellingByDestination: SpellingByDestination,
+  startingCharacters: number,
+): { spellingDictionary: Record<string, string[]>; warnings: string[] } => {
+  const warnings: string[] = [];
   const spellingDictionary: Record<string, string[]> = {};
+  let characterCount = startingCharacters;
   for (const { destination, variants } of spellingByDestination.values()) {
     const variantValues = Array.from(variants.values());
     const additionalCharacters =
@@ -116,11 +131,33 @@ export const buildGladiaCustomizations = (
     spellingDictionary[destination] = variantValues;
     characterCount += additionalCharacters;
   }
+  return { spellingDictionary, warnings };
+};
 
+export const buildGladiaCustomizations = (
+  entries: DictionaryEntries,
+): GladiaCustomizations => {
+  const replacementSources = new Set(
+    entries.replacements.map((rule) =>
+      sanitizeValue(rule.source).toLowerCase(),
+    ),
+  );
+  const { values, addVocabulary } = collectGladiaVocabulary(
+    entries,
+    replacementSources,
+  );
+  const spellingByDestination = collectGladiaSpelling(entries, addVocabulary);
+  const vocabulary = capGladiaVocabulary(values);
+  const spelling = capGladiaSpelling(
+    spellingByDestination,
+    vocabulary.characterCount,
+  );
   return {
-    vocabulary,
-    spellingDictionary,
-    warnings: Array.from(new Set(warnings)),
+    vocabulary: vocabulary.vocabulary,
+    spellingDictionary: spelling.spellingDictionary,
+    warnings: Array.from(
+      new Set([...vocabulary.warnings, ...spelling.warnings]),
+    ),
   };
 };
 

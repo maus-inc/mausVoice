@@ -43,18 +43,57 @@ const PRE_VERDICT_SCRIPTS_CI = /(?:^|[\s;&|(])\.?\/?scripts\/ci\//;
 // The release workflow pins structure by convention (steps are `- name:`
 // entries with an optional `shell:` and a `run: |` block), so a line scanner
 // is enough and keeps this test dependency-free.
+const STEP_KEYS = [
+  ["if", /^\s*if:\s*(.+?)\s*$/],
+  ["uses", /^\s*uses:\s*(\S+)\s*$/],
+  ["workingDirectory", /^\s*working-directory:\s*(.+?)\s*$/],
+  ["shell", /^\s*shell:\s*(\S+)/],
+];
+
+// Collect the body of an indented YAML block, `run: |` or `with:`, from the line
+// after its key. The block ends at the first non-blank line indented no deeper
+// than the key, so a key written inside a body is read as body text, never as
+// the step's own key.
+const collectIndentedBlock = (lines, start, keyIndent) => {
+  const body = [];
+  let index = start;
+  for (; index < lines.length; index += 1) {
+    const line = lines[index];
+    const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
+    if (line.trim() !== "" && indent <= keyIndent) break;
+    body.push(line);
+  }
+  return { body, next: index };
+};
+
+const readStepKey = (current, line) => {
+  for (const [key, pattern] of STEP_KEYS) {
+    const match = line.match(pattern);
+    if (!match) continue;
+    if (key === "shell") {
+      current.shell = match[1];
+      current.shells.push(match[1]);
+    } else {
+      current[key] = match[1];
+    }
+    return true;
+  }
+  return false;
+};
+
+// Extract the steps of a workflow file as { name, shell, shells, run } records.
+// The release workflow pins structure by convention (steps are `- name:`
+// entries with an optional `shell:` and a `run: |` block), so a line scanner
+// is enough and keeps this test dependency-free.
 const extractSteps = (workflowText) => {
   const lines = workflowText.split("\n");
   /** @type {{ name: string, uses: string | null, shell: string | null, shells: string[], run: string[],
    *          inputs: string[], if: string | null, workingDirectory: string | null }[]} */
   const steps = [];
   let current = null;
-  let inRun = false;
-  let runIndent = 0;
-  let inWith = false;
-  let withIndent = 0;
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const stepMatch = line.match(/^\s*-\s+name:\s*(.+?)\s*$/);
     if (stepMatch) {
       if (current) steps.push(current);
@@ -68,15 +107,15 @@ const extractSteps = (workflowText) => {
         if: null,
         workingDirectory: null,
       };
-      inRun = false;
       continue;
     }
     if (!current) continue;
 
-    const runMatch = line.match(/^(\s*)run:\s*\|/);
-    if (runMatch) {
-      inRun = true;
-      runIndent = runMatch[1].length;
+    const runBlock = line.match(/^(\s*)run:\s*\|/);
+    if (runBlock) {
+      const block = collectIndentedBlock(lines, index + 1, runBlock[1].length);
+      current.run.push(...block.body);
+      index = block.next - 1;
       continue;
     }
 
@@ -88,84 +127,37 @@ const extractSteps = (workflowText) => {
     const inlineRun = line.match(/^\s*run:\s*(\S.*?)\s*$/);
     if (inlineRun) {
       current.run.push(inlineRun[1]);
-      inRun = false;
       continue;
-    }
-    if (inRun) {
-      const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
-      if (line.trim() === "" || indent > runIndent) {
-        current.run.push(line);
-        continue;
-      }
-      inRun = false;
     }
 
-    // Step-level keys, read together and only once the run-body block above has had its
-    // say -- so a line inside a `run: |` body cannot be taken for a key.
-    //
-    // Unconditional, and that is load-bearing rather than sloppy. A line inside a `run: |`
-    // body cannot reach here: the block above `continue`s on it when it is blank or more
-    // indented than the `run:` key, and clears `inRun` on a dedent. So a guard here used to
-    // read `if (!inRun)`, which DeepScan was right about -- it is always true, because
-    // arriving here already means `inRun` is false.
-    //
-    // The property that guard was written to protect is real, and it is the `continue` above
-    // rather than the condition. Reinstating the guard would add a check that cannot fail,
-    // which reads as protection and is not.
-    //
-    // `shell:` used to be read up beside `run:`, before any of this. That was a real bug and
-    // not a theoretical one: a `shell:` line inside a run body was taken for the step's shell
-    // AND cleared `inRun`, so every line after it in that body was read as a step key too. No
-    // workflow here has such a line -- measured, 0 across `.github/workflows/*.yml` -- so it
-    // never fired; `does not read a step key out of a run: | body` now covers it.
-    //
-    const ifMatch = line.match(/^\s*if:\s*(.+?)\s*$/);
-    if (ifMatch) {
-      current.if = ifMatch[1];
-      continue;
-    }
-    // A step's `uses:` is recorded for the same reason `with:` is: a step that calls a
-    // local action executes code from the scanned checkout and has NO `run:` body for an
-    // assertion to read. Without this, `uses: ./.github/actions/...` before the secret-scan
-    // verdict was invisible to every check here -- measured, inserting one left the suite
-    // at 30/30. Read beside `if:`, so a `uses:` inside a run body cannot be mistaken for
-    // the step's key, which is the same reason `shell:` was moved.
-    const usesMatch = line.match(/^\s*uses:\s*(\S+)\s*$/);
-    if (usesMatch) {
-      current.uses = usesMatch[1];
-      continue;
-    }
-    const wdMatch = line.match(/^\s*working-directory:\s*(.+?)\s*$/);
-    if (wdMatch) {
-      current.workingDirectory = wdMatch[1];
-      continue;
-    }
     // The `with:` block, recorded because a step's INPUTS are as much a part of what it
     // does as its run body, and one assertion could not be written without them: the
     // trusted checkout's `ref:` lives there, and until now the only way to assert on it
     // was to match the whole file -- which any step carrying the same string satisfies.
     // Collected as raw lines, not parsed into a map: nothing needs the keys separately,
     // and a parsed map would commit this parser to a YAML reader it does not have.
-    const withMatch = line.match(/^(\s*)with:\s*$/);
-    if (withMatch) {
-      inWith = true;
-      withIndent = withMatch[1].length;
+    const withBlock = line.match(/^(\s*)with:\s*$/);
+    if (withBlock) {
+      const block = collectIndentedBlock(lines, index + 1, withBlock[1].length);
+      current.inputs.push(...block.body);
+      index = block.next - 1;
       continue;
     }
-    if (inWith) {
-      const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
-      if (line.trim() === "" || indent > withIndent) {
-        current.inputs.push(line);
-        continue;
-      }
-      inWith = false;
-    }
-    const shellMatch = line.match(/^\s*shell:\s*(\S+)/);
-    if (shellMatch) {
-      current.shell = shellMatch[1];
-      current.shells.push(shellMatch[1]);
-      continue;
-    }
+
+    // Step-level keys are read only here, after both block forms had their say, so a
+    // line inside a `run: |` or `with:` body cannot be taken for a key. `shell:` used
+    // to be read up beside `run:`, before the block was consumed. That was a real bug
+    // and not a theoretical one: a `shell:` line inside a run body was taken for the
+    // step's shell, and every line after it in that body was read as a step key too.
+    // No workflow here has such a line -- measured, 0 across `.github/workflows/*.yml`
+    // -- so it never fired; `does not read a step key out of a run: | body` now covers it.
+    //
+    // A step's `uses:` is recorded for the same reason `with:` is: a step that calls a
+    // local action executes code from the scanned checkout and has NO `run:` body for an
+    // assertion to read. Without this, `uses: ./.github/actions/...` before the secret-scan
+    // verdict was invisible to every check here -- measured, inserting one left the suite
+    // at 30/30.
+    readStepKey(current, line);
   }
   if (current) steps.push(current);
   return steps;
@@ -362,41 +354,48 @@ describe("release workflow shell contracts", () => {
   // and the scaffolding is where the decision lives. Measured: flipping one scan's
   // `active=1` to `active=0` leaves all four programs byte-identical, so that assertion
   // reported 30/30 on a gate that would never have activated in that scan.
+  const findLine = (lines, from, pattern) => {
+    for (let index = from; index < lines.length; index += 1) {
+      if (pattern.test(lines[index])) return index;
+    }
+    return -1;
+  };
+
+  // The index of the capability gate that follows `from`, or the end of the file.
+  const gateStart = (lines, from) => {
+    const gate = findLine(lines, from, /^\s*active=0\s*$/);
+    return gate === -1 ? lines.length : gate;
+  };
+
   const capabilityBlocks = (text) => {
     const lines = text.split("\n");
     const blocks = [];
-    let afterClose = -1;
-    for (let i = 0; i < lines.length; i += 1) {
-      // Skip lines inside a block already collected, so a second `active=0` further
-      // down the same arm cannot register as another copy.
-      if (i <= afterClose) continue;
-      if (!/^\s*active=0\s*$/.test(lines[i])) continue;
-      let opened = -1;
-      for (let j = i + 1; j < lines.length; j += 1) {
-        if (/^\s*if \[ "\$active" -ne 1 \]; then\s*$/.test(lines[j])) {
-          opened = j;
-          break;
-        }
-      }
-      if (opened === -1) continue;
+    let from = 0;
+    while (from < lines.length) {
       // Line-anchored, because the comments inside the arm contain prose that ends in
       // the word `fi` -- the same reason `4175584793` needed a line-anchored close.
-      let closed = -1;
-      for (let j = opened + 1; j < lines.length; j += 1) {
-        if (/^\s*fi\s*$/.test(lines[j])) {
-          closed = j;
-          break;
-        }
+      const opened = findLine(lines, from, /^\s*active=0\s*$/);
+      if (opened === -1) break;
+      const arm = findLine(
+        lines,
+        opened + 1,
+        /^\s*if \[ "\$active" -ne 1 \]; then\s*$/,
+      );
+      const closed = arm === -1 ? -1 : findLine(lines, arm + 1, /^\s*fi\s*$/);
+      if (closed === -1) {
+        from = opened + 1;
+        continue;
       }
-      if (closed === -1) continue;
-      const body = lines.slice(i, closed + 1);
+      const body = lines.slice(opened, closed + 1);
       blocks.push({
         text: body.join("\n"),
         // Whether this copy's inert arm ends the STEP rather than skipping the scan.
         exits: /^\s*exit 1\s*$/.test(body[body.length - 2] ?? ""),
-        startLine: i + 1,
+        startLine: opened + 1,
       });
-      afterClose = closed;
+      // Skip lines inside a block already collected, so a second `active=0` further
+      // down the same arm cannot register as another copy.
+      from = closed + 1;
     }
     return blocks;
   };
@@ -853,42 +852,40 @@ describe("release workflow shell contracts", () => {
     const resolverBlocks = (source) => {
       const lines = source.split("\n");
       const blocks = [];
-      let afterClose = -1;
-      for (let i = 0; i < lines.length; i += 1) {
-        if (i <= afterClose) continue;
-        if (!/^\s*POLICY_DIR="\$\(mktemp -d\)"/.test(lines[i])) continue;
-        let closed = -1;
+      let from = 0;
+      while (from < lines.length) {
+        const opened = findLine(
+          lines,
+          from,
+          /^\s*POLICY_DIR="\$\(mktemp -d\)"/,
+        );
+        if (opened === -1) break;
         // The block ends at the `fi` that closes the DIVERGENCE GUARD, not at the first
         // `fi` after POLICY_DIR. The block holds three `if` blocks in sequence and the
         // first one closes on the `cat-file` failure; stopping there excludes the
         // `cmp -s` guard, which is the part the block exists for. Measured: a first-`fi`
         // version of this extractor returned 13 lines, and a copy whose divergence guard
         // had been rewritten still compared equal.
-        let guard = -1;
-        for (let j = i + 1; j < lines.length; j += 1) {
-          // Never run past the capability gate, which is a different block entirely.
-          if (/^\s*active=0\s*$/.test(lines[j])) break;
-          if (/cmp -s /.test(lines[j])) {
-            guard = j;
-            break;
-          }
+        //
+        // The guard search never runs past the capability gate, which is a different
+        // block entirely. The close is line-anchored for the reason `4175584793` needed
+        // one -- prose above ends in the word `fi`.
+        const guard = findLine(
+          lines.slice(0, gateStart(lines, opened)),
+          opened + 1,
+          /cmp -s /,
+        );
+        const closed =
+          guard === -1 ? -1 : findLine(lines, guard + 1, /^\s*fi\s*$/);
+        if (closed === -1) {
+          from = opened + 1;
+          continue;
         }
-        if (guard !== -1) {
-          for (let j = guard + 1; j < lines.length; j += 1) {
-            // Line-anchored for the reason `4175584793` needed one -- prose above ends
-            // in the word `fi`.
-            if (/^\s*fi\s*$/.test(lines[j])) {
-              closed = j;
-              break;
-            }
-          }
-        }
-        if (closed === -1) continue;
         blocks.push({
-          text: lines.slice(i, closed + 1).join("\n"),
-          startLine: i + 1,
+          text: lines.slice(opened, closed + 1).join("\n"),
+          startLine: opened + 1,
         });
-        afterClose = closed;
+        from = closed + 1;
       }
       return blocks;
     };

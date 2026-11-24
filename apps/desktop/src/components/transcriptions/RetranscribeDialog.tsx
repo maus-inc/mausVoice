@@ -71,6 +71,35 @@ const CheckableMenuItem = ({
   </MenuItem>
 );
 
+const useRetranscribeSelection = (open: boolean) => {
+  const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
+  const tones = useAppStore((state) => {
+    const toneIds = getSortedToneIds(state);
+    return toneIds
+      .map((toneId) => getRec(state.toneById, toneId))
+      .filter((tone): tone is Tone => tone !== null);
+  });
+  const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguage] =
+    useState<DictationLanguageCode>(
+      toSelectableDictationLanguage(defaultLanguage),
+    );
+
+  useEffect(() => {
+    if (!open) return;
+    setSelectedToneId(tones[0]?.id ?? null);
+    setSelectedLanguage(toSelectableDictationLanguage(defaultLanguage));
+  }, [open, defaultLanguage, tones]);
+
+  return {
+    tones,
+    selectedToneId,
+    setSelectedToneId,
+    selectedLanguage,
+    setSelectedLanguage,
+  };
+};
+
 export const RetranscribeDialog = () => {
   const intl = useIntl();
   const styleLabelId = useId();
@@ -87,29 +116,14 @@ export const RetranscribeDialog = () => {
       ? state.transcriptions.retranscribingIds.includes(transcriptionId)
       : false,
   );
-
-  const tones = useAppStore((state) => {
-    const toneIds = getSortedToneIds(state);
-    return toneIds
-      .map((toneId) => getRec(state.toneById, toneId))
-      .filter((tone): tone is Tone => tone !== null);
-  });
-
-  const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
   const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
-
-  const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
-  const [selectedLanguage, setSelectedLanguage] =
-    useState<DictationLanguageCode>(
-      toSelectableDictationLanguage(defaultLanguage),
-    );
-
-  useEffect(() => {
-    if (open) {
-      setSelectedToneId(tones[0]?.id ?? null);
-      setSelectedLanguage(toSelectableDictationLanguage(defaultLanguage));
-    }
-  }, [open, defaultLanguage, tones]);
+  const {
+    tones,
+    selectedToneId,
+    setSelectedToneId,
+    selectedLanguage,
+    setSelectedLanguage,
+  } = useRetranscribeSelection(open);
 
   const handleClose = useCallback(() => {
     closeRetranscribeDialog();

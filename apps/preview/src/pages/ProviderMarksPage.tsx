@@ -168,8 +168,9 @@ export const ProviderMarksPage = () => {
         component="p"
         sx={{ color: "text.secondary", mb: 3 }}
       >
-        Fixtures at `#/provider-marks` — the settings components themselves,
-        with the store seeded, so the marks can be checked where they ship.
+        Fixtures at `#/provider-marks`. These are the settings components
+        themselves, with the store seeded, so the marks can be checked where
+        they ship.
       </Typography>
 
       <Section title="ApiKeyList · post-processing (key cards)">

@@ -340,6 +340,56 @@ Example 2:
   });
 });
 
+// The prompt asks the model to copy the space around a word when deleting it, so
+// the runs at either end of `find` are ordinary rather than unusual, and they are
+// what the two edge patterns used to trim.
+const EDGES = [
+  "",
+  " ",
+  "  ",
+  ".",
+  "!",
+  "…",
+  "-",
+  "'",
+  "\n",
+  "   .  ",
+  // A character outside the basic plane is one character that the run it sits in
+  // counts as two, and a combining mark is no letter at all, so neither belongs in
+  // a word.
+  "🎉",
+  "\u0301",
+  "a",
+  "🎉  ",
+];
+const WORDS = ["café", "日本語", "🎉", "𐐀", "cat"];
+
+// Every slice of every word, as [start, end] pairs.
+const sliceBounds = (word: string): [number, number][] => {
+  const bounds: [number, number][] = [];
+  for (let start = 0; start <= word.length; start += 1) {
+    for (let end = start; end <= word.length; end += 1)
+      bounds.push([start, end]);
+  }
+  return bounds;
+};
+
+// Every wrapped, sliced find shape against the two texts it is read in. Built
+// flat so the product reads as a product rather than as five nested loops.
+const wordEdgeShapes = (): { text: string; find: string }[] =>
+  WORDS.flatMap((word) =>
+    EDGES.flatMap((before) =>
+      EDGES.flatMap((after) =>
+        sliceBounds(word).flatMap(([start, end]) =>
+          [`${word}`, `a ${word} a`].map((text) => ({
+            text,
+            find: `${before}${word.slice(start, end)}${after}`,
+          })),
+        ),
+      ),
+    ),
+  );
+
 describe("applyTranscriptionEdits", () => {
   it("applies edits in order against the evolving text", () => {
     const result = applyTranscriptionEdits("um so we should ah ship it", [
@@ -618,44 +668,10 @@ describe("applyTranscriptionEdits", () => {
   });
 
   it("reads the same word edges off a find that carries punctuation and space", () => {
-    // The prompt asks the model to copy the space around a word when deleting
-    // it, so the runs at either end of `find` are ordinary rather than
-    // unusual, and they are what the two edge patterns used to trim.
-    const EDGES = [
-      "",
-      " ",
-      "  ",
-      ".",
-      "!",
-      "…",
-      "-",
-      "'",
-      "\n",
-      "   .  ",
-      // A character outside the basic plane is one character that the run it
-      // sits in counts as two, and a combining mark is no letter at all, so
-      // neither belongs in a word.
-      "🎉",
-      "\u0301",
-      "a",
-      "🎉  ",
-    ];
-    const WORDS = ["café", "日本語", "🎉", "𐐀", "cat"];
     let compared = 0;
-    for (const word of WORDS) {
-      for (const before of EDGES) {
-        for (const after of EDGES) {
-          for (let start = 0; start <= word.length; start += 1) {
-            for (let end = start; end <= word.length; end += 1) {
-              const find = `${before}${word.slice(start, end)}${after}`;
-              for (const text of [`${word}`, `a ${word} a`]) {
-                compared += 1;
-                expectSameDecisionAsPatterns(text, find);
-              }
-            }
-          }
-        }
-      }
+    for (const { text, find } of wordEdgeShapes()) {
+      compared += 1;
+      expectSameDecisionAsPatterns(text, find);
     }
     expect(compared).toBeGreaterThan(1_000);
   });
