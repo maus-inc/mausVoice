@@ -1,6 +1,7 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   listenToAudioChunks,
+  matchesAudioChunkAdmission,
   type AudioChunkAdmission,
 } from "../../sessions/audio-chunk-events";
 import type { TranscriptionSessionKind } from "../../sessions";
@@ -28,7 +29,7 @@ export type SessionAudioIntake = {
   subscriptionFailed: boolean;
   /** True once any part of the live stream is known to be invalid. */
   hasDiscontinuity: () => boolean;
-  /** Stop accepting events and complete a contiguous prefix from the native recording. */
+  /** Seal with this admission’s final waveform once; repeated calls return the first result. */
   sealLiveAudio: (
     samples: number[] | Float32Array,
     sampleRate?: number,
@@ -57,7 +58,7 @@ export const requiresLiveIntakeRecovery = (
 ): boolean => subscriptionFailed && sessionKind === "live-streaming";
 
 /** Seal only live providers, which cannot recover missed audio at finalize. */
-export const hasLiveAudioDiscontinuity = (
+export const sealAndCheckLiveAudioDiscontinuity = (
   sessionKind: TranscriptionSessionKind,
   intake: Pick<SessionAudioIntake, "sealLiveAudio"> | null,
   audio: StopRecordingResponse,
@@ -209,10 +210,7 @@ export const attachSessionAudioIntake = async (
       discontinuity = true;
       return false;
     }
-    return (
-      chunkAdmission.ownerId === admitted.ownerId &&
-      chunkAdmission.generation === admitted.generation
-    );
+    return matchesAudioChunkAdmission(admitted, chunkAdmission);
   };
 
   const hasValidOffset = (offset: number | null): offset is number => {
@@ -321,24 +319,6 @@ export const attachSessionAudioIntake = async (
 type NativeStartOwnerRef = { current: number | null };
 
 /**
- * Native stops an abort issued that its own invocation could not apply.
- *
- * An abort releases the claim and issues `stop_recording` with no `await`
- * between them, but a start that is still inside its own `await start_recording`
- * has not opened the microphone yet, so that stop can land against a recorder
- * that does not exist and return immediately. The claim is then gone and the
- * stream is still about to come up, which leaves a live recorder with no owner:
- * nothing stops it, and the user records continuously from an input they did not
- * choose.
- *
- * The debt is keyed by the caller's ref so each recording tracks its own, and it
- * is discharged by the superseded start that reports in and stops the stream it
- * actually opened. Keyed rather than module-global so an unmounted recording
- * cannot leave an entry behind for the next one.
- */
-const owedNativeStops = new WeakMap<NativeStartOwnerRef, Set<number>>();
-
-/**
  * The native admission each start opened, keyed by the ref that claimed it.
  *
  * The admission carries the `(ownerId, generation)` pair native requires for
@@ -372,83 +352,36 @@ const takeNativeStartHandle = (
   return handle;
 };
 
-const oweNativeStop = (ownerRef: NativeStartOwnerRef, operationId: number) => {
-  const owed = owedNativeStops.get(ownerRef) ?? new Set<number>();
-  owed.add(operationId);
-  owedNativeStops.set(ownerRef, owed);
-};
-
-/**
- * Stops native capture for a start that opened the microphone and then found
- * itself superseded. A recording a newer one has taken over is left alone, so a
- * stale start cannot silence a live stream.
- *
- * It also discharges a stop an abort still owed this operation (see
- * `owedNativeStops`). Without that, the abort had already released the claim, so
- * the ref held nothing and this helper declined to stop the stream this very
- * start was in the middle of opening.
- */
+/** Discard only this start's admission, even after the claim moved on. */
 export const stopOwnedNativeStart = async (
   ownerRef: NativeStartOwnerRef,
   operationId: number,
 ): Promise<void> => {
-  const owner = ownerRef.current;
-  const owed = owedNativeStops.get(ownerRef)?.delete(operationId) ?? false;
-  // A newer recording owns the claim: it is responsible for the stream now, and
-  // stopping here would cut off a live dictation this stale start knows nothing
-  // about.
-  if (owner !== null && owner !== operationId) return;
-  if (owner === operationId) {
-    ownerRef.current = null;
-  } else if (!owed) {
-    // The claim is already released and no abort is waiting on this start, so
-    // whatever stopped this operation has run and a second stop would only
-    // reach a recorder that a newer recording may already own.
-    return;
-  }
+  if (ownerRef.current === operationId) ownerRef.current = null;
   const handle = takeNativeStartHandle(ownerRef, operationId);
-  await (handle ? handle.discard() : discardNativeRecording()).catch(
-    (error: unknown) => {
-      getLogger().verbose(
-        `discard_recording failed after stale start: ${error}`,
-      );
-    },
-  );
+  await handle?.discard().catch((error: unknown) => {
+    getLogger().verbose(`discard_recording failed after stale start: ${error}`);
+  });
+};
+
+/** The accepted take now belongs to the normal dictation stop path. */
+export const commitNativeStart = (
+  ownerRef: NativeStartOwnerRef,
+  operationId: number,
+): void => {
+  if (ownerRef.current === operationId) ownerRef.current = null;
+  takeNativeStartHandle(ownerRef, operationId);
 };
 
 /**
- * Releases the native-start claim and stops capture, unconditionally.
- *
- * This is the abort path, and it is deliberately the opposite of
- * `stopOwnedNativeStart`: an abort always stops the stream it was tearing down.
- *
- * The claim is taken and the stop is issued with no `await` between them, which
- * is the point. The abort used to release the claim, then await the pill's idle
- * phase, and only then decide whether a newer start had taken ownership. A
- * restart landing inside that window called `start_recording` while the old
- * stream was still live -- native reports an already-active recorder as success,
- * so the restart silently inherited the old capture instead of opening the
- * microphone it asked for -- and then the abort skipped its stop while the
- * superseded start's own `stopOwnedNativeStart` also declined, because the ref no
- * longer held its id. Nothing stopped the stream and the user recorded
- * continuously from the wrong input.
- *
- * With no await in between, nothing else can run between taking the claim and
- * releasing the stream, and a restart that begins afterwards calls
- * `start_recording` against a stopped recorder.
- *
- * A start still inside `start_recording` is the one case that stop cannot reach,
- * so the claim it held is recorded as owed: it stops the stream itself when it
- * finds out it was superseded.
+ * Issue the abort before any await can let a restart enter. An opening start
+ * that returns afterwards independently discards its own scoped handle.
  */
 export const stopNativeRecordingForAbort = (
   ownerRef: NativeStartOwnerRef,
 ): Promise<void> => {
   const released = ownerRef.current;
   ownerRef.current = null;
-  if (released !== null) {
-    oweNativeStop(ownerRef, released);
-  }
   // A start that is still opening is addressed through its own admission; one
   // that already handed ownership over is whatever the module holds live.
   const handle =
@@ -477,8 +410,37 @@ export const createCurrentSegmentGuard =
     }
   };
 
+type AudioChunkUnlistenRef = { current: UnlistenFn | null };
+
+export const releaseAudioIntake = (
+  ref: AudioChunkUnlistenRef,
+  owned = ref.current,
+): void => {
+  if (ref.current !== owned) return;
+  ref.current = null;
+  try {
+    owned?.();
+  } catch (error) {
+    getLogger().warning(`Audio listener cleanup failed: ${error}`);
+  }
+};
+
+export const abortRecordingIntake = (
+  ref: AudioChunkUnlistenRef,
+  owned: UnlistenFn | null,
+  ownerRef: NativeStartOwnerRef,
+  preserveConcurrentCapture = false,
+): Promise<void> => {
+  releaseAudioIntake(ref, owned);
+  if (preserveConcurrentCapture) {
+    ownerRef.current = null;
+    return Promise.resolve();
+  }
+  return stopNativeRecordingForAbort(ownerRef);
+};
+
 export type RecordingResourceRefs = {
-  audioChunkUnlistenRef: { current: UnlistenFn | null };
+  audioChunkUnlistenRef: AudioChunkUnlistenRef;
   sessionRef: { current: TranscriptionSession | null };
   strategyRef: { current: BaseStrategy | null };
 };
@@ -494,12 +456,18 @@ export const releaseRecordingResources = ({
   sessionRef,
   strategyRef,
 }: RecordingResourceRefs): void => {
-  audioChunkUnlistenRef.current?.();
-  audioChunkUnlistenRef.current = null;
-  sessionRef.current?.cleanup();
-  const strategyCleanup = strategyRef.current?.cleanup();
-  void strategyCleanup?.catch((error) => {
-    getLogger().warning(`Strategy cleanup failed during unmount: ${error}`);
-  });
+  const attempt = (label: string, cleanup: () => unknown) => {
+    const report = (error: unknown) => {
+      getLogger().warning(`${label} cleanup failed during unmount: ${error}`);
+    };
+    try {
+      void Promise.resolve(cleanup()).catch(report);
+    } catch (error) {
+      report(error);
+    }
+  };
+  releaseAudioIntake(audioChunkUnlistenRef);
+  attempt("Session", () => sessionRef.current?.cleanup());
+  attempt("Strategy", () => strategyRef.current?.cleanup());
   void discardNativeRecording();
 };

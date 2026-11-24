@@ -35,12 +35,12 @@ impl Card {
     pub fn get_name(&self) -> Result<String> {
         let mut c: *mut c_char = ::std::ptr::null_mut();
         acheck!(snd_card_get_name(self.0, &mut c))
-            .and_then(|_| from_alloc("snd_card_get_name", c)) 
+            .and_then(|_| from_alloc("snd_card_get_name", c))
     }
     pub fn get_longname(&self) -> Result<String> {
         let mut c: *mut c_char = ::std::ptr::null_mut();
         acheck!(snd_card_get_longname(self.0, &mut c))
-            .and_then(|_| from_alloc("snd_card_get_longname", c)) 
+            .and_then(|_| from_alloc("snd_card_get_longname", c))
     }
 
     pub fn get_index(&self) -> c_int { self.0 }

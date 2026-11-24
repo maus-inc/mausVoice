@@ -49,6 +49,7 @@ import {
   formatReviewPersistenceFailure,
   handleEmptyTranscriptionResult,
   postProcessFinalizedTranscript,
+  runCurrentRecordingControl,
   surfacePersistedReviewInHistory,
 } from "./DictationSideEffects";
 import { POST_PROCESS_ERROR_CATEGORY } from "../../actions/post-process-error-category";
@@ -102,6 +103,48 @@ const deferred = <T>() => {
   });
   return { promise, resolve, reject };
 };
+
+describe("recording control completion", () => {
+  it.each([false, true])(
+    "ignores an old recording's completion (reject=%s)",
+    async (reject) => {
+      const native = deferred<void>();
+      const apply = vi.fn(async () => {});
+      let isCurrent = true;
+      const pending = runCurrentRecordingControl(
+        () => native.promise,
+        () => isCurrent,
+        apply,
+      );
+      isCurrent = false;
+      if (reject) native.reject(new Error("recording aborted"));
+      else native.resolve();
+      await pending;
+      expect(apply).not.toHaveBeenCalled();
+    },
+  );
+
+  it("applies current controls and propagates current failures", async () => {
+    const apply = vi.fn(async () => {});
+    await runCurrentRecordingControl(
+      async () => {},
+      () => true,
+      apply,
+    );
+    expect(apply).toHaveBeenCalledOnce();
+    const error = new Error("could not pause");
+    await expect(
+      runCurrentRecordingControl(
+        async () => {
+          throw error;
+        },
+        () => true,
+        apply,
+      ),
+    ).rejects.toThrow(error);
+    expect(apply).toHaveBeenCalledOnce();
+  });
+});
 
 describe("formatReviewPersistenceFailure", () => {
   it.each([

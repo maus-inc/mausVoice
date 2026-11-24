@@ -1,8 +1,8 @@
 use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
 use crate::errors::RecordingError;
 use crate::platform::audio::{
-    compute_level_bins, retain_finite_prefix, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL,
-    LEVEL_DISPATCH_INTERVAL,
+    compute_level_bins, label_has_low_quality_keyword, retain_finite_prefix, InputDeviceDescriptor,
+    CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
 };
 use crate::platform::{ChunkCallback, LevelCallback, Recorder};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,6 +21,7 @@ pub struct PulseRecorder {
 }
 
 struct ActiveRecording {
+    started_at: Instant,
     stop_signal: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<Result<RecordingResult, String>>>,
     sample_rate: u32,
@@ -113,6 +114,7 @@ impl Recorder for PulseRecorder {
         }
 
         *guard = Some(ActiveRecording {
+            started_at: Instant::now(),
             stop_signal,
             thread: Some(thread),
             sample_rate: native_rate,
@@ -128,17 +130,19 @@ impl Recorder for PulseRecorder {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut recording = guard.take().ok_or(RecordingError::NotRecording)?;
 
+        let expected_at_stop = recording.started_at.elapsed();
         recording.stop_signal.store(true, Ordering::Release);
 
         let thread = recording
             .thread
             .take()
             .ok_or(RecordingError::NotRecording)?;
-        let result = thread
+        let mut result = thread
             .join()
             .map_err(|_| RecordingError::StreamBuild("recording thread panicked".into()))?
             .map_err(RecordingError::StreamBuild)?;
 
+        result.metrics.expected_duration = expected_at_stop;
         Ok(result)
     }
 
@@ -333,14 +337,18 @@ fn record_loop(
         source_name.unwrap_or("default")
     );
 
+    let mut stop_pumped = false;
     Ok(capture_samples(
         sample_rate,
         &stop_signal,
         level_callback,
         chunk_callback,
         |stopping| {
-            if !stopping {
+            if !stopping || !stop_pumped {
+                // Pull in socket data once at the stop boundary, then drain the
+                // buffered prefix without following an indefinitely live source.
                 pulse_iterate(&mut mainloop)?;
+                stop_pumped |= stopping;
             }
             match stream.get_state() {
                 pulse::stream::State::Failed | pulse::stream::State::Terminated => {
@@ -495,7 +503,7 @@ fn capture_samples(
         }
     }
 
-    let duration = if !all_samples.is_empty() {
+    let duration = if capture_failed || !all_samples.is_empty() {
         Duration::from_secs_f64(all_samples.len() as f64 / f64::from(sample_rate))
     } else {
         start.elapsed()
@@ -505,7 +513,10 @@ fn capture_samples(
     RecordingResult {
         metrics: RecordingMetrics {
             duration,
+            has_live_samples: !all_samples.is_empty(),
+            expected_duration: start.elapsed(),
             size_bytes,
+            capture_fault: capture_failed.then(|| "fatal".to_owned()),
         },
         audio: RecordedAudio {
             samples: all_samples,
@@ -677,10 +688,14 @@ pub fn list_pulse_input_devices() -> Vec<InputDeviceDescriptor> {
     let mut devices: Vec<InputDeviceDescriptor> = sources
         .into_iter()
         .filter(|s| !s.is_monitor)
-        .map(|s| InputDeviceDescriptor {
-            label: s.description,
-            is_default: s.is_default,
-            caution: false,
+        .map(|source| {
+            let bluetooth = label_has_low_quality_keyword(&source.description);
+            InputDeviceDescriptor {
+                label: source.description,
+                is_default: source.is_default,
+                caution: bluetooth,
+                bluetooth,
+            }
         })
         .collect();
 
@@ -731,6 +746,25 @@ mod tests {
             )
             .unwrap();
         ownership.finish_admission(&admission);
+    }
+
+    #[test]
+    fn failure_before_first_read_reports_zero_capture_and_time_until_stop() {
+        let recorder = PulseRecorder::default();
+        let stop_signal = Arc::new(AtomicBool::new(false));
+        let result = capture_samples(FALLBACK_SAMPLE_RATE, &stop_signal, None, None, |_| {
+            Err("read failed".into())
+        });
+        *recorder.inner.lock().unwrap() = Some(ActiveRecording {
+            started_at: Instant::now() - Duration::from_secs(1),
+            stop_signal,
+            thread: Some(std::thread::spawn(move || Ok(result))),
+            sample_rate: FALLBACK_SAMPLE_RATE,
+        });
+        let result = recorder.stop().unwrap();
+        assert!(result.capture_failed);
+        assert_eq!(result.metrics.duration, Duration::ZERO);
+        assert!(result.metrics.expected_duration >= Duration::from_secs(1));
     }
 
     #[test]

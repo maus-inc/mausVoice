@@ -55,13 +55,13 @@ import {
   resolveTranscriptionSessionKind,
   type TranscriptionSessionKind,
 } from "../../sessions";
+import type { AudioChunkAdmission } from "../../sessions/audio-chunk-events";
 import {
   shouldForwardInterimSegment,
   startLiveProviderRecording,
   type PendingProviderStartup,
 } from "./dictation-live-start";
 import {
-  canBeginRecordingStart,
   getSessionProvider,
   isStartStillValidAfterStyleLoad,
   resolveDictationLanguage,
@@ -77,20 +77,24 @@ import type {
   ReviewedTranscriptPersistenceInput,
 } from "../../types/strategy.types";
 import {
+  abortRecordingIntake,
+  commitNativeStart,
   attachSessionAudioIntake,
   createCurrentSegmentGuard,
-  hasLiveAudioDiscontinuity,
+  sealAndCheckLiveAudioDiscontinuity,
   isRecordingStartCurrent,
+  releaseAudioIntake,
   releaseRecordingResources,
   requiresLiveIntakeRecovery,
-  stopNativeRecordingForAbort,
   stopOwnedNativeStart,
   trackNativeStartHandle,
   type SessionAudioIntake,
 } from "./dictation-recording-intake";
 import { createSystemVolumeDim } from "./dictation-volume-dim";
 import {
+  assertDictationStartAvailable,
   attemptSurvivedNoClear,
+  bindRecordingActivation,
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
@@ -117,6 +121,7 @@ import {
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
 import { playAlertSound, tryPlayAudioChime } from "../../utils/audio.utils";
 import {
+  ActiveRecordingClock,
   DEFAULT_DICTATION_LIMIT_MINUTES,
   getDictationRecordingTimerDurations,
   getEffectiveDictationLimitMinutes,
@@ -163,6 +168,7 @@ import {
 } from "../../utils/pipeline-trace";
 import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
 import { resolvePillWindowSize } from "../../utils/pill-window-size.utils";
+import { captureFaultNotice } from "../../utils/capture-fault-notice.utils";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -182,7 +188,7 @@ import { hasDictationBacklog } from "../../utils/output-routing.utils";
 import { surfaceMainWindow } from "../../utils/window.utils";
 import { resetHotkeyFilter } from "../../utils/hotkey-filter.utils";
 import {
-  discardNativeRecording,
+  ActiveRecordingError,
   invokeStopRecording,
   pauseNativeRecording,
   resumeNativeRecording,
@@ -899,7 +905,11 @@ const writeOrMissStopPathHistory = async (
   onHistoryMissed(ctx);
 };
 
-const scheduleStopPathHistory = async ({
+// Not `async`: it awaits nothing and returns `writeOrMissStopPathHistory`'s
+// promise directly. An `async` keyword here produced a promise that resolves to
+// another promise one step later for no reason, and it is what made this
+// function report as a promise while containing no suspension point.
+const scheduleStopPathHistory = ({
   input,
   strategy,
   historyOwner,
@@ -1127,6 +1137,49 @@ const logResumeFailure = (resuming: Promise<void>): void => {
   });
 };
 
+// Surface capture failure even if transcription subsequently fails.
+function warnOfShortCapture(intl: IntlShape, audio: StopRecordingResponse) {
+  const faultNotice = captureFaultNotice(audio);
+  if (faultNotice) {
+    getLogger().warning(`stopRecordingRaw: ${faultNotice.logMessage}`);
+    runToast(
+      showToast({
+        message:
+          faultNotice.kind === "capture_faulted"
+            ? intl.formatMessage(
+                {
+                  defaultMessage:
+                    "The microphone stopped recording after {captured} of {expected} seconds. Check that it is still connected.",
+                },
+                faultNotice.values,
+              )
+            : intl.formatMessage(
+                {
+                  defaultMessage:
+                    "The recording ended early. Check that the microphone is still connected.",
+                },
+                {},
+              ),
+        toastType: "error",
+        duration: 8_000,
+      }),
+    );
+  }
+}
+
+export async function runCurrentRecordingControl(
+  runNative: () => Promise<void>,
+  isCurrent: () => boolean,
+  apply: () => Promise<void>,
+): Promise<void> {
+  try {
+    await runNative();
+    if (isCurrent()) await apply();
+  } catch (error) {
+    if (isCurrent()) throw error;
+  }
+}
+
 export const DictationSideEffects = () => {
   const intl = useIntl();
 
@@ -1141,6 +1194,13 @@ export const DictationSideEffects = () => {
   const audioChunkUnlistenRef = useRef<UnlistenFn | null>(null);
   const audioIntakeRef = useRef<SessionAudioIntake | null>(null);
   const recordingOperationRef = useRef(0);
+  // The agent panel can stay open across multiple takes. Its mode is not a
+  // microphone claim, and sessionRef is not set yet while preparing a start.
+  const hasActiveTakeRef = useRef(false);
+  const invalidateRecordingOperation = useCallback(() => {
+    recordingOperationRef.current += 1;
+    hasActiveTakeRef.current = false;
+  }, []);
   const audioIntakeSubscriptionFailedRef = useRef(false);
   /** Session kind of the open recording; read at stop by the empty-result handler. */
   const recordingSessionKindRef = useRef<TranscriptionSessionKind>("local");
@@ -1217,47 +1277,54 @@ export const DictationSideEffects = () => {
     }
   }, []);
 
-  const dictationController = useMemo(
-    () =>
-      new ActivationController(
-        async () => {
-          await revealPillForActivityIfHidden();
-          await startDictationRecording();
-        },
-        () => stopDictationRecording(),
-        // Hold-to-talk: dictation records while the hotkey (Fn) is held and stops on release.
-        true,
-      ),
-    [revealPillForActivityIfHidden],
-  );
+  // Each shortcut owns only the operation it actually started. Use the
+  // ref at release time, not the (possibly stale) state from a render.
+  const dictationController = useMemo(() => {
+    const activation = bindRecordingActivation(
+      async (claim) => {
+        await revealPillForActivityIfHidden();
+        await startDictationRecording(claim);
+      },
+      () => recordingOperationRef.current,
+      () => stopDictationRecording(),
+    );
+    return new ActivationController(activation.start, activation.stop, true);
+  }, [revealPillForActivityIfHidden]);
 
-  const agentController = useMemo(
-    () =>
-      new ActivationController(
-        async () => {
-          await revealPillForActivityIfHidden();
-          await startAgentRecording();
-        },
-        () => stopAgentRecording(),
-      ),
-    [revealPillForActivityIfHidden],
-  );
+  const agentController = useMemo(() => {
+    const activation = bindRecordingActivation(
+      async (claim) => {
+        await revealPillForActivityIfHidden();
+        await startAgentRecording(claim);
+      },
+      () => recordingOperationRef.current,
+      () => stopAgentRecording(),
+    );
+    return new ActivationController(activation.start, activation.stop);
+  }, [revealPillForActivityIfHidden]);
 
   const additionalLanguageControllers = useMemo(
     () =>
-      additionalLanguageEntries.map((entry) => ({
-        actionName: entry.actionName,
-        controller: new ActivationController(
-          async () => {
+      additionalLanguageEntries.map((entry) => {
+        const activation = bindRecordingActivation(
+          async (claim) => {
             await revealPillForActivityIfHidden();
-            await startRecording({
-              mode: "dictate",
-              language: entry.language,
-            });
+            await startRecording(
+              { mode: "dictate", language: entry.language },
+              claim,
+            );
           },
+          () => recordingOperationRef.current,
           () => stopRecording(),
-        ),
-      })),
+        );
+        return {
+          actionName: entry.actionName,
+          controller: new ActivationController(
+            activation.start,
+            activation.stop,
+          ),
+        };
+      }),
     [additionalLanguageEntries, revealPillForActivityIfHidden],
   );
 
@@ -1269,6 +1336,8 @@ export const DictationSideEffects = () => {
       }),
     [],
   );
+
+  const activeRecordingClock = useMemo(() => new ActiveRecordingClock(), []);
 
   const clearUserRecordingTimers = useCallback(() => {
     if (recordingWarningTimerRef.current) {
@@ -1293,9 +1362,14 @@ export const DictationSideEffects = () => {
   }, []);
 
   const clearRecordingTimers = useCallback(() => {
+    activeRecordingClock.reset();
     clearUserRecordingTimers();
     clearProviderRecordingTimers();
-  }, [clearProviderRecordingTimers, clearUserRecordingTimers]);
+  }, [
+    activeRecordingClock,
+    clearProviderRecordingTimers,
+    clearUserRecordingTimers,
+  ]);
 
   useEffect(() => () => clearRecordingTimers(), [clearRecordingTimers]);
 
@@ -1303,7 +1377,7 @@ export const DictationSideEffects = () => {
     return () => {
       // Invalidate the operation token first so an in-flight start tail cannot
       // arm timers or dim the volume after teardown.
-      recordingOperationRef.current += 1;
+      invalidateRecordingOperation();
       audioIntakeSubscriptionFailedRef.current = false;
       audioIntakeRef.current = null;
       providerStartupAbortControllerRef.current?.abort(
@@ -1318,7 +1392,7 @@ export const DictationSideEffects = () => {
         strategyRef,
       });
     };
-  }, [systemVolumeDim]);
+  }, [invalidateRecordingOperation, systemVolumeDim]);
 
   const clearCancelPromptTimer = useCallback(() => {
     if (cancelPromptTimerRef.current) {
@@ -1420,28 +1494,13 @@ export const DictationSideEffects = () => {
     return () => clearInterval(interval);
   }, [isMainWindow, isActiveSession]);
 
-  // Single owner for the shared audio_chunk subscription. Every terminal path
-  // that ends a recording must call this, otherwise the Tauri listener outlives
-  // the session it was created for and keeps forwarding into a stale closure.
-  const releaseAudioIntake = useCallback((owned?: UnlistenFn | null) => {
-    if (owned === undefined) {
-      audioChunkUnlistenRef.current?.();
-      audioChunkUnlistenRef.current = null;
-      return;
-    }
-    if (audioChunkUnlistenRef.current === owned) {
-      owned?.();
-      audioChunkUnlistenRef.current = null;
-    }
-  }, []);
-
   const abortRecording = useCallback(
-    async (message?: AbortMessage) => {
+    async (message?: AbortMessage, preserveConcurrentCapture = false) => {
       const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
       // Invalidate the operation token first, so an in-flight start tail cannot
       // act on a recording that is over, and end the dim, so a volume write
       // already in flight cannot apply after this returns.
-      recordingOperationRef.current += 1;
+      invalidateRecordingOperation();
       audioIntakeSubscriptionFailedRef.current = false;
       audioIntakeRef.current = null;
       providerStartupAbortControllerRef.current?.abort(
@@ -1456,7 +1515,6 @@ export const DictationSideEffects = () => {
       clearRecordingTimers();
       clearCancelPromptTimer();
       hardResetHotkeyState();
-      releaseAudioIntake(ownedAudioChunkUnlisten);
       // Before the `sendPhaseToPill` await, and with no await of its own between
       // taking the claim and releasing the stream. See
       // `stopNativeRecordingForAbort` for the race that ordering closes: an abort
@@ -1466,7 +1524,12 @@ export const DictationSideEffects = () => {
       //
       // A second `stop_recording` can still arrive from the superseded start's own
       // cleanup. That is already tolerated: the invoke is caught and logged.
-      const stopNative = stopNativeRecordingForAbort(nativeStartOwnerRef);
+      const stopNative = abortRecordingIntake(
+        audioChunkUnlistenRef,
+        ownedAudioChunkUnlisten,
+        nativeStartOwnerRef,
+        preserveConcurrentCapture,
+      );
       // Detach the old session before any IPC can suspend. A later recording
       // must never be cleaned up by the tail of this abort.
       const session = sessionRef.current;
@@ -1510,7 +1573,7 @@ export const DictationSideEffects = () => {
       clearRecordingTimers,
       clearUtteranceToneSnapshots,
       hardResetHotkeyState,
-      releaseAudioIntake,
+      invalidateRecordingOperation,
       sendPhaseToPill,
       systemVolumeDim,
       intl,
@@ -1561,7 +1624,7 @@ export const DictationSideEffects = () => {
         // flags the result. The samples are still worth transcribing, but the
         // user has to know the dictation was cut short instead of silently
         // receiving a truncated transcript.
-        if (outAudio?.captureFailed) {
+        if (outAudio?.captureFailed && !outAudio.captureFault) {
           getLogger().warning(
             "Recording capture failed partway; transcribing the captured audio",
           );
@@ -1884,10 +1947,11 @@ export const DictationSideEffects = () => {
           abortMessage: "No audio data received",
         };
       }
+      warnOfShortCapture(intl, audio);
       if (pendingProviderStartup) {
         await pendingProviderStartup.promise;
       }
-      const audioIntakeDiscontinuous = hasLiveAudioDiscontinuity(
+      const audioIntakeDiscontinuous = sealAndCheckLiveAudioDiscontinuity(
         recordingSessionKind,
         ownedAudioIntake,
         audio,
@@ -1911,10 +1975,7 @@ export const DictationSideEffects = () => {
         abortMessage: String(error),
       };
     } finally {
-      if (audioChunkUnlistenRef.current === ownedAudioChunkUnlisten) {
-        ownedAudioChunkUnlisten?.();
-        audioChunkUnlistenRef.current = null;
-      }
+      releaseAudioIntake(audioChunkUnlistenRef, ownedAudioChunkUnlisten);
       if (audioIntakeRef.current === ownedAudioIntake) {
         audioIntakeRef.current = null;
       }
@@ -1990,7 +2051,7 @@ export const DictationSideEffects = () => {
       // timers for this recording now that it has ended. The dim is not guarded
       // by this token: it retired at the top of `stopRecordingRaw`, where a stop
       // becomes a stop rather than waiting for transcription first.
-      recordingOperationRef.current += 1;
+      invalidateRecordingOperation();
       // Timers must be cleared even when the transcribe chain fails or the
       // watchdog fires, so no stale auto-stop can fire into the next session.
       clearRecordingTimers();
@@ -2016,6 +2077,7 @@ export const DictationSideEffects = () => {
     clearRecordingTimers,
     clearUtteranceToneSnapshots,
     hardResetHotkeyState,
+    invalidateRecordingOperation,
     stopRecordingRaw,
     setIsStopping,
     intl,
@@ -2033,7 +2095,10 @@ export const DictationSideEffects = () => {
       ? getEffectiveDictationLimitMinutes(preferences)
       : DEFAULT_DICTATION_LIMIT_MINUTES;
     const { warningDurationMs, autoStopDurationMs } =
-      getDictationRecordingTimerDurations(dictationLimitMinutes);
+      getDictationRecordingTimerDurations(
+        dictationLimitMinutes,
+        activeRecordingClock.resume(),
+      );
 
     if (warningDurationMs !== null) {
       recordingWarningTimerRef.current = setTimeout(() => {
@@ -2069,7 +2134,7 @@ export const DictationSideEffects = () => {
         void stopRecording();
       }, autoStopDurationMs);
     }
-  }, [clearUserRecordingTimers, intl, stopRecording]);
+  }, [activeRecordingClock, clearUserRecordingTimers, intl, stopRecording]);
 
   const startProviderRecordingTimers = useCallback(() => {
     clearProviderRecordingTimers();
@@ -2178,24 +2243,31 @@ export const DictationSideEffects = () => {
         strategyRef.current = null;
       }
       clearRecordingState();
-      // This handler is sync and cannot await, but the call still has to be
-      // marked discarded so it is not a floating promise. `abortRecording`
-      // guards its own awaits, so nothing here can reject.
-      void abortRecording();
+      abortRecording(
+        undefined,
+        activeSession === null || error instanceof ActiveRecordingError,
+      ).catch(() => {
+        getLogger().warning("Could not finish aborting the failed start");
+      });
 
       hardResetHotkeyState();
       clearRecordingTimers();
-      void discardNativeRecording().catch((e: unknown) =>
-        getLogger().verbose(
-          `discard_recording failed during error handling: ${e}`,
-        ),
-      );
 
+      // An unconfirmed ALSA release needs an app restart, not a retry. The
+      // native message already says so; surface it instead of the generic
+      // failure so the user knows what to do.
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const needsRestart = errorMessage.includes("restart MausVoice");
       runToast(
         showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Recording failed",
-          }),
+          message: needsRestart
+            ? intl.formatMessage({
+                defaultMessage: "Please restart MausVoice to continue",
+              })
+            : intl.formatMessage({
+                defaultMessage: "Recording failed",
+              }),
           toastType: "error",
           duration: 8_000,
         }),
@@ -2209,71 +2281,123 @@ export const DictationSideEffects = () => {
     ],
   );
 
-  const startRecording = useCallback(
-    async (args: { mode: RecordingMode; language?: string | null }) => {
-      if (!canBeginRecordingStart()) return;
-      const clearGeneration = getLocalDataClearGeneration();
-      const attempt = ++recordingOperationRef.current;
-      audioIntakeSubscriptionFailedRef.current = false;
-      audioIntakeRef.current = null;
-      const state = getAppState();
-      const mode = args.mode;
-      const language = resolveDictationLanguage(args.language, state);
-      produceAppState((draft) => {
-        draft.activeRecordingMode = mode;
-        draft.dictationLanguageOverride = language;
-      });
+  // Extracted from `startRecording`: the mode-based tracking conditionals
+  // counted against its cognitive complexity. Both branches are independent
+  // side effects, so a helper keeps the intent clear without nesting.
+  const trackStartByMode = (
+    mode: RecordingMode,
+    requestedLanguage: string | null | undefined,
+  ) => {
+    if (mode === "agent") {
+      trackAgentStart();
+    } else if (!requestedLanguage) {
+      trackDictationStart();
+    }
+  };
 
-      const strategy = resolveRecordingStrategy(mode, strategyRef.current);
-
-      const validationError = strategy.validateAvailability();
-      if (validationError) {
-        abortRecording({
-          title: validationError.title,
-          body: validationError.body,
-        });
-        return;
-      }
-
-      // Extracted with the rest of the start-failure handling: another nested
-      // branch set that was counting against `startRecording`'s cognitive
-      // complexity. False means a newer start took over while the style loaded,
-      // so the caller must stop.
-      if (
-        !isStartStillValidAfterStyleLoad(
-          await prepareAutoStyle(mode, state, attempt),
-          attempt,
-          recordingOperationRef.current,
-          clearGeneration,
-        )
-      ) {
-        return;
-      }
-
-      // Seed the start snapshot after app-based style load. It is the
-      // fallback style for the utterance; the snapshot taken at stop (which
-      // includes any mid-dictation switch) is the authoritative one.
-      utteranceTonesRef.current.seed(
-        getToneIdToUse(getAppState(), {
-          currentAppToneId: null,
-        }),
+  // Extracted from `startRecording`: the pre-capture hook is optional and
+  // may throw; the guard must not abort the recording. Isolating it keeps
+  // the try/catch out of the main start flow's complexity budget.
+  const runPreCaptureSetup = async (session: TranscriptionSession) => {
+    try {
+      await session.onBeforeRecordingStart?.();
+    } catch (error) {
+      getLogger().warning(
+        `Pre-capture session setup failed, continuing without it: ${error}`,
       );
+    }
+  };
 
-      const preferredMicrophone = getMyPreferredMicrophone(state);
-      const transcriptPrefs = getTranscriptionPrefs(state);
+  const startRecording = useCallback(
+    async (
+      {
+        mode,
+        language: requestedLanguage,
+      }: { mode: RecordingMode; language?: string | null },
+      claim: (operation: number) => void,
+    ) => {
+      const state = getAppState();
+      assertDictationStartAvailable(
+        hasActiveTakeRef.current,
+        isStoppingRef.current,
+        { current: state.activeRecordingMode, requested: mode },
+      );
+      const clearGeneration = getLocalDataClearGeneration();
       const operationId = ++recordingOperationRef.current;
+      hasActiveTakeRef.current = true;
       let activeSession: TranscriptionSession | null = null;
       try {
+        claim(operationId);
+        audioIntakeSubscriptionFailedRef.current = false;
+        audioIntakeRef.current = null;
+        const language = resolveDictationLanguage(requestedLanguage, state);
+        produceAppState((draft) => {
+          draft.activeRecordingMode = mode;
+          draft.dictationLanguageOverride = language;
+          if (mode === "agent") draft.assistantInputMode = "voice";
+          else if (!requestedLanguage) draft.local.lastDictatedAt = Date.now();
+        });
+        trackStartByMode(mode, requestedLanguage);
+
+        const strategy = resolveRecordingStrategy(mode, strategyRef.current);
+
+        const validationError = strategy.validateAvailability();
+        if (validationError) {
+          await abortRecording(
+            {
+              title: validationError.title,
+              body: validationError.body,
+            },
+            true,
+          );
+          return;
+        }
+
+        // Extracted with the rest of the start-failure handling: another nested
+        // branch set that was counting against `startRecording`'s cognitive
+        // complexity. False means a newer start took over while the style loaded,
+        // so the caller must stop.
+        if (
+          !isStartStillValidAfterStyleLoad(
+            await prepareAutoStyle(mode, state, operationId),
+            operationId,
+            recordingOperationRef.current,
+            clearGeneration,
+          )
+        ) {
+          // Only release the take claim if this operation still owns it. A
+          // newer start has already claimed the next operation; clearing
+          // here would unblock a competing start mid-take.
+          if (recordingOperationRef.current === operationId) {
+            invalidateRecordingOperation();
+          }
+          return;
+        }
+
+        // Seed the start snapshot after app-based style load. It is the
+        // fallback style for the utterance; the snapshot taken at stop (which
+        // includes any mid-dictation switch) is the authoritative one.
+        utteranceTonesRef.current.seed(
+          getToneIdToUse(getAppState(), {
+            currentAppToneId: null,
+          }),
+        );
+
+        const preferredMicrophone = getMyPreferredMicrophone(state);
+        const transcriptPrefs = getTranscriptionPrefs(state);
         getLogger().info(`Transcription prefs: mode=${transcriptPrefs.mode}`);
-        const session = createTranscriptionSession(transcriptPrefs);
+        let chunkAdmission: AudioChunkAdmission | null = null;
+        const getChunkAdmission = () => chunkAdmission;
+        const session = createTranscriptionSession(
+          transcriptPrefs,
+          getChunkAdmission,
+        );
         activeSession = session;
         getLogger().info(
           `Created transcription session: ${session.constructor.name}`,
         );
 
         let audioForwardingReady = false;
-        let chunkAdmission: { ownerId: string; generation: number } | null =
-          null;
         const isCurrentStart = () =>
           attemptSurvivedNoClear(clearGeneration) &&
           isRecordingStartCurrent(
@@ -2296,7 +2420,7 @@ export const DictationSideEffects = () => {
               `[Dictation] Startup audio buffer overflowed; dropped ${droppedSamples} samples`,
             );
           },
-          () => chunkAdmission,
+          getChunkAdmission,
         );
         const startupAudioBuffer = intake.buffer;
         if (!intake.current) {
@@ -2313,7 +2437,7 @@ export const DictationSideEffects = () => {
           mode: transcriptPrefs.mode,
           provider: getSessionProvider(transcriptPrefs),
         });
-        audioChunkUnlistenRef.current?.();
+        releaseAudioIntake(audioChunkUnlistenRef);
         audioChunkUnlistenRef.current = intake.unlisten;
 
         tryPlayAudioChime("start_recording_clip");
@@ -2362,13 +2486,7 @@ export const DictationSideEffects = () => {
         // catch, which aborted the recording and showed "Recording failed" for a
         // start that had not begun. It only behaved because the one local
         // implementation happens to swallow its own errors.
-        try {
-          await session.onBeforeRecordingStart?.();
-        } catch (error) {
-          getLogger().warning(
-            `Pre-capture session setup failed, continuing without it: ${error}`,
-          );
-        }
+        await runPreCaptureSetup(session);
         if (!isCurrentStart()) {
           session.cleanup();
           return;
@@ -2413,7 +2531,7 @@ export const DictationSideEffects = () => {
           await stopOwnedNativeStart(nativeStartOwnerRef, operationId);
           return;
         }
-        nativeStartOwnerRef.current = null;
+        commitNativeStart(nativeStartOwnerRef, operationId);
         const startedSession = session;
         const sessionKind = resolveTranscriptionSessionKind({
           mode: transcriptPrefs.mode,
@@ -2439,7 +2557,10 @@ export const DictationSideEffects = () => {
           void systemVolumeDim.dim(operationId);
         };
 
-        if (sessionKind === "live-streaming") {
+        // Extracted to a nested helper: the live-streaming startup path has
+        // enough nested conditionals that keeping it inline pushes
+        // `startRecording` past SonarCloud's cognitive-complexity limit.
+        const startLiveStreamingStart = () => {
           const controller = new AbortController();
           providerStartupAbortControllerRef.current = controller;
           const startupPromise = startLiveProviderRecording({
@@ -2468,6 +2589,10 @@ export const DictationSideEffects = () => {
             intl.formatMessage({ defaultMessage: "Connecting" }),
           );
           startActiveRecordingEffects();
+        };
+
+        if (sessionKind === "live-streaming") {
+          startLiveStreamingStart();
           return;
         }
 
@@ -2502,55 +2627,48 @@ export const DictationSideEffects = () => {
     ],
   );
 
-  const startDictationRecording = useCallback(async () => {
-    const state = getAppState();
-    if (!getIsDictationUnlocked(state)) {
-      getLogger().verbose("Dictation not unlocked, ignoring start");
-      return;
-    }
-    if (state.pendingPillReview !== null) {
-      getLogger().info("Dictation blocked: review is pending");
-      playAlertSound();
-      return;
-    }
+  const startDictationRecording = useCallback(
+    async (claim: (operation: number) => void) => {
+      const state = getAppState();
+      if (!getIsDictationUnlocked(state)) {
+        getLogger().verbose("Dictation not unlocked, ignoring start");
+        return;
+      }
+      if (state.pendingPillReview !== null) {
+        getLogger().info("Dictation blocked: review is pending");
+        playAlertSound();
+        return;
+      }
 
-    getLogger().info("Starting dictation recording");
-    trackDictationStart();
-    produceAppState((draft) => {
-      draft.local.lastDictatedAt = Date.now();
-    });
-
-    await startRecording({ mode: "dictate" });
-  }, [startRecording]);
+      getLogger().info("Starting dictation recording");
+      await startRecording({ mode: "dictate" }, claim);
+    },
+    [startRecording],
+  );
 
   const stopDictationRecording = useCallback(async () => {
     getLogger().info("Stopping dictation recording");
     await stopRecording();
   }, [stopRecording]);
 
-  const startAgentRecording = useCallback(async () => {
-    const state = getAppState();
-    if (!getIsDictationUnlocked(state)) {
-      getLogger().verbose("Dictation not unlocked, ignoring agent start");
-      return;
-    }
-    if (state.pendingPillReview !== null) {
-      getLogger().info("Agent start blocked: review is pending");
-      playAlertSound();
-      return;
-    }
+  const startAgentRecording = useCallback(
+    async (claim: (operation: number) => void) => {
+      const state = getAppState();
+      if (!getIsDictationUnlocked(state)) {
+        getLogger().verbose("Dictation not unlocked, ignoring agent start");
+        return;
+      }
+      if (state.pendingPillReview !== null) {
+        getLogger().info("Agent start blocked: review is pending");
+        playAlertSound();
+        return;
+      }
 
-    if (state.assistantInputMode === "type") {
-      getLogger().info("Switching from type mode back to voice mode");
-      produceAppState((draft) => {
-        draft.assistantInputMode = "voice";
-      });
-    }
-
-    getLogger().info("Starting agent recording");
-    trackAgentStart();
-    await startRecording({ mode: "agent" });
-  }, [startRecording]);
+      getLogger().info("Starting agent recording");
+      await startRecording({ mode: "agent" }, claim);
+    },
+    [startRecording],
+  );
 
   const stopAgentRecording = useCallback(async () => {
     getLogger().info("Stopping agent recording");
@@ -2730,8 +2848,9 @@ export const DictationSideEffects = () => {
     if (!isMainWindow) return;
     getLogger().info("Switching to type mode");
 
-    // Stop the microphone/transcription without tearing down the assistant panel
-    recordingOperationRef.current += 1;
+    // Stop the microphone/transcription without tearing down the assistant panel.
+    const hadTake = hasActiveTakeRef.current;
+    invalidateRecordingOperation();
     audioIntakeSubscriptionFailedRef.current = false;
     audioIntakeRef.current = null;
     providerStartupAbortControllerRef.current?.abort(
@@ -2742,13 +2861,15 @@ export const DictationSideEffects = () => {
     systemVolumeDim.endRecording();
     clearRecordingTimers();
     hardResetHotkeyState();
-    releaseAudioIntake();
+    releaseAudioIntake(audioChunkUnlistenRef);
     void sendPhaseToPill("idle");
-    void discardNativeRecording().catch((e: unknown) =>
-      getLogger().verbose(
-        `discard_recording failed during type mode switch: ${e}`,
-      ),
-    );
+    if (hadTake) {
+      void abortRecordingIntake(
+        audioChunkUnlistenRef,
+        audioChunkUnlistenRef.current,
+        nativeStartOwnerRef,
+      );
+    }
     sessionRef.current?.cleanup();
     sessionRef.current = null;
     clearUtteranceToneSnapshots();
@@ -2815,59 +2936,77 @@ export const DictationSideEffects = () => {
     },
   });
 
+  const getRecordingControlTarget = useCallback(() => {
+    const session = sessionRef.current;
+    const strategy = strategyRef.current;
+    if (!session || !strategy || isStoppingRef.current) return null;
+    const operation = recordingOperationRef.current;
+    const isCurrent = () =>
+      !isStoppingRef.current &&
+      operation === recordingOperationRef.current &&
+      session === sessionRef.current &&
+      strategy === strategyRef.current;
+    return { strategy, isCurrent };
+  }, []);
+
   const pauseDictation = useCallback(async () => {
-    if (isPausedRef.current || isStoppingRef.current) {
-      return;
-    }
-    if (!sessionRef.current || !strategyRef.current) {
-      return;
-    }
-    if (getAppState().activeRecordingMode === null) {
+    const target = getRecordingControlTarget();
+    if (
+      !target ||
+      isPausedRef.current ||
+      getAppState().activeRecordingMode === null
+    ) {
       return;
     }
     try {
       getLogger().info("Pausing dictation");
-      // Hold mic capture without finalizing the session so the user can resume.
-      await pauseNativeRecording();
-      isPausedRef.current = true;
-      // User-configured timers measure active audio. Provider hard limits are
-      // wall-clock limits and intentionally continue while paused.
-      clearUserRecordingTimers();
-      // Keep the voice field fully open and slide the style bar in via paused phase.
-      await strategyRef.current.setPhase("paused");
-      // Fire-and-forget: a toast that fails to render is not a failure to pause,
-      // and awaiting it here would report one as "Failed to pause dictation".
-      runToast(
-        showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Dictation paused",
-          }),
-          toastType: "info",
-          duration: 2_000,
-        }),
+      await runCurrentRecordingControl(
+        pauseNativeRecording,
+        target.isCurrent,
+        async () => {
+          isPausedRef.current = true;
+          // User timers measure active audio; provider hard limits are wall-clock.
+          activeRecordingClock.pause();
+          clearUserRecordingTimers();
+          await target.strategy.setPhase("paused");
+          if (!target.isCurrent()) return;
+          runToast(
+            showToast({
+              message: intl.formatMessage({
+                defaultMessage: "Dictation paused",
+              }),
+              toastType: "info",
+              duration: 2_000,
+            }),
+          );
+        },
       );
     } catch (error) {
       getLogger().error(`Failed to pause dictation: ${error}`);
     }
-  }, [clearUserRecordingTimers, intl]);
+  }, [
+    activeRecordingClock,
+    clearUserRecordingTimers,
+    getRecordingControlTarget,
+    intl,
+  ]);
 
   const resumeDictation = useCallback(async () => {
-    if (!isPausedRef.current || isStoppingRef.current) {
-      return;
-    }
-    if (!sessionRef.current || !strategyRef.current) {
-      return;
-    }
+    const target = getRecordingControlTarget();
+    if (!target || !isPausedRef.current) return;
     try {
       getLogger().info("Resuming dictation");
-      await resumeNativeRecording();
-      isPausedRef.current = false;
-      await strategyRef.current.setPhase("recording");
-      startUserRecordingTimers();
+      await runCurrentRecordingControl(
+        resumeNativeRecording,
+        target.isCurrent,
+        async () => {
+          isPausedRef.current = false;
+          startUserRecordingTimers();
+          await target.strategy.setPhase("recording");
+        },
+      );
     } catch (error) {
       getLogger().error(`Failed to resume dictation: ${error}`);
-      // Fire-and-forget, and deliberately not awaited inside the catch: a toast
-      // that cannot render must not turn into a second "failed to resume" error.
       runToast(
         showToast({
           message: intl.formatMessage({
@@ -2878,7 +3017,7 @@ export const DictationSideEffects = () => {
         }),
       );
     }
-  }, [intl, startUserRecordingTimers]);
+  }, [getRecordingControlTarget, intl, startUserRecordingTimers]);
 
   useTauriListen<void>("cancel-dictation", () => {
     if (!isMainWindow) return;

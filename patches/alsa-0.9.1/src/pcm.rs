@@ -144,7 +144,25 @@ pub enum CheckedOpenError {
 
 unsafe impl Send for PCM {}
 
+#[derive(Debug)]
+pub(crate) struct IoLease<'a>(&'a cell::Cell<bool>);
+
+impl Drop for IoLease<'_> {
+    fn drop(&mut self) { self.0.set(false); }
+}
+
 impl PCM {
+    #[cfg(test)]
+    pub(crate) fn io_only_fixture() -> std::mem::ManuallyDrop<Self> {
+        std::mem::ManuallyDrop::new(Self(std::ptr::null_mut(), cell::Cell::new(false)))
+    }
+
+    pub(crate) fn reserve_io(&self) -> IoLease<'_> {
+        self.check_has_io();
+        self.1.set(true);
+        IoLease(&self.1)
+    }
+
     fn check_has_io(&self) {
         if self.1.get() { panic!("No hw_params call or additional IO objects allowed") }
     }
@@ -310,12 +328,13 @@ impl PCM {
     ///
     /// ```compile_fail
     /// #[derive(Clone, Copy)]
-    /// struct Bit(bool);
-    /// impl alsa::pcm::IoFormat for Bit {
+    /// #[repr(transparent)]
+    /// struct Byte(u8);
+    /// unsafe impl alsa::pcm::IoFormat for Byte {
     ///     const FORMAT: alsa::pcm::Format = alsa::pcm::Format::U8;
     /// }
     /// fn invalid(pcm: &alsa::PCM) {
-    ///     let _ = pcm.direct_mmap_capture::<Bit>();
+    ///     let _ = pcm.direct_mmap_capture::<Byte>();
     /// }
     /// ```
     ///
@@ -324,14 +343,12 @@ impl PCM {
     ///     let _ = pcm.direct_mmap_capture::<i16>();
     /// }
     /// ```
-    pub fn direct_mmap_capture<S: crate::direct::pcm::MmapSample>(&self) -> Result<crate::direct::pcm::MmapCapture<S>> {
-        self.check_has_io();
+    pub fn direct_mmap_capture<S: crate::direct::pcm::MmapSample>(&self) -> Result<crate::direct::pcm::MmapCapture<'_, S>> {
         crate::direct::pcm::new_mmap(self)
     }
 
     /// Write buffers by talking to the kernel directly, bypassing alsa-lib.
-    pub fn direct_mmap_playback<S: crate::direct::pcm::MmapSample>(&self) -> Result<crate::direct::pcm::MmapPlayback<S>> {
-        self.check_has_io();
+    pub fn direct_mmap_playback<S: crate::direct::pcm::MmapSample>(&self) -> Result<crate::direct::pcm::MmapPlayback<'_, S>> {
         crate::direct::pcm::new_mmap(self)
     }
 
@@ -770,44 +787,49 @@ impl Format {
 }
 
 
-pub trait IoFormat: Copy {
+/// Rust representations that can be read from a PCM buffer.
+///
+/// # Safety
+/// `Self` must have the size and alignment of one native sample of `FORMAT`,
+/// and every possible sample bit pattern must be a valid `Self`.
+pub unsafe trait IoFormat: Copy {
     const FORMAT: Format;
 }
 
-impl IoFormat for i8 { const FORMAT: Format = Format::S8; }
-impl IoFormat for u8 { const FORMAT: Format = Format::U8; }
+unsafe impl IoFormat for i8 { const FORMAT: Format = Format::S8; }
+unsafe impl IoFormat for u8 { const FORMAT: Format = Format::U8; }
 
-impl IoFormat for i16 {
+unsafe impl IoFormat for i16 {
     #[cfg(target_endian = "little")]
     const FORMAT: Format = Format::S16LE;
     #[cfg(target_endian = "big")]
     const FORMAT: Format = Format::S16BE;
 }
-impl IoFormat for u16 {
+unsafe impl IoFormat for u16 {
     #[cfg(target_endian = "little")]
     const FORMAT: Format = Format::U16LE;
     #[cfg(target_endian = "big")]
     const FORMAT: Format = Format::U16BE;
 }
-impl IoFormat for i32 {
+unsafe impl IoFormat for i32 {
     #[cfg(target_endian = "little")]
     const FORMAT: Format = Format::S32LE;
     #[cfg(target_endian = "big")]
     const FORMAT: Format = Format::S32BE;
 }
-impl IoFormat for u32 {
+unsafe impl IoFormat for u32 {
     #[cfg(target_endian = "little")]
     const FORMAT: Format = Format::U32LE;
     #[cfg(target_endian = "big")]
     const FORMAT: Format = Format::U32BE;
 }
-impl IoFormat for f32 {
+unsafe impl IoFormat for f32 {
     #[cfg(target_endian = "little")]
     const FORMAT: Format = Format::FloatLE;
     #[cfg(target_endian = "big")]
     const FORMAT: Format = Format::FloatBE;
 }
-impl IoFormat for f64 {
+unsafe impl IoFormat for f64 {
     #[cfg(target_endian = "little")]
     const FORMAT: Format = Format::Float64LE;
     #[cfg(target_endian = "big")]

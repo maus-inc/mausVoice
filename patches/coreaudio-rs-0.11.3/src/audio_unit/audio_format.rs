@@ -182,18 +182,10 @@ impl AudioFormat {
                 Some(AudioFormat::F60958AC3(StandardFlags::from_bits_truncate(i)))
             }
             (1768775988, _) => Some(AudioFormat::AppleIMA4),
-            (1633772320, Some(i)) => Some(AudioFormat::MPEG4AAC(
-                Mpeg4ObjectId::from_u32(i).expect("Unknown Mpeg4ObjectId"),
-            )),
-            (1667591280, Some(i)) => Some(AudioFormat::MPEG4CELP(
-                Mpeg4ObjectId::from_u32(i).expect("Unknown Mpeg4ObjectId"),
-            )),
-            (1752594531, Some(i)) => Some(AudioFormat::MPEG4HVXC(
-                Mpeg4ObjectId::from_u32(i).expect("Unknown Mpeg4ObjectId"),
-            )),
-            (1953986161, Some(i)) => Some(AudioFormat::MPEG4TwinVQ(
-                Mpeg4ObjectId::from_u32(i).expect("Unknown Mpeg4ObjectId"),
-            )),
+            (1633772320, Some(i)) => Mpeg4ObjectId::from_u32(i).map(AudioFormat::MPEG4AAC),
+            (1667591280, Some(i)) => Mpeg4ObjectId::from_u32(i).map(AudioFormat::MPEG4CELP),
+            (1752594531, Some(i)) => Mpeg4ObjectId::from_u32(i).map(AudioFormat::MPEG4HVXC),
+            (1953986161, Some(i)) => Mpeg4ObjectId::from_u32(i).map(AudioFormat::MPEG4TwinVQ),
             (1296122675, _) => Some(AudioFormat::MACE3),
             (1296122678, _) => Some(AudioFormat::MACE6),
             (1970037111, _) => Some(AudioFormat::ULaw),
@@ -209,9 +201,9 @@ impl AudioFormat {
             )),
             (1835623529, _) => Some(AudioFormat::MIDIStream),
             (1634760307, _) => Some(AudioFormat::ParameterValueStream),
-            (1634492771, Some(i)) => Some(AudioFormat::AppleLossless(
-                AppleLosslessFlags::from_bits_truncate(i),
-            )),
+            (1634492771, Some(i)) => {
+                AppleLosslessFlags::from_bits(i).map(AudioFormat::AppleLossless)
+            }
             (1633772392, _) => Some(AudioFormat::MPEG4AAC_HE),
             (1633772396, _) => Some(AudioFormat::MPEG4AAC_LD),
             (1633772389, _) => Some(AudioFormat::MPEG4AAC_ELD),
@@ -388,26 +380,30 @@ bitflags! {
     }
 }
 
-bitflags! {
-    /// Flags set for Apple Lossless data.
-    ///
-    /// **Available** in OS X v10.3 and later.
-    ///
-    /// Note: In the original Core Audio API these are consolidated with what we have named the
-    /// **StandardFlags** and **AppleLosslessFlags** types under the `AudioFormatFlag` type. We
-    /// have chosen to separate these for greater type safety and clearer compatibility with
-    /// the **AudioFormat** type.
-    ///
-    /// Original documentation [here](https://developer.apple.com/library/mac/documentation/MusicAudio/Reference/CoreAudioDataTypesRef/#//apple_ref/doc/constant_group/AudioStreamBasicDescription_Flags).
-    pub struct AppleLosslessFlags: u32 {
-        /// Sourced from 16 bit native endian signed integer data.
-        const BIT_16_SOURCE_DATA = 1;
-        /// Sourced from 20 bit native endian signed integer data aligned high in 24 bits.
-        const BIT_20_SOURCE_DATA = 2;
-        /// Sourced from 24 bit native endian signed integer data.
-        const BIT_24_SOURCE_DATA = 3;
-        /// Sourced from 32 bit native endian signed integer data.
-        const BIT_32_SOURCE_DATA = 4;
+/// The mutually exclusive source depths encoded in Apple Lossless format flags.
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
+pub enum AppleLosslessFlags {
+    BIT_16_SOURCE_DATA = 1,
+    BIT_20_SOURCE_DATA = 2,
+    BIT_24_SOURCE_DATA = 3,
+    BIT_32_SOURCE_DATA = 4,
+}
+
+impl AppleLosslessFlags {
+    pub fn from_bits(bits: u32) -> Option<Self> {
+        match bits {
+            1 => Some(Self::BIT_16_SOURCE_DATA),
+            2 => Some(Self::BIT_20_SOURCE_DATA),
+            3 => Some(Self::BIT_24_SOURCE_DATA),
+            4 => Some(Self::BIT_32_SOURCE_DATA),
+            _ => None,
+        }
+    }
+
+    pub fn bits(self) -> u32 {
+        self as u32
     }
 }
 

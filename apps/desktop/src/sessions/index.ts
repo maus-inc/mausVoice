@@ -7,6 +7,7 @@ import type {
   TranscriptionPrefs,
 } from "../types/transcription-prefs.types";
 import { AssemblyAITranscriptionSession } from "./assemblyai-transcription-session";
+import type { AudioChunkAdmission } from "./audio-chunk-events";
 import { AzureTranscriptionSession } from "./azure-transcription-session";
 import { BatchTranscriptionSession } from "./batch-transcription-session";
 import { DeepgramTranscriptionSession } from "./deepgram-transcription-session";
@@ -20,7 +21,6 @@ export { BatchTranscriptionSession } from "./batch-transcription-session";
 export { DeepgramTranscriptionSession } from "./deepgram-transcription-session";
 export { ElevenLabsTranscriptionSession } from "./elevenlabs-transcription-session";
 export { GladiaTranscriptionSession } from "./gladia-transcription-session";
-export { LocalTranscriptionSession } from "./local-transcription-session";
 
 /**
  * How a session handles the microphone audio, which is the fact the
@@ -96,6 +96,7 @@ const CLOUD_TRANSCRIPTION_PLANS: Readonly<
 
 export const createTranscriptionSession = (
   prefs: TranscriptionPrefs,
+  getAdmission: () => AudioChunkAdmission | null = () => null,
 ): TranscriptionSession => {
   if (prefs.mode === "api") {
     const plan = CLOUD_TRANSCRIPTION_PLANS[prefs.provider];
@@ -105,7 +106,7 @@ export const createTranscriptionSession = (
   }
 
   if (prefs.mode === "local") {
-    return new LocalTranscriptionSession();
+    return new LocalTranscriptionSession(getAdmission);
   }
 
   return new BatchTranscriptionSession();

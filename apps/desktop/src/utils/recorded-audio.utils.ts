@@ -1,6 +1,32 @@
 import type { StopRecordingResponse } from "../types/transcription-session.types";
 
 const HEADER_BYTES = 4;
+/**
+ * The trailer the Rust stop path appends only when the capture faulted:
+ * `[duration_ms: u32 LE][expected_ms: u32 LE][flags: u32 LE][magic: u32 LE]`.
+ *
+ * Its presence cannot be inferred from the audio. A float32 stream is always a
+ * multiple of four bytes, so twelve bytes of trailer look exactly like three
+ * samples, and an earlier version of this decoder keyed off a single flag bit —
+ * which is the low bit of the last sample's IEEE-754 mantissa, set for
+ * essentially all real audio. That version reported a capture fault and dropped
+ * three samples on about half of all healthy recordings.
+ *
+ * The magic is the discriminator because it is the one word that cannot plausibly
+ * be part of a recording, so the trailer is only consumed when it matches.
+ */
+const TRAILER_BYTES = 16;
+const CAPTURE_FAULT_BIT = 0b1;
+/**
+ * `CAPTURE_TRAILER_MAGIC` in `commands.rs`, byte for byte: the ASCII bytes
+ * `C`, `A`, `P`, `T`.
+ *
+ * Grouped in pairs because a pair is one character of the word, which is the
+ * unit that makes the number readable. A separator every four digits would
+ * split the word down the middle and group for the sake of grouping.
+ */
+// prettier-ignore
+const CAPTURE_TRAILER_MAGIC = 0x43_41_50_54;
 
 /**
  * The top bit of the sample-rate header means the capture failed partway
@@ -55,24 +81,62 @@ export const encodeRecordedAudio = (
   return bytes;
 };
 
+/**
+ * The capture facts a faulted recording carries, if any.
+ *
+ * Returns `null` for every ordinary recording: the trailer is only read once its
+ * flags word is recognised, so an untrailed body keeps every byte of audio.
+ */
+const readCaptureTrailer = (
+  view: DataView,
+  byteLength: number,
+): { durationMs: number; expectedMs: number } | null => {
+  if (byteLength < HEADER_BYTES + TRAILER_BYTES) {
+    // Too short to hold a trailer plus its header: an untrusted tail word must
+    // not cost a real recording any samples.
+    return null;
+  }
+  if (view.getUint32(byteLength - 4, true) !== CAPTURE_TRAILER_MAGIC) {
+    return null;
+  }
+  const flags = view.getUint32(byteLength - 8, true);
+  if ((flags & CAPTURE_FAULT_BIT) === 0) {
+    // A magic without the flag is not a trailer this build wrote. The audio is
+    // kept and the fault is not reported, which is the safe direction.
+    return null;
+  }
+  return {
+    durationMs: view.getUint32(byteLength - TRAILER_BYTES, true),
+    expectedMs: view.getUint32(byteLength - TRAILER_BYTES + 4, true),
+  };
+};
+
 const decodeBinary = (bytes: Uint8Array): StopRecordingResponse => {
   if (bytes.byteLength < HEADER_BYTES) {
     return EMPTY_RESULT();
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const header = view.getUint32(0, true);
-  // Leaving the flag in the rate made a failed capture look like a recording
-  // at an absurd rate, so every sample was resampled from a rate no device
-  // reports and the failure was never surfaced.
   const sampleRate = header & SAMPLE_RATE_MASK;
-  const captureFailure = (header & CAPTURE_FAILED_FLAG) !== 0;
-  const sampleCount = Math.floor((bytes.byteLength - HEADER_BYTES) / 4);
+  const failure = readCaptureFailed(header) ? { captureFailed: true } : {};
+  const trailer = readCaptureTrailer(view, bytes.byteLength);
+  const audioBytes = trailer
+    ? bytes.byteLength - TRAILER_BYTES
+    : bytes.byteLength;
+  const sampleCount = Math.floor((audioBytes - HEADER_BYTES) / 4);
   const samplesOffset = bytes.byteOffset + HEADER_BYTES;
-  const failure = captureFailure ? { captureFailed: true } : {};
+  const capture = trailer
+    ? {
+        captureFault: "fatal" as const,
+        capturedMs: trailer.durationMs,
+        expectedMs: trailer.expectedMs,
+      }
+    : {};
   if (IS_LITTLE_ENDIAN && samplesOffset % 4 === 0) {
     return {
       samples: new Float32Array(bytes.buffer, samplesOffset, sampleCount),
       sampleRate,
+      ...capture,
       ...failure,
     };
   }
@@ -80,7 +144,7 @@ const decodeBinary = (bytes: Uint8Array): StopRecordingResponse => {
   for (let index = 0; index < sampleCount; index += 1) {
     samples[index] = view.getFloat32(HEADER_BYTES + index * 4, true);
   }
-  return { samples, sampleRate, ...failure };
+  return { samples, sampleRate, ...capture, ...failure };
 };
 
 /**
@@ -107,6 +171,63 @@ const isSampleArray = (value: unknown): value is Float32Array | number[] =>
  * null audio result. A malformed body now decodes to empty, the same way an
  * unrecognised one always has.
  */
+/**
+ * Reads the finite number, or falls back to zero.
+ *
+ * `typeof === "number"` alone admits `NaN` and `Infinity`, and a non-finite
+ * sample rate propagates into every duration the caller computes from it.
+ */
+const finiteOrZero = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : 0;
+
+/**
+ * Decodes the `{ samples, sampleRate, ... }` object shape of the stop payload.
+ *
+ * The capture facts are carried across too. This exists so every caller shares
+ * one decoding path, and returning only the audio meant the path that most needs
+ * the fault -- the preview runtime and the test doubles -- was the one path
+ * where a faulted capture reported nothing at all.
+ */
+const decodeObjectPayload = (fields: {
+  samples: unknown;
+  sampleRate: unknown;
+  captureFault?: unknown;
+  capturedMs?: unknown;
+  expectedMs?: unknown;
+  captureFailed?: unknown;
+}): StopRecordingResponse => {
+  const {
+    samples,
+    sampleRate,
+    captureFault,
+    capturedMs,
+    expectedMs,
+    captureFailed,
+  } = fields;
+  if (!isSampleArray(samples)) {
+    return EMPTY_RESULT();
+  }
+  return {
+    // Copied rather than aliased: a caller that writes into the decoded buffer
+    // must not be able to reach back into the payload it came from.
+    samples:
+      samples instanceof Float32Array
+        ? samples.slice()
+        : Float32Array.from(samples),
+    sampleRate: finiteOrZero(sampleRate),
+    ...(readCaptureFailed(captureFailed) ? { captureFailed: true } : {}),
+    // Only a fatal fault is reported; anything else is silence, which is what
+    // an older caller already assumed.
+    ...(captureFault === "fatal" ? { captureFault: "fatal" as const } : {}),
+    ...(typeof capturedMs === "number" && Number.isFinite(capturedMs)
+      ? { capturedMs }
+      : {}),
+    ...(typeof expectedMs === "number" && Number.isFinite(expectedMs)
+      ? { expectedMs }
+      : {}),
+  };
+};
+
 export const decodeStopRecordingPayload = (
   payload: unknown,
 ): StopRecordingResponse => {
@@ -122,27 +243,9 @@ export const decodeStopRecordingPayload = (
     return decodeBinary(Uint8Array.from(payload as number[]));
   }
   if (payload && typeof payload === "object" && "samples" in payload) {
-    const { samples, sampleRate, captureFailed } = payload as {
-      samples?: unknown;
-      sampleRate?: unknown;
-      captureFailed?: unknown;
-    };
-    if (!isSampleArray(samples)) {
-      return EMPTY_RESULT();
-    }
-    return {
-      // Copied rather than aliased: a caller that writes into the decoded
-      // buffer must not be able to reach back into the payload it came from.
-      samples:
-        samples instanceof Float32Array
-          ? samples.slice()
-          : Float32Array.from(samples),
-      sampleRate:
-        typeof sampleRate === "number" && Number.isFinite(sampleRate)
-          ? sampleRate
-          : 0,
-      ...(readCaptureFailed(captureFailed) ? { captureFailed: true } : {}),
-    };
+    return decodeObjectPayload(
+      payload as Parameters<typeof decodeObjectPayload>[0],
+    );
   }
   return EMPTY_RESULT();
 };

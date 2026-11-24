@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoke = vi.hoisted(() => vi.fn());
-vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/api/window", () => ({
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  invoke,
+}));
+vi.mock("@tauri-apps/api/window", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/window")>()),
   getCurrentWindow: () => ({ label: "main" }),
 }));
 import {
@@ -12,11 +16,14 @@ import {
   isLocalDataClearRequested,
   LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
 } from "../../utils/local-data-write-gate";
+import { ActivationController } from "../../utils/activation.utils";
 import { resetNativeRecordingSession } from "../../utils/native-recording-session";
 import {
   admittedStartOptions,
   attemptStillOwns,
   attemptSurvivedNoClear,
+  assertDictationStartAvailable,
+  bindRecordingActivation,
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
@@ -70,7 +77,7 @@ it("aborts an active recording as soon as clear is requested, even before native
     return Promise.resolve(undefined);
   });
   const start = invokeGuardedRecordingStart(null);
-  const abort = vi.fn(async () => {});
+  const abort = vi.fn(() => Promise.resolve());
   const unsubscribe = subscribeRecordingAbortForClear(() => true, abort);
   // The admission is requested first, so the microphone open is dispatched a
   // microtask later; wait for it before releasing it.
@@ -88,7 +95,7 @@ it("aborts an active recording as soon as clear is requested, even before native
 });
 
 it("does not abort an idle recording and unregisters the clear listener", async () => {
-  const abort = vi.fn(async () => {});
+  const abort = vi.fn(() => Promise.resolve());
   let active = false;
   const unsubscribe = subscribeRecordingAbortForClear(() => active, abort);
   const release = await beginLocalDataClear();
@@ -108,7 +115,7 @@ it("stops a late microphone start after a parallel startup step has failed", asy
   const nativeStart = new Promise<string>((resolve) => {
     finish = resolve;
   });
-  const stop = vi.fn(async () => {});
+  const stop = vi.fn(() => Promise.resolve());
   const started = vi.fn();
   let current = true;
   const tracked = settleRecordingStart(
@@ -234,4 +241,107 @@ it("rejects an attempt admitted before a local-data clear began", async () => {
   expect(
     attemptStillOwns(ownershipOf(true, 1), 1, getLocalDataClearGeneration()),
   ).toBe(true);
+});
+
+const drain = async () => {
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+};
+
+describe("recording shortcut ownership", () => {
+  it("keeps the first startup and ignores release of a rejected shortcut", async () => {
+    let operation = 0;
+    let active = false;
+    let finishStart!: () => void;
+    const loading = new Promise<void>((resolve) => {
+      finishStart = resolve;
+    });
+    const stop = vi.fn(() => {
+      active = false;
+      return Promise.resolve();
+    });
+    const makeShortcut = () => {
+      const activation = bindRecordingActivation(
+        async (claim) => {
+          assertDictationStartAvailable(active, false);
+          active = true;
+          claim(++operation);
+          await loading;
+        },
+        () => operation,
+        stop,
+      );
+      return new ActivationController(activation.start, activation.stop, true);
+    };
+    const first = makeShortcut();
+    const competitor = makeShortcut();
+    first.handlePress();
+    await drain();
+    competitor.handlePress();
+    competitor.handleRelease();
+    await drain();
+    expect(competitor.isActive).toBe(false);
+    expect(operation).toBe(1);
+    expect(stop).not.toHaveBeenCalled();
+    first.handleRelease();
+    finishStart();
+    await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+  });
+
+  it("allows a second agent take in the same open panel, but not an overlap", () => {
+    const agent = { current: "agent", requested: "agent" } as const;
+    expect(() => assertDictationStartAvailable(true, false, agent)).toThrow();
+    expect(() => assertDictationStartAvailable(false, true, agent)).toThrow();
+    expect(() =>
+      assertDictationStartAvailable(false, false, agent),
+    ).not.toThrow();
+    expect(() =>
+      assertDictationStartAvailable(false, false, {
+        ...agent,
+        requested: "dictate",
+      }),
+    ).toThrow();
+  });
+
+  it("does not transfer a shortcut's stop permission on a second claim", async () => {
+    const stop = vi.fn(() => Promise.resolve());
+    let operation = 1;
+    const shortcut = bindRecordingActivation(
+      (claim) => {
+        claim(1);
+        claim(2);
+        return Promise.resolve();
+      },
+      () => operation,
+      stop,
+    );
+    await shortcut.start();
+    operation = 2;
+    await shortcut.stop();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("ignores controls from an unclaimed or superseded shortcut", async () => {
+    let operation = 1;
+    const stop = vi.fn(() => Promise.resolve());
+    const ignored = bindRecordingActivation(
+      () => Promise.resolve(),
+      () => operation,
+      stop,
+    );
+    await ignored.start();
+    await ignored.stop();
+    const old = bindRecordingActivation(
+      (claim) => {
+        claim(operation);
+        return Promise.resolve();
+      },
+      () => operation,
+      stop,
+    );
+    await old.start();
+    operation += 1;
+    await old.stop();
+    expect(stop).not.toHaveBeenCalled();
+    expect(() => assertDictationStartAvailable(false, true)).toThrow();
+  });
 });

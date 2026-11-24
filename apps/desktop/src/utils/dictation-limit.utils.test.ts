@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ActiveRecordingClock,
   DEFAULT_DICTATION_LIMIT_MINUTES,
   getDictationRecordingTimerDurations,
   getEffectiveDictationLimitMinutes,
@@ -100,6 +101,25 @@ describe("getDictationRecordingTimerDurations", () => {
       warningDurationMs: 240_000,
       autoStopDurationMs: 300_000,
     });
+  });
+
+  it("counts active segments, not pause time, towards the same limit", () => {
+    const clock = new ActiveRecordingClock();
+    expect(clock.resume(0)).toBe(0);
+    clock.pause(290_000);
+    expect(
+      getDictationRecordingTimerDurations(5, clock.resume(400_000)),
+    ).toEqual({
+      warningDurationMs: null,
+      autoStopDurationMs: 10_000,
+    });
+    clock.pause(410_000);
+    expect(
+      getDictationRecordingTimerDurations(5, clock.resume(500_000))
+        .autoStopDurationMs,
+    ).toBe(0);
+    clock.reset();
+    expect(clock.resume(600_000)).toBe(0);
   });
 
   it("caps timer durations at the maximum supported timeout", () => {

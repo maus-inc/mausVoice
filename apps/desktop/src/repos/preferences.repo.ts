@@ -16,6 +16,10 @@ import {
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
+import {
+  normalizeMicrophoneLingerMs,
+  normalizeMicrophonePrerollSeconds,
+} from "../utils/microphone-readiness.utils";
 import { orFalse, orNull, orTrue, orValue } from "../utils/nullable.utils";
 import { getEffectivePillVisibility, LOCAL_USER_ID } from "../utils/user.utils";
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
@@ -88,6 +92,9 @@ type LocalUserPreferences = {
   agentPermissionTimeoutMs?: number;
   spokenCommandsEnabled?: boolean;
   expansionFlags?: Nullable<string>;
+  keepMicrophoneReady?: boolean;
+  microphonePrerollSeconds?: Nullable<number>;
+  microphoneLingerMs?: Nullable<number>;
 };
 
 const normalizePillResetMonitorStrategy = (
@@ -266,6 +273,13 @@ const fromLocalFeaturePreferences = (preferences: LocalUserPreferences) => ({
     preferences.agentPermissionTimeoutMs,
   ),
   spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
+  keepMicrophoneReady: preferences.keepMicrophoneReady ?? false,
+  microphoneLingerMs: normalizeMicrophoneLingerMs(
+    preferences.microphoneLingerMs,
+  ),
+  microphonePrerollSeconds: normalizeMicrophonePrerollSeconds(
+    preferences.microphonePrerollSeconds,
+  ),
 });
 
 export const fromLocalPreferences = (
@@ -334,6 +348,9 @@ const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
     preferences.agentPermissionTimeoutMs,
   ),
   spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
+  keepMicrophoneReady: preferences.keepMicrophoneReady,
+  microphoneLingerMs: preferences.microphoneLingerMs,
+  microphonePrerollSeconds: preferences.microphonePrerollSeconds,
 });
 
 export const toLocalPreferences = (

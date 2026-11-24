@@ -38,6 +38,8 @@ pub mod recording_ownership;
 // `cargo test` on Windows, so it lives where it is tested on every platform.
 pub mod power_broadcast;
 
+pub mod audio_stage;
+
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "linux")]
@@ -153,6 +155,12 @@ pub mod app_info;
 
 pub mod audio;
 
+/// Why a device could not be opened, kept separate from "it is missing".
+pub mod mic_usage;
+
+/// What an error from a running capture stream means.
+pub mod stream_fault;
+
 pub mod paste_keybind;
 
 #[cfg(desktop)]
@@ -191,10 +199,127 @@ impl SavedClipboard {
 }
 
 pub type LevelCallback = Arc<dyn Fn(Vec<f32>) + Send + Sync>;
+/// Maximum PCM batch accepted by the live-audio event dispatcher.
+pub(crate) const MAX_CHUNK_EVENT_SAMPLES: usize = 256 * 1024;
+
 /// Receives a batch of samples plus the absolute index of the batch's first
 /// sample in the recording, so consumers can place audio on an absolute
 /// timeline instead of assuming every batch is contiguous.
 pub type ChunkCallback = Arc<dyn Fn(Vec<f32>, u64) + Send + Sync>;
+
+/// The pre-warm surface: holding a capture device open between dictations.
+///
+/// Separate from [`Recorder`] rather than folded into it, because recording and
+/// holding are different lifetimes. A recorder is asked to capture and then to
+/// stop; this asks for a device to be opened and left open. Folding them would
+/// put "open without recording" on every recorder implementation, including any
+/// that cannot express it, and every recorder would have to answer for a policy
+/// it does not implement.
+pub trait WarmCapture: Send + Sync {
+    /// Applies a warm request in one worker task, including promotion to a hold.
+    fn configure_warm(
+        &self,
+        preroll: std::time::Duration,
+        linger_ms: Option<u64>,
+        hold: bool,
+        preferred: Option<String>,
+    ) -> Result<(), String>;
+
+    /// Opens a capture device and holds it, without recording.
+    ///
+    /// `preroll` is how much audio from before a press to keep.
+    fn warm_open(&self, preroll: std::time::Duration) -> Result<(), String>;
+
+    /// Changes how much pre-press audio is kept, resizing a held ring rather
+    /// than reopening the device.
+    fn set_preroll(&self, preroll: std::time::Duration);
+
+    /// Resolves the device a press would use, without opening it.
+    fn prepare(&self, preferred: Option<&str>) -> Result<String, String>;
+
+    /// Tells the warm path which device the user prefers, before it opens one.
+    ///
+    /// A hold opens a device without a press, so it cannot inherit the
+    /// preference the way a press does: `start_recording` passes it in and the
+    /// stream it opens is the preferred device. Without this, a hold opened the
+    /// automatic device and the first press then replaced it, paying exactly the
+    /// cold open the hold exists to avoid.
+    fn set_preferred_device(&self, preferred: Option<String>);
+
+    /// Reopens the held stream if a better device appeared.
+    ///
+    /// A stream is bound to the device it was built on, so it cannot follow a
+    /// headset being plugged in; the only way to use the new device is to close
+    /// and reopen.
+    fn refresh_device(&self) {}
+
+    /// Keeps the stream that is already open until it is closed.
+    ///
+    /// Separate from `set_linger` because a linger of zero closes a stream. A
+    /// caller that has just opened one, or has just been handed one by a stop,
+    /// needs to keep it without passing through the value that would close it.
+    fn promote_to_hold(&self) {}
+
+    /// Closes the held stream and stops holding it, leaving the post-recording
+    /// window alone.
+    ///
+    /// Distinct from setting the window to zero: this is the app releasing the
+    /// device for its own reasons, and the window is a preference the user chose.
+    /// Conflating them turned the window off whenever anything released the
+    /// microphone.
+    fn release_hold(&self);
+
+    /// Closes the held stream.
+    fn warm_close(&self);
+
+    /// Whether a stream is held right now *and usable*, which is what "ready"
+    /// means to the user and what the dialog reports.
+    ///
+    /// Deliberately not the same question as [`Self::has_held_stream`]: a stream
+    /// that opened and delivered nothing is held but not ready. Use this one for
+    /// anything the user reads, and `has_held_stream` for anything that has to
+    /// release the device.
+    fn is_ready(&self) -> bool;
+
+    /// Whether a stream is held right now, usable or not.
+    ///
+    /// This is the structural question, and the exit path is why it exists: a
+    /// held stream keeps the OS microphone indicator lit whether or not it can
+    /// serve a press, so releasing it at exit must not ask `is_ready`, which
+    /// answers `false` for exactly the broken stream that most needs closing.
+    fn has_held_stream(&self) -> bool {
+        self.is_ready()
+    }
+
+    /// Sets the hold policy, in milliseconds: 0 closes at stop, a finite value
+    /// is a window, and `u64::MAX` holds until closed.
+    fn set_linger(&self, linger_ms: u64);
+
+    /// Applies a policy snapshot only if the policy generation is unchanged.
+    ///
+    /// A stop captures the generation alongside the persisted preference so a
+    /// newer `set_microphone_linger` that lands between the read and the
+    /// worker application cannot be overwritten by the stale snapshot.
+    fn set_linger_if_current(&self, linger_ms: u64, _expected_generation: u64) {
+        self.set_linger(linger_ms);
+    }
+
+    /// The current policy generation, as last bumped by a policy change.
+    ///
+    /// A stop reads this alongside the persisted preference to detect a newer
+    /// `set_microphone_linger` that landed after the read.
+    fn linger_policy_generation(&self) -> u64 {
+        0
+    }
+
+    /// One readable line of policy and last-start state.
+    fn status_line(&self) -> String;
+
+    /// The stage timing of the most recent capture start, oldest first.
+    fn last_startup(&self) -> Option<Vec<(String, u64)>> {
+        None
+    }
+}
 
 pub trait Recorder: Send + Sync {
     fn start(
@@ -213,6 +338,13 @@ pub trait Recorder: Send + Sync {
             return Err("Recording is still active after stop".into());
         }
         result
+    }
+    /// Seal a normal recording using the persisted hold policy, not a webview's cache.
+    fn stop_for_handoff_with_linger(
+        &self,
+        _linger: std::time::Duration,
+    ) -> Result<crate::domain::RecordingResult, Box<dyn std::error::Error>> {
+        self.stop_for_handoff()
     }
     fn pause(&self) -> Result<(), Box<dyn std::error::Error>>;
     fn resume(&self) -> Result<(), Box<dyn std::error::Error>>;

@@ -1817,14 +1817,10 @@ export const REGISTRY: RegistryEntry[] = [
     status: "recreated",
     statusNote:
       "Store/action-bound (tone CRUD, user prefs). Recreated as the presentational slice: the real MenuPopover + ListTile rows + Add/Edit/Public icons with identical labeling; data is fixture tones.",
-    sources: [
-      `${D}components/tones/ToneSelect.tsx`,
-      `${D}components/transcriptions/TranscriptionToneMenu.tsx`,
-    ],
+    sources: [`${D}components/tones/ToneSelect.tsx`],
     usedIn: [
       `${D}components/styling/AppStylingLayout.tsx`,
       `${D}components/styling/AppStylingRow.tsx`,
-      `${D}components/transcriptions/TranscriptionToneMenu.tsx`,
     ],
     demo: "tone-select",
     spec: [

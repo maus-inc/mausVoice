@@ -16,6 +16,7 @@ export type SegmentedControlProps<Value extends string> = {
   options: SegmentedControlOption<Value>[];
   onChange: (value: Value) => void;
   ariaLabel?: string;
+  allowReselect?: boolean;
   /**
    * Horizontal placement of the track within its flex-column container.
    * Defaults to `start` so existing call sites are unaffected; `center` centres
@@ -74,6 +75,7 @@ export const SegmentedControl = <Value extends string>({
   options,
   onChange,
   ariaLabel,
+  allowReselect = false,
   align = "start",
 }: SegmentedControlProps<Value>) => {
   const reduceMotion = useReducedMotion();
@@ -165,6 +167,11 @@ export const SegmentedControl = <Value extends string>({
               </>
             }
             sx={tabSx}
+            onClick={
+              allowReselect && option.value === value && !option.disabled
+                ? () => onChange(option.value)
+                : undefined
+            }
             disabled={option.disabled}
           />
         ))}

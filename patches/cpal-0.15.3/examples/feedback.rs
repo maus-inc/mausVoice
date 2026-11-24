@@ -105,7 +105,11 @@ fn main() -> anyhow::Result<()> {
     let latency_samples = latency_frames as usize * config.channels as usize;
 
     // The buffer to share samples
-    let ring = HeapRb::<f32>::new(latency_samples * 2);
+    let ring = HeapRb::<f32>::new(
+        latency_samples
+            .saturating_mul(2)
+            .max(config.channels as usize),
+    );
     let (mut producer, mut consumer) = ring.split();
 
     // Fill the samples with 0.0 equal to the length of the delay.

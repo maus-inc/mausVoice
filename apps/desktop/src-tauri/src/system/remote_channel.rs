@@ -8,6 +8,8 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
+pub(crate) const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+
 /// Messages a companion sender writes and the desktop receiver reads.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -80,6 +82,11 @@ pub(crate) async fn write_json_message<T: Serialize>(
 ) -> Result<(), String> {
     let json = serde_json::to_string(message)
         .map_err(|err| format!("Failed to serialize {direction} message: {err}"))?;
+    if json.len() >= MAX_FRAME_BYTES {
+        return Err(format!(
+            "Remote {direction} message exceeds the frame limit"
+        ));
+    }
     writer
         .write_all(json.as_bytes())
         .await
@@ -230,6 +237,14 @@ mod tests {
             session_id: "session-1".to_string(),
             sent_at: "2026-01-02T12:00:05Z".to_string(),
         };
+
+        // Escaping can make a message exceed the wire limit even with fewer
+        // raw input bytes. Failure must not put a partial frame on the socket.
+        let oversized = "\n".repeat(super::MAX_FRAME_BYTES / 2);
+        let error = write_json_message(&mut writer, &oversized, "remote sender")
+            .await
+            .unwrap_err();
+        assert!(error.contains("exceeds the frame limit"));
 
         write_json_message(&mut writer, &first, "remote sender")
             .await

@@ -195,7 +195,9 @@ impl Control {
     /// When the kernel wakes up due to a period interrupt, this value will
     /// be checked by the kernel. An XRUN will happen in case the application
     /// has not read or written enough data.
-    pub fn set_appl_ptr(&self, value: pcm::Frames) {
+    /// # Safety
+    /// The caller must own the only active control mapping for this PCM.
+    pub unsafe fn set_appl_ptr(&mut self, value: pcm::Frames) {
         unsafe {
             ptr::write_volatile(&mut (*self.0.ptr).appl_ptr, value as snd_pcm_uframes_t)
         }
@@ -209,7 +211,9 @@ impl Control {
     }
 
     /// Write minimum number of frames in buffer in order to wakeup process
-    pub fn set_avail_min(&self, value: pcm::Frames) {
+    /// # Safety
+    /// The caller must own the only active control mapping for this PCM.
+    pub unsafe fn set_avail_min(&mut self, value: pcm::Frames) {
         unsafe {
             ptr::write_volatile(&mut (*self.0.ptr).avail_min, value as snd_pcm_uframes_t)
         }
@@ -335,18 +339,20 @@ impl MmapDir for Capture {
     }
 }
 
-pub type MmapPlayback<S> = MmapIO<S, Playback>;
+pub type MmapPlayback<'pcm, S> = MmapIO<'pcm, S, Playback>;
 
-pub type MmapCapture<S> = MmapIO<S, Capture>;
+pub type MmapCapture<'pcm, S> = MmapIO<'pcm, S, Capture>;
 
 #[derive(Debug)]
 /// Struct containing direct I/O functions shared between playback and capture.
-pub struct MmapIO<S, D> {
+pub struct MmapIO<'pcm, S, D> {
     data: SampleData<S>,
     c: Control,
     ss: Status,
     bound: Frames,
     dir: PhantomData<*const D>,
+    partial: isize,
+    _lease: pcm::IoLease<'pcm>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -367,7 +373,11 @@ impl<S> RawSamples<S> {
     /// Returns true if iterator was depleted, and the number of samples written.
     /// This is just raw read/write of memory.
     pub unsafe fn write_samples<I: Iterator<Item=S>>(&self, i: &mut I) -> (bool, isize) {
-        let mut z = 0;
+        self.write_samples_from(i, 0)
+    }
+
+    unsafe fn write_samples_from<I: Iterator<Item=S>>(&self, i: &mut I, start: isize) -> (bool, isize) {
+        let mut z = start;
         let max_samples = self.samples();
         while z < max_samples {
             let b = if let Some(b) = i.next() { b } else { return (true, z) };
@@ -379,11 +389,12 @@ impl<S> RawSamples<S> {
 
 }
 
-impl<S: MmapSample, D: MmapDir> MmapIO<S, D> {
-    fn new(p: &pcm::PCM) -> Result<Self> {
+impl<'pcm, S: MmapSample, D: MmapDir> MmapIO<'pcm, S, D> {
+    fn new(p: &'pcm pcm::PCM) -> Result<Self> {
         if p.info()?.get_stream() != D::DIR {
             return Err(Error::unsupported("Wrong direction"));
         }
+        let lease = p.reserve_io();
         let boundary = p.sw_params_current()?.get_boundary()?;
         Ok(MmapIO {
             data: SampleData::new(p)?,
@@ -391,11 +402,13 @@ impl<S: MmapSample, D: MmapDir> MmapIO<S, D> {
             ss: Status::new(p)?,
             bound: boundary,
             dir: PhantomData,
+            partial: 0,
+            _lease: lease,
         })
     }
 }
 
-pub (crate) fn new_mmap<S: MmapSample, D: MmapDir>(p: &pcm::PCM) -> Result<MmapIO<S, D>> { MmapIO::new(p) }
+pub (crate) fn new_mmap<S: MmapSample, D: MmapDir>(p: &pcm::PCM) -> Result<MmapIO<'_, S, D>> { MmapIO::new(p) }
 
 fn advance_appl_ptr(appl_ptr: Frames, frames: Frames, boundary: Frames) -> Frames {
     assert!(boundary > 0 && appl_ptr >= 0 && appl_ptr < boundary && frames >= 0,
@@ -429,7 +442,7 @@ fn mmap_commit_rejects_negative_advances() {
     advance_appl_ptr(5, -1, 100);
 }
 
-impl<S, D: MmapDir> MmapIO<S, D> {
+impl<S, D: MmapDir> MmapIO<'_, S, D> {
     /// Read current status
     pub fn status(&self) -> &Status { &self.ss }
 
@@ -461,8 +474,19 @@ impl<S, D: MmapDir> MmapIO<S, D> {
     ///
     /// This will allow the kernel to write new data into this part of the buffer.
     /// Panics if `v` is negative or ALSA reports a pointer outside its boundary.
-    pub fn commit(&self, v: Frames) {
-        self.c.set_appl_ptr(advance_appl_ptr(self.appl_ptr(), v, self.boundary()))
+    pub fn commit(&mut self, v: Frames) {
+        self.partial = 0;
+        let next = advance_appl_ptr(self.appl_ptr(), v, self.boundary());
+        // This mapping holds the PCM's exclusive I/O lease.
+        unsafe { self.c.set_appl_ptr(next) };
+    }
+
+    fn commit_samples(&mut self, samples: isize) -> Frames {
+        let channels = self.channels() as isize;
+        let frames = (samples / channels) as Frames;
+        self.commit(frames);
+        self.partial = samples % channels;
+        frames
     }
 
     /// Number of frames available to read / write.
@@ -500,68 +524,66 @@ impl<S, D: MmapDir> MmapIO<S, D> {
     }
 }
 
-impl<S> MmapPlayback<S> {
-    /// Write samples to the kernel ringbuffer.
+impl<S> MmapPlayback<'_, S> {
+    /// Write samples to the kernel ringbuffer. A partial frame is retained for
+    /// the next call; only complete frames are made visible to the kernel.
     pub fn write<I: Iterator<Item=S>>(&mut self, i: &mut I) -> Frames {
         let (data, more_data) = self.data_ptr();
-        let (iter_end, samples) = unsafe { data.write_samples(i) };
-        let mut z = samples / data.channels as isize;
+        if data.frames <= 0 { return 0; }
+        let (iter_end, mut samples) = unsafe { data.write_samples_from(i, self.partial) };
         if !iter_end {
-            if let Some(data2) = more_data {
-                let (_, samples2) = unsafe {  data2.write_samples(i) };
-                z += samples2 / data2.channels as isize;
+            if let Some(next) = more_data {
+                samples += unsafe { next.write_samples(i) }.1;
             }
         }
-        let z = z as Frames;
-        self.commit(z);
-        z
+        self.commit_samples(samples)
     }
 }
 
-impl<S> MmapCapture<S> {
-    /// Read samples from the kernel ringbuffer.
-    ///
-    /// When the iterator is dropped or depleted, the read samples will be committed, i e,
-    /// the kernel can then write data to the location again. So do this ASAP.
-    pub fn iter(&mut self) -> CaptureIter<S> {
+impl<'pcm, S> MmapCapture<'pcm, S> {
+    /// Read samples from the kernel ringbuffer. Dropping an iterator commits
+    /// full frames and retains its position within the first uncommitted frame.
+    pub fn iter(&mut self) -> CaptureIter<'_, 'pcm, S> {
         let (data, more_data) = self.data_ptr();
+        let partial = self.partial;
         CaptureIter {
             m: self,
             samples: data,
-            p_offs: 0,
-            read_samples: 0,
+            p_offs: partial,
+            read_samples: partial,
             next_p: more_data,
         }
     }
 }
 
 /// Iterator over captured samples
-pub struct CaptureIter<'a, S: 'static> {
-    m: &'a MmapCapture<S>,
+pub struct CaptureIter<'a, 'pcm, S: 'static> {
+    m: &'a mut MmapCapture<'pcm, S>,
     samples: RawSamples<S>,
     p_offs: isize,
     read_samples: isize,
     next_p: Option<RawSamples<S>>,
 }
 
-impl<'a, S: 'static + Copy> CaptureIter<'a, S> {
+impl<'a, S: 'static + Copy> CaptureIter<'a, '_, S> {
     fn handle_max(&mut self) {
         self.p_offs = 0;
         if let Some(p2) = self.next_p.take() {
             self.samples = p2;
         } else {
-            self.m.commit((self.read_samples / self.samples.channels as isize) as Frames);
+            self.m.commit_samples(self.read_samples);
             self.read_samples = 0;
             self.samples.frames = 0; // Shortcut to "None" in case anyone calls us again
         }
     }
 }
 
-impl<'a, S: 'static + Copy> Iterator for CaptureIter<'a, S> {
+impl<'a, S: 'static + Copy> Iterator for CaptureIter<'a, '_, S> {
     type Item = S;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
+        if self.samples.frames <= 0 { return None; }
         if self.p_offs >= self.samples.samples() {
             self.handle_max();
             if self.samples.frames <= 0 { return None; }
@@ -573,9 +595,9 @@ impl<'a, S: 'static + Copy> Iterator for CaptureIter<'a, S> {
     }
 }
 
-impl<'a, S: 'static> Drop for CaptureIter<'a, S> {
+impl<'a, S: 'static> Drop for CaptureIter<'a, '_, S> {
     fn drop(&mut self) {
-        self.m.commit((self.read_samples / self.m.data.channels as isize) as Frames);
+        if self.read_samples > 0 { self.m.commit_samples(self.read_samples); }
     }
 }
 
@@ -690,4 +712,64 @@ fn playback_to_plughw_mmap() {
     pcm.drain().unwrap();
     assert_eq!(m.appl_ptr(), m.buffer_size());
     assert!(m.hw_ptr() >= m.buffer_size());
+}
+
+#[cfg(test)]
+mod partial_frame_tests {
+    use super::*;
+
+    fn anonymous<S>(count: usize) -> DriverMemory<S> {
+        let size = mem::size_of::<S>() * count;
+        let ptr = unsafe {
+            libc::mmap(ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0)
+        };
+        assert_ne!(ptr, libc::MAP_FAILED);
+        DriverMemory { ptr: ptr.cast(), size }
+    }
+
+    fn stereo<D: MmapDir>(pcm: &pcm::PCM, hw_ptr: snd_pcm_uframes_t) -> MmapIO<'_, i16, D> {
+        let ss = Status(anonymous::<snd_pcm_mmap_status>(1));
+        unsafe { (*ss.0.ptr).hw_ptr = hw_ptr };
+        MmapIO {
+            data: SampleData { mem: anonymous(4), frames: 2, channels: 2 },
+            c: Control(anonymous(1)), ss, bound: 16, dir: PhantomData,
+            partial: 0, _lease: pcm.reserve_io(),
+        }
+    }
+
+    #[test]
+    fn playback_completes_stereo_frame_on_later_write() {
+        let pcm = pcm::PCM::io_only_fixture();
+        let mut io = stereo::<Playback>(&pcm, 0);
+        assert_eq!(io.write(&mut [10].iter().copied()), 0);
+        assert_eq!(io.appl_ptr(), 0);
+        assert_eq!(io.write(&mut [20, 30, 40].iter().copied()), 2);
+        assert_eq!(io.appl_ptr(), 2);
+        let samples = unsafe { std::slice::from_raw_parts(io.data.mem.ptr, 4) };
+        assert_eq!(samples, &[10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn capture_continues_from_the_next_channel_after_iterator_drop() {
+        let pcm = pcm::PCM::io_only_fixture();
+        let mut io = stereo::<Capture>(&pcm, 2);
+        unsafe { ptr::copy_nonoverlapping([10, 20, 30, 40].as_ptr(), io.data.mem.ptr, 4) };
+        assert_eq!(io.iter().next(), Some(10));
+        assert_eq!(io.appl_ptr(), 0);
+        assert_eq!(io.iter().collect::<Vec<_>>(), vec![20, 30, 40]);
+        assert_eq!(io.appl_ptr(), 2);
+        assert!(io.iter().next().is_none());
+    }
+
+    #[test]
+    fn direct_mapping_holds_the_regular_io_slot_until_drop() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        let pcm = pcm::PCM::io_only_fixture();
+        let io = stereo::<Capture>(&pcm, 0);
+        assert!(catch_unwind(AssertUnwindSafe(|| pcm.io_bytes())).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| pcm.reserve_io())).is_err());
+        drop(io);
+        drop(pcm.io_bytes());
+    }
 }

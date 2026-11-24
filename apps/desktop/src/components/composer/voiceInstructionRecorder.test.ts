@@ -104,6 +104,7 @@ const baseDeps = (
     unsupportedMessage: () => "unsupported",
     recordingUnavailableMessage: (operation) =>
       operation === "stop" ? "stop failed" : "recording unavailable",
+    captureFailedMessage: () => "recording failed",
     onListeningChange: vi.fn(),
     onTranscript: vi.fn(),
     onError: vi.fn(),
@@ -156,6 +157,33 @@ describe("VoiceInstructionRecorder", () => {
     expect(deps.onResetLevels).toHaveBeenCalled();
     expect(recorder.getState()).toBe("idle");
     expect(deps.onListeningChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("does not transcribe a failed capture containing pre-roll", async () => {
+    const deps = baseDeps({
+      invoke: nativeInvoke({
+        stop_recording: () =>
+          Promise.resolve({
+            samples: [0.1, 0.2],
+            sampleRate: 16000,
+            captureFailed: true,
+          }),
+      }),
+      createSpeechRecognition: vi.fn(() => new FakeRecognition()),
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+
+    await recorder.toggle();
+    await recorder.toggle();
+
+    expect(deps.transcribe).not.toHaveBeenCalled();
+    expect(deps.onTranscript).not.toHaveBeenCalled();
+    expect(deps.createSpeechRecognition).not.toHaveBeenCalled();
+    expect(deps.onError).toHaveBeenCalledWith("recording failed");
+    expect(recorder.getState()).toBe("idle");
+    await recorder.toggle();
+    expect(recorder.getState()).toBe("provider");
+    recorder.dispose();
   });
 
   it("falls back to browser recognition when provider recording fails", async () => {
@@ -631,6 +659,30 @@ describe("VoiceInstructionRecorder", () => {
       expect(recorder.getState()).toBe("idle");
       expect(deps.onListeningChange).toHaveBeenLastCalledWith(false);
     });
+  });
+
+  it("holds the native slot through asynchronous browser disposal", async () => {
+    const fake = new FakeRecognition();
+    fake.stop = vi.fn();
+    const deps = baseDeps({
+      canUseProvider: () => false,
+      createSpeechRecognition: () => fake,
+    });
+    const recorder = new VoiceInstructionRecorder(deps);
+    await recorder.toggle();
+    recorder.dispose();
+    expect(fake.stop).toHaveBeenCalledOnce();
+    expect(deps.invoke).not.toHaveBeenCalledWith(
+      "release_browser_recording",
+      expect.anything(),
+    );
+    fake.onend?.();
+    await vi.waitFor(() =>
+      expect(deps.invoke).toHaveBeenCalledWith("release_browser_recording", {
+        ownerId: expect.any(String),
+        generation: 1,
+      }),
+    );
   });
 
   it("disposes browser recognition on unmount", async () => {

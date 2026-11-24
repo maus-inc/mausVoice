@@ -53,6 +53,20 @@ export type SnackbarAction = {
   focusOnShow?: boolean;
   onFocusReturn?: (undone: boolean) => void;
 };
+/**
+ * One queued snackbar, with its own counter.
+ *
+ * `counter` rather than a synthetic id, because the emitter already dedupes on
+ * the counter and the counter is what survives a StrictMode remount.
+ */
+export type SnackbarRequest = {
+  counter: number;
+  message: string;
+  mode: SnackbarMode;
+  duration: number;
+  transitionDuration?: number;
+  action?: SnackbarAction;
+};
 export type HotkeyStrategy = "listener" | "bridge";
 export type PasteKeybindSupport = "disabled" | "per-app" | "global";
 
@@ -141,6 +155,20 @@ export type AppState = {
   home: HomeState;
   chat: ChatState;
 
+  /**
+   * Every snackbar request in the order it was made, each with the counter
+   * value the emitter uses to tell a new request from a re-render.
+   *
+   * A single `snackbarMessage` slot was not enough. React batches, so two
+   * messages raised in one tick left the state holding only the second, and
+   * `SnackbarEmitter` -- which re-runs on the counter rather than per message --
+   * showed only that one. The first was never displayed and never would be: a
+   * message that loses the race is not delayed, it is dropped. It is a queue
+   * because the requests are not interchangeable -- "Saved" followed by
+   * "Upload failed" must not resolve to "Saved".
+   */
+  snackbarRequests: SnackbarRequest[];
+  /** Mirrors the newest request, for the readers that only care about that. */
   snackbarMessage?: string;
   snackbarCounter: number;
   snackbarMode: SnackbarMode;
@@ -199,6 +227,7 @@ export const INITIAL_APP_STATE: AppState = {
   confettiCounter: 0,
   keysHeld: [],
   initialized: false,
+  snackbarRequests: [],
   snackbarCounter: 0,
   snackbarMode: "info",
   snackbarDuration: 3000,

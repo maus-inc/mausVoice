@@ -16,6 +16,10 @@
     "apps/desktop/webdriver/specs/**/*.spec.ts",
     "apps/docs/scripts/make-card-ascii.mjs",
     "docs/assets/badges/source/generate-badges.mjs",
+    "apps/preview/verify-harness/mic-dialog.tsx",
+    "scripts/verify/shot-home.mjs",
+    "scripts/verify/shot-mic-dialog.mjs",
+    "scripts/verify/sweep-preview.mjs",
     "apps/desktop/webdriver/specs/contracts.spec.ts"
   ],
   "usedClassMembers": [

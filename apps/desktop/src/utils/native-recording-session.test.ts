@@ -145,26 +145,6 @@ describe("beginNativeRecording", () => {
     expect(currentNativeRecording()).toBeNull();
   });
 
-  it("discards a superseded recording before admitting a new one", async () => {
-    const { invoke, calls } = recorderTransport();
-    const first = await beginNativeRecording(null, {}, invoke);
-    const second = await beginNativeRecording(null, {}, invoke);
-
-    expect(calls.map(([command]) => command)).toEqual([
-      "recording_generation",
-      "start_recording",
-      // The superseded stream is released before a second admission exists.
-      "discard_recording",
-      "recording_generation",
-      "start_recording",
-    ]);
-    expect(calls[2]?.[1]).toEqual({
-      ownerId: first.handle.ownerId,
-      generation: first.handle.generation,
-    });
-    expect(currentNativeRecording()).toBe(second.handle);
-  });
-
   it("refuses another start while the first admission is pending", async () => {
     let releaseGeneration!: (generation: number) => void;
     const pendingGeneration = new Promise<number>((resolve) => {

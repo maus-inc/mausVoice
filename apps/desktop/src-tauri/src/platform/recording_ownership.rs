@@ -5,7 +5,15 @@ use std::time::{Duration, Instant};
 
 #[derive(Default)]
 pub struct RecordingWindow {
+    key: usize,
     closed: AtomicBool,
+    process_exited: AtomicBool,
+}
+
+impl RecordingWindow {
+    fn start_unavailable(&self) -> bool {
+        self.closed.load(Ordering::SeqCst) || self.process_exited.load(Ordering::SeqCst)
+    }
 }
 
 pub struct StartControl<'a> {
@@ -35,7 +43,7 @@ impl RecordingAdmission {
     }
 
     pub fn may_recover_audio(&self) -> bool {
-        !self.cancelled.load(Ordering::SeqCst) && !self.window.closed.load(Ordering::SeqCst)
+        !self.cancelled.load(Ordering::SeqCst) && !self.window.start_unavailable()
     }
 
     pub fn mark_recovery_failed(&self) {
@@ -226,6 +234,12 @@ fn finish_stop<T>(
 }
 
 /// Serializes the recorder and its owner across every webview.
+///
+/// When coordinator locks nest, `owner` or `windows` may precede `admissions`;
+/// never hold `owner` and `windows` together. `admissions` may precede either
+/// `retired_admissions` or `recovered`, which are not held together. Drop table
+/// guards before entering an owner operation, and release `owner` before calling
+/// the driver (see `run_owned_without_lock`).
 #[derive(Default)]
 pub struct RecordingOwnership {
     owner: Arc<Mutex<Option<Owner>>>,
@@ -325,7 +339,10 @@ impl RecordingOwnership {
         if let Some(window) = windows.get(&key).and_then(Weak::upgrade) {
             return window;
         }
-        let window = Arc::new(RecordingWindow::default());
+        let window = Arc::new(RecordingWindow {
+            key,
+            ..Default::default()
+        });
         windows.insert(key, Arc::downgrade(&window));
         window
     }
@@ -361,6 +378,42 @@ impl RecordingOwnership {
             });
         self.wake_starts();
         Some(window)
+    }
+
+    /// Snapshot the document associated with the webview at signal ingress.
+    #[cfg(any(target_os = "linux", test))]
+    pub fn recording_document_for_probe(&self, key: usize) -> Option<Arc<RecordingWindow>> {
+        self.windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+            .and_then(Weak::upgrade)
+    }
+
+    /// Reject recording starts queued by the departed document and return its
+    /// exact installed admission, if any. A browser lease is not retired here.
+    #[cfg(any(target_os = "linux", test))]
+    pub fn confirm_native_process_exit(
+        &self,
+        document: &Arc<RecordingWindow>,
+    ) -> Option<Arc<RecordingAdmission>> {
+        let owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if document.closed.load(Ordering::SeqCst)
+            || document.process_exited.swap(true, Ordering::SeqCst)
+        {
+            return None;
+        }
+        self.wake_starts();
+        let owner = owner.as_ref()?;
+        if owner.external || !Arc::ptr_eq(&owner.window, document) {
+            return None;
+        }
+        let admission = owner.admission.as_ref()?;
+        admission.cancel();
+        Some(Arc::clone(admission))
     }
 
     pub fn stop_window<T>(
@@ -829,7 +882,7 @@ impl RecordingOwnership {
                 || control
                     .admission
                     .is_some_and(|admission| admission.cancelled.load(Ordering::SeqCst))
-                || window.closed.load(Ordering::SeqCst)
+                || window.start_unavailable()
             {
                 return Err("Recording start was cancelled".into());
             }
@@ -920,7 +973,7 @@ impl RecordingOwnership {
             || control
                 .admission
                 .is_some_and(|admission| admission.cancelled.load(Ordering::SeqCst))
-            || window.closed.load(Ordering::SeqCst)
+            || window.start_unavailable()
         {
             owner
                 .as_mut()
@@ -945,7 +998,7 @@ impl RecordingOwnership {
                 || admission.generation != self.generation()
                 || admission.cancelled.load(Ordering::SeqCst)
                 || !admission.claimed.load(Ordering::SeqCst)
-                || admission.window.closed.load(Ordering::SeqCst)
+                || admission.window.start_unavailable()
         };
         if cancelled() {
             return Err("Recording start was cancelled".into());
@@ -976,6 +1029,7 @@ impl RecordingOwnership {
     }
 
     /// Release only after the browser's end event, or before it has started.
+    #[cfg(test)]
     fn release_external_matching(&self, id: &str, scope: Option<(&Arc<RecordingWindow>, u64)>) {
         self.cancel_matching_admission(id, scope);
         let mut owner = self
@@ -994,6 +1048,57 @@ impl RecordingOwnership {
         }
     }
 
+    pub fn release_external_window(&self, id: &str, key: usize, token: u64) {
+        // onend may arrive after a reload retired the current scope. The token
+        // still identifies the exact capture within this native window.
+        let window = self.window(key);
+        self.cancel_matching_admission(id, Some((&window, token)));
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if owner.as_ref().is_some_and(|owner| {
+            owner.external && owner.window.key == key && owner.token == token && owner.id == id
+        }) {
+            *owner = None;
+            self.wake_starts();
+        }
+    }
+
+    /// Retire a committed-away or destroyed document and release its browser lease.
+    /// Native capture still needs the explicit stop for the returned scope.
+    pub fn retire_document(&self, key: usize) -> Option<Arc<RecordingWindow>> {
+        let scope = self.close_window(key)?;
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if owner
+            .as_ref()
+            .is_some_and(|owner| owner.external && Arc::ptr_eq(&owner.window, &scope))
+        {
+            *owner = None;
+            self.wake_starts();
+        }
+        Some(scope)
+    }
+
+    /// Acknowledge capture end for an already closed window scope. Prefer
+    /// `retire_document` when handling a committed replacement or destruction.
+    pub fn confirm_external_window_capture_ended(&self, key: usize) {
+        let mut owner = self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if owner.as_ref().is_some_and(|owner| {
+            owner.external && owner.window.key == key && owner.window.closed.load(Ordering::Acquire)
+        }) {
+            *owner = None;
+            self.wake_starts();
+        }
+    }
+
+    #[cfg(test)]
     pub fn release_external_scoped(&self, id: &str, window: &Arc<RecordingWindow>, token: u64) {
         self.release_external_matching(id, Some((window, token)));
     }
@@ -1568,6 +1673,90 @@ mod tests {
             || Ok(()),
             || false,
         )
+    }
+
+    #[test]
+    fn a_delayed_crash_cleanup_does_not_touch_a_replacement_document() {
+        let coordinator = RecordingOwnership::default();
+        let window = coordinator.window(201);
+        let token = coordinator.reserve("reused-owner", &window).unwrap();
+        let first = start_idle_admission(&coordinator, "reused-owner", &window, token);
+        assert!(coordinator.recording_document_for_probe(202).is_none());
+        let document = coordinator.recording_document_for_probe(201).unwrap();
+        assert!(Arc::ptr_eq(&document, &window));
+        let crash = coordinator.confirm_native_process_exit(&document).unwrap();
+        assert!(Arc::ptr_eq(&crash, &first));
+        coordinator
+            .stop_admission(&crash, || (Ok(()), false))
+            .unwrap()
+            .unwrap();
+
+        coordinator.retire_document(201).unwrap();
+        let replacement = coordinator.window(201);
+        let token = coordinator.reserve("reused-owner", &replacement).unwrap();
+        let successor = start_idle_admission(&coordinator, "reused-owner", &replacement, token);
+        assert!(coordinator.confirm_native_process_exit(&document).is_none());
+        assert!(coordinator
+            .stop_admission(&crash, || -> (Result<(), String>, bool) {
+                panic!("the delayed crash must not touch the successor's driver");
+            })
+            .is_none());
+        assert!(successor.may_recover_audio());
+    }
+
+    #[test]
+    fn a_confirmed_crash_blocks_a_native_start_queued_before_owner_installation() {
+        let coordinator = RecordingOwnership::default();
+        let document = coordinator.window(201);
+        let token = coordinator.reserve("opening", &document).unwrap();
+        let admission = coordinator
+            .claim_admission("opening", &document, token)
+            .unwrap();
+        assert!(coordinator.confirm_native_process_exit(&document).is_none());
+        let error = coordinator.start(
+            "opening",
+            &document,
+            token,
+            StartControl {
+                admission: Some(&admission),
+                cancelled: &AtomicBool::new(false),
+                wait: Duration::ZERO,
+            },
+            || -> Result<(), String> { panic!("dead renderer's capture opened") },
+            || false,
+        );
+        assert_eq!(error.unwrap_err(), "Recording start was cancelled");
+    }
+
+    #[test]
+    fn a_confirmed_exit_rejects_a_queued_browser_claim() {
+        let coordinator = RecordingOwnership::default();
+        let document = coordinator.window(201);
+        let token = coordinator.reserve("browser", &document).unwrap();
+        let admission = coordinator
+            .claim_admission("browser", &document, token)
+            .unwrap();
+        assert!(coordinator.confirm_native_process_exit(&document).is_none());
+        assert_eq!(
+            coordinator.start_external(&admission).unwrap_err(),
+            "Recording start was cancelled"
+        );
+        assert!(start(&coordinator, "other-window").is_ok());
+    }
+
+    #[test]
+    fn a_crash_snapshot_does_not_include_the_browser_lease() {
+        let coordinator = RecordingOwnership::default();
+        let window = coordinator.window(201);
+        let token = coordinator.reserve("browser", &window).unwrap();
+        let admission = coordinator
+            .claim_admission("browser", &window, token)
+            .unwrap();
+        coordinator.start_external(&admission).unwrap();
+        assert!(coordinator.confirm_native_process_exit(&window).is_none());
+        assert!(start(&coordinator, "competing-native").is_err());
+        coordinator.retire_document(201).unwrap();
+        assert!(start(&coordinator, "competing-native").is_ok());
     }
 
     #[test]
@@ -2771,7 +2960,52 @@ mod tests {
             .unwrap()
             .is_err());
         assert!(start(&ownership, "native").is_err());
-        ownership.release_external("browser");
+        ownership.release_external_window("browser", 34, generation);
+        assert!(start(&ownership, "native").is_err());
+        ownership.release_external_window("browser", 33, generation);
+        assert!(start(&ownership, "native").is_ok());
+    }
+
+    #[test]
+    fn confirmed_window_death_releases_only_that_retired_external_capture() {
+        let ownership = RecordingOwnership::default();
+        let window = ownership.window(33);
+        let token = ownership.reserve("browser", &window).unwrap();
+        let admission = ownership
+            .claim_admission("browser", &window, token)
+            .unwrap();
+        ownership.start_external(&admission).unwrap();
+        let unrelated = ownership.window(34);
+        assert!(Arc::ptr_eq(
+            &ownership.retire_document(34).unwrap(),
+            &unrelated
+        ));
+        assert!(start(&ownership, "native").is_err());
+        ownership.retire_document(33).unwrap();
+        assert!(start(&ownership, "native").is_ok());
+    }
+
+    #[test]
+    fn a_replacement_document_can_record_without_the_old_pages_end_callback() {
+        let ownership = RecordingOwnership::default();
+        let old = ownership.window(33);
+        let token = ownership.reserve("browser", &old).unwrap();
+        let admission = ownership.claim_admission("browser", &old, token).unwrap();
+        ownership.start_external(&admission).unwrap();
+        ownership.finish_admission(&admission);
+
+        assert!(Arc::ptr_eq(&ownership.retire_document(33).unwrap(), &old));
+        let replacement = ownership.window(33);
+        assert!(!Arc::ptr_eq(&old, &replacement));
+        let replacement_token = ownership.reserve("browser", &replacement).unwrap();
+        let admission = ownership
+            .claim_admission("browser", &replacement, replacement_token)
+            .unwrap();
+        ownership.start_external(&admission).unwrap();
+        ownership.confirm_external_window_capture_ended(33);
+        ownership.release_external_window("browser", 33, token);
+        assert!(start(&ownership, "native").is_err());
+        ownership.release_external_window("browser", 33, replacement_token);
         assert!(start(&ownership, "native").is_ok());
     }
 

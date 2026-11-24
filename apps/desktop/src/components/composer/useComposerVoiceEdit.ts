@@ -234,6 +234,8 @@ export const useVoiceInstructionRecorder = ({
           : intlRef.current.formatMessage({
               defaultMessage: "Could not start recording. Please try again.",
             }),
+      captureFailedMessage: () =>
+        intlRef.current.formatMessage({ defaultMessage: "Recording failed" }),
       onListeningChange,
       onTranscript,
       onError,

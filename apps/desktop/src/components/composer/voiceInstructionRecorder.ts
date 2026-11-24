@@ -49,6 +49,8 @@ export type VoiceInstructionRecorderDeps = {
   speechRecognitionSupported: boolean;
   unsupportedMessage: () => string;
   recordingUnavailableMessage: (operation: "start" | "stop") => string;
+  /** Shown when the capture stopped before the user did, so the take is unusable. */
+  captureFailedMessage: () => string;
   onListeningChange: (listening: boolean) => void;
   onTranscript: (text: string) => void;
   onError: (message: string) => void;
@@ -432,6 +434,15 @@ export class VoiceInstructionRecorder {
           "Voice Edit Mode: provider recording failed to stop",
         );
         this.deps.onError(this.deps.recordingUnavailableMessage("stop"));
+      }
+      return null;
+    }
+    if (audio.captureFailed) {
+      // A sealed partial take can consist entirely of speech before the press.
+      // Do not send it to a provider or turn it into an edit instruction.
+      if (this.isCurrent(gen)) {
+        this.deps.logger.warning("Voice Edit Mode: capture stopped early");
+        this.deps.onError(this.deps.captureFailedMessage());
       }
       return null;
     }

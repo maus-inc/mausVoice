@@ -7,4 +7,13 @@ export type StopRecordingResponse = {
    * header, which `decodeStopRecordingPayload` reads and clears.
    */
   captureFailed?: boolean;
+  /**
+   * Set when the native capture reported that the stream was gone before the
+   * recording was stopped, so `capturedMs` is what survived of `expectedMs`.
+   */
+  captureFault?: "fatal";
+  /** Audio actually captured, in milliseconds. Only present with `captureFault`. */
+  capturedMs?: number;
+  /** How long the recorder believed it was recording. Only with `captureFault`. */
+  expectedMs?: number;
 };

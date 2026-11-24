@@ -4,7 +4,21 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
+
 const desktopSrc = path.resolve(rootDir, "../desktop/src");
+
+/**
+ * The `/@fs/` URL that serves an absolute filesystem path.
+ *
+ * Mirrors what Vite itself does (`/@fs/` plus the path with its leading slash
+ * removed, separators normalised), rather than concatenating `"/@fs" + dir`.
+ * That concatenation is wrong in two ways: it yields a double slash on POSIX and
+ * `/@fsC:\\...` on Windows, where the drive letter follows `@fs` directly. The
+ * Windows form is not an fs URL at all, so the proxy 404s before the request
+ * reaches the plugin that was supposed to rewrite it.
+ */
+const fsUrlFor = (absolutePath: string): string =>
+  "/@fs/" + absolutePath.replace(/\\/g, "/").replace(/^\/+/, "");
 
 // The preview renders REAL desktop components (`@desktop/*`), and those write
 // their user-facing strings as `FormattedMessage`/`useIntl` literals with no
@@ -81,6 +95,15 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5193,
+    // Refuse to start rather than move to the next free port.
+    //
+    // The proxy below targets this server's own port, and the verify scripts and
+    // harness URLs name it explicitly. A silent move to 5194 left the proxy
+    // pointing at whatever was on 5193 instead -- another process, or this same
+    // config's `preview` block -- so every `@desktop/*` import failed with a
+    // confusing error rather than "that port is taken". Failing loudly here is
+    // what keeps the failure legible.
+    strictPort: true,
     // `host: "0.0.0.0"` already exposes this dev server to the network, and
     // `allowedHosts: true` additionally switches OFF Vite's Host-header check. The pair is a
     // DNS-rebinding hole: any web page the developer visits could resolve its own hostname to
@@ -117,9 +140,27 @@ export default defineConfig({
       // `apps/firebase/**`, `apps/docs/**` -- which a demo dev server has no reason to serve.
       allow: [rootDir, desktopSrc],
     },
+    proxy: {
+      // The probe scripts import from the desktop package, so the module graph is
+      // rewritten to fetch those files through this server.
+      "/@desktop": {
+        target: "http://127.0.0.1:5193",
+        // `@fs` takes a URL path, so the separator has to be a forward slash.
+        // `desktopSrc` is an absolute filesystem path, which on Windows starts
+        // with a drive letter and uses backslashes: concatenated raw it forms
+        // `/@fsC:\...`, which is not a Vite fs URL at all and fails before the
+        // request leaves the server.
+        rewrite: (p) => p.replace(/^\/@desktop/, fsUrlFor(desktopSrc)),
+      },
+    },
   },
   preview: {
     host: "0.0.0.0",
     port: 5194,
+  },
+  optimizeDeps: {
+    // The harness renders desktop components through React.lazy, so a stale
+    // prebundle shows the old dialog after an edit and the screenshots lie.
+    exclude: ["@desktop/components/settings/MicrophoneDialog"],
   },
 });

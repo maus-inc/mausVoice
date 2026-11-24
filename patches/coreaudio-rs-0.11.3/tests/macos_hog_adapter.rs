@@ -86,7 +86,10 @@ pub mod listener_sys {
         if f.set_status != 0 {
             return f.set_status;
         }
-        f.pid = f.next;
+        if f.set_value != -1 {
+            return -50;
+        }
+        f.pid = if f.pid == f.next { -1 } else { f.next };
         0
     }
 }
@@ -124,6 +127,8 @@ mod tests {
         assert_eq!(f.set_count, 1);
         assert_eq!(f.set_value, -1);
         assert_eq!(f.set_size, std::mem::size_of::<sys::pid_t>() as u32);
+        drop(f);
+        assert_eq!(super::macos_hog::toggle_hog_mode(1), Ok(-1));
     }
     #[test]
     fn rejects_incorrect_returned_lengths() {

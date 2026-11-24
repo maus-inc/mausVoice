@@ -88,7 +88,7 @@ fn main() -> Result<(), anyhow::Error> {
     const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/recorded.wav");
     let spec = wav_spec_from_config(&config);
     let writer = hound::WavWriter::create(PATH, spec)?;
-    let writer = Arc::new(Mutex::new(Some(writer)));
+    let writer = Arc::new(Mutex::new((writer, None)));
 
     // A flag to indicate that recording is in progress.
     println!("Begin recording...");
@@ -137,7 +137,15 @@ fn main() -> Result<(), anyhow::Error> {
     // Let recording go for roughly three seconds.
     std::thread::sleep(std::time::Duration::from_secs(3));
     drop(stream);
-    writer.lock().unwrap().take().unwrap().finalize()?;
+    let (writer, error) = Arc::try_unwrap(writer)
+        .map_err(|_| anyhow::anyhow!("Recording callback did not release the WAV writer"))?
+        .into_inner()
+        .map_err(|_| anyhow::anyhow!("Recording callback failed"))?;
+    let finalized = writer.finalize();
+    if let Some(error) = error {
+        return Err(error.into());
+    }
+    finalized?;
     println!("Recording {} complete!", PATH);
     Ok(())
 }
@@ -159,7 +167,7 @@ fn wav_spec_from_config(config: &cpal::SupportedStreamConfig) -> hound::WavSpec 
     }
 }
 
-type WavWriterHandle = Arc<Mutex<Option<hound::WavWriter<BufWriter<File>>>>>;
+type WavWriterHandle = Arc<Mutex<(hound::WavWriter<BufWriter<File>>, Option<hound::Error>)>>;
 
 fn write_input_data<T, U>(input: &[T], writer: &WavWriterHandle)
 where
@@ -167,10 +175,14 @@ where
     U: Sample + hound::Sample + FromSample<T>,
 {
     if let Ok(mut guard) = writer.try_lock() {
-        if let Some(writer) = guard.as_mut() {
-            for &sample in input.iter() {
-                let sample: U = U::from_sample(sample);
-                writer.write_sample(sample).ok();
+        let (writer, error) = &mut *guard;
+        if error.is_some() {
+            return;
+        }
+        for &sample in input {
+            if let Err(failure) = writer.write_sample::<U>(U::from_sample(sample)) {
+                *error = Some(failure);
+                break;
             }
         }
     }

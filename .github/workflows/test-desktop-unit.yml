@@ -19,7 +19,17 @@ on:
       - "scripts/check-bindings.sh"
       - "scripts/bindings.sh"
       - "scripts/ci/check-bindings-guard.test.mjs"
+      # Reads both command lists, so it must run when either changes.
+      - "scripts/ci/bindings-command-parity.test.mjs"
+      - "apps/desktop/src-tauri/src/app.rs"
+      - "apps/desktop/src-tauri/examples/gen_bindings.rs"
       - "scripts/ci/check-workflow-pins.test.mjs"
+      - "scripts/ci/verify-scripts-load.test.mjs"
+      - "scripts/ci/install-chromium-cache.test.mjs"
+      - "scripts/verify/install-chromium.mjs"
+      # The guard reads these, so a change to one of them is exactly the edit
+      # most likely to break it and the one that would not start the job.
+      - "scripts/verify/**"
       - "scripts/ci/windows-tauri-imports.test.mjs"
       # Every suite this workflow runs, and the config `dev-surface-contracts`
       # reads. A guard whose own edit does not match the trigger filter does not
@@ -36,6 +46,7 @@ on:
       # of any desktop source change, and a guard that silently stops running is
       # the more expensive failure -- it is invisible until it matters.
       - "scripts/ci/check-workspace-hygiene.test.mjs"
+      - ".deepsource.toml"
       - "scripts/ci/cargo-lock-builds.test.mjs"
       - "scripts/ci/dev-surface-contracts.test.mjs"
       - "scripts/ci/dev-surface-config.mjs"
@@ -46,6 +57,12 @@ on:
       - "scripts/ci/validate-release-inputs.test.mjs"
       - "scripts/ci/release-notes.test.mjs"
       - "scripts/ci/verify-sherpa-archives.test.mjs"
+      - "scripts/ci/warm-microphone-edge-cases.test.mjs"
+      - "scripts/ci/verify-wait-for-truthy.test.mjs"
+      - "scripts/verify/wait-for-truthy.mjs"
+      # The QA guard reads both documents.
+      - "docs/qa/warm-microphone-edge-cases.md"
+      - "docs/qa/warm-microphone-measurements.md"
       - ".github/workflows/**"
 permissions: {}
 
@@ -203,7 +220,7 @@ jobs:
           fi
           sudo apt-get install -y \
             build-essential pkg-config cmake \
-            libgtk-3-dev "$WEBKIT_PKG" \
+            libgtk-3-dev "$WEBKIT_PKG" xvfb xauth \
             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev
       - name: Check Rust formatting
         # Every crate, not just the one the tests below run: the deviations that
@@ -232,6 +249,14 @@ jobs:
         shell: bash
         run: |
           bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" rust-unit cargo test --locked --lib
+      - name: Verify WebKit renderer-exit detection
+        working-directory: apps/desktop/src-tauri
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+        run: >-
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" webkit-recording
+          xvfb-run -a cargo test --locked --lib
+          webkit_main_frame_probe_distinguishes_live_page_and_process_exit -- --ignored --nocapture
       - name: Run ALSA fault-injection tests
         # The `#[ignore]`d half of the recorder suite. It needs a null ALSA PCM
         # and an `LD_PRELOAD` shim per test, which `cargo test --lib` gives it
@@ -276,6 +301,12 @@ jobs:
         run: node --test scripts/ci/package-exports.test.mjs
       - name: Test check-bindings tracked-file guard
         run: node --test scripts/ci/check-bindings-guard.test.mjs
+      - name: Test that the bindings generator collects every command
+        # `check-bindings.sh` below compares regenerated output to the committed
+        # file, which catches a drift only after a full Rust build. This test
+        # reads the two `*_commands![...]` lists directly, so a command added to
+        # `app.rs` and not to the generator fails in seconds, by name.
+        run: node --test scripts/ci/bindings-command-parity.test.mjs
       - name: Test workflow action pin guard
         run: node --test scripts/ci/check-workflow-pins.test.mjs
       - name: Test the release script guards
@@ -290,12 +321,43 @@ jobs:
           node --test scripts/ci/release-notes.test.mjs
           node --test scripts/ci/verify-sherpa-archives.test.mjs
       - name: Test workspace hygiene guards
-        # This suite reads the repository rather than a build output: it refuses
-        # a captured transcript in the tree, and it fails when a `.deepsource.toml`
-        # exclusion has rotted into matching nothing -- the one way an analyzer
-        # stops being skipped without anyone being told. A guard that no job runs
-        # is documentation, so it is run here like the others.
+        # This suite reads the repository rather than a build output. It rejects
+        # captured transcripts, stale DeepSource exclusions, and a JavaScript
+        # parser configuration that treats the Node tooling as classic scripts.
         run: node --test scripts/ci/check-workspace-hygiene.test.mjs
+      - name: Test that the verify scripts can be loaded
+        # The scripts under `scripts/verify` are only run by hand, so nothing in
+        # CI executed them and nothing noticed when one could not start. This
+        # guard was written after `shot-mic-dialog.mjs` shipped with a
+        # `const URL` that shadowed the global: `node --check` accepted the file
+        # and the script died on its first `new URL` with a ReferenceError. A
+        # module-scope shadowing bug is invisible to a parser and to every other
+        # gate here, so it gets its own.
+        run: node --test scripts/ci/verify-scripts-load.test.mjs
+      - name: Test the Chromium installer's cache and staging logic
+        # The installer decides "already installed" from a manifest and sweeps
+        # leftover partial extractions. Both are easy to get subtly wrong in ways
+        # only a stale cache shows: reading the dependency declaration instead of
+        # the installed package accepts an older browser, and a pid-suffixed
+        # staging directory means a failed run's leftovers are never removed.
+        # The tests build the fixture on disk rather than invoking the installer,
+        # because invoking it downloads ~150 MB.
+        run: node --test scripts/ci/install-chromium-cache.test.mjs
+      - name: Test the warm-microphone QA matrix
+        # `docs/qa/warm-microphone-edge-cases.md` cites a test for every row, and
+        # this guard is what keeps those citations true: a row whose test was
+        # renamed or deleted otherwise goes on claiming coverage it lost. It
+        # reads the markdown and the source tree, needs no build, and was the
+        # one `scripts/ci` guard no workflow ran.
+        run: node --test scripts/ci/warm-microphone-edge-cases.test.mjs
+      - name: Test the wait-for-truthy polling helper
+        # `waitForTruthy` decides whether a page was ready or the script gave
+        # up, and every verify script's pass/fail rests on that answer being
+        # right; its deadline branch is what a timeout report depends on. It had
+        # a test and no workflow ran it, which is the state the hygiene guard
+        # exists to catch -- it only surfaced when the helper moved out of
+        # `cdp.mjs` and the guard re-read the tree.
+        run: node --test scripts/ci/verify-wait-for-truthy.test.mjs
       - name: Test Windows-only Rust module imports
         # No runner in this repository compiles
         # apps/desktop/src-tauri/src/platform/windows/** on Linux, so an

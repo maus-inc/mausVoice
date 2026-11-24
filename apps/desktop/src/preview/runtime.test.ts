@@ -803,7 +803,11 @@ describe("browser preview transport", () => {
         },
         second,
       ],
-      expected: group,
+      expected: group.map(({ keys, actionName, id }) => ({
+        keys,
+        actionName,
+        id,
+      })),
     });
 
     const saved = await invokePreviewCommand<Row[]>("hotkey_list");
