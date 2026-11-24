@@ -97,7 +97,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("in-memory database");
-        sqlx::query(include_str!("migrations/096_pill_position.sql"))
+        sqlx::query(include_str!("migrations/097_pill_position.sql"))
             .execute(&pool)
             .await
             .expect("pill_position schema");
