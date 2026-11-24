@@ -1529,7 +1529,7 @@ const buildMemoryTranscription = (processed: ProcessedAudio): Transcription => {
     ),
     postProcessApiKeyId: orNull(postProcessResult.metadata.postProcessApiKeyId),
     transcriptionMode: orNull(transcribeResult.metadata?.transcriptionMode),
-    postProcessMode: postProcessResult.metadata?.postProcessMode ?? null,
+    postProcessMode: postProcessResult.metadata.postProcessMode ?? null,
     postProcessDevice: orNull(postProcessResult.metadata.postProcessDevice),
     postProcessModel: orNull(postProcessResult.metadata.postProcessModel),
     postProcessProvider: orNull(postProcessResult.metadata.postProcessProvider),
