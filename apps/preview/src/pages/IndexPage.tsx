@@ -25,7 +25,7 @@ export const IndexPage = () => {
           MUI renders an unknown variant as a <span>, so without it the heading
           and the paragraph below it sit on the same line and collide. */}
       <Typography variant="headlineSmall" sx={{ display: "block" }}>
-        mausVoice UI — preview &amp; specs
+        mausVoice UI preview and specs
       </Typography>
       <Typography
         variant="bodyMedium"

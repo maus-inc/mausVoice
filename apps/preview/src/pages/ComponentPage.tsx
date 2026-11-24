@@ -38,7 +38,7 @@ const STATUS_BADGE: Record<
 
 const specMarkdown = (id: string): string =>
   SPEC_MODULES[`../../specs/${id}.md`] ??
-  "_Spec file missing — run `pnpm --filter @maus-inc/preview gen:specs`._";
+  "_Spec file missing. Run `pnpm --filter @maus-inc/preview gen:specs`._";
 
 export const ComponentPage = () => {
   const { id } = useParams();

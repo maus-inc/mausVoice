@@ -10,7 +10,7 @@ import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
 // English-only list: `applyHallucinationFiltering` short-circuits and returns the
 // text unchanged for any non-English `language`, so a non-English phrase added here
 // would be dead code (never reached). Keep additions English.
-export const KNOWN_SILENCE_HALLUCINATIONS = [
+const KNOWN_SILENCE_HALLUCINATIONS = [
   "[blank_audio]",
   "[blank audio]",
   "[silence]",
@@ -31,7 +31,7 @@ export const KNOWN_SILENCE_HALLUCINATIONS = [
  * fabricated sign-off (see SILENCE_HALLUCINATION_COMPANIONS) is almost
  * certainly part of the same hallucinated artifact and is safe to drop.
  */
-export const SUBTITLE_HALLUCINATION_PHRASES = [
+const SUBTITLE_HALLUCINATION_PHRASES = [
   "subtitles by the amara.org community",
   "subtitles by the amara.org community.",
 ] as const;
@@ -43,7 +43,7 @@ export const SUBTITLE_HALLUCINATION_PHRASES = [
  * the whole segment is dropped by probability gating), so a real dictated
  * "Best regards." email sign-off survives.
  */
-export const SILENCE_HALLUCINATION_COMPANIONS = ["best regards."] as const;
+const SILENCE_HALLUCINATION_COMPANIONS = ["best regards."] as const;
 
 const normalizeHallucinationText = (text: string): string =>
   text
@@ -203,7 +203,7 @@ export const toTranscriptionSegments = (
  * the provider sent no `avgLogprob`. The 0.9 value is deliberately
  * conservative so only clearly-silent segments are removed.
  */
-export const NO_SPEECH_PROB_THRESHOLD = 0.9;
+const NO_SPEECH_PROB_THRESHOLD = 0.9;
 
 /**
  * Whisper's reference decoder skips a window as silent only when
@@ -211,7 +211,7 @@ export const NO_SPEECH_PROB_THRESHOLD = 0.9;
  * A confidently decoded segment in a window with a high `no_speech_prob` is
  * real speech, so it must not be dropped on the probability alone.
  */
-export const NO_SPEECH_AVG_LOGPROB_THRESHOLD = -1;
+const NO_SPEECH_AVG_LOGPROB_THRESHOLD = -1;
 
 const flaggedAsSilence = (segment: TranscriptionSegment): boolean =>
   segment.noSpeechProb != null &&
@@ -228,7 +228,7 @@ const decodedConfidently = (segment: TranscriptionSegment): boolean =>
  * The last case catches confident hallucinations such as "Thanks." over room
  * tone without dropping quiet speech, which does carry energy.
  */
-export const isLikelySilentSegment = (segment: TranscriptionSegment): boolean =>
+const isLikelySilentSegment = (segment: TranscriptionSegment): boolean =>
   flaggedAsSilence(segment) &&
   (!decodedConfidently(segment) || segment.audioSilent === true);
 
@@ -237,7 +237,7 @@ export const isLikelySilentSegment = (segment: TranscriptionSegment): boolean =>
  * measured span is widened on both sides. A wider span can only add energy,
  * which keeps the segment.
  */
-export const SEGMENT_AUDIO_PAD_SEC = 0.5;
+const SEGMENT_AUDIO_PAD_SEC = 0.5;
 
 /**
  * Measures the audio under each segment the probability test alone would

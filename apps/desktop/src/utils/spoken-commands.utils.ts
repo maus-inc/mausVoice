@@ -16,7 +16,7 @@ import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
  * words cannot be part of the surrounding sentence.
  */
 
-export const isEnglishSpokenCommandLanguage = (
+const isEnglishSpokenCommandLanguage = (
   language: string | undefined,
 ): boolean =>
   language?.trim().toLowerCase() === "auto" ||
@@ -883,6 +883,18 @@ const applyMatchedCommand = (
   output.push(command.value);
 };
 
+const nextPendingGap = (
+  output: string[],
+  matched: ReturnType<typeof matchCommandAt> & object,
+  followingGap: string | null,
+): string | null => {
+  if (matched.command.kind === "scratch") {
+    // Keep the gap after a partial scratch so the next word stays separated.
+    return output.length === 0 ? null : followingGap;
+  }
+  return shouldDropFollowingGap(matched.command) ? null : followingGap;
+};
+
 export const applySpokenCommands = (
   text: string,
   language?: string,
@@ -923,15 +935,11 @@ export const applySpokenCommands = (
     }
 
     applyMatchedCommand(output, matched.command, emitOriginalGap);
-    const followingGap = parsed.gaps[index + matched.length - 1] ?? null;
-    if (matched.command.kind === "scratch") {
-      // Keep the gap after a partial scratch so the next word stays separated.
-      pendingOriginalGap = output.length === 0 ? null : followingGap;
-    } else {
-      pendingOriginalGap = shouldDropFollowingGap(matched.command)
-        ? null
-        : followingGap;
-    }
+    pendingOriginalGap = nextPendingGap(
+      output,
+      matched,
+      parsed.gaps[index + matched.length - 1] ?? null,
+    );
     index += matched.length;
   }
 

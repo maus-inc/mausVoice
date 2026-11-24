@@ -480,7 +480,7 @@ pub fn ease_point(
     bounds: (f64, f64, f64, f64),
     work: Option<EdgeWork>,
 ) -> (f64, f64) {
-    let Some(work) = work.filter(|w| w.active()) else {
+    let Some(work) = work.filter(EdgeWork::active) else {
         return (x, y);
     };
     let (min_x, min_y, max_x, max_y) = bounds;

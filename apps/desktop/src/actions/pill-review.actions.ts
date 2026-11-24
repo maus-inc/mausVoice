@@ -17,12 +17,7 @@ import { runToast, showToast } from "./toast.actions";
  * transcript at a time, so concurrent ones queue here and are presented in
  * arrival order; the queue never drops one silently.
  */
-export type PillReviewAction = "insert" | "copy" | "cancel" | "edit" | "open";
-
-export type PendingPillReview = {
-  id: string;
-  text: string;
-};
+type PillReviewAction = "insert" | "copy" | "cancel" | "edit" | "open";
 
 /** Where the reviewed text came from. Preserved on the session for history. */
 export type ReviewSource = "dictation" | "assistant-tool";

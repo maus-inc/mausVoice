@@ -111,6 +111,14 @@ export const registerHotkeys = (draft: AppState, hotkeys: Hotkey[]): void => {
   }
 };
 
+export const upsertHotkey = (draft: AppState, hotkey: Hotkey): void => {
+  registerHotkeys(draft, [hotkey]);
+  if (!draft.settings.hotkeyIds.includes(hotkey.id)) {
+    draft.settings.hotkeyIds.push(hotkey.id);
+  }
+  draft.settings.hotkeysStatus = "success";
+};
+
 export const registerApiKeys = (draft: AppState, apiKeys: ApiKey[]): void => {
   for (const apiKey of apiKeys) {
     draft.apiKeyById[apiKey.id] = apiKey;

@@ -56,67 +56,72 @@ enum AudioRequest {
     },
 }
 
+impl AudioRequest {
+    fn clip(&self) -> &'static [u8] {
+        match self {
+            Self::Play(bytes) => bytes,
+            Self::PlayThock { bytes, .. } => bytes,
+        }
+    }
+
+    fn volume(&self) -> Option<f32> {
+        match self {
+            Self::Play(_) => None,
+            Self::PlayThock { volume, .. } => Some(*volume),
+        }
+    }
+}
+
 /// Initialize a dedicated audio thread at app startup for instant chime playback.
 /// The thread keeps an OutputStream alive so we don't recreate it for each chime.
 pub fn warm_audio_output() {
     let (tx, rx) = mpsc::channel::<AudioRequest>();
 
-    // Store the sender for later use
     if AUDIO_SENDER.set(tx).is_err() {
         log::warn!("Audio sender already initialized");
         return;
     }
 
-    // Spawn the dedicated audio thread
-    thread::spawn(move || {
-        // Create the output stream once and keep it alive
-        let (_stream, handle) = match OutputStream::try_default() {
-            Ok(result) => {
-                log::info!("Pre-warmed audio output stream");
-                result
-            }
-            Err(err) => {
-                log::error!("Failed to create audio output: {err}");
-                // Still process requests, but they'll fail gracefully. The
-                // volume is applied per-sink in the no-device fallback too,
-                // so a thock never plays louder than the user-controlled
-                // `INTERACTION_FEEDBACK_VOLUME` (clamped to the safe window
-                // by `current_interaction_feedback_volume`).
-                for request in rx {
-                    match request {
-                        AudioRequest::Play(bytes) => play_clip_fallback(bytes, None),
-                        AudioRequest::PlayThock { bytes, volume } => {
-                            play_clip_fallback(bytes, Some(volume))
-                        }
-                    }
-                }
-                return;
-            }
-        };
+    thread::spawn(move || run_audio_thread(rx));
+}
 
-        // Process play requests on this thread
-        for request in rx {
-            match request {
-                AudioRequest::Play(bytes) => {
-                    if let Ok(sink) = Sink::try_new(&handle) {
-                        if let Ok(source) = Decoder::new(Cursor::new(bytes)) {
-                            sink.append(source);
-                            sink.sleep_until_end();
-                        }
-                    }
-                }
-                AudioRequest::PlayThock { bytes, volume } => {
-                    if let Ok(sink) = Sink::try_new(&handle) {
-                        sink.set_volume(volume.clamp(0.0, 1.0));
-                        if let Ok(source) = Decoder::new(Cursor::new(bytes)) {
-                            sink.append(source);
-                            sink.sleep_until_end();
-                        }
-                    }
-                }
-            }
+fn run_audio_thread(rx: mpsc::Receiver<AudioRequest>) {
+    // The stream binding must outlive the loop: it is what keeps playback running.
+    let (_stream, handle) = match OutputStream::try_default() {
+        Ok(result) => {
+            log::info!("Pre-warmed audio output stream");
+            result
         }
-    });
+        Err(err) => {
+            log::error!("Failed to create audio output: {err}");
+            // Still process requests, but they'll fail gracefully. The volume is
+            // applied per-sink in the no-device fallback too, so a thock never plays
+            // louder than the user-controlled `INTERACTION_FEEDBACK_VOLUME` (clamped
+            // to the safe window by `current_interaction_feedback_volume`).
+            for request in rx {
+                play_clip_fallback(request.clip(), request.volume());
+            }
+            return;
+        }
+    };
+
+    for request in rx {
+        play_through_sink(&handle, &request);
+    }
+}
+
+fn play_through_sink(handle: &rodio::OutputStreamHandle, request: &AudioRequest) {
+    let Ok(sink) = Sink::try_new(handle) else {
+        return;
+    };
+    if let Some(volume) = request.volume() {
+        sink.set_volume(volume.clamp(0.0, 1.0));
+    }
+    let Ok(source) = Decoder::new(Cursor::new(request.clip())) else {
+        return;
+    };
+    sink.append(source);
+    sink.sleep_until_end();
 }
 
 /// Try to send a play request to the warm audio thread.

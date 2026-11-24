@@ -33,7 +33,7 @@ import {
   mapDictationLanguageToWhisperLanguage,
 } from "../utils/language.utils";
 import { encodeRecordedAudio } from "../utils/recorded-audio.utils";
-import { orFalse, orNull } from "../utils/nullable.utils";
+import { orNull } from "../utils/nullable.utils";
 import { withTimeout } from "../utils/timeout.utils";
 import { getLogger } from "../utils/log.utils";
 import {
@@ -85,6 +85,13 @@ import {
   beginLocalDataWrite,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
+import {
+  buildProviderTimingKey,
+  readStoragePreferences,
+  shouldPersistAudioSnapshot,
+  shouldRecordSuppressedUsage,
+  shouldRefreshUsageAfterSave,
+} from "./transcribe-store.rules";
 
 export type TranscribeAudioInput = {
   samples: AudioSamples;
@@ -140,72 +147,61 @@ export type TranscriptionMetadata = TranscribeAudioMetadata &
     rawTranscript?: string | null;
   };
 
-/**
- * Transcribe audio samples to text.
- * This is the first step - just converts audio to raw transcript.
- */
-export const transcribeAudio = async ({
-  samples,
-  sampleRate,
-  dictationLanguage: dictationLanguageOverride,
-  hallucinationFilterEnabled: filterOverride,
-  trace,
-  toneId,
-  signal,
-}: TranscribeAudioInput): Promise<TranscribeAudioResult> => {
-  const state = getAppState();
+const resolveTranscriptionContext = async (
+  state: ReturnType<typeof getAppState>,
+  {
+    dictationLanguage: dictationLanguageOverride,
+    hallucinationFilterEnabled: filterOverride,
+  }: TranscribeAudioInput,
+) => {
   const hallucinationFilterEnabled =
     filterOverride ?? state.userPrefs?.hallucinationFilterEnabled ?? true;
-
-  const metadata: TranscribeAudioMetadata = {};
-  const warnings: string[] = [];
-
-  const {
-    repo: transcribeRepo,
-    apiKeyId: transcriptionApiKeyId,
-    warnings: transcribeWarnings,
-  } = getTranscribeAudioRepo();
-  warnings.push(...transcribeWarnings);
-
-  // Dispatch warnings (e.g. a stale provider selection) must not be lost when
-  // the transcription call itself throws: log them before the network call so
-  // they always reach the log, and attach them to the thrown error below.
-  if (warnings.length > 0) {
-    getLogger().warning(`Transcription warnings: ${warnings.join("; ")}`);
-  }
-
   const dictationLanguage = dictationLanguageOverride
     ? coerceToDictationLanguage(dictationLanguageOverride)
     : await loadMyEffectiveDictationLanguage(state);
   const whisperLanguage =
     mapDictationLanguageToWhisperLanguage(dictationLanguage);
-
-  getLogger().verbose(
-    `Transcribing audio: language=${dictationLanguage}, whisper=${whisperLanguage}, sampleRate=${sampleRate}, toneId=${toneId ?? "none"}`,
-  );
-
-  const dictionaryEntries = collectDictionaryEntries(state);
   // Best practice: transcription prompt is ONLY for glossary/domain bias (<50 tokens),
   // NOT for style formatting. Style is applied deterministically in fast-style.utils.ts
   // after transcription (universal across ALL providers).
   const transcriptionPrompt = buildLocalizedTranscriptionPrompt({
-    entries: dictionaryEntries,
+    entries: collectDictionaryEntries(state),
     dictationLanguage,
     state,
   });
+  return {
+    hallucinationFilterEnabled,
+    dictationLanguage,
+    whisperLanguage,
+    transcriptionPrompt,
+  };
+};
 
-  getLogger().verbose(
-    `Transcription prompt: ${transcriptionPrompt.length} chars, apiKeyId=${transcriptionApiKeyId ?? "none"}`,
-  );
-
-  const transcribeStart = performance.now();
-  let transcribeOutput: TranscribeAudioOutput;
+const runProviderTranscription = async (
+  repo: ReturnType<typeof getTranscribeAudioRepo>["repo"],
+  {
+    samples,
+    sampleRate,
+    signal,
+    prompt,
+    language,
+    hallucinationFilterEnabled,
+  }: {
+    samples: TranscribeAudioInput["samples"];
+    sampleRate: TranscribeAudioInput["sampleRate"];
+    signal: TranscribeAudioInput["signal"];
+    prompt: string;
+    language: ReturnType<typeof mapDictationLanguageToWhisperLanguage>;
+    hallucinationFilterEnabled: boolean;
+  },
+  warnings: string[],
+): Promise<TranscribeAudioOutput> => {
   try {
-    transcribeOutput = await transcribeRepo.transcribeAudio({
+    return await repo.transcribeAudio({
       samples,
       sampleRate,
-      prompt: transcriptionPrompt,
-      language: whisperLanguage,
+      prompt,
+      language,
       hallucinationFilterEnabled,
       signal,
     });
@@ -220,7 +216,85 @@ export const transcribeAudio = async ({
       { cause: error },
     );
   }
+};
+
+const buildTranscriptionMetadata = ({
+  transcribeOutput,
+  state,
+  transcriptionPrompt,
+  transcriptionApiKeyId,
+  durationMs,
+}: {
+  transcribeOutput: TranscribeAudioOutput;
+  state: ReturnType<typeof getAppState>;
+  transcriptionPrompt: string;
+  transcriptionApiKeyId: string | null;
+  durationMs: number;
+}): TranscribeAudioMetadata => ({
+  modelSize:
+    transcribeOutput.metadata?.modelSize ||
+    state.settings.aiTranscription.modelSize ||
+    null,
+  inferenceDevice: transcribeOutput.metadata?.inferenceDevice || null,
+  transcriptionDurationMs: Math.round(durationMs),
+  transcriptionPrompt,
+  transcriptionApiKeyId,
+  transcriptionMode: transcribeOutput.metadata?.transcriptionMode || null,
+});
+
+/**
+ * Transcribe audio samples to text.
+ * This is the first step - just converts audio to raw transcript.
+ */
+export const transcribeAudio = async (
+  input: TranscribeAudioInput,
+): Promise<TranscribeAudioResult> => {
+  const { samples, sampleRate, toneId, trace } = input;
+  const state = getAppState();
+
+  const {
+    repo: transcribeRepo,
+    apiKeyId: transcriptionApiKeyId,
+    warnings: transcribeWarnings,
+  } = getTranscribeAudioRepo();
+  const warnings: string[] = [...transcribeWarnings];
+
+  // Dispatch warnings (e.g. a stale provider selection) must not be lost when
+  // the transcription call itself throws: log them before the network call so
+  // they always reach the log, and attach them to the thrown error below.
+  if (warnings.length > 0) {
+    getLogger().warning(`Transcription warnings: ${warnings.join("; ")}`);
+  }
+
+  const {
+    hallucinationFilterEnabled,
+    dictationLanguage,
+    whisperLanguage,
+    transcriptionPrompt,
+  } = await resolveTranscriptionContext(state, input);
+
+  getLogger().verbose(
+    `Transcribing audio: language=${dictationLanguage}, whisper=${whisperLanguage}, sampleRate=${sampleRate}, toneId=${toneId ?? "none"}`,
+  );
+  getLogger().verbose(
+    `Transcription prompt: ${transcriptionPrompt.length} chars, apiKeyId=${transcriptionApiKeyId ?? "none"}`,
+  );
+
+  const transcribeStart = performance.now();
+  const transcribeOutput = await runProviderTranscription(
+    transcribeRepo,
+    {
+      samples,
+      sampleRate,
+      signal: input.signal,
+      prompt: transcriptionPrompt,
+      language: whisperLanguage,
+      hallucinationFilterEnabled,
+    },
+    warnings,
+  );
   const transcribeDuration = performance.now() - transcribeStart;
+
   warnings.push(...(transcribeOutput.warnings ?? []));
   if (transcribeOutput.warnings && transcribeOutput.warnings.length > 0) {
     getLogger().warning(
@@ -257,16 +331,13 @@ export const transcribeAudio = async ({
     `Transcription complete in ${Math.round(transcribeDuration)}ms (${rawTranscript.length} raw chars, ${sanitizedTranscript.length} sanitized chars, mode=${transcribeOutput.metadata?.transcriptionMode ?? "unknown"})`,
   );
 
-  metadata.modelSize =
-    transcribeOutput.metadata?.modelSize ||
-    state.settings.aiTranscription.modelSize ||
-    null;
-  metadata.inferenceDevice = transcribeOutput.metadata?.inferenceDevice || null;
-  metadata.transcriptionDurationMs = Math.round(transcribeDuration);
-  metadata.transcriptionPrompt = transcriptionPrompt;
-  metadata.transcriptionApiKeyId = transcriptionApiKeyId;
-  metadata.transcriptionMode =
-    transcribeOutput.metadata?.transcriptionMode || null;
+  const metadata = buildTranscriptionMetadata({
+    transcribeOutput,
+    state,
+    transcriptionPrompt,
+    transcriptionApiKeyId,
+    durationMs: transcribeDuration,
+  });
 
   markPipeline(trace, "transcribed");
 
@@ -1226,91 +1297,100 @@ const shouldStoreRecording = (
   return true;
 };
 
-const storeTranscriptionWithWriteLease = async (
-  input: StoreTranscriptionInput,
-  lease: LocalDataWriteLease,
-  deferWriteReleaseUntil: (write: Promise<void>) => void,
-): Promise<StoreTranscriptionOutput> => {
-  getLogger().verbose("Storing transcription record");
-  const rate = input.audio.sampleRate;
-  const sampleCount = getSampleCount(input.audio.samples);
-
+const readAudioPayload = (
+  audio: StoreTranscriptionInput["audio"],
+): { rate: number; sampleCount: number } | null => {
+  const rate = audio.sampleRate;
   if (rate == null || !Number.isFinite(rate)) {
     getLogger().error("Received audio payload without sample rate");
     showErrorSnackbar("Recording missing sample rate. Please try again.");
-    return { transcription: null, wordCount: 0 };
+    return null;
   }
+  return { rate, sampleCount: getSampleCount(audio.samples) };
+};
 
-  const hasText = Boolean(
-    input.rawTranscript && input.rawTranscript.length > 0,
+type StorePlan = {
+  input: StoreTranscriptionInput;
+  lease: LocalDataWriteLease;
+  deferWriteReleaseUntil: (write: Promise<void>) => void;
+  transcriptionId: string;
+  wordsAdded: number;
+  transcriptionFailed: boolean;
+  rate: number;
+  sampleCount: number;
+  state: AppState;
+};
+
+const EMPTY_STORE_RESULT: StoreTranscriptionOutput = {
+  transcription: null,
+  wordCount: 0,
+};
+
+const recordSuppressedUsage = (plan: StorePlan): StoreTranscriptionOutput => {
+  const { input, lease, wordsAdded, transcriptionFailed } = plan;
+  const { incognitoEnabled, includeInStats } = readStoragePreferences(
+    plan.state,
   );
-  const transcriptionFailed =
-    input.rawTranscript === null && input.warnings.length > 0;
-
-  if (!shouldStoreRecording(rate, sampleCount, hasText, transcriptionFailed)) {
-    return { transcription: null, wordCount: 0 };
-  }
-
-  const state = getAppState();
-  const incognitoEnabled = orFalse(state.userPrefs?.incognitoModeEnabled);
-  const includeInStats = orFalse(state.userPrefs?.incognitoModeIncludeInStats);
-  const preserveAudioOnFailure =
-    state.userPrefs?.preserveAudioOnFailure ?? true;
-  const wordsAdded = getWordsAdded(input.transcript);
-  const transcriptionId = createId();
-
-  if (!isPersistenceAllowed() || input.persistAllowedAtCapture === false) {
-    getLogger().verbose(
-      `Persistence suppressed: skipping storage (incognito=${incognitoEnabled}, includeInStats=${includeInStats}, words=${wordsAdded})`,
+  getLogger().verbose(
+    `Persistence suppressed: skipping storage (incognito=${incognitoEnabled}, includeInStats=${includeInStats}, words=${wordsAdded})`,
+  );
+  if (
+    shouldRecordSuppressedUsage({
+      wordsAdded,
+      transcriptionFailed,
+      remoteStatus: input.remoteStatus,
+      includeInStats,
+      incognitoEnabled,
+      ephemeralSessionActive: isEphemeralSessionActive(),
+    })
+  ) {
+    // Counting words is an incognito-only option, and an ephemeral session
+    // never opted into usage statistics. Incognito has no saved row for a
+    // later backfill, so opted-in usage is best-effort: keep the profile
+    // write detached from the stop path so the pill accepts another click,
+    // but hold its clear lease until it settles.
+    plan.deferWriteReleaseUntil(
+      recordIncognitoUsageWords(
+        plan.transcriptionId,
+        toLocalDateKey(new Date()),
+        wordsAdded,
+        lease,
+      ),
     );
-    // Counting words is an incognito-only option. An ephemeral session never
-    // opted into usage statistics.
-    //
-    // Incognito has no saved row for a later backfill, so opted-in usage is
-    // best-effort. Keep the profile write detached from the stop path so the pill
-    // can accept another click, but hold its clear lease until it settles.
-    if (
-      wordsAdded > 0 &&
-      !transcriptionFailed &&
-      input.remoteStatus !== "received" &&
-      includeInStats &&
-      incognitoEnabled &&
-      !isEphemeralSessionActive()
-    ) {
-      deferWriteReleaseUntil(
-        recordIncognitoUsageWords(
-          transcriptionId,
-          toLocalDateKey(new Date()),
-          wordsAdded,
-          lease,
-        ),
-      );
-    }
-
-    return { transcription: null, wordCount: wordsAdded };
   }
+  return { transcription: null, wordCount: wordsAdded };
+};
 
-  // Skip the audio write entirely when the user has opted out of retaining
-  // failed recordings, so we don't leak a WAV on disk with no DB pointer to
-  // ever purge it from.
-  const shouldPersistAudio =
-    rate > 0 &&
-    sampleCount > 0 &&
-    !(transcriptionFailed && !preserveAudioOnFailure);
+const persistStoredRow = async (
+  plan: StorePlan,
+): Promise<StoreTranscriptionOutput> => {
+  const { input, lease, rate, sampleCount, transcriptionFailed } = plan;
+  const { preserveAudioOnFailure } = readStoragePreferences(plan.state);
+  const persistAudio = shouldPersistAudioSnapshot({
+    rate,
+    sampleCount,
+    transcriptionFailed,
+    preserveAudioOnFailure,
+  });
   const payloadSamples = Array.isArray(input.audio.samples)
     ? input.audio.samples.slice()
     : Array.from(input.audio.samples ?? []);
-  const audioSnapshot = shouldPersistAudio
-    ? await persistAudioSnapshot(transcriptionId, payloadSamples, rate, lease)
+  const audioSnapshot = persistAudio
+    ? await persistAudioSnapshot(
+        plan.transcriptionId,
+        payloadSamples,
+        rate,
+        lease,
+      )
     : undefined;
 
   const transcription = buildTranscriptionRecord({
     input,
-    transcriptionId,
+    transcriptionId: plan.transcriptionId,
     audioSnapshot,
     transcriptionFailed,
     createdAt: input.createdAt ?? dayjs().toISOString(),
-    createdByUserId: getMyEffectiveUserId(state),
+    createdByUserId: getMyEffectiveUserId(plan.state),
   });
 
   const storedTranscription = await persistTranscription(transcription, lease);
@@ -1321,9 +1401,9 @@ const storeTranscriptionWithWriteLease = async (
       // still unwinding; a click in that gap is taken natively and then dropped.
       // A sweep that hangs would hold the session locked for as long as it
       // takes, so it runs on its own and the row is already durable.
-      deferWriteReleaseUntil(purgeStaleAudioSnapshots(lease));
+      plan.deferWriteReleaseUntil(purgeStaleAudioSnapshots(lease));
     }
-    return { transcription: null, wordCount: 0 };
+    return EMPTY_STORE_RESULT;
   }
 
   // `transcription_create` commits this row, its live usage event, and the
@@ -1332,32 +1412,81 @@ const storeTranscriptionWithWriteLease = async (
   // the stop path remains locked; the next dashboard refresh can read the
   // durable profile and activity aggregate if this refresh fails or the app exits.
   if (
-    wordsAdded > 0 &&
-    !transcriptionFailed &&
-    storedTranscription.remoteStatus !== "received"
+    shouldRefreshUsageAfterSave({
+      wordsAdded: plan.wordsAdded,
+      transcriptionFailed,
+      remoteStatus: storedTranscription.remoteStatus,
+    })
   ) {
-    deferWriteReleaseUntil(refreshUsageAfterSavedTranscription());
+    plan.deferWriteReleaseUntil(refreshUsageAfterSavedTranscription());
   }
-  deferWriteReleaseUntil(purgeStaleAudioSnapshots(lease));
+  plan.deferWriteReleaseUntil(purgeStaleAudioSnapshots(lease));
 
+  recordProviderTiming(input, lease);
+
+  return { transcription: storedTranscription, wordCount: plan.wordsAdded };
+};
+
+const recordProviderTiming = (
+  input: StoreTranscriptionInput,
+  lease: LocalDataWriteLease,
+): void => {
   markPipeline(input.trace, "persisted");
   const summary = summarizePipeline(input.trace);
-  if (summary) {
-    const providerKey = [
-      input.transcriptionMetadata.transcriptionMode ?? "unknown",
-      input.transcriptionMetadata.modelSize ?? "",
-      input.transcriptionMetadata.inferenceDevice ?? "",
-      input.postProcessMetadata.postProcessMode ?? "",
-    ].join("|");
-    produceAppState((draft) => {
-      draft.local.providerTiming[providerKey] = appendTimingSample(
-        draft.local.providerTiming[providerKey],
-        summary,
-      );
-    }, lease);
+  if (!summary) {
+    return;
+  }
+  const providerKey = buildProviderTimingKey(
+    input.transcriptionMetadata,
+    input.postProcessMetadata,
+  );
+  produceAppState((draft) => {
+    draft.local.providerTiming[providerKey] = appendTimingSample(
+      draft.local.providerTiming[providerKey],
+      summary,
+    );
+  }, lease);
+};
+
+const storeTranscriptionWithWriteLease = async (
+  input: StoreTranscriptionInput,
+  lease: LocalDataWriteLease,
+  deferWriteReleaseUntil: (write: Promise<void>) => void,
+): Promise<StoreTranscriptionOutput> => {
+  getLogger().verbose("Storing transcription record");
+  const payload = readAudioPayload(input.audio);
+  if (!payload) {
+    return EMPTY_STORE_RESULT;
+  }
+  const { rate, sampleCount } = payload;
+
+  const hasText = Boolean(
+    input.rawTranscript && input.rawTranscript.length > 0,
+  );
+  const transcriptionFailed =
+    input.rawTranscript === null && input.warnings.length > 0;
+
+  if (!shouldStoreRecording(rate, sampleCount, hasText, transcriptionFailed)) {
+    return EMPTY_STORE_RESULT;
   }
 
-  return { transcription: storedTranscription, wordCount: wordsAdded };
+  const plan: StorePlan = {
+    input,
+    lease,
+    deferWriteReleaseUntil,
+    transcriptionId: createId(),
+    wordsAdded: getWordsAdded(input.transcript),
+    transcriptionFailed,
+    rate,
+    sampleCount,
+    state: getAppState(),
+  };
+
+  if (!isPersistenceAllowed() || input.persistAllowedAtCapture === false) {
+    return recordSuppressedUsage(plan);
+  }
+
+  return persistStoredRow(plan);
 };
 
 export const storeTranscription = async (

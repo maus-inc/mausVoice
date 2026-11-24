@@ -1,5 +1,5 @@
 import { Stack } from "@mui/material";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import {
   ensureOnboardingFlow,
   markOnboardingStepEntered,
@@ -19,6 +19,22 @@ import { SignInForm } from "./SignInForm";
 import { TutorialForm } from "./TutorialForm";
 import { UnlockedProForm } from "./UnlockedProForm";
 import { UserDetailsForm } from "./UserDetailsForm";
+import type { OnboardingPageKey } from "../../state/onboarding.state";
+
+const PAGE_FORMS: Record<OnboardingPageKey, ComponentType> = {
+  signIn: SignInForm,
+  personalCredentials: PersonalCredentialsForm,
+  chooseTranscription: ChooseTranscriptionForm,
+  chooseLlm: ChooseLlmForm,
+  userDetails: UserDetailsForm,
+  referralSource: ReferralSourceForm,
+  micPerms: MicPermsForm,
+  a11yPerms: A11yPermsForm,
+  keybindings: KeybindingsForm,
+  micCheck: MicCheckForm,
+  unlockedPro: UnlockedProForm,
+  tutorial: TutorialForm,
+};
 
 export default function OnboardingPage() {
   const currentPage = useAppStore((state) => state.onboarding.currentPage);
@@ -46,6 +62,8 @@ export default function OnboardingPage() {
   )
     return null;
 
+  const PageForm = PAGE_FORMS[currentPage];
+
   return (
     <Stack
       direction="row"
@@ -55,18 +73,7 @@ export default function OnboardingPage() {
         height: "100%",
       }}
     >
-      {currentPage === "signIn" && <SignInForm />}
-      {currentPage === "personalCredentials" && <PersonalCredentialsForm />}
-      {currentPage === "chooseTranscription" && <ChooseTranscriptionForm />}
-      {currentPage === "chooseLlm" && <ChooseLlmForm />}
-      {currentPage === "userDetails" && <UserDetailsForm />}
-      {currentPage === "referralSource" && <ReferralSourceForm />}
-      {currentPage === "micPerms" && <MicPermsForm />}
-      {currentPage === "a11yPerms" && <A11yPermsForm />}
-      {currentPage === "keybindings" && <KeybindingsForm />}
-      {currentPage === "micCheck" && <MicCheckForm />}
-      {currentPage === "unlockedPro" && <UnlockedProForm />}
-      {currentPage === "tutorial" && <TutorialForm />}
+      <PageForm />
     </Stack>
   );
 }

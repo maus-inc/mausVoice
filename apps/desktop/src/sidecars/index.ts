@@ -19,13 +19,10 @@ import {
 } from "./local-transcription.sidecar";
 import { toErrorMessage } from "./sidecar.utils";
 
-export { isSessionNotFoundError } from "./local-transcription.sidecar";
-
 export type {
   LocalSidecarDevice,
   LocalSidecarDownloadSnapshot,
   LocalSidecarModelStatus,
-  LocalSidecarStreamingSession,
   LocalSidecarStreamingSessionInput,
   LocalSidecarTranscribeInput,
   LocalSidecarTranscribeOutput,

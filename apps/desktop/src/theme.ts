@@ -271,6 +271,30 @@ export const theme = createTheme({
   },
 
   components: {
+    // The Material 3 scale names above are not in MUI's default mapping, and an
+    // unmapped variant renders a span, which is inline. Map them so a heading is
+    // a heading and body text is a paragraph.
+    MuiTypography: {
+      defaultProps: {
+        variantMapping: {
+          displayLarge: "h1",
+          displayMedium: "h1",
+          displaySmall: "h2",
+          headlineLarge: "h2",
+          headlineMedium: "h3",
+          headlineSmall: "h4",
+          titleLarge: "h5",
+          titleMedium: "h6",
+          titleSmall: "h6",
+          bodyLarge: "p",
+          bodyMedium: "p",
+          bodySmall: "p",
+          labelLarge: "span",
+          labelMedium: "span",
+          labelSmall: "span",
+        },
+      },
+    },
     MuiCssBaseline: {
       styleOverrides: (themeParam) => ({
         "*, *::before, *::after": {

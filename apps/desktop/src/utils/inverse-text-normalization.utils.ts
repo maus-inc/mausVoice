@@ -26,6 +26,7 @@
  * unchanged, which is what keeps the pass safe for the other dictation
  * languages the app supports.
  */
+import { stripTrailingCharacters } from "@maus-inc/utilities";
 
 const SMALL_NUMBERS: Readonly<Record<string, number>> = {
   zero: 0,
@@ -163,6 +164,18 @@ const UNAMBIGUOUS_MONTH_SOURCE = Object.keys(MONTHS)
   .filter((month) => !["may", "march", "august"].includes(month))
   .join("|");
 
+/** The twelve hours a spoken clock time can start with. */
+const HOUR_WORD_SOURCE =
+  "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve";
+
+/** Minutes below ten, which are spoken after "oh". */
+const UNIT_WORD_SOURCE = "one|two|three|four|five|six|seven|eight|nine";
+
+/** A spoken minute: "thirty", "forty five", "twenty-five". */
+const SPOKEN_MINUTE_SOURCE = String.raw`(?:twenty|thirty|forty|fifty)(?:[-\s](?:${UNIT_WORD_SOURCE}))?`;
+
+const MERIDIEM_SOURCE = String.raw`a\.?\s?m\.?|p\.?\s?m\.?`;
+
 const MERIDIEM_NORMALIZATIONS: ReadonlyArray<readonly [RegExp, string]> = [
   [/^a\.?\s?m\.?$/i, "AM"],
   [/^p\.?\s?m\.?$/i, "PM"],
@@ -191,7 +204,14 @@ const isNumberToken = (word: string): boolean => {
 const isJoiningToken = (word: string): boolean => word.toLowerCase() === "and";
 
 const formatCardinal = (value: number): string =>
-  value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  value.toString().replace(/\d+/g, (run) => {
+    let grouped = "";
+    for (let i = 0; i < run.length; i += 1) {
+      if (i > 0 && (run.length - i) % 3 === 0) grouped += ",";
+      grouped += run[i];
+    }
+    return grouped;
+  });
 
 type CardinalParse = {
   value: number;
@@ -311,10 +331,10 @@ const numberWordsOf = (text: string): string[] =>
   text.split("-").filter((part) => part.length > 0);
 
 /** Sentence punctuation that can ride on the last word of a number. */
-const TRAILING_PUNCTUATION_RE = /[.,!?;:]+$/;
+const TRAILING_PUNCTUATION_CHARS = ".,!?;:";
 
 /** Punctuation that ends the number run it sits on, unlike a comma. */
-const SENTENCE_BOUNDARY_RE = /[.!?;:]+$/;
+const SENTENCE_BOUNDARY_CHARS = ".!?;:";
 
 /**
  * The word inside a token, with the punctuation the sentence put there removed.
@@ -323,7 +343,11 @@ const SENTENCE_BOUNDARY_RE = /[.!?;:]+$/;
  * only "twenty" and wrote "20 three".
  */
 const numberTokenText = (text: string): string =>
-  text.replace(TRAILING_PUNCTUATION_RE, "");
+  stripTrailingCharacters(text, TRAILING_PUNCTUATION_CHARS);
+
+/** The punctuation `numberTokenText` strips, so it can be written back. */
+const trailingPunctuationOf = (text: string): string =>
+  text.slice(stripTrailingCharacters(text, TRAILING_PUNCTUATION_CHARS).length);
 
 /** Whether a single word is one of the number words this pass understands. */
 export const isSpokenNumberWord = (word: string): boolean =>
@@ -412,7 +436,10 @@ const applyTimeRules = (text: string): string => {
 
   // "quarter past three" / "half past three" / "quarter to three".
   out = out.replace(
-    /\b(quarter|half)\s+past\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/gi,
+    new RegExp(
+      String.raw`\b(quarter|half)\s+past\s+(${HOUR_WORD_SOURCE})\b`,
+      "gi",
+    ),
     (match, part: string, hour: string) => {
       const parsed = SMALL_NUMBERS[hour.toLowerCase()];
       if (parsed === undefined) return match;
@@ -420,7 +447,7 @@ const applyTimeRules = (text: string): string => {
     },
   );
   out = out.replace(
-    /\bquarter\s+to\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/gi,
+    new RegExp(String.raw`\bquarter\s+to\s+(${HOUR_WORD_SOURCE})\b`, "gi"),
     (match, hour: string) => {
       const parsed = SMALL_NUMBERS[hour.toLowerCase()];
       if (parsed === undefined) return match;
@@ -430,7 +457,10 @@ const applyTimeRules = (text: string): string => {
 
   // "three to five pm" reads as a range of clock times.
   out = out.replace(
-    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+to\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(a\.?\s?m\.?|p\.?\s?m\.?)\b/gi,
+    new RegExp(
+      String.raw`\b(${HOUR_WORD_SOURCE})\s+to\s+(${HOUR_WORD_SOURCE})\s+(${MERIDIEM_SOURCE})\b`,
+      "gi",
+    ),
     (match, from: string, to: string, tail: string) =>
       formatClockRange(
         SMALL_NUMBERS[from.toLowerCase()],
@@ -441,7 +471,10 @@ const applyTimeRules = (text: string): string => {
 
   // "three thirty pm", "three oh five p.m.", "nine am", "twelve o'clock".
   out = out.replace(
-    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\s+((?:oh|o)?\s?(?:twenty|thirty|forty|fifty)(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?|(?:oh|o)\s+(?:one|two|three|four|five|six|seven|eight|nine)))?\s*(a\.?\s?m\.?|p\.?\s?m\.?|o'clock)\b/gi,
+    new RegExp(
+      String.raw`\b(${HOUR_WORD_SOURCE})(?:\s+((?:oh|o)?\s?(?:${SPOKEN_MINUTE_SOURCE})|(?:oh|o)\s+(?:${UNIT_WORD_SOURCE})))?\s*(${MERIDIEM_SOURCE}|o'clock)\b`,
+      "gi",
+    ),
     (match, hour: string, minute: string | undefined, tail: string) => {
       const parsedHour = SMALL_NUMBERS[hour.toLowerCase()];
       if (parsedHour === undefined) return match;
@@ -453,8 +486,14 @@ const applyTimeRules = (text: string): string => {
 
   // "at three thirty" / "around eleven forty five": a clock time is only read
   // from a bare hour and minute when a time preposition sets it up.
+  // `ohMinute` and `minute` reach the callback by position, so the `oh` branch
+  // must stay a capturing group and stay ahead of the spoken-minute branch. A
+  // non-capturing group here silently shifts the minute into the wrong slot.
   out = out.replace(
-    /\b(at|by|around|about|from|until|before|after)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\s+(?:oh|o)\s+(one|two|three|four|five|six|seven|eight|nine)|\s+((?:twenty|thirty|forty|fifty)(?:[-\s](?:one|two|three|four|five|six|seven|eight|nine))?))\b/gi,
+    new RegExp(
+      String.raw`\b(at|by|around|about|from|until|before|after)\s+(${HOUR_WORD_SOURCE})(?:\s+(?:oh|o)\s+(${UNIT_WORD_SOURCE})|\s+(${SPOKEN_MINUTE_SOURCE}))\b`,
+      "gi",
+    ),
     (
       match,
       cue: string,
@@ -596,7 +635,11 @@ const collectNumberRun = (
     lastTokenIndex = cursor;
     previousToken = candidate.text;
     cursor += 1;
-    if (SENTENCE_BOUNDARY_RE.test(candidate.text)) break;
+    if (
+      stripTrailingCharacters(candidate.text, SENTENCE_BOUNDARY_CHARS) !==
+      candidate.text
+    )
+      break;
   }
 
   return { words, lastTokenIndex };
@@ -616,7 +659,10 @@ const isCentWord = (segment: Segment | undefined): boolean =>
     segment &&
     !segment.isSpace &&
     ["cent", "cents"].includes(
-      segment.text.toLowerCase().replace(/[.,!?;:]+$/, ""),
+      stripTrailingCharacters(
+        segment.text.toLowerCase(),
+        TRAILING_PUNCTUATION_CHARS,
+      ),
     ),
   );
 
@@ -627,7 +673,10 @@ const unitWordAt = (
 ): { lowered: string; punctuation: string } | null => {
   const wordSegment = segments[nextIndex + 1];
   if (!wordSegment || wordSegment.isSpace) return null;
-  const lowered = wordSegment.text.toLowerCase().replace(/[.,!?;:]+$/, "");
+  const lowered = stripTrailingCharacters(
+    wordSegment.text.toLowerCase(),
+    TRAILING_PUNCTUATION_CHARS,
+  );
   return { lowered, punctuation: wordSegment.text.slice(lowered.length) };
 };
 
@@ -645,14 +694,23 @@ const unitFollowers = (
   count: number,
 ): string[] => {
   const unit = segments[nextIndex + 1];
-  if (!unit || SENTENCE_BOUNDARY_RE.test(unit.text)) return [];
+  if (
+    !unit ||
+    stripTrailingCharacters(unit.text, SENTENCE_BOUNDARY_CHARS) !== unit.text
+  )
+    return [];
   const words: string[] = [];
   while (words.length < count) {
     const index = nextIndex + 3 + words.length * 2;
     const gap = segments[index - 1];
     const word = segments[index];
     if (!gap?.isSpace || !word || word.isSpace) break;
-    words.push(word.text.toLowerCase().replace(/[.,!?;:]+$/, ""));
+    words.push(
+      stripTrailingCharacters(
+        word.text.toLowerCase(),
+        TRAILING_PUNCTUATION_CHARS,
+      ),
+    );
   }
   return words;
 };
@@ -727,7 +785,10 @@ const readPerCentUnit = (
 ): TrailingUnit => {
   const cents = segments[nextIndex + 3];
   if (!isCentWord(cents)) return unit;
-  const cleaned = cents.text.toLowerCase().replace(/[.,!?;:]+$/, "");
+  const cleaned = stripTrailingCharacters(
+    cents.text.toLowerCase(),
+    TRAILING_PUNCTUATION_CHARS,
+  );
   unit.percentSuffix = "%";
   unit.trailingPunctuation = cents.text.slice(cleaned.length);
   unit.trailingIndex = nextIndex + 3;
@@ -821,8 +882,8 @@ const dropArticleBeforeNumber = (
   output: string[],
   unit: TrailingUnit,
 ): void => {
-  const previous = output[output.length - 1];
-  const beforePrevious = output[output.length - 2];
+  const previous = output.at(-1);
+  const beforePrevious = output.at(-2);
   if (
     unit.attributiveUnit ||
     beforePrevious === undefined ||
@@ -886,8 +947,7 @@ const applyCardinalRules = (text: string): string => {
       continue;
     }
 
-    const runPunctuation =
-      segments[lastTokenIndex].text.match(TRAILING_PUNCTUATION_RE)?.[0] ?? "";
+    const runPunctuation = trailingPunctuationOf(segments[lastTokenIndex].text);
     writeRun(output, parsedRun, unit, runPunctuation);
     index = unit.trailingIndex > 0 ? unit.trailingIndex + 1 : nextIndex;
   }

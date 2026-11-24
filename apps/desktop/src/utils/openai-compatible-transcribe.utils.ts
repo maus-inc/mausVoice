@@ -1,4 +1,7 @@
-import { HttpError } from "@maus-inc/utilities";
+import {
+  buildTranscriptionFormData,
+  throwHttpError,
+} from "@maus-inc/utilities";
 import {
   buildOpenAICompatibleTranscriptionUrl,
   normalizeOpenAICompatibleBaseUrl,
@@ -52,20 +55,14 @@ export const openaiCompatibleTranscribeAudio = async ({
   // deterministic 4xx. We never default to `json`, which would silently disable
   // the silence gate for servers that DO support `verbose_json`.
   const buildBody = (format: "verbose_json" | "json" | null): FormData => {
-    const formData = new FormData();
-    const file = new Blob([blob], { type: `audio/${ext}` });
-    formData.append("file", file, `audio.${ext}`);
-    formData.append("model", model);
-    if (prompt) {
-      formData.append("prompt", prompt);
-    }
-    if (language && language !== "auto") {
-      formData.append("language", language);
-    }
-    if (format) {
-      formData.append("response_format", format);
-    }
-    return formData;
+    return buildTranscriptionFormData({
+      blob,
+      ext,
+      model,
+      prompt,
+      language,
+      responseFormat: format ?? undefined,
+    });
   };
 
   const headers: Record<string, string> = {};
@@ -116,14 +113,15 @@ export const openaiCompatibleTranscribeAudio = async ({
     // The status travels on the error as data so a retry policy can read a
     // terminal 4xx as terminal and wait out a `Retry-After` hint on a 429 or
     // 503. The message is unchanged, so existing assertions and any caller
-    // that shows it to the user read exactly as before.
-    throw new HttpError(
-      finalResponse.status,
-      `OpenAI Compatible transcription failed: ${finalResponse.status} - ${
-        errorBody || "Unknown error"
-      }`,
-      { retryAfter: finalResponse.headers.get("retry-after") },
-    );
+    // that shows it to the user read exactly as before. `errorBody` is passed
+    // through because the degradation logic above already consumed the stream.
+    await throwHttpError(finalResponse, {
+      body: errorBody,
+      message: (body) =>
+        `OpenAI Compatible transcription failed: ${finalResponse.status} - ${
+          body || "Unknown error"
+        }`,
+    });
   }
 
   const data = (await finalResponse.json()) as {

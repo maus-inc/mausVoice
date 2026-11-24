@@ -154,3 +154,8 @@ reports/ui-verify/*.png
 # future edit to the comment had to be made 4 times and 3 copies would be
 # left stale. One copy now, with the reason recorded so the next append is a
 # merge rather than a copy.
+
+# Agent sandbox state and local artifacts
+.local/
+.openhands/artifacts/
+.openhands/memory/

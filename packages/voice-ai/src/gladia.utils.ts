@@ -562,51 +562,62 @@ export const createGladiaStreamingSession = ({
     }
   });
 
-  session.on("message", (message) => {
-    if (disposed) {
+  const handleTranscriptMessage = (data: unknown): void => {
+    const payload = data as {
+      id?: unknown;
+      is_final?: unknown;
+      utterance?: { text?: unknown };
+    } | null;
+    if (
+      !payload ||
+      typeof payload.id !== "string" ||
+      typeof payload.is_final !== "boolean" ||
+      !payload.utterance ||
+      typeof payload.utterance.text !== "string"
+    ) {
+      addWarning("Gladia returned a malformed transcript message.");
       return;
     }
+    const update = transcript.update(
+      payload.id,
+      payload.utterance.text,
+      payload.is_final,
+    );
+    if (update.committedSegment) {
+      onFinalSegment?.(update.committedSegment);
+    }
+  };
 
+  const handleMessage = (message: LiveV2WebSocketMessage): void => {
+    if (disposed) return;
     const providerError = getMessageError(message);
     if (providerError) {
       addWarning(`Gladia reported an error: ${errorMessage(providerError)}`);
     }
-
     if (message.type === "transcript") {
-      const data = message.data;
-      if (
-        !data ||
-        typeof data.id !== "string" ||
-        typeof data.is_final !== "boolean" ||
-        !data.utterance ||
-        typeof data.utterance.text !== "string"
-      ) {
-        addWarning("Gladia returned a malformed transcript message.");
+      handleTranscriptMessage(message.data);
+      return;
+    }
+    if (message.type === "post_final_transcript") {
+      const fullTranscript = message.data?.transcription?.full_transcript;
+      if (typeof fullTranscript !== "string") {
+        addWarning("Gladia returned a malformed post-final transcript.");
         return;
       }
-      const update = transcript.update(
-        data.id,
-        data.utterance.text,
-        data.is_final,
-      );
-      if (update.committedSegment) {
-        onFinalSegment?.(update.committedSegment);
-      }
-    } else if (message.type === "post_final_transcript") {
-      const fullTranscript = message.data?.transcription?.full_transcript;
-      if (typeof fullTranscript === "string") {
-        transcript.setAuthoritativeText(fullTranscript);
-      } else {
-        addWarning("Gladia returned a malformed post-final transcript.");
-      }
-    } else if (message.type === "post_transcript") {
-      if (typeof message.data?.full_transcript === "string") {
-        transcript.setAuthoritativeText(message.data.full_transcript);
-      } else {
-        addWarning("Gladia returned a malformed post transcript.");
-      }
+      transcript.setAuthoritativeText(fullTranscript);
+      return;
     }
-  });
+    if (message.type === "post_transcript") {
+      const fullTranscript = message.data?.full_transcript;
+      if (typeof fullTranscript !== "string") {
+        addWarning("Gladia returned a malformed post transcript.");
+        return;
+      }
+      transcript.setAuthoritativeText(fullTranscript);
+    }
+  };
+
+  session.on("message", handleMessage);
 
   session.on("error", (error) => {
     if (!disposed) {

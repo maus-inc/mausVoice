@@ -9,6 +9,7 @@ import {
   LANGUAGE_DISPLAY_NAMES,
 } from "./language.utils";
 import { ToneConfig } from "./tone.utils";
+import { getLogger } from "./log.utils";
 import { getMyUserName } from "./user.utils";
 import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
 
@@ -189,6 +190,42 @@ export const estimateTokenCount = (value: string): number => {
   return tokens;
 };
 
+const countTermWords = (term: string): number =>
+  term.split(/\s+/).filter(Boolean).length;
+
+const termFitsLimits = (trimmed: string, budget: VocabularyBudget): boolean => {
+  const length = codePointLength(trimmed);
+  return (
+    length > 0 &&
+    length <= (budget.maxTermLength ?? Infinity) &&
+    countTermWords(trimmed) <= (budget.maxWordsPerTerm ?? Infinity)
+  );
+};
+
+type VocabularyTally = {
+  capped: string[];
+  characters: number;
+  words: number;
+  estimatedTokens: number;
+};
+
+const termFitsBudget = (
+  { capped, characters, words, estimatedTokens }: VocabularyTally,
+  trimmed: string,
+  budget: VocabularyBudget,
+): boolean => {
+  const separator = capped.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
+  const separatorTokens = capped.length > 0 ? estimateTokenCount(", ") : 0;
+  const termTokens = estimateTokenCount(trimmed);
+  return (
+    capped.length < budget.maxEntries &&
+    characters + separator + codePointLength(trimmed) <= budget.maxCharacters &&
+    words + countTermWords(trimmed) <= (budget.maxWords ?? Infinity) &&
+    estimatedTokens + separatorTokens + termTokens <=
+      (budget.maxEstimatedTokens ?? Infinity)
+  );
+};
+
 export const capVocabularyTerms = (
   terms: string[],
   budget: VocabularyBudget,
@@ -198,45 +235,40 @@ export const capVocabularyTerms = (
   characters: number;
   estimatedTokens: number;
 } => {
-  const capped: string[] = [];
-  let characters = 0;
-  let estimatedTokens = 0;
-  let words = 0;
+  const tally: VocabularyTally = {
+    capped: [],
+    characters: 0,
+    words: 0,
+    estimatedTokens: 0,
+  };
   let truncated = false;
-
-  const wordCount = (term: string) => term.split(/\s+/).filter(Boolean).length;
 
   for (const term of terms) {
     const trimmed = term.trim();
     const length = codePointLength(trimmed);
-    const fitsTermLimits =
-      length > 0 &&
-      length <= (budget.maxTermLength ?? Infinity) &&
-      wordCount(trimmed) <= (budget.maxWordsPerTerm ?? Infinity);
-    if (!fitsTermLimits) {
+    if (!termFitsLimits(trimmed, budget)) {
       truncated = truncated || length > 0;
       continue;
     }
-    const separator = capped.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
-    const separatorTokens = capped.length > 0 ? estimateTokenCount(", ") : 0;
-    const termTokens = estimateTokenCount(trimmed);
-    if (
-      capped.length >= budget.maxEntries ||
-      characters + separator + length > budget.maxCharacters ||
-      words + wordCount(trimmed) > (budget.maxWords ?? Infinity) ||
-      estimatedTokens + separatorTokens + termTokens >
-        (budget.maxEstimatedTokens ?? Infinity)
-    ) {
+    if (!termFitsBudget(tally, trimmed, budget)) {
       truncated = true;
       break;
     }
-    capped.push(trimmed);
-    characters += separator + length;
-    words += wordCount(trimmed);
-    estimatedTokens += separatorTokens + termTokens;
+    const separator = tally.capped.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
+    const separatorTokens =
+      tally.capped.length > 0 ? estimateTokenCount(", ") : 0;
+    tally.capped.push(trimmed);
+    tally.characters += separator + length;
+    tally.words += countTermWords(trimmed);
+    tally.estimatedTokens += separatorTokens + estimateTokenCount(trimmed);
   }
 
-  return { terms: capped, truncated, characters, estimatedTokens };
+  return {
+    terms: tally.capped,
+    truncated,
+    characters: tally.characters,
+    estimatedTokens: tally.estimatedTokens,
+  };
 };
 
 /**
@@ -657,7 +689,7 @@ const transcriptionPromptByCode: Record<DictationLanguageCode, string> = {
 // this heuristic budget, so the rendered initial_prompt (terms plus
 // instruction) stays within the heuristic. An oversized prompt also raises
 // the risk of leaking into near-silent transcriptions.
-export const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
+const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
   maxEntries: 100,
   maxCharacters: 650,
 };
@@ -895,7 +927,7 @@ const PROCESSED_TRANSCRIPTION_EDITS_SCHEMA = z
 export const POST_PROCESS_TRUNCATED_WARNING =
   "The styling response was cut off at the model's output limit, so its partial reply was discarded.";
 
-export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
+const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
   edits: PROCESSED_TRANSCRIPTION_EDITS_SCHEMA,
   result: z
     .string()
@@ -946,12 +978,14 @@ ${transcript}
 
 Execute the command and provide your response in ${languageName}.
 `;
-    console.log(
+    getLogger().verbose(
       "[Agent Prompt] Using tone template, result length:",
       base.length,
     );
   } else {
-    console.log("[Agent Prompt] Using default prompt (no tone template)");
+    getLogger().verbose(
+      "[Agent Prompt] Using default prompt (no tone template)",
+    );
     base = intl.formatMessage(
       {
         defaultMessage: `

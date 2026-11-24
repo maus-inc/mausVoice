@@ -98,13 +98,12 @@ export const TIP_ICONS: Record<OnboardingTipId, ReactNode> = {
  * mutates that page's own state (Settings' Groq dialog). Live tips without
  * an entry here introduce the page itself and carry no action.
  */
-export const TIP_LIVE_ACTIONS: Partial<
-  Record<OnboardingTipId, { label: ReactNode }>
-> = {
-  "generative-provider": {
-    label: <FormattedMessage defaultMessage="Add API key" />,
-  },
-};
+const TIP_LIVE_ACTIONS: Partial<Record<OnboardingTipId, { label: ReactNode }>> =
+  {
+    "generative-provider": {
+      label: <FormattedMessage defaultMessage="Add API key" />,
+    },
+  };
 
 /**
  * Shared header art for every live tip. One abstract monochrome ink
@@ -148,7 +147,7 @@ const dismissScrim = {
  * Subscribes a component to a tip's visibility: true while the tip has not
  * been dismissed, false after `dismissTip` has persisted it.
  */
-export const useTip = (id: OnboardingTipId): boolean =>
+const useTip = (id: OnboardingTipId): boolean =>
   useAppStore((s) => !(s.local.dismissedTipIds ?? []).includes(id));
 
 /**

@@ -137,7 +137,7 @@ const SchemeButton = () => {
   } as const;
   const { next, icon } = schemes[mode ?? "system"];
   return (
-    <Tooltip title={`Scheme: ${mode ?? "?"} — switch to ${next}`}>
+    <Tooltip title={`Scheme: ${mode ?? "?"}. Switch to ${next}`}>
       <IconButton
         onClick={() => setMode(next)}
         aria-label="Toggle color scheme"

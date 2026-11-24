@@ -30,8 +30,8 @@ import {
   getTranscriptionPrefs,
   setCurrentUser,
   setUserPreferences,
-  TranscriptionPrefs,
 } from "../utils/user.utils";
+import type { TranscriptionPrefs } from "../types/transcription-prefs.types";
 import { showErrorSnackbar } from "./app.actions";
 import { clearLocalStorageValue } from "./local-storage.actions";
 import { refreshMember } from "./member.actions";
@@ -145,79 +145,100 @@ const hasStaleOnboardingAccountState = (onboarding: OnboardingState): boolean =>
   onboarding.referralSource.trim() !== "" ||
   onboarding.preferredMicrophone !== null;
 
-export const resumeOnboardingPage = (): void => {
-  const state = getAppState();
-  if (state.auth && !state.initialized) return;
-  const resume = state.local.onboardingResumePage;
+const needsFreshOnboardingSession = (
+  state: ReturnType<typeof getAppState>,
+): boolean => {
+  if (state.auth === null) return false;
   const hasForeignNameDraft =
-    state.auth !== null &&
     state.local.onboardingNameDraftUserId !== null &&
     !isOnboardingNameDraftOwnedByAuth(
       state.local.onboardingNameDraftUserId,
       state.auth.uid,
     );
   const hasForeignSession =
-    state.auth !== null &&
     state.local.onboardingSessionUserId !== null &&
     state.local.onboardingSessionUserId !== state.auth.uid;
   const hasUnownedCompletedSession =
-    state.auth !== null &&
     state.local.onboardingSessionUserId === null &&
     state.local.onboardingResumePage === null &&
     state.local.onboardingNameDraft === "" &&
     hasStaleOnboardingAccountState(state.onboarding);
-  if (hasForeignNameDraft || hasForeignSession || hasUnownedCompletedSession) {
-    const existingName = getMyUser(state)?.name.trim() ?? "";
-    produceAppState((draft) => {
-      Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
-      applyOnboardingNameDraft(
-        draft.onboarding,
-        createOnboardingNameDraft(existingName),
-      );
-      draft.onboarding.currentPage = "signIn";
-      draft.onboarding.isResuming = false;
-      draft.local.onboardingResumePage = null;
-      draft.local.onboardingNameDraft = existingName;
-      draft.local.onboardingNameDraftUserId = draft.auth?.uid ?? null;
-      draft.local.onboardingSessionUserId = draft.auth?.uid ?? null;
-    });
+  return hasForeignNameDraft || hasForeignSession || hasUnownedCompletedSession;
+};
+
+const resetOnboardingToSignIn = (existingName: string): void => {
+  produceAppState((draft) => {
+    Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
+    applyOnboardingNameDraft(
+      draft.onboarding,
+      createOnboardingNameDraft(existingName),
+    );
+    draft.onboarding.currentPage = "signIn";
+    draft.onboarding.isResuming = false;
+    draft.local.onboardingResumePage = null;
+    draft.local.onboardingNameDraft = existingName;
+    draft.local.onboardingNameDraftUserId = draft.auth?.uid ?? null;
+    draft.local.onboardingSessionUserId = draft.auth?.uid ?? null;
+  });
+};
+
+const clearResumeTarget = (): void => {
+  produceAppState((draft) => {
+    draft.onboarding.currentPage = "signIn";
+    draft.onboarding.isResuming = false;
+    draft.local.onboardingResumePage = null;
+    draft.local.onboardingNameDraft = "";
+    draft.local.onboardingNameDraftUserId = null;
+    draft.local.onboardingSessionUserId = null;
+  });
+};
+
+const restoreResumedPage = (
+  state: ReturnType<typeof getAppState>,
+  resume: NonNullable<
+    ReturnType<typeof getAppState>["local"]["onboardingResumePage"]
+  >,
+): void => {
+  const resumeName =
+    state.local.onboardingNameDraft || getMyUser(state)?.name || "";
+  if (state.auth && resume !== "signIn" && !resumeName) {
+    clearResumeTarget();
     return;
   }
-  if (
-    resume &&
-    resume !== state.onboarding.currentPage &&
-    state.onboarding.history.length === 0
-  ) {
-    const resumeName =
-      state.local.onboardingNameDraft || getMyUser(state)?.name || "";
-    if (state.auth && resume !== "signIn" && !resumeName) {
-      produceAppState((draft) => {
-        draft.onboarding.currentPage = "signIn";
-        draft.onboarding.isResuming = false;
-        draft.local.onboardingResumePage = null;
-        draft.local.onboardingNameDraft = "";
-        draft.local.onboardingNameDraftUserId = null;
-        draft.local.onboardingSessionUserId = null;
-      });
-      return;
+  // Restoring persisted state is not completing the initial sign-in step.
+  // Keep the empty navigation stack rather than inventing a back target.
+  produceAppState((draft) => {
+    applyOnboardingNameDraft(
+      draft.onboarding,
+      createOnboardingNameDraft(resumeName),
+    );
+    draft.onboarding.currentPage = nearestKeptPage(resume);
+    draft.onboarding.isResuming = true;
+    draft.local.onboardingResumePage = draft.onboarding.currentPage;
+    draft.local.onboardingNameDraft = resumeName;
+    if (draft.auth?.uid) {
+      draft.local.onboardingNameDraftUserId = draft.auth.uid;
+      draft.local.onboardingSessionUserId = draft.auth.uid;
     }
-    // Restoring persisted state is not completing the initial sign-in step.
-    // Keep the empty navigation stack rather than inventing a back target.
-    produceAppState((draft) => {
-      applyOnboardingNameDraft(
-        draft.onboarding,
-        createOnboardingNameDraft(resumeName),
-      );
-      draft.onboarding.currentPage = nearestKeptPage(resume);
-      draft.onboarding.isResuming = true;
-      draft.local.onboardingResumePage = draft.onboarding.currentPage;
-      draft.local.onboardingNameDraft = resumeName;
-      if (draft.auth?.uid) {
-        draft.local.onboardingNameDraftUserId = draft.auth.uid;
-        draft.local.onboardingSessionUserId = draft.auth.uid;
-      }
-    });
+  });
+};
+
+export const resumeOnboardingPage = (): void => {
+  const state = getAppState();
+  if (state.auth && !state.initialized) return;
+  if (needsFreshOnboardingSession(state)) {
+    resetOnboardingToSignIn(getMyUser(state)?.name.trim() ?? "");
+    return;
   }
+  const resume = state.local.onboardingResumePage;
+  if (
+    !resume ||
+    resume === state.onboarding.currentPage ||
+    state.onboarding.history.length > 0
+  ) {
+    return;
+  }
+  restoreResumedPage(state, resume);
 };
 
 /** Skip already-granted permission pages only while restoring a saved flow. */

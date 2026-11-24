@@ -1,3 +1,4 @@
+import { stripTrailingCharacters } from "@maus-inc/utilities";
 import { Box, Portal } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
@@ -36,13 +37,13 @@ export const TipToaster = () => {
   // React Router renders existing routes with a trailing slash and keeps it
   // in `pathname`, so strip it before matching, or a trailing-slash URL would
   // hide the tip.
-  const route = pathname.replace(/\/+$/, "") || "/";
+  const route = stripTrailingCharacters(pathname, "/") || "/";
   // A tip's href is the page its feature lives on, and it may carry a
   // `#setting-<key>` anchor for the deep link it opens. The stack matches the
   // page only, so an anchor in the href does not hide the tip on its own route.
   const tips = ONBOARDING_TIPS.filter((tip) => {
     if (!tip.href) return false;
-    const path = tip.href.split("#")[0].replace(/\/+$/, "") || "/";
+    const path = stripTrailingCharacters(tip.href.split("#")[0], "/") || "/";
     return path === route && !dismissed.includes(tip.id);
   });
 

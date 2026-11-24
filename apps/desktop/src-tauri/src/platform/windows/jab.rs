@@ -77,20 +77,41 @@ struct JabApi {
     set_caret_position: SetCaretPositionFn,
 }
 
-fn find_jab_dll() -> Option<std::path::PathBuf> {
-    // 1. JAVA_HOME environment variable
-    if let Ok(java_home) = std::env::var("JAVA_HOME") {
-        let path = std::path::PathBuf::from(&java_home)
-            .join("bin")
-            .join("windowsaccessbridge-64.dll");
-        if path.exists() {
-            return Some(path);
-        }
-    }
+const JAB_DLL_NAME: &str = "windowsaccessbridge-64.dll";
 
-    // 2. `where java` on PATH. This binary is GUI-subsystem in release, so it
-    // owns no console and a console-subsystem child started without
-    // CREATE_NO_WINDOW is given a new one, which flashes on screen.
+fn find_jab_dll() -> Option<std::path::PathBuf> {
+    find_in_java_home()
+        .or_else(find_via_where_java)
+        .or_else(find_in_program_files)
+        .or_else(find_in_icedtea_cache)
+}
+
+/// The JAB DLL inside `dir/bin`, when it exists.
+fn dll_in_bin(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dll = dir.join("bin").join(JAB_DLL_NAME);
+    dll.exists().then_some(dll)
+}
+
+/// Any direct child of `base` whose `bin` holds the JAB DLL.
+fn find_dll_in_children(base: &std::path::Path) -> Option<std::path::PathBuf> {
+    std::fs::read_dir(base)
+        .ok()?
+        .flatten()
+        .find_map(|entry| dll_in_bin(&entry.path()))
+}
+
+fn find_in_java_home() -> Option<std::path::PathBuf> {
+    let java_home = std::env::var("JAVA_HOME").ok()?;
+    let dll = std::path::PathBuf::from(java_home)
+        .join("bin")
+        .join(JAB_DLL_NAME);
+    dll.exists().then_some(dll)
+}
+
+fn find_via_where_java() -> Option<std::path::PathBuf> {
+    // This binary is GUI-subsystem in release, so it owns no console and a
+    // console-subsystem child started without CREATE_NO_WINDOW is given a new
+    // one, which flashes on screen.
     let mut where_cmd = std::process::Command::new("where");
     where_cmd.arg("java");
     {
@@ -98,61 +119,38 @@ fn find_jab_dll() -> Option<std::path::PathBuf> {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         where_cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    if let Ok(output) = where_cmd.output() {
-        if let Ok(path_str) = String::from_utf8(output.stdout) {
-            if let Some(line) = path_str.lines().next() {
-                if let Some(bin_dir) = std::path::Path::new(line.trim()).parent() {
-                    let dll = bin_dir.join("windowsaccessbridge-64.dll");
-                    if dll.exists() {
-                        return Some(dll);
-                    }
-                }
-            }
-        }
-    }
+    let output = where_cmd.output().ok()?;
+    let path_str = String::from_utf8(output.stdout).ok()?;
+    let line = path_str.lines().next()?;
+    let bin_dir = std::path::Path::new(line.trim()).parent()?;
+    let dll = bin_dir.join(JAB_DLL_NAME);
+    dll.exists().then_some(dll)
+}
 
-    // 3. Common JRE/JDK installation directories
-    let program_files = [
-        std::env::var("ProgramFiles").ok(),
-        std::env::var("ProgramFiles(x86)").ok(),
-    ];
-    let java_dirs = [
+fn find_in_program_files() -> Option<std::path::PathBuf> {
+    const JAVA_DIRS: [&str; 5] = [
         "Java",
         "Eclipse Adoptium",
         "AdoptOpenJDK",
         "Amazon Corretto",
         "Zulu",
     ];
-    for pf in program_files.iter().flatten() {
-        for java_dir in &java_dirs {
-            let base = std::path::PathBuf::from(pf).join(java_dir);
-            if let Ok(entries) = std::fs::read_dir(&base) {
-                for entry in entries.flatten() {
-                    let dll = entry.path().join("bin").join("windowsaccessbridge-64.dll");
-                    if dll.exists() {
-                        return Some(dll);
-                    }
-                }
-            }
-        }
-    }
+    [
+        std::env::var("ProgramFiles").ok(),
+        std::env::var("ProgramFiles(x86)").ok(),
+    ]
+    .into_iter()
+    .flatten()
+    .flat_map(|pf| JAVA_DIRS.map(move |dir| std::path::PathBuf::from(&pf).join(dir)))
+    .find_map(|base| find_dll_in_children(&base))
+}
 
-    // 4. OpenWebStart / IcedTea-Web JRE cache
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let ows_base = std::path::PathBuf::from(&local_app_data)
-            .join("icedtea-web")
-            .join("cache");
-        if let Ok(entries) = std::fs::read_dir(&ows_base) {
-            for entry in entries.flatten() {
-                let dll = entry.path().join("bin").join("windowsaccessbridge-64.dll");
-                if dll.exists() {
-                    return Some(dll);
-                }
-            }
-        }
-    }
-
-    None
+fn find_in_icedtea_cache() -> Option<std::path::PathBuf> {
+    let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
+    let base = std::path::PathBuf::from(local_app_data)
+        .join("icedtea-web")
+        .join("cache");
+    find_dll_in_children(&base)
 }
 
 /// Find the JAB DLL by examining the executable path of a running Java process.

@@ -16,7 +16,7 @@ import type {
 import dayjs from "dayjs";
 import { detectLocale, matchSupportedLocale } from "../i18n";
 import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
-import { createTranscriptionSession } from "../sessions";
+import type { TranscriptionPrefs } from "../types/transcription-prefs.types";
 import type { AppState } from "../state/app.state";
 import { applyAiPreferences } from "./ai.utils";
 import { registerUsers } from "./app.utils";
@@ -248,28 +248,6 @@ export const setUserPreferences = (
   applyAiPreferences(draft, normalized);
 };
 
-type BaseTranscriptionPrefs = {
-  warnings: string[];
-};
-
-export type LocalTranscriptionPrefs = BaseTranscriptionPrefs & {
-  mode: "local";
-  gpuEnumerationEnabled: boolean;
-  transcriptionDevice: string | null;
-  transcriptionModelSize: string | null;
-};
-
-export type ApiTranscriptionPrefs = BaseTranscriptionPrefs & {
-  mode: "api";
-  provider: ApiKeyProvider;
-  apiKeyId: string;
-  apiKeyValue: string;
-  transcriptionModel: string | null;
-};
-
-export type TranscriptionPrefs =
-  LocalTranscriptionPrefs | ApiTranscriptionPrefs;
-
 /**
  * Providers with an implemented batch transcription route — i.e. parity with
  * the `getTranscribeAudioRepo()` switch branches in `repos/index.ts` (mirrored
@@ -361,12 +339,6 @@ export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {
     transcriptionDevice: config.device ?? null,
     transcriptionModelSize: config.modelSize ?? null,
   };
-};
-
-export const getTranscriptionSupportsStreaming = (state: AppState): boolean => {
-  const prefs = getTranscriptionPrefs(state);
-  const session = createTranscriptionSession(prefs);
-  return session.supportsStreaming();
 };
 
 type BaseGenerativePrefs = {

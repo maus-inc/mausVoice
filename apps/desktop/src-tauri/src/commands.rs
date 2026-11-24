@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
 use cap_std::fs::{Dir, OpenOptions};
+use tokio::io::AsyncWriteExt;
 use url::Url;
 
 /// Per-command re-entry guards. When an IPC command mutates global OS state
@@ -2075,8 +2076,8 @@ pub async fn transcription_import_audio(
         })
     })
     .await
-    .map_err(|err| format!("audio import task failed: {err}"));
-    result?.map(Some)
+    .map_err(|err| format!("audio import task failed: {err}"))?;
+    result.map(Some)
 }
 
 fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
@@ -2319,7 +2320,7 @@ fn sweep_orphaned_wavs(audio_dir: &cap_std::fs::Dir) -> Result<(), String> {
         let file_name = entry.file_name();
         if std::path::Path::new(&file_name)
             .extension()
-            .and_then(|extension| extension.to_str())
+            .and_then(std::ffi::OsStr::to_str)
             == Some("wav")
         {
             if let Err(error) =
@@ -6489,7 +6490,7 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
     let fixed = allowed.fixed_args.to_vec();
     let bin = allowed.binary.to_string();
 
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let mut cmd = std::process::Command::new(&bin);
         cmd.args(&fixed);
         cmd.args(&user);
@@ -6576,9 +6577,7 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
         })
     })
     .await
-    .map_err(|err| format!("Terminal command task panicked: {err}"))?;
-
-    result
+    .map_err(|err| format!("Terminal command task panicked: {err}"))?
 }
 
 /// Returns `true` when the running app bundle can be updated in-place.
@@ -7000,26 +6999,29 @@ async fn download_installer_response_to_file(
     // `create_new` avoids following or overwriting an entry planted at this
     // predictable-by-design temp path. A collision is safe to report; the next
     // update attempt receives a fresh random filename.
-    let mut file = std::fs::OpenOptions::new()
+    let mut file = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(dest)
+        .await
         .map_err(|error| error.to_string())?;
 
     let transfer_result: Result<(), String> = async {
         let mut written: u64 = 0;
         while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
             written = installer_account_chunk(written, chunk.len() as u64)?;
-            std::io::Write::write_all(&mut file, &chunk).map_err(|error| error.to_string())?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|error| error.to_string())?;
         }
-        std::io::Write::flush(&mut file).map_err(|error| error.to_string())
+        file.flush().await.map_err(|error| error.to_string())
     }
     .await;
 
     // Closing first is required before removing a failed download on Windows.
     drop(file);
     if transfer_result.is_err() {
-        let _ = std::fs::remove_file(dest);
+        let _ = tokio::fs::remove_file(dest).await;
     }
     transfer_result
 }
@@ -7108,7 +7110,7 @@ pub async fn download_and_open_mac_installer(
     // bad signature, mismatched bytes) we delete the temp file and abort so
     // an unverified installer is never handed to `open`.
     if let Err(err) = verify_installer_signature(&app, &dest, &signature_url).await {
-        let _ = std::fs::remove_file(&dest);
+        let _ = tokio::fs::remove_file(&dest).await;
         return Err(err);
     }
 
@@ -7125,7 +7127,7 @@ pub async fn download_and_open_mac_installer(
     let mut child = match std::process::Command::new("open").arg(&dest).spawn() {
         Ok(child) => child,
         Err(error) => {
-            let _ = std::fs::remove_file(&dest);
+            let _ = tokio::fs::remove_file(&dest).await;
             return Err(error.to_string());
         }
     };
@@ -7137,14 +7139,14 @@ pub async fn download_and_open_mac_installer(
     match handoff {
         Ok(true) => {}
         Ok(false) => {
-            let _ = std::fs::remove_file(&dest);
+            let _ = tokio::fs::remove_file(&dest).await;
             return Err(
                 "`open` exited non-zero, so the installer was not handed off to a handler"
                     .to_string(),
             );
         }
         Err(error) => {
-            let _ = std::fs::remove_file(&dest);
+            let _ = tokio::fs::remove_file(&dest).await;
             return Err(error);
         }
     }

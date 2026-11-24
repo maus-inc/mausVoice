@@ -32,3 +32,21 @@ export const isLogBreakingControlCode = (code: number): boolean =>
  */
 export const isLogBreakingControl = (text: string): boolean =>
   text.length > 0 && isLogBreakingControlCode(codePointOf(text));
+
+/**
+ * Drops every trailing character that appears in `characters`.
+ *
+ * A regex such as `/[.,!?;:]+$/` backtracks super-linearly on a long run of
+ * the same character, which matters here because the input is transcript text.
+ * Walking back from the end is linear and gives the same result.
+ */
+export const stripTrailingCharacters = (
+  value: string,
+  characters: string,
+): string => {
+  let end = value.length;
+  while (end > 0 && characters.includes(value.charAt(end - 1))) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+};

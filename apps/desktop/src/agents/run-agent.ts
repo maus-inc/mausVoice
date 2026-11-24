@@ -5,6 +5,7 @@ import type {
   AgentTool,
 } from "@repo/agent";
 import type {
+  ChatMessage,
   ChatToolStatus,
   LlmMessage,
   LlmToolCall,
@@ -23,6 +24,7 @@ import {
 } from "../actions/tool.actions";
 import { getAgentRepo, getChatMessageRepo } from "../repos";
 import { createAgentRunState } from "../state/agent.state";
+import type { StreamingMessageState } from "../state/app.state";
 import { getAppState, produceAppState } from "../store";
 import { createTool } from "../tools";
 import { modifyAgentState } from "../utils/agent.utils";
@@ -598,6 +600,26 @@ function createAgentTools(
   }));
 }
 
+/**
+ * Run one tool call, turning a thrown error into the failure shape the agent
+ * loop reports. A tool that throws is a failed call, never a failed run.
+ */
+async function runTool(
+  info: ToolInfo,
+  params: Record<string, unknown>,
+  conversationId: string,
+) {
+  try {
+    const result = await executeTool(info.id, params, { conversationId });
+    return { success: true, result };
+  } catch (err) {
+    return {
+      success: false,
+      failureReason: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 async function executeWithPermission(
   info: ToolInfo,
   params: Record<string, unknown>,
@@ -612,15 +634,7 @@ async function executeWithPermission(
   const permissionScope = `conversation:${conversationId}`;
 
   if (tool.getAlwaysAllow(params, permissionScope)) {
-    try {
-      const result = await executeTool(info.id, params, { conversationId });
-      return { success: true, result };
-    } catch (err) {
-      return {
-        success: false,
-        failureReason: err instanceof Error ? err.message : String(err),
-      };
-    }
+    return runTool(info, params, conversationId);
   }
 
   const permissionParams = { ...params, reason };
@@ -652,15 +666,7 @@ async function executeWithPermission(
   );
 
   if (resolution === "allowed" && isActive()) {
-    try {
-      const result = await executeTool(info.id, params, { conversationId });
-      return { success: true, result };
-    } catch (err) {
-      return {
-        success: false,
-        failureReason: err instanceof Error ? err.message : String(err),
-      };
-    }
+    return runTool(info, params, conversationId);
   }
 
   return { success: false, failureReason: "Tool call was denied by user" };
@@ -855,54 +861,83 @@ const trimConversationBlocks = (
 function buildConversationMessages(conversationId: string): LlmMessage[] {
   const state = getAppState();
   const messageIds = state.chatMessageIdsByConversationId[conversationId] ?? [];
-  const messages: LlmMessage[] = [];
-
-  for (const id of messageIds) {
-    const streaming = state.streamingMessageById[id];
-    // `isStreaming` is cleared at the first `tool-call-start`, which is before
-    // any of that turn's tool results are persisted. Replaying on that flag
-    // alone hands a replacement run a half-finished assistant turn, tool calls
-    // included, with none of the matching `tool` messages behind it. A message is
-    // safe to replay only once it has stopped streaming *and* every tool call it
-    // declared has come back done.
-    const hasUnfinishedToolCall =
-      streaming?.toolCalls?.some((toolCall) => !toolCall.done) ?? false;
-    if (streaming?.isStreaming || hasUnfinishedToolCall) {
-      continue;
-    }
-    const msg = state.chatMessageById[id];
-    if (!msg) continue;
-
-    const metadata = msg.metadata;
-
-    // Tool results are persisted with role "system" plus metadata.type
-    // (see the tool-call-result persist branch above). Rehydrate them
-    // here as LlmMessage `tool` messages by matching the saved id.
-    if (
-      metadata?.type === "tool-result" &&
-      typeof metadata.toolCallId === "string"
-    ) {
-      messages.push({
-        role: "tool",
-        toolCallId: metadata.toolCallId,
-        content: msg.content,
-      });
-    } else if (msg.role === "assistant") {
-      const persistedToolCalls = metadata?.toolCalls;
-      const toolCalls =
-        Array.isArray(persistedToolCalls) &&
-        persistedToolCalls.every(isValidPersistedToolCall)
-          ? persistedToolCalls
-          : undefined;
-      messages.push({
-        role: "assistant",
-        content: msg.content || undefined,
-        ...(toolCalls && { toolCalls }),
-      });
-    } else if (msg.role === "user") {
-      messages.push({ role: "user", content: msg.content });
-    }
-  }
+  const messages = messageIds.flatMap((id) => {
+    const message = toReplayableLlmMessage(state, id);
+    return message ? [message] : [];
+  });
 
   return trimConversationBlocks(groupConversationMessages(messages));
+}
+
+/**
+ * `isStreaming` is cleared at the first `tool-call-start`, which is before any
+ * of that turn's tool results are persisted. Replaying on that flag alone hands
+ * a replacement run a half-finished assistant turn, tool calls included, with
+ * none of the matching `tool` messages behind it. A message is safe to replay
+ * only once it has stopped streaming *and* every tool call it declared has come
+ * back done.
+ */
+function isReplayableMessage(
+  streaming: StreamingMessageState | undefined,
+): boolean {
+  const hasUnfinishedToolCall =
+    streaming?.toolCalls?.some((toolCall) => !toolCall.done) ?? false;
+  return !streaming?.isStreaming && !hasUnfinishedToolCall;
+}
+
+function toReplayableLlmMessage(
+  state: ReturnType<typeof getAppState>,
+  id: string,
+): LlmMessage | null {
+  if (!isReplayableMessage(state.streamingMessageById[id])) return null;
+  const message = state.chatMessageById[id];
+  return message ? toLlmMessage(message) : null;
+}
+
+function toLlmMessage(message: ChatMessage): LlmMessage | null {
+  const toolResult = asToolResult(message.metadata);
+  if (toolResult) {
+    return {
+      role: "tool",
+      toolCallId: toolResult.toolCallId,
+      content: message.content,
+    };
+  }
+
+  if (message.role === "assistant") {
+    const toolCalls = persistedToolCalls(message.metadata);
+    return {
+      role: "assistant",
+      content: message.content || undefined,
+      ...(toolCalls && { toolCalls }),
+    };
+  }
+
+  if (message.role === "user") {
+    return { role: "user", content: message.content };
+  }
+
+  return null;
+}
+
+/**
+ * Tool results are persisted with role "system" plus metadata.type (see the
+ * tool-call-result persist branch above), so the saved id is what makes them
+ * replayable as LlmMessage `tool` messages.
+ */
+function asToolResult(
+  metadata: ChatMessage["metadata"],
+): { toolCallId: string } | null {
+  if (metadata?.type !== "tool-result") return null;
+  const { toolCallId } = metadata;
+  return typeof toolCallId === "string" ? { toolCallId } : null;
+}
+
+function persistedToolCalls(
+  metadata: ChatMessage["metadata"],
+): LlmToolCall[] | undefined {
+  const calls = metadata?.toolCalls;
+  return Array.isArray(calls) && calls.every(isValidPersistedToolCall)
+    ? calls
+    : undefined;
 }

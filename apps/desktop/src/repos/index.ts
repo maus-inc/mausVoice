@@ -23,17 +23,16 @@ import {
 import { isGeminiTranscribeModel } from "@maus-inc/voice-ai";
 import {
   ApiGenerativePrefs,
-  ApiTranscriptionPrefs,
   GenerativePrefs,
   getAgentModePrefs,
   getGenerativePrefs,
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../utils/user.utils";
+import type { ApiTranscriptionPrefs } from "../types/transcription-prefs.types";
 import { BaseApiKeyRepo, LocalApiKeyRepo } from "./api-key.repo";
 import { BaseAppTargetRepo, LocalAppTargetRepo } from "./app-target.repo";
 import { BaseAuthRepo, PersonalAuthRepo } from "./auth.repo";
-import { BaseChatMessageRepo, LocalChatMessageRepo } from "./chat-message.repo";
 import {
   BaseConversationRepo,
   LocalConversationRepo,
@@ -42,7 +41,6 @@ import {
   BaseDailyActivityRepo,
   LocalDailyActivityRepo,
 } from "./daily-activity.repo";
-export type { DailyWordActivity } from "./daily-activity.repo";
 import {
   AzureOpenAIGenerateTextRepo,
   BaseGenerateTextRepo,
@@ -183,9 +181,7 @@ export const getConversationRepo = (): BaseConversationRepo => {
   return new LocalConversationRepo();
 };
 
-export const getChatMessageRepo = (): BaseChatMessageRepo => {
-  return new LocalChatMessageRepo();
-};
+export { getChatMessageRepo } from "./chat-message.repo";
 
 export const getToolRepo = (): ToolRepo => {
   return new ToolRepo();

@@ -60,7 +60,7 @@ type TranscriptionOptionsPayload = {
   deviceId?: string;
 };
 
-export type TranscribeAudioMetadata = {
+type TranscribeAudioMetadata = {
   inferenceDevice?: Nullable<string>;
   modelSize?: Nullable<string>;
   transcriptionMode?: Nullable<TranscriptionMode>;
@@ -760,79 +760,105 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
     this.customVocabulary = customVocabulary;
   }
 
+  private async transcribeWithModel(
+    input: TranscribeSegmentInput,
+    model: GeminiTranscriptionModel,
+    wavBuffer: ArrayBuffer,
+  ): Promise<string> {
+    const { text } = await geminiTranscribeAudio({
+      apiKey: this.geminiApiKey,
+      model,
+      blob: wavBuffer,
+      mimeType: "audio/wav",
+      prompt: input.prompt ?? undefined,
+      language: input.language,
+      // Pass explicit array (even empty) to prevent prompt fallback that
+      // would treat localized instructions as vocabulary terms.
+      customVocabulary: this.customVocabulary,
+      transcriptionMode: "verbatim",
+      customFetch: withAbortSignal(secureFetch, input.signal),
+      // Every sibling provider that takes a signal passes it -- Aldea (:485),
+      // Azure (:728), Speaches (:870), OpenRouter (:963). It is separate from
+      // `customFetch` and not redundant with it: the wrapper binds the abort to the
+      // HTTP requests, while this reaches the poll loop's `delay(...)` between
+      // attempts. Without it a cancel left the loop running to its own
+      // FILE_POLL_DEADLINE_MS -- measured at 31,150ms and 19 polls after an abort at
+      // 300ms, against 302ms and 2 polls with it.
+      signal: input.signal,
+    });
+    return text;
+  }
+
+  // `GEMINI_TRANSCRIPTION_MODELS` holds exactly one dedicated `-transcribe` id,
+  // so this find always lands on a general model -- and
+  // `transcribeWithGeneralModel` accepts neither `customVocabulary` nor
+  // `transcriptionMode`. The dictionary the user configured was therefore
+  // dropped for the rest of the recording, with no entry in `warnings` and so
+  // nothing on the history row. There is no second transcribe model to fall
+  // back to, so the fallback stays and reports itself.
+  private fallbackModelMessage(
+    effectiveModel: GeminiTranscriptionModel,
+    fallbackModel: GeminiTranscriptionModel,
+  ): string {
+    return `${effectiveModel} was unavailable, so this dictation used ${fallbackModel} instead. That model does not accept dictionary terms, so the custom vocabulary was not applied.`;
+  }
+
+  private isModelAccessFailure(error: unknown): boolean {
+    const status =
+      error instanceof Error && "status" in error
+        ? (error as { status?: number }).status
+        : undefined;
+    return status === 403 || status === 404;
+  }
+
+  private async transcribeWithFallback(
+    input: TranscribeSegmentInput,
+    wavBuffer: ArrayBuffer,
+    warnings: string[],
+  ): Promise<{ transcript: string; usedModel: GeminiTranscriptionModel }> {
+    // Cache resolved model after first fallback to avoid 403 per segment.
+    const effectiveModel = this.resolvedModel ?? this.model;
+    try {
+      const transcript = await this.transcribeWithModel(
+        input,
+        effectiveModel,
+        wavBuffer,
+      );
+      if (!this.resolvedModel) this.resolvedModel = effectiveModel;
+      return { transcript, usedModel: effectiveModel };
+    } catch (error) {
+      const canFallBack =
+        isGeminiTranscribeModel(effectiveModel) &&
+        this.isModelAccessFailure(error);
+      const fallbackModel = canFallBack
+        ? (GEMINI_TRANSCRIPTION_MODELS.find(
+            (m) => !isGeminiTranscribeModel(m),
+          ) as GeminiTranscriptionModel | undefined)
+        : undefined;
+      if (!fallbackModel) throw error;
+      const transcript = await this.transcribeWithModel(
+        input,
+        fallbackModel,
+        wavBuffer,
+      );
+      this.resolvedModel = fallbackModel;
+      warnings.push(this.fallbackModelMessage(effectiveModel, fallbackModel));
+      return { transcript, usedModel: fallbackModel };
+    }
+  }
+
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
-
-    const tryTranscribe = async (model: GeminiTranscriptionModel) => {
-      const { text } = await geminiTranscribeAudio({
-        apiKey: this.geminiApiKey,
-        model,
-        blob: wavBuffer,
-        mimeType: "audio/wav",
-        prompt: input.prompt ?? undefined,
-        language: input.language,
-        // Pass explicit array (even empty) to prevent prompt fallback that
-        // would treat localized instructions as vocabulary terms.
-        customVocabulary: this.customVocabulary,
-        transcriptionMode: "verbatim",
-        customFetch: withAbortSignal(secureFetch, input.signal),
-        // Every sibling provider that takes a signal passes it -- Aldea (:485),
-        // Azure (:728), Speaches (:870), OpenRouter (:963). It is separate from
-        // `customFetch` and not redundant with it: the wrapper binds the abort to the
-        // HTTP requests, while this reaches the poll loop's `delay(...)` between
-        // attempts. Without it a cancel left the loop running to its own
-        // FILE_POLL_DEADLINE_MS -- measured at 31,150ms and 19 polls after an abort at
-        // 300ms, against 302ms and 2 polls with it.
-        signal: input.signal,
-      });
-      return text;
-    };
-
-    // Cache resolved model after first fallback to avoid 403 per segment.
-    const effectiveModel = this.resolvedModel ?? this.model;
-    let transcript: string;
-    let usedModel = effectiveModel;
     // Only ever non-empty when the fallback below changed the model, so the
     // common path returns exactly the shape it returned before.
     const warnings: string[] = [];
-    try {
-      transcript = await tryTranscribe(effectiveModel);
-      if (!this.resolvedModel) this.resolvedModel = effectiveModel;
-    } catch (error) {
-      const isTranscribeModel = isGeminiTranscribeModel(effectiveModel);
-      const status =
-        error instanceof Error && "status" in error
-          ? (error as { status?: number }).status
-          : undefined;
-      const isModelAccessError = status === 403 || status === 404;
-      if (isTranscribeModel && isModelAccessError) {
-        const fallbackModel = GEMINI_TRANSCRIPTION_MODELS.find(
-          (m) => !isGeminiTranscribeModel(m),
-        ) as GeminiTranscriptionModel | undefined;
-        if (fallbackModel) {
-          transcript = await tryTranscribe(fallbackModel);
-          usedModel = fallbackModel;
-          this.resolvedModel = fallbackModel;
-          // `GEMINI_TRANSCRIPTION_MODELS` holds exactly one dedicated
-          // `-transcribe` id, so this find always lands on a general model --
-          // and `transcribeWithGeneralModel` accepts neither `customVocabulary`
-          // nor `transcriptionMode`. The dictionary the user configured was
-          // therefore dropped for the rest of the recording, with no entry in
-          // `warnings` and so nothing on the history row. There is no second
-          // transcribe model to fall back to, so the fallback stays and reports
-          // itself.
-          warnings.push(
-            `${effectiveModel} was unavailable, so this dictation used ${fallbackModel} instead. That model does not accept dictionary terms, so the custom vocabulary was not applied.`,
-          );
-        } else {
-          throw error;
-        }
-      } else {
-        throw error;
-      }
-    }
+    const { transcript, usedModel } = await this.transcribeWithFallback(
+      input,
+      wavBuffer,
+      warnings,
+    );
 
     return {
       text: transcript,

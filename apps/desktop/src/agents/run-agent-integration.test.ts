@@ -83,6 +83,10 @@ vi.mock("../repos", () => ({
   getChatMessageRepo: () => getChatMessageRepoMock(),
 }));
 
+vi.mock("../repos/chat-message.repo", () => ({
+  getChatMessageRepo: () => getChatMessageRepoMock(),
+}));
+
 vi.mock("../actions/tool.actions", () => ({
   executeTool: vi.fn(),
   getToolPermissionStatus: getToolPermissionStatusMock,

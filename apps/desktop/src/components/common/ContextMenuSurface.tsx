@@ -51,6 +51,68 @@ const iconColor = (item: ContextMenuItem): string => {
   return "text.secondary";
 };
 
+const MENU_NAVIGATION_KEYS = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "Enter",
+  " ",
+  "Home",
+  "End",
+]);
+
+type MenuKeyNavigation =
+  | { kind: "index"; index: number }
+  | { kind: "activate"; item: ContextMenuActionItem }
+  | null;
+
+const resolveMenuKeyNavigation = (
+  key: string,
+  activeIndex: number,
+  actionableIndices: number[],
+  items: ContextMenuItem[],
+): MenuKeyNavigation => {
+  const position = actionableIndices.indexOf(activeIndex);
+  switch (key) {
+    case "ArrowDown":
+      return {
+        kind: "index",
+        index: actionableIndices[(position + 1) % actionableIndices.length],
+      };
+    case "ArrowUp":
+      return {
+        kind: "index",
+        index:
+          actionableIndices[
+            position < 0
+              ? actionableIndices.length - 1
+              : (position - 1 + actionableIndices.length) %
+                actionableIndices.length
+          ],
+      };
+    case "Enter":
+    case " ": {
+      const item = items[activeIndex];
+      if (
+        activeIndex < 0 ||
+        !item ||
+        item.kind === "divider" ||
+        item.disabled
+      ) {
+        return null;
+      }
+      return { kind: "activate", item };
+    }
+    case "Home":
+      return { kind: "index", index: actionableIndices[0] };
+    case "End":
+      return { kind: "index", index: actionableIndices.at(-1) ?? 0 };
+    default:
+      // Any other key (Tab, printable characters, Escape, which is handled on
+      // document in the capture phase) is not the menu's to act on.
+      return null;
+  }
+};
+
 export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
   const [activeIndex, setActiveIndex] = useState<number>(-1);
   const [keyboardNavigation, setKeyboardNavigation] = useState(false);
@@ -97,55 +159,21 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
         revealKeyboardItem.current = true;
         setKeyboardNavigation(true);
       }
-      switch (e.key) {
-        case "ArrowDown": {
-          e.preventDefault();
-          const currentPos = actionableIndices.indexOf(activeIndex);
-          const nextPos = (currentPos + 1) % actionableIndices.length;
-          setActiveIndex(actionableIndices[nextPos]);
-          break;
-        }
-        case "ArrowUp": {
-          e.preventDefault();
-          const currentPos = actionableIndices.indexOf(activeIndex);
-          const prevPos =
-            currentPos < 0
-              ? actionableIndices.length - 1
-              : (currentPos - 1 + actionableIndices.length) %
-                actionableIndices.length;
-          setActiveIndex(actionableIndices[prevPos]);
-          break;
-        }
-        case "Enter":
-        case " ": {
-          e.preventDefault();
-          if (activeIndex >= 0) {
-            const item = items[activeIndex];
-            if (item.kind !== "divider" && !item.disabled) {
-              item.onClick();
-            }
-          }
-          break;
-        }
-        case "Home": {
-          e.preventDefault();
-          if (actionableIndices.length > 0) {
-            setActiveIndex(actionableIndices[0]);
-          }
-          break;
-        }
-        case "End": {
-          e.preventDefault();
-          if (actionableIndices.length > 0) {
-            setActiveIndex(actionableIndices.at(-1) ?? 0);
-          }
-          break;
-        }
-        default:
-          // Any other key (Tab, printable characters, Escape — handled on
-          // document in capture phase) is not the menu's to act on.
-          break;
+      if (MENU_NAVIGATION_KEYS.has(e.key)) {
+        e.preventDefault();
       }
+      const navigation = resolveMenuKeyNavigation(
+        e.key,
+        activeIndex,
+        actionableIndices,
+        items,
+      );
+      if (!navigation) return;
+      if (navigation.kind === "index") {
+        setActiveIndex(navigation.index);
+        return;
+      }
+      navigation.item.onClick();
     },
     [items, activeIndex],
   );

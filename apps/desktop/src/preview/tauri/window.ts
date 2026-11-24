@@ -113,10 +113,7 @@ class PreviewWindow {
     // inside a browser viewport or iframe. `window.outerWidth` is the host
     // browser's outer chrome width, which stays at the full screen width even
     // when the preview viewport is narrowed.
-    return Promise.resolve().then(() => ({
-      width: window.innerWidth,
-      height: window.innerHeight,
-    }));
+    return this.innerSize();
   }
   onResized(handler: EventCallback<LogicalSize>): Promise<UnlistenFn> {
     const scale = this.scale;

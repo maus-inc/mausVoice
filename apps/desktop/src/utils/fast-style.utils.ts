@@ -57,6 +57,19 @@ const assertWithinChunkSize = (text: string): string => {
 };
 
 /**
+ * The prologue every transform runs before it shapes the text: size guard,
+ * symbol replacements, self-correction repair and filler removal. The order is
+ * the contract, because each step can feed the next.
+ */
+const cleanDictation = (raw: string, startsSentence: boolean): string => {
+  let text = assertWithinChunkSize(raw).trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true, startsSentence);
+  return text;
+};
+
+/**
  * Sentence terminators: ASCII plus the CJK full stop and the full-width forms.
  * Fast styling is advertised as international-safe, and Japanese or Chinese
  * dictation carries no ASCII punctuation, so a cut that only recognised `.!?`
@@ -760,6 +773,21 @@ const fixSelfCorrections = (text: string): string => {
   return out.replace(/\s{2,}/g, " ").trim();
 };
 
+/**
+ * The last word that ends before `offset`, requiring whitespace between it and
+ * the offset. Replaces `/(\S+)\s+$/`, whose greedy capture backtracks
+ * super-linearly on a long run of spaces.
+ */
+const wordBeforeOffset = (whole: string, offset: number): string => {
+  const head = whole.slice(0, offset);
+  let end = head.length;
+  while (end > 0 && /\s/.test(head.charAt(end - 1))) end -= 1;
+  if (end === head.length) return "";
+  let start = end;
+  while (start > 0 && !/\s/.test(head.charAt(start - 1))) start -= 1;
+  return head.slice(start, end);
+};
+
 const joinSpokenDomains = (text: string): string =>
   text.replace(
     SPOKEN_DOMAIN_RE,
@@ -771,8 +799,9 @@ const joinSpokenDomains = (text: string): string =>
       whole: string,
     ): string => {
       if (SPOKEN_ADDRESS_STOPWORDS.has(host.toLowerCase())) return match;
-      const before = /(\S+)\s+$/.exec(whole.slice(0, offset));
-      const frame = before?.[1].toLowerCase().replace(/[^a-z]/g, "") ?? "";
+      const frame = wordBeforeOffset(whole, offset)
+        .toLowerCase()
+        .replace(/[^a-z]/g, "");
       return SPOKEN_DOMAIN_FRAMES.has(frame) ? `${host}.${tld}` : match;
     },
   );
@@ -822,12 +851,8 @@ const toPolished = (
   isFinal = true,
   startsSentence = true,
 ): string => {
-  const guarded = assertWithinChunkSize(raw);
-  let text = guarded.trim();
+  let text = cleanDictation(raw, startsSentence);
   if (!text) return text;
-  text = applySymbolReplacements(text);
-  text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true, startsSentence);
   text = fixCapitalizationAndPunctuation(text, isFinal);
   text = breakIntoParagraphs(text, 3);
   text = text.replaceAll("—", "-");
@@ -948,11 +973,7 @@ const CHAT_CONNECTIVE_RE =
   /\b(?:furthermore|moreover|additionally|consequently)\b[,\s]+(\S)/gi;
 
 const toChat = (raw: string, isFinal = true, startsSentence = true): string => {
-  const guarded = assertWithinChunkSize(raw);
-  let text = guarded.trim();
-  text = applySymbolReplacements(text);
-  text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true, startsSentence);
+  let text = cleanDictation(raw, startsSentence);
   const sentences = splitIntoSentences(text);
   const cleaned = sentences
     .map((s) => deleteLeadingPhrase(s, CHAT_CONNECTIVE_RE))
@@ -1037,11 +1058,7 @@ const toPrompt = (
   isFinal = true,
   startsSentence = true,
 ): string => {
-  const guarded = assertWithinChunkSize(raw);
-  let text = guarded.trim();
-  text = applySymbolReplacements(text);
-  text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true, startsSentence);
+  let text = cleanDictation(raw, startsSentence);
   // Both are anchored to `^` and both DELETE, and `PROMPT_REQUEST_RE` is the one that
   // takes request words: `Can you send that file over again` at a whitespace seam came
   // back as `Send it again`. Gated for the same reason as `SO_WELL_LEADING_RE` above.
@@ -1052,7 +1069,7 @@ const toPrompt = (
   // Every sentence is kept. Condensing the request must not drop a constraint
   // the speaker stated after the opening, such as a deadline or a format
   // requirement, so this strips the politeness framing and nothing else.
-  const out = text.trim() || guarded.trim();
+  const out = text.trim() || raw.trim();
   if (!out) return out;
   const cased = capitalizeFirst(out);
   // This appends directly rather than going through `ensureSentencePunctuation`, so
@@ -1084,11 +1101,7 @@ export const stripEdgePunctuation = (text: string): string => {
 };
 
 const toBullets = (raw: string, startsSentence = true): string => {
-  const guarded = assertWithinChunkSize(raw);
-  let text = guarded.trim();
-  text = applySymbolReplacements(text);
-  text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true, startsSentence);
+  let text = cleanDictation(raw, startsSentence);
 
   const sentences = splitIntoSentences(text);
   if (sentences.length === 0) return text;
@@ -1125,11 +1138,7 @@ const toConcise = (
   isFinal = true,
   startsSentence = true,
 ): string => {
-  const guarded = assertWithinChunkSize(raw);
-  let text = guarded.trim();
-  text = applySymbolReplacements(text);
-  text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true, startsSentence);
+  let text = cleanDictation(raw, startsSentence);
   text = deleteLeadingPhrase(text, HEDGING_RE);
   for (const [re, repl] of REDUNDANT_PHRASES) {
     text = text.replace(re, repl);
@@ -1153,11 +1162,7 @@ type NoteBuckets = { notes: string[]; actions: string[] };
  * `applyFastStyle`.
  */
 const classifyForNotes = (raw: string, startsSentence = true): NoteBuckets => {
-  const guarded = assertWithinChunkSize(raw);
-  let text = guarded.trim();
-  text = applySymbolReplacements(text);
-  text = fixSelfCorrections(text);
-  text = removeFillerWords(text, true, startsSentence);
+  let text = cleanDictation(raw, startsSentence);
   const notes: string[] = [];
   const actions: string[] = [];
   for (const sentence of splitIntoSentences(text)) {
@@ -1385,7 +1390,7 @@ const applyDictionaryCasing = (
     .sort((a, b) => b.length - a.length);
   let out = text;
   for (const term of candidates) {
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
     // Lookarounds rather than `\b`: the ASCII word boundary never matched a
     // term that starts or ends in a non-ASCII letter ("Beyoncé"), so those
     // terms were silently skipped.

@@ -71,7 +71,7 @@ export const parseRetryAfterMs = (
   // became a delay to obey. Anything outside the grammar is handed to the
   // HTTP-date branch below instead, which returns null for a header that is
   // neither form and so leaves the caller on its own backoff. The digit run is
-  // tested first deliberately — it is also how a four-digit value like "3600"
+  // tested first deliberately: it is also how a four-digit value like "3600"
   // stays a capped half-minute rather than becoming the year 3600.
   const seconds = DELTA_SECONDS.test(value) ? Number(value) : Number.NaN;
   if (Number.isFinite(seconds)) {
@@ -167,5 +167,34 @@ export const toHttpError = (error: unknown): unknown => {
     error instanceof Error ? error.message : `HTTP request failed: ${status}`;
   return new HttpError(status, message, {
     retryAfter: readRetryAfterHeader(error),
+  });
+};
+
+export type HttpErrorSpec = {
+  /** Text used when the response body cannot be read. */
+  fallback?: string;
+  /**
+   * Body text the caller already read. A `Response` body is a single-use
+   * stream, so a caller that inspects the body to decide something passes it
+   * here rather than letting this helper read it a second time.
+   */
+  body?: string;
+  /** Build the message from the body text. */
+  message: (body: string) => string;
+};
+
+/**
+ * Throw the `HttpError` a non-2xx response represents. Reads the body once and
+ * carries the `Retry-After` hint, so a retry policy reads the status and the
+ * hint as data instead of parsing the message.
+ */
+export const throwHttpError = async (
+  response: Response,
+  { body, fallback, message }: HttpErrorSpec,
+): Promise<never> => {
+  const text =
+    body ?? (await response.text().catch(() => fallback ?? "Unknown error"));
+  throw new HttpError(response.status, message(text), {
+    retryAfter: response.headers.get("retry-after"),
   });
 };

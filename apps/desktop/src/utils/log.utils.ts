@@ -82,11 +82,14 @@ const serializeForLog = (value: unknown): string => {
 const stringify = (args: unknown[]): string =>
   args
     .map((arg) => {
-      if (typeof arg === "string") return arg;
+      // A string reaches the sink verbatim, and the dominant call shape in this
+      // repo interpolates provider or request text into a template string. The
+      // same secret that is `[redacted-secret]` inside an object was logged in
+      // full through that path, so scrub the text in place.
+      if (typeof arg === "string") return redactStringValue(arg);
       // An Error reaches the sink as its own stack, so it skips `serializeForLog`
-      // and therefore skipped the masker entirely: the same secret that is
-      // `[redacted-secret]` inside an object was logged verbatim whenever a caller
-      // passed the failure itself. Scrub the text in place so the stack survives.
+      // and therefore skipped the masker entirely. Scrub the text in place so
+      // the stack survives.
       if (arg instanceof Error)
         return redactStringValue(arg.stack ?? arg.message);
       try {
