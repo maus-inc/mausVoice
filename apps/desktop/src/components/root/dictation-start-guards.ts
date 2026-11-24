@@ -9,10 +9,6 @@ import {
   isLocalDataClearRequested,
 } from "../../utils/local-data-write-gate";
 
-/** A wipe that landed before the microphone opened cancels the start. */
-export const canBeginRecordingStart = (): boolean =>
-  !isLocalDataClearRequested();
-
 export const resolveDictationLanguage = (
   requested: string | null | undefined,
   state: AppState,
