@@ -38,11 +38,6 @@ const WAYLAND_DRAG_BOUNDS: rust_pill_shared::drag::DragBounds =
         max_y: 1e9,
     };
 
-// Phase message sequence guard: see ipc::InMessage::Phase.
-thread_local! {
-    static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
 /// Apply every message waiting on the channel before the frame steps.
 ///
 /// Draining here, rather than from a separate glib source, keeps message order and
@@ -63,7 +58,11 @@ fn drain_messages(
     let rx = receiver.borrow();
     while let Ok(msg) = rx.try_recv() {
         match msg {
-            InMessage::Phase { phase, seq } => on_phase(phase, seq, state_tick),
+            InMessage::Phase { phase, seq } => {
+                state_tick
+                    .indicator
+                    .apply_phase(phase, seq, reduced_motion, || clear_flash(state_tick));
+            }
             InMessage::Levels { levels } => on_levels(levels, state_tick),
             InMessage::StyleInfo { count, name } => on_style_info(count, name, state_tick),
             InMessage::Toast { .. } => on_toast(msg, state_tick),
@@ -89,53 +88,6 @@ fn drain_messages(
             InMessage::PillPlacement { .. } => {}
             InMessage::Quit => on_quit(quit),
         }
-    }
-}
-
-/// Applies `InMessage::Phase`.
-fn on_phase(phase: Phase, seq: u64, state_tick: &Rc<PillState>) {
-    let stale = LAST_PHASE_SEQ.with(|last| {
-        let stale = seq < last.get();
-        if !stale {
-            last.set(seq);
-        }
-        stale
-    });
-    if stale {
-        // A stale phase is skipped, exactly as `continue` did when this was a
-        // match arm inside the drain loop.
-        return;
-    }
-    let prev = state_tick.phase.get();
-    state_tick.phase.set(phase);
-    state_tick
-        .style_tooltip_gate
-        .set_take_running(phase == Phase::Recording);
-    // A new take sweeps any banner parked above the pill (for
-    // example the retranscribing toast) so it cannot sit on the
-    // style selector for the whole take. A resume from Paused
-    // keeps toasts raised during the take, such as the cancel
-    // confirm.
-    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-        clear_flash(state_tick);
-    }
-    if rust_pill_shared::should_clear_stage_text_on_phase(
-        prev == Phase::Loading,
-        phase == Phase::Idle,
-        phase == Phase::Loading,
-    ) {
-        *state_tick.stage_text.borrow_mut() = None;
-    }
-    if phase == Phase::Loading && prev != Phase::Loading {
-        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-        state_tick.loading_offset.set(offset);
-    }
-    if phase == Phase::Idle && prev != Phase::Idle {
-        state_tick.pending_levels.borrow_mut().clear();
-        state_tick.target_level.set(0.0);
-        state_tick.current_level.set(0.0);
-        state_tick.wave_phase.set(0.0);
-        state_tick.loading_offset.set(0.0);
     }
 }
 
@@ -2460,7 +2412,7 @@ fn tick(state: &PillState, dt: f64) {
         dt,
     );
 
-    tick_ring(state, dt);
+    tick_hold_and_ring(state, dt);
 
     // Auto-scroll to bottom when new content arrives
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
@@ -2549,10 +2501,11 @@ fn tick_long_press(state: &PillState, dt: f64) {
     }
 }
 
-/// Advances the long-press ring for one frame. The policy lives in
-/// `rust_pill_shared` so the three platform renderers cannot drift apart.
-fn tick_ring(state: &PillState, dt: f64) {
-    rust_pill_shared::RingHost::tick_ring(state, dt);
+/// Advances the drag affordances, the long-press ring and the hold tail for
+/// one frame. The policy lives in `rust_pill_shared` so the three platform
+/// renderers cannot drift apart.
+fn tick_hold_and_ring(state: &PillState, dt: f64) {
+    rust_pill_shared::RingHost::tick_hold_and_ring(state, dt);
 }
 
 /// The celebration, drawn from just above the pill.

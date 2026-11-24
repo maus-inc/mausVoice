@@ -864,7 +864,11 @@ fn perform_tick() {
 /// this match stays one arm per message and each decision is read on its own.
 fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
     match msg {
-        InMessage::Phase { .. } => on_phase(ctx, msg),
+        InMessage::Phase { phase, seq } => {
+            ctx.state
+                .indicator
+                .apply_phase(phase, seq, reduced_motion, || clear_flash(&ctx.state));
+        }
         InMessage::Levels { levels } => {
             *ctx.state.pending_levels.borrow_mut() = levels;
         }
@@ -966,58 +970,6 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
         InMessage::Quit => {
             ctx.quit.set(true);
         }
-    }
-}
-
-/// Advances the phase, dropping a message an older sequence already replaced.
-fn on_phase(ctx: &AppContext, msg: InMessage) {
-    let InMessage::Phase { phase, seq } = msg else {
-        return;
-    };
-    // Phase message sequence guard: see ipc::InMessage::Phase.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
-    let stale = LAST_PHASE_SEQ.with(|last| {
-        let stale = seq < last.get();
-        if !stale {
-            last.set(seq);
-        }
-        stale
-    });
-    if stale {
-        return;
-    }
-    let prev = ctx.state.phase.get();
-    ctx.state.phase.set(phase);
-    ctx.state
-        .style_tooltip_gate
-        .set_take_running(phase == Phase::Recording);
-    // A new take sweeps any banner parked above the pill (for
-    // example the retranscribing toast) so it cannot sit on the
-    // style selector for the whole take. A resume from Paused
-    // keeps toasts raised during the take, such as the cancel
-    // confirm.
-    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-        clear_flash(&ctx.state);
-    }
-    if rust_pill_shared::should_clear_stage_text_on_phase(
-        prev == Phase::Loading,
-        phase == Phase::Idle,
-        phase == Phase::Loading,
-    ) {
-        *ctx.state.stage_text.borrow_mut() = None;
-    }
-    if phase == Phase::Loading && prev != Phase::Loading {
-        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-        ctx.state.loading_offset.set(offset);
-    }
-    if phase == Phase::Idle && prev != Phase::Idle {
-        ctx.state.pending_levels.borrow_mut().clear();
-        ctx.state.target_level.set(0.0);
-        ctx.state.current_level.set(0.0);
-        ctx.state.wave_phase.set(0.0);
-        ctx.state.loading_offset.set(0.0);
     }
 }
 
@@ -1936,7 +1888,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
         dt,
     );
 
-    tick_ring(state, dt);
+    tick_hold_and_ring(state, dt);
 
     // Auto-scroll to bottom
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
@@ -2097,10 +2049,11 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
     }
 }
 
-/// Advances the long-press ring for one frame. The policy lives in
-/// `rust_pill_shared` so the three platform renderers cannot drift apart.
-fn tick_ring(state: &PillState, dt: f64) {
-    rust_pill_shared::RingHost::tick_ring(state, dt);
+/// Advances the drag affordances, the long-press ring and the hold tail for
+/// one frame. The policy lives in `rust_pill_shared` so the three platform
+/// renderers cannot drift apart.
+fn tick_hold_and_ring(state: &PillState, dt: f64) {
+    rust_pill_shared::RingHost::tick_hold_and_ring(state, dt);
 }
 
 // ── Window positioning ────────────────────────────────────────────

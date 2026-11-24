@@ -72,7 +72,9 @@ function routesPhase(raw, owner, bannerOwner) {
   const code = raw.replace(/\s+/gu, "");
   const arms = code.split("InMessage::Phase{phase,seq}=>");
   if (arms.length !== 2) return false;
-  const body = arms[1].split("InMessage::Levels")[0].replace(/,$/u, "");
+  // Bound on the next arm rather than on `Levels`, because arm order differs
+  // per platform and the body is what this guard is about.
+  const body = arms[1].split(/InMessage::/u)[0].replace(/,$/u, "");
   const call = `${owner}.indicator.apply_phase(phase,seq,reduced_motion,||clear_flash(${bannerOwner}))`;
   return [call, `{${call}}`, `{${call};}`].includes(body);
 }
@@ -266,6 +268,7 @@ const PATHS = [
   ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
   ["windowsState", "packages/rust_windows_pill/src/state.rs"],
   ["sharedPill", "packages/rust_pill_shared/src/lib.rs"],
+  ["sharedIndicator", "packages/rust_pill_shared/src/indicator.rs"],
   ["sharedMessages", "packages/rust_pill_shared/src/messages.rs"],
   ["sharedHover", "packages/rust_pill_shared/src/hover.rs"],
   ["sharedDrag", "packages/rust_pill_shared/src/drag.rs"],
@@ -1824,10 +1827,14 @@ describe("PR28 ring-alpha render-loop policy", () => {
       // `elapsed >= LONG_PRESS_DURATION`, so the slice is exactly the transition
       // into drag. Nothing earlier in the file can satisfy the search.
       const from = pill.indexOf("elapsed >= LONG_PRESS_DURATION");
-      const to = pill.indexOf(
-        "arm_pulse.set(rust_pill_shared::pulse_armed())",
-        from,
-      );
+      // The arm confirmation moved behind `RingState::arm`, which sets the
+      // same pulse the inline call used to, so the slice ends at either.
+      const armCall = /\.ring\.arm\(\)/gu;
+      armCall.lastIndex = Math.max(0, from);
+      const armed = armCall.exec(pill);
+      const to = armed
+        ? armed.index
+        : pill.indexOf("arm_pulse.set(rust_pill_shared::pulse_armed())", from);
       assert.ok(
         from >= 0 && to > from,
         `${name}: the arm branch is not recognisable`,
@@ -3346,20 +3353,18 @@ describe("native gesture adapter contracts", () => {
     // Every pill understands the message, or one platform re-leaks the position.
     // The clear hands its declaration id to the pill so the pill's answer retires
     // exactly this declaration, not a later clear's.
-    const ipcFor = (name) =>
-      ({ gtkPill: "gtkIpc", windowsPill: "windowsIpc", macApp: "macIpc" })[
-        name
-      ];
+    // Every platform re-exports the shared message types, so the variant is
+    // asserted once against the module that defines it.
+    assert.match(
+      source.sharedMessages,
+      /ForgetPosition \{\s*#\[serde\(default\)\]\s*ack: Option<u64>,\s*\}/,
+      "sharedMessages: the variant is what serde turns into forget_position",
+    );
     for (const name of ["gtkPill", "windowsPill", "macApp"]) {
       assert.match(
         source[name],
         /InMessage::ForgetPosition \{ ack \}/,
         `${name}: no handler, so this backend writes the cleared row back`,
-      );
-      assert.match(
-        source[ipcFor(name)],
-        /ForgetPosition \{\s*#\[serde\(default\)\]\s*ack: Option<u64>,\s*\}/,
-        `${ipcFor(name)}: the variant is what serde turns into forget_position`,
       );
     }
     // Every path that declares and delivers a clear takes the delivery lock, so
@@ -4869,31 +4874,6 @@ describe("native pill loading animation behind stage text", () => {
         routesPhase(text, owner, bannerOwner),
         `${label}: phase IPC must update this window's indicator and banner`,
       );
-      const phaseArm = handlerBody(
-        pathOf.get(
-          label === "macos"
-            ? "macPill"
-            : label === "gtk"
-              ? "gtkPill"
-              : "windowsPill",
-        ),
-        "Phase",
-      );
-      assert.match(
-        phaseArm,
-        /if rust_pill_shared::should_clear_stage_text_on_phase\(\s*prev == Phase::Loading,\s*phase == Phase::Idle,\s*phase == Phase::Loading,\s*\) \{\s*\*[\w.]*stage_text\.borrow_mut\(\) = None;\s*\}/,
-        `${label}: InMessage::Phase must clear stage_text via should_clear_stage_text_on_phase`,
-      );
-      assert.match(
-        phaseArm,
-        /if phase == Phase::Loading && prev != Phase::Loading \{\s*let offset = if reduced_motion\(\) \{ 0\.5 \} else \{ 0\.0 \};\s*[\w.]*loading_offset\.set\(offset\);\s*\}/,
-        `${label}: InMessage::Phase must initialize loading_offset (respecting reduced_motion) when entering Phase::Loading`,
-      );
-      assert.match(
-        phaseArm,
-        /if phase == Phase::Idle && prev != Phase::Idle \{[^}]*loading_offset\.set\(0\.0\);/,
-        `${label}: InMessage::Phase must reset loading_offset when returning to Phase::Idle`,
-      );
       assert.match(
         text,
         /rust_pill_shared::advance_loading_offset\(\s*state\.loading_offset\.get\(\),\s*LOADING_SPEED,\s*dt,\s*reduced_motion\(\),\s*\)/,
@@ -4916,5 +4896,23 @@ describe("native pill loading animation behind stage text", () => {
         `${label}: InMessage::StageText must normalize incoming text via active_stage_text`,
       );
     }
+
+    // The platform arms delegate to `DictationIndicator::apply_phase`, so the
+    // phase resets are asserted once against the module that owns them.
+    assert.match(
+      source.sharedIndicator,
+      /if should_clear_stage_text_on_phase\(\s*prev == P::LOADING,\s*phase == P::IDLE,\s*phase == P::LOADING,\s*\) \{\s*self\.stage_text\.take\(\);\s*\}/,
+      "sharedIndicator: apply_phase must clear stage_text via should_clear_stage_text_on_phase",
+    );
+    assert.match(
+      source.sharedIndicator,
+      /if phase == P::LOADING && prev != P::LOADING \{\s*self\.loading_offset\.set\(if reduced_motion\(\) \{ 0\.5 \} else \{ 0\.0 \}\);\s*\}/,
+      "sharedIndicator: apply_phase must initialize loading_offset (respecting reduced_motion)",
+    );
+    assert.match(
+      source.sharedIndicator,
+      /if phase == P::IDLE && prev != P::IDLE \{[\s\S]*?self\.loading_offset\.set\(0\.0\);/,
+      "sharedIndicator: apply_phase must reset loading_offset when returning to Phase::Idle",
+    );
   });
 });

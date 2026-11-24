@@ -1072,62 +1072,15 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         InMessage::Quit => {
             QUIT.with(|q| q.set(true));
         }
-        InMessage::Phase { .. } => on_phase(state, msg),
+        InMessage::Phase { phase, seq } => {
+            state
+                .indicator
+                .apply_phase(phase, seq, reduced_motion, || clear_flash(state));
+        }
         InMessage::AssistantState { .. } => on_assistant_state(state, msg),
         InMessage::ResetPosition { .. } => on_reset_position(state, msg),
         InMessage::ForgetPosition { .. } => on_forget_position(state, msg),
         InMessage::RequestPosition => on_request_position(state),
-    }
-}
-
-/// Advances the phase, dropping a message an older sequence already replaced.
-fn on_phase(state: &PillState, msg: InMessage) {
-    let InMessage::Phase { phase, seq } = msg else {
-        return;
-    };
-    // Phase message sequence guard: see ipc::InMessage::Phase.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
-    let stale = LAST_PHASE_SEQ.with(|last| {
-        let stale = seq < last.get();
-        if !stale {
-            last.set(seq);
-        }
-        stale
-    });
-    if stale {
-        return;
-    }
-    let prev = state.phase.get();
-    state.phase.set(phase);
-    state
-        .style_tooltip_gate
-        .set_take_running(phase == Phase::Recording);
-    // A new take sweeps any banner parked above the pill (for example
-    // the retranscribing toast) so it cannot sit on the style selector
-    // for the whole take. A resume from Paused keeps toasts raised
-    // during the take, such as the cancel confirm.
-    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-        clear_flash(state);
-    }
-    if rust_pill_shared::should_clear_stage_text_on_phase(
-        prev == Phase::Loading,
-        phase == Phase::Idle,
-        phase == Phase::Loading,
-    ) {
-        *state.stage_text.borrow_mut() = None;
-    }
-    if phase == Phase::Loading && prev != Phase::Loading {
-        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-        state.loading_offset.set(offset);
-    }
-    if phase == Phase::Idle && prev != Phase::Idle {
-        state.pending_levels.borrow_mut().clear();
-        state.target_level.set(0.0);
-        state.current_level.set(0.0);
-        state.wave_phase.set(0.0);
-        state.loading_offset.set(0.0);
     }
 }
 
@@ -1506,7 +1459,7 @@ fn tick(state: &PillState, dt: f64) {
         dt,
     );
 
-    tick_ring(state, dt);
+    tick_hold_and_ring(state, dt);
 
     if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
@@ -2502,9 +2455,9 @@ fn initial_state(
     restored_work_area: Option<rust_pill_shared::edge::MonitorRect>,
     pending_restore: Option<ParkedWindow>,
 ) -> PillState {
-    indicator: crate::state::DictationIndicator::default(),
-    ring: rust_pill_shared::RingState::new(),
     PillState {
+        indicator: crate::state::DictationIndicator::default(),
+        ring: rust_pill_shared::RingState::new(),
         visibility: Cell::new(Visibility::WhileActive),
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
@@ -3520,13 +3473,11 @@ fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
     check_hover(hwnd, state);
 }
 
-/// Advances the long-press ring for one frame.
-///
-/// All the policy lives in `rust_pill_shared::advance_ring` so the three
-/// platform renderers cannot drift apart; this only marshals `Cell` state in
-/// and out of the shared struct, plus the Windows-specific redraw bookkeeping.
-fn tick_ring(state: &PillState, dt: f64) {
-    rust_pill_shared::RingHost::tick_ring(state, dt);
+/// Advances the drag affordances, the long-press ring and the hold tail for
+/// one frame. The policy lives in `rust_pill_shared` so the three platform
+/// renderers cannot drift apart.
+fn tick_hold_and_ring(state: &PillState, dt: f64) {
+    rust_pill_shared::RingHost::tick_hold_and_ring(state, dt);
 }
 
 // ── Native text input overlay ────────────────────────────────────────

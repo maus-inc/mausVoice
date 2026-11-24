@@ -10,6 +10,7 @@ on:
       - "sitemap.xml"
       - "robots.txt"
       - "llms.txt"
+      - "setup-toolchain.sh"
       - "scripts/ci/pr28-contracts.test.mjs"
       - "scripts/ci/pr37-contracts.test.mjs"
       - "scripts/ci/release-shell-contracts.test.mjs"
