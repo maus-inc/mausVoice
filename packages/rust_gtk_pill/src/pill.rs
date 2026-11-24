@@ -427,9 +427,23 @@ fn on_request_position(state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
         // No stored origin to place, or no live monitor to contradict it.
         _ => true,
     };
+    // A saved centre inside the live work area does not mean the two agree. The
+    // assistant panel clamps an edge-parked pill inward without touching the
+    // saved origin, so the reply would name the pre-clamp point and the composer
+    // would anchor there. Only a saved origin that is also where the window
+    // actually sits may authorize a save.
+    let live_rect = live_pill_rect(win_tick, state_tick);
+    let saved_matches_live = match (&saved_rect, &live_rect) {
+        (Some(saved), Some(live)) => {
+            (saved.x - live.x).abs() < 0.5 && (saved.y - live.y).abs() < 0.5
+        }
+        // Nothing to compare: no applied move to read, or no stored origin.
+        _ => true,
+    };
     let persist = state_tick.has_saved_position.get()
         && saved_monitor.is_some()
         && stored_on_live_display
+        && saved_matches_live
         && state_tick.drag_save_due.get().is_none()
         && !gesture_owns_window(state_tick, drag_clock_now());
     let (rect, monitor) = if persist {
@@ -438,10 +452,7 @@ fn on_request_position(state_tick: &Rc<PillState>, win_tick: &gtk::Window) {
         // Not storable, so the reply describes where the window is now: the
         // composer places against this, and a stored origin it has left would
         // put the pill on the wrong display.
-        (
-            live_pill_rect(win_tick, state_tick).or(saved_rect),
-            live_monitor,
-        )
+        (live_rect.or(saved_rect), live_monitor)
     };
     ipc::send(&OutMessage::PositionChanged {
         report: rust_pill_shared::restore::PositionReport::new(

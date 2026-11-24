@@ -710,11 +710,19 @@ fn on_anim_tick(hwnd: HWND) {
             // takes a second immutable borrow. Two immutable RefCell borrows are
             // safe; do NOT upgrade either to borrow_mut() or this path panics.
             tick_drag_release_fallback(hwnd, state);
-            // A drop the display change held back is written as soon as both
-            // holds have passed. The frame loop is the retry: the drop is
-            // reported once, so nothing else would come back for it.
-            if state.drag_save_due.get().is_some() {
-                write_drag_position(hwnd, state, drag_now());
+            // A drop the display change held back is written once its deadline
+            // passes. The frame loop is the retry: the drop is reported once, so
+            // nothing else would come back for it. The deadline also covers a
+            // record whose monitor could not be resolved, which is scheduled a
+            // quarter second out; retrying every frame spent a native monitor
+            // lookup at the refresh rate for nothing.
+            let drop_clock = drag_now();
+            if state
+                .drag_save_due
+                .get()
+                .is_some_and(|due| drop_clock >= due)
+            {
+                write_drag_position(hwnd, state, drop_clock);
             }
             // Hover intent is sampled every animation frame (~16.7 ms at
             // 60 Hz) so the 50 ms ARM_DWELL is measured at display rate.

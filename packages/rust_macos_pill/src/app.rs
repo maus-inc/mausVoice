@@ -513,6 +513,12 @@ fn register_screen_observer_class() -> &'static Class {
 /// only point at which the new display list is guaranteed to be readable.
 extern "C" fn screen_parameters_changed(_this: &Object, _sel: Sel, _notification: id) {
     let _ = with_ctx(|ctx| unsafe {
+        // A quit hides the embedded pill but leaves this context and its
+        // observer alive, so AppKit can still post a display change after it.
+        // Moving a hidden window would publish a position nobody chose.
+        if ctx.quit.get() {
+            return;
+        }
         // The arrangement is read here, once, and handed to the reconciliation.
         // Enumerating again inside it would let the two calls disagree, and a
         // reconciliation that ran against an arrangement the poll did not record

@@ -150,7 +150,15 @@ const handlerBody = (path, variant) => {
     // text after that brace is not part of the arm. Without the stop, the arm ran
     // to the end of the file and a handler defined below it read as a call.
     const closes = new RegExp(`^ {0,${indent}}}`);
+    // The `=>` is found before the stop scan: a struct pattern can span lines and
+    // its closing brace sits at the arm's indent, so stopping at the first brace
+    // would cut the arm before the call that proves the handler is still used.
     let end = start + 1;
+    while (end < lines.length && !lines[end].includes("=>")) {
+      if (next.test(lines[end]) || closes.test(lines[end])) break;
+      end += 1;
+    }
+    end += 1;
     while (end < lines.length && !next.test(lines[end])) {
       if (closes.test(lines[end])) break;
       end += 1;
@@ -1817,8 +1825,9 @@ describe("PR28 fork-workflow secret isolation", () => {
       source.integrationWorkflow,
       // The condition is the contract, not the YAML scalar style. A block scalar
       // and a single-line `if:` express the same guard, and the fixtures above
-      // already accept both.
-      /if:\s*(?:\|\s*)?github\.event_name == 'push' \|\|\s*\(github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository\)/,
+      // already accept both. `${{ }}` is GitHub's own expression delimiter and
+      // does not change the condition, so it is accepted too.
+      /if:\s*(?:\|\s*)?(?:\$\{\{\s*)?github\.event_name == 'push' \|\|\s*\(github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository\)\s*(?:\}\})?/,
     );
   });
 });
@@ -3629,9 +3638,13 @@ describe("native gesture adapter contracts", () => {
       ["macApp", "fn reposition_window"],
       ["gtkPill", "fn frame_tick"],
     ]) {
+      // Windows gates the retry on the stored deadline, so a record whose
+      // monitor could not be resolved is retried once the quarter second has
+      // passed rather than every frame. The other two re-check the guard inside
+      // the writer, which is the same retry with the check one call deeper.
       assert.match(
         scope(name, marker),
-        /drag_save_due\.get\(\)\.is_some\(\)/,
+        /drag_save_due\s*\.get\(\)\s*\.(?:is_some_and|is_some)\b/,
         `${name}: nothing retries a held-back save`,
       );
     }

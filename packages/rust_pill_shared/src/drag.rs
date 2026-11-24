@@ -294,6 +294,12 @@ impl DragController {
         self.phase
     }
 
+    /// The latched grab offset, so a test can assert what a rescale did to it.
+    #[cfg(test)]
+    pub fn grab_offset(&self) -> (f64, f64) {
+        (self.grab_dx, self.grab_dy)
+    }
+
     pub fn is_settling(&self) -> bool {
         self.phase == DragPhase::Settling
     }
@@ -744,12 +750,29 @@ mod tests {
     }
 
     #[test]
-    fn rescaling_an_idle_controller_leaves_the_next_grab_alone() {
+    fn rescaling_an_idle_controller_leaves_the_latched_grab_alone() {
+        // The grab offset outlives the gesture: the controller returns to Idle
+        // but keeps what it latched. Rescaling then would move a grab that no
+        // longer exists, so the guard is what keeps the next gesture's starting
+        // point honest. Asserting through `begin_drag` alone proves nothing,
+        // because that overwrites both offsets.
         let mut drag = DragController::new();
-        drag.rescale_grab(1.5);
         drag.begin_drag(300.0, 0.0, 1000.0, 500.0, 0.0);
-        let out = drag.advance(&held_frame(1300.0, 500.0, 0.0));
-        assert!((out.x - 1000.0).abs() < 1e-9, "got {}", out.x);
+        drag.advance(&held_frame(1300.0, 500.0, 0.0));
+        drag.end_drag(FRAME_DT);
+        for step in 0..1_000 {
+            drag.advance(&free_frame(FRAME_DT * f64::from(step + 2), FRAME_DT));
+            if drag.phase() == DragPhase::Idle {
+                break;
+            }
+        }
+        assert_eq!(drag.phase(), DragPhase::Idle);
+        let latched = drag.grab_offset();
+        assert_ne!(latched.0, 0.0);
+
+        drag.rescale_grab(1.5);
+
+        assert_eq!(drag.grab_offset(), latched);
     }
 
     fn wide_bounds() -> DragBounds {
