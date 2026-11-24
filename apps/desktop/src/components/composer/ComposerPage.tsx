@@ -48,33 +48,7 @@ const closeComposerWindow = async () => {
     .catch(() => undefined);
 };
 
-export const ComposerPage = () => {
-  const intl = useIntl();
-  const disabledReasonId = useId();
-  // Focus the transcript field explicitly once it has mounted rather than with
-  // a DOM `autoFocus` prop: `autoFocus` fires as an attribute and cannot be
-  // deferred, so it races anything that moves focus in the same commit. This
-  // mirrors ContextMenu's own "focus after commit, not via autoFocus" rule.
-  // `TextField` forwards `inputRef` to the underlying `<textarea>` (it passes
-  // it straight to `Input`'s `inputRef`), so this reaches the real element.
-  const transcriptRef = useRef<HTMLTextAreaElement | null>(null);
-  const params = useMemo(() => new URLSearchParams(window.location.search), []);
-  const requestId = params.get("requestId") ?? "";
-  // Session original for the original-vs-edited view. Falls back to the
-  // loaded text when the host opened the composer without one.
-  const sessionOriginal = params.get("original") ?? "";
-  const [text, setText] = useState("");
-  const [undoText, setUndoText] = useState<string | null>(null);
-  const [instruction, setInstruction] = useState("");
-  const [isEditing, setIsEditing] = useState(false);
-  const [editError, setEditError] = useState<string | null>(null);
-  const [isListening, setIsListening] = useState(false);
-  const recorderRef = useRef<VoiceInstructionRecorder | null>(null);
-  const userEditedRef = useRef(false);
-  // Tracks mount state so async edit work cannot setState after the composer
-  // window is torn down (Esc / Cancel / unmount during a network round-trip).
-  const mountedRef = useRef(true);
-
+const useVoiceEditAvailability = (intl: ReturnType<typeof useIntl>) => {
   // Voice Edit Mode relies on the webview's SpeechRecognition API, which only
   // exists on Chromium-based webviews. Feature-detect once so we can disable
   // the mic button with a clear message instead of silently no-op'ing (or
@@ -134,32 +108,104 @@ export const ComposerPage = () => {
         });
   }
 
-  // Held in a ref and refreshed in an effect (never during render) so a locale
-  // change while the composer is open updates the recorder's unsupported
-  // message without a render-phase ref write.
-  const unsupportedMessageRef = useRef(
-    intl.formatMessage({
-      defaultMessage: "Voice editing is not supported on this platform",
-    }),
-  );
-  const recordingUnavailableMessageRef = useRef(
-    intl.formatMessage({
-      defaultMessage: "Could not start recording. Please try again.",
-    }),
-  );
-  useEffect(() => {
-    transcriptRef.current?.focus();
-  }, []);
+  return {
+    speechRecognitionSupported,
+    hasGenerationProvider,
+    voiceInstructionSupported,
+    disabledReason,
+  };
+};
 
-  useEffect(() => {
-    unsupportedMessageRef.current = intl.formatMessage({
-      defaultMessage: "Voice editing is not supported on this platform",
-    });
-    recordingUnavailableMessageRef.current = intl.formatMessage({
-      defaultMessage: "Could not start recording. Please try again.",
-    });
-  }, [intl]);
+const editFailureMessage = (
+  error: unknown,
+  intl: ReturnType<typeof useIntl>,
+): string =>
+  error instanceof Error
+    ? error.message
+    : intl.formatMessage({ defaultMessage: "Edit failed." });
 
+const useVoiceEdit = ({
+  intl,
+  mountedRef,
+}: {
+  intl: ReturnType<typeof useIntl>;
+  mountedRef: React.RefObject<boolean>;
+}) => {
+  const [text, setText] = useState("");
+  const [undoText, setUndoText] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const recorderRef = useRef<VoiceInstructionRecorder | null>(null);
+  const userEditedRef = useRef(false);
+
+  const applyEdit = async () => {
+    if (!instruction.trim() || !text.trim() || isEditing) return;
+    setIsEditing(true);
+    setEditError(null);
+    const currentText = text;
+    try {
+      const edited = await applyVoiceEditInstruction({
+        text: currentText,
+        instruction,
+      });
+      if (mountedRef.current) {
+        if (edited !== undefined) {
+          setUndoText(currentText);
+          setText((latest) => (latest === currentText ? edited : latest));
+        }
+        setInstruction("");
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        setEditError(editFailureMessage(error, intl));
+      }
+    } finally {
+      if (mountedRef.current) setIsEditing(false);
+    }
+  };
+
+  const toggleVoiceInstruction = () => {
+    void recorderRef.current?.toggle();
+  };
+
+  return {
+    text,
+    setText,
+    undoText,
+    setUndoText,
+    instruction,
+    setInstruction,
+    isEditing,
+    editError,
+    setEditError,
+    isListening,
+    setIsListening,
+    recorderRef,
+    userEditedRef,
+    applyEdit,
+    toggleVoiceInstruction,
+  };
+};
+
+const useVoiceInstructionRecorder = ({
+  speechRecognitionSupported,
+  unsupportedMessageRef,
+  recordingUnavailableMessageRef,
+  recorderRef,
+  onListeningChange,
+  onTranscript,
+  onError,
+}: {
+  speechRecognitionSupported: boolean;
+  unsupportedMessageRef: React.RefObject<string>;
+  recordingUnavailableMessageRef: React.RefObject<string>;
+  recorderRef: React.RefObject<VoiceInstructionRecorder | null>;
+  onListeningChange: (listening: boolean) => void;
+  onTranscript: (spoken: string) => void;
+  onError: (message: string) => void;
+}) => {
   // Construct the recorder in an effect (not during render) so StrictMode's
   // double render cannot leave a discarded, undisposed instance. Provider
   // availability is re-probed on every start via canUseProvider, so the recorder
@@ -192,10 +238,9 @@ export const ComposerPage = () => {
       speechRecognitionSupported,
       unsupportedMessage: () => unsupportedMessageRef.current,
       recordingUnavailableMessage: () => recordingUnavailableMessageRef.current,
-      onListeningChange: setIsListening,
-      onTranscript: (spoken) =>
-        setInstruction((current) => `${current} ${spoken}`.trim()),
-      onError: setEditError,
+      onListeningChange,
+      onTranscript,
+      onError,
       onResetLevels: () =>
         produceAppState((draft) => {
           draft.audioLevels = [];
@@ -208,13 +253,285 @@ export const ComposerPage = () => {
       recorderRef.current = null;
     };
   }, [speechRecognitionSupported]);
+};
 
+const ComposerTranscriptSection = ({
+  intl,
+  transcriptRef,
+  text,
+  onTextChange,
+  editError,
+  sessionOriginal,
+  undoText,
+  isEditing,
+  onUndo,
+}: {
+  intl: ReturnType<typeof useIntl>;
+  transcriptRef: React.RefObject<HTMLTextAreaElement | null>;
+  text: string;
+  onTextChange: (next: string) => void;
+  editError: string | null;
+  sessionOriginal: string;
+  undoText: string | null;
+  isEditing: boolean;
+  onUndo: () => void;
+}) => (
+  <>
+    <TextField
+      inputRef={transcriptRef}
+      multiline
+      minRows={7}
+      fullWidth
+      value={text}
+      onChange={(event) => onTextChange(event.target.value)}
+      aria-label={intl.formatMessage({ defaultMessage: "Transcript" })}
+    />
+    {editError && (
+      <Typography variant="caption" color="error">
+        {editError}
+      </Typography>
+    )}
+    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+      <Typography variant="caption" color="text.secondary">
+        <FormattedMessage
+          defaultMessage="{count, plural, one {# word} other {# words}}"
+          values={{ count: countWords(text) }}
+        />
+        {sessionOriginal !== "" && text !== sessionOriginal ? (
+          <>
+            {" · "}
+            <FormattedMessage defaultMessage="Unsaved Changes" />
+          </>
+        ) : null}
+      </Typography>
+      {undoText !== null && (
+        <Button
+          size="small"
+          variant="text"
+          disabled={isEditing}
+          onClick={onUndo}
+        >
+          <FormattedMessage defaultMessage="Undo edit" />
+        </Button>
+      )}
+    </Stack>
+    {sessionOriginal !== "" && (
+      <Accordion disableGutters>
+        <AccordionSummary>
+          <Typography variant="subtitle2">
+            <FormattedMessage
+              defaultMessage="Original transcript ({count, plural, one {# word} other {# words}})"
+              values={{ count: countWords(sessionOriginal) }}
+            />
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ whiteSpace: "pre-wrap" }}
+          >
+            {sessionOriginal}
+          </Typography>
+        </AccordionDetails>
+      </Accordion>
+    )}
+  </>
+);
+
+const ComposerVoiceEditSection = ({
+  intl,
+  disabledReasonId,
+  instruction,
+  onInstructionChange,
+  onApply,
+  isListening,
+  onToggleVoice,
+  isEditing,
+  hasGenerationProvider,
+  voiceInstructionSupported,
+  disabledReason,
+}: {
+  intl: ReturnType<typeof useIntl>;
+  disabledReasonId: string;
+  instruction: string;
+  onInstructionChange: (next: string) => void;
+  onApply: () => Promise<void>;
+  isListening: boolean;
+  onToggleVoice: () => void;
+  isEditing: boolean;
+  hasGenerationProvider: boolean;
+  voiceInstructionSupported: boolean;
+  disabledReason: string | null;
+}) => (
+  <>
+    <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+      <TextField
+        fullWidth
+        size="small"
+        label={<FormattedMessage defaultMessage="Voice Edit Mode" />}
+        placeholder={intl.formatMessage({
+          defaultMessage: "Make this shorter or turn it into bullets",
+        })}
+        value={instruction}
+        onChange={(event) => onInstructionChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            void onApply();
+          }
+        }}
+      />
+      <IconButton
+        color={isListening ? "error" : "primary"}
+        onClick={onToggleVoice}
+        aria-label={intl.formatMessage({
+          defaultMessage: "Dictate edit instruction",
+        })}
+        disabled={isEditing || !voiceInstructionSupported}
+        title={disabledReason ?? undefined}
+        aria-describedby={disabledReason ? disabledReasonId : undefined}
+      >
+        <Mic size={20} strokeWidth={2} />
+      </IconButton>
+      <Button
+        variant="outlined"
+        onClick={() => void onApply()}
+        disabled={!instruction.trim() || isEditing || !hasGenerationProvider}
+        sx={{ whiteSpace: "nowrap", minHeight: 40 }}
+      >
+        {isEditing ? (
+          <CircularProgress size={18} />
+        ) : (
+          <FormattedMessage defaultMessage="Apply" />
+        )}
+      </Button>
+    </Stack>
+    {disabledReason && (
+      <Typography
+        id={disabledReasonId}
+        variant="caption"
+        color="text.secondary"
+      >
+        {disabledReason}
+      </Typography>
+    )}
+  </>
+);
+
+const ComposerActions = ({
+  isEditing,
+  text,
+  onCancel,
+  onInsert,
+}: {
+  isEditing: boolean;
+  text: string;
+  onCancel: () => void;
+  onInsert: () => void;
+}) => (
+  <Stack direction="row" spacing={1} sx={{ justifyContent: "flex-end" }}>
+    <Button variant="text" onClick={onCancel}>
+      <FormattedMessage defaultMessage="Cancel" />
+    </Button>
+    <MetalChrome>
+      <Button
+        variant="contained"
+        onClick={onInsert}
+        disabled={isEditing || !text.trim()}
+      >
+        <FormattedMessage defaultMessage="Insert" />
+      </Button>
+    </MetalChrome>
+  </Stack>
+);
+
+export const ComposerPage = () => {
+  const intl = useIntl();
+  const disabledReasonId = useId();
+  // Focus the transcript field explicitly once it has mounted rather than with
+  // a DOM `autoFocus` prop: `autoFocus` fires as an attribute and cannot be
+  // deferred, so it races anything that moves focus in the same commit. This
+  // mirrors ContextMenu's own "focus after commit, not via autoFocus" rule.
+  // `TextField` forwards `inputRef` to the underlying `<textarea>` (it passes
+  // it straight to `Input`'s `inputRef`), so this reaches the real element.
+  const transcriptRef = useRef<HTMLTextAreaElement | null>(null);
+  const params = useMemo(() => new URLSearchParams(window.location.search), []);
+  const requestId = params.get("requestId") ?? "";
+  // Session original for the original-vs-edited view. Falls back to the
+  // loaded text when the host opened the composer without one.
+  const sessionOriginal = params.get("original") ?? "";
+
+  // Tracks mount state so async edit work cannot setState after the composer
+  // window is torn down (Esc / Cancel / unmount during a network round-trip).
+  const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
   }, []);
+
+  const {
+    speechRecognitionSupported,
+    hasGenerationProvider,
+    voiceInstructionSupported,
+    disabledReason,
+  } = useVoiceEditAvailability(intl);
+
+  // Held in a ref and refreshed in an effect (never during render) so a locale
+  // change while the composer is open updates the recorder's unsupported
+  // message without a render-phase ref write.
+  const unsupportedMessageRef = useRef(
+    intl.formatMessage({
+      defaultMessage: "Voice editing is not supported on this platform",
+    }),
+  );
+  const recordingUnavailableMessageRef = useRef(
+    intl.formatMessage({
+      defaultMessage: "Could not start recording. Please try again.",
+    }),
+  );
+  useEffect(() => {
+    unsupportedMessageRef.current = intl.formatMessage({
+      defaultMessage: "Voice editing is not supported on this platform",
+    });
+    recordingUnavailableMessageRef.current = intl.formatMessage({
+      defaultMessage: "Could not start recording. Please try again.",
+    });
+  }, [intl]);
+  useEffect(() => {
+    transcriptRef.current?.focus();
+  }, []);
+
+  const {
+    text,
+    setText,
+    undoText,
+    setUndoText,
+    instruction,
+    setInstruction,
+    isEditing,
+    editError,
+    setEditError,
+    isListening,
+    setIsListening,
+    recorderRef,
+    applyEdit,
+    toggleVoiceInstruction,
+    userEditedRef,
+  } = useVoiceEdit({ intl, mountedRef });
+
+  useVoiceInstructionRecorder({
+    speechRecognitionSupported,
+    unsupportedMessageRef,
+    recordingUnavailableMessageRef,
+    recorderRef,
+    onListeningChange: setIsListening,
+    onTranscript: (spoken) =>
+      setInstruction((current) => `${current} ${spoken}`.trim()),
+    onError: setEditError,
+  });
 
   useEffect(() => {
     let active = true;
@@ -282,40 +599,6 @@ export const ComposerPage = () => {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [finish]);
 
-  const applyEdit = async () => {
-    if (!instruction.trim() || !text.trim() || isEditing) return;
-    setIsEditing(true);
-    setEditError(null);
-    const currentText = text;
-    try {
-      const edited = await applyVoiceEditInstruction({
-        text: currentText,
-        instruction,
-      });
-      if (mountedRef.current) {
-        if (edited !== undefined) {
-          setUndoText(currentText);
-          setText((latest) => (latest === currentText ? edited : latest));
-        }
-        setInstruction("");
-      }
-    } catch (error) {
-      if (mountedRef.current) {
-        setEditError(
-          error instanceof Error
-            ? error.message
-            : intl.formatMessage({ defaultMessage: "Edit failed." }),
-        );
-      }
-    } finally {
-      if (mountedRef.current) setIsEditing(false);
-    }
-  };
-
-  const toggleVoiceInstruction = () => {
-    void recorderRef.current?.toggle();
-  };
-
   return (
     <Box
       sx={{
@@ -345,149 +628,46 @@ export const ComposerPage = () => {
               <FormattedMessage defaultMessage="Edit the text before inserting it." />
             </Typography>
           </Box>
-          <TextField
-            inputRef={transcriptRef}
-            multiline
-            minRows={7}
-            fullWidth
-            value={text}
-            onChange={(event) => {
+          <ComposerTranscriptSection
+            intl={intl}
+            transcriptRef={transcriptRef}
+            text={text}
+            onTextChange={(next) => {
               userEditedRef.current = true;
-              setText(event.target.value);
+              setText(next);
             }}
-            aria-label={intl.formatMessage({ defaultMessage: "Transcript" })}
+            editError={editError}
+            sessionOriginal={sessionOriginal}
+            undoText={undoText}
+            isEditing={isEditing}
+            onUndo={() => {
+              setText(undoText ?? "");
+              setUndoText(null);
+            }}
           />
-          {editError && (
-            <Typography variant="caption" color="error">
-              {editError}
-            </Typography>
-          )}
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-            <Typography variant="caption" color="text.secondary">
-              <FormattedMessage
-                defaultMessage="{count, plural, one {# word} other {# words}}"
-                values={{ count: countWords(text) }}
-              />
-              {sessionOriginal !== "" && text !== sessionOriginal ? (
-                <>
-                  {" · "}
-                  <FormattedMessage defaultMessage="Unsaved Changes" />
-                </>
-              ) : null}
-            </Typography>
-            {undoText !== null && (
-              <Button
-                size="small"
-                variant="text"
-                disabled={isEditing}
-                onClick={() => {
-                  setText(undoText);
-                  setUndoText(null);
-                }}
-              >
-                <FormattedMessage defaultMessage="Undo edit" />
-              </Button>
-            )}
-          </Stack>
-          {sessionOriginal !== "" && (
-            <Accordion disableGutters>
-              <AccordionSummary>
-                <Typography variant="subtitle2">
-                  <FormattedMessage
-                    defaultMessage="Original transcript ({count, plural, one {# word} other {# words}})"
-                    values={{ count: countWords(sessionOriginal) }}
-                  />
-                </Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ whiteSpace: "pre-wrap" }}
-                >
-                  {sessionOriginal}
-                </Typography>
-              </AccordionDetails>
-            </Accordion>
-          )}
-          <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
-            <TextField
-              fullWidth
-              size="small"
-              label={<FormattedMessage defaultMessage="Voice Edit Mode" />}
-              placeholder={intl.formatMessage({
-                defaultMessage: "Make this shorter or turn it into bullets",
-              })}
-              value={instruction}
-              onChange={(event) => setInstruction(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void applyEdit();
-                }
-              }}
-            />
-            <IconButton
-              color={isListening ? "error" : "primary"}
-              onClick={toggleVoiceInstruction}
-              aria-label={intl.formatMessage({
-                defaultMessage: "Dictate edit instruction",
-              })}
-              disabled={isEditing || !voiceInstructionSupported}
-              title={disabledReason ?? undefined}
-              aria-describedby={disabledReason ? disabledReasonId : undefined}
-            >
-              <Mic size={20} strokeWidth={2} />
-            </IconButton>
-            <Button
-              variant="outlined"
-              onClick={() => void applyEdit()}
-              disabled={
-                !instruction.trim() || isEditing || !hasGenerationProvider
-              }
-              sx={{ whiteSpace: "nowrap", minHeight: 40 }}
-            >
-              {isEditing ? (
-                <CircularProgress size={18} />
-              ) : (
-                <FormattedMessage defaultMessage="Apply" />
-              )}
-            </Button>
-          </Stack>
-          {disabledReason && (
-            <Typography
-              id={disabledReasonId}
-              variant="caption"
-              color="text.secondary"
-            >
-              {disabledReason}
-            </Typography>
-          )}
-          <Stack
-            direction="row"
-            spacing={1}
-            sx={{ justifyContent: "flex-end" }}
-          >
-            <Button
-              variant="text"
-              onClick={() => {
-                finish(false).catch(() => undefined);
-              }}
-            >
-              <FormattedMessage defaultMessage="Cancel" />
-            </Button>
-            <MetalChrome>
-              <Button
-                variant="contained"
-                onClick={() => {
-                  finish(true).catch(() => undefined);
-                }}
-                disabled={isEditing || !text.trim()}
-              >
-                <FormattedMessage defaultMessage="Insert" />
-              </Button>
-            </MetalChrome>
-          </Stack>
+          <ComposerVoiceEditSection
+            intl={intl}
+            disabledReasonId={disabledReasonId}
+            instruction={instruction}
+            onInstructionChange={setInstruction}
+            onApply={applyEdit}
+            isListening={isListening}
+            onToggleVoice={toggleVoiceInstruction}
+            isEditing={isEditing}
+            hasGenerationProvider={hasGenerationProvider}
+            voiceInstructionSupported={voiceInstructionSupported}
+            disabledReason={disabledReason}
+          />
+          <ComposerActions
+            isEditing={isEditing}
+            text={text}
+            onCancel={() => {
+              finish(false).catch(() => undefined);
+            }}
+            onInsert={() => {
+              finish(true).catch(() => undefined);
+            }}
+          />
         </Stack>
       </Paper>
     </Box>
