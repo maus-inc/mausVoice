@@ -212,7 +212,30 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
 
 fn dispatch_click(state: &PillState, action: &ClickAction) {
     match action {
-        ClickAction::Pill => click_pill(state),
+        ClickAction::Pill => {
+            // A pending review owns the pill surface: the transcript must be
+            // answered (or cancelled) before a body click can start dictation
+            // or an assistant turn again.
+            if state.assistant_review.borrow().is_some() {
+                return;
+            }
+            // Loading owns the current operation; another body click must not
+            // emit feedback or start a second action.
+            if !rust_pill_shared::can_emit_interaction_feedback(
+                true,
+                state.phase.get() == Phase::Loading,
+            ) {
+                return;
+            }
+            // The recording chime owns the pill-body click. The desktop side
+            // plays start/stop clips for the same event, so emitting a thock
+            // here doubled the sound.
+            if state.assistant_active.get() {
+                ipc::send(&OutMessage::AgentTalk);
+            } else {
+                ipc::send(&OutMessage::Click);
+            }
+        }
         ClickAction::StyleForward => switch_style("forward"),
         ClickAction::StyleBackward => switch_style("backward"),
         ClickAction::AssistantClose => close_assistant(state),
@@ -251,31 +274,6 @@ fn dispatch_click(state: &PillState, action: &ClickAction) {
 
 fn entry_text(state: &PillState) -> String {
     state.entry_text.borrow().clone()
-}
-
-fn click_pill(state: &PillState) {
-    // A pending review owns the pill surface: the transcript must be answered
-    // (or cancelled) before a body click can start dictation or an assistant
-    // turn again.
-    if state.assistant_review.borrow().is_some() {
-        return;
-    }
-    // Loading owns the current operation; another body click must not emit
-    // feedback or start a second action.
-    if !rust_pill_shared::can_emit_interaction_feedback(
-        true,
-        state.phase.get() == Phase::Loading,
-    ) {
-        return;
-    }
-    // The recording chime owns the pill-body click. The desktop side plays
-    // start/stop clips for the same event, so emitting a thock here doubled the
-    // sound.
-    if state.assistant_active.get() {
-        ipc::send(&OutMessage::AgentTalk);
-    } else {
-        ipc::send(&OutMessage::Click);
-    }
 }
 
 fn switch_style(direction: &str) {
