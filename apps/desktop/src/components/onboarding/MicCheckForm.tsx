@@ -97,6 +97,13 @@ export const MicCheckForm = () => {
       if (handle) await handle.stop();
     } catch (error) {
       console.error("Failed to stop recording", error);
+      // A rejected stop can leave the device open, and this handle is the only
+      // reference to it, so release it instead of dropping it.
+      if (handle) {
+        void handle.discard().catch((cause) => {
+          console.error("Failed to discard the mic check recording", cause);
+        });
+      }
     } finally {
       setSyncedRecordingState("idle");
       if (!isLocalDataClearRequested()) {

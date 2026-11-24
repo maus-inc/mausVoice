@@ -308,6 +308,13 @@ export const MicrophoneTester = ({
         }
       } catch (error) {
         console.error("Failed to stop microphone test", error);
+        // A rejected stop can leave the device open, and this handle is the
+        // only reference to it, so release it instead of dropping it.
+        if (handle) {
+          void handle.discard().catch((cause) => {
+            console.error("Failed to discard the microphone test", cause);
+          });
+        }
         if (!opts?.silent && !isLocalDataClearRequested()) {
           setTestError(
             intl.formatMessage({
