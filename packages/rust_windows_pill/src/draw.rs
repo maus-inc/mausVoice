@@ -1344,13 +1344,7 @@ fn draw_message_separator(gfx: &mut Gfx, index: usize, area_x: f64, y: f64, alph
     y + 8.0
 }
 
-fn draw_tool_result_line(
-    gfx: &mut Gfx,
-    msg: &PillMessage,
-    area_x: f64,
-    y: f64,
-    alpha: f64,
-) -> f64 {
+fn draw_tool_result_line(gfx: &mut Gfx, msg: &PillMessage, area_x: f64, y: f64, alpha: f64) -> f64 {
     let tool_desc = msg
         .tool_description
         .as_deref()
@@ -1407,6 +1401,7 @@ fn draw_message_text(
     y
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_transcript(
     gfx: &mut Gfx,
     state: &PillState,
