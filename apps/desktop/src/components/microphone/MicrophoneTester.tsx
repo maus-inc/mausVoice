@@ -20,6 +20,8 @@ import {
   usePreviewPlayback,
 } from "./microphone-test-preview";
 
+type MicTestState = "idle" | "starting" | "recording" | "stopping";
+
 type TestButtonLayout = "row" | "column";
 
 const TestRecordButton = ({
@@ -342,8 +344,8 @@ const useMicrophoneTestLifecycle = ({
   handleStopTest,
 }: {
   mountedRef: React.RefObject<boolean>;
-  testState: "idle" | "starting" | "recording" | "stopping";
-  testStateRef: React.RefObject<"idle" | "starting" | "recording" | "stopping">;
+  testState: MicTestState;
+  testStateRef: React.RefObject<MicTestState>;
   isGlobalRecording: boolean;
   previewUrlRef: React.RefObject<string | null>;
   clearPreviewUrl: () => void;
@@ -393,9 +395,7 @@ const useMicrophoneTest = ({
 }) => {
   const overlayPhase = useAppStore((state) => state.overlayPhase);
   const audioLevels = useAppStore((state) => state.audioLevels);
-  const [testState, setTestState] = useState<
-    "idle" | "starting" | "recording" | "stopping"
-  >("idle");
+  const [testState, setTestState] = useState<MicTestState>("idle");
   const [testError, setTestError] = useState<string | null>(null);
 
   const isGlobalRecording = isRecordingOverlayPhase(overlayPhase);
@@ -407,15 +407,12 @@ const useMicrophoneTest = ({
   const testStateRef = useRef(testState);
   testStateRef.current = testState;
 
-  const setSyncedTestState = useCallback(
-    (next: "idle" | "starting" | "recording" | "stopping") => {
-      testStateRef.current = next;
-      if (mountedRef.current) {
-        setTestState(next);
-      }
-    },
-    [],
-  );
+  const setSyncedTestState = useCallback((next: MicTestState) => {
+    testStateRef.current = next;
+    if (mountedRef.current) {
+      setTestState(next);
+    }
+  }, []);
 
   const {
     previewUrl,
