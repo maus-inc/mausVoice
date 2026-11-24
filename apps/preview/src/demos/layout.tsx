@@ -240,6 +240,34 @@ export const TitlebarDemo = () => (
             </Box>
           </Box>
         </State>
+        <State label="minimum window width (800px — wordmark kept)" wide>
+          <Box
+            sx={{
+              width: "100%",
+              maxWidth: 800,
+              borderRadius: 2,
+              overflow: "hidden",
+              border: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <TitleBar />
+          </Box>
+        </State>
+        <State label="constrained (295px — ellipsis before hiding)" wide>
+          <Box
+            sx={{
+              width: 295,
+              maxWidth: "100%",
+              borderRadius: 2,
+              overflow: "hidden",
+              border: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <TitleBar />
+          </Box>
+        </State>
       </Matrix>
     </DemoSection>
     <DemoSection

@@ -18,7 +18,7 @@ Toggle transitions 150ms easeOut (bg/color/transform); maximize glyph morphs Squ
 
 ## States
 
-light/dark/system · maximized/unmaximized icon · hover/press on controls · drag/double-click (Tauri only) · resize grips (Tauri only).
+light/dark/system · roomy (>627px, including 800px minWidth) / compact controls (≤627px, wordmark kept) / ellipsis truncation / wordmark hidden (≤261–267px) · maximized/unmaximized icon · hover/press on controls · drag/double-click (Tauri only) · resize grips (Tauri only).
 
 ## Accessibility
 

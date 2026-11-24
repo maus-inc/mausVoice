@@ -819,7 +819,7 @@ PNG mark at 32/64/192; wordmark in TAN-PARADISO (display face sanctioned here).
 None.
 
 ## States
-mark / lockup.
+mark / lockup / compact spacing (\`compact\`) / ellipsis truncation / wordmark hidden (\`hideWordmark\`).
 
 ## Accessibility
 Decorative adjacent to text (verify alt/aria-hidden at call sites).
@@ -989,7 +989,7 @@ Bar 40px (DESIGN.md says ~46 — code is 40), level1 @ .88/.92 + blur(18px) satu
 Toggle transitions 150ms easeOut (bg/color/transform); maximize glyph morphs Square↔Copy via MorphNavIcon; no bounce.
 
 ## States
-light/dark/system · maximized/unmaximized icon · hover/press on controls · drag/double-click (Tauri only) · resize grips (Tauri only).
+light/dark/system · roomy (>627px, including 800px minWidth) / compact controls (≤627px, wordmark kept) / ellipsis truncation / wordmark hidden (≤261–267px) · maximized/unmaximized icon · hover/press on controls · drag/double-click (Tauri only) · resize grips (Tauri only).
 
 ## Accessibility
 Controls are IconButtons with localized labels (verify aria-labels in source); theme menu is a real MUI Menu with checks.

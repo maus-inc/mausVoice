@@ -18,7 +18,7 @@ None.
 
 ## States
 
-mark / lockup.
+mark / lockup / compact spacing (`compact`) / ellipsis truncation / wordmark hidden (`hideWordmark`).
 
 ## Accessibility
 
