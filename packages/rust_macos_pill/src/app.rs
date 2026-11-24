@@ -2342,12 +2342,11 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let (px, py, pw, ph) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
-        let footprint = Footprint {
-            fx: cox + px,
-            fy: coy + py,
-            pw,
-            ph,
-            win_h,
+        let fx = cox + px;
+        let fy = coy + py;
+        // View is flipped y-down; screen origin is bottom-left (y-up).
+        let footprint_center = |origin_x: f64, origin_y: f64| {
+            (origin_x + fx + pw / 2.0, origin_y + win_h - fy - ph / 2.0)
         };
         // Three placements, in priority order, and they are not the same thing:
         //
