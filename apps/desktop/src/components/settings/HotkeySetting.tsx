@@ -6,7 +6,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getHotkeyRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
-import { registerHotkeys } from "../../utils/app.utils";
+import { upsertHotkey } from "../../utils/app.utils";
 import { createId } from "../../utils/id.utils";
 import {
   enqueueHotkeyWrite,
@@ -412,13 +412,10 @@ export const HotkeySetting = ({
     }
     try {
       markOptimisticHotkeyWrite(newValue.actionName, newValue.id);
-      produceAppState((draft) => {
-        registerHotkeys(draft, [newValue]);
-        if (!draft.settings.hotkeyIds.includes(newValue.id)) {
-          draft.settings.hotkeyIds.push(newValue.id);
-        }
-        draft.settings.hotkeysStatus = "success";
-      }, releaseWrite.lease);
+      produceAppState(
+        (draft) => upsertHotkey(draft, newValue),
+        releaseWrite.lease,
+      );
       await enqueueHotkeyWrite(async () => {
         await getHotkeyRepo().saveHotkey(newValue, releaseWrite.lease);
         setOnboardingSavedHotkey(newValue.id, newValue);
