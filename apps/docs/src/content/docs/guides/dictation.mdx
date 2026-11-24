@@ -12,7 +12,7 @@ import Callout from "../../../components/guides/Callout.astro";
 
 One dictation crosses the same stages every time, and the pill is the only surface that reports each one. When something looks wrong, read the pill first. It tells you whether the app is capturing, converting, delivering, or finished.
 
-This guide follows a single dictation from the key press to the text in the target field. The [dictation workflow reference](/mausVoice/docs/using-mausvoice/dictation-workflow/) states the same stages as a list. This page shows them.
+This guide follows a single dictation from the key press to the text in the target field. The [dictation workflow reference](../using-mausvoice/dictation-workflow/) states the same stages as a list. This page shows them.
 
 ## What the pill reports
 
@@ -38,21 +38,21 @@ The three states are mutually exclusive. A pill that stays in Transcribing has n
     image="dictation-step-1-hold"
     alt="The macOS, Windows, and Linux default hold-to-dictate shortcuts"
   >
-    The defaults are `Fn` on macOS, Left Windows/Meta plus Left Control on Windows, and Left Control plus Left Alt plus Space on Linux. Dictation is a hold action: the press starts capture and the release stops it. A saved custom binding replaces the default once it exists, and the reset button restores the platform default. The [default shortcuts reference](/mausVoice/docs/reference/default-shortcuts/) lists the full set, including the actions that ship with no key at all.
+    The defaults are `Fn` on macOS, Left Windows/Meta plus Left Control on Windows, and Left Control plus Left Alt plus Space on Linux. Dictation is a hold action: the press starts capture and the release stops it. A saved custom binding replaces the default once it exists, and the reset button restores the platform default. The [default shortcuts reference](../reference/default-shortcuts/) lists the full set, including the actions that ship with no key at all.
   </Step>
   <Step
     title="Speak while the pill shows Listening"
     image="dictation-step-2-speak"
     alt="The pill in the recording state with a live capture waveform"
   >
-    Capture uses the microphone selected in **Settings → Dictation → Microphone**. With **Real-time output** enabled, committed segments are inserted while you are still speaking. Without it, nothing reaches the target until you release. If the pill never leaves idle, the shortcut did not reach the app. The [hotkey troubleshooting guide](/mausVoice/docs/troubleshooting/hotkeys/) separates a reserved combination from a permission problem.
+    Capture uses the microphone selected in **Settings → Dictation → Microphone**. With **Real-time output** enabled, committed segments are inserted while you are still speaking. Without it, nothing reaches the target until you release. If the pill never leaves idle, the shortcut did not reach the app. The [hotkey troubleshooting guide](../troubleshooting/hotkeys/) separates a reserved combination from a permission problem.
   </Step>
   <Step
     title="Release to stop and pick an engine"
     image="dictation-step-3-release"
     alt="The pill in the transcribing state with the available transcription engines"
   >
-    Releasing the shortcut ends capture. The audio goes to whichever engine the transcription settings select: the local sidecar running Whisper, Parakeet, Canary, or SenseVoice, or an API provider. Local engines keep audio on the device. A network provider sends the audio to that provider under its own retention terms, which the [data flow page](/mausVoice/docs/privacy-security/data-flow/) states per provider.
+    Releasing the shortcut ends capture. The audio goes to whichever engine the transcription settings select: the local sidecar running Whisper, Parakeet, Canary, or SenseVoice, or an API provider. Local engines keep audio on the device. A network provider sends the audio to that provider under its own retention terms, which the [data flow page](../privacy-security/data-flow/) states per provider.
   </Step>
   <Step
     title="Processing runs in a fixed order"
@@ -102,7 +102,7 @@ The pill carries two side controls. Pause and resume sit on the left, cancel sit
 />
 
 <Callout title="Cancelling is not the same as a provider failure">
-  A cancel ends the session on purpose and leaves no diagnostic evidence. A provider failure leaves a failed status and a reason you can act on. The [troubleshooting first response](/mausVoice/docs/troubleshooting/first-response/) separates the two before you change any settings.
+  A cancel ends the session on purpose and leaves no diagnostic evidence. A provider failure leaves a failed status and a reason you can act on. The [troubleshooting first response](../troubleshooting/first-response/) separates the two before you change any settings.
 </Callout>
 
 ## What is stored
@@ -111,10 +111,10 @@ Unless Incognito is on, the app stores the transcription record and attempts to 
 
 ## When review is enabled
 
-With **Review before insert** on, the transcript stops before delivery and opens in the pill's editable panel. Insert, Copy, Open, and Cancel decide what happens next, and an unanswered review expires after five minutes. The [review guide](/mausVoice/docs/guides/transcript-review/) walks through all five outcomes, the queue, and the expiry.
+With **Review before insert** on, the transcript stops before delivery and opens in the pill's editable panel. Insert, Copy, Open, and Cancel decide what happens next, and an unanswered review expires after five minutes. The [review guide](./transcript-review/) walks through all five outcomes, the queue, and the expiry.
 
 ## Related pages
 
-- [Recording controls](/mausVoice/docs/using-mausvoice/recording-controls/) for every shortcut and the manual style cycle.
-- [Text insertion options](/mausVoice/docs/using-mausvoice/text-insertion/) for paste versus simulated typing and per-app overrides.
-- [The floating pill](/mausVoice/docs/using-mausvoice/floating-pill/) for moving and finding the pill.
+- [Recording controls](../using-mausvoice/recording-controls/) for every shortcut and the manual style cycle.
+- [Text insertion options](../using-mausvoice/text-insertion/) for paste versus simulated typing and per-app overrides.
+- [The floating pill](../using-mausvoice/floating-pill/) for moving and finding the pill.

@@ -83,7 +83,7 @@ The built-in tools can read the focused field and surrounding screen context, pa
 
 Power mode adds the `run_terminal_command` tool. The Rust backend validates each command against an allowlist and runs it directly, without a shell. Shell metacharacters such as `/`, `\`, `;`, `|`, `&`, and `$` are rejected anywhere in an argument, a bare `..` argument is refused, and absolute paths and subdirectory paths are not allowed. Enabling it requires a warning confirmation and a restart before the tool is available.
 
-Commands run with the mausVoice process's full user permissions. Keep power mode off unless the task genuinely needs shell access, and never approve a command you do not understand. The [assistant mode reference](/mausVoice/docs/using-mausvoice/assistant-mode/) lists the exact allowlist for each platform.
+Commands run with the mausVoice process's full user permissions. Keep power mode off unless the task genuinely needs shell access, and never approve a command you do not understand. The [assistant mode reference](../using-mausvoice/assistant-mode/) lists the exact allowlist for each platform.
 
 ## How a review reaches an agent's Paste
 
