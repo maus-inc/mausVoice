@@ -54,12 +54,11 @@ shows you. Turn it on with:
 
 ```bash
 git config commit.template .gitmessage
-npx lefthook@2.2.2 install   # pinned; lefthook stays out of the manifest so installs stay light
+npm install --global lefthook@2.2.2
+lefthook install
 ```
 
-The hooks are a convenience, not a gate. `lefthook` is deliberately not a repository
-dependency, so every `pnpm install` in CI stays small. Pin the version when you run it, as
-above, so onboarding never executes an unreviewed future release.
+Local hooks do not replace CI. `lefthook` is deliberately not a repository dependency. Pin the version when installing it, as above. Before every push, review the entire diff against the entire `CODING_STANDARDS.md` and [prepare the receipt](engineering/standards-review.md). The `Full-diff coding standards review` PR job validates the receipt in the description against the event's commits, even when local hooks are not installed.
 
 A branch carries the current tip of its base the whole time it is open. Bring the base in by
 merge, `git fetch origin <base>` and then `git merge FETCH_HEAD`, before the first edit, before

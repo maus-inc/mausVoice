@@ -82,7 +82,7 @@ jobs:
             build-essential pkg-config cmake \
             libgtk-3-dev "$WEBKIT_PKG" \
             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev \
-            libgtk-layer-shell-dev imagemagick
+            libgtk-layer-shell-dev imagemagick xvfb xauth python3-xlib
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build dependencies
@@ -117,11 +117,15 @@ jobs:
       - name: Test native pill (Linux)
         if: matrix.os == 'ubuntu-22.04'
         run: cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml
+      - name: Exercise GTK review keys on a virtual X display
+        if: matrix.os == 'ubuntu-22.04'
+        working-directory: packages/rust_gtk_pill
+        run: |
+          cargo build --locked --bin mausvoice-gtk-pill
+          xvfb-run -a /usr/bin/python3 tests/review_escape.py "${CARGO_TARGET_DIR:-target}/debug/mausvoice-gtk-pill"
       - name: Test shared pill geometry
         if: matrix.os == 'ubuntu-22.04'
         run: cargo test --locked --manifest-path packages/rust_pill_shared/Cargo.toml
       - name: Verify app icons
         if: matrix.os == 'ubuntu-22.04'
-        run: |
-          sudo apt-get install -y imagemagick
-          node scripts/generate-app-icons.mjs --check
+        run: node scripts/generate-app-icons.mjs --check

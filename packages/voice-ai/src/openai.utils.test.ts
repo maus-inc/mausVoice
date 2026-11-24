@@ -13,9 +13,15 @@ describe("openaiTranscribeAudio response_format", () => {
   it.each(models)(
     "requests $expectedFormat for $model",
     async ({ model, expectedFormat }) => {
-      const createTranscription = vi.fn().mockResolvedValue({
-        text: "hello world",
-        segments: [{ text: "hello world", no_speech_prob: 0.1 }],
+      const createTranscription = vi.fn(async ({ response_format }) => {
+        if (response_format !== expectedFormat)
+          throw new Error("Unsupported response format");
+        return expectedFormat === "json"
+          ? { text: "hello world" }
+          : {
+              text: "hello world",
+              segments: [{ text: "hello world", no_speech_prob: 0.1 }],
+            };
       });
 
       vi.resetModules();
@@ -45,44 +51,15 @@ describe("openaiTranscribeAudio response_format", () => {
         response_format: expectedFormat,
       });
       expect(result.text).toBe("hello world");
-      expect(result.segments?.[0]?.noSpeechProb).toBe(0.1);
+      if (expectedFormat === "verbose_json") {
+        expect(result.segments?.[0]?.noSpeechProb).toBe(0.1);
+      } else {
+        expect(result.segments).toBeUndefined();
+      }
 
       vi.doUnmock("openai");
     },
   );
-
-  it("does not send verbose_json to gpt-4o models (which 400 on it)", async () => {
-    const createTranscription = vi.fn().mockResolvedValue({
-      text: "hello world",
-    });
-
-    vi.resetModules();
-    vi.doMock("openai", () => ({
-      default: class MockOpenAI {
-        audio = {
-          transcriptions: {
-            create: createTranscription,
-          },
-        };
-      },
-      toFile: vi.fn().mockResolvedValue({}),
-    }));
-
-    const { openaiTranscribeAudio } = await import("./openai.utils");
-
-    const result = await openaiTranscribeAudio({
-      apiKey: "test-key",
-      model: "gpt-4o-transcribe",
-      blob: new ArrayBuffer(8),
-      ext: "wav",
-    });
-
-    const format = createTranscription.mock.calls[0][0].response_format;
-    expect(format).not.toBe("verbose_json");
-    expect(result.segments).toBeUndefined();
-
-    vi.doUnmock("openai");
-  });
 });
 
 describe("openaiGenerateTextResponse sampling parameters", () => {

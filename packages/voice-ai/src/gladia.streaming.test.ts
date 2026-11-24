@@ -1,25 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-type GladiaWsRetry = {
-  maxAttemptsPerConnection: number;
-  maxConnections: number;
-  closeCodes: unknown[];
-};
-
-/** The merged-options shape the real `GladiaClient` keeps private. */
-type GladiaClientOptionsView = {
-  options: {
-    apiKey?: string;
-    wsRetry: GladiaWsRetry;
-  };
-};
-
-/** What a caller passes: only the fields it wants to override. */
-type GladiaClientInput = {
-  apiKey?: string;
-  wsRetry?: Partial<GladiaWsRetry>;
-};
-
 type Listener = (payload: unknown) => void;
 
 const importWithLiveSdkMock = async ({
@@ -66,7 +46,6 @@ const importWithLiveSdkMock = async ({
   const startSession = vi.fn(() => fakeSession);
   const deleteSession = vi.fn().mockResolvedValue(deleteResult);
   const clientOptions: unknown[] = [];
-  const mergedClientOptions: GladiaClientOptionsView[] = [];
   const liveV2 = vi.fn(() => ({
     startSession,
     delete: deleteSession,
@@ -75,23 +54,12 @@ const importWithLiveSdkMock = async ({
   vi.resetModules();
   vi.doMock("@gladiaio/sdk", () => ({
     GladiaClient: class MockGladiaClient {
-      // The production code writes the close-code list onto the merged options
-      // after the constructor, so the mock has to carry the same merged shape
-      // the real client exposes.
-      options: GladiaClientOptionsView["options"];
+      // Storage for the adapter's post-construction write only. Constructor
+      // merging and reconnect policy are exercised in gladia.live-reconnect.test.ts.
+      options = { wsRetry: {} };
 
-      constructor(input: GladiaClientInput) {
+      constructor(input: unknown) {
         clientOptions.push(input);
-        this.options = {
-          ...input,
-          wsRetry: {
-            maxAttemptsPerConnection: 5,
-            maxConnections: 0,
-            closeCodes: [],
-            ...input.wsRetry,
-          },
-        };
-        mergedClientOptions.push(this);
       }
 
       liveV2 = liveV2;
@@ -106,7 +74,6 @@ const importWithLiveSdkMock = async ({
     startSession,
     deleteSession,
     clientOptions,
-    mergedClientOptions,
   };
 };
 
@@ -114,24 +81,6 @@ afterEach(() => {
   vi.doUnmock("@gladiaio/sdk");
   vi.restoreAllMocks();
 });
-
-/**
- * The client options the SDK's WebSocket constructor actually received.
- *
- * The point of this test is that `closeCodes` survives the constructor merge
- * and reaches the WebSocket client, so an empty record is the merge having
- * dropped it. `mergedClientOptions[0]!` turned that into a `TypeError` about
- * reading `.options` of `undefined`.
- */
-const mergedOptions = <T>(recorded: readonly unknown[], index = 0): T => {
-  const options = recorded[index];
-  if (options === undefined) {
-    throw new Error(
-      `Expected the WebSocket client to have been constructed at index ${index}, recorded ${recorded.length}`,
-    );
-  }
-  return options as T;
-};
 
 describe("createGladiaStreamingSession", () => {
   it("rejects a blank key before constructing an SDK client", async () => {
@@ -157,7 +106,6 @@ describe("createGladiaStreamingSession", () => {
       startSession,
       deleteSession,
       clientOptions,
-      mergedClientOptions,
     } = await importWithLiveSdkMock();
     const onFinalSegment = vi.fn();
     const onReady = vi.fn();
@@ -180,17 +128,6 @@ describe("createGladiaStreamingSession", () => {
       // session on its fourth drop.
       wsRetry: { maxAttemptsPerConnection: 3, maxConnections: 0 },
     });
-    // The close-code list is written after the constructor merge, never
-    // through it, so it must be an array on the merged block the WebSocket
-    // client actually receives.
-    expect(
-      mergedOptions<{ options: { wsRetry: { closeCodes: unknown } } }>(
-        mergedClientOptions,
-      ).options.wsRetry.closeCodes,
-    ).toEqual([
-      [1002, 4399],
-      [4500, 9999],
-    ]);
     expect(startSession).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "solaria-1",

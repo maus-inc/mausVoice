@@ -27,11 +27,14 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDirectInvocation } from "./direct-invocation.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+// Lock entries and Git paths use slashes even on a Windows checkout.
+const gitRelative = (root, full) => relative(root, full).split(sep).join("/");
 
 function collectFiles(root, dir, out) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -40,7 +43,7 @@ function collectFiles(root, dir, out) {
       collectFiles(root, full, out);
     } else if (entry.isFile()) {
       out.push({
-        relativePath: relative(root, full),
+        relativePath: gitRelative(root, full),
         content: readFileSync(full),
       });
     }
@@ -103,7 +106,7 @@ function reportHashDrift(name, entry, actual, error) {
 function reportIgnoredFiles(name, files, skillDir, root, error) {
   const ignored = findIgnoredFiles(
     root,
-    files.map((file) => join(relative(root, skillDir), file.relativePath)),
+    files.map((file) => gitRelative(root, join(skillDir, file.relativePath))),
   );
   if (ignored.length === 0) return false;
   error(
@@ -122,12 +125,12 @@ function verifyLockedSkill(name, entry, skillsDir, root, error) {
     error(
       `${name}: MISSING  no directory for a locked skill, run \`npx skills update\``,
     );
-    return { checked: false, drift: true };
+    return { drift: true };
   }
   const files = listSkillFiles(skillDir);
   const hashDrift = reportHashDrift(name, entry, hashSkillFiles(files), error);
   const ignoredDrift = reportIgnoredFiles(name, files, skillDir, root, error);
-  return { checked: true, drift: hashDrift || ignoredDrift };
+  return { drift: hashDrift || ignoredDrift };
 }
 
 function reportUnrecorded(onDisk, lock, strict, log, error) {
@@ -156,15 +159,15 @@ export function verifySkills(
     : [];
 
   let drift = 0;
-  let checked = 0;
+  let verified = 0;
 
   for (const [name, entry] of locked) {
     const outcome = verifyLockedSkill(name, entry, skillsDir, root, error);
-    if (outcome.checked) checked++;
     if (outcome.drift) {
       drift++;
       continue;
     }
+    verified++;
     log(`${name}: ok  ${entry.source}`);
   }
 
@@ -173,7 +176,7 @@ export function verifySkills(
   const { unrecorded } = unrecordedOutcome;
 
   log(
-    `${checked - drift} of ${locked.length} locked skills verified, ${unrecorded.length} unrecorded${
+    `${verified} of ${locked.length} locked skills verified, ${unrecorded.length} unrecorded${
       strict ? " (strict)" : ""
     }`,
   );

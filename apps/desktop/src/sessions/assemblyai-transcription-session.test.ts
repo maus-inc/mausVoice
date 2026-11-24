@@ -22,9 +22,11 @@ let closeInsteadOfOpen = false;
 let sendBeginOnOpen = true;
 
 class FakeWebSocket {
+  static CONNECTING = 0;
   static OPEN = 1;
+  static CLOSING = 2;
   static CLOSED = 3;
-  readyState = FakeWebSocket.OPEN;
+  readyState = FakeWebSocket.CONNECTING;
   url: string;
   sent: string[] = [];
   closeCalls = 0;
@@ -38,11 +40,13 @@ class FakeWebSocket {
     this.url = url;
     createdSockets.push(this);
     queueMicrotask(() => {
+      if (this.readyState !== FakeWebSocket.CONNECTING) return;
       if (closeInsteadOfOpen) {
         this.readyState = FakeWebSocket.CLOSED;
         this.onclose?.({ code: 1006 });
         return;
       }
+      this.readyState = FakeWebSocket.OPEN;
       this.onopen?.();
       if (sendBeginOnOpen) {
         this.onmessage?.({ data: JSON.stringify({ type: "Begin" }) });
@@ -51,6 +55,9 @@ class FakeWebSocket {
   }
 
   send(data: string | ArrayBufferView | Blob) {
+    if (this.readyState === FakeWebSocket.CONNECTING)
+      throw new DOMException("Socket not open", "InvalidStateError");
+    if (this.readyState !== FakeWebSocket.OPEN) return;
     if (typeof data === "string") {
       this.sent.push(data);
     } else {
@@ -61,9 +68,12 @@ class FakeWebSocket {
   close() {
     this.closeCalls += 1;
     if (this.throwOnClose) throw new Error("socket close failed");
-    if (this.readyState === FakeWebSocket.CLOSED) return;
-    this.readyState = FakeWebSocket.CLOSED;
-    this.onclose?.({ code: 1000 });
+    if (this.readyState >= FakeWebSocket.CLOSING) return;
+    this.readyState = FakeWebSocket.CLOSING;
+    queueMicrotask(() => {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.onclose?.({ code: 1000 });
+    });
   }
 }
 
@@ -272,13 +282,33 @@ describe("AssemblyAI streaming connection parameters", () => {
     // regression reports what it did (nothing) instead of timing out the file.
     closeInsteadOfOpen = true;
     const outcome = await Promise.race([
-      startAssemblyAIStreaming("test-key", 16000, [], undefined).then(
+      startAssemblyAIStreaming("test-key", 16000, []).then(
         () => "resolved",
         (error: Error) => `rejected: ${error.message}`,
       ),
       new Promise((resolve) => setTimeout(() => resolve("STILL PENDING"), 50)),
     ]);
     expect(outcome).toBe("rejected: WebSocket closed before the session began");
+  });
+
+  it("stays pending through transport open until the provider sends Begin", async () => {
+    sendBeginOnOpen = false;
+    let ready = false;
+    const started = startAssemblyAIStreaming("test-key", 16000, []).then(
+      (session) => {
+        ready = true;
+        return session;
+      },
+    );
+    const socket = createdSockets.at(-1);
+    if (!socket) throw new Error("Expected a connecting socket");
+    expect(socket.readyState).toBe(FakeWebSocket.CONNECTING);
+    await flushMicrotasks();
+    expect(socket.readyState).toBe(FakeWebSocket.OPEN);
+    expect(ready).toBe(false);
+    socket.onmessage?.({ data: JSON.stringify({ type: "Begin" }) });
+    (await started).cleanup();
+    expect(ready).toBe(true);
   });
 
   it("waits for Begin and closes the socket when startup is aborted", async () => {
@@ -328,12 +358,7 @@ describe("AssemblyAI streaming connection parameters", () => {
   it("still resolves normally when the socket closes after opening", async () => {
     // The other half of the same `onclose`: a close after a successful
     // handshake is the normal end of a session and must not reject.
-    const session = await startAssemblyAIStreaming(
-      "test-key",
-      16000,
-      [],
-      undefined,
-    );
+    const session = await startAssemblyAIStreaming("test-key", 16000, []);
     expect(session).toBeTruthy();
     const socket = createdSockets.at(-1);
     expect(() => socket?.close()).not.toThrow();
@@ -358,12 +383,7 @@ describe("AssemblyAI streaming connection parameters", () => {
   });
 
   it("omits keyterms_prompt when the dictionary is empty", async () => {
-    const session = await startAssemblyAIStreaming(
-      "test-key",
-      16000,
-      [],
-      undefined,
-    );
+    const session = await startAssemblyAIStreaming("test-key", 16000, []);
     const socket = createdSockets.at(-1);
     expect(socket?.url).toContain("speech_model=universal-3-5-pro");
     expect(socket?.url).not.toContain("keyterms_prompt");

@@ -8,6 +8,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
 pub(crate) use rust_pill_shared::clock::monotonic_now as drag_clock_now;
+use rust_pill_shared::review_key::{handle_review_key, ReviewKey};
 
 use crate::constants::*;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
@@ -180,22 +181,8 @@ fn build_surface(
 
 fn new_pill_state(backend: Backend) -> PillState {
     PillState {
-        phase: Cell::new(Phase::Idle),
+        indicator: rust_pill_shared::indicator::DictationIndicator::default(),
         visibility: Cell::new(Visibility::WhileActive),
-        expand_t: Cell::new(0.0),
-        expand_velocity: Cell::new(0.0),
-        hovered: Cell::new(false),
-        wave_phase: Cell::new(0.0),
-        current_level: Cell::new(0.0),
-        target_level: Cell::new(0.0),
-        loading_offset: Cell::new(0.0),
-        pending_levels: RefCell::new(Vec::new()),
-        style_count: Cell::new(0),
-        style_name: RefCell::new(String::new()),
-        tooltip_t: Cell::new(0.0),
-        tooltip_velocity: Cell::new(0.0),
-        tooltip_width: Cell::new(0.0),
-        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
@@ -248,7 +235,6 @@ fn new_pill_state(backend: Backend) -> PillState {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
-        stage_text: RefCell::new(None),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
@@ -573,15 +559,16 @@ fn connect_entry_events(window: &gtk::Window, entry: &gtk::Entry, state: &Rc<Pil
         // same as on the Windows pill: the desktop is waiting for an answer.
         // The window sees the key before the focused entry does, so this works
         // whether or not the entry holds the keyboard.
-        if event.keyval() != gdk::keys::constants::Escape {
-            return glib::Propagation::Proceed;
-        }
-        match state_escape.pending_review_id() {
-            Some(review_id) => {
-                input::send_review_decision(&review_id, "cancel", None);
-                glib::Propagation::Stop
-            }
-            None => glib::Propagation::Proceed,
+        if handle_review_key(
+            event.keyval(),
+            gdk::keys::constants::Escape,
+            || state_escape.pending_review_id(),
+            input::send_review_decision,
+        ) == ReviewKey::CancelRequested
+        {
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
         }
     });
 }

@@ -4,13 +4,42 @@ Describe what this change does, why it is needed, and which part of the reposito
 
 Everything below this paragraph returns inside a collapsible block, except the verification gate, the checklist and the footer. A review round or a babysit poll adds a row to the round log, never a new section, and a raw log never goes in the body at all.
 
+<details>
+<summary>Draft roadmap</summary>
+
+Replace these prompts when the draft opens. After every push, revise the current scope and milestones in place. Link evidence and remove superseded steps; this is a handoff, not a log.
+
+- Outcome: <authorized scope and what counts as done>
+- Milestones: <short ordered steps; mark done, active or next>
+- Next action: <where the next agent should resume; include a blocker or decision only if needed>
+
+</details>
+
 ## Verification gate
 
 Head SHA: `0000000000000000000000000000000000000000`
 
 Base: `<base branch>` at `0000000000000000000000000000000000000000`, contained in the head above.
 
-Replace both zero placeholders. The head is the current 40-character hexadecimal PR head SHA, and a result from an earlier edit does not verify this head. The base is `git rev-parse FETCH_HEAD` right after `git fetch origin <base>`, and `git merge-base --is-ancestor FETCH_HEAD HEAD` must exit 0 for the head you name.
+<details>
+<summary>Full-diff coding standards review</summary>
+
+Standards blob: `0000000000000000000000000000000000000000`
+
+I applied the entire CODING_STANDARDS.md to the entire base-to-head diff.
+
+- CS01: <verified or not applicable>: <diff-specific evidence or reason>
+- CS02: <verified or not applicable>: <diff-specific evidence or reason>
+- CS03: <verified or not applicable>: <diff-specific evidence or reason>
+- CS04: <verified or not applicable>: <diff-specific evidence or reason>
+- CS05: <verified or not applicable>: <diff-specific evidence or reason>
+- CS06: <verified or not applicable>: <diff-specific evidence or reason>
+- CS07: <verified or not applicable>: <diff-specific evidence or reason>
+- CS08: <verified or not applicable>: <diff-specific evidence or reason>
+
+</details>
+
+Replace the verification heading through this first fold with the accepted `last-review.md` from `engineering/standards-review.md`. Each row cites a changed repository-relative path in backticks and gives its own result or reason. The PR check rejects placeholders and stale base, head or standards revisions. Leave the command results below it.
 
 - `pnpm install --frozen-lockfile`: <passed, failed, or not run with reason>
 - `pnpm run lint`: <passed, failed, or not run with reason>

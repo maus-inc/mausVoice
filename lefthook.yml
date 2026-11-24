@@ -1,6 +1,6 @@
 # Lefthook git hooks for mausVoice
 # https://lefthook.dev/configuration/
-# Install: npm install -g lefthook && lefthook install
+# Install the pinned version in CONTRIBUTING.md.
 # The rules behind these jobs live in COMMIT.md, .agents/PREFLIGHT.md and AGENTS.md.
 
 pre-commit:
@@ -39,11 +39,15 @@ pre-commit:
     - name: vendored skills match the lockfile
       # .gitignore is here because the script also fails on a rule that would
       # drop a vendored file from a fresh checkout.
-      glob: "{.agents/skills/**,skills-lock.json,.gitignore,scripts/ci/verify-skills.mjs}"
+      glob: "{.agents/skills/**,skills-lock.json,.gitignore,.gitattributes,scripts/ci/verify-skills.mjs}"
       run: pnpm run skills:verify
 
 pre-push:
   jobs:
+    - name: full-diff standards review
+      use_stdin: true
+      run: node scripts/ci/standards-review.mjs pre-push "{1}"
+
     - name: lint
       run: pnpm run lint
 

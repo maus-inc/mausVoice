@@ -23,6 +23,7 @@ use crate::nsstring::with_ns_string;
 use rust_pill_shared::clock::monotonic_now as drag_now;
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
+use rust_pill_shared::review_key::{handle_review_key, ReviewKey};
 use rust_pill_shared::{LONG_PRESS_DURATION, LONG_PRESS_MOVE_THRESHOLD};
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
@@ -490,10 +491,7 @@ extern "C" fn control_do_command(
     _text_view: id,
     command: Sel,
 ) -> BOOL {
-    if command != sel!(cancelOperation:) {
-        return NO;
-    }
-    if cancel_pending_review() {
+    if handle_review_command(command) == ReviewKey::CancelRequested {
         YES
     } else {
         NO
@@ -504,21 +502,17 @@ extern "C" fn control_do_command(
 ///
 /// The chain deliberately stops here: an Escape with no review to answer must
 /// not travel up to the panel, which would close the pill window.
-extern "C" fn cancel_operation(_this: &Object, _sel: Sel, _sender: id) {
-    cancel_pending_review();
+extern "C" fn cancel_operation(_this: &Object, command: Sel, _sender: id) {
+    handle_review_command(command);
 }
 
-/// Send a cancel decision for the transcript under review, if there is one.
-/// Returns whether a review was cancelled.
-fn cancel_pending_review() -> bool {
-    with_ctx(|ctx| match ctx.state.pending_review_id() {
-        Some(review_id) => {
-            input::send_review_decision(&review_id, "cancel", None);
-            true
-        }
-        None => false,
-    })
-    .unwrap_or(false)
+fn handle_review_command(command: Sel) -> ReviewKey {
+    handle_review_key(
+        command,
+        sel!(cancelOperation:),
+        || with_ctx(|ctx| ctx.state.pending_review_id()).flatten(),
+        input::send_review_decision,
+    )
 }
 
 /// Put `text` in the panel's text field. Used to load a transcript into the
@@ -539,53 +533,11 @@ extern "C" fn tick_callback(_this: &Object, _sel: Sel, _timer: id) {
 /// Runs one frame of the pill loop: processes queued IPC messages, advances
 /// the springs/animations, and repaints when the state changed.
 fn handle_in_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
-    // Phase message sequence guard: see ipc::InMessage::Phase.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
     match msg {
         InMessage::Phase { phase, seq } => {
-            let stale = LAST_PHASE_SEQ.with(|last| {
-                let stale = seq < last.get();
-                if !stale {
-                    last.set(seq);
-                }
-                stale
-            });
-            if stale {
-                return;
-            }
-            let prev = ctx.state.phase.get();
-            ctx.state.phase.set(phase);
             ctx.state
-                .style_tooltip_gate
-                .set_take_running(phase == Phase::Recording);
-            // A new take sweeps any banner parked above the pill (for
-            // example the retranscribing toast) so it cannot sit on the
-            // style selector for the whole take. A resume from Paused
-            // keeps toasts raised during the take, such as the cancel
-            // confirm.
-            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                clear_flash(&ctx.state);
-            }
-            if rust_pill_shared::should_clear_stage_text_on_phase(
-                prev == Phase::Loading,
-                phase == Phase::Idle,
-                phase == Phase::Loading,
-            ) {
-                *ctx.state.stage_text.borrow_mut() = None;
-            }
-            if phase == Phase::Loading && prev != Phase::Loading {
-                let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                ctx.state.loading_offset.set(offset);
-            }
-            if phase == Phase::Idle && prev != Phase::Idle {
-                ctx.state.pending_levels.borrow_mut().clear();
-                ctx.state.target_level.set(0.0);
-                ctx.state.current_level.set(0.0);
-                ctx.state.wave_phase.set(0.0);
-                ctx.state.loading_offset.set(0.0);
-            }
+                .indicator
+                .apply_phase(phase, seq, reduced_motion, || clear_flash(&ctx.state))
         }
         InMessage::Levels { levels } => {
             *ctx.state.pending_levels.borrow_mut() = levels;
@@ -1899,22 +1851,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
 
     // Initialize state
     let state = Rc::new(PillState {
-        phase: Cell::new(Phase::Idle),
+        indicator: Default::default(),
         visibility: Cell::new(Visibility::WhileActive),
-        expand_t: Cell::new(0.0),
-        expand_velocity: Cell::new(0.0),
-        hovered: Cell::new(false),
-        wave_phase: Cell::new(0.0),
-        current_level: Cell::new(0.0),
-        target_level: Cell::new(0.0),
-        loading_offset: Cell::new(0.0),
-        pending_levels: RefCell::new(Vec::new()),
-        style_count: Cell::new(0),
-        style_name: RefCell::new(String::new()),
-        tooltip_t: Cell::new(0.0),
-        tooltip_velocity: Cell::new(0.0),
-        tooltip_width: Cell::new(0.0),
-        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         ui_scale,
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
@@ -1968,7 +1906,6 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
-        stage_text: RefCell::new(None),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),

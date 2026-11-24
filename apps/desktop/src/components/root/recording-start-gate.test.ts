@@ -8,10 +8,15 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 import {
   beginLocalDataClear,
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
   LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
 } from "../../utils/local-data-write-gate";
 import { resetNativeRecordingSession } from "../../utils/native-recording-session";
 import {
+  admittedStartOptions,
+  attemptStillOwns,
+  attemptSurvivedNoClear,
   invokeGuardedRecordingStart,
   settleRecordingStart,
   subscribeRecordingAbortForClear,
@@ -19,6 +24,7 @@ import {
 
 beforeEach(() => {
   resetNativeRecordingSession();
+  invoke.mockReset();
   localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
 });
 
@@ -121,4 +127,111 @@ it("stops a late microphone start after a parallel startup step has failed", asy
   await expect(tracked).resolves.toBe("started");
   expect(stop).toHaveBeenCalledOnce();
   expect(started).not.toHaveBeenCalled();
+});
+
+it("retains the handle at admission, before the start reply lands", async () => {
+  let finishStart!: (value: { sampleRate: number }) => void;
+  invoke.mockImplementation((command: string) => {
+    if (command === "recording_generation") return Promise.resolve(1);
+    if (command === "start_recording") {
+      return new Promise((resolve) => {
+        finishStart = resolve;
+      });
+    }
+    return Promise.resolve(undefined);
+  });
+  const retained: unknown[] = [];
+  const start = invokeGuardedRecordingStart(
+    null,
+    admittedStartOptions(
+      () => true,
+      (handle) => retained.push(handle),
+    ),
+  );
+  // The handle arrives while `start_recording` is still unanswered, so a caller
+  // can stop the device during the opening window.
+  await vi.waitFor(() => expect(retained).toHaveLength(1));
+  expect(
+    invoke.mock.calls.filter(([command]) => command === "start_recording"),
+  ).toHaveLength(1);
+  finishStart({ sampleRate: 16000 });
+  const { handle } = await start;
+  expect(retained[0]).toBe(handle);
+});
+
+it("retires the reservation instead of dispatching a stale start", async () => {
+  invoke.mockImplementation((command: string) => {
+    if (command === "recording_generation") return Promise.resolve(1);
+    return Promise.resolve({ sampleRate: 16000 });
+  });
+  const retained: unknown[] = [];
+  await expect(
+    invokeGuardedRecordingStart(
+      null,
+      admittedStartOptions(
+        () => false,
+        (handle) => retained.push(handle),
+      ),
+    ),
+  ).rejects.toThrow("Recording start was cancelled");
+  // The cancelled attempt never retained a handle and never opened the device.
+  expect(retained).toHaveLength(0);
+  expect(
+    invoke.mock.calls.filter(([command]) => command === "start_recording"),
+  ).toHaveLength(0);
+});
+
+/** Ownership reads live refs, so each case drives them through one mutable record. */
+const ownershipOf = (mounted: boolean, opId: number) => ({
+  isMounted: () => mounted,
+  currentOpId: () => opId,
+});
+
+it("lets the newest attempt on a mounted form publish its state", () => {
+  const generation = getLocalDataClearGeneration();
+  expect(attemptStillOwns(ownershipOf(true, 3), 3, generation)).toBe(true);
+});
+
+it("rejects an attempt that a newer start or stop has superseded", () => {
+  // The op id is bumped by every start and every stop, so an older reply must
+  // not publish over the state the newer attempt already set.
+  const generation = getLocalDataClearGeneration();
+  expect(attemptStillOwns(ownershipOf(true, 4), 3, generation)).toBe(false);
+});
+
+it("rejects an attempt whose component unmounted while it opened", () => {
+  const generation = getLocalDataClearGeneration();
+  expect(attemptStillOwns(ownershipOf(false, 3), 3, generation)).toBe(false);
+});
+
+it("keeps the failure path out of a cleared session", async () => {
+  const admittedGeneration = getLocalDataClearGeneration();
+  expect(attemptSurvivedNoClear(admittedGeneration)).toBe(true);
+  const release = await beginLocalDataClear();
+  localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+  release();
+  // The failure path logs only while the attempt's own session still stands, so
+  // a clear that began after admission silences it even once the clear ends.
+  expect(attemptSurvivedNoClear(admittedGeneration)).toBe(false);
+  expect(attemptSurvivedNoClear(getLocalDataClearGeneration())).toBe(true);
+});
+
+it("rejects an attempt admitted before a local-data clear began", async () => {
+  const admittedGeneration = getLocalDataClearGeneration();
+  expect(attemptStillOwns(ownershipOf(true, 1), 1, admittedGeneration)).toBe(
+    true,
+  );
+  const release = await beginLocalDataClear();
+  localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
+  release();
+  // The clear has finished, so the marker no longer rejects anything. The op id
+  // and the mount state still match, which leaves the moved generation as the
+  // only reason this attempt must not publish into the cleared session.
+  expect(isLocalDataClearRequested()).toBe(false);
+  expect(attemptStillOwns(ownershipOf(true, 1), 1, admittedGeneration)).toBe(
+    false,
+  );
+  expect(
+    attemptStillOwns(ownershipOf(true, 1), 1, getLocalDataClearGeneration()),
+  ).toBe(true);
 });

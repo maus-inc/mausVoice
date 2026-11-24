@@ -1,3 +1,4 @@
+use rust_pill_shared::indicator::DictationIndicator;
 use std::cell::{Cell, RefCell};
 
 use crate::constants::*;
@@ -77,8 +78,9 @@ impl ClickRegion {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum WindowMode {
+    #[default]
     Dictation,
     AssistantCompact,
     AssistantExpanded,
@@ -114,25 +116,9 @@ pub(crate) struct FlameTongue {
     pub(crate) speed: f64,
 }
 
-#[derive(Debug, Clone)]
-
+#[derive(Debug, Clone, Default)]
 pub(crate) struct PillState {
-    pub(crate) phase: Cell<Phase>,
     pub(crate) visibility: Cell<Visibility>,
-    pub(crate) expand_t: Cell<f64>,
-    pub(crate) expand_velocity: Cell<f64>,
-    pub(crate) hovered: Cell<bool>,
-    pub(crate) wave_phase: Cell<f64>,
-    pub(crate) current_level: Cell<f64>,
-    pub(crate) target_level: Cell<f64>,
-    pub(crate) loading_offset: Cell<f64>,
-    pub(crate) pending_levels: RefCell<Vec<f32>>,
-    pub(crate) style_count: Cell<u32>,
-    pub(crate) style_name: RefCell<String>,
-    pub(crate) tooltip_t: Cell<f64>,
-    pub(crate) tooltip_velocity: Cell<f64>,
-    pub(crate) tooltip_width: Cell<f64>,
-    pub(crate) style_tooltip_gate: rust_pill_shared::StyleTooltipGate,
 
     pub(crate) window_mode: Cell<WindowMode>,
     pub(crate) draw_width: Cell<f64>,
@@ -206,7 +192,6 @@ pub(crate) struct PillState {
     pub(crate) transcript_time_since_update: Cell<f64>,
     pub(crate) transcript_opacity: Cell<f64>,
     pub(crate) transcript_has_message: Cell<bool>,
-    pub(crate) stage_text: RefCell<Option<String>>,
 
     // Long-press balloon pop + drag
     pub(crate) long_press_active: Cell<bool>,
@@ -262,6 +247,7 @@ pub(crate) struct PillState {
     // state so the render path reuses one allocation across frames.
     pub(crate) ring_points: RefCell<Vec<(f64, f64, f64)>>,
 
+    pub(crate) indicator: DictationIndicator<Phase>,
     // Dirty flag — when false, the rendered output is identical to the previous
     // frame so we can skip draw + UpdateLayeredWindow entirely.
     pub(crate) dirty: Cell<bool>,
@@ -446,3 +432,14 @@ rust_pill_shared::impl_ring_host!(
         crate::pill::reduced_motion()
     }
 );
+
+rust_pill_shared::impl_recording_phase!(Phase);
+
+// Native paint and input code read the same indicator that receives phase IPC.
+impl std::ops::Deref for PillState {
+    type Target = DictationIndicator<Phase>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.indicator
+    }
+}

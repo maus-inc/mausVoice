@@ -39,6 +39,44 @@ const read = (relativePath) =>
     ? collapse(readRaw(relativePath))
     : readRaw(relativePath);
 
+// Keep Rust line boundaries until comments and literals are gone. Block comments
+// nest and raw strings may themselves contain quotes and comment delimiters.
+function rustCode(text) {
+  const noise =
+    /\/\/[^\n]*|\/\*|\b[bc]?r(#*)"|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\\n])'/gu;
+  const chunks = [];
+  let end = 0;
+  for (let m; (m = noise.exec(text)); end = noise.lastIndex) {
+    chunks.push(text.slice(end, m.index), " ");
+    if (m[0] === "/*") {
+      const delimiter = /\/\*|\*\//g;
+      delimiter.lastIndex = noise.lastIndex;
+      let depth = 1;
+      while (depth) {
+        const next = delimiter.exec(text);
+        assert.ok(next, "unclosed Rust block comment");
+        depth += next[0] === "/*" ? 1 : -1;
+      }
+      noise.lastIndex = delimiter.lastIndex;
+    } else if (m[1] !== undefined) {
+      const terminator = `"${m[1]}`;
+      const close = text.indexOf(terminator, noise.lastIndex);
+      assert.notEqual(close, -1, "unclosed raw string");
+      noise.lastIndex = close + terminator.length;
+    }
+  }
+  return chunks.join("") + text.slice(end);
+}
+
+function routesPhase(raw, owner, bannerOwner) {
+  const code = raw.replace(/\s+/gu, "");
+  const arms = code.split("InMessage::Phase{phase,seq}=>");
+  if (arms.length !== 2) return false;
+  const body = arms[1].split("InMessage::Levels")[0].replace(/,$/u, "");
+  const call = `${owner}.indicator.apply_phase(phase,seq,reduced_motion,||clear_flash(${bannerOwner}))`;
+  return [call, `{${call}}`, `{${call};}`].includes(body);
+}
+
 // The lines of the item declared at `marker`, up to and including the line that
 // closes it, collapsed as `read` collapses a whole file. A guard that inspects
 // one function cannot use the collapsed text: a `//` comment runs to the end of
@@ -2486,7 +2524,29 @@ describe("native pill loading animation behind stage text", () => {
     }
   });
 
-  it("clears stage_text via should_clear_stage_text_on_phase, advances loading_offset with reduced_motion, and normalizes StageText IPC", () => {
+  it("does not count a Phase route inside a comment or quoted example", () => {
+    const wire =
+      "state.indicator.apply_phase(phase, seq, reduced_motion, || clear_flash(state))";
+    const routes = (statement) =>
+      routesPhase(
+        rustCode(
+          `match msg { InMessage::Phase { phase, seq } => { ${statement}\n } InMessage::Levels { levels } => {} }`,
+        ),
+        "state",
+        "state",
+      );
+    assert.ok(routes(`/* banner */ ${wire};`));
+    for (const inactive of [
+      `// ${wire}`,
+      `/* outer /* nested */ ${wire} */`,
+      `"${wire}";`,
+      `r##"example " ${wire}"##;`,
+    ]) {
+      assert.equal(routes(inactive), false);
+    }
+  });
+
+  it("routes phase IPC to the shared indicator and preserves stage text and reduced-motion drawing", () => {
     const shared = read("packages/rust_pill_shared/src/lib.rs");
     assert.match(
       shared,
@@ -2499,28 +2559,19 @@ describe("native pill loading animation behind stage text", () => {
       "rust_pill_shared must define advance_loading_offset",
     );
 
-    for (const [label, text] of [
-      ["gtk", source.gtkPill],
-      ["macos", source.macApp],
-      ["windows", source.windowsPill],
+    for (const [label, path, owner] of [
+      ["gtk", "gtkPill", "state_tick"],
+      ["macos", "macApp", "ctx.state"],
+      ["windows", "windowsPill", "state"],
     ]) {
-      const phaseArm = text
-        .split("InMessage::Phase { phase, seq } => {")[1]
-        .split("InMessage::Levels")[0];
-      assert.match(
-        phaseArm,
-        /if rust_pill_shared::should_clear_stage_text_on_phase\(\s*prev == Phase::Loading,\s*phase == Phase::Idle,\s*phase == Phase::Loading,\s*\) \{\s*\*[\w.]*stage_text\.borrow_mut\(\) = None;\s*\}/,
-        `${label}: InMessage::Phase must clear stage_text via should_clear_stage_text_on_phase`,
-      );
-      assert.match(
-        phaseArm,
-        /if phase == Phase::Loading && prev != Phase::Loading \{\s*let offset = if reduced_motion\(\) \{ 0\.5 \} else \{ 0\.0 \};\s*[\w.]*loading_offset\.set\(offset\);\s*\}/,
-        `${label}: InMessage::Phase must initialize loading_offset (respecting reduced_motion) when entering Phase::Loading`,
-      );
-      assert.match(
-        phaseArm,
-        /if phase == Phase::Idle && prev != Phase::Idle \{[^}]*loading_offset\.set\(0\.0\);/,
-        `${label}: InMessage::Phase must reset loading_offset when returning to Phase::Idle`,
+      const text = collapse(rustCode(readRaw(pathOf.get(path))));
+      // The shared Rust tests exercise ordering, stage text, reduced motion,
+      // and the idle reset. Here check that each actual Phase arm routes the
+      // wire sequence, OS preference and banner callback to that model.
+      const bannerOwner = label === "macos" ? `&${owner}` : owner;
+      assert.ok(
+        routesPhase(text, owner, bannerOwner),
+        `${label}: phase IPC must update this window's indicator and banner`,
       );
       assert.match(
         text,

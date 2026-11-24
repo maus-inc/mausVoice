@@ -91,21 +91,23 @@ export async function runEval({
   await Promise.all(promises);
 }
 
-export const postProcess = async ({
+type PostProcessInput = {
+  tone: ToneConfig;
+  transcription: string;
+  language?: string;
+  userName?: string;
+  repo?: Pick<BaseGenerateTextRepo, "generateText">;
+  signal?: AbortSignal;
+};
+
+export const postProcessResolution = async ({
   tone,
   transcription,
   language = "en",
   userName = "Thomas Gundan",
   repo,
   signal,
-}: {
-  tone: ToneConfig;
-  transcription: string;
-  language?: string;
-  userName?: string;
-  repo?: BaseGenerateTextRepo;
-  signal?: AbortSignal;
-}): Promise<string> => {
+}: PostProcessInput) => {
   const promptInput: PostProcessingPromptInput = {
     transcript: transcription,
     dictationLanguage: language,
@@ -123,12 +125,16 @@ export const postProcess = async ({
     jsonResponse: PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
   });
 
-  // Score what production would deliver, edits included, so an eval failure
-  // points at the real pipeline rather than at an eval-only parser.
-  const resolution = resolveProcessedTranscription(output.text, transcription);
+  return resolveProcessedTranscription(output.text, transcription);
+};
+
+// Quality evals score what would be delivered, including the raw fallback.
+// A test of model cleanup must inspect the resolution instead.
+export const postProcess = async (input: PostProcessInput): Promise<string> => {
+  const resolution = await postProcessResolution(input);
   return resolution.status === "cleaned"
     ? resolution.transcript
-    : transcription;
+    : input.transcription;
 };
 
 export const toneFromPrompt = (promptTemplate: string): StyleToneConfig => ({

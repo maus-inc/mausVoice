@@ -8,7 +8,7 @@ type TileLocator = ReturnType<typeof $>;
  * Implementation map:
  *   k5.9.9.1  #299 switch row press transform — apps/desktop/src/components/common/ListTile.tsx
  *             (switch semantics: apps/desktop/src/components/settings/SettingRow.tsx)
- *   m3.0.0.1  #300 saved-audio startup latency   — apps/desktop/src/utils/transcription-audio-cache.ts
+ *   m3.0.0.1  #300 History navigation only (no saved-audio playback measurement)
  *   r7.3.0.2  #301 sidebar route prefetch        — apps/desktop/src/utils/route-prefetch.ts
  *   v2.0.7.0  #307 version tag overlap           — apps/desktop/src/components/dashboard/DashboardMenu.tsx
  *   p4.3.0.8  #308 preview popup eye toggle      — apps/desktop/src/preview/PreviewRoot.tsx
@@ -88,7 +88,7 @@ async function settleRoute() {
 // source, so these must not reference module scope. One canonical lookup for
 // the Settings row and the version caption, shared by every contract block.
 function settingsRowSnapshot() {
-  const rows = [...document.querySelectorAll("li")];
+  const rows = [...document.querySelectorAll("nav li")];
   const row = rows.find((li) =>
     [...li.querySelectorAll("span, p, div")].some(
       (n) =>
@@ -106,18 +106,34 @@ function settingsRowSnapshot() {
   const r = row.getBoundingClientRect();
   return {
     transformed: ancestors,
+    centerHitsRow: row.contains(
+      document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2),
+    ),
     rect: { x: r.x, y: r.y, width: r.width, height: r.height },
   };
 }
 
 function versionCaptionRect() {
-  const captions = [...document.querySelectorAll("p, span")];
+  const captions = [...document.querySelectorAll("nav p, nav span")];
   const el = captions.find((node) =>
     /^v\d+\.\d+\.\d+/.test((node.textContent ?? "").trim()),
   );
   if (!el) return null;
   const r = el.getBoundingClientRect();
   return { x: r.x, y: r.y, width: r.width, height: r.height };
+}
+
+async function expectVersionBelowSettings() {
+  const settings = await browser.execute(settingsRowSnapshot);
+  const caption = await browser.execute(versionCaptionRect);
+  if (!settings || !caption)
+    throw new Error("Expected both the Settings row and the version caption");
+  expect(caption.width).toBeGreaterThan(0);
+  expect(caption.height).toBeGreaterThan(0);
+  expect(caption.y).toBeGreaterThanOrEqual(
+    settings.rect.y + settings.rect.height - 2,
+  );
+  expect(settings.centerHitsRow).toBe(true);
 }
 
 async function stateSnapshot(tag: string) {
@@ -671,55 +687,28 @@ describe("MausAgent native deliverable contract", () => {
 
   it("v2.0.7.0 #307 keeps the sidebar version tag clear of the Settings tile", async () => {
     await ensureOn("/dashboard");
-    const settings = await browser.execute(settingsRowSnapshot);
-    const caption = await browser.execute(versionCaptionRect);
-    expect(caption).not.toBeNull();
-    expect(caption!.width).toBeGreaterThan(0);
-    expect(caption!.height).toBeGreaterThan(0);
-    expect(caption!.y).toBeGreaterThanOrEqual(
-      settings!.rect.y + settings!.rect.height - 2,
-    );
-
-    // Narrow window sizes: the layout fix must hold outside the default size.
-    await browser.setWindowSize(900, 720);
+    const previous = await browser.getWindowSize();
     try {
-      const narrowRow = await browser.execute(settingsRowSnapshot);
-      const narrowCaption = await browser.execute(versionCaptionRect);
-      expect(narrowRow).not.toBeNull();
-      expect(narrowCaption).not.toBeNull();
-      // Hit-target probe: the Settings row's center must hit the row (or a
-      // descendant), never the caption. The caption element is relocated by
-      // its rect so this block needs no duplicate lookup.
-      const hitIsCaption = await browser.execute(
-        (
-          rowRect: { x: number; y: number; width: number; height: number },
-          capRect: { x: number; y: number; width: number; height: number },
-        ) => {
-          const probe = document.elementFromPoint(
-            rowRect.x + rowRect.width / 2,
-            rowRect.y + rowRect.height / 2,
-          );
-          const caption = [...document.querySelectorAll("p, span")].find(
-            (node) => {
-              const r = node.getBoundingClientRect();
-              return (
-                Math.abs(r.x - capRect.x) < 1 &&
-                Math.abs(r.y - capRect.y) < 1 &&
-                Math.abs(r.width - capRect.width) < 1
-              );
-            },
-          );
-          return !!probe && !!caption && probe.contains(caption);
-        },
-        narrowRow.rect,
-        narrowCaption.rect,
-      );
-      expect(
-        narrowCaption.rect.y >= narrowRow.rect.y + narrowRow.rect.height - 2,
-      ).toBe(true);
-      expect(hitIsCaption).toBe(false);
+      for (const [width, height] of [
+        [1280, 800],
+        [900, 720],
+      ]) {
+        await browser.setWindowSize(width, height);
+        // The driver resizes the outer window. Do not measure the same webview
+        // twice if the resize is ignored or its layout has not caught up.
+        await browser.waitUntil(
+          async () =>
+            (await browser.execute(() => window.innerWidth <= 900)) ===
+            (width === 900),
+          {
+            timeout: 5_000,
+            timeoutMsg: `Viewport did not resize for ${width}`,
+          },
+        );
+        await expectVersionBelowSettings();
+      }
     } finally {
-      await browser.setWindowSize(1280, 800);
+      await browser.setWindowSize(previous.width, previous.height);
     }
   });
 });

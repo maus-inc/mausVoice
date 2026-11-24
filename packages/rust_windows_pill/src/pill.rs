@@ -1,4 +1,5 @@
 use rust_pill_shared::clock::monotonic_now as drag_now;
+use rust_pill_shared::review_key::{handle_review_key, ReviewKey};
 use std::cell::{Cell, RefCell};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -14,10 +15,10 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::Gfx;
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy};
 use crate::state;
 use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
-use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
+use rust_pill_shared::drag::{DragBounds, DragFrame};
 use rust_pill_shared::edge::MonitorRect;
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
 use rust_pill_shared::{LONG_PRESS_DURATION, LONG_PRESS_MOVE_THRESHOLD};
@@ -55,6 +56,23 @@ thread_local! {
     static LAST_TOPMOST_REASSERT: Cell<Option<Instant>> = const { Cell::new(None) };
     static TOPMOST_REASSERT_COUNT: Cell<u32> = const { Cell::new(0) };
     static PILL_PLACEMENT: Cell<u8> = const { Cell::new(PILL_PLACEMENT_BOTTOM) };
+}
+
+/// The live window starts with these dimensions, preferences and animation
+/// sentinels. Empty collections, idle effects and controllers use their defaults.
+fn initial_state() -> PillState {
+    PillState {
+        draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
+        draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
+        assistant_input_mode: RefCell::new("voice".to_string()),
+        assistant_compact: Cell::new(true),
+        should_stick: Cell::new(true),
+        mouse_x: Cell::new(-1000.0),
+        mouse_y: Cell::new(-1000.0),
+        ring: rust_pill_shared::RingState::new(),
+        dirty: Cell::new(true),
+        ..Default::default()
+    }
 }
 
 /// Runs the Windows pill: registers the window class, creates the layered
@@ -114,104 +132,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let gfx = Gfx::new(WINDOW_W_TYPING, win_h).expect("Failed to create D2D context");
     eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
 
-    let state = PillState {
-        phase: Cell::new(Phase::Idle),
-        visibility: Cell::new(Visibility::WhileActive),
-        expand_t: Cell::new(0.0),
-        expand_velocity: Cell::new(0.0),
-        hovered: Cell::new(false),
-        wave_phase: Cell::new(0.0),
-        current_level: Cell::new(0.0),
-        target_level: Cell::new(0.0),
-        loading_offset: Cell::new(0.0),
-        pending_levels: RefCell::new(Vec::new()),
-        style_count: Cell::new(0),
-        style_name: RefCell::new(String::new()),
-        tooltip_t: Cell::new(0.0),
-        tooltip_velocity: Cell::new(0.0),
-        tooltip_width: Cell::new(0.0),
-        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
-        window_mode: Cell::new(WindowMode::Dictation),
-        draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
-        draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
-        draw_w_velocity: Cell::new(0.0),
-        draw_h_velocity: Cell::new(0.0),
-        assistant_active: Cell::new(false),
-        assistant_review: RefCell::new(None),
-        assistant_input_mode: RefCell::new("voice".to_string()),
-        assistant_compact: Cell::new(true),
-        assistant_conversation_id: RefCell::new(None),
-        assistant_user_prompt: RefCell::new(None),
-        assistant_messages: RefCell::new(Vec::new()),
-        assistant_streaming: RefCell::new(None),
-        assistant_permissions: RefCell::new(Vec::new()),
-        panel_open_t: Cell::new(0.0),
-        panel_open_velocity: Cell::new(0.0),
-        kb_button_t: Cell::new(0.0),
-        kb_button_velocity: Cell::new(0.0),
-        shimmer_phase: Cell::new(0.0),
-        scroll_offset: Cell::new(0.0),
-        content_height: Cell::new(0.0),
-        viewport_height: Cell::new(0.0),
-        should_stick: Cell::new(true),
-        click_regions: RefCell::new(Vec::new()),
-        mouse_x: Cell::new(-1000.0),
-        mouse_y: Cell::new(-1000.0),
-        entry_text: RefCell::new(String::new()),
-        pause_t: Cell::new(0.0),
-        pause_velocity: Cell::new(0.0),
-        cancel_t: Cell::new(0.0),
-        cancel_velocity: Cell::new(0.0),
-        flash_message: RefCell::new(String::new()),
-        flash_visible: Cell::new(false),
-        flash_t: Cell::new(0.0),
-        flash_velocity: Cell::new(0.0),
-        flash_timer: Cell::new(0.0),
-        flash_is_error: Cell::new(false),
-        flash_action: RefCell::new(None),
-        flash_action_label: RefCell::new(None),
-        flash_reject_action: RefCell::new(None),
-        flash_reject_action_label: RefCell::new(None),
-        fireworks_active: Cell::new(false),
-        fireworks_elapsed: Cell::new(0.0),
-        fireworks_next_launch: Cell::new(0),
-        fireworks_rockets: RefCell::new(Vec::new()),
-        flame_active: Cell::new(false),
-        flame_elapsed: Cell::new(0.0),
-        flame_tongues: RefCell::new(Vec::new()),
-        flash_blue_active: Cell::new(false),
-        flash_blue_elapsed: Cell::new(0.0),
-        transcript_text: RefCell::new(String::new()),
-        transcript_time_since_update: Cell::new(0.0),
-        transcript_opacity: Cell::new(0.0),
-        transcript_has_message: Cell::new(false),
-        stage_text: RefCell::new(None),
-        long_press_active: Cell::new(false),
-        long_press_elapsed: Cell::new(0.0),
-        long_press_start_x: Cell::new(0.0),
-        long_press_start_y: Cell::new(0.0),
-        dragging: Cell::new(false),
-        drag_cancelled: Cell::new(false),
-        drag_cursor_x: Cell::new(0.0),
-        drag_cursor_y: Cell::new(0.0),
-        drag_motion: RefCell::new(DragController::new()),
-        last_monitor_topology: RefCell::new(None),
-        hover_intent: RefCell::new(HoverIntent::new()),
-        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
-        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
-        has_saved_position: Cell::new(false),
-        reset_strategy: Cell::new(ResetStrategy::Current),
-        saved_x: Cell::new(0),
-        saved_y: Cell::new(0),
-        inflate_t: Cell::new(0.0),
-        inflate_velocity: Cell::new(0.0),
-        drag_label_t: Cell::new(0.0),
-        drag_label_velocity: Cell::new(0.0),
-        ring: rust_pill_shared::RingState::new(),
-        pointer_down: Cell::new(false),
-        ring_points: RefCell::new(Vec::new()),
-        dirty: Cell::new(true),
-    };
+    let state = initial_state();
 
     STATE.with(|s| *s.borrow_mut() = Some(state));
     GFX.with(|g| *g.borrow_mut() = Some(gfx));
@@ -267,109 +188,83 @@ pub fn run(receiver: Receiver<InMessage>) {
     }
 }
 
-/// Run `f` against the live pill state, when the pill has published one.
-fn with_state(f: impl FnOnce(&PillState)) {
-    STATE.with(|cell| {
-        if let Some(state) = cell.borrow().as_ref() {
-            f(state);
-        }
-    });
-}
-
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_TIMER => {
             if wparam.0 == TIMER_CURSOR {
                 on_cursor_tick(hwnd);
             }
-            LRESULT(0)
         }
-        WM_MOUSEMOVE => {
-            on_mouse_move(lparam);
-            LRESULT(0)
-        }
-        WM_SETCURSOR => {
-            // HTCLIENT keeps the window's own cursor; anything else is chrome
-            // the window manager should handle.
-            if (lparam.0 & 0xFFFF) as i16 == 1 {
-                LRESULT(1)
-            } else {
-                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-            }
-        }
+        WM_MOUSEMOVE => with_pill_state(|state| on_mouse_move(state, mouse_position(lparam))),
+        WM_SETCURSOR if (lparam.0 & 0xFFFF) == HTCLIENT as isize => return LRESULT(1),
         WM_LBUTTONDOWN => {
-            on_left_button_down(hwnd, lparam);
-            LRESULT(0)
+            with_pill_state(|state| on_button_down(hwnd, state, mouse_position(lparam)))
         }
-        WM_LBUTTONUP => {
-            on_left_button_up(hwnd, lparam);
-            LRESULT(0)
-        }
-        WM_CAPTURECHANGED => {
-            on_capture_changed(hwnd);
-            LRESULT(0)
-        }
+        WM_LBUTTONUP => with_pill_state(|state| on_button_up(hwnd, state, mouse_position(lparam))),
+        WM_CAPTURECHANGED => with_pill_state(|state| on_capture_changed(hwnd, state)),
         WM_MOUSEWHEEL => {
             let delta = ((wparam.0 >> 16) & 0xFFFF) as i16 as f64;
-            with_state(|state| input::handle_scroll(state, -delta / 120.0 * 30.0));
-            LRESULT(0)
+            with_pill_state(|state| input::handle_scroll(state, -delta / 120.0 * 30.0));
         }
         WM_CHAR => {
             if let Some(ch) = char::from_u32(wparam.0 as u32) {
-                with_state(|state| on_entry_char(state, ch));
+                with_pill_state(|state| on_character(state, ch));
             }
-            LRESULT(0)
         }
         WM_KEYDOWN => {
-            if wparam.0 == VK_ESCAPE.0 as usize {
-                with_state(on_escape);
+            if handle_window_review_key(wparam.0) == ReviewKey::EscapeWithoutReview
+                && STATE.with(|s| s.borrow().as_ref().is_some_and(|state| state.is_typing()))
+            {
+                ipc::send(&OutMessage::AssistantClose);
             }
-            LRESULT(0)
         }
-        WM_DESTROY => {
-            unsafe {
-                PostQuitMessage(0);
-            }
-            LRESULT(0)
-        }
-        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+        WM_DESTROY => unsafe { PostQuitMessage(0) },
+        _ => return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
+    LRESULT(0)
 }
 
-fn on_mouse_move(lparam: LPARAM) {
-    let raw_x = (lparam.0 & 0xFFFF) as i16 as f64;
-    let raw_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
-    with_state(|state| {
-        let (ox, oy) = state.content_offset();
-        let x = raw_x - ox;
-        let y = raw_y - oy;
-        state.mouse_x.set(x);
-        state.mouse_y.set(y);
-        let regions = state.click_regions.borrow();
-        let hit = regions.iter().rev().find(|r| r.contains(x, y));
-        let cursor_id = match hit {
-            Some(r) if matches!(r.action, ClickAction::InputField) => IDC_IBEAM,
-            Some(_) => IDC_HAND,
-            None => IDC_ARROW,
-        };
-        unsafe {
-            SetCursor(LoadCursorW(None, cursor_id).ok());
+fn with_pill_state(f: impl FnOnce(&PillState)) {
+    STATE.with(|slot| {
+        if let Some(state) = slot.borrow().as_ref() {
+            f(state);
         }
     });
 }
 
-fn on_left_button_down(hwnd: HWND, lparam: LPARAM) {
-    let x = (lparam.0 & 0xFFFF) as i16 as f64;
-    let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
-    with_state(|state| {
-        if state.is_typing() {
-            focus_edit_control();
-        }
-        // A fresh press owns its release, including selector clicks.
-        state.drag_cancelled.set(false);
-        if !input::is_on_pill_at(state, x, y) {
-            return;
-        }
+fn mouse_position(lparam: LPARAM) -> (f64, f64) {
+    (
+        (lparam.0 & 0xFFFF) as i16 as f64,
+        ((lparam.0 >> 16) & 0xFFFF) as i16 as f64,
+    )
+}
+
+fn on_mouse_move(state: &PillState, (raw_x, raw_y): (f64, f64)) {
+    let (ox, oy) = state.content_offset();
+    let x = raw_x - ox;
+    let y = raw_y - oy;
+    state.mouse_x.set(x);
+    state.mouse_y.set(y);
+    let regions = state.click_regions.borrow();
+    let hit = regions.iter().rev().find(|r| r.contains(x, y));
+    let cursor_id = match hit {
+        Some(r) if matches!(r.action, ClickAction::InputField) => IDC_IBEAM,
+        Some(_) => IDC_HAND,
+        None => IDC_ARROW,
+    };
+    unsafe {
+        SetCursor(LoadCursorW(None, cursor_id).ok());
+    }
+}
+
+fn on_button_down(hwnd: HWND, state: &PillState, (x, y): (f64, f64)) {
+    if state.is_typing() {
+        focus_edit_control();
+    }
+    // A fresh press owns its release, including selector clicks.
+    state.drag_cancelled.set(false);
+    // Start long-press tracking if clicking on the pill body
+    if input::is_on_pill_at(state, x, y) {
         if state.drag_motion.borrow_mut().interrupt_settle() {
             persist_drag_position(hwnd, state);
         }
@@ -378,72 +273,59 @@ fn on_left_button_down(hwnd: HWND, lparam: LPARAM) {
         state.long_press_elapsed.set(0.0);
         state.long_press_start_x.set(x);
         state.long_press_start_y.set(y);
-    });
+    }
 }
 
-fn on_left_button_up(hwnd: HWND, lparam: LPARAM) {
-    let x = (lparam.0 & 0xFFFF) as i16 as f64;
-    let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
-    with_state(|state| {
-        // End any drag: persists the drop position and releases the pointer
-        // capture. Returns whether a drag was in progress so the click that
-        // would otherwise follow is suppressed.
-        let was_dragging = end_drag(hwnd, state, true);
-        state.long_press_active.set(false);
-        state.long_press_elapsed.set(0.0);
-        // The button is up, so hover stops being pinned.
-        state.pointer_down.set(false);
-        if !was_dragging && !state.drag_cancelled.get() {
-            input::handle_click(state, x, y);
-        }
-        // Hover was pinned for the duration of the gesture; settle it now that
-        // the pointer is free rather than waiting for the next cursor tick.
-        check_hover(hwnd, state);
-    });
+fn on_button_up(hwnd: HWND, state: &PillState, (x, y): (f64, f64)) {
+    // End any drag: persists the drop position and releases the
+    // pointer capture. Returns whether a drag was in progress so
+    // we can suppress the click that would otherwise follow.
+    let was_dragging = end_drag(hwnd, state, true);
+    // Cancel any in-progress long press
+    state.long_press_active.set(false);
+    state.long_press_elapsed.set(0.0);
+    // The button is up, so hover stops being pinned.
+    state.pointer_down.set(false);
+    // Only fire click if the user wasn't dragging
+    if !was_dragging && !state.drag_cancelled.get() {
+        input::handle_click(state, x, y);
+    }
+    // Hover was pinned for the duration of the gesture; settle
+    // it now that the pointer is free rather than waiting for
+    // the next cursor tick.
+    check_hover(hwnd, state);
 }
 
-fn on_capture_changed(hwnd: HWND) {
-    // Another window took the capture (task switch, lock screen, ...). Treat it
-    // as the end of the gesture and keep the pill where it is, otherwise
-    // `dragging` would stay latched on.
-    with_state(|state| {
-        state.long_press_active.set(false);
-        state.long_press_elapsed.set(0.0);
-        state.pointer_down.set(false);
-        // The capture is already gone, so only persist the position.
-        let _ = end_drag(hwnd, state, true);
-        // Settle hover now rather than staying pinned-expanded for up to a full
-        // cursor tick. check_hover only reads state and Cells, so it is safe
-        // under this immutable borrow.
-        check_hover(hwnd, state);
-    });
+fn on_capture_changed(hwnd: HWND, state: &PillState) {
+    // Another window took the capture (task switch, lock screen, ...).
+    // Treat it as the end of the gesture and keep the pill where it is,
+    // otherwise `dragging` would stay latched on.
+    state.long_press_active.set(false);
+    state.long_press_elapsed.set(0.0);
+    // The gesture is over, so hover stops being pinned.
+    state.pointer_down.set(false);
+    // The capture is already gone, so only persist the position.
+    let _ = end_drag(hwnd, state, true);
+    // Settle hover now rather than staying pinned-expanded for
+    // up to a full cursor tick. check_hover only reads state
+    // and Cells, so it is safe under this immutable borrow.
+    check_hover(hwnd, state);
 }
 
-fn on_entry_char(state: &PillState, ch: char) {
+fn on_character(state: &PillState, ch: char) {
     if ch == '\r' || ch == '\n' {
-        // Enter submits: an insert decision while a transcript is under review,
-        // a message to the assistant otherwise.
+        // Enter submits: an insert decision while a
+        // transcript is under review, a message to the
+        // assistant otherwise.
         if input::submit_entry(state) {
             set_edit_text("");
         }
     } else if ch == '\u{8}' {
-        state.entry_text.borrow_mut().pop();
+        // Backspace
+        let mut t = state.entry_text.borrow_mut();
+        t.pop();
     } else if !ch.is_control() {
         state.entry_text.borrow_mut().push(ch);
-    }
-}
-
-fn on_escape(state: &PillState) {
-    // Escape while a transcript is under review is a cancel decision: the
-    // desktop is waiting for an answer.
-    match state.pending_review_id() {
-        Some(review_id) => {
-            let _ = input::send_review_decision(&review_id, "cancel", None);
-        }
-        None if state.is_typing() => {
-            ipc::send(&OutMessage::AssistantClose);
-        }
-        None => {}
     }
 }
 
@@ -704,53 +586,12 @@ fn apply_assistant_state(state: &PillState, update: AssistantStateUpdate) {
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
-    // Phase message sequence guard: see ipc::InMessage::Phase.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
     state.dirty.set(true);
     match msg {
         InMessage::Phase { phase, seq } => {
-            let stale = LAST_PHASE_SEQ.with(|last| {
-                let stale = seq < last.get();
-                if !stale {
-                    last.set(seq);
-                }
-                stale
-            });
-            if stale {
-                return;
-            }
-            let prev = state.phase.get();
-            state.phase.set(phase);
             state
-                .style_tooltip_gate
-                .set_take_running(phase == Phase::Recording);
-            // A new take sweeps any banner parked above the pill (for example
-            // the retranscribing toast) so it cannot sit on the style selector
-            // for the whole take. A resume from Paused keeps toasts raised
-            // during the take, such as the cancel confirm.
-            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                clear_flash(state);
-            }
-            if rust_pill_shared::should_clear_stage_text_on_phase(
-                prev == Phase::Loading,
-                phase == Phase::Idle,
-                phase == Phase::Loading,
-            ) {
-                *state.stage_text.borrow_mut() = None;
-            }
-            if phase == Phase::Loading && prev != Phase::Loading {
-                let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                state.loading_offset.set(offset);
-            }
-            if phase == Phase::Idle && prev != Phase::Idle {
-                state.pending_levels.borrow_mut().clear();
-                state.target_level.set(0.0);
-                state.current_level.set(0.0);
-                state.wave_phase.set(0.0);
-                state.loading_offset.set(0.0);
-            }
+                .indicator
+                .apply_phase(phase, seq, reduced_motion, || clear_flash(state))
         }
         InMessage::Levels { levels } => {
             *state.pending_levels.borrow_mut() = levels;
@@ -2081,6 +1922,10 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
     let was_dragging = state.dragging.get();
 
     if was_dragging {
+        // Capture loss or a cursor tick can finish a drag before WM_LBUTTONUP.
+        // Remember that this press was consumed, even across ReleaseCapture's
+        // synchronous WM_CAPTURECHANGED. A fresh button-down resets the flag.
+        state.drag_cancelled.set(true);
         if persist_position {
             // The drop point persists when the release settle finishes (the
             // frame loop calls persist_drag_position on the settled frame),
@@ -2285,6 +2130,21 @@ unsafe extern "system" fn edit_container_proc(
     }
 }
 
+fn handle_window_review_key(key: usize) -> ReviewKey {
+    handle_review_key(
+        key,
+        VK_ESCAPE.0 as usize,
+        || {
+            STATE.with(|s| {
+                s.borrow()
+                    .as_ref()
+                    .and_then(|state| state.pending_review_id())
+            })
+        },
+        input::send_review_decision,
+    )
+}
+
 /// Intercepts messages for the Edit control before TranslateMessage/DispatchMessage.
 /// Returns true if the message was consumed and should not be dispatched.
 fn handle_edit_message(msg: &MSG) -> bool {
@@ -2312,24 +2172,16 @@ fn handle_edit_message(msg: &MSG) -> bool {
                     }
                 }
                 return true;
-            } else if msg.wParam.0 == VK_ESCAPE.0 as usize {
-                // Escape while a transcript is under review is a cancel
-                // decision: the desktop is waiting for an answer.
-                let review_id = STATE.with(|s| {
-                    s.borrow()
-                        .as_ref()
-                        .and_then(|state| state.pending_review_id())
-                });
-                match review_id {
-                    Some(review_id) => {
-                        let _ = input::send_review_decision(&review_id, "cancel", None);
-                    }
-                    None => {
-                        let _ = ipc::send(&OutMessage::AssistantClose);
-                    }
+            }
+            match handle_window_review_key(msg.wParam.0) {
+                ReviewKey::CancelRequested => return true,
+                ReviewKey::EscapeWithoutReview => {
+                    ipc::send(&OutMessage::AssistantClose);
+                    return true;
                 }
-                return true;
-            } else if ctrl && msg.wParam.0 == 'A' as usize {
+                ReviewKey::Other => {}
+            }
+            if ctrl && msg.wParam.0 == 'A' as usize {
                 // Select all
                 unsafe {
                     SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
@@ -2503,6 +2355,78 @@ pub(crate) fn focus_edit_control() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_window_paints_dictation_once_then_rests_until_input() {
+        let state = initial_state();
+        assert_eq!(state.phase.get(), Phase::Idle);
+        assert_eq!(state.visibility.get(), ipc::Visibility::WhileActive);
+        assert_eq!(state.effective_window_mode(), WindowMode::Dictation);
+        assert_eq!(
+            (state.draw_width.get(), state.draw_height.get()),
+            (
+                DICTATION_WINDOW_WIDTH as f64,
+                DICTATION_WINDOW_HEIGHT as f64
+            )
+        );
+        assert_eq!(state.reset_strategy.get(), ResetStrategy::Current);
+        assert!(state.assistant_compact.get() && state.should_stick.get());
+        assert_eq!(state.assistant_input_mode.borrow().as_str(), "voice");
+        assert_eq!(
+            (state.mouse_x.get(), state.mouse_y.get()),
+            (-1000.0, -1000.0)
+        );
+        assert_eq!(
+            state.ring.release_elapsed(),
+            rust_pill_shared::LONG_PRESS_RING_FADE
+        );
+        assert!(state.needs_redraw(), "the first frame must paint");
+        state.dirty.set(false);
+        assert!(
+            !state.needs_redraw(),
+            "idle effects must not request a second frame"
+        );
+    }
+
+    #[test]
+    fn a_recording_phase_message_dismisses_the_idle_banner() {
+        let state = initial_state();
+        state.flash_visible.set(true);
+        let message =
+            serde_json::from_str(r#"{"type":"phase","phase":"recording","seq":7}"#).unwrap();
+        process_message(message, &state, HWND::default());
+        assert_eq!(state.phase.get(), Phase::Recording);
+        assert!(!state.flash_visible.get());
+    }
+
+    #[test]
+    fn capture_loss_consumes_the_drag_but_not_the_next_click() {
+        let state = initial_state();
+        let hwnd = HWND::default();
+        let (ox, oy) = state.content_offset();
+        let point = (ox + 5.0, oy + 5.0);
+        state.flash_visible.set(true);
+        state
+            .click_regions
+            .borrow_mut()
+            .push(crate::state::ClickRegion {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+                action: ClickAction::FlashAction,
+            });
+        state.dragging.set(true);
+        on_capture_changed(hwnd, &state);
+        on_button_up(hwnd, &state, point);
+        assert!(state.flash_visible.get(), "late release clicked the toast");
+        on_button_down(hwnd, &state, point);
+        on_button_up(hwnd, &state, point);
+        assert!(
+            !state.flash_visible.get(),
+            "a fresh click must still dismiss the toast"
+        );
+    }
 
     #[test]
     fn clearing_crossing_deformation_requests_the_final_repaint() {

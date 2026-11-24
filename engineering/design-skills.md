@@ -43,10 +43,10 @@ with a value recorded in `DESIGN.md`, `DESIGN.md` wins and the conflict goes in
 
 **Provenance:** ported into mausVoice on 2026-10-28 from `better-Shape/app` branch
 `mega/absorb-all`, commit `008b0cbae2b5`, byte for byte. `stageshow` was added on
-2026-11-09 straight from `benjitaylor/skills` with the install command below. `node
-scripts/ci/verify-skills.mjs` reports 54 of 54 locked skills verified against the
-`computedHash` values in `skills-lock.json`, with `be-ambitious`, `find-skills`,
-`ui-capture` and `unslop` unrecorded because they are project-owned. The upstream vendoring history is
+2026-11-09 straight from `benjitaylor/skills` with the install command below. `pnpm run skills:verify` checks the locked folders against
+`skills-lock.json` and lists unrecorded folders separately. In this checkout those are
+`be-ambitious`, `find-skills`, `ui-capture`, `unslop`, and the two
+[Fallow skills](fallow.md), `fallow` and `fallow-review`. The upstream vendoring history is
 in the Provenance section at the end of this file.
 
 This file holds the long material: what each skill is for, when an agent must load it,
@@ -448,7 +448,7 @@ Checked on 2026-10-28 by hashing all 803 vendored files and comparing every
 `AGENTS.md` against the 56 vendored directory names. `be-ambitious` was added on
 2026-11-05 as the fifty-seventh directory and `stageshow` on 2026-11-09 as the
 fifty-eighth, so that count reads 56 for the set checked that day, 57 locked-plus-owned
-before Stageshow, and 58 directories on disk now.
+before Stageshow, and 58 directories on November 9. See the verifier for today's inventory.
 
 **One name collision, and it is not a duplicate.** `find-skills` appears both as a row
 in the compressed index and as `.agents/skills/find-skills/SKILL.md`. They are the same

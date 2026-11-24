@@ -6,3 +6,6 @@ packages/desktop-native-apis/src/bindings.ts -whitespace
 
 # Enforce LF line endings for SQL files so migration checksums stay canonical across platforms.
 *.sql text eol=lf
+
+# The skills lock hashes upstream bytes, including the files that ship as CRLF.
+.agents/skills/** -text
