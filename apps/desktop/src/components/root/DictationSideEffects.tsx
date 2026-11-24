@@ -95,10 +95,7 @@ import {
   settleRecordingStart,
   subscribeRecordingAbortForClear,
 } from "./recording-start-gate";
-import {
-  getLocalDataClearGeneration,
-  isLocalDataClearRequested,
-} from "../../utils/local-data-write-gate";
+import { getLocalDataClearGeneration } from "../../utils/local-data-write-gate";
 import type {
   OverlayPhase,
   OverlayResolvePermissionPayload,
