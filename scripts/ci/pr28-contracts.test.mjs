@@ -1223,14 +1223,34 @@ describe("PR28 ring-alpha render-loop policy", () => {
       /note_report\(has_saved_position, ack\)/,
       "the shared handler does not account for every report",
     );
-    for (const file of [
-      "apps/desktop/src-tauri/src/pill_process.rs",
-      "apps/desktop/src-tauri/src/platform/macos/overlay.rs",
+    // The acknowledgement has to be the value the report carried. A call that
+    // passes `None` retires nothing, so the declaration stays open and every
+    // later drop is refused, which is exactly what the clear asked to avoid.
+    for (const [file, source] of [
+      [
+        "apps/desktop/src-tauri/src/pill_process.rs",
+        /let ack = val\.get\("ack"\)/,
+      ],
+      [
+        "apps/desktop/src-tauri/src/platform/macos/overlay.rs",
+        /let ack = report\.ack;/,
+      ],
     ]) {
+      const text = read(file);
       assert.match(
-        read(file),
+        text,
         /pill_position::apply_published_position\(/,
         `${file}: a pill report bypasses the shared handler`,
+      );
+      assert.match(
+        text,
+        source,
+        `${file}: the report's acknowledgement is not read`,
+      );
+      assert.match(
+        text,
+        /apply_published_position\((?:(?!\);)[\s\S])*?\back\b/,
+        `${file}: the acknowledgement never reaches the shared handler`,
       );
     }
   });
@@ -1448,13 +1468,29 @@ describe("PR28 ring-alpha render-loop policy", () => {
       const end = src.indexOf("Relocation::", at + 20);
       return src.slice(at, end > 0 ? end : at + 4000);
     };
-    for (const marker of ["Relocation::Keep", "Relocation::Move"]) {
+    // The polarity is the guard. A bare mention of `drag_save_due` passes with the
+    // test inverted, which turns "do not update the record" into "update only
+    // while a drop is owed". `Keep` updates the retained metadata only when no
+    // save is owed; `Move` skips the update while one is.
+    for (const [marker, predicate] of [
+      ["Relocation::Keep", /state\.drag_save_due\.get\(\)\.is_none\(\)/],
+      ["Relocation::Move", /state\.drag_save_due\.get\(\)\.is_some\(\)/],
+    ]) {
       assert.match(
         arm(marker),
-        /drag_save_due/,
-        `gtkPill: ${marker} adopts a frame while a drop save is owed`,
+        predicate,
+        `gtkPill: ${marker} updates the record while a drop save is owed`,
       );
     }
+    // And an owed save must not strand the window off-screen: the move is applied
+    // before the record is considered, so the pill still lands where the layout
+    // put it and only the store is skipped.
+    const move = arm("Relocation::Move");
+    assert.ok(
+      move.indexOf("move_toplevel") > 0 &&
+        move.indexOf("move_toplevel") < move.indexOf("drag_save_due"),
+      "gtkPill: an owed drop save stops the window being kept on screen",
+    );
   });
 
   it("reports the drop it recorded, not the window the retry happened to find", () => {
@@ -3713,8 +3749,10 @@ describe("native gesture adapter contracts", () => {
     // whose failure branch logged and carried on would satisfy a bare match while
     // the reset moved the pill anyway, which is the exact outcome the guard exists
     // to prevent. The branch has to leave the function.
+    // The branch has to fail, not merely leave: `return Ok(())` satisfies a bare
+    // `return` while the caller sees a successful reset whose row is still there.
     const bails =
-      /let Some\(declaration\) = crate::pill_position::clear_saved_position\(app, &\w+\)\.await else \{\s*return\b/;
+      /let Some\(declaration\) = crate::pill_position::clear_saved_position\(app, &\w+\)\.await else \{\s*return Err\(/;
     for (const [name, marker] of [
       ["pillProcess", "pub async fn notify_reset_position"],
     ]) {
@@ -3753,10 +3791,24 @@ describe("native gesture adapter contracts", () => {
     // path it lived on was the one that failed: the macOS overlay kept three
     // fields through the whole refactor and only CI's macOS lint noticed.
     const files = rustFilesUnder("apps/desktop/src-tauri/src");
+    const VARIANT = "OutMessage::PositionChanged";
     for (const file of files) {
-      const text = read(file);
-      const pieces = text.split("OutMessage::PositionChanged");
-      for (const piece of pieces.slice(1)) {
+      // A doc comment that names the variant is not a pattern, and splitting the
+      // raw text treated one as another consumer, failing a correct file for
+      // describing itself. An occurrence whose line already holds `//` is skipped;
+      // everything else is collapsed and checked as before.
+      const raw = readRaw(file);
+      const pieces = [];
+      for (
+        let at = raw.indexOf(VARIANT);
+        at !== -1;
+        at = raw.indexOf(VARIANT, at + 1)
+      ) {
+        const lineStart = raw.lastIndexOf("\n", at) + 1;
+        if (raw.slice(lineStart, at).includes("//")) continue;
+        pieces.push(collapse(raw.slice(at + VARIANT.length)));
+      }
+      for (const piece of pieces) {
         // Only the pattern's own braces. A consumer may match
         // `OutMessage::PositionChanged { report }` and then destructure the
         // record's fields on the next line, which is legal; reading a fixed

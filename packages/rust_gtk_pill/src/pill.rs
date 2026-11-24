@@ -1633,7 +1633,15 @@ fn reconcile_display_layout(
             // store, and refreshing the retained area first pairs that drop with a
             // work area it was not dropped in. The retry writes the drop with its
             // own retained area, and the next poll reconciles from what it stored.
+            // The retained metadata has to describe the saved origin. A deferred
+            // drop can commit on the display it was made on while reconciliation
+            // has already moved the window elsewhere, and refreshing from the
+            // live footprint would then pair that origin with this display's area
+            // and id. Waiting until the two agree keeps the record whole.
+            let saved_matches_live = (origin_x - state.saved_x.get()).abs() < 0.5
+                && (origin_y - state.saved_y.get()).abs() < 0.5;
             if state.has_saved_position.get()
+                && saved_matches_live
                 && state.drag_save_due.get().is_none()
                 && !gesture_owns_window(state, now)
             {
