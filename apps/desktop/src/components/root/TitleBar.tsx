@@ -183,7 +183,10 @@ const bindAsyncUnlisten = (
  *
  * Returns the maximized flag, an optimistic setter, the synchronous maximized
  * ref, the pending unconfirmed maximize ref, whether control spacing/buttons
- * render compact, and whether the wordmark must hide for lack of space.
+ * render compact, whether the wordmark must hide for lack of space, and a ref
+ * for the bar's own container, which a second effect measures with a
+ * `ResizeObserver` outside Tauri so a plain browser host still exercises
+ * `compact`/`hideWordmark`.
  */
 const useWindowMetrics = (platform: Platform) => {
   const [maximized, setMaximized] = useState(false);
@@ -196,6 +199,7 @@ const useWindowMetrics = (platform: Platform) => {
   const maxTicketRef = useRef(0);
   const maximizedRef = useRef(false);
   const pendingMaximizedRef = useRef<PendingMaximized | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const applyMaximized = useCallback((value: boolean) => {
     maxTicketRef.current += 1;
@@ -275,6 +279,30 @@ const useWindowMetrics = (platform: Platform) => {
     };
   }, [platform]);
 
+  // Browser preview (and any other non-Tauri host) has no native window to
+  // subscribe to: `getCurrentWindow().onResized` is unavailable, so the effect
+  // above exits immediately and `compact`/`hideWordmark` would otherwise stay
+  // at their roomy defaults forever. Measuring the bar's own rendered
+  // container instead keeps `apps/preview`'s demo states — and every other
+  // non-Tauri render of this component — exercising the same thresholds a
+  // real window resize would.
+  useEffect(() => {
+    if (isTauriRuntime()) return;
+    const node = containerRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const applyWidth = (width: number) => {
+      setCompact(isCompactWidth(width, platform));
+      setHideWordmark(isWordmarkHidden(width, platform));
+    };
+    applyWidth(node.getBoundingClientRect().width);
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width !== undefined) applyWidth(width);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [platform]);
+
   // Storing discrete booleans rather than raw width means a resize drag
   // re-renders the bar only when a threshold is crossed, not on every tick.
   // An unknown window size reads as roomy with the wordmark visible.
@@ -289,6 +317,7 @@ const useWindowMetrics = (platform: Platform) => {
     pendingMaximizedRef,
     compact,
     hideWordmark,
+    containerRef,
   ] as const;
 };
 
@@ -870,7 +899,11 @@ const leftClusterSx = (
   ({
     alignItems: "center",
     minWidth: 0,
-    overflow: "hidden",
+    // No `overflow: "hidden"` here: the wordmark's own `Typography` in
+    // `LogoWithText` already clips and ellipsizes itself, and clipping at
+    // this ancestor level instead cut off the theme toggle's focus-visible
+    // ring, which extends past its border via the global `outline`/
+    // `outlineOffset` in `theme.ts`.
     position: "relative",
     zIndex: 1,
     pl: trafficLights ? (compact ? 0.75 : 1) : compact ? 0.25 : 0.5,
@@ -896,6 +929,7 @@ export const TitleBar = () => {
     pendingMaximizedRef,
     compact,
     hideWordmark,
+    containerRef,
   ] = useWindowMetrics(platform);
   const focused = useWindowFocused();
   const {
@@ -916,7 +950,11 @@ export const TitleBar = () => {
   return (
     <>
       <WindowResizeHandles disabled={maximized} />
-      <Box data-focused={focused} sx={titleBarSx(dark, trafficLights, compact)}>
+      <Box
+        data-focused={focused}
+        ref={containerRef}
+        sx={titleBarSx(dark, trafficLights, compact)}
+      >
         {/*
           Full-bleed drag region. Mouse events are stopped from bubbling to
           Tauri's document-level `drag.js` listener so stationary clicks do not

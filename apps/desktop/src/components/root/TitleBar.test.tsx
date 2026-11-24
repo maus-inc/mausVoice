@@ -663,6 +663,24 @@ it("keeps the wordmark and roomy controls at 800px window width", async () => {
   expect(getComputedStyle(wordmark!).display).not.toBe("none");
 });
 
+it("does not clip the theme toggle's focus ring on the left cluster", async () => {
+  // The global `:focus-visible` outline (theme.ts) is a 2px ring with a 2px
+  // offset, extending 4px past a control's own border. `overflow: "hidden"`
+  // on the cluster that holds the theme toggle would clip that ring; the
+  // wordmark's own Typography already clips and ellipsizes itself in
+  // LogoWithText, so this ancestor must not also clip.
+  await renderBar();
+  const toggleWrapper = [...document.querySelectorAll("div")].find(
+    (node) =>
+      getComputedStyle(node).pointerEvents === "auto" &&
+      getComputedStyle(node).display === "inline-flex",
+  );
+  if (!toggleWrapper) throw new Error("theme toggle wrapper not rendered");
+  const leftCluster = toggleWrapper.parentElement;
+  if (!leftCluster) throw new Error("left cluster not rendered");
+  expect(getComputedStyle(leftCluster).overflow).not.toBe("hidden");
+});
+
 it("tightens caption buttons while keeping the wordmark at compact window widths", async () => {
   windowMocks.outerSize.mockResolvedValue({ width: 520, height: 480 });
   await renderBar();
@@ -839,6 +857,67 @@ it("keeps the roomy bar when the window size is not known yet", async () => {
   await renderBar();
 
   expect(pxOf(requireByLabel("Close"), "width")).toBe(captionButtonSize(false));
+});
+
+it("measures its own rendered container in browser preview, so compact and hideWordmark still react without a native window", async () => {
+  // `getCurrentWindow().onResized` only exists under Tauri, so a non-Tauri
+  // host (apps/preview's demo, or any other browser embed) has no native
+  // event to subscribe to. The bar falls back to observing its own container
+  // with a ResizeObserver; this fakes one to drive that fallback directly,
+  // since jsdom's own ResizeObserver stub (see jsdom-ui-harness.ts) never
+  // invokes its callback.
+  platformState.native = false;
+  let resizeCallback:
+    ((entries: Array<{ contentRect: { width: number } }>) => void) | undefined;
+  class FakeResizeObserver {
+    constructor(
+      callback: (entries: Array<{ contentRect: { width: number } }>) => void,
+    ) {
+      resizeCallback = callback;
+    }
+    observe() {
+      /* no-op: the test drives the callback directly */
+    }
+    unobserve() {
+      /* no-op */
+    }
+    disconnect() {
+      /* no-op */
+    }
+  }
+  const previousResizeObserver = globalThis.ResizeObserver;
+  (globalThis as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
+    FakeResizeObserver as unknown as typeof ResizeObserver;
+
+  try {
+    await renderBar();
+    const hideAt = wordmarkHideThreshold("unknown");
+
+    await act(async () => {
+      resizeCallback?.([{ contentRect: { width: hideAt } }]);
+    });
+    let wordmark = [...document.querySelectorAll("span")].find(
+      (node) => node.textContent === "mausVoice",
+    );
+    expect(getComputedStyle(wordmark!).display).toBe("none");
+    expect(pxOf(requireByLabel("Close"), "width")).toBe(
+      COMPACT_CAPTION_BUTTON_SIZE,
+    );
+
+    await act(async () => {
+      resizeCallback?.([{ contentRect: { width: 800 } }]);
+    });
+    wordmark = [...document.querySelectorAll("span")].find(
+      (node) => node.textContent === "mausVoice",
+    );
+    expect(getComputedStyle(wordmark!).display).not.toBe("none");
+    expect(pxOf(requireByLabel("Close"), "width")).toBe(
+      captionButtonSize(false),
+    );
+  } finally {
+    (globalThis as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
+      previousResizeObserver;
+  }
 });
 
 it("ignores minimized resize ticks so minimizing a wide or maximized window does not flip to compact or clear maximize state", async () => {
