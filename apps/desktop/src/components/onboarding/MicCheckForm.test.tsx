@@ -25,6 +25,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 vi.mock("../../store", () => ({
   getAppState: () => state,
+  produceAppState: vi.fn(),
   useAppStore: (select: (s: typeof state) => unknown) => select(state),
 }));
 vi.mock("../../actions/onboarding.actions", () => ({
