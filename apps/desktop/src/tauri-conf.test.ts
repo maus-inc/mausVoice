@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { isWordmarkHidden } from "./components/root/titleBarGeometry";
 
 const conf = JSON.parse(
   readFileSync(
@@ -8,6 +9,12 @@ const conf = JSON.parse(
   ),
 ) as {
   app?: {
+    windows?: Array<{
+      width?: number;
+      height?: number;
+      minWidth?: number;
+      minHeight?: number;
+    }>;
     security?: {
       csp?: string | null;
       dangerousDisableAssetCspModification?: boolean | string[];
@@ -84,6 +91,20 @@ describe("tauri.conf.json updater contracts", () => {
       // mausvoice/mausvoice is not this project and never resolved.
       expect(url.pathname.startsWith("/maus-inc/mausVoice/")).toBe(true);
       expect(url.pathname.endsWith("/latest.json")).toBe(true);
+    }
+  });
+});
+
+describe("tauri.conf.json main window sizing contracts", () => {
+  const mainWindow = conf.app?.windows?.[0] ?? {};
+
+  it("keeps the title-bar wordmark visible at the configured minimum window size across all platforms", () => {
+    expect(mainWindow.minWidth).toBe(800);
+    expect(mainWindow.minHeight).toBe(600);
+    for (const platform of ["windows", "linux", "macos"] as const) {
+      expect(isWordmarkHidden(mainWindow.minWidth ?? null, platform)).toBe(
+        false,
+      );
     }
   });
 });

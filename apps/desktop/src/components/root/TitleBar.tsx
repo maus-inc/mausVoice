@@ -15,7 +15,7 @@ import {
 } from "../../styles/palette";
 import { hairline, titleBarShadow } from "../../styles/shadows";
 import { isTauriRuntime } from "../../utils/env.utils";
-import { getPlatform } from "../../utils/platform.utils";
+import { getPlatform, type Platform } from "../../utils/platform.utils";
 import { LogoWithText } from "../common/LogoWithText";
 import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
@@ -24,9 +24,13 @@ import {
   CAPTION_CLUSTER_GAP,
   CAPTION_CLUSTER_PAD_RIGHT,
   captionButtonSize,
+  COMPACT_TRAFFIC_CLUSTER_GAP,
   hasRightCaptionButtons,
   isCompactWidth,
+  isWordmarkHidden,
+  MIN_DRAG_REGION_WIDTH,
   TITLE_BAR_HEIGHT,
+  TRAFFIC_CLUSTER_GAP,
   TRAFFIC_DOT_SIZE,
   TRAFFIC_HIT_SIZE,
 } from "./titleBarGeometry";
@@ -136,9 +140,39 @@ const shouldIgnoreMeasuredMaximized = (
 const toLogicalWidth = (physicalWidth: number, scale: number): number =>
   physicalWidth / (scale || 1);
 
+const resolveTitleBarPlatform = (): Platform =>
+  isTauriRuntime() ? getPlatform() : "unknown";
+
 /**
- * One `onResized` subscription carrying both the maximized flag and the bar
- * density.
+ * Releases a Tauri event listener whether cleanup ran before or after the
+ * async `listen` promise resolved.
+ */
+const bindAsyncUnlisten = (
+  subscription: Promise<() => void>,
+): { isCanceled: () => boolean; release: () => void } => {
+  let canceled = false;
+  let unlisten: (() => void) | undefined;
+  subscription
+    .then((fn) => {
+      if (canceled) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    })
+    .catch(() => undefined);
+  return {
+    isCanceled: () => canceled,
+    release: () => {
+      canceled = true;
+      unlisten?.();
+    },
+  };
+};
+
+/**
+ * One `onResized` subscription carrying the maximized flag, compact chrome
+ * spacing, and wordmark visibility.
  *
  * These used to be two hooks each registering `win.onResized`, so every tick of
  * a resize drag issued three IPC calls for two pieces of state that change in
@@ -148,12 +182,13 @@ const toLogicalWidth = (physicalWidth: number, scale: number): number =>
  * is not the same as "newest measurement wins".
  *
  * Returns the maximized flag, an optimistic setter, the synchronous maximized
- * ref, the pending unconfirmed maximize ref, and whether the bar should render
- * compact.
+ * ref, the pending unconfirmed maximize ref, whether control spacing/buttons
+ * render compact, and whether the wordmark must hide for lack of space.
  */
-const useWindowMetrics = () => {
+const useWindowMetrics = (platform: Platform) => {
   const [maximized, setMaximized] = useState(false);
   const [compact, setCompact] = useState(false);
+  const [hideWordmark, setHideWordmark] = useState(false);
   // Separate monotonic tickets for width vs. maximized state so an optimistic
   // maximize toggle guards `setMaximized` against stale pre-click measurements
   // without discarding the latest width measurement for `setCompact`.
@@ -171,7 +206,6 @@ const useWindowMetrics = () => {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    let unlisten: (() => void) | undefined;
     let canceled = false;
     const win = getCurrentWindow();
 
@@ -183,7 +217,9 @@ const useWindowMetrics = () => {
     ) => {
       const active = isActiveTicket(canceled, ticket, sizeTicketRef.current);
       if (!active || !shouldApplySize(minimizedNow, size)) return;
-      setCompact(isCompactWidth(toLogicalWidth(size.width, scale)));
+      const logicalWidth = toLogicalWidth(size.width, scale);
+      setCompact(isCompactWidth(logicalWidth, platform));
+      setHideWordmark(isWordmarkHidden(logicalWidth, platform));
     };
 
     const applyMeasuredMaximized = (
@@ -232,31 +268,16 @@ const useWindowMetrics = () => {
     };
     read().catch(() => undefined);
 
-    win
-      .onResized(read)
-      .then((fn) => {
-        // `onResized` resolves asynchronously. If the effect cleaned up before
-        // it resolved (e.g. React StrictMode double-invoke, or fast navigation),
-        // the unlisten fn must be released immediately instead of being stored
-        // and leaked, since the `return` below would have already run.
-        if (canceled) {
-          fn();
-        } else {
-          unlisten = fn;
-        }
-      })
-      .catch(() => undefined);
-
+    const listener = bindAsyncUnlisten(win.onResized(read));
     return () => {
       canceled = true;
-      unlisten?.();
+      listener.release();
     };
-  }, []);
+  }, [platform]);
 
-  // Storing the decision rather than the raw width means a resize drag
-  // re-renders the bar only when the density actually changes, not on every
-  // tick. An unknown window size reads as not compact, so browser preview keeps
-  // the roomy default it has always shown.
+  // Storing discrete booleans rather than raw width means a resize drag
+  // re-renders the bar only when a threshold is crossed, not on every tick.
+  // An unknown window size reads as roomy with the wordmark visible.
   //
   // The setter is handed back so a caption-button click can update the flag
   // optimistically, without the bar waiting for the next resize event to
@@ -267,6 +288,7 @@ const useWindowMetrics = () => {
     maximizedRef,
     pendingMaximizedRef,
     compact,
+    hideWordmark,
   ] as const;
 };
 
@@ -275,34 +297,22 @@ const useWindowFocused = () => {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    let unlisten: (() => void) | undefined;
-    let canceled = false;
     const win = getCurrentWindow();
     let receivedFocusEvent = false;
+    const listener = bindAsyncUnlisten(
+      win.onFocusChanged(({ payload }) => {
+        receivedFocusEvent = true;
+        if (!listener.isCanceled()) setFocused(payload);
+      }),
+    );
     win
       .isFocused()
       .then((value) => {
         // The initial snapshot can arrive after a newer native event.
-        if (!canceled && !receivedFocusEvent) setFocused(value);
+        if (!listener.isCanceled() && !receivedFocusEvent) setFocused(value);
       })
       .catch(() => undefined);
-    win
-      .onFocusChanged(({ payload }) => {
-        receivedFocusEvent = true;
-        if (!canceled) setFocused(payload);
-      })
-      .then((fn) => {
-        if (canceled) {
-          fn();
-        } else {
-          unlisten = fn;
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      canceled = true;
-      unlisten?.();
-    };
+    return listener.release;
   }, []);
 
   return focused;
@@ -699,6 +709,7 @@ const TrafficButton = ({
 type TrafficLightProps = {
   focused: boolean;
   dark: boolean;
+  compact: boolean;
   closeLabel: string;
   minimizeLabel: string;
   maximizeLabel: string;
@@ -710,6 +721,7 @@ type TrafficLightProps = {
 const MacTrafficLights = ({
   focused,
   dark,
+  compact,
   closeLabel,
   minimizeLabel,
   maximizeLabel,
@@ -719,9 +731,10 @@ const MacTrafficLights = ({
 }: TrafficLightProps) => (
   <Stack
     direction="row"
-    spacing={1}
     sx={{
       alignItems: "center",
+      flexShrink: 0,
+      gap: `${compact ? COMPACT_TRAFFIC_CLUSTER_GAP : TRAFFIC_CLUSTER_GAP}px`,
       position: "relative",
       zIndex: 1,
       opacity: focused ? 1 : 0.55,
@@ -781,6 +794,7 @@ const CaptionButtons = ({
       sx={{
         alignItems: "center",
         alignSelf: "stretch",
+        flexShrink: 0,
         gap: `${CAPTION_CLUSTER_GAP}px`,
         pr: `${CAPTION_CLUSTER_PAD_RIGHT}px`,
         position: "relative",
@@ -825,18 +839,17 @@ const CaptionButtons = ({
     </Stack>
   );
 };
-const titleBarSx = (dark: boolean, trafficLights: boolean) =>
+const titleBarSx = (dark: boolean, trafficLights: boolean, compact: boolean) =>
   ({
     height: TITLE_BAR_HEIGHT,
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
-    px: trafficLights ? 1.5 : 0,
-    pl: trafficLights ? 1.5 : 1,
+    pl: trafficLights ? (compact ? 1.25 : 1.5) : compact ? 0.75 : 1,
     // Caption buttons sit flush against the right window edge (like native
     // Windows chrome); the NorthEast resize grip overlaps the close button's
     // outer corner.
-    pr: trafficLights ? 1.5 : 0,
+    pr: trafficLights ? (compact ? 1.25 : 1.5) : 0,
     position: "relative",
     zIndex: 20,
     // Same wash as the navigation rail, so the bar and the rail read as one
@@ -849,31 +862,41 @@ const titleBarSx = (dark: boolean, trafficLights: boolean) =>
     boxShadow: dark ? titleBarShadow.dark : titleBarShadow.light,
   }) as const;
 
-const leftClusterSx = (trafficLights: boolean, focused: boolean) =>
+const leftClusterSx = (
+  trafficLights: boolean,
+  focused: boolean,
+  compact: boolean,
+) =>
   ({
     alignItems: "center",
+    minWidth: 0,
+    overflow: "hidden",
     position: "relative",
     zIndex: 1,
-    pl: trafficLights ? 1 : 0.5,
+    pl: trafficLights ? (compact ? 0.75 : 1) : compact ? 0.25 : 0.5,
     color: "text.primary",
     opacity: focused ? 1 : 0.6,
     pointerEvents: "none",
   }) as const;
 
-const resolveTitleBarPlatform = () =>
-  isTauriRuntime() ? getPlatform() : "unknown";
-
 export const TitleBar = () => {
   const dark = useIsDarkMode();
   const intl = useIntl();
+  const platform = resolveTitleBarPlatform();
   // Same predicate the resize grips use, so the chrome and the grips can never
   // disagree. Browser preview ("unknown") gets right-side caption buttons.
-  const trafficLights = !hasRightCaptionButtons(resolveTitleBarPlatform());
+  const trafficLights = !hasRightCaptionButtons(platform);
   // Maximized flag and bar density come from one subscription: they change in
   // the same event, so reading them separately issued duplicated IPC on every
   // tick of a resize drag.
-  const [maximized, setMaximized, maximizedRef, pendingMaximizedRef, compact] =
-    useWindowMetrics();
+  const [
+    maximized,
+    setMaximized,
+    maximizedRef,
+    pendingMaximizedRef,
+    compact,
+    hideWordmark,
+  ] = useWindowMetrics(platform);
   const focused = useWindowFocused();
   const {
     minimize,
@@ -893,7 +916,7 @@ export const TitleBar = () => {
   return (
     <>
       <WindowResizeHandles disabled={maximized} />
-      <Box data-focused={focused} sx={titleBarSx(dark, trafficLights)}>
+      <Box data-focused={focused} sx={titleBarSx(dark, trafficLights, compact)}>
         {/*
           Full-bleed drag region. Mouse events are stopped from bubbling to
           Tauri's document-level `drag.js` listener so stationary clicks do not
@@ -916,6 +939,7 @@ export const TitleBar = () => {
           <MacTrafficLights
             focused={focused}
             dark={dark}
+            compact={compact}
             closeLabel={closeLabel}
             minimizeLabel={minimizeLabel}
             maximizeLabel={maximizeLabel}
@@ -927,16 +951,28 @@ export const TitleBar = () => {
 
         <Stack
           direction="row"
-          spacing={1}
-          sx={leftClusterSx(trafficLights, focused)}
+          spacing={compact ? 0.75 : 1}
+          sx={leftClusterSx(trafficLights, focused, compact)}
         >
-          <Box sx={{ display: "inline-flex", pointerEvents: "auto" }}>
+          <Box
+            sx={{
+              display: "inline-flex",
+              flexShrink: 0,
+              pointerEvents: "auto",
+            }}
+          >
             <ThemeModeToggle />
           </Box>
-          <LogoWithText compact={compact} />
+          <LogoWithText compact={compact} hideWordmark={hideWordmark} />
         </Stack>
 
-        <Box sx={{ flex: 1, pointerEvents: "none" }} />
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: `${MIN_DRAG_REGION_WIDTH}px`,
+            pointerEvents: "none",
+          }}
+        />
 
         {trafficLights ? null : (
           <CaptionButtons

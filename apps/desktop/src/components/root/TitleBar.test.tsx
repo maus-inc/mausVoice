@@ -74,9 +74,13 @@ import {
   CAPTION_BUTTON_RADIUS,
   captionButtonSize,
   COMPACT_CAPTION_BUTTON_SIZE,
+  compactChromeThreshold,
+  isCompactWidth,
+  isWordmarkHidden,
   MIN_TARGET_SIZE,
   TRAFFIC_DOT_SIZE,
   TRAFFIC_HIT_SIZE,
+  wordmarkHideThreshold,
 } from "./titleBarGeometry";
 import { captionButtonRestOpacity } from "../../styles/palette";
 
@@ -648,8 +652,19 @@ describe("TitleBar on macOS", () => {
   });
 });
 
-it("narrows the caption buttons and hides the wordmark on a narrow window", async () => {
-  windowMocks.outerSize.mockResolvedValue({ width: 400, height: 600 });
+it("keeps the wordmark and roomy controls at 800px window width", async () => {
+  windowMocks.outerSize.mockResolvedValue({ width: 800, height: 600 });
+  await renderBar();
+
+  const wordmark = [...document.querySelectorAll("span")].find(
+    (node) => node.textContent === "mausVoice",
+  );
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(captionButtonSize(false));
+  expect(getComputedStyle(wordmark!).display).not.toBe("none");
+});
+
+it("tightens caption buttons while keeping the wordmark at compact window widths", async () => {
+  windowMocks.outerSize.mockResolvedValue({ width: 520, height: 480 });
   await renderBar();
 
   const wordmark = [...document.querySelectorAll("span")].find(
@@ -658,8 +673,47 @@ it("narrows the caption buttons and hides the wordmark on a narrow window", asyn
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
     COMPACT_CAPTION_BUTTON_SIZE,
   );
-  // The wordmark is the first thing to go on a narrow bar.
+  expect(getComputedStyle(wordmark!).display).not.toBe("none");
+  expect(getComputedStyle(wordmark!).textOverflow).toBe("ellipsis");
+});
+
+it("truncates before hiding and hides the wordmark only when space genuinely runs out", async () => {
+  const hideAt = wordmarkHideThreshold("windows");
+  windowMocks.outerSize.mockResolvedValue({ width: hideAt + 20, height: 480 });
+  await renderBar();
+
+  let wordmark = [...document.querySelectorAll("span")].find(
+    (node) => node.textContent === "mausVoice",
+  );
+  expect(getComputedStyle(wordmark!).display).not.toBe("none");
+  expect(getComputedStyle(wordmark!).textOverflow).toBe("ellipsis");
+
+  act(() => root.unmount());
+  root = createRoot(container);
+  windowMocks.outerSize.mockResolvedValue({ width: hideAt, height: 480 });
+  await renderBar();
+
+  wordmark = [...document.querySelectorAll("span")].find(
+    (node) => node.textContent === "mausVoice",
+  );
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(
+    COMPACT_CAPTION_BUTTON_SIZE,
+  );
   expect(getComputedStyle(wordmark!).display).toBe("none");
+});
+
+it("evaluates geometry thresholds consistently across Windows, Linux, and macOS", () => {
+  for (const platform of ["windows", "linux", "macos"] as const) {
+    const compactAt = compactChromeThreshold(platform);
+    const hideAt = wordmarkHideThreshold(platform);
+    expect(hideAt).toBeLessThan(520);
+    expect(compactAt).toBeLessThan(800);
+    expect(compactAt).toBeGreaterThan(520);
+    expect(isCompactWidth(800, platform)).toBe(false);
+    expect(isCompactWidth(520, platform)).toBe(true);
+    expect(isWordmarkHidden(520, platform)).toBe(false);
+    expect(isWordmarkHidden(hideAt, platform)).toBe(true);
+  }
 });
 
 it("keeps the roomy bar on a wide window", async () => {
@@ -689,7 +743,7 @@ it("re-evaluates density when the window is resized", async () => {
   await renderBar();
   expect(pxOf(requireByLabel("Close"), "width")).toBe(captionButtonSize(false));
 
-  windowMocks.outerSize.mockResolvedValue({ width: 820, height: 700 });
+  windowMocks.outerSize.mockResolvedValue({ width: 560, height: 500 });
   await act(async () => {
     fireResize?.();
   });
@@ -726,7 +780,7 @@ it("keeps the newest density when resize ticks resolve out of order", async () =
         resolveNarrow = done;
       }),
     )
-    .mockResolvedValue({ width: 820, height: 700 });
+    .mockResolvedValue({ width: 560, height: 500 });
   await renderBar();
 
   await act(async () => {
@@ -736,7 +790,7 @@ it("keeps the newest density when resize ticks resolve out of order", async () =
 
   // The newer tick lands first and compacts the bar.
   await act(async () => {
-    resolveNarrow({ width: 820, height: 700 });
+    resolveNarrow({ width: 560, height: 500 });
   });
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
     COMPACT_CAPTION_BUTTON_SIZE,
@@ -764,14 +818,19 @@ it("registers a single onResized listener", async () => {
 
 it("compares against logical pixels, so a scaled display still compacts", async () => {
   // A 200% display reports twice the physical width for the same window. The
-  // threshold is in CSS pixels, so a narrow window must still compact.
+  // threshold is in CSS pixels, so a narrow window must still compact while
+  // keeping the wordmark visible.
   windowMocks.scaleFactor.mockResolvedValue(2);
-  windowMocks.outerSize.mockResolvedValue({ width: 1640, height: 1200 });
+  windowMocks.outerSize.mockResolvedValue({ width: 1120, height: 1000 });
   await renderBar();
 
+  const wordmark = [...document.querySelectorAll("span")].find(
+    (node) => node.textContent === "mausVoice",
+  );
   expect(pxOf(requireByLabel("Close"), "width")).toBe(
     COMPACT_CAPTION_BUTTON_SIZE,
   );
+  expect(getComputedStyle(wordmark!).display).not.toBe("none");
 });
 
 it("keeps the roomy bar when the window size is not known yet", async () => {
