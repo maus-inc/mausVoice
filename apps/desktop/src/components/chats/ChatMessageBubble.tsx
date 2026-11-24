@@ -72,16 +72,16 @@ const MessageActions = ({
 
 type ChatMessageBubbleProps = { id: string };
 
-export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
+const useMessageActionList = ({
+  content,
+  role,
+  onEdit,
+}: {
+  content: string;
+  role: string | undefined;
+  onEdit: () => void;
+}) => {
   const intl = useIntl();
-  const ctxMenu = useContextMenu();
-  const { message, parts, permissions, canRetry } = useMessageParts(id);
-  const isStreaming = useAppStore((s) => Boolean(s.streamingMessageById[id]));
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [confirmDrop, setConfirmDrop] = useState(false);
-
-  const content = message?.content ?? "";
   const copyAction = useMemo(() => {
     if (!content.trim()) return null;
     return async () => {
@@ -97,12 +97,6 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
     };
   }, [content, intl]);
 
-  const startEdit = useCallback(() => {
-    setDraft(content);
-    setConfirmDrop(false);
-    setEditing(true);
-  }, [content]);
-
   const actions = useMemo(
     () =>
       [
@@ -113,25 +107,16 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
               run: copyAction,
             }
           : null,
-        message?.role === "user"
+        role === "user"
           ? {
               key: "edit",
               label: intl.formatMessage({ defaultMessage: "Edit and resend" }),
-              run: startEdit,
+              run: onEdit,
             }
           : null,
       ].filter((item): item is NonNullable<typeof item> => item !== null),
-    [copyAction, intl, message?.role, startEdit],
+    [copyAction, intl, role, onEdit],
   );
-
-  // Both affordances read from one list, so they cannot drift apart.
-  // Hover and focus are tracked on the bubble, not on the action row. An idle
-  // row has no pointer events, so a handler attached to it could never fire;
-  // the bubble is always a hit target.
-  const [actionsVisible, setActionsVisible] = useState(false);
-  // The row would fight the open editor for the same space, and an empty
-  // message has nothing to copy or resend.
-  const showActions = !editing && actions.length > 0;
 
   const contextMenuItems = useMemo<ContextMenuItem[]>(
     () =>
@@ -141,6 +126,107 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
       })),
     [actions],
   );
+
+  return { actions, contextMenuItems };
+};
+
+const shouldShowActions = (editing: boolean, actionCount: number): boolean =>
+  !editing && actionCount > 0;
+
+const useMessageEditor = ({
+  messageId,
+  content,
+  conversationId,
+}: {
+  messageId: string;
+  content: string;
+  conversationId: string | undefined;
+}) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [confirmDrop, setConfirmDrop] = useState(false);
+
+  const startEdit = useCallback(() => {
+    setDraft(content);
+    setConfirmDrop(false);
+    setEditing(true);
+  }, [content]);
+
+  const changeDraft = useCallback((value: string) => {
+    setDraft(value);
+    setConfirmDrop(false);
+  }, []);
+
+  const saveEdit = () => {
+    const text = draft.trim();
+    if (!text || !conversationId) return;
+    if (
+      !confirmDrop &&
+      laterMessagesHaveToolActivity(conversationId, messageId)
+    ) {
+      setConfirmDrop(true);
+      return;
+    }
+    setEditing(false);
+    setConfirmDrop(false);
+    void editAndResend(conversationId, messageId, text).catch((error) => {
+      // The edit already left the UI; surface the failure instead of a silent
+      // rejection, and reopen the editor so the text is not lost.
+      getLogger().error("Failed to edit and resend message");
+      showErrorSnackbar(error);
+      setDraft(text);
+      setEditing(true);
+    });
+  };
+
+  const cancelEdit = useCallback(() => {
+    setEditing(false);
+    setConfirmDrop(false);
+  }, []);
+
+  return {
+    editing,
+    draft,
+    changeDraft,
+    confirmDrop,
+    startEdit,
+    saveEdit,
+    cancelEdit,
+  };
+};
+
+export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
+  const ctxMenu = useContextMenu();
+  const { message, parts, permissions, canRetry } = useMessageParts(id);
+  const isStreaming = useAppStore((s) => Boolean(s.streamingMessageById[id]));
+  const {
+    editing,
+    draft,
+    changeDraft,
+    confirmDrop,
+    startEdit,
+    saveEdit,
+    cancelEdit,
+  } = useMessageEditor({
+    messageId: id,
+    content: message?.content ?? "",
+    conversationId: message?.conversationId,
+  });
+
+  const { actions, contextMenuItems } = useMessageActionList({
+    content: message?.content ?? "",
+    role: message?.role,
+    onEdit: startEdit,
+  });
+
+  // Both affordances read from one list, so they cannot drift apart.
+  // Hover and focus are tracked on the bubble, not on the action row. An idle
+  // row has no pointer events, so a handler attached to it could never fire;
+  // the bubble is always a hit target.
+  const [actionsVisible, setActionsVisible] = useState(false);
+  // The row would fight the open editor for the same space, and an empty
+  // message has nothing to copy or resend.
+  const showActions = shouldShowActions(editing, actions.length);
 
   if (!message) {
     return null;
@@ -162,28 +248,6 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   }
 
   if (!shouldRenderMessage(message, parts, isStreaming, canRetry)) return null;
-
-  const saveEdit = () => {
-    const text = draft.trim();
-    if (!text) return;
-    if (
-      !confirmDrop &&
-      laterMessagesHaveToolActivity(message.conversationId, id)
-    ) {
-      setConfirmDrop(true);
-      return;
-    }
-    setEditing(false);
-    setConfirmDrop(false);
-    void editAndResend(message.conversationId, id, text).catch((error) => {
-      // The edit already left the UI; surface the failure instead of a silent
-      // rejection, and reopen the editor so the text is not lost.
-      getLogger().error("Failed to edit and resend message");
-      showErrorSnackbar(error);
-      setDraft(text);
-      setEditing(true);
-    });
-  };
 
   return (
     <Stack
@@ -210,14 +274,8 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
             <MessageEditForm
               draft={draft}
               confirmDrop={confirmDrop}
-              onChange={(value) => {
-                setDraft(value);
-                setConfirmDrop(false);
-              }}
-              onCancel={() => {
-                setEditing(false);
-                setConfirmDrop(false);
-              }}
+              onChange={changeDraft}
+              onCancel={cancelEdit}
               onSave={saveEdit}
             />
           ) : null
