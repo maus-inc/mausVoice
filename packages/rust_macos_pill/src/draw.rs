@@ -1,5 +1,5 @@
 use crate::gfx::{self, Ctx};
-use crate::ipc::{Phase, PillPermission, PillStreaming};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
@@ -1316,6 +1316,72 @@ fn draw_compact_content(
     ctx.show_text(text);
 }
 
+fn draw_message_separator(ctx: &Ctx, index: usize, area_x: f64, y: f64, alpha: f64) -> f64 {
+    if index == 0 {
+        return y;
+    }
+    let y = y + 16.0;
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
+    ctx.set_line_width(1.0);
+    ctx.move_to(area_x, y);
+    ctx.line_to(area_x + 36.0, y);
+    ctx.stroke();
+    y + 8.0
+}
+
+fn draw_tool_result_line(ctx: &Ctx, msg: &PillMessage, area_x: f64, y: f64, alpha: f64) -> f64 {
+    let tool_desc = msg
+        .tool_description
+        .as_deref()
+        .or(msg.tool_name.as_deref())
+        .unwrap_or("Tool");
+    let reason = msg.reason.as_deref().unwrap_or("");
+    let display = if reason.is_empty() {
+        tool_desc.to_string()
+    } else {
+        format!("{tool_desc} — {reason}")
+    };
+
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(12.0);
+
+    draw_wrench_icon(ctx, area_x, y + 2.0, 12.0, 0.5 * alpha);
+    let text_x = area_x + 18.0;
+    ctx.move_to(text_x, y + 12.0);
+    ctx.show_text(&display);
+    y + 18.0
+}
+
+fn draw_message_text(
+    ctx: &Ctx,
+    content: &str,
+    is_error: bool,
+    area_x: f64,
+    y: f64,
+    area_w: f64,
+    alpha: f64,
+) -> f64 {
+    let color_alpha = if is_error { 0.94 } else { 0.92 };
+    let (r, g, b) = if is_error {
+        (1.0, 0.4, 0.4)
+    } else {
+        (1.0, 1.0, 1.0)
+    };
+
+    ctx.set_source_rgba(r, g, b, color_alpha * alpha);
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(14.0);
+
+    let mut y = y;
+    for line in &wrap_text(ctx, content, area_w) {
+        ctx.move_to(area_x, y + 20.0 * 0.75);
+        ctx.show_text(line);
+        y += 20.0;
+    }
+    y
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_transcript(
     ctx: &Ctx,
@@ -1363,18 +1429,8 @@ fn draw_transcript(
     ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
 
-    let line_height = 20.0;
-
     for (i, msg) in messages.iter().enumerate() {
-        if i > 0 {
-            y += 16.0;
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
-            ctx.set_line_width(1.0);
-            ctx.move_to(area_x, y);
-            ctx.line_to(area_x + 36.0, y);
-            ctx.stroke();
-            y += 8.0;
-        }
+        y = draw_message_separator(ctx, i, area_x, y, alpha);
 
         if let Some(ref stream) = *streaming {
             if stream.message_id == msg.id {
@@ -1383,45 +1439,9 @@ fn draw_transcript(
         }
 
         if msg.is_tool_result {
-            let tool_desc = msg
-                .tool_description
-                .as_deref()
-                .or(msg.tool_name.as_deref())
-                .unwrap_or("Tool");
-            let reason = msg.reason.as_deref().unwrap_or("");
-            let display = if reason.is_empty() {
-                tool_desc.to_string()
-            } else {
-                format!("{tool_desc} — {reason}")
-            };
-
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-            ctx.select_font_face("Satoshi", false, false);
-            ctx.set_font_size(12.0);
-
-            draw_wrench_icon(ctx, area_x, y + 2.0, 12.0, 0.5 * alpha);
-            let text_x = area_x + 18.0;
-            ctx.move_to(text_x, y + 12.0);
-            ctx.show_text(&display);
-            y += 18.0;
+            y = draw_tool_result_line(ctx, msg, area_x, y, alpha);
         } else if let Some(ref content) = msg.content {
-            let color_alpha = if msg.is_error { 0.94 } else { 0.92 };
-            let (r, g, b) = if msg.is_error {
-                (1.0, 0.4, 0.4)
-            } else {
-                (1.0, 1.0, 1.0)
-            };
-
-            ctx.set_source_rgba(r, g, b, color_alpha * alpha);
-            ctx.select_font_face("Satoshi", false, false);
-            ctx.set_font_size(14.0);
-
-            let lines = wrap_text(ctx, content, area_w);
-            for line in &lines {
-                ctx.move_to(area_x, y + line_height * 0.75);
-                ctx.show_text(line);
-                y += line_height;
-            }
+            y = draw_message_text(ctx, content, msg.is_error, area_x, y, area_w, alpha);
         } else {
             y = draw_thinking_text(ctx, area_x, y, alpha, state);
         }
