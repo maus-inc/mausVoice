@@ -605,8 +605,8 @@ fn update_reduced_motion_cache(cache: &Cell<bool>, queried_animation: Option<boo
 /// edits alone.
 fn reload_entry_for_review(
     state: &PillState,
-    review_id: Option<&String>,
-    previous_review_id: Option<&String>,
+    review_id: Option<&str>,
+    previous_review_id: Option<&str>,
     review_text: Option<String>,
 ) {
     if review_id == previous_review_id {
@@ -621,8 +621,8 @@ fn stick_on_new_assistant_content(
     state: &PillState,
     active: bool,
     was_active: bool,
-    review_id: Option<&String>,
-    previous_review_id: Option<&String>,
+    review_id: Option<&str>,
+    previous_review_id: Option<&str>,
 ) {
     if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
         state.should_stick.set(true);
@@ -792,8 +792,8 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
 
             reload_entry_for_review(
                 state,
-                review_id.as_ref(),
-                previous_review_id.as_ref(),
+                review_id.as_deref(),
+                previous_review_id.as_deref(),
                 review_text,
             );
             state.assistant_active.set(active);
@@ -808,8 +808,8 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 state,
                 active,
                 was_active,
-                review_id.as_ref(),
-                previous_review_id.as_ref(),
+                review_id.as_deref(),
+                previous_review_id.as_deref(),
             );
         }
         InMessage::ResetPosition { strategy } => {
