@@ -700,6 +700,10 @@ async resetKeyListenerState() : Promise<void> {
  * default centre-bottom of a monitor. `strategy` selects which monitor:
  * `"current"` (the monitor the pill lives on, the historical default) or
  * `"cursor"` (the monitor under the mouse).
+ * 
+ * Async so the main thread does not wait on the local-data write gate: the
+ * clear can be queued behind a whole local-data wipe, which holds that gate for
+ * its duration.
  */
 async resetPillPosition(strategy: string | null) : Promise<Result<null, string>> {
     try {

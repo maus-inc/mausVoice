@@ -192,6 +192,17 @@ pub enum InMessage {
     ResetPosition {
         #[serde(default)]
         strategy: ResetStrategy,
+        /// The desktop's declaration id, echoed back on the report that
+        /// answers it.
+        #[serde(default)]
+        ack: Option<u64>,
+    },
+    /// Drop the parked position but leave the window alone, so a request that
+    /// follows a local-data clear cannot republish the wiped row. `ack` is the
+    /// desktop's declaration id, echoed back on the report that answers it.
+    ForgetPosition {
+        #[serde(default)]
+        ack: Option<u64>,
     },
     /// Screen edge the pill anchors to. Only the Win32 pill acts on it; the
     /// desktop sends it to every platform, so the others accept and ignore it

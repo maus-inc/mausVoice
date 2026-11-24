@@ -2,39 +2,31 @@ use rust_pill_shared::indicator::DictationIndicator;
 use std::cell::{Cell, RefCell};
 
 use crate::constants::*;
-use crate::ipc::{
-    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
-};
+pub(crate) use rust_pill_shared::fireworks::{Rocket, RocketPhase};
+pub(crate) use rust_pill_shared::flame::FlameTongue;
 
+use crate::ipc::{Phase, PillMessage, PillPermission, PillReview, PillStreaming, Visibility};
+
+/// Everything a drop reported to the desktop has to agree on.
+///
+/// Captured at the settle, when the origin is the one the user released at, so
+/// the origin, its work area and its display token all describe one instant. The
+/// guarded retry and the shutdown writer both publish this record rather than
+/// re-resolving any of it, because between the drop and either of those the
+/// layout can change and a late resolution would name a display the pill was
+/// never on.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum RocketPhase {
-    Rising,
-    Exploding,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Spark {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) life: f64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Rocket {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) vx: f64,
-    pub(crate) vy: f64,
-    pub(crate) trail: Vec<(f64, f64)>,
-    pub(crate) fuse: f64,
-    pub(crate) phase: RocketPhase,
-    pub(crate) num_sparks: usize,
-    pub(crate) launch_index: usize,
-    pub(crate) sparks: Vec<Spark>,
-    pub(crate) trail_alpha: f64,
-    pub(crate) color: (f64, f64, f64),
+pub(crate) struct DropRecord {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    /// The window's size at the drop, so the reported rectangle is one
+    /// instant's worth of geometry. A DPI change while the save is deferred
+    /// resizes the live window, and pairing that size with this origin would
+    /// describe a window the user never released.
+    pub(crate) width: f64,
+    pub(crate) height: f64,
+    pub(crate) work_area: Option<rust_pill_shared::edge::MonitorRect>,
+    pub(crate) display_id: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,15 +99,6 @@ impl WindowMode {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct FlameTongue {
-    pub(crate) t: f64,
-    pub(crate) height: f64,
-    pub(crate) width: f64,
-    pub(crate) phase: f64,
-    pub(crate) speed: f64,
-}
-
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PillState {
     pub(crate) visibility: Cell<Visibility>,
@@ -125,6 +108,11 @@ pub(crate) struct PillState {
     pub(crate) draw_height: Cell<f64>,
     pub(crate) draw_w_velocity: Cell<f64>,
     pub(crate) draw_h_velocity: Cell<f64>,
+    /// How the fixed drawing canvas maps onto the window surface. It is 1.0 until
+    /// a per-monitor scale change resizes the surface, and it is the one value
+    /// drawing, pointer mapping and published geometry all read, so they cannot
+    /// describe the pill at different sizes.
+    pub(crate) content_scale: Cell<f64>,
 
     pub(crate) assistant_active: Cell<bool>,
     pub(crate) assistant_input_mode: RefCell<String>,
@@ -222,10 +210,63 @@ pub(crate) struct PillState {
     /// the pill changes monitors. See rust_pill_shared::deform.
     pub(crate) crossing: RefCell<rust_pill_shared::deform::CrossingDeform>,
     pub(crate) has_saved_position: Cell<bool>,
-    /// Monitor strategy for the next re-home after a reset-position command.
-    pub(crate) reset_strategy: Cell<ResetStrategy>,
+    /// Why this pill has no stored position and where a due placement goes.
+    /// Defaults to a launch placement, because that is what a process with no
+    /// record is.
+    pub(crate) anchor: Cell<rust_pill_shared::layout::Anchor>,
+    /// Whether a drag's final position is still waiting to be stored. Set when
+    /// the frame loop wants to save but the input lock is held, so a destroy that
+    /// arrives before the lock clears can still store it.
+    pub(crate) pending_drag_position: Cell<bool>,
+    /// The complete record of a drop while a guarded save is owed.
+    ///
+    /// `saved_x`/`saved_y` still describe the position from *before* the drop, so
+    /// they cannot be asked where the pill was released. Keeping the released
+    /// origin here lets the retry write the drop the user made rather than
+    /// whatever it finds on the frame it finally runs.
+    ///
+    /// The work area and the display token are part of the record because the
+    /// retry can run after the layout changed. Resolving them at retry time puts
+    /// the released origin beside a display it was never on, and the next launch
+    /// then finds an exact match for that display and clamps the origin instead of
+    /// carrying the relative place over from the panel that went away.
+    pub(crate) drop_record: Cell<Option<DropRecord>>,
+    /// When a drop that the display-change hold refused may be written, or `None`
+    /// when no save is owed. The drop is reported once, so a refused save has to
+    /// be retried from here or the position is lost.
+    pub(crate) drag_save_due: Cell<Option<f64>>,
     pub(crate) saved_x: Cell<i32>,
     pub(crate) saved_y: Cell<i32>,
+    /// Stable token of the display the saved position belongs to, or `None` when
+    /// the display could not be named. Published with the position so the stored
+    /// record can name the display rather than only its rectangle.
+    pub(crate) saved_display_id: Cell<Option<u64>>,
+    /// A stored record the launch could not resolve because display enumeration
+    /// failed. The cursor tick applies it once an enumeration succeeds, and a reset
+    /// or a clear spends it first.
+    pub(crate) pending_restore: Cell<Option<rust_pill_shared::restore::ParkedWindow>>,
+    /// A surface size `resize` refused, kept so the frame loop retries it before the
+    /// next presentation. Without the retry the window stays at the new size while
+    /// the surface keeps the old one, and the next frame presents the old size and
+    /// resizes the window back.
+    pub(crate) pending_surface: Cell<Option<(i32, i32)>>,
+    /// The work area the saved position was clamped into, kept so a pill whose
+    /// panel is unplugged remaps from the geometry it was saved against rather
+    /// than from the survivor it happens to be nearest to.
+    pub(crate) saved_work_area: Cell<rust_pill_shared::edge::MonitorRect>,
+    /// When the current drag started, and which layout was in effect. A layout
+    /// change while a drag is held has to be remembered as interrupting it, so
+    /// the settle that follows is not saved as the user's choice.
+    pub(crate) drag_started_at: Cell<Option<f64>>,
+    /// Holds position saves until the display layout has been steady, so a frame
+    /// the system forced during a display change is never stored as the user's
+    /// position. See rust_pill_shared::layout::SaveGuard.
+    pub(crate) save_guard: RefCell<rust_pill_shared::layout::SaveGuard>,
+    /// The last display-arrangement signature this pill reconciled against, and
+    /// when. Used to notice a layout change even if the platform message is
+    /// missed: a hidden window receives no `WM_DPICHANGED`, and a window that is
+    /// briefly off-screen may receive no `WM_DISPLAYCHANGE` either.
+    pub(crate) layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>,
 
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,
@@ -303,6 +344,35 @@ impl PillState {
     pub(crate) fn is_typing(&self) -> bool {
         (self.assistant_active.get() && *self.assistant_input_mode.borrow() == "type")
             || self.assistant_review.borrow().is_some()
+    }
+
+    /// A pointer position in window pixels mapped into drawing-canvas pixels.
+    ///
+    /// Every click region and hit test is laid out on the fixed canvas, while
+    /// mouse messages arrive in the surface's own pixels. They agree until a
+    /// scale change shrinks the surface, so the pointer has to take the same
+    /// mapping the renderer does or a click lands where the pill is not drawn.
+    pub(crate) fn pointer_to_canvas(&self, x: f64, y: f64) -> (f64, f64) {
+        let scale = self.content_scale.get();
+        if scale > 0.0 && scale != 1.0 {
+            (x / scale, y / scale)
+        } else {
+            (x, y)
+        }
+    }
+
+    /// The mapping `pointer_to_canvas` undoes: canvas pixels to window pixels.
+    ///
+    /// A real child window sits in screen coordinates, so anything placed from
+    /// canvas math has to be mapped or it lands at the wrong spot once a scale
+    /// change has shrunk the surface.
+    pub(crate) fn canvas_to_window(&self, x: f64, y: f64) -> (f64, f64) {
+        let scale = self.content_scale.get();
+        if scale > 0.0 && scale != 1.0 {
+            (x * scale, y * scale)
+        } else {
+            (x, y)
+        }
     }
 
     pub(crate) fn content_offset(&self) -> (f64, f64) {

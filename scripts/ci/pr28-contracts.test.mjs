@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
@@ -77,6 +77,24 @@ function routesPhase(raw, owner, bannerOwner) {
   return [call, `{${call}}`, `{${call};}`].includes(body);
 }
 
+// Every Rust file under a directory. A guard that has to prove a shape holds on
+// all of them cannot list them: the file it misses is the drift it exists for,
+// and a platform-gated file compiles only on that platform's CI job.
+const rustFilesUnder = (directory) => {
+  const found = [];
+  const walk = (relativePath) => {
+    for (const entry of readdirSync(join(repoRoot, relativePath), {
+      withFileTypes: true,
+    })) {
+      const child = `${relativePath}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else if (entry.name.endsWith(".rs")) found.push(child);
+    }
+  };
+  walk(directory);
+  return found.sort();
+};
+
 // The lines of the item declared at `marker`, up to and including the line that
 // closes it, collapsed as `read` collapses a whole file. A guard that inspects
 // one function cannot use the collapsed text: a `//` comment runs to the end of
@@ -95,6 +113,131 @@ const scopeOf = (relativePath, marker) => {
   return collapse(lines.slice(start, end + 1).join("\n"));
 };
 
+// The index just past a Rust string or line comment that starts at `i`, or `i`
+// when no literal starts there. Brace counting that walks raw text treats a
+// brace inside `"reset }"` as the end of the enclosing function, so a guard then
+// reads a truncated body and fails over code that is correct. Raw strings are
+// not handled: none of the scanned files use one inside a handler.
+const skipRustLiteral = (text, i, skipComments) => {
+  const ch = text[i];
+  // Only on raw text. A collapsed body has no newline to end a comment, so
+  // skipping to one would swallow the rest of the function.
+  if (skipComments && ch === "/" && text[i + 1] === "/") {
+    const end = text.indexOf("\n", i);
+    return end === -1 ? text.length : end;
+  }
+  // Only double-quoted strings. An apostrophe is a lifetime far more often than
+  // a char literal in this code, and treating `&'static` as an opening quote
+  // swallows the rest of the file. A `'{'` char literal is not handled for the
+  // same reason, and none appears in a scanned handler.
+  if (ch !== '"') return i;
+  for (let j = i + 1; j < text.length; j += 1) {
+    if (text[j] === "\\") {
+      j += 1;
+    } else if (text[j] === ch) {
+      return j + 1;
+    }
+  }
+  return text.length;
+};
+
+// The text inside the brace-delimited block whose opening `{` is at
+// `openIndex`. A pattern with `[\s\S]*?` can cross the block's closing brace and
+// match a `return` from a later branch, so a guard that cares whether *this*
+// branch returns has to read the block itself.
+const balancedBlock = (text, openIndex) => {
+  let depth = 0;
+  for (let i = openIndex; i < text.length; i += 1) {
+    const skip = skipRustLiteral(text, i, false);
+    if (skip > i) {
+      i = skip - 1;
+      continue;
+    }
+    if (text[i] === "{") depth += 1;
+    else if (text[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(openIndex + 1, i);
+    }
+  }
+  return "";
+};
+
+// The body of one message handler, whichever shape it has.
+//
+// A message used to be a match arm inline in the drain loop, so guards split the
+// file on the arm's pattern and read up to the next variant. Now each message is
+// its own function, and splitting on the arm would read an empty string -- every
+// assertion inside it then fails, or worse, a `doesNotMatch` passes for the wrong
+// reason. This finds the handler for a variant by its `fn on_*` name, then by the
+// arm that dispatches to it.
+const handlerBody = (path, variant) => {
+  // Reads the file itself: `source` is collapsed, and on collapsed text a comment
+  // that names a variant looks the same as the arm that matches it.
+  const text = readRaw(path);
+  const snake = variant.replace(/(?<!^)([A-Z])/g, "_$1").toLowerCase();
+  // The arm that dispatches to this variant, from its line to the next arm. Found
+  // by its own line rather than by substring, so a mention in a comment is not one.
+  const arm = new RegExp(`^ *InMessage::${variant}\\b`);
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => arm.test(line));
+  let armText = "";
+  if (start !== -1) {
+    const indent = /^ */.exec(lines[start])[0].length;
+    const next = new RegExp(`^ {0,${indent}}InMessage::[A-Z]`);
+    // The match closes before another arm appears when this one is last, and the
+    // text after that brace is not part of the arm. Without the stop, the arm ran
+    // to the end of the file and a handler defined below it read as a call.
+    const closes = new RegExp(`^ {0,${indent}}}`);
+    // The `=>` is found before the stop scan: a struct pattern can span lines and
+    // its closing brace sits at the arm's indent, so stopping at the first brace
+    // would cut the arm before the call that proves the handler is still used.
+    let end = start + 1;
+    while (end < lines.length && !lines[end].includes("=>")) {
+      if (next.test(lines[end]) || closes.test(lines[end])) break;
+      end += 1;
+    }
+    end += 1;
+    while (end < lines.length && !next.test(lines[end])) {
+      if (closes.test(lines[end])) break;
+      end += 1;
+    }
+    armText = lines.slice(start, end).join("\n");
+  }
+  const fnName = `on_${snake}`;
+  const fnAt = text.indexOf(`fn ${fnName}(`);
+  if (fnAt !== -1) {
+    // A named handler only counts while an arm still calls it. A function left
+    // behind by a removed arm reads as a handler while the runtime ignores the
+    // message, so every guard built on it would pass over dead code.
+    // A call in a comment is not a call. An arm that stopped calling its handler
+    // but kept the old call in a `//` comment reads as a handler to `includes()`,
+    // and every guard built on the arm then passes over an arm that does nothing.
+    const executable = armText.replace(/\/\/[^\n]*/g, "");
+    // The arm may handle the message inline while a same-named helper exists for
+    // something else. Then the arm is the handler, and returning an empty string
+    // failed a correct file; the caller reads the arm instead.
+    if (!new RegExp(`(?<!fn )${fnName}\\(`).test(executable)) {
+      return collapse(armText);
+    }
+    const fnStart = text.lastIndexOf("\n", fnAt) + 1;
+    let depth = 0;
+    for (let i = text.indexOf("{", fnAt); i < text.length; i += 1) {
+      const skip = skipRustLiteral(text, i, true);
+      if (skip > i) {
+        i = skip - 1;
+        continue;
+      }
+      if (text[i] === "{") depth += 1;
+      else if (text[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return collapse(text.slice(fnStart, i + 1));
+      }
+    }
+    return "";
+  }
+  return collapse(armText);
+};
+
 const PATHS = [
   ["commands", "apps/desktop/src-tauri/src/commands.rs"],
   ["tray", "apps/desktop/src-tauri/src/system/tray.rs"],
@@ -110,6 +253,15 @@ const PATHS = [
   ["windowsPill", "packages/rust_windows_pill/src/pill.rs"],
   ["macApp", "packages/rust_macos_pill/src/app.rs"],
   ["pillProcess", "apps/desktop/src-tauri/src/pill_process.rs"],
+  ["pillPosition", "apps/desktop/src-tauri/src/pill_position.rs"],
+  ["restore", "packages/rust_pill_shared/src/restore.rs"],
+  ["windowsMain", "packages/rust_windows_pill/src/main.rs"],
+  ["macMain", "packages/rust_macos_pill/src/main.rs"],
+  ["layout", "packages/rust_pill_shared/src/layout.rs"],
+  ["gtkMain", "packages/rust_gtk_pill/src/main.rs"],
+  ["gtkIpc", "packages/rust_gtk_pill/src/ipc.rs"],
+  ["windowsIpc", "packages/rust_windows_pill/src/ipc.rs"],
+  ["macIpc", "packages/rust_macos_pill/src/ipc.rs"],
   ["macState", "packages/rust_macos_pill/src/state.rs"],
   ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
   ["windowsState", "packages/rust_windows_pill/src/state.rs"],
@@ -446,12 +598,17 @@ describe("PR28 native reset contracts", () => {
       source.commands,
       /crate::platform::overlay::notify_reset_position\(&app, &strategy\)/,
     );
+    // The reset hands the clear's declaration id to the pill so its answer
+    // retires exactly this declaration, not a later clear's.
     assert.match(
       source.macOverlay,
-      /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
+      /pill\.send\(InMessage::ResetPosition \{\s*strategy,\s*ack: Some\(declaration\),\s*\}\)/,
     );
     assertGlobReexportCarriesReset();
-    assert.match(source.macPill, /InMessage::ResetPosition \{ strategy \}/);
+    assert.match(
+      source.macPill,
+      /InMessage::ResetPosition \{ strategy, ack \}/,
+    );
   });
 
   it("keeps tray reset state synchronized after native position events", () => {
@@ -472,27 +629,40 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
       /invoke\("reset_pill_position", \{ strategy \}\)/,
     );
     // The Rust command emits a typed reset_position payload to the pill
-    // process and returns an error (not a panic) when no pill is managed.
+    // process. It returns `Result` so a failure that leaves the stored row in
+    // place can reach the caller; a missing pill is not one of those, because the
+    // row is already gone and the next launch starts at the default corner.
     // `commands.rs` returns that `Result` straight out of a `#[tauri::command]`,
     // so the return type is part of the contract and is pinned with the
-    // parameters.
+    // parameters. The chain is `async` so the main thread does not wait on the
+    // local-data write gate, which a clear holds for its whole duration.
     assert.match(
       source.pillProcess,
-      /pub fn notify_reset_position\(app: &tauri::AppHandle, strategy: &str\) -> Result<\(\), String>/,
+      /pub async fn notify_reset_position\(app: &tauri::AppHandle, strategy: &str\) -> Result<\(\), String>/,
     );
-    assert.match(source.pillProcess, /"type":"reset_position"/);
+    // Serialised rather than interpolated. The strategy is a `String` from an IPC
+    // argument, and the pill deserialises it into an enum that accepts only
+    // `current` and `cursor`, so hand-building the record meant an unvalidated
+    // value produced a message the pill rejected after the row was already gone.
+    assert.match(
+      source.pillProcess,
+      /serde_json::json!\(\{\s*"type": "reset_position",\s*"strategy": strategy,\s*"ack": declaration,\s*\}\)/,
+      "pillProcess: the reset record is interpolated instead of serialised",
+    );
     assert.match(
       source.pillProcess,
       /try_state::<std::sync::Arc<PillProcess>>\(\)/,
     );
     assert.match(
       source.pillProcess,
-      /Reset position requested with no managed pill process/,
+      /Reset the stored pill position with no managed pill process/,
+      "pillProcess: a reset with no pill to move is logged, not reported as a failure",
     );
-    // Each platform overlay routes the reset into its pill channel.
+    // Each platform overlay routes the reset into its pill channel, carrying the
+    // clear's declaration id so the pill's answer retires exactly it.
     assert.match(
       source.macOverlay,
-      /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
+      /pill\.send\(InMessage::ResetPosition \{\s*strategy,\s*ack: Some\(declaration\),\s*\}\)/,
     );
     // Both overlays re-export the shared notifiers with a glob rather than
     // naming each one, so the route lives in the module they pull from. What the
@@ -510,9 +680,20 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     );
     assert.match(source.gtkX11, /x11_release_persisted\.set\(true\)/);
     assert.match(source.gtkX11, /pub\(crate\) fn persist_drop_position/);
+    // Reading the flag without clearing it is the point. Clearing it in the
+    // condition (`replace(false)`) consumed a release even when the save guard
+    // deferred or refused the save, so the missed-release net then had nothing left
+    // to act on and the drop was lost. The flag is only cleared by a save that
+    // actually happened.
+    // The net now lives in `settle_unrecorded_drop`, so the predicate is written
+    // against the borrowed state it is handed.
     assert.match(
       source.gtkX11,
-      /!state_tick\.x11_release_persisted\.replace\(false\)/,
+      /!was_dragging\.get\(\) \|\| state\.x11_release_persisted\.get\(\)/,
+    );
+    assert.doesNotMatch(
+      source.gtkX11,
+      /x11_release_persisted\.replace\(false\)/,
     );
   });
 
@@ -690,6 +871,976 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
   });
 
+  it("withdraws an erase that never happened", () => {
+    // A clear declares the erase before it deletes. If the delete fails, the reset
+    // wrappers return before telling the pill to forget, so no report ever arrives
+    // to spend the declaration -- and every drag after the failed reset is dropped.
+    // The rollback must be tied to its own declaration: a plain store can cancel a
+    // newer clear that started in the meantime.
+    const pos = read("apps/desktop/src-tauri/src/pill_position.rs");
+    // The declarations are a list under one lock. They were a flag plus a
+    // generation counter held as two atomics, and a reviewer showed the window in
+    // that: a withdraw could pass its comparison, then a second clear declared,
+    // then the withdraw stored `false` over it -- leaving a clear in flight with
+    // nothing protecting it. Even one merged word only fixes that instance: a
+    // single bit cannot say *which* clear is outstanding, so one clear taking its
+    // own declaration back would still drop another's. Each declaration is its own
+    // entry, and a withdraw removes exactly its own.
+    assert.match(
+      pos,
+      /static ERASE: Mutex<EraseState>/,
+      "the declarations are not behind one lock, so a withdraw can race a declaration",
+    );
+    assert.match(
+      pos,
+      /fn mark_position_erased\(\) -> u64/,
+      "the declaration does not report which one it made",
+    );
+    assert.match(pos, /fn withdraw_erase\(generation: u64\)/);
+    assert.match(
+      pos,
+      /state\.outstanding\.retain\(\|id\| \*id != generation\)/,
+      "the rollback is not tied to its own declaration, so it can cancel a newer clear",
+    );
+    // The list and the flag the save path reads are written under the same lock,
+    // and the flag is cleared only once nothing is outstanding.
+    assert.match(
+      pos,
+      /state\.outstanding\.retain\(\|id\| \*id != generation\);\s*if state\.outstanding\.is_empty\(\) \{\s*ERASE_DECLARED\.store\(false/,
+      "the flag can be cleared while a clear is still owed its answer",
+    );
+    // Every failure return from the clear has to withdraw.
+    const clear = pos.slice(
+      pos.indexOf("pub async fn clear_saved_position("),
+      pos.indexOf("pub fn saved_position_argument("),
+    );
+    // Per branch, not a count. A duplicate in one branch would satisfy a count
+    // while the other branch lost its withdrawal, and that branch is the one that
+    // leaves the declaration set and drops every later save.
+    for (const marker of ["else {", "Err(err) => {"]) {
+      const at = clear.indexOf(marker);
+      assert.ok(at >= 0, `the clear has no ${marker} exit to inspect`);
+      assert.match(
+        balancedBlock(clear, clear.indexOf("{", at)),
+        /withdraw_erase\(declaration\)/,
+        `the ${marker} exit leaves its declaration set and drops every later save`,
+      );
+    }
+    // The successful clear keeps its declaration: the report that follows spends
+    // it, and retracting it first would let a publish land behind the wipe.
+    const okAt = clear.indexOf("Ok(()) =>");
+    assert.ok(okAt >= 0, "the clear has no success arm to inspect");
+    assert.doesNotMatch(
+      clear.slice(okAt, clear.indexOf("Err(err)", okAt)),
+      /withdraw_erase/,
+      "the successful clear retracts the declaration its own report spends",
+    );
+    // The declaration precedes the delete, which is what keeps a publish queued
+    // behind the clear from landing after it. Both have to be present before the
+    // comparison means anything: two `-1`s also compare as ordered.
+    const declarationAt = clear.indexOf(
+      "let declaration = mark_position_erased()",
+    );
+    const deleteAt = clear.indexOf("clear_pill_position");
+    assert.ok(declarationAt >= 0, "the clear never declares the erase");
+    assert.ok(deleteAt >= 0, "the clear never deletes the row");
+    assert.ok(
+      declarationAt < deleteAt,
+      "the declaration must precede the delete",
+    );
+  });
+
+  it("takes the write gate before the delivery order on every reset path", () => {
+    // The local-data clear holds the write gate for the whole wipe and then takes
+    // the delivery order to send its forget. A reset that took the delivery order
+    // first and then waited for the gate is the other half of an ABBA deadlock:
+    // the reset waits for a gate the clear holds, the clear waits for a delivery
+    // order the reset holds, and both operations stop until the app restarts.
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const reset = scope(name, "pub async fn notify_reset_position");
+      const gateAt = reset.indexOf("lock_local_data_write");
+      const deliveryAt = reset.indexOf("lock_clear_delivery");
+      assert.ok(gateAt >= 0, `${name}: the reset never takes the write gate`);
+      assert.ok(
+        deliveryAt >= 0,
+        `${name}: the reset never takes the delivery order`,
+      );
+      assert.ok(
+        gateAt < deliveryAt,
+        `${name}: the reset waits for the write gate while holding the delivery order, which deadlocks against a local-data clear`,
+      );
+      // The clear itself must not re-acquire the gate under the delivery order,
+      // which would deadlock the reset path against itself.
+      const clear = scope("pillPosition", "pub async fn clear_saved_position");
+      assert.ok(
+        !clear.includes("lock_local_data_write"),
+        "pillPosition: the clear takes the write gate again under the delivery order",
+      );
+      assert.match(
+        clear,
+        /_gate: &crate::db::local_data_write_gate::LocalDataWriteGuard/,
+        "pillPosition: the clear does not take the caller's write gate",
+      );
+    }
+  });
+
+  it("clears the retained drop with the gesture it belongs to", () => {
+    // `drop_frame` belongs to one gesture. Left behind by a reset, a forget or the
+    // next drag, the write `take()`s it and stores the previous drop instead.
+    const app = source.macApp;
+    // Three cancellations -- reset, forget and a drag starting -- each clears it.
+    // Checked per handler, because a count lets one handler drop its clear while
+    // another keeps two, and the handler that lost it still stores the old drop.
+    for (const marker of [
+      "fn on_reset_position(",
+      "fn on_forget_position(",
+      "fn tick_long_press(",
+    ]) {
+      assert.match(
+        scope("macApp", marker),
+        /drop_frame\.set\(None\)/,
+        `${marker} keeps the previous drop, so the next save stores it`,
+      );
+    }
+    // Each cancellation clears it next to the deadline it belongs to.
+    assert.match(
+      app,
+      /ctx\.state\.drag_save_due\.set\(None\);[\s\S]{0,400}?ctx\.state\.drop_frame\.set\(None\)/,
+      "a cancelled gesture keeps the previous drop, so the next save stores it",
+    );
+  });
+
+  it("keeps the retained drop's own display, not the one reconciliation moved it onto", () => {
+    // The display is read when the drop lands and retained with the frame. A retry
+    // runs after the layout hold, and reconciliation can have moved the window onto
+    // another panel by then; reading the live screen at retry time would pair the
+    // retained rectangle with that panel, so a restart restores the drop against a
+    // monitor it was never on.
+    const state = source.macState;
+    assert.match(
+      state,
+      /pub\(crate\) struct DropRecord \{[\s\S]{0,700}?monitor: Option<Rect>,[\s\S]{0,120}?display_id: Option<u64>/,
+      "macOS: the retained drop carries no display, so the retry must read the live screen",
+    );
+    // The pill centre is retained beside the frame. The live centre moves with the
+    // panel and hover state, and a retry that recomputed it could resolve a
+    // different display than the one the user dropped on.
+    assert.match(
+      state,
+      /pub\(crate\) struct DropRecord \{[\s\S]{0,450}?point: \(f64, f64\),/,
+      "macOS: the retained drop recomputes its centre from live state",
+    );
+    const write = scope("macApp", "fn write_drag_position(");
+    // The retained record is read whole, and its monitor and display go into the
+    // report rather than the live window's. The monitor is already an `Option`, so
+    // it is passed through as captured, never re-derived from the live screen.
+    assert.match(
+      write,
+      /Some\(record\) => \([\s\S]{0,200}?frame_from_tuple\(record\.frame\),\s*record\.monitor,\s*record\.display_id,\s*record\.primary_top,?\s*\)/,
+      "macOS: the retry reads the live display instead of the retained one",
+    );
+    assert.match(
+      write,
+      /report: rust_pill_shared::restore::PositionReport::new\(\s*true,\s*Some\(reported\),\s*monitor,\s*display_id,\s*\)/,
+      "macOS: the retained monitor is dropped",
+    );
+    // And the record is filled at the same instant the frame is, so the two cannot
+    // describe different panels, and the flip basis is captured with them.
+    assert.match(
+      write,
+      /let point = pill_drop_point\(state, frame\);[\s\S]{0,300}?drop_display_for_frame_point\(frame, point, window\)/,
+      "macOS: the display is not captured with the frame",
+    );
+    // A drop captured while no screen resolved is completed from its own frame
+    // rather than consumed unresolved, which the desktop would ignore.
+    assert.match(
+      write,
+      /Some\(record\) if record\.monitor\.is_none\(\) => \{[\s\S]{0,1600}?drop_display_for_frame\(frame, record\.point\)/,
+      "macOS: an unresolved drop is consumed instead of completed or kept owed",
+    );
+  });
+
+  it("drops the previous gesture's recorded drop when the next drag starts", () => {
+    // A drop the guard refused leaves `drop_record` recorded for the frame loop's
+    // retry. Left behind when a new drag starts, a destroy before this gesture
+    // settles would store the place the user moved away from.
+    const arm = source.windowsPill.slice(
+      source.windowsPill.indexOf("elapsed >= LONG_PRESS_DURATION"),
+      source.windowsPill.indexOf(
+        "arm_pulse.set(rust_pill_shared::pulse_armed())",
+      ),
+    );
+    assert.match(
+      arm,
+      /state\.drop_record\.set\(None\)/,
+      "windowsPill: the previous gesture's recorded drop survives into this one",
+    );
+  });
+
+  it("writes the recorded drop when shutdown drains an owed save", () => {
+    // A destroy has no frame loop after it, so the writer it calls must not read
+    // the live rect: reconciliation can have moved the window since the drop, and
+    // the user's release is not that move. The recorded origin wins, guard or not.
+    // The guarded writer and the shutdown writer both end in the one store, so the
+    // drop cannot mean two different things depending on which path ran.
+    const write = scope("windowsPill", "fn write_drag_position_unchecked(");
+    assert.match(
+      write,
+      /store_recorded_drop\(hwnd, state\)/,
+      "windowsPill: the shutdown write does not go through the shared store",
+    );
+    const store = scope("windowsPill", "fn store_recorded_drop(");
+    assert.match(store, /state\.drop_record\.take\(\)/);
+    assert.match(
+      store,
+      /let origin = \(record\.x, record\.y\);/,
+      "windowsPill: the shared store carries the live rect instead of the drop",
+    );
+    // And the guarded writer reaches the same store, so the two paths cannot drift.
+    const guarded = scope("windowsPill", "fn write_drag_position(");
+    assert.match(guarded, /store_recorded_drop\(hwnd, state\)/);
+    // The drain reaches it, and the guarded writer is not the path destroy takes
+    // (that one can defer and park a retry that never runs).
+    const destroy = scope("windowsPill", "unsafe fn on_wm_destroy(");
+    assert.match(destroy, /write_drag_position_unchecked\(hwnd, state\)/);
+  });
+
+  it("probes the visible pill's centre for the work area, not the window's", () => {
+    // The window is taller than the pill, so on vertically offset displays its
+    // centre can be on a different panel than the pill. The work area must come
+    // from the same footprint centre the display token is resolved from.
+    const helper = scope("windowsPill", "fn work_area_for_report(");
+    assert.match(
+      helper,
+      /visible_pill_centre\(\(published\.x, published\.y\), footprint\)/,
+      "windowsPill: the work area is probed from the pill's centre via visible_pill_centre",
+    );
+    // The arithmetic lives in the helper, so it is asserted there. A centre taken
+    // from the window corner would put a straddling window on the wrong panel.
+    const centre = scope("windowsPill", "fn visible_pill_centre(");
+    assert.match(
+      centre,
+      /origin\.0 \+ offset\.0 \+ size\.0 \/ 2\.0/,
+      "windowsPill: the centre adds the pill's horizontal offset and half its width",
+    );
+    assert.match(
+      centre,
+      /origin\.1 \+ offset\.1 \+ size\.1 \/ 2\.0/,
+      "windowsPill: the centre adds the pill's vertical offset and half its height",
+    );
+  });
+
+  it("seeds the layout baseline where the pill was placed", () => {
+    // A fresh poll treats its first observation as the baseline and reconciles
+    // nothing, so an output removed between the placement and that first sample is
+    // absorbed instead of reconciled. Seeding at realize makes the first poll
+    // compare against the arrangement the pill was placed on.
+    assert.match(
+      source.layout,
+      /pub fn seed\(&mut self, now: f64, signature: u64\)/,
+    );
+    const realize = source.gtkPill.slice(
+      source.gtkPill.indexOf("window.connect_realize("),
+      source.gtkPill.indexOf("window.connect_size_allocate("),
+    );
+    assert.match(
+      realize,
+      /seed_layout_baseline\(window, &state_realize\)/,
+      "gtkPill: the baseline is not seeded at realize",
+    );
+    const seed = scope("gtkPill", "fn seed_layout_baseline(");
+    assert.match(seed, /\.seed\(/);
+    assert.doesNotMatch(
+      seed,
+      /reconcile_display_layout/,
+      "gtkPill: the seed acts on the launch as if it were a display change",
+    );
+  });
+
+  it("honors reduced motion in the fireworks activation on every pill", () => {
+    // Rockets fly under gravity, which is the motion the setting asks to suppress.
+    // Every platform shares `Fireworks::restart`, so the reduced-motion decision is
+    // made once rather than re-derived at three call sites.
+    const fireworks = read("packages/rust_pill_shared/src/fireworks.rs");
+    assert.match(fireworks, /pub fn restart\(&self, reduced_motion: bool\)/);
+    assert.match(
+      fireworks,
+      /self\.active\.set\(!reduced_motion\)/,
+      "the shared restart no longer honors reduced motion",
+    );
+    for (const [name, src] of [
+      ["windowsPill", source.windowsPill],
+      ["macApp", source.macApp],
+      ["gtkPill", source.gtkPill],
+    ]) {
+      assert.match(
+        src,
+        /rust_pill_shared::fireworks::Fireworks \{[\s\S]{0,300}?\}\s*\.restart\(reduced_motion\(\)\)/,
+        `${name}: the fireworks activation does not go through the shared reduced-motion rule`,
+      );
+    }
+  });
+
+  it("reports the macOS drop in the desktop's coordinate space", () => {
+    // `window_frame` is Cocoa bottom-left; `pill_geometry` and restore are top-down.
+    // Copying origin.1 across would store a Y value in the wrong space, which is
+    // indistinguishable from the pill being parked somewhere else.
+    const write = scope("macApp", "fn write_drag_position(");
+    assert.match(
+      write,
+      /let reported = to_top_down\(frame, primary_top\)/,
+      "the report carries the Cocoa Y value instead of the converted one",
+    );
+    // And the conversion is shared with `pill_geometry`, not reimplemented.
+    assert.match(source.macApp, /fn primary_top_for\(window: id\) -> f64/);
+    const geometry = scope("macApp", "unsafe fn pill_geometry(");
+    assert.match(
+      geometry,
+      /let primary_top = primary_top_for\(window\);/,
+      "pill_geometry computes the flip point separately, so the two can disagree",
+    );
+  });
+
+  it("flips the macOS drop against the basis the monitor was converted with", () => {
+    // The record holds a Cocoa frame and a top-down monitor converted together at
+    // capture time. Flipping the frame at retry time against a fresh `primary_top`
+    // would pair the retained monitor with a rect measured against a later primary
+    // display height, so the two halves of one report would describe two
+    // arrangements. The basis is therefore retained with the drop and reused.
+    const write = scope("macApp", "fn write_drag_position(");
+    assert.match(
+      write,
+      /to_top_down\(frame, primary_top\)/,
+      "macOS: the retry re-reads the flip basis instead of the retained one",
+    );
+    assert.doesNotMatch(
+      write,
+      /to_top_down\(frame, unsafe \{ primary_top_for\(window\) \}\)/,
+      "macOS: the retry converts against the live primary top, not the capture-time one",
+    );
+    // The basis is captured with the frame and the display, in one record.
+    const capture = scope("macApp", "unsafe fn display_record(");
+    assert.match(
+      capture,
+      /-> \(Option<Rect>, Option<u64>, f64\)/,
+      "macOS: the drop capture does not return the flip basis",
+    );
+    assert.match(
+      capture,
+      /primary_top\)/,
+      "macOS: the drop capture does not return the flip basis",
+    );
+    assert.match(
+      source.macState,
+      /struct DropRecord \{[\s\S]*?primary_top: f64,[\s\S]*?\}/,
+      "macOS: DropRecord does not retain the flip basis",
+    );
+    assert.match(
+      write,
+      /record\.primary_top/,
+      "macOS: the retry does not read the retained flip basis",
+    );
+  });
+
+  it("never lets an erase discard the first genuine save", () => {
+    // A one-shot "drop the next publish" flag cannot tell a stale publish from the
+    // user's next drag: a clear with nothing in flight leaves the flag set, and the
+    // drop made right after it is thrown away -- the pill looks parked while the
+    // database is empty. The erase is declared instead, and retired by the report
+    // that names the clear's id, never by a save.
+    const pos = read("apps/desktop/src-tauri/src/pill_position.rs");
+    assert.match(
+      pos,
+      /fn note_report\(has_saved_position: bool, ack: Option<u64>\) -> bool/,
+    );
+    assert.match(
+      pos,
+      /has_saved_position \}/,
+      "a save must never be discarded by the erase accounting",
+    );
+    // The report retires exactly the declarations at or below the clear it names,
+    // so an earlier clear's answer cannot retract a later clear's declaration.
+    assert.match(
+      pos,
+      /state\.outstanding\.retain\(\|id\| \*id > ack\);\s*if state\.outstanding\.is_empty\(\) \{\s*ERASE_DECLARED\.store\(false/,
+      "the declaration is not retired by the answer that names it",
+    );
+    // The gate on the write is the declaration being unanswered, not a one-shot
+    // take, so the very next drag stores.
+    assert.match(pos, /if erase_is_undeclared\(\)/);
+    assert.doesNotMatch(pos, /take_erased_publish/);
+    // And every report is accounted for, not only the saves: reading only the
+    // saves would never see the answer that retires the declaration. The
+    // accounting lives in one shared handler, so the two pill paths cannot drift
+    // apart on it, and both of them have to go through that handler.
+    const apply = pos.slice(pos.indexOf("pub fn apply_published_position("));
+    assert.ok(apply, "the shared position handler is missing");
+    assert.match(
+      apply,
+      /note_report\(has_saved_position, ack\)/,
+      "the shared handler does not account for every report",
+    );
+    // The acknowledgement has to be the value the report carried. A call that
+    // passes `None` retires nothing, so the declaration stays open and every
+    // later drop is refused, which is exactly what the clear asked to avoid.
+    for (const [file, source] of [
+      [
+        "apps/desktop/src-tauri/src/pill_process.rs",
+        /let ack = val\.get\("ack"\)/,
+      ],
+      [
+        "apps/desktop/src-tauri/src/platform/macos/overlay.rs",
+        /let ack = report\.ack;/,
+      ],
+    ]) {
+      const text = read(file);
+      assert.match(
+        text,
+        /pill_position::apply_published_position\(/,
+        `${file}: a pill report bypasses the shared handler`,
+      );
+      assert.match(
+        text,
+        source,
+        `${file}: the report's acknowledgement is not read`,
+      );
+      assert.match(
+        text,
+        /apply_published_position\((?:(?!\);)[\s\S])*?\back\b/,
+        `${file}: the acknowledgement never reaches the shared handler`,
+      );
+    }
+  });
+
+  it("spends a cursor reset only after a placement lands", () => {
+    // `screens()` can be empty -- a lid closing, every display asleep -- and the
+    // tick returns without placing anything. Spending the reset before that return
+    // turns a reset that never happened into one that can never happen.
+    const app = source.macApp;
+    const spend = app.indexOf(".after_placement()");
+    // The bail that governs this spend, not the first one in the file: the launch
+    // placement runs the same rule higher up, and pairing the spend with that bail
+    // made the ordering assertion true for the wrong reason.
+    const bail = app.lastIndexOf(
+      "let Some((screen, frame)) = target else {",
+      spend,
+    );
+    assert.ok(
+      spend > 0 && bail > 0,
+      "the reset spend or the bail is not recognisable",
+    );
+    assert.ok(
+      spend > bail,
+      "macOS: the cursor reset is spent before the placement can fail",
+    );
+    // The bail is the only refusal on this path: macOS applies the frame without a
+    // return value. What the spend needs is that no other exit sits between the two
+    // and that it lands before the placement it describes, so a later path that
+    // returns early cannot consume the reset without placing the pill.
+    // From the end of the bail's own block, because the bail's body is a `return`.
+    const afterBail = app.indexOf("};", bail) + 2;
+    // Comments stripped: this region explains the rule in prose that says
+    // "return", and only code can exit.
+    assert.doesNotMatch(
+      app.slice(afterBail, spend).replace(/\/\/[^\n]*/g, ""),
+      /\breturn\b/,
+      "macOS: a placement path returns between the bail and the spend",
+    );
+    const resolveAt = app.indexOf(
+      "resolve_placement(state, screen, frame",
+      spend,
+    );
+    assert.ok(
+      resolveAt > spend,
+      "macOS: the cursor reset is spent after the placement it belongs to",
+    );
+  });
+
+  it("reports the drop on macOS too, not the window the retry found", () => {
+    const write = scope("macApp", "fn write_drag_position(");
+    assert.match(
+      write,
+      /state\.drop_frame\.set\(Some/,
+      "macOS: the refused drop is not recorded",
+    );
+    assert.match(
+      write,
+      /state\.drop_frame\.take\(\)/,
+      "macOS: the retry never reads the recorded drop",
+    );
+    assert.match(
+      write,
+      /let reported = to_top_down\(frame, primary_top\)/,
+      "macOS: the report is not flipped from the Cocoa drop into top-down space",
+    );
+    assert.match(write, /Some\(reported\)/);
+  });
+
+  it("leaves an unnamed restore destination unnamed on macOS", () => {
+    // The record's token names the display that went away -- that is why the
+    // restore ran. Falling back to it pairs the destination's geometry with the
+    // dead display's name, which is exactly what the restore is correcting.
+    const app = source.macApp;
+    assert.match(
+      app,
+      /saved_display_id: Cell::new\(restored\.and\(restored_display_id\)\)/,
+    );
+  });
+
+  it("reads save_owed after the settle net, so a refused drop is not parked away", () => {
+    // `settle_unrecorded_drop` can arm the deadline by refusing a save. If the
+    // idle timer reads `save_owed` before that call, the same tick falls through
+    // to the idle parking below and moves the window back to the pre-drop
+    // position before the frame retry can store the drop -- the retry then saves
+    // the place the pill was dragged away from. The read must come after.
+    const x11 = read("packages/rust_gtk_pill/src/x11.rs");
+    const net = x11.indexOf("settle_unrecorded_drop(&win_tick");
+    const owed = x11.indexOf(
+      "let save_owed = state_tick.drag_save_due.get().is_some();",
+    );
+    assert.ok(
+      net > 0 && owed > 0,
+      "the idle timer's net or save_owed read moved",
+    );
+    assert.ok(
+      owed > net,
+      "save_owed is read before the settle net, so a refused drop can be parked away",
+    );
+  });
+
+  it("arms the save deadline when the X11 fallback is refused", () => {
+    // A refusal that leaves `drag_save_due` unset leaves `save_owed` false, and the
+    // slow timer parks the window back at the pre-drop position on every pass -- so
+    // the retry it is kept for saves a place the pill was already moved away from.
+    const reduce = read("packages/rust_gtk_pill/src/x11.rs");
+    const at = reduce.indexOf("pub(crate) fn persist_drop_position(");
+    assert.ok(at > 0, "the fallback is not recognisable");
+    const refusal = reduce.slice(
+      at,
+      reduce.indexOf("let (root_x, root_y)", at),
+    );
+    assert.match(
+      refusal,
+      /state\.drag_save_due\.set\(due\)/,
+      "the refused fallback does not arm the deadline, so idle parking undoes the drop",
+    );
+  });
+
+  it("resets its fallback record when a new drag starts", () => {
+    // The X11 fallback saves a drag that ended without settling, and it records
+    // the drag end once because `drag_ended` starts the hold. `drag_started`
+    // clears that hold for the next gesture, so the flag has to be cleared with
+    // it: a second unsettled drop would otherwise be treated as already recorded,
+    // and `allows_save` answers false for a drag that never ended -- forever.
+    // The rule lives in `note_drag_holds`, which the timer calls while a drag is
+    // held or settling. It asserts the pairing rather than the placement: the flag
+    // is only correct next to the check that a drag is starting. Scoped to the
+    // function, because the collapsed file has no newlines to stop a slice at and
+    // a later `if dragging` block could satisfy the assertion.
+    const rule = scope("gtkX11", "fn note_drag_holds(");
+    assert.ok(rule.length > 0, "the drag-hold rule is not recognisable");
+    assert.match(
+      rule,
+      /if dragging \{\s*drop_recorded\.set\(false\);/,
+      "a new drag keeps the previous gesture's recorded drop",
+    );
+  });
+
+  it("publishes a position the system moved the window to", () => {
+    // `Relocation::Keep` adopts a move the system made. The desktop holds the
+    // record, so adopting it only in-process means a restart restores the pill to
+    // the place the system moved it away from.
+    const keep = (src, name) => {
+      const at = src.indexOf("Relocation::Keep");
+      assert.ok(at > 0, `${name}: the Keep arm is not recognisable`);
+      const end = src.indexOf("Relocation::", at + 20);
+      return src.slice(at, end > 0 ? end : at + 4000);
+    };
+    for (const [name, src] of [
+      ["windowsPill", source.windowsPill],
+      ["macApp", source.macApp],
+    ]) {
+      const arm = keep(src, name);
+      // The report is sent by the helper both arms call, so the arm itself names
+      // it rather than spelling out the message.
+      assert.match(
+        arm,
+        /PositionChanged|publish_current_position\(/,
+        `${name}: an adopted move is never published, so a restart restores the old origin`,
+      );
+      // The guard, not just the message: narrowed to `origin_moved`, a work area
+      // or display that changed under a stationary window stays unpublished, and
+      // the next restore remaps against a rectangle the display no longer has.
+      assert.match(
+        arm,
+        /if origin_moved \|\| area_changed \{/,
+        `${name}: a changed work area or display is never published`,
+      );
+    }
+  });
+
+  it("never adopts a frame a gesture still owns", () => {
+    // A drag in flight, the settle after one, and a drop whose save is still owed
+    // all describe a frame the user has not finished choosing. A display change
+    // arriving inside any of them runs the same reconciliation as an idle one, so
+    // without the ownership test the `Keep` arm adopts the mid-drag origin and
+    // publishes it over the last completed drop, and the `Move` arm writes the
+    // forced origin into the record. The `Move` itself still runs: a pill left
+    // off-screen is worse than one that moves under the pointer.
+    const arm = (src, name, marker) => {
+      const at = src.indexOf(marker);
+      assert.ok(at > 0, `${name}: the ${marker} arm is not recognisable`);
+      const end = src.indexOf("Relocation::", at + 20);
+      return src.slice(at, end > 0 ? end : at + 4000);
+    };
+    for (const [name, src] of [
+      ["windowsPill", source.windowsPill],
+      ["macApp", source.macApp],
+    ]) {
+      for (const marker of ["Relocation::Keep", "Relocation::Move"]) {
+        assert.match(
+          arm(src, name, marker),
+          /gesture_owns_window\(state, now\)/,
+          `${name}: ${marker} adopts a frame a gesture still owns`,
+        );
+      }
+      assert.equal(
+        src.match(/fn gesture_owns_window/g)?.length,
+        1,
+        `${name}: the ownership rule is not one function`,
+      );
+    }
+  });
+
+  it("keeps every GTK reconcile arm off the record a pending drop owes", () => {
+    // A settled drop whose save is deferred is the record that has to reach the
+    // store, and `drag_save_due` is what says so. A reconcile arm that adopts the
+    // layout-forced frame while that save is owed pairs the drop with a work area
+    // it was not dropped in, or stores the forced origin over it, and the user's
+    // drop is the record that loses.
+    const src = source.gtkPill;
+    const arm = (marker) => {
+      const at = src.indexOf(marker);
+      assert.ok(at > 0, `gtkPill: the ${marker} arm is not recognisable`);
+      const end = src.indexOf("Relocation::", at + 20);
+      return src.slice(at, end > 0 ? end : at + 4000);
+    };
+    // The polarity is the guard. A bare mention of `drag_save_due` passes with the
+    // test inverted, which turns "do not update the record" into "update only
+    // while a drop is owed". `Keep` updates the retained metadata only when no
+    // save is owed; `Move` skips the update while one is.
+    for (const [marker, predicate] of [
+      ["Relocation::Keep", /state\.drag_save_due\.get\(\)\.is_none\(\)/],
+      ["Relocation::Move", /state\.drag_save_due\.get\(\)\.is_some\(\)/],
+    ]) {
+      assert.match(
+        arm(marker),
+        predicate,
+        `gtkPill: ${marker} updates the record while a drop save is owed`,
+      );
+    }
+    // And an owed save must not strand the window off-screen: the move is applied
+    // before the record is considered, so the pill still lands where the layout
+    // put it and only the store is skipped.
+    const move = arm("Relocation::Move");
+    assert.ok(
+      move.indexOf("move_toplevel") > 0 &&
+        move.indexOf("move_toplevel") < move.indexOf("drag_save_due"),
+      "gtkPill: an owed drop save stops the window being kept on screen",
+    );
+  });
+
+  it("reports the drop it recorded, not the window the retry happened to find", () => {
+    // The desktop stores the rectangle in the report. A retry runs after a delay,
+    // and reconciliation can move the window in between, so reporting the live
+    // rect would store one place while `saved_x`/`saved_y` hold another.
+    // The store is one function now, shared by the guarded writer and the shutdown
+    // writer, so the assertions live on it rather than on one caller.
+    const write = scope("windowsPill", "fn store_recorded_drop(");
+    assert.match(write, /state\.drop_record\.take\(\)/);
+    assert.match(
+      write,
+      /let origin = \(record\.x, record\.y\);/,
+      "windowsPill: the report carries the live rect instead of the drop",
+    );
+    assert.match(
+      write,
+      /Some\(reported\)/,
+      "windowsPill: the reported rectangle is not the one built from the drop",
+    );
+    // The work area travels with the rectangle: restore clamps the origin into
+    // it, so a live *monitor* answered from wherever the window drifted to would
+    // make the desktop store an origin and a work area from different displays,
+    // and the next launch would remap one against the other.
+    //
+    // It is also the drop point, not the window, that picks the monitor: the
+    // window may have been reconciled away by the retry. And one resolution has to
+    // answer both the work area and the display token, because resolving them
+    // separately let a shrunk work area leave the enumerated list while
+    // `MonitorFromPoint` still found the display, so the report named one panel and
+    // stored another's geometry.
+    // Both fields come off the record the settle captured, so neither can be
+    // re-resolved against a layout the drop never saw.
+    assert.match(
+      write,
+      /let display_id = record\.display_id;/,
+      "windowsPill: the display token is re-resolved instead of read from the drop",
+    );
+    assert.match(
+      write,
+      /let monitor = record\.work_area\.map\(\|area\| Rect \{/,
+      "windowsPill: the work area is re-resolved instead of read from the drop",
+    );
+    // And the record itself is built from one monitor lookup at the settle.
+    const record = scope("windowsPill", "fn drop_record_at(");
+    assert.match(
+      record,
+      /let monitor_handle = monitor_for_point\(centre\)/,
+      "windowsPill: the drop record is not resolved from the pill's centre",
+    );
+    assert.match(
+      record,
+      /work_area: monitor_handle\.and_then\(query_monitor_info\)/,
+      "windowsPill: the drop record's work area is not resolved from the same handle",
+    );
+    assert.match(
+      record,
+      /display_id: monitor_handle\.and_then\(monitor_display_id\)/,
+      "windowsPill: the drop record's token is not resolved from the same handle",
+    );
+    // And nothing in the report may come from the live window: an origin, a
+    // work area, a display or a size resolved there can all disagree with the
+    // drop after reconciliation has moved the pill, and a DPI change can resize
+    // it while the save is deferred. The record captured at the settle already
+    // carries all four.
+    const afterSave = write.slice(
+      write.indexOf(".set(true)"),
+      write.indexOf("ipc::send"),
+    );
+    assert.ok(afterSave.length > 0, "the save path is not recognisable");
+    const geometryUses =
+      afterSave.match(/current_pill_geometry\(hwnd\)/g) ?? [];
+    assert.equal(
+      geometryUses.length,
+      0,
+      "the report reads the live window; the drop record already carries its size",
+    );
+    assert.match(
+      afterSave,
+      /width: record\.width,\s*height: record\.height,/,
+      "the reported size does not come from the drop record",
+    );
+    assert.match(
+      record,
+      /width: window\.0,\s*height: window\.1,/,
+      "the drop record does not capture the window size",
+    );
+  });
+
+  it("installs every piece of the toolchain, not just cargo", () => {
+    // Readiness was `$PREFIX/bin/cargo` existing. An install that failed after the
+    // binaries landed leaves the cross-target libraries, the vendor tree, the
+    // cargo config and the sysroot missing, and a retry would skip the whole block
+    // and announce a toolchain that cannot build the workspace.
+    const script = read("setup-toolchain.sh");
+    assert.match(script, /toolchain_installed\(\)/);
+    // Existence is not completion. An interrupted `tar` leaves a tree that looks
+    // whole by name, so each unpacked tree is published only after it succeeded and
+    // the retry asks for the marker, not the directory.
+    // Scoped to the readiness function: the payload path also appears in the copy
+    // step, so a whole-file search would pass with the check removed.
+    const readiness = script.slice(
+      script.indexOf("toolchain_installed() {"),
+      script.indexOf("\n}", script.indexOf("toolchain_installed() {")),
+    );
+    assert.ok(readiness.length > 0, "the readiness check is not recognisable");
+    for (const marker of [
+      ".install-complete",
+      "/tmp/cargo-vendor/.unpack-complete",
+      "/tmp/sysroot/.unpack-complete",
+      // The payload itself: with it gone and the outputs intact, setup used to skip
+      // the fetch and then fail on the missing source, and every later run repeated
+      // that failure instead of refetching.
+      "$SV/rust/cargo-config.toml",
+    ]) {
+      assert.ok(
+        readiness.includes(marker),
+        `the retry check does not look for ${marker}, so a half-unpacked tree passes`,
+      );
+    }
+    // Staged then published, for the trees and the config alike: a partial result
+    // must never be reachable under the name the check accepts.
+    assert.match(
+      script,
+      /mv \/tmp\/sysroot\.staging \/tmp\/sysroot/,
+      "the sysroot is extracted in place, so an interrupted untar looks complete",
+    );
+    assert.match(
+      script,
+      /mv "\$CARGO_HOME\/config\.toml\.tmp" "\$CARGO_HOME\/config\.toml"/,
+      "the cargo config is copied in place, so a truncated copy is kept",
+    );
+    // And the config is compared against the payload, not merely present.
+    assert.match(
+      script,
+      /cmp -s "\$SV\/rust\/cargo-config\.toml" "\$CARGO_HOME\/config\.toml"/,
+      "a truncated config.toml satisfies an existence check forever",
+    );
+  });
+
+  it("provisions the native payloads the transcription build scripts download", () => {
+    // Both `build.rs` scripts fetch release archives from GitHub Releases, which
+    // a restricted sandbox cannot reach. The vendor branch pre-seeds them under
+    // `native/`, so setup has to carry them and point the two env vars at them,
+    // or a transcription build fails on the download instead of using the payload.
+    const script = read("setup-toolchain.sh");
+    assert.match(
+      script,
+      /git archive FETCH_HEAD rust system native/,
+      "the payload fetch omits native/, so the archives are never present",
+    );
+    assert.match(
+      script,
+      /export MAUSVOICE_ORT_DYLIB_PATH="\$\(find \/tmp\/ort -name libonnxruntime\.so \| head -1\)"/,
+      "MAUSVOICE_ORT_DYLIB_PATH is not pointed at the unpacked payload",
+    );
+    assert.match(
+      script,
+      /export SHERPA_ONNX_ARCHIVE_DIR="\$SV\/native\/sherpa-onnx"/,
+      "SHERPA_ONNX_ARCHIVE_DIR is not pointed at the payload archive directory",
+    );
+  });
+
+  it("spends a cursor-reset once it has been carried out", () => {
+    // `ResetAtCursor` is the only anchor that both places and follows the
+    // pointer. If it survives the placement that satisfied it, every later frame
+    // reads "follow the pointer" and the pill hops to whatever display the
+    // cursor crosses onto -- the chasing a reset exists to stop.
+    const layout = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(layout, /pub fn after_placement\(self\) -> Self/);
+    assert.match(
+      layout,
+      /Self::ResetAtCursor\s*=>\s*Self::ResetAtCurrent/,
+      "the shared rule no longer spends the cursor-reset",
+    );
+    // Both pointer-capable pills must call it on the reset path. GTK's release
+    // path reaches the same place through the X11 timer, which demotes on apply.
+    assert.match(
+      source.macApp,
+      /if reset_placement \{\s*state\.anchor\.set\(state\.anchor\.get\(\)\.after_placement\(\)\);/,
+      "macOS: a cursor-reset is never spent, so the pill keeps chasing the pointer",
+    );
+    // Windows spends it after the placement lands, so a refused move keeps the
+    // request pending instead of dropping it on the floor.
+    assert.match(
+      source.windowsPill,
+      /if move_window\(hwnd, x, y, current\.left, current\.top\) \{[\s\S]{0,500}?anchor\.get\(\)\.after_placement\(\)/,
+      "windowsPill: a cursor-reset is spent without the move landing",
+    );
+    assert.match(
+      source.gtkPill,
+      /anchor\.set\(rust_pill_shared::layout::Anchor::ResetAtCurrent\)/,
+      "gtkPill: the applied reset is not demoted",
+    );
+  });
+
+  it("withholds the save flag from a report taken mid-gesture", () => {
+    // A report tells the desktop whether to store the record. While a gesture
+    // owns the window the geometry is where the pointer is, not where the user
+    // dropped the pill, so the flag has to be withheld: a report that authorizes
+    // the save stores a frame the user never chose.
+    // Each platform answers the request in its own handler, so the guard is read
+    // from the function rather than from a match arm.
+    const handlers = [["gtkPill", scope("gtkPill", "fn on_request_position(")]];
+    for (const name of ["windowsPill", "macPill"]) {
+      handlers.push([name, handlerBody(pathOf.get(name), "RequestPosition")]);
+    }
+    for (const [name, handler] of handlers) {
+      assert.ok(handler.length > 0, `${name}: no RequestPosition handler`);
+      assert.match(
+        handler,
+        /gesture_owns_window\(/,
+        `${name}: a report authorizes a save while a gesture owns the window`,
+      );
+    }
+  });
+
+  it("writes the drop the user made, not whatever the retry frame finds", () => {
+    // A refused save leaves `saved_x`/`saved_y` describing the position from
+    // before the drop. If the retry reads the live window instead of remembering
+    // the release, an idle placement in between means the stored position is one
+    // the user never chose.
+    assert.match(
+      source.windowsPill,
+      /drop_record: Cell::new\(None\)/,
+      "windowsPill: nothing remembers where the drop landed",
+    );
+    // The size is recorded with the origin, at the same instant: a DPI change
+    // while the save is deferred resizes the live window, and a size read then
+    // would describe a window the user never released.
+    assert.match(
+      source.windowsPill,
+      /state\s*\.drop_record\s*\.set\(Some\(drop_record_at\(origin, \(width, height\), state\)\)\)/,
+      "windowsPill: the settle never records the drop origin and size",
+    );
+    // The origin is the frame the move applied, not the one it asked for: a move
+    // across a DPI seam lands where `WM_DPICHANGED` put the window, and recording
+    // the requested origin would name a frame the pill does not occupy.
+    assert.match(
+      source.windowsPill,
+      /let \(origin, width, height\) = if settled_ok \{\s*\(\s*\(settled\.left, settled\.top\)/,
+      "windowsPill: the drop origin is the requested frame, not the applied one",
+    );
+    // The size is read after the final move, because a DPI change delivered by
+    // that move resizes the window before it returns.
+    assert.match(
+      source.windowsPill,
+      /GetWindowRect\(hwnd, &mut settled\)/,
+      "windowsPill: the drop size is read before the move that can resize it",
+    );
+    const write = scope("windowsPill", "fn store_recorded_drop(");
+    assert.match(
+      write,
+      /state\.drop_record\.take\(\)/,
+      "windowsPill: the retry writes the live rect instead of the drop",
+    );
+    assert.match(
+      write,
+      /state\.saved_x\.set\(origin\.0\)/,
+      "windowsPill: the recorded drop does not reach the saved position",
+    );
+  });
+
+  it("starts each drag with no save owed from the last one", () => {
+    // A drop the save guard refused leaves `drag_save_due` armed for the frame
+    // loop to retry. That retry belongs to the gesture the user already finished.
+    // If it survives into the next drag it fires mid-move and stores the window
+    // wherever it happens to be, which is a position nobody chose -- so each
+    // backend disarms it at the moment drag begins. The one place they can all
+    // agree on is the long-press arm, which is the only way into a drag.
+    for (const name of ["gtkPill", "macPill", "windowsPill"]) {
+      const pill = source[name];
+      // Anchor on the arm branch and the pulse that confirms it: both are inside
+      // `elapsed >= LONG_PRESS_DURATION`, so the slice is exactly the transition
+      // into drag. Nothing earlier in the file can satisfy the search.
+      const from = pill.indexOf("elapsed >= LONG_PRESS_DURATION");
+      const to = pill.indexOf(
+        "arm_pulse.set(rust_pill_shared::pulse_armed())",
+        from,
+      );
+      assert.ok(
+        from >= 0 && to > from,
+        `${name}: the arm branch is not recognisable`,
+      );
+      const arm = pill.slice(from, to);
+      assert.match(
+        arm,
+        /drag_save_due\.set\(None\)/,
+        `${name}: an owed save from the previous drag survives into this one`,
+      );
+    }
+  });
+
   it("confirms the arm with a pulse that survives the ring's own alpha", () => {
     // The pulse lives on the shared `RingState`, so the arm call and the idle
     // sentinel are written once for all three platforms.
@@ -768,7 +1919,11 @@ describe("PR28 fork-workflow secret isolation", () => {
     );
     assert.match(
       source.integrationWorkflow,
-      /if:\s*\|\s*github\.event_name == 'push' \|\|\s*\(github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository\)/,
+      // The condition is the contract, not the YAML scalar style. A block scalar
+      // and a single-line `if:` express the same guard, and the fixtures above
+      // already accept both. `${{ }}` is GitHub's own expression delimiter and
+      // does not change the condition, so it is accepted too.
+      /if:\s*(?:\|\s*)?(?:\$\{\{\s*)?github\.event_name == 'push' \|\|\s*\(github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository\)\s*(?:\}\})?/,
     );
   });
 });
@@ -801,17 +1956,29 @@ describe("PR28 native placement contracts", () => {
 
   it("has monitor-disconnect recovery on every native platform", () => {
     assert.match(source.gtkPill, /still_connected/);
-    // macOS resolves the containing screen into `chosen`, carrying that
-    // screen's visible frame. A display unplugged mid-drag leaves no screen
-    // containing the anchor, so the match arm falls back to the primary
-    // screen's visible frame instead of freezing at stale coordinates.
-    assert.match(source.macPill, /match chosen \{/);
-    assert.match(source.macPill, /None if count > 0 =>/);
-    assert.match(
-      source.macPill,
-      /let visible = screen_visible_frame\(primary\)/,
-    );
+    // macOS resolves the containing screen into `chosen`. A display unplugged
+    // mid-drag leaves no screen containing the anchor, so the fallback takes the
+    // primary screen instead of freezing at stale coordinates.
+    //
+    // The fallback used to repeat the visible-frame and region resolution inside
+    // its own match arm, so the two paths could answer differently. Both now call
+    // `resolve_placement`, which is what makes the recovery provably the same
+    // placement as the fast path; the guard asks for that, and for the primary
+    // screen being the thing fallen back to.
+    assert.match(source.macPill, /let mut chosen = None;/);
+    assert.match(source.macPill, /count > 0\)\.then\(/);
     assert.match(source.macPill, /primary/);
+    assert.match(
+      scope("macPill", "fn resolve_placement("),
+      /screen_visible_frame\(screen\)/,
+    );
+    // Two call sites: the matched screen and the fallback. One of them is inside
+    // `reposition_window`, which is where the pair used to be written out.
+    assert.equal(
+      (source.macPill.match(/resolve_placement\(/g) || []).length,
+      2,
+      "macPill: the fallback and the fast path must share one resolution",
+    );
     assert.match(source.windowsPill, /MONITOR_DEFAULTTONEAREST/);
   });
 
@@ -1830,9 +2997,7 @@ describe("native gesture adapter contracts", () => {
   ]) {
     it(`cancels ${platform} pointer state rather than rearming a reset drag`, () => {
       const pill = source[`${platform}Pill`];
-      const reset = pill
-        .split("InMessage::ResetPosition { strategy } => {")[1]
-        .split("InMessage::RequestPosition")[0];
+      const reset = handlerBody(pathOf.get(`${platform}Pill`), "ResetPosition");
       for (const field of ["dragging", "pointer_down", "long_press_active"]) {
         assert.ok(reset.includes(`${state}.${field}.set(false)`));
       }
@@ -1888,9 +3053,7 @@ describe("native gesture adapter contracts", () => {
   }
 
   it("cancels Windows gesture ownership before resetting its position", () => {
-    const reset = source.windowsPill
-      .split("InMessage::ResetPosition { strategy } => {")[1]
-      .split("InMessage::RequestPosition")[0];
+    const reset = handlerBody(pathOf.get("windowsPill"), "ResetPosition");
     assert.match(reset, /cancel_drag_gesture\(hwnd, state\)/);
     assert.ok(
       reset.indexOf("cancel_drag_gesture") <
@@ -1916,8 +3079,13 @@ describe("native gesture adapter contracts", () => {
     const tick = source.windowsPill
       .split("fn tick_selector_placement(")[1]
       .split("fn advance_selector_placement(")[0];
-    assert.match(tick, /draw::pill_position\(/);
-    assert.match(tick, /selector_space_above\([\s\S]*?pill_y/);
+    // The tick reads the footprint the renderer draws, and answers the headroom
+    // from the pill's own top edge rather than the window's.
+    assert.match(tick, /live_pill_footprint\(state\)/);
+    assert.match(tick, /selector_space_above\(rect\.y, work\.y, offset\.1\)/);
+    // The footprint itself is the drawn pill, in window pixels.
+    const footprint = scope("windowsPill", "fn live_pill_footprint(");
+    assert.match(footprint, /draw::pill_position\(/);
     const helper = source.windowsPill
       .split("fn selector_space_above(")[1]
       .split("fn tick_selector_placement(")[0];
@@ -1966,7 +3134,33 @@ describe("native gesture adapter contracts", () => {
 
   it("shares the X11 applied position with idle placement and retains monitor fallbacks", () => {
     assert.doesNotMatch(source.gtkX11, /let last_pos =/);
-    assert.match(source.gtkX11, /state\.x11_drag_applied\.set\(init_pos\)/);
+    // The realized origin is the restored one when there is a stored position,
+    // else the pointer anchor. Both are published through the same applied cell
+    // so idle placement and the frame tick read one value.
+    // The restore also carries the display it landed on and the destination work
+    // area, so the origin is taken out of the triple rather than used bare.
+    assert.match(
+      source.gtkX11,
+      /let target = restored\.map_or\(init_pos, \|\(origin, _, _\)\| origin\)/,
+    );
+    // The retained area comes from the same sample as the origin and the token:
+    // keeping the record's area while adopting a remapped origin leaves
+    // reconciliation measuring this origin against the display the pill left.
+    assert.match(
+      source.gtkX11,
+      /if let Some\(\(\(x, y\), display_id, work_area\)\) = restored \{[\s\S]{0,400}?state\.saved_work_area\.set\(work_area\);/,
+      "gtkX11: the retained work area is not taken from the restore",
+    );
+    // The macOS retained area lives in Cocoa space, while `restore` answers in
+    // the published top-down one. Retaining the answer unflipped means every
+    // later reader flips an already top-down rect, and the first relaunch after a
+    // display change measures the pill against a rectangle it never had.
+    assert.match(
+      source.macApp,
+      /restored_work_area = Some\(flip_primary_basis\(work_area, primary_top\)\)/,
+      "macApp: the restored work area is retained in the frame it is read in",
+    );
+    assert.match(source.gtkX11, /state\.x11_drag_applied\.set\(target\)/);
     assert.match(
       source.gtkX11,
       /let prev = state_tick\.x11_drag_applied\.get\(\)/,
@@ -2001,10 +3195,15 @@ describe("native gesture adapter contracts", () => {
   });
 
   it("compensates macOS default placement for the below-content slot", () => {
+    // Applied to the frame's `ty` binding, whether it is bound on its own or
+    // built as one element of the frame's origin.
     assert.match(
       source.macPill,
-      /let ty = default_content_origin_y\(visible\.origin\.y, win_h\)/,
+      /default_content_origin_y\(visible\.origin\.y, win_h\)/,
     );
+    // The idle placement it compensates for is applied by `park_window`, which is
+    // the only caller that reaches the default anchor.
+    assert.match(source.macPill, /fn park_window\(/);
     assert.match(
       source.macPill,
       /fn below_selector_slot_does_not_lift_the_content_canvas/,
@@ -2060,12 +3259,982 @@ describe("native gesture adapter contracts", () => {
   });
 
   it("uses the created Windows height for initial placement", () => {
+    // A stored position is tried first, else the default corner for the height
+    // the window was created with.
+    // The restore also returns the display it landed on, so the binding is typed
+    // as a pair; the height it was clamped against is still the created one.
     assert.match(
       source.windowsPill,
-      /let \(wx, wy\) = initial_position\(win_h\)/,
+      /restore_position\(parked, win_h\)/,
+      "windowsPill: the restore is not clamped against the created height",
     );
-    const body = scope("windowsPill", "fn initial_position(");
-    assert.match(body, /default_pill_y\(wa\.top, wa_h, win_h\)/);
+    // A record whose display enumeration failed is kept for the cursor tick, so
+    // the launch still has to hand it to the state factory.
+    assert.match(
+      source.windowsPill,
+      /RestoreOutcome::NoDisplays => \{\s*pending_restore = Some\(parked\);/,
+      "windowsPill: a record the launch could not resolve is discarded",
+    );
+    // The window is created at the destination display's scale, so the default
+    // corner is measured against the physical height and that scale.
+    const body = scope("windowsPill", "fn default_position(");
+    assert.match(body, /let scale = scale_for_monitor\(monitor\);/);
+    assert.match(body, /default_pill_y\(wa\.top, wa_h, win_h, scale\)/);
+  });
+
+  it("restores against the visible footprint, not the transparent canvas", () => {
+    // The OS window is a large transparent canvas with the pill drawn inside it,
+    // and the window also reserves the selector slot below the pill. Clamping
+    // the canvas instead of the footprint puts an edge-parked pill hundreds of
+    // pixels inward, and the idle tick then disagrees with the restore, so the
+    // pill visibly moves after launch. One shared function, and a reserve that
+    // includes the slot, is what keeps the two paths on the same pixels.
+    for (const name of ["macPill", "windowsPill"]) {
+      const text = source[name];
+      assert.match(
+        text,
+        /rust_pill_shared::restore::footprint_bounds\(/,
+        `${name}: the restore must clamp the footprint`,
+      );
+      assert.match(
+        text,
+        /restore::centered_bottom_footprint\(/,
+        `${name}: the resting footprint must come from the shared helper`,
+      );
+      assert.match(
+        text,
+        /COLLAPSED_BOTTOM_INSET\s*\+\s*rust_pill_shared::placement::below_slot_extra\(/,
+        `${name}: the reserve must include the selector slot`,
+      );
+    }
+    // GTK draws inside a toplevel whose transparent margins differ per axis, so
+    // it passes the visible pill rect directly. The restore asks about the saved
+    // record's window size as well as this one, so the rect is carried to the size
+    // being asked about rather than reused for both.
+    assert.match(
+      source.gtkX11,
+      /scaled_footprint\(\s*\(\(fx, fy\), \(fw, fh\)\),\s*\(window_w, window_h\),\s*window,\s*\)/,
+    );
+    assert.match(
+      source.gtkX11,
+      /rust_pill_shared::restore::footprint_bounds\(work, offset, size\)/,
+    );
+  });
+
+  it("carries the saved position through the GTK X11 re-exec", () => {
+    // Under XWayland the GTK pill re-execs itself with GDK_BACKEND=x11. Without
+    // the arguments, the new process never sees `--saved-position` and the pill
+    // re-homes to its default corner on every launch on that backend.
+    const main = scope("gtkMain", "fn main(");
+    assert.match(main, /\.args\(std::env::args_os\(\)\.skip\(1\)\)/);
+  });
+
+  it("makes a running pill forget the position the clear wiped", () => {
+    // Clearing local data wipes the row, reopens writes, then reloads the window,
+    // which asks the pill for its geometry so the composer can anchor to it. The
+    // pill still holds the pre-clear position and would publish it straight back,
+    // so the clear has to tell it to forget first.
+    const clear = scope("commands", "pub async fn clear_local_data(");
+    assert.match(clear, /forget_running_pill_position/);
+    // Before the clear announces that the frontend may finish, otherwise the
+    // reload can land first.
+    assert.ok(
+      clear.indexOf("forget_running_pill_position") <
+        clear.indexOf("mark_ready_for_frontend_completion"),
+      "the pill must forget before writes reopen",
+    );
+    // Every pill understands the message, or one platform re-leaks the position.
+    // The clear hands its declaration id to the pill so the pill's answer retires
+    // exactly this declaration, not a later clear's.
+    const ipcFor = (name) =>
+      ({ gtkPill: "gtkIpc", windowsPill: "windowsIpc", macApp: "macIpc" })[
+        name
+      ];
+    for (const name of ["gtkPill", "windowsPill", "macApp"]) {
+      assert.match(
+        source[name],
+        /InMessage::ForgetPosition \{ ack \}/,
+        `${name}: no handler, so this backend writes the cleared row back`,
+      );
+      assert.match(
+        source[ipcFor(name)],
+        /ForgetPosition \{\s*#\[serde\(default\)\]\s*ack: Option<u64>,\s*\}/,
+        `${ipcFor(name)}: the variant is what serde turns into forget_position`,
+      );
+    }
+    // Every path that declares and delivers a clear takes the delivery lock, so
+    // arrival order at the pill matches declaration order. Without that, a clear
+    // declared second can reach the pill first, and its answer retires a
+    // declaration whose clear the pill has not applied.
+    assert.match(
+      source.pillPosition,
+      /pub async fn forget_running_pill_position\(app: &tauri::AppHandle\) -> ForgetOutcome/,
+    );
+    const forgetScope = scope(
+      "pillPosition",
+      "pub async fn forget_running_pill_position(app: &tauri::AppHandle) -> ForgetOutcome",
+    );
+    assert.match(
+      forgetScope,
+      /lock_clear_delivery\(\)\.await/,
+      "pillPosition: the forget path delivers without the ordering lock",
+    );
+    assert.ok(
+      forgetScope.indexOf("lock_clear_delivery") <
+        forgetScope.indexOf("mark_position_erased"),
+      "pillPosition: the forget path declares before it takes the ordering lock",
+    );
+    // A failed delivery keeps the declaration outstanding on purpose, and the
+    // branch must not withdraw it. The pill can have a saved-position report
+    // buffered on its stdout that describes the position this clear just deleted;
+    // the latch is what stops that report being stored. The reader's exit
+    // withdraws every declaration, so a latch left closed here cannot outlive the
+    // pill it is protecting against.
+    //
+    // `[\s\S]` rather than `[^}]`, because the log line in this branch
+    // interpolates `{err}` and the closing brace of that interpolation ended a
+    // `[^}]*` before the rest of the branch.
+    const forgetErrorBranch =
+      /Err\(err\) => \{[\s\S]*?ForgetOutcome::DeliveryFailed/;
+    assert.match(
+      forgetScope,
+      forgetErrorBranch,
+      "pillPosition: a failed delivery does not report a delivery failure",
+    );
+    const errorArm = forgetScope.slice(
+      forgetScope.indexOf("Err(err) => {"),
+      forgetScope.indexOf("ForgetOutcome::DeliveryFailed"),
+    );
+    assert.doesNotMatch(
+      errorArm,
+      /withdraw_erase\(declaration\)/,
+      "pillPosition: a failed delivery opens the latch over a report it never saw",
+    );
+    // An absent pill is the one case that completes the wipe without an answer,
+    // and it withdraws its declaration because no reader is left to do it.
+    assert.match(
+      forgetScope,
+      /pill_is_running\(app\)[\s\S]{0,600}?ForgetOutcome::NoPill/,
+      "pillPosition: an absent pill is not told apart from a failed delivery",
+    );
+    // The withdrawal is part of that branch, not a nearby line. The reader exited
+    // before this declaration existed, so its exit cannot withdraw it: without the
+    // call the wipe reports success with a declaration left outstanding.
+    const noPillBranch = forgetScope.slice(
+      forgetScope.indexOf("if !crate::platform::overlay::pill_is_running(app)"),
+      forgetScope.indexOf("ForgetOutcome::NoPill") +
+        "ForgetOutcome::NoPill".length,
+    );
+    assert.ok(
+      noPillBranch.length > 0,
+      "pillPosition: the absent-pill branch is not where this guard looks",
+    );
+    assert.match(
+      noPillBranch,
+      /withdraw_erase\(declaration\); return ForgetOutcome::NoPill/,
+      "pillPosition: the absent-pill branch leaves the declaration it made outstanding",
+    );
+    // Both reset paths hold it across the clear and the send.
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const body = scope(name, "pub async fn notify_reset_position(");
+      assert.match(
+        body,
+        /lock_clear_delivery\(\)\.await/,
+        `${name}: the reset path delivers without the ordering lock`,
+      );
+      assert.ok(
+        body.indexOf("lock_clear_delivery") <
+          body.indexOf("clear_saved_position"),
+        `${name}: the reset declares before it takes the ordering lock`,
+      );
+    }
+  });
+
+  it("reacts to a display change on every platform", () => {
+    // A pill whose display is unplugged, rescaled or rearranged is left at an
+    // origin no display covers: still running, still listening, invisible. Then
+    // its own save path stores that stranded origin over the good one. Every
+    // platform has to notice, and each has a different signal for it.
+    assert.match(
+      source.windowsPill,
+      /WM_DISPLAYCHANGE \| WM_SETTINGCHANGE/,
+      "windowsPill: no display-change message handled",
+    );
+    // Matched as an arm, not as a bare name: a mention in a comment or a
+    // renamed constant would satisfy a looser pattern while the message goes
+    // unhandled.
+    // Still matched as a dispatch, not a bare name: the handler is reachable only
+    // if `wndproc` routes the message to it.
+    assert.match(
+      source.windowsPill,
+      /WM_DPICHANGED => on_wm_dpichanged\(/,
+      "windowsPill: a scale change moves the pill and is never corrected",
+    );
+    // The suggested rect has to be adopted. Ignoring lParam makes Windows
+    // rescale the window itself, which moves the pill off its parked spot.
+    assert.match(
+      source.windowsPill,
+      /SetWindowPos\(hwnd, None, x, y, w, h, SWP_NOZORDER \| SWP_NOACTIVATE\)/,
+      "windowsPill: the DPI suggestion is ignored, so Windows rescales the pill",
+    );
+    assert.match(
+      source.macPill,
+      /NSApplicationDidChangeScreenParametersNotification/,
+      "macPill: no screen-parameter observer",
+    );
+    for (const name of ["windowsPill", "macPill", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::reconcile\(/,
+        `${name}: nothing re-resolves the position against the new layout`,
+      );
+      // The call, not the definition: a platform that stopped calling it would
+      // still match its own `fn reconcile_display_layout(`.
+      const poll = scope(name, "fn poll_display_layout(");
+      assert.ok(poll.length > 0, `${name}: no display poll`);
+      assert.match(
+        poll,
+        /reconcile_display_layout\(/,
+        `${name}: the poll never reconciles the arrangement it saw change`,
+      );
+    }
+  });
+
+  it("backs the display events with a poll that cannot miss a change", () => {
+    // A hidden window receives no WM_DPICHANGED, a macOS app that is not
+    // frontmost can miss the notification, and an unmapped X11 window can miss a
+    // RandR change. The poll is the backstop under those events.
+    for (const name of ["windowsPill", "macPill", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::layout_signature\(/,
+        `${name}: no poll backstop, so a missed event strands the pill`,
+      );
+    }
+  });
+
+  it("refuses to save a position the display change forced", () => {
+    // The OS moves pill windows during a display change, and the frame it leaves
+    // behind is indistinguishable from a drag. Saving it replaces the position
+    // the user chose with the one the system improvised.
+    // Scoped to the save path itself. An unscoped match passes on a mention
+    // anywhere in the file, which is exactly what a dropped check looks like.
+    // The guard check moved into the save-only writer that every drop path ends
+    // in: the entry point records when the drop happened, the writer decides
+    // whether it may be stored. Scoped to the writer so a mention elsewhere
+    // still fails.
+    const saves = [
+      ["windowsPill", "fn write_drag_position(", /allows_save\(now\)/],
+      ["macPill", "fn write_drag_position(", /allows_save\(now\)/],
+      [
+        "gtkX11",
+        "pub\(crate\) fn write_window_position(",
+        /allows_save\(now\)/,
+      ],
+    ];
+    for (const [name, marker, pattern] of saves) {
+      const save = scope(name, marker);
+      assert.match(
+        save,
+        /save_guard\.borrow\(\)\.allows_save\(/,
+        `${name}: the save path never asks the guard`,
+      );
+      assert.match(
+        save,
+        pattern,
+        `${name}: the guard's verdict is not what decides the save`,
+      );
+      // The refusal has to be a return, not a logged warning that falls through.
+      // The block is read to its own closing brace: a pattern that runs on can
+      // match a later branch's `return` and pass while the refusal falls through.
+      const refusalAt = save.indexOf(
+        "if !state.save_guard.borrow().allows_save(now) {",
+      );
+      assert.ok(
+        refusalAt >= 0,
+        `${name}: the guard's refusal is not recognisable`,
+      );
+      const refusal = balancedBlock(save, save.indexOf("{", refusalAt));
+      assert.match(
+        refusal,
+        /return;/,
+        `${name}: the refusal does not stop the save`,
+      );
+      // A `return` that only fires when the drop record is absent lets the branch
+      // fall through to the store with a record present, and `/return;/` alone
+      // would pass. The refusal has to keep the drop owed and store nothing.
+      assert.match(
+        refusal,
+        /drag_save_due\.set\(/,
+        `${name}: the refusal does not keep the drop owed`,
+      );
+      assert.doesNotMatch(
+        refusal,
+        /saved_x\.set\(|upsert_pill_position/,
+        `${name}: the refusal stores the frame it refused`,
+      );
+      // Windows stores through `store_recorded_drop`, macOS and GTK set the origin
+      // in place, so the tail is checked for either shape.
+      assert.match(
+        save.slice(save.indexOf("{", refusalAt) + refusal.length),
+        /saved_x\.set\(|store_/,
+        `${name}: a permitted save never records the origin`,
+      );
+    }
+    // A failed or partial enumeration must not read as an unplugged display.
+    for (const name of ["windowsPill", "macPill", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /layout_changed\(/,
+        `${name}: the save guard is never told the layout moved`,
+      );
+    }
+  });
+
+  it("names the display in the stored record instead of only its rectangle", () => {
+    // A rect is not an identity: two identical panels share one, and a
+    // resolution change moves the rect of a monitor that has not moved. Without
+    // a stable token a pill whose monitor is replugged lands on a different one.
+    for (const name of ["windowsPill", "macPill", "gtkX11"]) {
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::display_identity\(/,
+        `${name}: the display is never named, so the record carries only a rect`,
+      );
+    }
+    assert.match(
+      source.windowsPill,
+      /EnumDisplayDevicesW/,
+      "windowsPill: the monitor device path is the durable name on Windows",
+    );
+    assert.match(
+      source.macPill,
+      /CGDisplayCreateUUIDFromDisplayID/,
+      "macPill: CGDirectDisplayID is not stable, the UUID is",
+    );
+    // The token has to reach the database, or the pill cannot use it next launch.
+    assert.match(
+      source.pillProcess,
+      /display_id: Option<u64>/,
+      "pillProcess: the token is dropped before it is stored",
+    );
+    assert.match(
+      source.pillPosition,
+      /ParkedWindow::new_named\(/,
+      "pillPosition: the record is built without the display's identity",
+    );
+    assert.match(
+      source.restore,
+      /display_id: Option<u64>/,
+      "restore: the record has no field for the display's identity",
+    );
+    // Matching by token has to come first, or a display that changed resolution
+    // loses to whichever display now covers the rect it was saved with.
+    const choose = scope("restore", "fn choose_display(");
+    assert.match(
+      choose,
+      /parked\.display_id\s*\{[^}]*display\.id == Some\(saved\)/,
+      "restore: the token is stored but never matched",
+    );
+    assert.ok(
+      choose.indexOf("display.id == Some(saved)") <
+        choose.indexOf("same_geometry"),
+      "restore: geometry wins over the display's identity",
+    );
+    // A version bump is what stops an old row, which cannot name its display,
+    // from being read as a named one.
+    assert.match(source.restore, /pub const SCHEMA_VERSION: i64 = 2;/);
+  });
+
+  it("keeps the pill where it is when told to forget the position", () => {
+    // `ForgetPosition` exists because a local-data clear wipes the row and the
+    // pill would otherwise publish its pre-clear position straight back. Its
+    // contract is that the pill does not move, so an unsaved flag alone must not
+    // be read as "re-home to the default corner": that would move a visible,
+    // deliberate pill as a side effect of clearing a database.
+    //
+    // GTK already distinguishes the two, because its idle path anchors to the
+    // last applied origin when nothing is saved. Windows and macOS both fall
+    // through to their default corner, so both need the guard.
+    const guards = [
+      ["windowsPill", "fn reposition_to_cursor_monitor("],
+      ["macPill", "fn reposition_window("],
+    ];
+    for (const [name, marker] of guards) {
+      const reposition = scope(name, marker);
+      // The decision is the shared anchor, not a local pair of flags. A guard on
+      // the local expression would pass again the moment someone rebuilt the same
+      // two-flag check, which is exactly how Windows and macOS drifted apart.
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::Anchor::/,
+        `${name}: placement does not consult the shared anchor model`,
+      );
+      // macOS parks the window from a helper once the frame loop is split up, so
+      // the guard is read from its home rather than from the caller that reaches it.
+      assert.match(
+        source[name],
+        /if !anchor\.places\(\) \{[^}]*return;/,
+        `${name}: a cleared pill is placed anyway, so forgetting moves it`,
+      );
+    }
+    // The GTK equivalent is a fallback rather than a guard, and has to keep
+    // anchoring to the last applied origin.
+    const gtkAnchor = read("packages/rust_gtk_pill/src/x11.rs");
+    assert.match(
+      gtkAnchor,
+      /prev\.0 as f64 \+ center_x, prev\.1 as f64 \+ center_y/,
+      "gtkX11: the unsaved fallback stopped reusing the last applied origin",
+    );
+  });
+
+  it("reuses one display source for reconciliation and restore", () => {
+    // A record names its display, so the enumeration that resolves it has to carry
+    // the identity token. Restore used the token-less enumeration, which silently
+    // reduced every restore to geometry matching: a pill saved on a display that
+    // was resized or rearranged came back on whichever display sat nearest.
+    const restore = scope("windowsPill", "fn restore_position(");
+    assert.match(
+      restore,
+      /let Some\(work_areas\) = enumerate_work_areas_with_identity\(\) else \{\s*return RestoreOutcome::NoDisplays;/,
+      "windowsPill: restore enumerates displays without their identity, or treats a failed enumeration as a verdict on the record",
+    );
+    assert.doesNotMatch(restore, /enumerate_work_areas\(\)\?/);
+    // One callback serves both enumerations, so the token cannot be attached in
+    // one and forgotten in the other.
+    const windows = source.windowsPill;
+    assert.equal(
+      (windows.match(/unsafe extern "system" fn collect_monitor_rect\(/g) || [])
+        .length,
+      1,
+      "windowsPill: two enumeration callbacks, so their fields can diverge",
+    );
+    assert.match(windows, /fn enumerate_work_areas_with_identity\(\)/);
+    assert.match(windows, /candidate\.id = monitor_display_id\(monitor\)/);
+  });
+
+  it("gives every pill one anchor model instead of one flag per platform", () => {
+    // Three flags described the same thing in three dialects, which is how two of
+    // them came to answer "cleared" differently from the third.
+    const shared = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(shared, /pub enum Anchor \{/);
+    assert.match(
+      shared,
+      /pub fn pill_anchor\(saved: bool, restarted: bool\) -> Anchor/,
+    );
+    assert.match(shared, /pub fn places\(self\) -> bool/);
+    // No platform may keep its own reset-strategy field again: the anchor plus the
+    // follow-the-pointer flag are the whole state.
+    for (const name of ["windowsPill", "macApp", "gtkPill", "gtkX11"]) {
+      assert.doesNotMatch(
+        source[name],
+        /reset_strategy/,
+        `${name}: a private reset strategy is back alongside the shared anchor`,
+      );
+    }
+    // Every reset and every forget sets the anchor, so neither can leave it stale.
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      const handler = handlerBody(pathOf.get(name), "ResetPosition");
+      assert.match(
+        handler,
+        /Anchor::from_reset\(/,
+        `${name}: a reset leaves the anchor stale`,
+      );
+    }
+    // Forgetting is the other half. A cleared pill that keeps its old anchor
+    // still follows the pointer on the next launch, which is exactly the
+    // placement the clear was meant to cancel.
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      const handler = handlerBody(pathOf.get(name), "ForgetPosition");
+      assert.match(
+        handler,
+        /Anchor::from_forget\(\)/,
+        `${name}: a forget leaves the anchor stale`,
+      );
+    }
+  });
+
+  it("keeps a drop the display change held back instead of losing it", () => {
+    // The drop is reported once. A guard that returned here without recording a
+    // deadline lost the position outright: the pill reopened where it sat before
+    // the user moved it, on every platform, silently.
+    const shared = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(
+      shared,
+      /pub fn save_due_at\(&self, now: f64\) -> Option<f64>/,
+    );
+    // The deadline is parked by the writer the entry point hands the drop to.
+    for (const [name, persist] of [
+      [
+        "windowsPill",
+        "fn write_drag_position(hwnd: HWND, state: &PillState, now: f64)",
+      ],
+      [
+        "macApp",
+        "fn write_drag_position(state: &PillState, window: id, now: f64)",
+      ],
+      ["gtkX11", "pub(crate) fn write_window_position("],
+    ]) {
+      const body = scope(name, persist);
+      assert.match(
+        body,
+        /save_due_at\(now\)/,
+        `${name}: a refused save has no deadline, so the drop is lost`,
+      );
+      assert.match(
+        body,
+        /drag_save_due\.set\(due\)/,
+        `${name}: the deadline is computed and then dropped`,
+      );
+    }
+    // And something has to come back for it, otherwise the deadline is a comment.
+    // GTK's retry lives in the frame body, which used to be a closure inside
+    // `run` and is now the free `frame_tick`; naming `fn run` would read the
+    // launcher and pass on a comment rather than on the retry.
+    for (const [name, marker] of [
+      ["windowsPill", "fn on_anim_tick"],
+      ["macApp", "fn reposition_window"],
+      ["gtkPill", "fn frame_tick"],
+    ]) {
+      // Windows gates the retry on the stored deadline, so a record whose
+      // monitor could not be resolved is retried once the quarter second has
+      // passed rather than every frame. The other two re-check the guard inside
+      // the writer, which is the same retry with the check one call deeper.
+      assert.match(
+        scope(name, marker),
+        /drag_save_due\s*\.get\(\)\s*\.(?:is_some_and|is_some)\b/,
+        `${name}: nothing retries a held-back save`,
+      );
+    }
+    // Clearing local data must cancel the retry, or it writes the row back.
+    //
+    // GTK dispatches `ForgetPosition` to `on_forget_position`, so its clear
+    // lives in that helper rather than in the arm, while the other two clear
+    // inline. `handlerBody` covers both shapes; `scope` on the arm stops before
+    // the helper and would fail on a correct clear.
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      assert.match(
+        handlerBody(pathOf.get(name), "ForgetPosition"),
+        /drag_save_due\.set\(None\)/,
+        `${name}: a retry outlives the clear and recreates the row`,
+      );
+    }
+  });
+
+  it("never reads a negative X11 origin as an unmoved window", () => {
+    // X11 virtual screens are signed: a second monitor left of or above the
+    // primary one owns negative coordinates. `x < 0 && y < 0` therefore described
+    // a real window as unapplied, and unplugging that display left the pill with
+    // nothing to reconcile from.
+    assert.match(
+      source.gtkPill,
+      /pub\(crate\) const UNAPPLIED_ORIGIN: i32 = i32::MIN;/,
+    );
+    assert.doesNotMatch(
+      source.gtkPill,
+      /origin_x < 0\.0 && origin_y < 0\.0/,
+      "gtkPill: negative coordinates are real places, not an unset latch",
+    );
+    assert.doesNotMatch(
+      source.gtkPill,
+      /x11_drag_applied\.get\(\)\.1\s*==\s*i32::MIN/,
+      "gtkPill: one axis of the sentinel is not the sentinel",
+    );
+    assert.match(source.gtkPill, /if is_unapplied\(origin_x, origin_y\)/);
+  });
+
+  it("restores and reconciles against work areas, not full monitor rects", () => {
+    // The pill lives inside the work area. Asking for `rcMonitor` put the taskbar
+    // and the dock back into the space the pill may occupy, so restore could park
+    // it behind them and a saved work-area record stopped matching its display.
+    const marker = "fn enumerate_work_areas_with_identity";
+    const fn = scope("windowsPill", marker);
+    assert.match(
+      fn,
+      /enumerate_displays\(true\)/,
+      "windowsPill: the work-area enumeration asks for full monitor rects",
+    );
+    assert.doesNotMatch(fn, /enumerate_displays\(false\)/);
+  });
+
+  it("fails a reset whose stored record survived the clear", () => {
+    // A reset that reports success while the row is still there moves the window
+    // and then restores the old spot next launch. The clear has to answer, and the
+    // reset has to act on the answer. The clear now returns the declaration id when
+    // the record is gone, and `None` when it is not, so the reset binds it with
+    // `let ... else` and bails on `None`.
+    assert.match(
+      source.pillPosition,
+      /pub async fn clear_saved_position\(\s*app: &tauri::AppHandle,\s*_gate: &crate::db::local_data_write_gate::LocalDataWriteGuard,\s*\) -> Option<u64>/,
+    );
+    // Matched through the brace to the `return`, not just to the call: an `if`
+    // whose failure branch logged and carried on would satisfy a bare match while
+    // the reset moved the pill anyway, which is the exact outcome the guard exists
+    // to prevent. The branch has to leave the function.
+    // The branch has to fail, not merely leave: `return Ok(())` satisfies a bare
+    // `return` while the caller sees a successful reset whose row is still there.
+    const bails =
+      /let Some\(declaration\) = crate::pill_position::clear_saved_position\(app, &\w+\)\.await else \{\s*return Err\(/;
+    for (const [name, marker] of [
+      ["pillProcess", "pub async fn notify_reset_position"],
+    ]) {
+      const body = scope(name, marker);
+      assert.match(
+        body,
+        bails,
+        `${name}: a failed clear still resets, and the next launch undoes it`,
+      );
+      // And the move happens after the guard, so there is no path to it that the
+      // clear has not answered.
+      assert.ok(
+        body.indexOf("clear_saved_position") <
+          body.indexOf('"strategy": strategy'),
+        `${name}: the pill is told to re-home before the record is cleared`,
+      );
+    }
+    const macReset = read(
+      "apps/desktop/src-tauri/src/platform/macos/overlay.rs",
+    );
+    assert.match(
+      macReset,
+      bails,
+      "the macOS overlay reset has the same hole as the generic path",
+    );
+    assert.ok(
+      macReset.indexOf("clear_saved_position") <
+        macReset.indexOf("InMessage::ResetPosition"),
+      "the macOS pill is told to re-home before the record is cleared",
+    );
+  });
+
+  it("reads the published position as one record on every desktop path", () => {
+    // The variant carries a single `report`. A consumer that still destructured
+    // the pre-refactor fields compiled nowhere, so the only platform whose code
+    // path it lived on was the one that failed: the macOS overlay kept three
+    // fields through the whole refactor and only CI's macOS lint noticed.
+    const files = rustFilesUnder("apps/desktop/src-tauri/src");
+    const VARIANT = "OutMessage::PositionChanged";
+    for (const file of files) {
+      // A doc comment that names the variant is not a pattern, and splitting the
+      // raw text treated one as another consumer, failing a correct file for
+      // describing itself. An occurrence whose line already holds `//` is skipped;
+      // everything else is collapsed and checked as before.
+      const raw = readRaw(file);
+      const pieces = [];
+      for (
+        let at = raw.indexOf(VARIANT);
+        at !== -1;
+        at = raw.indexOf(VARIANT, at + 1)
+      ) {
+        const lineStart = raw.lastIndexOf("\n", at) + 1;
+        if (raw.slice(lineStart, at).includes("//")) continue;
+        pieces.push(collapse(raw.slice(at + VARIANT.length)));
+      }
+      for (const piece of pieces) {
+        // Only the pattern's own braces. A consumer may match
+        // `OutMessage::PositionChanged { report }` and then destructure the
+        // record's fields on the next line, which is legal; reading a fixed
+        // window past the pattern rejected that valid shape.
+        const pattern = /^\s*\{([^}]*)\}/.exec(piece);
+        assert.ok(
+          pattern,
+          `${file}: destructures the published position into loose fields again`,
+        );
+        // `report` or a rename of it, which is the same binding.
+        assert.match(
+          pattern[1],
+          /^\s*report\s*(:\s*\w+)?\s*,?\s*$/,
+          `${file}: destructures the published position into loose fields again`,
+        );
+        assert.doesNotMatch(
+          pattern[1],
+          /has_saved_position/,
+          `${file}: reads a field the shared record owns`,
+        );
+      }
+    }
+  });
+
+  it("polls the arrangement through one shared policy", () => {
+    // The baseline rule is the part that is easy to get wrong and invisible when
+    // wrong: acting on the first signature treats the launch as a display change
+    // and moves a pill that had just been restored.
+    const shared = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(shared, /pub fn poll_layout\(/);
+    assert.match(shared, /pub enum PollOutcome \{/);
+    // The pair a poll carries between frames is `LayoutPoll`, and the pills hold
+    // one. Keeping the two values as loose cells is what let a caller store one
+    // and not the other, which polls forever without ever looking wrong.
+    assert.match(shared, /pub struct LayoutPoll \{/);
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /\.observe\(now, rust_pill_shared::layout::layout_signature\(&areas\)\)/,
+        `${name}: the layout poll is hand-rolled again`,
+      );
+      assert.match(
+        source[name],
+        /PollOutcome::Changed/,
+        `${name}: the poll does not gate reconciliation on a change`,
+      );
+    }
+    for (const [name, marker] of [
+      ["windowsState", "layout_poll"],
+      ["macState", "layout_poll"],
+      ["gtkState", "layout_poll"],
+    ]) {
+      assert.match(
+        source[name],
+        /layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>/,
+        `${name}: the poll state is back to loose cells`,
+      );
+      assert.doesNotMatch(
+        source[name],
+        /layout_polled_at|layout_signature/,
+        `${name}: a second copy of the poll state exists beside the first`,
+      );
+      assert.ok(marker);
+    }
+  });
+
+  it("clears the interrupted-drag latch when a drag starts", () => {
+    // The latch means "a layout change landed under this drag". Nothing cleared it
+    // on GTK, so one interrupted drag refused every later save and the pill
+    // silently stopped remembering its position at all.
+    const pill = read("packages/rust_gtk_pill/src/pill.rs");
+    // The reader collapses whitespace, so a comment between the two statements
+    // shows up as ordinary text and the guard has to span it.
+    assert.match(
+      pill,
+      /state\.dragging\.set\(true\);.*?state\.save_guard\.borrow_mut\(\)\.drag_started\(\);/,
+      "gtkPill: a drag starts without clearing the interrupted-drag latch",
+    );
+    // GTK's missed-release net publishes a position, so it takes the same guard.
+    const x11 = read("packages/rust_gtk_pill/src/x11.rs");
+    const fallback = scope("gtkX11", "pub(crate) fn persist_drop_position(");
+    assert.match(
+      fallback,
+      /!state\.save_guard\.borrow\(\)\.allows_save\(now\)/,
+      "gtkX11: the missed-release fallback saves without consulting the guard",
+    );
+  });
+
+  it("resizes the layered surface when the DPI suggestion resizes the window", () => {
+    // Every frame presents exactly the surface's own dimensions, so a surface left
+    // at its old size resizes the window back on the next frame and undoes
+    // WM_DPICHANGED entirely.
+    const gfx = read("packages/rust_windows_pill/src/gfx.rs");
+    assert.match(
+      gfx,
+      /pub\(crate\) fn resize\(&mut self, width: i32, height: i32\)/,
+    );
+    const dpi = scope("windowsPill", "unsafe fn on_wm_dpichanged(");
+    assert.match(
+      dpi,
+      /gfx\.resize\(w, h\)/,
+      "windowsPill: the surface ignores the DPI size",
+    );
+    // The surface is what UpdateLayeredWindow presents, so this is the only place
+    // the suggestion can survive.
+    const layered = scope("windowsPill", "fn update_layered(");
+    assert.match(layered, /cx: gfx\.width/);
+    assert.match(layered, /cy: gfx\.height/);
+  });
+
+  it("saves a pending final position before the window is destroyed", () => {
+    // The message arrives asynchronously, so latched input can still be pending
+    // with the pill's last position sitting in it. Once the window is gone the
+    // frame loop that would have delivered it never runs.
+    const destroy = scope("windowsPill", "unsafe fn on_wm_destroy(");
+    assert.match(destroy, /pending_drag_position\.get\(\)/);
+    assert.match(destroy, /persist_drag_position\(hwnd, state\)/);
+    const save = scope("windowsPill", "fn persist_drag_position(");
+    assert.match(
+      save,
+      /state\.pending_drag_position\.set\(false\)/,
+      "windowsPill: a consumed pending save is not cleared, so destroy stores it twice",
+    );
+    // Clearing the latch is not the same as having saved. While a save is owed
+    // the retry lives on the frame loop, and there is no frame loop after
+    // `WM_DESTROY`: a write that defers here is a position lost. The latch must
+    // only be cleared on the path that actually writes, so `write_drag_position`
+    // has to be reachable without an early return in between -- and the shared
+    // store it reaches must be the thing that leaves the drop.
+    const write = scope("windowsPill", "fn write_drag_position(");
+    assert.match(
+      save,
+      /write_drag_position\(hwnd, state, now\)/,
+      "windowsPill: the pending save never reaches the writer",
+    );
+    assert.match(
+      write,
+      /store_recorded_drop\(hwnd, state\)/,
+      "windowsPill: the writer does not leave the drop",
+    );
+    const store = scope("windowsPill", "fn store_recorded_drop(");
+    assert.match(
+      store,
+      /state\.drag_save_due\.set\(None\)/,
+      "windowsPill: a written drop leaves a retry owed, so destroy would store it twice",
+    );
+    // The destroy path must not be able to leave work on the frame loop, which
+    // no longer runs. `write_drag_position` defers while the guard refuses, so the
+    // only safe order is: destroy asks, the guard allows, the writer writes.
+    assert.doesNotMatch(
+      destroy,
+      /drag_save_due\.set\(/,
+      "windowsPill: destroy parks a retry that will never run",
+    );
+    // The drain must ask the deadline, not the pending flag. `persist_drag_position`
+    // clears `pending_drag_position` before the writer can defer, so a destroy that
+    // re-checks that flag skips the write and loses the drop. Asserting only that
+    // destroy avoids `drag_save_due.set(` left that swap passing.
+    assert.match(
+      destroy,
+      /drag_save_due\.get\(\)\.is_some\(\)/,
+      "windowsPill: destroy checks the cleared flag instead of the owed save",
+    );
+    assert.match(
+      destroy,
+      /write_drag_position_unchecked\(hwnd, state\)/,
+      "windowsPill: destroy sees the owed save and does not write it",
+    );
+  });
+
+  it("reads its own arguments without requiring Unicode", () => {
+    // `std::env::args()` panics on any argument that is not valid Unicode, and
+    // argv[0] is the executable path, which on Linux and macOS is a byte string
+    // that need not be UTF-8. A user with one such directory in the pill's
+    // install path would lose the whole overlay before its first frame, from a
+    // process that has no way to report anything.
+    const shared = read("packages/rust_pill_shared/src/restore.rs");
+    assert.match(shared, /pub fn saved_position_from_process_args\(\)/);
+    // `args_os` rather than `args`, and the non-Unicode argument is skipped rather
+    // than converted: the scan has to be able to walk past a path it cannot read.
+    assert.match(shared, /std::env::args_os\(\)/);
+    assert.match(
+      shared,
+      /into_string\(\)\.ok\(\)/,
+      "shared: a non-Unicode argument is converted instead of skipped",
+    );
+    // A repeated flag describes two positions, so it is answered the way the
+    // documentation says a repeated one is: `None`, not first-wins.
+    const reader = scope("restore", "pub fn saved_position_from_args");
+    assert.match(
+      reader,
+      /if records\.next\(\)\.is_some\(\) \{\s*return None;/,
+      "shared: a repeated --saved-position is ambiguous, not first-wins",
+    );
+    for (const name of ["gtkMain", "windowsMain", "macMain"]) {
+      assert.doesNotMatch(
+        source[name],
+        /std::env::args\(\)/,
+        `${name}: env::args panics on a non-Unicode argument`,
+      );
+      assert.match(
+        source[name],
+        /saved_position_from_process_args\(\)/,
+        `${name}: the panic-free reader is not what main uses`,
+      );
+    }
+  });
+
+  it("gates the position delete in the clear path", () => {
+    // Clearing the row is a local-data write like any other. Ungated, it can
+    // race a save that is already queued and the row comes back after the wipe.
+    //
+    // The gate is the caller's, not the clear's. The clear runs while the reset
+    // path holds the delivery order, and a gate acquired there would be taken in
+    // the other order from the local-data clear, which holds the gate and then
+    // takes the delivery order for its own forget. That is an ABBA deadlock, so
+    // the reset paths take the gate first and hand it in.
+    const clear = scope("pillPosition", "pub async fn clear_saved_position(");
+    assert.match(
+      clear,
+      /_gate: &crate::db::local_data_write_gate::LocalDataWriteGuard/,
+      "the clear does not run under the caller's write gate",
+    );
+    assert.ok(
+      !clear.includes("lock_local_data_write"),
+      "the clear takes the write gate again under the delivery order",
+    );
+    const deleteAt = clear.indexOf("clear_pill_position");
+    assert.ok(deleteAt >= 0, "the clear never deletes the row");
+
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const reset = scope(name, "pub async fn notify_reset_position");
+      const guard =
+        /let Ok\((\w+)\) = crate::db::local_data_write_gate::lock_local_data_write\(None\)/.exec(
+          reset,
+        );
+      assert.ok(guard, `${name}: the reset never takes the write gate`);
+      assert.notStrictEqual(
+        guard[1],
+        "_",
+        `${name}: an underscore binding drops the write gate immediately`,
+      );
+      const callAt = reset.indexOf("clear_saved_position");
+      assert.ok(callAt >= 0, `${name}: the reset never clears the record`);
+      assert.ok(
+        reset.indexOf(guard[0]) < callAt,
+        `${name}: the write gate has to be taken before the delete`,
+      );
+      assert.doesNotMatch(
+        reset.slice(0, callAt),
+        new RegExp(`drop\\(${guard[1]}\\)`),
+        `${name}: the write gate is dropped before the delete`,
+      );
+      // An explicit `drop` is not the only way to release the gate: a block that
+      // closes between the binding and the delete releases it too, and that
+      // leaves the same gap with no `drop` for the check above to find. The
+      // delete has to sit inside the scope the gate was taken in.
+      const between = reset.slice(
+        reset.indexOf(guard[0]) + guard[0].length,
+        callAt,
+      );
+      let depth = 0;
+      for (const char of between) {
+        if (char === "{") depth += 1;
+        if (char === "}") depth -= 1;
+        assert.ok(
+          depth >= 0,
+          `${name}: the write gate's scope closes before the delete, so the delete is ungated`,
+        );
+      }
+    }
+  });
+
+  it("seeds the Windows state from the position it created the window at", () => {
+    // The window is created at the restored origin, but the cursor tick parks
+    // the pill from `has_saved_position`/`saved_x`/`saved_y`. Left unsaved, the
+    // first tick 60 ms later re-homes the pill to the default corner and the
+    // restore looks like it was ignored.
+    // The seeding lives in the state factory now; `run` is still required to
+    // hand it the restored origin, so a caller that stops passing it fails here
+    // rather than silently starting unsaved.
+    const run = scope("windowsPill", "pub fn run(");
+    // `restored` also carries the display the placement chose, so the factory is
+    // handed the origin out of that pair plus the token and the work area it was
+    // saved against alongside it. The work area is what a later unplug remaps
+    // from, so a caller that stops passing it fails here.
+    assert.match(
+      run,
+      /initial_state\(\s*restored\.map\(\|placement\| placement\.origin\),\s*restored_display_id,\s*restored_work_area,\s*pending_restore,\s*\)/,
+      "windowsPill: run does not hand the factory the restored placement and any record it still owes",
+    );
+    const seeded = scope("windowsPill", "fn initial_state(");
+    assert.match(
+      seeded,
+      /has_saved_position: Cell::new\(restored\.is_some\(\)\)/,
+    );
+    assert.match(
+      seeded,
+      /saved_x: Cell::new\(restored\.map_or\(0, \|origin\| origin\.0\)\)/,
+    );
+    assert.match(
+      seeded,
+      /saved_y: Cell::new\(restored\.map_or\(0, \|origin\| origin\.1\)\)/,
+    );
   });
 
   it("anchors macOS selector geometry to the live pill instead of the area strip", () => {
@@ -2092,11 +4261,13 @@ describe("native gesture adapter contracts", () => {
   });
 
   it("samples macOS crossing geometry after rehoming rather than before", () => {
-    const perform = source.macPill
-      .split("fn perform_tick()")[1]
+    // The frame's ordering lives in `finish_frame`, which `perform_tick` calls
+    // once the queued messages are applied.
+    const frame = source.macPill
+      .split("fn finish_frame(")[1]
       .split("fn end_drag(")[0];
-    const reposition = perform.indexOf("reposition_window(");
-    const spatial = perform.indexOf("tick_spatial_feedback(");
+    const reposition = frame.indexOf("reposition_window(");
+    const spatial = frame.indexOf("tick_spatial_feedback(");
     assert.ok(reposition >= 0 && spatial > reposition);
   });
 
@@ -2209,14 +4380,21 @@ describe("native gesture adapter contracts", () => {
   });
 
   it("parks and clamps Windows content without counting transparent selector rows", () => {
-    assert.match(source.windowsPill, /win_h\.clamp\(0, WINDOW_H_TYPING\)/);
+    // The clamp is the canvas as the window shows it, so it scales with the
+    // surface: clamping a 150% window to the logical 362 rows would let it hang
+    // below the work area by the difference.
     assert.match(
       source.windowsPill,
-      /work_area_height - content_canvas_height\(win_h\) - MARGIN_BOTTOM/,
+      /let canvas = \(WINDOW_H_TYPING as f64 \* scale\)\.round\(\) as i32;/,
+    );
+    assert.match(source.windowsPill, /win_h\.clamp\(0, canvas\.max\(0\)\)/);
+    assert.match(
+      source.windowsPill,
+      /work_area_height - content_canvas_height\(win_h, scale\) - margin/,
     );
     assert.match(
       source.windowsPill,
-      /wa\.bottom - content_canvas_height\(win_h\)/,
+      /wa\.bottom - content_canvas_height\(win_h, state\.content_scale\.get\(\)\)/,
     );
   });
 
@@ -2314,8 +4492,12 @@ describe("native review and monitor contracts", () => {
 
   it("centralizes fallible Win32 monitor-info initialization", () => {
     const pill = source.windowsPill;
-    // `GetMonitorInfoW` belongs to the one wrapper, not to its callers.
-    assert.equal(pill.match(/GetMonitorInfoW\(/g)?.length, 1);
+    // `GetMonitorInfoW` belongs to the wrappers, not to their callers. There are
+    // exactly two, and both are the fallible-initialization pattern this guard
+    // exists for: the plain monitor info used for work areas, and the extended
+    // form whose `szDevice` names the display for the stored record. A third call
+    // site would be a caller doing its own struct plumbing.
+    assert.equal(pill.match(/GetMonitorInfoW\(/g)?.length, 2);
     assert.ok((pill.match(/query_monitor_info\(/g)?.length ?? 0) >= 6);
 
     // A caller binds the info in one of two ways, and both have to guard: a
@@ -2385,13 +4567,56 @@ describe("selector transition visibility", () => {
 });
 
 describe("macOS saved-position scope", () => {
-  it("starts unsaved and only captures origins from this instance's live canvas", () => {
-    assert.match(source.macApp, /has_saved_position: Cell::new\(false\)/);
-    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 1);
-    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 1);
+  it("starts at the restored position and only captures origins from this instance's live canvas", () => {
+    // The pill starts saved only when the host restored a position for it, so a
+    // launch with nothing stored still parks at the default corner.
+    assert.match(
+      source.macApp,
+      /has_saved_position: Cell::new\(restored\.is_some\(\)\)/,
+    );
+    // Exactly one live capture, plus the one seed of the restored value at setup.
+    // Anything else means a second code path writes the saved origin.
+    const seeds =
+      source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
+    assert.equal(seeds, 1, "the restored origin must be seeded exactly once");
+    // Four writers of the saved origin, each with its own reason: the drop, the
+    // retry that applies a record the launch could not resolve, the reconciliation
+    // that adopts a move AppKit already made, and the reconciliation that moves the
+    // pill itself. Anything else is another code path deciding where the pill was
+    // parked. The idle clamp is deliberately not one of them: its left bound
+    // narrows only while the assistant panel is open, and the inset origin it
+    // produces still fits the bare pill's bounds, so recording it would leave the
+    // pill inset after the panel closed.
+    //
+    // A refused drop is no longer one of them: it records the origin in
+    // `drop_origin` and the write reads it back, so the retry cannot save a
+    // repositioned frame, and the one writer that records it is the one above.
+    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 4);
+    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 4);
+    // The clamp holds the live window and must not reach the record: its bound
+    // depends on whether the assistant panel is open, so a recorded clamp outlives
+    // the panel that caused it.
+    assert.doesNotMatch(
+      source.macApp,
+      /state\.saved_x\.set\(target_x\)/,
+      "macApp: the transient clamp is written back into the record",
+    );
+    // The retry that applies a record the launch could not resolve has to publish
+    // where it landed, because the record it applied names the display it was saved
+    // on, not necessarily the one it was placed on.
+    const retry = source.macApp
+      .split("fn try_restore_pending(")[1]
+      .split("fn reposition_window(")[0];
+    assert.match(retry, /restore::restore\(/);
+    assert.match(retry, /publish_current_position\(/);
     const capture = source.macApp
       .split("fn persist_drag_position(")[1]
       .split("fn reduced_motion(")[0];
+    // The capture writes the origin it recorded when the drop happened, not the
+    // frame it finds when the write runs: between the two, reconciliation can move
+    // the window, and a retry that read the live frame would store that move as the
+    // user's choice.
+    assert.match(capture, /state\.drop_frame\.take\(\)/);
     assert.match(capture, /saved_x\.set\(frame\.origin\.x\)/);
     assert.match(capture, /saved_y\.set\(frame\.origin\.y\)/);
     assert.match(capture, /OutMessage::PositionChanged/);
@@ -2400,6 +4625,77 @@ describe("macOS saved-position scope", () => {
       .split("export const getComposerWindowPosition")[0];
     assert.match(desktopCache, /cachedPillRect = rect/);
     assert.doesNotMatch(desktopCache, /localStorage|invoke\(|writeFile/);
+  });
+});
+
+describe("pill position persistence gate", () => {
+  it("takes the local-data write gate before storing a position", () => {
+    // The stored position is user data: the clear wipes the table, and the
+    // clear dialog promises the pill comes back to the default corner. Without
+    // the gate, a drag that lands mid-clear writes the row back afterwards.
+    const store = scope("pillPosition", "pub fn store_published_position(");
+    // The generation is checked as well as the lock: a clear can reopen the gate
+    // for the frontend's completion step while the pill still holds the pre-clear
+    // position, and nothing from that window may be stored.
+    assert.match(store, /current_write_generation\(\)/);
+    assert.match(store, /lock_local_data_write\(Some\(generation\)\)/);
+    assert.match(store, /upsert_pill_position/);
+    // A refused gate is the clear working as intended, so it is not logged as a
+    // failure the user should worry about.
+    assert.match(store, /current_write_generation\(\)\.is_none\(\)/);
+    // The guard has to live through the write, not just be taken near it. An
+    // inner block that closed before the upsert would satisfy every check above
+    // while leaving the write ungated, which is the race the gate exists to stop.
+    const guard =
+      /let (\w+) = crate::db::local_data_write_gate::lock_local_data_write\(Some\(generation\)\)/.exec(
+        store,
+      );
+    assert.ok(guard, "the store never binds the write gate");
+    assert.notStrictEqual(
+      guard[1],
+      "_",
+      "an underscore binding drops the write gate immediately",
+    );
+    const upsertAt = store.indexOf("upsert_pill_position");
+    assert.ok(upsertAt >= 0, "the store never writes the row");
+    assert.ok(
+      store.indexOf(guard[0]) < upsertAt,
+      "the write gate has to be taken before the write",
+    );
+    assert.doesNotMatch(
+      store.slice(0, upsertAt),
+      new RegExp(`drop\\(${guard[1]}\\)`),
+      "the write gate is dropped before the write",
+    );
+    let depth = 0;
+    for (const char of store.slice(
+      store.indexOf(guard[0]) + guard[0].length,
+      upsertAt,
+    )) {
+      if (char === "{") depth += 1;
+      if (char === "}") depth -= 1;
+      assert.ok(
+        depth >= 0,
+        "the write gate's scope closes before the write, so the write is ungated",
+      );
+    }
+  });
+
+  it("forgets the stored position when the user resets it", () => {
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const reset = scope(name, "pub async fn notify_reset_position(");
+      assert.match(
+        reset,
+        /clear_saved_position/,
+        `${name}: a reset that only moves the pill leaves the next launch restoring the old spot`,
+      );
+      // The clear comes first: the pill republishes the corner it lands on, and
+      // that republish must not be what the next launch restores.
+      assert.ok(
+        reset.indexOf("clear_saved_position") < reset.search(/\.send\(/),
+        `${name}: the stored record must be cleared before the pill re-homes`,
+      );
+    }
   });
 });
 
@@ -2573,15 +4869,47 @@ describe("native pill loading animation behind stage text", () => {
         routesPhase(text, owner, bannerOwner),
         `${label}: phase IPC must update this window's indicator and banner`,
       );
+      const phaseArm = handlerBody(
+        pathOf.get(
+          label === "macos"
+            ? "macPill"
+            : label === "gtk"
+              ? "gtkPill"
+              : "windowsPill",
+        ),
+        "Phase",
+      );
+      assert.match(
+        phaseArm,
+        /if rust_pill_shared::should_clear_stage_text_on_phase\(\s*prev == Phase::Loading,\s*phase == Phase::Idle,\s*phase == Phase::Loading,\s*\) \{\s*\*[\w.]*stage_text\.borrow_mut\(\) = None;\s*\}/,
+        `${label}: InMessage::Phase must clear stage_text via should_clear_stage_text_on_phase`,
+      );
+      assert.match(
+        phaseArm,
+        /if phase == Phase::Loading && prev != Phase::Loading \{\s*let offset = if reduced_motion\(\) \{ 0\.5 \} else \{ 0\.0 \};\s*[\w.]*loading_offset\.set\(offset\);\s*\}/,
+        `${label}: InMessage::Phase must initialize loading_offset (respecting reduced_motion) when entering Phase::Loading`,
+      );
+      assert.match(
+        phaseArm,
+        /if phase == Phase::Idle && prev != Phase::Idle \{[^}]*loading_offset\.set\(0\.0\);/,
+        `${label}: InMessage::Phase must reset loading_offset when returning to Phase::Idle`,
+      );
       assert.match(
         text,
         /rust_pill_shared::advance_loading_offset\(\s*state\.loading_offset\.get\(\),\s*LOADING_SPEED,\s*dt,\s*reduced_motion\(\),\s*\)/,
         `${label}: tick must advance loading_offset via rust_pill_shared::advance_loading_offset with dt and reduced_motion()`,
       );
 
-      const stageTextArm = text
-        .split("InMessage::StageText { text } => {")[1]
-        .split("}")[0];
+      const stageTextArm = handlerBody(
+        pathOf.get(
+          label === "macos"
+            ? "macPill"
+            : label === "gtk"
+              ? "gtkPill"
+              : "windowsPill",
+        ),
+        "StageText",
+      );
       assert.match(
         stageTextArm,
         /let stage = rust_pill_shared::active_stage_text\(text\.as_deref\(\)\);\s*\*[\w.]*stage_text\.borrow_mut\(\) = stage\.map\(str::to_owned\);/,

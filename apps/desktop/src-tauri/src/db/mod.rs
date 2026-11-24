@@ -8,6 +8,7 @@ pub mod hotkey_queries;
 pub mod local_data_write_gate;
 pub mod open;
 pub mod paired_remote_device_queries;
+pub mod pill_position_queries;
 pub mod preferences_queries;
 pub mod term_queries;
 pub mod tone_queries;
@@ -205,6 +206,11 @@ pub const FAST_STYLE_SHORT_DICTATIONS_MIGRATION_SQL: &str =
 /// find it on screen. "none" by default.
 pub const PILL_LOCATE_GESTURE_MIGRATION_SQL: &str =
     include_str!("migrations/096_pill_locate_gesture.sql");
+/// Where the dictation pill was last parked. A table rather than a
+/// `user_preferences` column because the renderer upserts that whole row from
+/// state that knows nothing about window geometry, and would null it on the
+/// next unrelated preference save.
+pub const PILL_POSITION_MIGRATION_SQL: &str = include_str!("migrations/097_pill_position.sql");
 /// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
 /// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
 /// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
@@ -677,6 +683,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 96,
             description: "add_pill_locate_gesture_modifier",
             sql: PILL_LOCATE_GESTURE_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 97,
+            description: "create_pill_position_table",
+            sql: PILL_POSITION_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

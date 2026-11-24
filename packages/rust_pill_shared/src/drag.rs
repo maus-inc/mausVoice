@@ -294,6 +294,12 @@ impl DragController {
         self.phase
     }
 
+    /// The latched grab offset, so a test can assert what a rescale did to it.
+    #[cfg(test)]
+    pub fn grab_offset(&self) -> (f64, f64) {
+        (self.grab_dx, self.grab_dy)
+    }
+
     pub fn is_settling(&self) -> bool {
         self.phase == DragPhase::Settling
     }
@@ -385,6 +391,21 @@ impl DragController {
         self.release_vy = 0.0;
         self.settle_target = None;
         self.settle_elapsed = 0.0;
+    }
+
+    /// Rebase the latched grab offset onto a new surface scale.
+    ///
+    /// The offset is a physical distance from the window origin to the point the
+    /// user grabbed, and the surface is rendered at the display's scale. When that
+    /// scale changes mid-gesture the same canvas point covers a different number of
+    /// physical pixels, so an offset left as it was holds the grabbed point away
+    /// from the pointer by the difference.
+    pub fn rescale_grab(&mut self, ratio: f64) {
+        if !ratio.is_finite() || ratio <= 0.0 || self.phase == DragPhase::Idle {
+            return;
+        }
+        self.grab_dx *= ratio;
+        self.grab_dy *= ratio;
     }
 
     /// Record a pointer observation between frames (a motion event). Samples
@@ -717,6 +738,43 @@ mod tests {
 
     const FRAME_DT: f64 = 1.0 / 60.0;
 
+    #[test]
+    fn rescaling_the_grab_keeps_the_grabbed_point_under_the_pointer() {
+        // A 100% window grabbed 300 px in from its origin. At 150% that canvas
+        // point is 450 px in, so an offset left at 300 puts the pill 150 px off.
+        let mut drag = DragController::new();
+        drag.begin_drag(300.0, 0.0, 1000.0, 500.0, 0.0);
+        drag.rescale_grab(1.5);
+        let out = drag.advance(&held_frame(1300.0, 500.0, 0.0));
+        assert!((out.x - 850.0).abs() < 1e-9, "got {}", out.x);
+    }
+
+    #[test]
+    fn rescaling_an_idle_controller_leaves_the_latched_grab_alone() {
+        // The grab offset outlives the gesture: the controller returns to Idle
+        // but keeps what it latched. Rescaling then would move a grab that no
+        // longer exists, so the guard is what keeps the next gesture's starting
+        // point honest. Asserting through `begin_drag` alone proves nothing,
+        // because that overwrites both offsets.
+        let mut drag = DragController::new();
+        drag.begin_drag(300.0, 0.0, 1000.0, 500.0, 0.0);
+        drag.advance(&held_frame(1300.0, 500.0, 0.0));
+        drag.end_drag(FRAME_DT);
+        for step in 0..1_000 {
+            drag.advance(&free_frame(FRAME_DT * f64::from(step + 2), FRAME_DT));
+            if drag.phase() == DragPhase::Idle {
+                break;
+            }
+        }
+        assert_eq!(drag.phase(), DragPhase::Idle);
+        let latched = drag.grab_offset();
+        assert_ne!(latched.0, 0.0);
+
+        drag.rescale_grab(1.5);
+
+        assert_eq!(drag.grab_offset(), latched);
+    }
+
     fn wide_bounds() -> DragBounds {
         DragBounds {
             min_x: -10_000.0,
@@ -945,6 +1003,7 @@ mod tests {
             y: 200.0,
             width: 300.0,
             height: 400.0,
+            id: None,
         };
         let edges = EdgeMask {
             left: false,
@@ -967,23 +1026,7 @@ mod tests {
 
     #[test]
     fn ending_a_drag_clears_the_partial_seam_latch() {
-        let monitor = MonitorRect {
-            x: 0.0,
-            y: 0.0,
-            width: 1200.0,
-            height: 1000.0,
-        };
-        let work = MonitorRect {
-            width: 1180.0,
-            height: 900.0,
-            ..monitor
-        };
-        let neighbor = MonitorRect {
-            x: 1200.0,
-            y: 200.0,
-            width: 1000.0,
-            height: 600.0,
-        };
+        let (monitor, work, neighbor) = crate::layout::tests::seam_fixture();
         let mut drag = DragController::new();
         drag.begin_drag(0.0, 0.0, 100.0, 100.0, 0.0);
 
@@ -1004,6 +1047,7 @@ mod tests {
             y: 0.0,
             width: 300.0,
             height: 200.0,
+            id: None,
         };
         let edges = EdgeMask {
             left: true,

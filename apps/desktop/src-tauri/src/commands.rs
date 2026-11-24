@@ -286,7 +286,7 @@ impl Drop for TypingSession {
 
 /// User-data tables wiped by `clear_local_data`. Extend this list when
 /// adding a table that stores user content — a missed table is a privacy leak.
-const USER_DATA_TABLES_TO_CLEAR: [&str; 14] = [
+const USER_DATA_TABLES_TO_CLEAR: [&str; 15] = [
     "daily_word_activity_events",
     "daily_word_activity",
     "chat_messages",
@@ -304,6 +304,10 @@ const USER_DATA_TABLES_TO_CLEAR: [&str; 14] = [
     // those ids behind: `sweep_orphaned_wavs` below already removes every `.wav`
     // in the managed directory, so the retry has nothing left to act on.
     "pending_audio_deletions",
+    // Where the pill was parked. It is a preference in substance, and the clear
+    // dialog promises to delete preferences, so leaving it behind would put the
+    // pill back where the user had it before the wipe.
+    "pill_position",
 ];
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
 use tauri_plugin_updater::UpdaterExt;
@@ -3494,6 +3498,32 @@ pub async fn clear_local_data(
         );
     }
 
+    // The pill still holds the pre-clear position in memory. Tell it to forget
+    // before writes reopen, so the window reload that follows cannot publish the
+    // cleared position back into the table.
+    //
+    // A forget that did not reach a running pill leaves the wipe incomplete on
+    // purpose. The pill can have a saved-position report buffered on its stdout
+    // that describes the position this clear just deleted, and reporting ready
+    // lets the frontend reopen writes before that report is drained, which
+    // recreates the row. The erase latch stays closed, so the report is dropped
+    // when it arrives; the user retries the clear once the pill is gone.
+    match crate::pill_position::forget_running_pill_position(&app).await {
+        crate::pill_position::ForgetOutcome::Delivered(_)
+        | crate::pill_position::ForgetOutcome::NoPill => {}
+        crate::pill_position::ForgetOutcome::DeliveryFailed => {
+            log::error!(
+                "Local data cleared, but the running pill could not be told to forget the \
+                 cleared position, so the wipe is left incomplete"
+            );
+            return Err(
+                "Database cleared, but the running pill could not be told to forget the \
+                 cleared position. Quit and reopen the app, then clear again."
+                    .to_string(),
+            );
+        }
+    }
+
     native_clear_guard.mark_ready_for_frontend_completion();
     Ok(())
 }
@@ -5258,11 +5288,23 @@ pub fn request_pill_position(app: AppHandle) -> Result<(), String> {
 /// default centre-bottom of a monitor. `strategy` selects which monitor:
 /// `"current"` (the monitor the pill lives on, the historical default) or
 /// `"cursor"` (the monitor under the mouse).
+///
+/// Async so the main thread does not wait on the local-data write gate: the
+/// clear can be queued behind a whole local-data wipe, which holds that gate for
+/// its duration.
 #[tauri::command]
 #[specta::specta]
-pub fn reset_pill_position(app: AppHandle, strategy: Option<String>) -> Result<(), String> {
+pub async fn reset_pill_position(app: AppHandle, strategy: Option<String>) -> Result<(), String> {
+    // Validate before the clear, not after. The clear deletes the stored row and
+    // returns a declaration, and only then is the message sent. A strategy the
+    // pill cannot deserialize makes that send fail on GTK, which leaves the user
+    // with a deleted record and a pill that never moved, and the failure is
+    // reported as a delivery error rather than as the bad argument it was.
     let strategy = strategy.unwrap_or_else(|| "current".to_string());
-    crate::platform::overlay::notify_reset_position(&app, &strategy)
+    if strategy != "current" && strategy != "cursor" {
+        return Err(format!("unknown pill reset strategy: {strategy}"));
+    }
+    crate::platform::overlay::notify_reset_position(&app, &strategy).await
 }
 
 #[tauri::command]

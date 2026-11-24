@@ -155,9 +155,15 @@ test("architecture detects a cyclic fixture", (t) => {
 });
 
 // Cycles the consolidated base already had when the recorder-ownership work
-// landed on top of it. They all pass through the `sessions/index.ts` barrel,
-// `utils/user.utils.ts`, or the `agents/index.ts` barrel; breaking them is a
-// separate refactor of that layout, not part of this branch.
+// landed on top of it, plus the ones its type-module move left behind.
+//
+// The base moved the transcription preference types out of `utils/user.utils.ts`
+// and broke eleven cycles through that module, so their entries are gone. The
+// same move exposed six routes through `tools/paste.tool.ts` and
+// `actions/pending-paste-review.actions.ts`, which close back through
+// `actions/chat.actions.ts`. They are recorded here rather than broken in this
+// branch because the edge to remove is the one from `pending-paste-review` to
+// the chat action module, and that belongs to the base's layout refactor.
 //
 // The gate is "no new cycles": anything observed that is not listed here fails,
 // and an entry is deleted as soon as its cycle is broken. The cycle the

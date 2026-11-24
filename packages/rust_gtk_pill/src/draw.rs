@@ -1049,7 +1049,8 @@ fn draw_flame(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let usable = pill_w - inset * 2.0;
 
     let fade_in = (elapsed / 0.3).clamp(0.0, 1.0);
-    let fade_out = ((FLAME_TOTAL_DURATION - elapsed) / 0.8).clamp(0.0, 1.0);
+    let fade_out =
+        ((rust_pill_shared::flame::FLAME_TOTAL_DURATION - elapsed) / 0.8).clamp(0.0, 1.0);
     let alpha = fade_in * fade_out;
     if alpha < 0.01 {
         return;
@@ -1062,8 +1063,8 @@ fn draw_flame(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         let w = tongue.width * (0.85 + 0.15 * flicker);
         let hw = w / 2.0;
 
-        let sway =
-            tongue.phase.sin() * FLAME_SWAY + (tongue.phase * 1.7 + 1.0).sin() * FLAME_SWAY * 0.4;
+        let sway = tongue.phase.sin() * rust_pill_shared::flame::FLAME_SWAY
+            + (tongue.phase * 1.7 + 1.0).sin() * rust_pill_shared::flame::FLAME_SWAY * 0.4;
 
         let base_x = pill_x + inset + usable * tongue.t;
         let cx = base_x + sway * 0.3;
@@ -1124,7 +1125,7 @@ fn draw_fireworks(cr: &cairo::Context, state: &PillState, _ww: f64, _wh: f64) {
         // Trail
         if rocket.trail.len() > 1 && rocket.trail_alpha > 0.01 {
             let n = rocket.trail.len();
-            cr.set_line_width(FIREWORKS_ROCKET_LINE_WIDTH);
+            cr.set_line_width(rust_pill_shared::fireworks::FIREWORKS_ROCKET_LINE_WIDTH);
             cr.set_line_cap(cairo::LineCap::Round);
             for i in 1..n {
                 let alpha = (i as f64 / n as f64) * rocket.trail_alpha * 0.8;
@@ -1137,21 +1138,21 @@ fn draw_fireworks(cr: &cairo::Context, state: &PillState, _ww: f64, _wh: f64) {
 
         // Bright head while rising
         if rocket.phase == RocketPhase::Rising {
-            let hs = FIREWORKS_HEAD_SIZE / 2.0;
+            let hs = rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE / 2.0;
             cr.set_source_rgba(rc, gc, bc, 0.95);
             rounded_rect(
                 cr,
                 rocket.x - hs,
                 rocket.y - hs,
-                FIREWORKS_HEAD_SIZE,
-                FIREWORKS_HEAD_SIZE,
+                rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE,
+                rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE,
                 hs,
             );
             let _ = cr.fill();
         }
 
         // Sparks
-        cr.set_line_width(FIREWORKS_SPARK_LINE_WIDTH);
+        cr.set_line_width(rust_pill_shared::fireworks::FIREWORKS_SPARK_LINE_WIDTH);
         cr.set_line_cap(cairo::LineCap::Round);
         for spark in &rocket.sparks {
             if spark.life <= 0.0 {
