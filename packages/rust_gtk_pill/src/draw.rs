@@ -69,8 +69,7 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
 
         // Painted outside the pill body so a locate replay still outlines a
         // window whose body is the typing panel or an open transcript review.
-        if state.ring_alpha.get() > 0.0
-            || rust_pill_shared::pulse_is_running(state.arm_pulse.get())
+        if state.ring_alpha.get() > 0.0 || rust_pill_shared::pulse_is_running(state.arm_pulse.get())
         {
             paint_pill_attached(cr, state, ww, wh, |cr| {
                 let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
