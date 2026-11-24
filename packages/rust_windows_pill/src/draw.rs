@@ -1327,7 +1327,6 @@ fn draw_compact_content(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_message_separator(gfx: &mut Gfx, index: usize, area_x: f64, y: f64, alpha: f64) -> f64 {
     if index == 0 {
         return y;
@@ -1401,6 +1400,7 @@ fn draw_message_text(
     y
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_transcript(
     gfx: &mut Gfx,
     state: &PillState,
