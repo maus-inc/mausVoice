@@ -14,7 +14,9 @@ import {
   flushHistoryPersist,
   MAX_HISTORY_PERSIST_QUEUE,
   resetHistoryPersistQueue,
+  shouldPersistBeforeDelivery,
   snapshotStopRecordingAudio,
+  type PersistBeforeDeliveryInput,
 } from "./history-persist.utils";
 
 afterEach(() => {
@@ -103,5 +105,44 @@ describe("enqueueHistoryPersist", () => {
     }, "next");
     await flushHistoryPersist();
     expect(order).toEqual(["fail", "next"]);
+  });
+});
+
+describe("shouldPersistBeforeDelivery", () => {
+  const allowed: PersistBeforeDeliveryInput = {
+    hasPersistenceHook: true,
+    reviewBeforeInsert: false,
+    remoteDeviceId: null,
+    insertionMethod: "paste",
+    handsFreeDelayMs: 0,
+    activeSimulatedTypingCount: 0,
+    queueFull: false,
+  };
+
+  it("starts the write during delivery when nothing can still change the row", () => {
+    expect(shouldPersistBeforeDelivery(allowed)).toBe(true);
+  });
+
+  it.each([
+    ["no persistence hook", { hasPersistenceHook: false }],
+    ["review-before-insert is on", { reviewBeforeInsert: true }],
+    ["a remote target is paired", { remoteDeviceId: "device-1" }],
+    ["delivery is simulated typing", { insertionMethod: "type" }],
+    ["a hands-free delay holds delivery", { handsFreeDelayMs: 1 }],
+    [
+      "a simulated typing route is in flight",
+      { activeSimulatedTypingCount: 1 },
+    ],
+    ["the persist queue is full", { queueFull: true }],
+  ])("keeps the serial path when %s", (_label, override) => {
+    expect(shouldPersistBeforeDelivery({ ...allowed, ...override })).toBe(
+      false,
+    );
+  });
+
+  it("treats a zero hands-free delay as no delay", () => {
+    expect(
+      shouldPersistBeforeDelivery({ ...allowed, handsFreeDelayMs: 0 }),
+    ).toBe(true);
   });
 });

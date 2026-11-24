@@ -16,17 +16,7 @@ import type {
 import dayjs from "dayjs";
 import { detectLocale, matchSupportedLocale } from "../i18n";
 import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
-import type {
-  ApiTranscriptionPrefs,
-  LocalTranscriptionPrefs,
-  TranscriptionPrefs,
-} from "../types/transcription-prefs.types";
-
-export type {
-  ApiTranscriptionPrefs,
-  LocalTranscriptionPrefs,
-  TranscriptionPrefs,
-};
+import type { TranscriptionPrefs } from "../types/transcription-prefs.types";
 import type { AppState } from "../state/app.state";
 import { applyAiPreferences } from "./ai.utils";
 import { registerUsers } from "./app.utils";
