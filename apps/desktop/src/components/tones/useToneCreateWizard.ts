@@ -51,7 +51,7 @@ const buildWizardTone = ({
   };
 };
 
-export const useToneWizardDraft = (intl: ReturnType<typeof useIntl>) => {
+const useToneWizardDraft = (intl: ReturnType<typeof useIntl>) => {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [outputLength, setOutputLength] = useState("");
