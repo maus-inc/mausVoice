@@ -436,6 +436,9 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
     this.providerRouting = providerRouting;
   }
 
+  // Required by BaseGenerateTextRepo's abstract contract. This provider is only
+  // wired for streaming today, so no caller reaches the one-shot form.
+  // fallow-ignore-next-line unused-class-member
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
     const response = await openrouterGenerateTextResponse({
       apiKey: this.apiKey,
@@ -521,6 +524,9 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
     this.model = (model as DeepseekModel) ?? DEEPSEEK_MODELS[0];
   }
 
+  // Required by BaseGenerateTextRepo's abstract contract. This provider is only
+  // wired for streaming today, so no caller reaches the one-shot form.
+  // fallow-ignore-next-line unused-class-member
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
     const response = await deepseekGenerateTextResponse({
       apiKey: this.apiKey,
@@ -606,6 +612,9 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
     this.model = (model as ClaudeModel) ?? CLAUDE_MODELS[0];
   }
 
+  // Required by BaseGenerateTextRepo's abstract contract. This provider is only
+  // wired for streaming today, so no caller reaches the one-shot form.
+  // fallow-ignore-next-line unused-class-member
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
     const response = await claudeGenerateTextResponse({
       apiKey: this.apiKey,
