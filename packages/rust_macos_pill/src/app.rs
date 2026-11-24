@@ -962,7 +962,7 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
         InMessage::ForgetPosition { .. } => on_forget_position(ctx, msg),
         InMessage::RequestPosition => on_request_position(ctx),
         InMessage::Locate => {
-            rust_pill_shared::RingHost::begin_locate(ctx.state);
+            rust_pill_shared::RingHost::begin_locate(&*ctx.state);
         }
         // Only the Win32 pill anchors to a screen edge; the desktop broadcasts
         // the preference, so accept it and ignore it here.
@@ -1199,6 +1199,7 @@ fn finish_frame(ctx: &AppContext, dt: f64, now: f64) {
         ctx.state.visibility.get().into(),
         ctx.state.phase.get() != Phase::Idle,
         ctx.state.owns_panel(),
+        ctx.state.ring.locate_active(),
     );
     unsafe {
         if should_show {
@@ -1478,7 +1479,7 @@ fn write_drag_position(state: &PillState, window: id, now: f64) {
 }
 
 /// True when macOS accessibility asks for reduced motion.
-fn reduced_motion() -> bool {
+pub(crate) fn reduced_motion() -> bool {
     unsafe {
         let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
         let reduce: BOOL = msg_send![workspace, accessibilityDisplayShouldReduceMotion];
@@ -1861,7 +1862,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     // Inflate animation. The target ramps up partway through the hold (not at
     // the arm moment), so the pill is already growing while the ring fills and
     // arming continues that motion instead of starting a new one.
-    let hold_p = draw::long_press_progress(state.long_press_elapsed.get());
+    let hold_p = rust_pill_shared::long_press_progress(state.long_press_elapsed.get());
     let inflate_target = rust_pill_shared::inflate_target(
         hold_p,
         state.long_press_active.get(),

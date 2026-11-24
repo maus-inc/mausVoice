@@ -1826,6 +1826,16 @@ pub const LONG_PRESS_HOLD_DELAY: f64 = 0.12;
 /// ring.
 pub const LONG_PRESS_MOVE_THRESHOLD: f64 = 8.0;
 
+/// How far the long-press outline has filled, from 0 to 1.
+///
+/// The ramp only starts once [`LONG_PRESS_HOLD_DELAY`] has elapsed, so a quick
+/// click never renders a partially filled outline, and it reaches 1.0 exactly
+/// when the gesture arms at [`LONG_PRESS_DURATION`]. Each platform crate
+/// carried its own copy of this wrapper before the pills shared one.
+pub fn long_press_progress(elapsed: f64) -> f64 {
+    hold_progress(elapsed, LONG_PRESS_HOLD_DELAY, LONG_PRESS_DURATION)
+}
+
 /// Silver-white with a very slight cool tint, so the ring reads as a neutral
 /// grab affordance and stays distinct from the blue commit flash.
 pub const LONG_PRESS_OUTLINE_COLOR: (f64, f64, f64) = (0.92, 0.95, 1.0);

@@ -898,7 +898,7 @@ fn query_client_area_animation() -> Option<bool> {
 
 /// True when the user turned off client-area animation effects.
 /// Re-read at most every 2 s.
-fn reduced_motion() -> bool {
+pub(crate) fn reduced_motion() -> bool {
     let now = Instant::now();
     let stale = REDUCED_MOTION_CHECKED.with(|c| {
         if let Some(prev) = c.get() {
@@ -1445,7 +1445,7 @@ fn tick(state: &PillState, dt: f64) {
     // Inflate animation. The target ramps up partway through the hold (not at
     // the arm moment), so the pill is already growing while the ring fills and
     // arming continues that motion instead of starting a new one.
-    let hold_p = draw::long_press_progress(state.long_press_elapsed.get());
+    let hold_p = rust_pill_shared::long_press_progress(state.long_press_elapsed.get());
     let inflate_target = rust_pill_shared::inflate_target(
         hold_p,
         state.long_press_active.get(),
@@ -1549,6 +1549,7 @@ fn update_visibility(hwnd: HWND, state: &PillState) {
         state.visibility.get().into(),
         state.phase.get() != Phase::Idle,
         state.owns_panel(),
+        state.ring.locate_active(),
     );
 
     unsafe {

@@ -9,6 +9,8 @@ use std::io::Write;
 
 use serde::{Deserialize, Serialize};
 
+use crate::restore::PositionReport;
+
 /// Axis-aligned screen rectangle, top-left origin, y-down.
 ///
 /// Each platform reports it in its own window-position space — physical pixels
@@ -23,9 +25,10 @@ pub struct Rect {
     pub height: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
+    #[default]
     Hidden,
     WhileActive,
     Persistent,
@@ -49,6 +52,8 @@ pub enum Phase {
     Loading,
     Paused,
 }
+
+crate::impl_recording_phase!(Phase);
 
 /// Which monitor a reset-position re-homes the pill onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -267,9 +272,12 @@ pub enum OutMessage {
         text: Option<String>,
     },
     PositionChanged {
-        has_saved_position: bool,
-        rect: Option<Rect>,
-        monitor: Option<Rect>,
+        /// Flattened so the desktop keeps reading `has_saved_position`, `rect`,
+        /// `monitor`, `display_id` and `ack` as siblings on the wire. Every pill
+        /// crate publishes a report rather than five loose fields, and the
+        /// desktop parses that flat shape in `pill_process.rs`.
+        #[serde(flatten)]
+        report: PositionReport<Rect>,
     },
     /// Haptic/audio feedback request for the desktop process.
     /// `kind` values: "press", "deep", "release".
@@ -384,5 +392,53 @@ mod review_localization_tests {
         let review = parsed.review.expect("review should be present");
         assert_eq!(review.id, "r1");
         assert_eq!(review.insert_label.as_deref(), Some("Einfuegen"));
+    }
+}
+
+#[cfg(test)]
+mod position_wire_tests {
+    use super::{OutMessage, Rect};
+    use crate::restore::{DisplayRef, PositionReport};
+
+    /// The desktop parses `position_changed` as one flat object in
+    /// `pill_process.rs`, reading `has_saved_position`, `rect`, `monitor`,
+    /// `display_id` and `ack` as siblings. A report that nested under its own
+    /// key, or dropped the display token, would still compile and still pass a
+    /// round-trip through the pill, so this test pins the wire shape itself.
+    #[test]
+    fn position_changed_flattens_its_report() {
+        let mut report = PositionReport::new(
+            true,
+            Some(Rect {
+                x: 1.0,
+                y: 2.0,
+                width: 3.0,
+                height: 4.0,
+            }),
+            None,
+            Some(7),
+        );
+        report.ack = Some(9);
+        let value = serde_json::to_value(OutMessage::PositionChanged { report }).unwrap();
+        assert_eq!(value["type"], "position_changed");
+        assert_eq!(value["has_saved_position"], true);
+        assert_eq!(value["display_id"], 7);
+        assert_eq!(value["ack"], 9);
+        assert_eq!(value["rect"]["width"], 3.0);
+        assert!(value.get("report").is_none());
+        assert!(value.get("display").is_none());
+    }
+
+    /// `PositionReport::new` stamps no clear, and an unstamped report must not
+    /// put an `ack` on the wire, because the desktop reads a missing token as
+    /// "retire nothing".
+    #[test]
+    fn an_unstamped_report_omits_the_ack() {
+        let report = PositionReport::new(false, None, None, None);
+        let value = serde_json::to_value(OutMessage::PositionChanged { report }).unwrap();
+        assert!(value.get("ack").is_none());
+        assert!(value.get("display_id").is_none());
+        assert_eq!(value["has_saved_position"], false);
+        let _ = DisplayRef::new(None);
     }
 }

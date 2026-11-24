@@ -87,7 +87,7 @@ impl EdgeMask {
 /// and code that compared them with `==` before this field existed should keep
 /// comparing geometry. `==` does that; [`MonitorRect::same_geometry`] names it
 /// when the intent is worth spelling out.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct MonitorRect {
     pub x: f64,
     pub y: f64,

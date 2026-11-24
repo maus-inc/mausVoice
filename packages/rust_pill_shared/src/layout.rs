@@ -600,11 +600,12 @@ impl SaveGuard {
 /// because the two are not independent: a cleared pill has nowhere to go and must
 /// never follow the pointer, and a stored one belongs where it was left. Carrying
 /// both in one value makes that illegal pair unrepresentable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Anchor {
     /// A stored position survived, so the pill belongs there.
     Saved,
     /// Never placed in this process, so it is due a first placement at the pointer.
+    #[default]
     LaunchAtCursor,
     /// The user asked for a reset onto the display the pill already lives on.
     ResetAtCurrent,

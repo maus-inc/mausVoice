@@ -1,4 +1,4 @@
-use rust_pill_shared::indicator::DictationIndicator;
+pub(crate) use rust_pill_shared::indicator::DictationIndicator;
 use std::cell::{Cell, RefCell};
 
 pub(crate) use rust_pill_shared::fireworks::{Rocket, RocketPhase};
@@ -354,8 +354,6 @@ rust_pill_shared::impl_ring_host!(
         crate::app::reduced_motion()
     }
 );
-
-rust_pill_shared::impl_recording_phase!(Phase);
 
 // Native paint and input code read the same indicator that receives phase IPC.
 impl std::ops::Deref for PillState {

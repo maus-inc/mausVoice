@@ -618,6 +618,7 @@ fn frame_tick(
         state_tick.visibility.get().into(),
         state_tick.phase.get() != Phase::Idle,
         state_tick.owns_panel(),
+        state_tick.ring.locate_active(),
     );
     if should_show {
         win_tick.show();
@@ -2385,7 +2386,7 @@ fn tick(state: &PillState, dt: f64) {
     // Inflate animation. The target ramps up partway through the hold (not at
     // the arm moment), so the pill is already growing while the ring fills and
     // arming continues that motion instead of starting a new one.
-    let hold_p = draw::long_press_progress(state.long_press_elapsed.get());
+    let hold_p = rust_pill_shared::long_press_progress(state.long_press_elapsed.get());
     let inflate_target = rust_pill_shared::inflate_target(
         hold_p,
         state.long_press_active.get(),

@@ -174,3 +174,7 @@ pub(crate) const TRANSCRIPT_PADDING_H: f64 = 14.0;
 pub(crate) const TRANSCRIPT_RADIUS: f64 = 10.0;
 pub(crate) const TRANSCRIPT_FONT_SIZE: f64 = 12.0;
 pub(crate) const TRANSCRIPT_MAX_WIDTH: f64 = 440.0;
+
+pub(crate) use rust_pill_shared::{
+    DRAG_INFLATE_STIFFNESS, LONG_PRESS_DURATION, LONG_PRESS_MOVE_THRESHOLD,
+};
