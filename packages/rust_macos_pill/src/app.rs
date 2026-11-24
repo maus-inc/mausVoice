@@ -1713,6 +1713,48 @@ fn tick_spatial_feedback(window: id, state: &PillState, dt: f64, now: f64) {
 /// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
 /// cancel controls, drag inflate), and the fireworks/flame/flash/transcript
 /// sub-tickers.
+/// Advances the banner timer and its fade spring for one frame.
+fn tick_flash_banner(state: &PillState, dt: f64, tooltip_target: f64) {
+    if state.flash_visible.get() {
+        let remaining = state.flash_timer.get() - dt;
+        if remaining <= 0.0 {
+            clear_flash(state);
+        } else {
+            state.flash_timer.set(remaining);
+        }
+    }
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
+    rust_pill_shared::spring::spring_01(
+        &state.flash_t,
+        &state.flash_velocity,
+        flash_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
+}
+
+/// Where the cancel control's spring should settle this frame.
+fn controls_target(state: &PillState) -> f64 {
+    let show_controls = !state.assistant_active.get()
+        && match state.phase.get() {
+            // Hover-revealed while recording, pinned open while paused.
+            Phase::Recording => state.hovered.get(),
+            Phase::Paused => true,
+            // Post-recording processing: neither cancel nor pause can still act
+            // on the take, so the controls fade out with the same spring.
+            Phase::Idle | Phase::Loading => false,
+        };
+    if show_controls {
+        1.0
+    } else {
+        0.0
+    }
+}
+
 fn tick(state: &PillState, window: id, dt: f64) {
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
@@ -1847,27 +1889,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     // Long-press balloon pop + drag
     tick_long_press(state, window, dt);
 
-    // Flash message timer
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - dt;
-        if remaining <= 0.0 {
-            clear_flash(state);
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
-    let flash_target = rust_pill_shared::flash_banner_target(
-        state.flash_visible.get(),
-        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
-        tooltip_target > 0.5,
-    );
-    rust_pill_shared::spring::spring_01(
-        &state.flash_t,
-        &state.flash_velocity,
-        flash_target,
-        SPRING_STIFFNESS,
-        dt,
-    );
+    tick_flash_banner(state, dt, tooltip_target);
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
@@ -1884,18 +1906,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
         dt,
     );
 
-    // Cancel + pause controls.
-    let controls_phase = state.phase.get();
-    let show_controls = !state.assistant_active.get()
-        && match controls_phase {
-            // Hover-revealed while recording, pinned open while paused.
-            Phase::Recording => state.hovered.get(),
-            Phase::Paused => true,
-            // Post-recording processing: neither cancel nor pause can still
-            // act on the take, so the controls fade out with the same spring.
-            Phase::Idle | Phase::Loading => false,
-        };
-    let cancel_target = if show_controls { 1.0 } else { 0.0 };
+    let cancel_target = controls_target(state);
     rust_pill_shared::spring::spring_01(
         &state.cancel_t,
         &state.cancel_velocity,
@@ -2320,11 +2331,6 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let win_w = win_frame.size.width;
         let win_h = win_frame.size.height;
 
-        // A drag uses the cursor screen and settles on its drop screen. Everything else
-        // belongs to the screen the pill actually lives on — resolving the
-        // screen from the live cursor here is what made a pinned pill hop
-        // monitors (and clamp into the wrong visible frame) whenever the
-        // pointer crossed a screen edge.
         let dragging = state.dragging.get();
         let settling = state.drag_motion.borrow().is_settling();
         // One question, answered in one place: is this pill due a placement, and
@@ -2351,11 +2357,12 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let (px, py, pw, ph) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
-        let fx = cox + px;
-        let fy = coy + py;
-        // View is flipped y-down; screen origin is bottom-left (y-up).
-        let footprint_center = |origin_x: f64, origin_y: f64| {
-            (origin_x + fx + pw / 2.0, origin_y + win_h - fy - ph / 2.0)
+        let footprint = Footprint {
+            fx: cox + px,
+            fy: coy + py,
+            pw,
+            ph,
+            win_h,
         };
         // Three placements, in priority order, and they are not the same thing:
         //
@@ -2466,7 +2473,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         if dragging {
             bounds.apply_shared_seam_bounds(
                 drag_region,
-                (fx + pw / 2.0, win_h - fy - ph / 2.0),
+                (footprint.fx + pw / 2.0, win_h - footprint.fy - ph / 2.0),
                 edge_mask,
             );
         }
