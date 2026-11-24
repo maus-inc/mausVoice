@@ -39,6 +39,7 @@ const useProfileDraft = ({
   preparing,
   resetImage,
   cancelPendingPick,
+  syncImage,
 }: {
   open: boolean;
   user: ReturnType<typeof useMyUser>;
@@ -49,6 +50,7 @@ const useProfileDraft = ({
   preparing: boolean;
   resetImage: (next: string | null) => void;
   cancelPendingPick: () => void;
+  syncImage: (next: string | null) => void;
 }) => {
   const [name, setName] = useState(initialName);
   const [saveFailed, setSaveFailed] = useState(false);
@@ -75,8 +77,8 @@ const useProfileDraft = ({
   }, [open, initialName, initialImage, resetImage]);
 
   useEffect(() => {
-    if (open && !imageEdited && !preparing) resetImage(initialImage);
-  }, [open, imageEdited, preparing, initialImage, resetImage]);
+    if (open && !imageEdited && !preparing) syncImage(initialImage);
+  }, [open, imageEdited, preparing, initialImage, syncImage]);
 
   const close = useCallback(() => {
     produceAppState((draft) => {
@@ -248,6 +250,7 @@ const useAvatarDraft = ({
       pickTicket.current += 1;
       setPreparing(false);
     },
+    syncImage: (next: string | null) => setImage(next),
     handlePick,
     handleRemove,
   };
@@ -268,6 +271,7 @@ export const ProfileDialog = () => {
     preparing,
     resetImage,
     cancelPendingPick,
+    syncImage,
     handlePick,
     handleRemove,
   } = useAvatarDraft({ initialImage, intl });
@@ -294,6 +298,7 @@ export const ProfileDialog = () => {
     preparing,
     resetImage,
     cancelPendingPick,
+    syncImage,
   });
 
   return (
