@@ -145,111 +145,129 @@ function checkVisibleHeading(scan, lineNo, violations, seenSections) {
   }
 }
 
-function check(body, maxOpen) {
-  const lines = body.split("\n");
-  const violations = [];
-  const state = { inComment: false, inFence: false };
-  let depth = 0;
-  let awaitingSummary = false;
-  let openLines = 0;
-  let footerCount = 0;
-  let footerInsideFold = false;
-  let botTerritory = false;
+function createLineScanner(violations) {
   const seenSections = new Set();
+  const state = { inComment: false, inFence: false };
+  const counters = {
+    depth: 0,
+    awaitingSummary: false,
+    openLines: 0,
+    footerCount: 0,
+    footerInsideFold: false,
+    botTerritory: false,
+  };
+  return {
+    state,
+    counters,
+    seenSections,
+    scan: (raw, lineNo) =>
+      scanLine(raw, lineNo, violations, state, counters, seenSections),
+  };
+}
 
-  lines.forEach((raw, index) => {
-    const lineNo = index + 1;
-    const scan = stripNoise(raw, state).trim();
-    if (scan === "") {
-      return;
-    }
-
-    if (botTerritory) {
-      // Below the footer the review bots write, and the author cannot control that text.
-      // The only authored mistake still detectable down here is a second footer.
-      if (scan.startsWith("MausAgent | Filed by ")) {
-        footerCount += 1;
-      }
-      return;
-    }
-
-    const opens = (scan.match(/<details\b/gi) ?? []).length;
-    const closes = (scan.match(/<\/details>/gi) ?? []).length;
-    const wasOpen = depth > 0;
-
-    if (!wasOpen) {
-      openLines += 1;
-      checkVisibleHeading(scan, lineNo, violations, seenSections);
-      if (scan.startsWith("MausAgent | Filed by ")) {
-        footerCount += 1;
-        // The authored body ends here. Whatever the bots appended below is out of scope.
-        botTerritory = true;
-      }
-      if (ROUND_BULLET.test(scan)) {
-        violations.push(
-          `R8 line ${lineNo}: unfolded bullet "${quote(scan, 60)}" records a round, a poll or a check run. Put it in the round log table.`,
-        );
-      }
-    } else if (scan.startsWith("MausAgent | Filed by ")) {
-      footerInsideFold = true;
-    }
-
-    const hasSummary = /<summary>[\s\S]*<\/summary>/i.test(scan);
-
-    if (opens > 0) {
-      // A one-line <details><summary>...</summary> is valid HTML, turns up in bot
-      // boilerplate, and needs no follow-up line. A bare <details> does.
-      awaitingSummary = !hasSummary;
-    } else if (awaitingSummary && depth > 0) {
-      awaitingSummary = false;
-      if (!hasSummary) {
-        violations.push(
-          `R1 line ${lineNo}: a <details> block starts with "${quote(scan)}" instead of a <summary>.`,
-        );
-      }
-    }
-
-    depth = Math.max(0, depth + opens - closes);
-    if (depth === 0) {
-      awaitingSummary = false;
-    }
-  });
-
-  // The footer line is the Footer section, whether or not a "## Footer" heading precedes it.
-  if (footerCount > 0) {
-    seenSections.add("Footer");
+function scanBotTerritoryLine(scan, counters) {
+  // Below the footer the review bots write, and the author cannot control that text.
+  // The only authored mistake still detectable down here is a second footer.
+  if (scan.startsWith("MausAgent | Filed by ")) {
+    counters.footerCount += 1;
   }
+}
+
+function scanUnfoldedLine(scan, lineNo, violations, counters, seenSections) {
+  counters.openLines += 1;
+  checkVisibleHeading(scan, lineNo, violations, seenSections);
+  if (scan.startsWith("MausAgent | Filed by ")) {
+    counters.footerCount += 1;
+    // The authored body ends here. Whatever the bots appended below is out of scope.
+    counters.botTerritory = true;
+  }
+  if (ROUND_BULLET.test(scan)) {
+    violations.push(
+      `R8 line ${lineNo}: unfolded bullet "${quote(scan, 60)}" records a round, a poll or a check run. Put it in the round log table.`,
+    );
+  }
+}
+
+function scanFoldState(scan, lineNo, violations, counters) {
+  const opens = (scan.match(/<details\b/gi) ?? []).length;
+  const closes = (scan.match(/<\/details>/gi) ?? []).length;
+  const hasSummary = /<summary>[\s\S]*<\/summary>/i.test(scan);
+  if (opens > 0) {
+    // A one-line <details><summary>...</summary> is valid HTML, turns up in bot
+    // boilerplate, and needs no follow-up line. A bare <details> does.
+    counters.awaitingSummary = !hasSummary;
+  } else if (counters.awaitingSummary && counters.depth > 0) {
+    counters.awaitingSummary = false;
+    if (!hasSummary) {
+      violations.push(
+        `R1 line ${lineNo}: a <details> block starts with "${quote(scan)}" instead of a <summary>.`,
+      );
+    }
+  }
+  counters.depth = Math.max(0, counters.depth + opens - closes);
+  if (counters.depth === 0) {
+    counters.awaitingSummary = false;
+  }
+}
+
+function scanLine(raw, lineNo, violations, state, counters, seenSections) {
+  const scan = stripNoise(raw, state).trim();
+  if (scan === "") return;
+  if (counters.botTerritory) {
+    scanBotTerritoryLine(scan, counters);
+    return;
+  }
+  if (counters.depth > 0) {
+    if (scan.startsWith("MausAgent | Filed by "))
+      counters.footerInsideFold = true;
+  } else {
+    scanUnfoldedLine(scan, lineNo, violations, counters, seenSections);
+  }
+  scanFoldState(scan, lineNo, violations, counters);
+}
+
+function checkFooterSections(violations, counters, seenSections) {
+  // The footer line is the Footer section, whether or not a "## Footer" heading precedes it.
+  if (counters.footerCount > 0) seenSections.add("Footer");
   const missing = REQUIRED_SECTIONS.filter((name) => !seenSections.has(name));
   if (missing.length > 0) {
     violations.push(
       `R7: the visible sections ${missing.map((name) => `"## ${name}"`).join(", ")} are missing. The template keeps all four unfolded.`,
     );
   }
-  if (depth > 0) {
-    violations.push(`R2: ${depth} <details> block(s) are never closed.`);
-  }
-  if (openLines > maxOpen) {
+  if (counters.depth > 0) {
     violations.push(
-      `R4: the unfolded body is ${openLines} lines, over the budget of ${maxOpen}. Fold the long part, do not delete it.`,
+      `R2: ${counters.depth} <details> block(s) are never closed.`,
     );
   }
-  if (footerCount === 0 && !footerInsideFold) {
+  if (counters.footerCount === 0 && !counters.footerInsideFold) {
     violations.push(
       "R5: the footer line 'MausAgent | Filed by ...' is missing.",
     );
   }
-  if (footerCount > 1) {
+  if (counters.footerCount > 1) {
     violations.push(
-      `R5: the footer line appears ${footerCount} times. Keep one, at the end of the authored body; the check stops at the first.`,
+      `R5: the footer line appears ${counters.footerCount} times. Keep one, at the end of the authored body; the check stops at the first.`,
     );
   }
-  if (footerInsideFold) {
+  if (counters.footerInsideFold) {
     violations.push(
       "R5: the footer line sits inside a fold. The footer stays visible.",
     );
   }
+}
 
-  return { violations, openLines };
+function check(body, maxOpen) {
+  const violations = [];
+  const { counters, seenSections, scan } = createLineScanner(violations);
+  body.split("\n").forEach((raw, index) => scan(raw, index + 1));
+  checkFooterSections(violations, counters, seenSections);
+  if (counters.openLines > maxOpen) {
+    violations.push(
+      `R4: the unfolded body is ${counters.openLines} lines, over the budget of ${maxOpen}. Fold the long part, do not delete it.`,
+    );
+  }
+  return { violations, openLines: counters.openLines };
 }
 
 const args = parseArgs(process.argv.slice(2));
