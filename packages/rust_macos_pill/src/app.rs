@@ -1659,6 +1659,85 @@ fn tick_ring(state: &PillState, dt: f64) {
 
 // ── Window positioning ────────────────────────────────────────────
 
+struct Footprint {
+    fx: f64,
+    fy: f64,
+    pw: f64,
+    ph: f64,
+    win_h: f64,
+}
+
+impl Footprint {
+    /// View is flipped y-down; screen origin is bottom-left (y-up).
+    fn center(&self, origin_x: f64, origin_y: f64) -> (f64, f64) {
+        (
+            origin_x + self.fx + self.pw / 2.0,
+            origin_y + self.win_h - self.fy - self.ph / 2.0,
+        )
+    }
+}
+
+fn region_for(
+    state: &PillState,
+    dragging: bool,
+    full: rust_pill_shared::edge::MonitorRect,
+    work_area: rust_pill_shared::edge::MonitorRect,
+    monitor_frames: &[rust_pill_shared::edge::MonitorRect],
+    seam_point: (f64, f64),
+) -> rust_pill_shared::edge::DragRegion {
+    if dragging {
+        state
+            .drag_motion
+            .borrow_mut()
+            .resolve_drag_region(full, work_area, monitor_frames, seam_point)
+    } else {
+        rust_pill_shared::edge::drag_region(full, work_area, monitor_frames, seam_point)
+    }
+}
+
+/// A drag uses the cursor screen and settles on its drop screen. Everything else
+/// belongs to the screen the pill actually lives on. Resolving the screen from
+/// the live cursor here is what made a pinned pill hop monitors (and clamp into
+/// the wrong visible frame) whenever the pointer crossed a screen edge.
+fn resolve_anchor(
+    state: &PillState,
+    mouse_loc: NSPoint,
+    win_origin: NSPoint,
+    footprint: &Footprint,
+) -> (f64, f64) {
+    let dragging = state.dragging.get();
+    let settling = state.drag_motion.borrow().is_settling();
+    // The pill's first placement (before any saved position) should follow the
+    // cursor's screen once; afterwards it stays put even if it happens to sit at
+    // (0, 0), so a legitimately-placed window is never chased.
+    let first_placement = !state.first_placement_done.get();
+    // A reset with the "cursor" strategy re-homes onto the screen under the
+    // pointer exactly once; the strategy is consumed so later ticks keep the
+    // pill where it landed instead of chasing the cursor.
+    let reset_to_cursor =
+        !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
+
+    if dragging || settling || (!state.has_saved_position.get() && first_placement) {
+        // First placement at the cursor: mark it done so subsequent ticks keep
+        // the window where it landed instead of re-chasing the cursor.
+        if !dragging && !settling && !state.has_saved_position.get() {
+            state.first_placement_done.set(true);
+            state.reset_strategy.set(ResetStrategy::Current);
+        }
+        state
+            .drag_motion
+            .borrow()
+            .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
+    } else if reset_to_cursor {
+        state.reset_strategy.set(ResetStrategy::Current);
+        (mouse_loc.x, mouse_loc.y)
+    } else if state.has_saved_position.get() {
+        footprint.center(state.saved_x.get(), state.saved_y.get())
+    } else {
+        footprint.center(win_origin.x, win_origin.y)
+    }
+}
+
 fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
     unsafe {
         let mouse_loc = mouse_location();
@@ -1669,51 +1748,19 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let win_w = win_frame.size.width;
         let win_h = win_frame.size.height;
 
-        // A drag uses the cursor screen and settles on its drop screen. Everything else
-        // belongs to the screen the pill actually lives on — resolving the
-        // screen from the live cursor here is what made a pinned pill hop
-        // monitors (and clamp into the wrong visible frame) whenever the
-        // pointer crossed a screen edge.
         let dragging = state.dragging.get();
-        let settling = state.drag_motion.borrow().is_settling();
-        // The pill's first placement (before any saved position) should follow
-        // the cursor's screen once; afterwards it stays put even if it happens
-        // to sit at (0, 0), so a legitimately-placed window is never chased.
-        let first_placement = !state.first_placement_done.get();
         let (px, py, pw, ph) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
-        let fx = cox + px;
-        let fy = coy + py;
-        // View is flipped y-down; screen origin is bottom-left (y-up).
-        let footprint_center = |origin_x: f64, origin_y: f64| {
-            (origin_x + fx + pw / 2.0, origin_y + win_h - fy - ph / 2.0)
+        let footprint = Footprint {
+            fx: cox + px,
+            fy: coy + py,
+            pw,
+            ph,
+            win_h,
         };
-        // A reset with the "cursor" strategy re-homes onto the screen under
-        // the pointer exactly once; the strategy is consumed so later ticks
-        // keep the pill where it landed instead of chasing the cursor.
-        let reset_to_cursor =
-            !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
         let (anchor_x, anchor_y) =
-            if dragging || settling || (!state.has_saved_position.get() && first_placement) {
-                // First placement at the cursor: mark it done so subsequent ticks
-                // keep the window where it landed instead of re-chasing the cursor.
-                if !dragging && !settling && !state.has_saved_position.get() {
-                    state.first_placement_done.set(true);
-                    state.reset_strategy.set(ResetStrategy::Current);
-                }
-                state
-                    .drag_motion
-                    .borrow()
-                    .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
-            } else if reset_to_cursor {
-                state.reset_strategy.set(ResetStrategy::Current);
-                (mouse_loc.x, mouse_loc.y)
-            } else if state.has_saved_position.get() {
-                footprint_center(state.saved_x.get(), state.saved_y.get())
-            } else {
-                footprint_center(win_frame.origin.x, win_frame.origin.y)
-            };
+            resolve_anchor(state, mouse_loc, win_frame.origin, &footprint);
 
         // Resolve monitor bounds in Cocoa's global point space. A connected
         // neighbor opens only its shared edge; the visible frame remains the
@@ -1741,22 +1788,15 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 let visible = screen_visible_frame(screen);
                 let full = ns_rect_to_monitor_rect(frame);
                 let work_area = ns_rect_to_monitor_rect(visible);
-                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
-                let region = if dragging {
-                    state.drag_motion.borrow_mut().resolve_drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                } else {
-                    rust_pill_shared::edge::drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                };
+                let seam_point = footprint.center(win_frame.origin.x, win_frame.origin.y);
+                let region = region_for(
+                    state,
+                    dragging,
+                    full,
+                    work_area,
+                    &monitor_frames,
+                    seam_point,
+                );
                 chosen = Some((visible, region.bounds, region.edge_mask));
                 break;
             }
@@ -1772,22 +1812,15 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 let visible = screen_visible_frame(primary);
                 let full = ns_rect_to_monitor_rect(frame);
                 let work_area = ns_rect_to_monitor_rect(visible);
-                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
-                let region = if dragging {
-                    state.drag_motion.borrow_mut().resolve_drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                } else {
-                    rust_pill_shared::edge::drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                };
+                let seam_point = footprint.center(win_frame.origin.x, win_frame.origin.y);
+                let region = region_for(
+                    state,
+                    dragging,
+                    full,
+                    work_area,
+                    &monitor_frames,
+                    seam_point,
+                );
                 (visible, region.bounds, region.edge_mask)
             }
             None => return,
