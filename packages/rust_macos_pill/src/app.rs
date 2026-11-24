@@ -538,11 +538,216 @@ extern "C" fn tick_callback(_this: &Object, _sel: Sel, _timer: id) {
 
 /// Runs one frame of the pill loop: processes queued IPC messages, advances
 /// the springs/animations, and repaints when the state changed.
-fn perform_tick() {
+fn handle_in_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
     // Phase message sequence guard: see ipc::InMessage::Phase.
     thread_local! {
         static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     }
+    match msg {
+        InMessage::Phase { phase, seq } => {
+            let stale = LAST_PHASE_SEQ.with(|last| {
+                let stale = seq < last.get();
+                if !stale {
+                    last.set(seq);
+                }
+                stale
+            });
+            if stale {
+                return;
+            }
+            let prev = ctx.state.phase.get();
+            ctx.state.phase.set(phase);
+            ctx.state
+                .style_tooltip_gate
+                .set_take_running(phase == Phase::Recording);
+            // A new take sweeps any banner parked above the pill (for
+            // example the retranscribing toast) so it cannot sit on the
+            // style selector for the whole take. A resume from Paused
+            // keeps toasts raised during the take, such as the cancel
+            // confirm.
+            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                clear_flash(&ctx.state);
+            }
+            if rust_pill_shared::should_clear_stage_text_on_phase(
+                prev == Phase::Loading,
+                phase == Phase::Idle,
+                phase == Phase::Loading,
+            ) {
+                *ctx.state.stage_text.borrow_mut() = None;
+            }
+            if phase == Phase::Loading && prev != Phase::Loading {
+                let offset = if reduced_motion() { 0.5 } else { 0.0 };
+                ctx.state.loading_offset.set(offset);
+            }
+            if phase == Phase::Idle && prev != Phase::Idle {
+                ctx.state.pending_levels.borrow_mut().clear();
+                ctx.state.target_level.set(0.0);
+                ctx.state.current_level.set(0.0);
+                ctx.state.wave_phase.set(0.0);
+                ctx.state.loading_offset.set(0.0);
+            }
+        }
+        InMessage::Levels { levels } => {
+            *ctx.state.pending_levels.borrow_mut() = levels;
+        }
+        InMessage::StyleInfo { count, name } => {
+            ctx.state.style_count.set(count);
+            *ctx.state.style_name.borrow_mut() = name;
+        }
+        InMessage::Toast {
+            message,
+            toast_type,
+            duration,
+            action,
+            action_label,
+            reject_action,
+            reject_action_label,
+        } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state
+                .flash_is_error
+                .set(toast_type.as_deref() == Some("error"));
+            ctx.state.flash_visible.set(true);
+            ctx.state
+                .flash_timer
+                .set(duration.unwrap_or(FLASH_DURATION));
+            *ctx.state.flash_action.borrow_mut() = action;
+            *ctx.state.flash_action_label.borrow_mut() = action_label;
+            *ctx.state.flash_reject_action.borrow_mut() = reject_action;
+            *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
+        }
+        InMessage::DismissToast => {
+            clear_flash(&ctx.state);
+        }
+        InMessage::Fireworks { message } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state.flash_is_error.set(false);
+            *ctx.state.flash_action.borrow_mut() = None;
+            *ctx.state.flash_action_label.borrow_mut() = None;
+            *ctx.state.flash_reject_action.borrow_mut() = None;
+            *ctx.state.flash_reject_action_label.borrow_mut() = None;
+            ctx.state.flash_visible.set(true);
+            ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
+
+            ctx.state.fireworks_active.set(true);
+            ctx.state.fireworks_elapsed.set(0.0);
+            ctx.state.fireworks_next_launch.set(0);
+            ctx.state.fireworks_rockets.borrow_mut().clear();
+        }
+        InMessage::Flame { message } => {
+            *ctx.state.flash_message.borrow_mut() = message;
+            ctx.state.flash_is_error.set(false);
+            *ctx.state.flash_action.borrow_mut() = None;
+            *ctx.state.flash_action_label.borrow_mut() = None;
+            *ctx.state.flash_reject_action.borrow_mut() = None;
+            *ctx.state.flash_reject_action_label.borrow_mut() = None;
+            ctx.state.flash_visible.set(true);
+            ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
+
+            ctx.state.flame_active.set(true);
+            ctx.state.flame_elapsed.set(0.0);
+            ctx.state.flame_tongues.borrow_mut().clear();
+        }
+        InMessage::FlashBlue => {
+            ctx.state.flash_blue_active.set(true);
+            ctx.state.flash_blue_elapsed.set(0.0);
+        }
+        InMessage::BroadcastTranscript { text } => {
+            *ctx.state.transcript_text.borrow_mut() = text;
+            ctx.state.transcript_time_since_update.set(0.0);
+            ctx.state.transcript_has_message.set(true);
+        }
+        InMessage::StageText { text } => {
+            let stage = rust_pill_shared::active_stage_text(text.as_deref());
+            *ctx.state.stage_text.borrow_mut() = stage.map(str::to_owned);
+        }
+        InMessage::Visibility { visibility } => {
+            ctx.state.visibility.set(visibility);
+        }
+        InMessage::WindowSize { ref size } => {
+            let mode = WindowMode::from_str(size);
+            ctx.state.window_mode.set(mode);
+        }
+        InMessage::AssistantState {
+            active,
+            input_mode,
+            compact,
+            conversation_id,
+            user_prompt,
+            messages,
+            streaming,
+            permissions,
+            review,
+        } => {
+            let was_active = ctx.state.assistant_active.get();
+            let previous_review_id = ctx
+                .state
+                .assistant_review
+                .borrow()
+                .as_ref()
+                .map(|r| r.id.clone());
+            let review_id = review.as_ref().map(|r| r.id.clone());
+            let review_text = review.as_ref().map(|r| r.text.clone());
+            *ctx.state.assistant_review.borrow_mut() = review.map(|review| *review);
+
+            // The entry is the review surface: a new transcript loads
+            // into it for editing, and answering the review empties it
+            // again. An unchanged id leaves the user's edits alone.
+            if review_id != previous_review_id {
+                let text = review_text.unwrap_or_default();
+                *ctx.state.entry_text.borrow_mut() = text.clone();
+                set_entry_text(&text);
+            }
+            ctx.state.assistant_active.set(active);
+            *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
+            ctx.state.assistant_compact.set(compact);
+            *ctx.state.assistant_conversation_id.borrow_mut() = conversation_id;
+            *ctx.state.assistant_user_prompt.borrow_mut() = user_prompt;
+            *ctx.state.assistant_messages.borrow_mut() = messages;
+            *ctx.state.assistant_streaming.borrow_mut() = streaming;
+            *ctx.state.assistant_permissions.borrow_mut() = permissions;
+
+            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
+                ctx.state.should_stick.set(true);
+                ctx.state.scroll_offset.set(0.0);
+            }
+        }
+        InMessage::ResetPosition { strategy } => {
+            // Cancel ownership, not a normal release: no final sample
+            // or old drop may re-arm/overwrite this reset.
+            ctx.state.dragging.set(false);
+            ctx.state.pointer_down.set(false);
+            ctx.state.long_press_active.set(false);
+            ctx.state.long_press_elapsed.set(0.0);
+            ctx.state.drag_cancelled.set(true);
+            ctx.state.has_saved_position.set(false);
+            ctx.state.drag_motion.borrow_mut().reset();
+            ctx.state.selector_placement.borrow_mut().reset();
+            ctx.state.crossing.borrow_mut().reset();
+            ctx.state.reset_strategy.set(strategy);
+            reposition_window(ctx.window, &ctx.state, dt, now);
+            let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: false,
+                rect: Some(rect),
+                monitor: Some(monitor),
+            });
+        }
+        InMessage::RequestPosition => {
+            let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: ctx.state.has_saved_position.get(),
+                rect: Some(rect),
+                monitor: Some(monitor),
+            });
+        }
+        InMessage::Quit => {
+            ctx.quit.set(true);
+        }
+    }
+}
+
+fn perform_tick() {
     APP_CTX.with(|cell| {
         let borrow = cell.borrow();
         let Some(ctx) = borrow.as_ref() else { return };
@@ -560,216 +765,7 @@ fn perform_tick() {
         // Process IPC messages
         let rx = ctx.receiver.borrow();
         while let Ok(msg) = rx.try_recv() {
-            match msg {
-                InMessage::Phase { phase, seq } => {
-                    let stale = LAST_PHASE_SEQ.with(|last| {
-                        let stale = seq < last.get();
-                        if !stale {
-                            last.set(seq);
-                        }
-                        stale
-                    });
-                    if stale {
-                        continue;
-                    }
-                    let prev = ctx.state.phase.get();
-                    ctx.state.phase.set(phase);
-                    ctx.state
-                        .style_tooltip_gate
-                        .set_take_running(phase == Phase::Recording);
-                    // A new take sweeps any banner parked above the pill (for
-                    // example the retranscribing toast) so it cannot sit on the
-                    // style selector for the whole take. A resume from Paused
-                    // keeps toasts raised during the take, such as the cancel
-                    // confirm.
-                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                        clear_flash(&ctx.state);
-                    }
-                    if rust_pill_shared::should_clear_stage_text_on_phase(
-                        prev == Phase::Loading,
-                        phase == Phase::Idle,
-                        phase == Phase::Loading,
-                    ) {
-                        *ctx.state.stage_text.borrow_mut() = None;
-                    }
-                    if phase == Phase::Loading && prev != Phase::Loading {
-                        let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                        ctx.state.loading_offset.set(offset);
-                    }
-                    if phase == Phase::Idle && prev != Phase::Idle {
-                        ctx.state.pending_levels.borrow_mut().clear();
-                        ctx.state.target_level.set(0.0);
-                        ctx.state.current_level.set(0.0);
-                        ctx.state.wave_phase.set(0.0);
-                        ctx.state.loading_offset.set(0.0);
-                    }
-                }
-                InMessage::Levels { levels } => {
-                    *ctx.state.pending_levels.borrow_mut() = levels;
-                }
-                InMessage::StyleInfo { count, name } => {
-                    ctx.state.style_count.set(count);
-                    *ctx.state.style_name.borrow_mut() = name;
-                }
-                InMessage::Toast {
-                    message,
-                    toast_type,
-                    duration,
-                    action,
-                    action_label,
-                    reject_action,
-                    reject_action_label,
-                } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state
-                        .flash_is_error
-                        .set(toast_type.as_deref() == Some("error"));
-                    ctx.state.flash_visible.set(true);
-                    ctx.state
-                        .flash_timer
-                        .set(duration.unwrap_or(FLASH_DURATION));
-                    *ctx.state.flash_action.borrow_mut() = action;
-                    *ctx.state.flash_action_label.borrow_mut() = action_label;
-                    *ctx.state.flash_reject_action.borrow_mut() = reject_action;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
-                }
-                InMessage::DismissToast => {
-                    clear_flash(&ctx.state);
-                }
-                InMessage::Fireworks { message } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state.flash_is_error.set(false);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
-                    *ctx.state.flash_reject_action.borrow_mut() = None;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
-                    ctx.state.flash_visible.set(true);
-                    ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
-
-                    ctx.state.fireworks_active.set(true);
-                    ctx.state.fireworks_elapsed.set(0.0);
-                    ctx.state.fireworks_next_launch.set(0);
-                    ctx.state.fireworks_rockets.borrow_mut().clear();
-                }
-                InMessage::Flame { message } => {
-                    *ctx.state.flash_message.borrow_mut() = message;
-                    ctx.state.flash_is_error.set(false);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
-                    *ctx.state.flash_reject_action.borrow_mut() = None;
-                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
-                    ctx.state.flash_visible.set(true);
-                    ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
-
-                    ctx.state.flame_active.set(true);
-                    ctx.state.flame_elapsed.set(0.0);
-                    ctx.state.flame_tongues.borrow_mut().clear();
-                }
-                InMessage::FlashBlue => {
-                    ctx.state.flash_blue_active.set(true);
-                    ctx.state.flash_blue_elapsed.set(0.0);
-                }
-                InMessage::Locate => {
-                    rust_pill_shared::RingHost::begin_locate(&*ctx.state);
-                }
-                InMessage::BroadcastTranscript { text } => {
-                    *ctx.state.transcript_text.borrow_mut() = text;
-                    ctx.state.transcript_time_since_update.set(0.0);
-                    ctx.state.transcript_has_message.set(true);
-                }
-                InMessage::StageText { text } => {
-                    let stage = rust_pill_shared::active_stage_text(text.as_deref());
-                    *ctx.state.stage_text.borrow_mut() = stage.map(str::to_owned);
-                }
-                InMessage::Visibility { visibility } => {
-                    ctx.state.visibility.set(visibility);
-                }
-                InMessage::WindowSize { ref size } => {
-                    let mode = WindowMode::from_str(size);
-                    ctx.state.window_mode.set(mode);
-                }
-                InMessage::AssistantState {
-                    active,
-                    input_mode,
-                    compact,
-                    conversation_id,
-                    user_prompt,
-                    messages,
-                    streaming,
-                    permissions,
-                    review,
-                } => {
-                    let was_active = ctx.state.assistant_active.get();
-                    let previous_review_id = ctx
-                        .state
-                        .assistant_review
-                        .borrow()
-                        .as_ref()
-                        .map(|r| r.id.clone());
-                    let review_id = review.as_ref().map(|r| r.id.clone());
-                    let review_text = review.as_ref().map(|r| r.text.clone());
-                    *ctx.state.assistant_review.borrow_mut() = review.map(|review| *review);
-
-                    // The entry is the review surface: a new transcript loads
-                    // into it for editing, and answering the review empties it
-                    // again. An unchanged id leaves the user's edits alone.
-                    if review_id != previous_review_id {
-                        let text = review_text.unwrap_or_default();
-                        *ctx.state.entry_text.borrow_mut() = text.clone();
-                        set_entry_text(&text);
-                    }
-                    ctx.state.assistant_active.set(active);
-                    *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
-                    ctx.state.assistant_compact.set(compact);
-                    *ctx.state.assistant_conversation_id.borrow_mut() = conversation_id;
-                    *ctx.state.assistant_user_prompt.borrow_mut() = user_prompt;
-                    *ctx.state.assistant_messages.borrow_mut() = messages;
-                    *ctx.state.assistant_streaming.borrow_mut() = streaming;
-                    *ctx.state.assistant_permissions.borrow_mut() = permissions;
-
-                    if (active && !was_active)
-                        || (review_id.is_some() && review_id != previous_review_id)
-                    {
-                        ctx.state.should_stick.set(true);
-                        ctx.state.scroll_offset.set(0.0);
-                    }
-                }
-                InMessage::ResetPosition { strategy } => {
-                    // Cancel ownership, not a normal release: no final sample
-                    // or old drop may re-arm/overwrite this reset.
-                    ctx.state.dragging.set(false);
-                    ctx.state.pointer_down.set(false);
-                    ctx.state.long_press_active.set(false);
-                    ctx.state.long_press_elapsed.set(0.0);
-                    ctx.state.drag_cancelled.set(true);
-                    ctx.state.has_saved_position.set(false);
-                    ctx.state.drag_motion.borrow_mut().reset();
-                    ctx.state.selector_placement.borrow_mut().reset();
-                    ctx.state.crossing.borrow_mut().reset();
-                    ctx.state.reset_strategy.set(strategy);
-                    reposition_window(ctx.window, &ctx.state, dt, now);
-                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
-                    ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: false,
-                        rect: Some(rect),
-                        monitor: Some(monitor),
-                    });
-                }
-                InMessage::RequestPosition => {
-                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
-                    ipc::send(&OutMessage::PositionChanged {
-                        has_saved_position: ctx.state.has_saved_position.get(),
-                        rect: Some(rect),
-                        monitor: Some(monitor),
-                    });
-                }
-                // Only the Win32 pill anchors to a screen edge; the desktop
-                // broadcasts the preference, so accept it and ignore it here.
-                InMessage::PillPlacement { .. } => {}
-                InMessage::Quit => {
-                    ctx.quit.set(true);
-                }
-            }
+            handle_in_message(ctx, msg, dt, now);
         }
         drop(rx);
 
@@ -787,7 +783,7 @@ fn perform_tick() {
 
         // A mouseUp can be missed (another app steals the event, the session
         // locks). Poll the real button state so a released button can never
-        // leave hover pinned open — the same backstop the Windows pill uses.
+        // leave hover pinned open, the same backstop the Windows pill uses.
         release_pointer_if_button_up(&ctx.state, ctx.window);
 
         // Compute hover from actual mouse position over pill area
@@ -795,56 +791,8 @@ fn perform_tick() {
 
         tick(&ctx.state, ctx.window, dt);
 
-        // Show/hide entry for typing mode
-        let is_typing = ctx.state.is_typing();
-        unsafe {
-            let entry = ctx.entry;
-            let entry_hidden: BOOL = msg_send![entry, isHidden];
-            if is_typing && entry_hidden != NO {
-                let _: () = msg_send![entry, setHidden:NO];
-                let _: () = msg_send![ctx.window, makeKeyWindow];
-                let _: () = msg_send![ctx.window, makeFirstResponder:entry];
-            } else if !is_typing && entry_hidden == NO {
-                let _: () = msg_send![entry, setHidden:YES];
-                let _: () = msg_send![ctx.window, resignKeyWindow];
-            }
-
-            // Sync entry text to state. `controlTextDidChange:` already does
-            // this on every keystroke; this covers changes the delegate does
-            // not see, such as a paste routed by the system.
-            if is_typing {
-                *ctx.state.entry_text.borrow_mut() = field_string(entry);
-            }
-        }
-
-        // Visibility
-        let is_active = ctx.state.phase.get() != Phase::Idle;
-        let owns_panel = ctx.state.owns_panel();
-        let locating = ctx.state.ring.locate_active();
-        let should_show = rust_pill_shared::should_show_pill(
-            ctx.state.visibility.get().into(),
-            is_active,
-            owns_panel,
-            locating,
-        );
-        // A locate replay can be the only reason this window is on screen, and
-        // nothing in it was meant to receive a click. Without this the pill
-        // swallows a click aimed at the app underneath and starts dictation.
-        let locate_only = rust_pill_shared::locate_is_the_only_reason_shown(
-            ctx.state.visibility.get().into(),
-            is_active,
-            owns_panel,
-            locating,
-        );
-        unsafe {
-            let _: () =
-                msg_send![ctx.window, setIgnoresMouseEvents: if locate_only { YES } else { NO }];
-            if should_show {
-                let _: () = msg_send![ctx.window, orderFront:nil];
-            } else {
-                let _: () = msg_send![ctx.window, orderOut:nil];
-            }
-        }
+        sync_entry_visibility(ctx);
+        sync_window_visibility(ctx);
 
         // Reposition window: follow cursor when dragging, auto-center otherwise
         reposition_window(ctx.window, &ctx.state, dt, now);
@@ -856,6 +804,45 @@ fn perform_tick() {
             let _: () = msg_send![ctx.view, setNeedsDisplay:YES];
         }
     });
+}
+
+fn sync_entry_visibility(ctx: &AppContext) {
+    // Show/hide entry for typing mode
+    let is_typing = ctx.state.is_typing();
+    unsafe {
+        let entry = ctx.entry;
+        let entry_hidden: BOOL = msg_send![entry, isHidden];
+        if is_typing && entry_hidden != NO {
+            let _: () = msg_send![entry, setHidden:NO];
+            let _: () = msg_send![ctx.window, makeKeyWindow];
+            let _: () = msg_send![ctx.window, makeFirstResponder:entry];
+        } else if !is_typing && entry_hidden == NO {
+            let _: () = msg_send![entry, setHidden:YES];
+            let _: () = msg_send![ctx.window, resignKeyWindow];
+        }
+
+        // Sync entry text to state. `controlTextDidChange:` already does this
+        // on every keystroke; this covers changes the delegate does not see,
+        // such as a paste routed by the system.
+        if is_typing {
+            *ctx.state.entry_text.borrow_mut() = field_string(entry);
+        }
+    }
+}
+
+fn sync_window_visibility(ctx: &AppContext) {
+    let should_show = rust_pill_shared::should_show_pill(
+        ctx.state.visibility.get().into(),
+        ctx.state.phase.get() != Phase::Idle,
+        ctx.state.owns_panel(),
+    );
+    unsafe {
+        if should_show {
+            let _: () = msg_send![ctx.window, orderFront:nil];
+        } else {
+            let _: () = msg_send![ctx.window, orderOut:nil];
+        }
+    }
 }
 
 // ── Hover detection ──────────────────────────────────────────────
@@ -1097,69 +1084,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     let hovered = state.hovered.get();
     let frame_scale = dt * 60.0; // Scale factor relative to 60fps baseline
 
-    // Audio levels (frame-rate independent)
-    if is_recording {
-        let levels = std::mem::take(&mut *state.pending_levels.borrow_mut());
-        if !levels.is_empty() {
-            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
-            let avg = sum / levels.len() as f64;
-            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
-            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
-            let boosted = (combined.sqrt() * 1.35).min(1.0);
-            let target = state.target_level.get();
-            let mix = 1.0 - 0.25_f64.powf(frame_scale);
-            state
-                .target_level
-                .set((target * (1.0 - mix) + boosted * mix).min(1.0));
-        }
-    } else {
-        // Levels queued while not recording are stale. Without this they stay in
-        // the mailbox until the next recording starts and are then folded into
-        // that recording's first frame, so a burst of audio captured while the
-        // pill sat idle or loading moves the meter before any of it was spoken.
-        // Same guard as `rust_windows_pill::pill`.
-        state.pending_levels.borrow_mut().clear();
-        if is_loading {
-            let target = state.target_level.get();
-            state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
-        } else {
-            state.target_level.set(0.0);
-            state
-                .current_level
-                .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
-            if state.current_level.get() < 0.0002 {
-                state.current_level.set(0.0);
-            }
-        }
-    }
-
-    let current = state.current_level.get();
-    let target = state.target_level.get();
-    let smoothing = 1.0 - (1.0 - LEVEL_SMOOTHING).powf(frame_scale);
-    let new_current = current + (target - current) * smoothing;
-    state.current_level.set(if new_current < 0.0002 {
-        0.0
-    } else {
-        new_current
-    });
-
-    let decay = TARGET_DECAY_PER_FRAME.powf(frame_scale);
-    let decayed = target * decay;
-    state
-        .target_level
-        .set(if decayed < 0.0005 { 0.0 } else { decayed });
-
-    let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording {
-        PROCESSING_BASE_LEVEL
-    } else {
-        0.0
-    };
-    let effective_level = level.max(base_level);
-    let advance = (WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level) * frame_scale;
-    state
-        .wave_phase
-        .set((state.wave_phase.get() + advance) % TAU);
+    tick_audio_levels(state, is_recording, is_loading, frame_scale);
 
     // Pill expand/collapse (spring) — snappier than tooltip/panel so the
     // primary affordance feels instant. See PILL_EXPAND_STIFFNESS.
@@ -1278,6 +1203,71 @@ fn tick(state: &PillState, window: id, dt: f64) {
     rust_pill_shared::RingHost::tick_flash(state, tooltip_target > 0.5, dt);
 
     rust_pill_shared::RingHost::tick_hold_and_ring(state, dt);
+}
+
+fn tick_audio_levels(state: &PillState, is_recording: bool, is_loading: bool, frame_scale: f64) {
+    if is_recording {
+        let levels = std::mem::take(&mut *state.pending_levels.borrow_mut());
+        if !levels.is_empty() {
+            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
+            let avg = sum / levels.len() as f64;
+            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
+            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
+            let boosted = (combined.sqrt() * 1.35).min(1.0);
+            let target = state.target_level.get();
+            let mix = 1.0 - 0.25_f64.powf(frame_scale);
+            state
+                .target_level
+                .set((target * (1.0 - mix) + boosted * mix).min(1.0));
+        }
+    } else {
+        // Levels queued while not recording are stale. Without this they stay in
+        // the mailbox until the next recording starts and are then folded into
+        // that recording's first frame, so a burst of audio captured while the
+        // pill sat idle or loading moves the meter before any of it was spoken.
+        // Same guard as `rust_windows_pill::pill`.
+        state.pending_levels.borrow_mut().clear();
+        if is_loading {
+            let target = state.target_level.get();
+            state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+        } else {
+            state.target_level.set(0.0);
+            state
+                .current_level
+                .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
+            if state.current_level.get() < 0.0002 {
+                state.current_level.set(0.0);
+            }
+        }
+    }
+
+    let current = state.current_level.get();
+    let target = state.target_level.get();
+    let smoothing = 1.0 - (1.0 - LEVEL_SMOOTHING).powf(frame_scale);
+    let new_current = current + (target - current) * smoothing;
+    state.current_level.set(if new_current < 0.0002 {
+        0.0
+    } else {
+        new_current
+    });
+
+    let decay = TARGET_DECAY_PER_FRAME.powf(frame_scale);
+    let decayed = target * decay;
+    state
+        .target_level
+        .set(if decayed < 0.0005 { 0.0 } else { decayed });
+
+    let level = state.current_level.get();
+    let base_level = if is_loading && !is_recording {
+        PROCESSING_BASE_LEVEL
+    } else {
+        0.0
+    };
+    let effective_level = level.max(base_level);
+    let advance = (WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level) * frame_scale;
+    state
+        .wave_phase
+        .set((state.wave_phase.get() + advance) % TAU);
 }
 
 fn tick_fireworks(state: &PillState, dt: f64) {
@@ -1530,6 +1520,87 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
 
 // ── Window positioning ────────────────────────────────────────────
 
+struct Footprint {
+    fx: f64,
+    fy: f64,
+    pw: f64,
+    ph: f64,
+    win_h: f64,
+}
+
+impl Footprint {
+    /// View is flipped y-down; screen origin is bottom-left (y-up).
+    fn center(&self, origin_x: f64, origin_y: f64) -> (f64, f64) {
+        (
+            origin_x + self.fx + self.pw / 2.0,
+            origin_y + self.win_h - self.fy - self.ph / 2.0,
+        )
+    }
+}
+
+fn region_for(
+    state: &PillState,
+    dragging: bool,
+    full: rust_pill_shared::edge::MonitorRect,
+    work_area: rust_pill_shared::edge::MonitorRect,
+    monitor_frames: &[rust_pill_shared::edge::MonitorRect],
+    seam_point: (f64, f64),
+) -> rust_pill_shared::edge::DragRegion {
+    if dragging {
+        state.drag_motion.borrow_mut().resolve_drag_region(
+            full,
+            work_area,
+            monitor_frames,
+            seam_point,
+        )
+    } else {
+        rust_pill_shared::edge::drag_region(full, work_area, monitor_frames, seam_point)
+    }
+}
+
+/// A drag uses the cursor screen and settles on its drop screen. Everything else
+/// belongs to the screen the pill actually lives on. Resolving the screen from
+/// the live cursor here is what made a pinned pill hop monitors (and clamp into
+/// the wrong visible frame) whenever the pointer crossed a screen edge.
+fn resolve_anchor(
+    state: &PillState,
+    mouse_loc: NSPoint,
+    win_origin: NSPoint,
+    footprint: &Footprint,
+) -> (f64, f64) {
+    let dragging = state.dragging.get();
+    let settling = state.drag_motion.borrow().is_settling();
+    // The pill's first placement (before any saved position) should follow the
+    // cursor's screen once; afterwards it stays put even if it happens to sit at
+    // (0, 0), so a legitimately-placed window is never chased.
+    let first_placement = !state.first_placement_done.get();
+    // A reset with the "cursor" strategy re-homes onto the screen under the
+    // pointer exactly once; the strategy is consumed so later ticks keep the
+    // pill where it landed instead of chasing the cursor.
+    let reset_to_cursor =
+        !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
+
+    if dragging || settling || (!state.has_saved_position.get() && first_placement) {
+        // First placement at the cursor: mark it done so subsequent ticks keep
+        // the window where it landed instead of re-chasing the cursor.
+        if !dragging && !settling && !state.has_saved_position.get() {
+            state.first_placement_done.set(true);
+            state.reset_strategy.set(ResetStrategy::Current);
+        }
+        state
+            .drag_motion
+            .borrow()
+            .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
+    } else if reset_to_cursor {
+        state.reset_strategy.set(ResetStrategy::Current);
+        (mouse_loc.x, mouse_loc.y)
+    } else if state.has_saved_position.get() {
+        footprint.center(state.saved_x.get(), state.saved_y.get())
+    } else {
+        footprint.center(win_origin.x, win_origin.y)
+    }
+}
+
 fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
     unsafe {
         let mouse_loc = mouse_location();
@@ -1540,51 +1611,19 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let win_w = win_frame.size.width;
         let win_h = win_frame.size.height;
 
-        // A drag uses the cursor screen and settles on its drop screen. Everything else
-        // belongs to the screen the pill actually lives on — resolving the
-        // screen from the live cursor here is what made a pinned pill hop
-        // monitors (and clamp into the wrong visible frame) whenever the
-        // pointer crossed a screen edge.
         let dragging = state.dragging.get();
         let settling = state.drag_motion.borrow().is_settling();
-        // The pill's first placement (before any saved position) should follow
-        // the cursor's screen once; afterwards it stays put even if it happens
-        // to sit at (0, 0), so a legitimately-placed window is never chased.
-        let first_placement = !state.first_placement_done.get();
         let (px, py, pw, ph) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
-        let fx = cox + px;
-        let fy = coy + py;
-        // View is flipped y-down; screen origin is bottom-left (y-up).
-        let footprint_center = |origin_x: f64, origin_y: f64| {
-            (origin_x + fx + pw / 2.0, origin_y + win_h - fy - ph / 2.0)
+        let footprint = Footprint {
+            fx: cox + px,
+            fy: coy + py,
+            pw,
+            ph,
+            win_h,
         };
-        // A reset with the "cursor" strategy re-homes onto the screen under
-        // the pointer exactly once; the strategy is consumed so later ticks
-        // keep the pill where it landed instead of chasing the cursor.
-        let reset_to_cursor =
-            !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
-        let (anchor_x, anchor_y) =
-            if dragging || settling || (!state.has_saved_position.get() && first_placement) {
-                // First placement at the cursor: mark it done so subsequent ticks
-                // keep the window where it landed instead of re-chasing the cursor.
-                if !dragging && !settling && !state.has_saved_position.get() {
-                    state.first_placement_done.set(true);
-                    state.reset_strategy.set(ResetStrategy::Current);
-                }
-                state
-                    .drag_motion
-                    .borrow()
-                    .monitor_anchor((mouse_loc.x, mouse_loc.y), dragging)
-            } else if reset_to_cursor {
-                state.reset_strategy.set(ResetStrategy::Current);
-                (mouse_loc.x, mouse_loc.y)
-            } else if state.has_saved_position.get() {
-                footprint_center(state.saved_x.get(), state.saved_y.get())
-            } else {
-                footprint_center(win_frame.origin.x, win_frame.origin.y)
-            };
+        let (anchor_x, anchor_y) = resolve_anchor(state, mouse_loc, win_frame.origin, &footprint);
 
         // Resolve monitor bounds in Cocoa's global point space. A connected
         // neighbor opens only its shared edge; the visible frame remains the
@@ -1612,22 +1651,15 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 let visible = screen_visible_frame(screen);
                 let full = ns_rect_to_monitor_rect(frame);
                 let work_area = ns_rect_to_monitor_rect(visible);
-                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
-                let region = if dragging {
-                    state.drag_motion.borrow_mut().resolve_drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                } else {
-                    rust_pill_shared::edge::drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                };
+                let seam_point = footprint.center(win_frame.origin.x, win_frame.origin.y);
+                let region = region_for(
+                    state,
+                    dragging,
+                    full,
+                    work_area,
+                    &monitor_frames,
+                    seam_point,
+                );
                 chosen = Some((visible, region.bounds, region.edge_mask));
                 break;
             }
@@ -1643,22 +1675,15 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 let visible = screen_visible_frame(primary);
                 let full = ns_rect_to_monitor_rect(frame);
                 let work_area = ns_rect_to_monitor_rect(visible);
-                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
-                let region = if dragging {
-                    state.drag_motion.borrow_mut().resolve_drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                } else {
-                    rust_pill_shared::edge::drag_region(
-                        full,
-                        work_area,
-                        &monitor_frames,
-                        seam_point,
-                    )
-                };
+                let seam_point = footprint.center(win_frame.origin.x, win_frame.origin.y);
+                let region = region_for(
+                    state,
+                    dragging,
+                    full,
+                    work_area,
+                    &monitor_frames,
+                    seam_point,
+                );
                 (visible, region.bounds, region.edge_mask)
             }
             None => return,
@@ -1683,10 +1708,10 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             && !state.assistant_active.get()
         {
             (
-                clamp_frame.x - fx,
-                clamp_frame.y - win_h + fy + ph,
-                clamp_frame.right() - fx - pw,
-                clamp_frame.bottom() - win_h + fy,
+                clamp_frame.x - footprint.fx,
+                clamp_frame.y - win_h + footprint.fy + ph,
+                clamp_frame.right() - footprint.fx - pw,
+                clamp_frame.bottom() - win_h + footprint.fy,
             )
         } else {
             (
@@ -1705,7 +1730,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         if dragging {
             bounds.apply_shared_seam_bounds(
                 drag_region,
-                (fx + pw / 2.0, win_h - fy - ph / 2.0),
+                (footprint.fx + pw / 2.0, win_h - footprint.fy - ph / 2.0),
                 edge_mask,
             );
         }
