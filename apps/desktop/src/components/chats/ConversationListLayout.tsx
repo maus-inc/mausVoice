@@ -41,18 +41,12 @@ const EmptyListMessage = ({ message }: { message: ReactNode }) => (
   </Box>
 );
 
-export const ConversationListLayout = ({
-  selectedId,
-  fullWidth = false,
-  onSelect,
-  onNewChat,
-  onDelete,
-}: ConversationListLayoutProps) => {
-  const intl = useIntl();
-  const conversationIds = useAppStore((s) => s.chat.conversationIds);
-  const conversationById = useAppStore((s) => s.conversationById);
-  const [query, setQuery] = useState("");
-
+const useConversationListGroups = (
+  conversationIds: string[],
+  conversationById: ReturnType<typeof useAppStore.getState>["conversationById"],
+  query: string,
+  intl: ReturnType<typeof useIntl>,
+) => {
   const conversations = useMemo(
     () =>
       conversationIds
@@ -84,6 +78,28 @@ export const ConversationListLayout = ({
     const occupied = GROUP_ORDER.filter((group) => buckets[group].length > 0);
     return { buckets, showLabels: occupied.length > 1, occupied };
   }, [filtered]);
+
+  return { conversations, filtered, grouped };
+};
+
+export const ConversationListLayout = ({
+  selectedId,
+  fullWidth = false,
+  onSelect,
+  onNewChat,
+  onDelete,
+}: ConversationListLayoutProps) => {
+  const intl = useIntl();
+  const conversationIds = useAppStore((s) => s.chat.conversationIds);
+  const conversationById = useAppStore((s) => s.conversationById);
+  const [query, setQuery] = useState("");
+
+  const { conversations, filtered, grouped } = useConversationListGroups(
+    conversationIds,
+    conversationById,
+    query,
+    intl,
+  );
 
   const groupLabel = (group: ThreadDayGroup) => {
     switch (group) {
