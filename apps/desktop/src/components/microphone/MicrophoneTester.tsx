@@ -124,6 +124,42 @@ export type MicrophoneTesterProps = {
   justifyButtons?: "flex-start" | "center" | "flex-end" | "space-between";
 };
 
+const canStartTest = ({
+  testState,
+  isGlobalRecording,
+  disabled,
+}: {
+  testState: string;
+  isGlobalRecording: boolean;
+  disabled: boolean;
+}): boolean =>
+  testState === "idle" &&
+  !isGlobalRecording &&
+  !disabled &&
+  !isLocalDataClearRequested();
+
+const isClearGenerationCurrent = (clearGeneration: number): boolean =>
+  !isLocalDataClearRequested() &&
+  clearGeneration === getLocalDataClearGeneration();
+
+const isStaleRecordingAttempt = ({
+  mounted,
+  opId,
+  currentOpId,
+  clearGeneration,
+  currentClearGeneration,
+}: {
+  mounted: boolean;
+  opId: number;
+  currentOpId: number;
+  clearGeneration: number;
+  currentClearGeneration: number;
+}): boolean =>
+  !mounted ||
+  opId !== currentOpId ||
+  isLocalDataClearRequested() ||
+  clearGeneration !== currentClearGeneration;
+
 export const MicrophoneTester = ({
   preferredMicrophone,
   waveformHeight = 96,
@@ -210,10 +246,11 @@ export const MicrophoneTester = ({
 
   const handleStartTest = useCallback(async () => {
     if (
-      testStateRef.current !== "idle" ||
-      isGlobalRecording ||
-      disabled ||
-      isLocalDataClearRequested()
+      !canStartTest({
+        testState: testStateRef.current,
+        isGlobalRecording,
+        disabled,
+      })
     ) {
       return;
     }
@@ -227,10 +264,13 @@ export const MicrophoneTester = ({
     try {
       await invokeGuardedRecordingStart(preferredMicrophone ?? null);
       if (
-        !mountedRef.current ||
-        opId !== opIdRef.current ||
-        isLocalDataClearRequested() ||
-        clearGeneration !== getLocalDataClearGeneration()
+        isStaleRecordingAttempt({
+          mounted: mountedRef.current,
+          opId,
+          currentOpId: opIdRef.current,
+          clearGeneration,
+          currentClearGeneration: getLocalDataClearGeneration(),
+        })
       ) {
         await invokeStopRecording().catch(() => undefined);
         if (opId === opIdRef.current) {
@@ -240,10 +280,7 @@ export const MicrophoneTester = ({
       }
       setSyncedTestState("recording");
     } catch (error) {
-      if (
-        !isLocalDataClearRequested() &&
-        clearGeneration === getLocalDataClearGeneration()
-      ) {
+      if (isClearGenerationCurrent(clearGeneration)) {
         console.error("Failed to start microphone test", error);
         if (mountedRef.current && opId === opIdRef.current) {
           setTestError("Unable to start microphone test. Please try again.");
