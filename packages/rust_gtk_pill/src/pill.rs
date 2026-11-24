@@ -619,53 +619,11 @@ fn handle_in_message(
     entry_tick: &gtk::Entry,
     quit_tick: &Cell<bool>,
 ) {
-    // Phase message sequence guard: see ipc::InMessage::Phase.
-    thread_local! {
-        static LAST_PHASE_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
     match msg {
         InMessage::Phase { phase, seq } => {
-            let stale = LAST_PHASE_SEQ.with(|last| {
-                let stale = seq < last.get();
-                if !stale {
-                    last.set(seq);
-                }
-                stale
-            });
-            if stale {
-                return;
-            }
-            let prev = state_tick.phase.get();
-            state_tick.phase.set(phase);
             state_tick
-                .style_tooltip_gate
-                .set_take_running(phase == Phase::Recording);
-            // A new take sweeps any banner parked above the pill (for
-            // example the retranscribing toast) so it cannot sit on the
-            // style selector for the whole take. A resume from Paused
-            // keeps toasts raised during the take, such as the cancel
-            // confirm.
-            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
-                clear_flash(state_tick);
-            }
-            if rust_pill_shared::should_clear_stage_text_on_phase(
-                prev == Phase::Loading,
-                phase == Phase::Idle,
-                phase == Phase::Loading,
-            ) {
-                *state_tick.stage_text.borrow_mut() = None;
-            }
-            if phase == Phase::Loading && prev != Phase::Loading {
-                let offset = if reduced_motion() { 0.5 } else { 0.0 };
-                state_tick.loading_offset.set(offset);
-            }
-            if phase == Phase::Idle && prev != Phase::Idle {
-                state_tick.pending_levels.borrow_mut().clear();
-                state_tick.target_level.set(0.0);
-                state_tick.current_level.set(0.0);
-                state_tick.wave_phase.set(0.0);
-                state_tick.loading_offset.set(0.0);
-            }
+                .indicator
+                .apply_phase(phase, seq, reduced_motion, || clear_flash(state_tick));
         }
         InMessage::Levels { levels } => {
             *state_tick.pending_levels.borrow_mut() = levels;
