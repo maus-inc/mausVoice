@@ -217,8 +217,12 @@ fn dispatch_click(state: &PillState, action: &ClickAction) {
         ClickAction::StyleBackward => switch_style("backward"),
         ClickAction::AssistantClose => close_assistant(state),
         ClickAction::ReviewInsert(id) => insert_review(state, id),
-        ClickAction::ReviewCopy(id) => send_review_decision(id, "copy", Some(entry_text(state))),
-        ClickAction::ReviewEdit(id) => send_review_decision(id, "edit", Some(entry_text(state))),
+        ClickAction::ReviewCopy(id) => {
+            send_review_decision(id, "copy", Some(entry_text(state)));
+        }
+        ClickAction::ReviewEdit(id) => {
+            send_review_decision(id, "edit", Some(entry_text(state)));
+        }
         ClickAction::ReviewCancel(id) => {
             send_review_decision(id, "cancel", None);
         }
