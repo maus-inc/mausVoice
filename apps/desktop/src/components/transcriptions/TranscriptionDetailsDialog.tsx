@@ -17,111 +17,18 @@ import {
   Typography,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import type { MessageDescriptor } from "react-intl";
-import { saveCorrectedTranscript } from "../../actions/auto-learn.actions";
-import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
-import { getPostProcessFeedback } from "../../actions/post-process-feedback";
-import {
-  isPostProcessErrorCategory,
-  postProcessErrorReason,
-} from "../../actions/post-process-error-category";
 import {
   closeTranscriptionDetailsDialog,
-  getUnusableResponseType,
-  isUnusableResponseWarning,
   openRetranscribeDialog,
 } from "../../actions/transcriptions.actions";
-import { AppState } from "../../state/app.state";
 import { useAppStore } from "../../store";
+import {
+  useTranscriptionModelLabels,
+  useTranscriptionTextLabels,
+} from "./use-transcription-details-labels";
 import { TranscriptionTextBlock } from "./TranscriptionTextBlock";
-
-const resolveCategoryWarning = (
-  warning: string,
-  postProcessFailed: boolean | null | undefined,
-  postProcessFallback: boolean | null | undefined,
-  formatReason: (descriptor: MessageDescriptor) => string,
-): string => {
-  const feedback = getPostProcessFeedback(
-    {
-      postProcessFailed,
-      postProcessFallback,
-      postProcessError: warning,
-    },
-    "history-details",
-  );
-  return feedback?.message ?? formatReason(postProcessErrorReason(warning));
-};
-
-// A run that saved the raw ASR leaves the row's displayed text equal to its
-// sanitized transcript column; a run that kept the previous text leaves the
-// two different. Rows recorded without the column cannot say which happened,
-// and the feedback module's default wording applies to them.
-const getUnusableRowHadPreviousText = (row: {
-  transcript: string;
-  sanitizedTranscript?: string | null;
-}): boolean | undefined => {
-  const sanitized = row.sanitizedTranscript;
-  if (sanitized === null || sanitized === undefined) {
-    return undefined;
-  }
-  return row.transcript !== sanitized;
-};
-
-// Rows that fell back after an unusable reply keep the raw marker as their
-// warning, which means nothing to the user. Show the same explanation the
-// retranscribe toast used instead.
-const resolveUnusableWarning = (
-  warning: string,
-  hasPreviousTranscript: boolean | undefined,
-): string => {
-  const feedback = getPostProcessFeedback(
-    {
-      postProcessFailed: false,
-      postProcessFallback: true,
-      postProcessError: null,
-    },
-    "history-details",
-    {
-      unusableResponseType: getUnusableResponseType(warning),
-      hasPreviousTranscript,
-    },
-  );
-  return feedback?.message ?? warning;
-};
-
-const formatModelSizeLabel = (modelSize?: string | null): React.ReactNode => {
-  const value = modelSize?.trim();
-  if (!value) {
-    return <FormattedMessage defaultMessage="Unknown" />;
-  }
-
-  return value.charAt(0).toUpperCase() + value.slice(1);
-};
-
-const resolveApiKeyLabel = (
-  records: AppState["apiKeyById"],
-  apiKeyId: string | null | undefined,
-  noneLabel: string,
-  unknownLabel: string,
-): string => {
-  if (!apiKeyId) {
-    return noneLabel;
-  }
-
-  const record = getRec(records, apiKeyId);
-  if (!record) {
-    return unknownLabel;
-  }
-
-  const suffix = record.keySuffix?.trim();
-  if (suffix && suffix.length > 0) {
-    return `${record.name} (••••${suffix})`;
-  }
-
-  return record.name;
-};
+import { useFinalTranscriptEditor } from "./use-final-transcript-editor";
 
 const DetailField = ({
   label,
@@ -140,22 +47,6 @@ const DetailField = ({
   </Box>
 );
 
-const formatTextOrUnknown = (value?: string | null): React.ReactNode => {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? (
-    trimmed
-  ) : (
-    <FormattedMessage defaultMessage="Unknown" />
-  );
-};
-
-const formatDurationLabel = (ms?: number | null): string | null => {
-  if (ms == null) {
-    return null;
-  }
-  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
-};
-
 export const TranscriptionDetailsDialog = () => {
   const intl = useIntl();
   const open = useAppStore((state) => state.transcriptions.detailsDialogOpen);
@@ -167,28 +58,6 @@ export const TranscriptionDetailsDialog = () => {
     return getRec(state.transcriptionById, transcriptionId);
   });
   const apiKeysById = useAppStore((state) => state.apiKeyById);
-
-  const [isEditingFinal, setIsEditingFinal] = useState(false);
-  const [finalDraft, setFinalDraft] = useState("");
-  const [isSavingFinal, setIsSavingFinal] = useState(false);
-
-  // Focus the final-transcription field explicitly once it has mounted rather
-  // than with a DOM `autoFocus` prop: `autoFocus` fires as an attribute and
-  // cannot be deferred, so it races anything that moves focus in the same
-  // commit. This mirrors ContextMenu's own "focus after commit, not via
-  // autoFocus" rule. The field renders only while editing, so the effect is
-  // keyed on `isEditingFinal` rather than `[]` -- this component itself stays
-  // mounted for the whole app lifetime, so a mount-only effect would never fire.
-  // `TextField` forwards `inputRef` to the underlying `<textarea>`.
-  const finalDraftRef = useRef<HTMLTextAreaElement | null>(null);
-  useEffect(() => {
-    if (isEditingFinal) finalDraftRef.current?.focus();
-  }, [isEditingFinal]);
-
-  useEffect(() => {
-    setIsEditingFinal(false);
-    setFinalDraft("");
-  }, [open, transcription?.id]);
 
   const isRetranscribing = useAppStore((state) =>
     transcription?.id
@@ -209,242 +78,50 @@ export const TranscriptionDetailsDialog = () => {
     <ReplayRoundedIcon />
   );
 
-  const transcriptionModeLabel = useMemo(() => {
-    if (transcription?.transcriptionMode === "api") {
-      return <FormattedMessage defaultMessage="API" />;
-    }
-    if (transcription?.transcriptionMode === "local") {
-      return <FormattedMessage defaultMessage="Local" />;
-    }
-    return <FormattedMessage defaultMessage="Unknown" />;
-  }, [transcription?.transcriptionMode]);
-
-  const transcriptionApiKeyLabel = useMemo(
-    () =>
-      resolveApiKeyLabel(
-        apiKeysById,
-        transcription?.transcriptionApiKeyId,
-        "None",
-        "Unknown",
-      ),
-    [apiKeysById, transcription?.transcriptionApiKeyId],
-  );
-
-  const postProcessModeLabel = useMemo(() => {
-    if (transcription?.postProcessMode === "api") {
-      return <FormattedMessage defaultMessage="API" />;
-    }
-    if (transcription?.postProcessMode === "fast") {
-      return <FormattedMessage defaultMessage="Fast (local)" />;
-    }
-    return <FormattedMessage defaultMessage="Disabled" />;
-  }, [transcription?.postProcessDevice, transcription?.postProcessMode]);
-
-  const postProcessApiKeyLabel = useMemo(
-    () =>
-      resolveApiKeyLabel(
-        apiKeysById,
-        transcription?.postProcessApiKeyId,
-        "None",
-        "Unknown",
-      ),
-    [apiKeysById, transcription?.postProcessApiKeyId],
-  );
-
-  const modelSizeLabel = useMemo(
-    () => formatModelSizeLabel(transcription?.modelSize),
-    [transcription?.modelSize],
-  );
-
-  const deviceLabel = useMemo(
-    () => formatTextOrUnknown(transcription?.inferenceDevice),
-    [transcription?.inferenceDevice],
-  );
-
-  const postProcessDeviceLabel = useMemo(
-    () => formatTextOrUnknown(transcription?.postProcessDevice),
-    [transcription?.postProcessDevice],
-  );
-
-  const postProcessModelLabel = useMemo(
-    () => formatTextOrUnknown(transcription?.postProcessModel),
-    [transcription?.postProcessModel],
-  );
-
-  const transcriptionPrompt = useMemo(() => {
-    const prompt = transcription?.transcriptionPrompt?.trim();
-    return prompt && prompt.length > 0 ? prompt : null;
-  }, [transcription?.transcriptionPrompt]);
-
-  const rawTranscriptText = useMemo(
-    () => transcription?.rawTranscript ?? transcription?.transcript ?? "",
-    [transcription?.rawTranscript, transcription?.transcript],
-  );
-
-  const sanitizedTranscriptText = useMemo(
-    () => transcription?.sanitizedTranscript ?? null,
-    [transcription?.sanitizedTranscript],
-  );
-
-  const postProcessPrompt = useMemo(() => {
-    let prompt = transcription?.postProcessPrompt?.trim() ?? "";
-    if (rawTranscriptText) {
-      prompt = prompt.replace(rawTranscriptText.trim(), "<transcript>");
-    }
-
-    return prompt && prompt.length > 0 ? prompt : null;
-  }, [transcription?.postProcessPrompt, rawTranscriptText]);
+  const modelLabels = useTranscriptionModelLabels({
+    transcription,
+    apiKeysById,
+  });
+  const {
+    transcriptionModeLabel,
+    postProcessModeLabel,
+    transcriptionApiKeyLabel,
+    postProcessApiKeyLabel,
+    modelSizeLabel,
+    deviceLabel,
+    postProcessDeviceLabel,
+    postProcessModelLabel,
+  } = modelLabels;
 
   const finalTranscriptText = transcription?.transcript ?? "";
 
-  const transcriptionDurationLabel = useMemo(
-    () => formatDurationLabel(transcription?.transcriptionDurationMs),
-    [transcription?.transcriptionDurationMs],
-  );
+  const textLabels = useTranscriptionTextLabels({ transcription, intl });
+  const {
+    transcriptionPrompt,
+    rawTranscriptText,
+    sanitizedTranscriptText,
+    postProcessPrompt,
+    transcriptionDurationLabel,
+    postprocessDurationLabel,
+    warnings,
+  } = textLabels;
 
-  const postprocessDurationLabel = useMemo(
-    () => formatDurationLabel(transcription?.postprocessDurationMs),
-    [transcription?.postprocessDurationMs],
-  );
-
-  const warnings = useMemo(() => {
-    // The row is read through one local so the guarded accesses below stay
-    // bare: an optional chain next to a bare property read on the same value
-    // reads as an unresolved nullability question, and after this guard there
-    // is none left.
-    const row = transcription;
-    const rowWarnings = row?.warnings;
-    if (!row || !rowWarnings) {
-      return [];
-    }
-    return rowWarnings
-      .map((warning) => warning.trim())
-      .filter((warning) => warning.length > 0)
-      .map((warning) => {
-        if (isPostProcessErrorCategory(warning)) {
-          return resolveCategoryWarning(
-            warning,
-            row.postProcessFailed,
-            row.postProcessFallback,
-            (descriptor) => intl.formatMessage(descriptor),
-          );
-        }
-        // Translate only the known unusable-reply markers; a fallback row can
-        // also carry unrelated warnings that must stay verbatim.
-        if (
-          !row.postProcessFailed &&
-          row.postProcessFallback &&
-          isUnusableResponseWarning(warning)
-        ) {
-          return resolveUnusableWarning(
-            warning,
-            getUnusableRowHadPreviousText(row),
-          );
-        }
-        return warning;
-      });
-  }, [
+  const editor = useFinalTranscriptEditor({
+    transcriptionId: transcription?.id,
+    open,
+    finalTranscriptText,
     intl,
-    transcription?.postProcessFailed,
-    transcription?.postProcessFallback,
-    transcription?.warnings,
-    transcription?.transcript,
-    transcription?.sanitizedTranscript,
-  ]);
-
-  const startEditingFinal = () => {
-    setFinalDraft(finalTranscriptText);
-    setIsEditingFinal(true);
-  };
-
-  const cancelEditingFinal = () => {
-    setIsEditingFinal(false);
-    setFinalDraft("");
-  };
-
-  const handleSaveFinal = async () => {
-    if (!transcription?.id) {
-      return;
-    }
-
-    // Saving unchanged text would perform a needless DB write and run the
-    // full glossary extraction pipeline for nothing.
-    if (finalDraft.trim() === finalTranscriptText.trim()) {
-      setIsEditingFinal(false);
-      setFinalDraft("");
-      return;
-    }
-
-    setIsSavingFinal(true);
-    try {
-      const { learnedTerms, failedTerms, dictionarySuppressed } =
-        await saveCorrectedTranscript({
-          transcriptionId: transcription.id,
-          correctedText: finalDraft,
-        });
-
-      setIsEditingFinal(false);
-      setFinalDraft("");
-
-      if (learnedTerms.length === 1 && failedTerms === 0) {
-        showSnackbar(
-          intl.formatMessage(
-            { defaultMessage: 'Added "{term}" to your dictionary' },
-            { term: learnedTerms[0] },
-          ),
-          { mode: "success" },
-        );
-      } else if (learnedTerms.length > 0 && failedTerms === 0) {
-        showSnackbar(
-          intl.formatMessage(
-            { defaultMessage: "Added {count} words to your dictionary" },
-            { count: learnedTerms.length },
-          ),
-          { mode: "success" },
-        );
-      } else if (learnedTerms.length > 0 && failedTerms > 0) {
-        showSnackbar(
-          intl.formatMessage(
-            {
-              defaultMessage:
-                "Added {added} words to your dictionary ({failed} failed)",
-            },
-            { added: learnedTerms.length, failed: failedTerms },
-          ),
-          { mode: "success" },
-        );
-      } else if (failedTerms > 0) {
-        showSnackbar(
-          intl.formatMessage({
-            defaultMessage:
-              "Transcript updated, but the corrected words could not be added to your dictionary.",
-          }),
-          { mode: "error" },
-        );
-      } else if (dictionarySuppressed) {
-        // Auto-learn was on and the glossary write was refused, so an empty
-        // `learnedTerms` here is a policy decision rather than a correction that
-        // taught nothing. Saying "Transcript updated" and stopping there leaves
-        // the user reading a promise the mode does not keep.
-        showSnackbar(
-          intl.formatMessage({
-            defaultMessage:
-              "Transcript updated. Nothing was added to your dictionary because Incognito is on.",
-          }),
-          { mode: "success" },
-        );
-      } else {
-        showSnackbar(
-          intl.formatMessage({ defaultMessage: "Transcript updated" }),
-          { mode: "success" },
-        );
-      }
-    } catch (error) {
-      showErrorSnackbar(error);
-    } finally {
-      setIsSavingFinal(false);
-    }
-  };
+  });
+  const {
+    isEditingFinal,
+    finalDraft,
+    setFinalDraft,
+    isSavingFinal,
+    finalDraftRef,
+    startEditingFinal,
+    cancelEditingFinal,
+    handleSaveFinal,
+  } = editor;
 
   return (
     <Dialog
