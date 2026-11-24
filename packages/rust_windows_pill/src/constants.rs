@@ -167,7 +167,7 @@ pub(crate) const TRANSCRIPT_MAX_WIDTH: f64 = 440.0;
 /// exactly once.
 pub(crate) const DROP_RETRY_SECONDS: f64 = 0.25;
 pub(crate) use rust_pill_shared::{
-    DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS, LONG_PRESS_DURATION, LONG_PRESS_MOVE_THRESHOLD,
+    DRAG_INFLATE_STIFFNESS, LONG_PRESS_DURATION, LONG_PRESS_MOVE_THRESHOLD,
 };
 
 // Particle physics constants
