@@ -34,17 +34,17 @@ describe("createChatMessage", () => {
   it("registers a new message once", async () => {
     await createChatMessage(message("message-1"));
 
-    expect(getAppState().chatMessageIdsByConversationId["conversation-1"]).toEqual(
-      ["message-1"],
-    );
+    expect(
+      getAppState().chatMessageIdsByConversationId["conversation-1"],
+    ).toEqual(["message-1"]);
   });
 
   it("does not list a message twice when a retry re-creates the same id", async () => {
     await createChatMessage(message("message-1"));
     await createChatMessage(message("message-1"));
 
-    expect(getAppState().chatMessageIdsByConversationId["conversation-1"]).toEqual(
-      ["message-1"],
-    );
+    expect(
+      getAppState().chatMessageIdsByConversationId["conversation-1"],
+    ).toEqual(["message-1"]);
   });
 });
