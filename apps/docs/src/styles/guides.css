@@ -57,15 +57,6 @@
   margin: 1.75rem 0 2rem;
 }
 
-.mv-figure__stage {
-  position: relative;
-  border-radius: 16px;
-  border: 1px solid var(--mv-hairline);
-  background: var(--mv-canvas);
-  box-shadow: var(--mv-shadow);
-  overflow: hidden;
-}
-
 .mv-figure__caption {
   margin-top: 0.75rem;
   font-size: var(--sl-text-sm);
@@ -161,10 +152,6 @@
   opacity: 0.55;
 }
 
-.mv-rail__spacer {
-  flex: 1;
-}
-
 .mv-canvas {
   flex: 1;
   min-width: 0;
@@ -196,7 +183,7 @@
 }
 
 .mv-card__label {
-  font-size: 11.5px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--mv-ink-faint);
@@ -207,11 +194,6 @@
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
-}
-
-.mv-row {
-  display: flex;
-  gap: 12px;
 }
 
 .mv-row--metrics {
@@ -296,22 +278,6 @@
 }
 
 /* Pill mock */
-
-.mv-pill-stage {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
-  padding: 46px 24px;
-  min-height: 240px;
-  background:
-    radial-gradient(
-      120% 90% at 50% 0%,
-      var(--mv-raised) 0%,
-      var(--mv-canvas) 62%
-    );
-}
 
 .mv-pill {
   display: inline-flex;
@@ -441,25 +407,6 @@
 }
 
 /* Markers and annotation list */
-
-.mv-marker {
-  position: absolute;
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  background: var(--mv-accent);
-  color: var(--mv-canvas);
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  box-shadow:
-    0 0 0 3px var(--mv-canvas),
-    0 6px 14px rgba(0, 0, 0, 0.18);
-  transform: translate(-50%, -50%);
-}
 
 /* Anchor: attach a numbered badge to the element it describes, so the badge
    can never drift away from its target. */
@@ -643,15 +590,15 @@
   vertical-align: top;
 }
 
-.mv-shot img.mv-shot__dark {
+.mv-shot__dark {
   display: none;
 }
 
-[data-theme="dark"] .mv-shot img.mv-shot__light {
+[data-theme="dark"] .mv-shot__light {
   display: none;
 }
 
-[data-theme="dark"] .mv-shot img.mv-shot__dark {
+[data-theme="dark"] .mv-shot__dark {
   display: block;
 }
 

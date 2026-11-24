@@ -58,17 +58,22 @@ const createClient = (url) => {
     socket.addEventListener("error", (event) => fail(event.error ?? event));
   });
 
-  socket.addEventListener("message", (message) => {
-    const payload = JSON.parse(message.data);
-    if (payload.id && pending.has(payload.id)) {
-      const { resolve: done, reject } = pending.get(payload.id);
-      pending.delete(payload.id);
-      if (payload.error) reject(new Error(payload.error.message));
-      else done(payload.result);
-      return;
-    }
+  const settle = (payload) => {
+    const { resolve: done, reject } = pending.get(payload.id);
+    pending.delete(payload.id);
+    if (payload.error) reject(new Error(payload.error.message));
+    else done(payload.result);
+  };
+
+  const dispatch = (payload) => {
     const listeners = events.get(payload.method);
     if (listeners) listeners.forEach((listener) => listener(payload.params));
+  };
+
+  socket.addEventListener("message", (message) => {
+    const payload = JSON.parse(message.data);
+    if (payload.id && pending.has(payload.id)) settle(payload);
+    else dispatch(payload);
   });
 
   const send = (method, params = {}) =>
