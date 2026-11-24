@@ -63,8 +63,8 @@ export const resolveTypographySx = ({
  * so its scroll height is the full, unclamped height.
  */
 export const resolveHiddenTypographySx = (
-  clampPaddingRight: number | string | undefined,
-  inlineToggleRight: number | string | undefined,
+  clampPaddingRight: CssSpacing | undefined,
+  inlineToggleRight: CssSpacing | undefined,
   sx: TypographyProps["sx"],
 ) => {
   const baseDisplay = { display: "block" } as const;
