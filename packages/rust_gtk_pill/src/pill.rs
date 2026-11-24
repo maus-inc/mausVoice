@@ -40,6 +40,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     install_css();
     let (drawing_area, entry) = build_surface(&window, backend, window_h);
     let state = Rc::new(new_pill_state(backend));
+    connect_window_setup(&window, &state);
     connect_hover_events(&window, &state);
     connect_gesture_events(&window, &entry, &state);
     connect_scroll_event(&window, &state);
@@ -289,18 +290,20 @@ fn new_pill_state(backend: Backend) -> PillState {
         alloc_width: Cell::new(0.0),
         alloc_height: Cell::new(0.0),
         backend: Cell::new(backend),
-    });
+    }
+}
 
-    if backend == Backend::X11 {
-        let state_realize = state.clone();
+fn connect_window_setup(window: &gtk::Window, state: &Rc<PillState>) {
+    if state.backend.get() == Backend::X11 {
+        let state_realize = Rc::clone(state);
         window.connect_realize(move |window| x11::setup_x11_window(window, state_realize.clone()));
     }
 
-    let state_alloc = state.clone();
+    let state_alloc = Rc::clone(state);
     window.connect_size_allocate(move |_, alloc| {
         state_alloc.alloc_width.set(alloc.width() as f64);
         state_alloc.alloc_height.set(alloc.height() as f64);
-    }
+    });
 }
 
 fn connect_hover_events(window: &gtk::Window, state: &Rc<PillState>) {
@@ -799,8 +802,8 @@ fn handle_in_message(
                 *state_tick.entry_text.borrow_mut() = text.clone();
                 entry_tick.set_text(&text);
             } else if crate::input::entry_should_be_cleared(
-                state_tick.entry_text.borrow(),
-                entry_tick.text(),
+                &state_tick.entry_text.borrow(),
+                &entry_tick.text(),
             ) {
                 // The mirror was emptied somewhere that had no widget -- the
                 // Send-button click, or `submit_entry` -- and the id did not change,
