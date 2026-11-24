@@ -34,7 +34,7 @@ const toLocalChatMessage = (message: ChatMessage): LocalChatMessage => ({
   metadata: message.metadata ? JSON.stringify(message.metadata) : null,
 });
 
-export abstract class BaseChatMessageRepo extends BaseRepo {
+abstract class BaseChatMessageRepo extends BaseRepo {
   abstract listChatMessages(conversationId: string): Promise<ChatMessage[]>;
   abstract createChatMessage(
     message: ChatMessage,

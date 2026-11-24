@@ -55,7 +55,17 @@ import {
   resolveTranscriptionSessionKind,
   type TranscriptionSessionKind,
 } from "../../sessions";
-import { startLiveProviderSession } from "../../sessions/provider-startup.utils";
+import {
+  shouldForwardInterimSegment,
+  startLiveProviderRecording,
+  type PendingProviderStartup,
+} from "./dictation-live-start";
+import {
+  canBeginRecordingStart,
+  getSessionProvider,
+  isStartStillValidAfterStyleLoad,
+  resolveDictationLanguage,
+} from "./dictation-start-guards";
 import { RecordingMode } from "../../state/app.state";
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { AgentStrategy } from "../../strategies/agent.strategy";
@@ -167,7 +177,6 @@ import {
   getIsDictationUnlocked,
   getIsOnboarded,
   getMyPreferredMicrophone,
-  getMyPrimaryDictationLanguage,
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
@@ -226,11 +235,6 @@ const openPillConversationImpl = async (
     reportPasteRecovery();
     throw error;
   }
-};
-
-type PendingProviderStartup = {
-  operationId: number;
-  promise: Promise<void>;
 };
 
 type AbortMessage = {
@@ -2209,14 +2213,14 @@ export const DictationSideEffects = () => {
 
   const startRecording = useCallback(
     async (args: { mode: RecordingMode; language?: string | null }) => {
-      if (isLocalDataClearRequested()) return;
+      if (!canBeginRecordingStart()) return;
       const clearGeneration = getLocalDataClearGeneration();
       const attempt = ++recordingOperationRef.current;
       audioIntakeSubscriptionFailedRef.current = false;
       audioIntakeRef.current = null;
       const state = getAppState();
       const mode = args.mode;
-      const language = args.language || getMyPrimaryDictationLanguage(state);
+      const language = resolveDictationLanguage(args.language, state);
       produceAppState((draft) => {
         draft.activeRecordingMode = mode;
         draft.dictationLanguageOverride = language;
@@ -2238,10 +2242,12 @@ export const DictationSideEffects = () => {
       // complexity. False means a newer start took over while the style loaded,
       // so the caller must stop.
       if (
-        !(await prepareAutoStyle(mode, state, attempt)) ||
-        recordingOperationRef.current !== attempt ||
-        isLocalDataClearRequested() ||
-        clearGeneration !== getLocalDataClearGeneration()
+        !isStartStillValidAfterStyleLoad(
+          await prepareAutoStyle(mode, state, attempt),
+          attempt,
+          recordingOperationRef.current,
+          clearGeneration,
+        )
       ) {
         return;
       }
@@ -2308,8 +2314,7 @@ export const DictationSideEffects = () => {
         // (batch/after-stop/local kinds still transcribe the recording).
         recordingSessionKindRef.current = resolveTranscriptionSessionKind({
           mode: transcriptPrefs.mode,
-          provider:
-            transcriptPrefs.mode === "api" ? transcriptPrefs.provider : null,
+          provider: getSessionProvider(transcriptPrefs),
         });
         audioChunkUnlistenRef.current?.();
         audioChunkUnlistenRef.current = intake.unlisten;
@@ -2322,8 +2327,10 @@ export const DictationSideEffects = () => {
               () => recordingOperationRef.current,
               (segment) => {
                 if (
-                  recordingSessionKindRef.current !== "live-streaming" ||
-                  !intake.hasDiscontinuity()
+                  shouldForwardInterimSegment(
+                    recordingSessionKindRef.current,
+                    intake.hasDiscontinuity(),
+                  )
                 ) {
                   strategy.handleInterimSegment(segment);
                 }
@@ -2413,8 +2420,7 @@ export const DictationSideEffects = () => {
         const startedSession = session;
         const sessionKind = resolveTranscriptionSessionKind({
           mode: transcriptPrefs.mode,
-          provider:
-            transcriptPrefs.mode === "api" ? transcriptPrefs.provider : null,
+          provider: getSessionProvider(transcriptPrefs),
         });
         const cleanupStartedSession = () => {
           try {
@@ -2439,45 +2445,24 @@ export const DictationSideEffects = () => {
         if (sessionKind === "live-streaming") {
           const controller = new AbortController();
           providerStartupAbortControllerRef.current = controller;
-          const startupPromise = (async () => {
-            try {
-              await startLiveProviderSession({
-                session: startedSession,
-                sampleRate,
-                controller,
-              });
-              if (!isCurrentStart()) {
-                cleanupStartedSession();
-                return;
-              }
-              replayStartupAudio();
-              if (!isStoppingRef.current) {
-                sendPillStageText(null);
-              }
-            } catch (error) {
-              if (!isCurrentStart()) {
-                cleanupStartedSession();
-                return;
-              }
-              getLogger().warning(
-                `Live provider startup failed; preserving the captured recording: ${error}`,
-              );
-              cleanupStartedSession();
+          const startupPromise = startLiveProviderRecording({
+            operationId,
+            session: startedSession,
+            sampleRate,
+            controller,
+            isCurrentStart,
+            cleanupStartedSession,
+            replayStartupAudio,
+            onStartupAudioDiscarded: () => {
               startupAudioBuffer.reset();
               audioForwardingReady = true;
-              if (!isStoppingRef.current) {
-                sendPillStageText(null);
-                void stopRecording();
-              }
-            } finally {
-              if (providerStartupRef.current?.operationId === operationId) {
-                providerStartupRef.current = null;
-              }
-              if (providerStartupAbortControllerRef.current === controller) {
-                providerStartupAbortControllerRef.current = null;
-              }
-            }
-          })();
+            },
+            isStopping: () => isStoppingRef.current,
+            sendPillStageText,
+            stopRecording,
+            providerStartupRef,
+            providerStartupAbortControllerRef,
+          });
           providerStartupRef.current = {
             operationId,
             promise: startupPromise,

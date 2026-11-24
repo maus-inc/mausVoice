@@ -18,7 +18,10 @@ import type {
   StrategyValidationError,
 } from "../types/strategy.types";
 import { getEffectiveHandsFreeDelayMs } from "../utils/hands-free-delay.utils";
-import { isHistoryPersistQueueFull } from "../utils/history-persist.utils";
+import {
+  isHistoryPersistQueueFull,
+  shouldPersistBeforeDelivery,
+} from "../utils/history-persist.utils";
 import { getLogger } from "../utils/log.utils";
 import { sendPillStageText } from "../utils/overlay.utils";
 import {
@@ -61,6 +64,18 @@ async function checkFocusedPasteTarget(): Promise<
     return "unknown";
   }
 }
+
+/** Mutable record of one bulk dictation delivery, threaded through its stages. */
+type BulkTranscriptState = {
+  transcript: string | null;
+  sanitizedTranscript: string | null;
+  postProcessMetadata: PostProcessMetadata;
+  postProcessWarnings: string[];
+  remoteStatus: "sent" | null;
+  remoteDeviceId: string | null;
+  historyOwner: HistoryOwner;
+  pendingPersistence: HandleTranscriptResult["pendingPersistence"];
+};
 
 export class DictationStrategy extends BaseStrategy {
   private streamedSegmentCount = 0;
@@ -414,207 +429,30 @@ export class DictationStrategy extends BaseStrategy {
   private async handleFinalBulkTranscript(
     args: HandleTranscriptParams,
   ): Promise<HandleTranscriptResult> {
-    let transcript: string | null = null;
-    let sanitizedTranscript: string | null = null;
-    let postProcessMetadata: PostProcessMetadata = {};
-    let postProcessWarnings: string[] = [];
-    let remoteStatus: "sent" | null = null;
-    let historyOwner: HistoryOwner = "stop-path";
-    let pendingPersistence: HandleTranscriptResult["pendingPersistence"];
-    let remoteDeviceId: string | null = null;
-
-    // Records a late failure on the warning list and, when the row was already
-    // written concurrently with delivery, on the stored row itself. On the
-    // serial path the list rides on the store call that still lies ahead; the
-    // concurrent row needs the explicit append because its store already ran.
-    const recordFailureWarning = (errorMessage: string): void => {
-      postProcessWarnings.push(errorMessage);
-      if (pendingPersistence) {
-        void pendingPersistence.then(({ transcription }) => {
-          if (transcription) {
-            void appendTranscriptionWarnings(transcription.id, [errorMessage]);
-          }
-        });
-      }
+    const state: BulkTranscriptState = {
+      transcript: null,
+      sanitizedTranscript: null,
+      postProcessMetadata: {},
+      postProcessWarnings: [],
+      remoteStatus: null,
+      remoteDeviceId: null,
+      historyOwner: "stop-path",
+      pendingPersistence: undefined,
     };
 
     try {
-      sanitizedTranscript = this.sanitizeTranscript(args.rawTranscript);
-      if (sanitizedTranscript) {
-        if (args.processedTranscript) {
-          transcript = args.processedTranscript;
-          postProcessMetadata = args.serverPostProcessMetadata ?? {};
-        } else {
-          const state = getAppState();
-          const effectiveToneId = args.toneId ?? getToneIdToUse(state);
-          const tone = effectiveToneId
-            ? state.toneById[effectiveToneId]
-            : undefined;
-          const result = await postProcessTranscript({
-            rawTranscript: sanitizedTranscript,
-            toneId: effectiveToneId,
-            trace: args.trace,
-            onPolishStart: tone?.shouldDisablePostProcessing
-              ? undefined
-              : () => {
-                  sendPillStageText(
-                    getIntl().formatMessage({ defaultMessage: "Polishing" }),
-                  );
-                },
-          });
+      Object.assign(state, await this.resolveBulkTranscript(args));
+      this.logPostProcessOutcome(state.postProcessMetadata);
 
-          transcript = result.transcript;
-          postProcessMetadata = result.metadata;
-          postProcessWarnings = result.warnings;
-        }
-      }
-
-      if (
-        postProcessMetadata.postProcessFallback &&
-        postProcessMetadata.postProcessError &&
-        !postProcessMetadata.postProcessFailed
-      ) {
-        getLogger().warning(
-          "Post-processing provider failed; delivered the local fast style instead",
-        );
-      }
-
-      if (postProcessMetadata.postProcessEditFailed) {
-        getLogger().warning(
-          "Post-processing edits could not be applied; preserving the original transcript without insertion",
-        );
-        // The History toast is the caller's to show once storage has actually
-        // produced a row: persistence being allowed does not mean the write
-        // succeeded. Routing stays blocked here either way, so the row is
-        // what preserves the raw transcript.
-      } else if (postProcessMetadata.postProcessFailed) {
-        getLogger().warning(
-          "Post-processing failed; preserving the transcript without insertion",
-        );
-      } else if (transcript) {
-        // The History row's content is final here, but the row used to wait
-        // for delivery (hands-free delay, paste, or simulated typing, the last
-        // one O(text length)) before its write even started. Write it now,
-        // while delivery runs, when delivery cannot change what gets stored:
-        // review-before-insert can still edit the text, and a remote target
-        // records its delivery outcome on the row, so both keep the serial path.
-        //
-        // Both preference reads are fresh rather than the values captured
-        // before the post-processing await: a receiver paired or a review
-        // toggled during that wait must still select the serial path, because
-        // routing reads the live preferences in the same tick right after.
-        remoteDeviceId = this.getActiveRemoteTargetDeviceId();
-        const deliveryState = getAppState();
-        const deliveryTarget = args.currentApp
-          ? (deliveryState.appTargetById[args.currentApp.id] ?? null)
-          : null;
-        const prefs = getMyUserPreferences(deliveryState);
-        const insertionMethod = resolveInsertionMethod(deliveryTarget, prefs);
-        // Simulated typing can take the length of the transcript, and a
-        // hands-free delay holds delivery open for seconds. Keep those History
-        // writes on the stop path, which re-reads Incognito after delivery
-        // settles; otherwise a mode change during the wait races an
-        // already-started write and saves the row the user just asked us not
-        // to retain.
-        const canPersistBeforeDelivery =
-          insertionMethod !== "type" &&
-          getEffectiveHandsFreeDelayMs(prefs) <= 0 &&
-          this.activeSimulatedTypingCount === 0;
-        const concurrentPersistence =
-          args.persistTranscriptNow !== undefined &&
-          getMyUserPreferences(deliveryState)?.reviewBeforeInsert !== true &&
-          remoteDeviceId === null &&
-          canPersistBeforeDelivery &&
-          !isHistoryPersistQueueFull();
-        if (concurrentPersistence && args.persistTranscriptNow) {
-          pendingPersistence = args
-            .persistTranscriptNow({
-              transcript,
-              sanitizedTranscript,
-              postProcessMetadata,
-              postProcessWarnings,
-            })
-            .catch((error) => {
-              getLogger().error(
-                `Concurrent history persistence failed: ${error}`,
-              );
-              return { transcription: null, wordCount: 0 };
-            });
-          historyOwner = "concurrent";
-        }
-
-        try {
-          getLogger().verbose(
-            `Routing transcript output (${transcript.length} chars, app=${args.currentApp?.id ?? "none"})`,
-          );
-
-          const textToPaste = transcript.trim() + " ";
-          const result = await routeTranscriptOutput(
-            {
-              text: textToPaste,
-              mode: "dictation",
-              currentAppId: args.currentApp?.id ?? null,
-              // The concurrent row already stores this exact text. Pinning the
-              // review off keeps a preference flipped mid-delivery from opening
-              // a review whose Save would write a second, edited row.
-              skipReview: concurrentPersistence ? true : undefined,
-            },
-            args.trace ?? null,
-            this.routeOutputHooks,
-          );
-          if (
-            result.delivered &&
-            result.deliveredText !== null &&
-            result.deliveredText !== textToPaste &&
-            // A concurrent row already stores this utterance; adopting a review
-            // edit here would persist a second row. skipReview makes this
-            // unreachable today, and the guard keeps it impossible tomorrow.
-            !concurrentPersistence
-          ) {
-            // The review settled on an edited text. Adopt it for History and
-            // persist now so the exact edit becomes durable as soon as it lands.
-            transcript = result.deliveredText;
-            if (args.persistReviewedTranscript) {
-              // A failure leaves the transcript on the pill, which the toast
-              // tells the user to retry from, so the row is the pill's from here
-              // either way. Only the distinction decides who may write it.
-              historyOwner = (await args.persistReviewedTranscript({
-                transcript,
-                sanitizedTranscript,
-                postProcessMetadata,
-                postProcessWarnings,
-              }))
-                ? "review"
-                : "pill";
-            }
-          }
-          if (result.remote && result.delivered) {
-            remoteStatus = "sent";
-            showSnackbar("Transcript sent to paired receiver.", {
-              mode: "success",
-            });
-          }
-
-          getLogger().info("Transcript output routed successfully");
-        } catch (error) {
-          getLogger().error(`Failed to route transcription output: ${error}`);
-          // A delivery failure is a failure of this utterance, so it rides on
-          // the row the same way a post-processing failure does: on the serial
-          // path via the warning list, on the concurrent row via the append.
-          recordFailureWarning(
-            error instanceof Error ? error.message : "An error occurred.",
-          );
-          showErrorSnackbar(
-            error instanceof Error
-              ? error.message
-              : String(error) || "Unable to insert transcription.",
-          );
-        }
+      if (this.mayDeliverBulkTranscript(state)) {
+        this.startConcurrentHistoryWrite(args, state);
+        await this.deliverBulkTranscript(args, state);
       }
     } catch (error) {
       getLogger().error(`Failed to process transcription: ${error}`);
 
-      recordFailureWarning(
+      this.recordBulkFailureWarning(
+        state,
         error instanceof Error ? error.message : "An error occurred.",
       );
 
@@ -626,15 +464,282 @@ export class DictationStrategy extends BaseStrategy {
 
     return {
       shouldContinue: false,
-      transcript,
-      sanitizedTranscript,
-      postProcessMetadata,
-      postProcessWarnings,
-      remoteStatus,
-      remoteDeviceId: remoteStatus ? remoteDeviceId : null,
-      historyOwner,
-      pendingPersistence,
+      transcript: state.transcript,
+      sanitizedTranscript: state.sanitizedTranscript,
+      postProcessMetadata: state.postProcessMetadata,
+      postProcessWarnings: state.postProcessWarnings,
+      remoteStatus: state.remoteStatus,
+      remoteDeviceId: state.remoteStatus ? state.remoteDeviceId : null,
+      historyOwner: state.historyOwner,
+      pendingPersistence: state.pendingPersistence,
     };
+  }
+
+  private async resolveBulkTranscript(
+    args: HandleTranscriptParams,
+  ): Promise<
+    Pick<
+      BulkTranscriptState,
+      | "transcript"
+      | "sanitizedTranscript"
+      | "postProcessMetadata"
+      | "postProcessWarnings"
+    >
+  > {
+    const sanitizedTranscript = this.sanitizeTranscript(args.rawTranscript);
+    if (!sanitizedTranscript) {
+      return {
+        transcript: null,
+        sanitizedTranscript: null,
+        postProcessMetadata: {},
+        postProcessWarnings: [],
+      };
+    }
+
+    if (args.processedTranscript) {
+      return {
+        transcript: args.processedTranscript,
+        sanitizedTranscript,
+        postProcessMetadata: args.serverPostProcessMetadata ?? {},
+        postProcessWarnings: [],
+      };
+    }
+
+    const state = getAppState();
+    const effectiveToneId = args.toneId ?? getToneIdToUse(state);
+    const tone = effectiveToneId ? state.toneById[effectiveToneId] : undefined;
+    const result = await postProcessTranscript({
+      rawTranscript: sanitizedTranscript,
+      toneId: effectiveToneId,
+      trace: args.trace,
+      onPolishStart: tone?.shouldDisablePostProcessing
+        ? undefined
+        : () => {
+            sendPillStageText(
+              getIntl().formatMessage({ defaultMessage: "Polishing" }),
+            );
+          },
+    });
+
+    return {
+      transcript: result.transcript,
+      sanitizedTranscript,
+      postProcessMetadata: result.metadata,
+      postProcessWarnings: result.warnings,
+    };
+  }
+
+  private logPostProcessOutcome(metadata: PostProcessMetadata): void {
+    if (
+      metadata.postProcessFallback &&
+      metadata.postProcessError &&
+      !metadata.postProcessFailed
+    ) {
+      getLogger().warning(
+        "Post-processing provider failed; delivered the local fast style instead",
+      );
+    }
+
+    if (metadata.postProcessEditFailed) {
+      getLogger().warning(
+        "Post-processing edits could not be applied; preserving the original transcript without insertion",
+      );
+      // The History toast is the caller's to show once storage has actually
+      // produced a row: persistence being allowed does not mean the write
+      // succeeded. Routing stays blocked here either way, so the row is
+      // what preserves the raw transcript.
+    } else if (metadata.postProcessFailed) {
+      getLogger().warning(
+        "Post-processing failed; preserving the transcript without insertion",
+      );
+    }
+  }
+
+  private mayDeliverBulkTranscript(state: BulkTranscriptState): boolean {
+    return (
+      state.transcript !== null &&
+      !state.postProcessMetadata.postProcessEditFailed &&
+      !state.postProcessMetadata.postProcessFailed
+    );
+  }
+
+  private recordBulkFailureWarning(
+    state: BulkTranscriptState,
+    errorMessage: string,
+  ): void {
+    state.postProcessWarnings.push(errorMessage);
+    if (state.pendingPersistence) {
+      void state.pendingPersistence.then(({ transcription }) => {
+        if (transcription) {
+          void appendTranscriptionWarnings(transcription.id, [errorMessage]);
+        }
+      });
+    }
+  }
+
+  /**
+   * Starts the History write before delivery when delivery cannot change what
+   * gets stored, and leaves it to the stop path otherwise. Returns the owner of
+   * the row and the device id delivery will report against.
+   */
+  private startConcurrentHistoryWrite(
+    args: HandleTranscriptParams,
+    state: BulkTranscriptState,
+  ): void {
+    const transcript = state.transcript;
+    if (!transcript) return;
+
+    // Both preference reads are fresh rather than the values captured before
+    // the post-processing await: a receiver paired or a review toggled during
+    // that wait must still select the serial path, because routing reads the
+    // live preferences in the same tick right after.
+    state.remoteDeviceId = this.getActiveRemoteTargetDeviceId();
+    const deliveryState = getAppState();
+    const deliveryTarget = args.currentApp
+      ? (deliveryState.appTargetById[args.currentApp.id] ?? null)
+      : null;
+    const prefs = getMyUserPreferences(deliveryState);
+    const persistTranscriptNow = args.persistTranscriptNow;
+    const canPersistBeforeDelivery = shouldPersistBeforeDelivery({
+      hasPersistenceHook: persistTranscriptNow !== undefined,
+      reviewBeforeInsert: prefs?.reviewBeforeInsert === true,
+      remoteDeviceId: state.remoteDeviceId,
+      insertionMethod: resolveInsertionMethod(deliveryTarget, prefs),
+      handsFreeDelayMs: getEffectiveHandsFreeDelayMs(prefs),
+      activeSimulatedTypingCount: this.activeSimulatedTypingCount,
+      queueFull: isHistoryPersistQueueFull(),
+    });
+    if (!canPersistBeforeDelivery || !persistTranscriptNow) return;
+
+    state.pendingPersistence = persistTranscriptNow({
+      transcript,
+      sanitizedTranscript: state.sanitizedTranscript,
+      postProcessMetadata: state.postProcessMetadata,
+      postProcessWarnings: state.postProcessWarnings,
+    }).catch((error) => {
+      getLogger().error(`Concurrent history persistence failed: ${error}`);
+      return { transcription: null, wordCount: 0 };
+    });
+    state.historyOwner = "concurrent";
+  }
+
+  private async adoptReviewedTranscript(
+    args: HandleTranscriptParams,
+    state: BulkTranscriptState,
+    deliveredText: string,
+  ): Promise<void> {
+    // The review settled on an edited text. Adopt it for History and persist
+    // now so the exact edit becomes durable as soon as it lands.
+    state.transcript = deliveredText;
+    if (!args.persistReviewedTranscript) return;
+
+    // A failure leaves the transcript on the pill, which the toast tells the
+    // user to retry from, so the row is the pill's from here either way. Only
+    // the distinction decides who may write it.
+    const persisted = await args.persistReviewedTranscript({
+      transcript: state.transcript,
+      sanitizedTranscript: state.sanitizedTranscript,
+      postProcessMetadata: state.postProcessMetadata,
+      postProcessWarnings: state.postProcessWarnings,
+    });
+    state.historyOwner = persisted ? "review" : "pill";
+  }
+
+  private async deliverBulkTranscript(
+    args: HandleTranscriptParams,
+    state: BulkTranscriptState,
+  ): Promise<void> {
+    const transcript = state.transcript;
+    if (!transcript) return;
+    const concurrentPersistence = state.historyOwner === "concurrent";
+    const textToPaste = transcript.trim() + " ";
+
+    try {
+      getLogger().verbose(
+        `Routing transcript output (${transcript.length} chars, app=${args.currentApp?.id ?? "none"})`,
+      );
+
+      const { result, editedText } = await this.routeBulkTranscript(
+        args,
+        textToPaste,
+        concurrentPersistence,
+      );
+      // A concurrent row already stores this utterance; adopting a review edit
+      // here would persist a second row. skipReview makes this unreachable
+      // today, and the guard keeps it impossible tomorrow.
+      if (editedText !== null && !concurrentPersistence) {
+        await this.adoptReviewedTranscript(args, state, editedText);
+      }
+      this.reportRemoteDelivery(state, result);
+
+      getLogger().info("Transcript output routed successfully");
+    } catch (error) {
+      this.handleDeliveryFailure(state, error);
+    }
+  }
+
+  /**
+   * Routes the utterance and reports the text the user's review settled on,
+   * or null when delivery kept the text it was given.
+   */
+  private async routeBulkTranscript(
+    args: HandleTranscriptParams,
+    textToPaste: string,
+    concurrentPersistence: boolean,
+  ): Promise<{
+    result: Awaited<ReturnType<typeof routeTranscriptOutput>>;
+    editedText: string | null;
+  }> {
+    const result = await routeTranscriptOutput(
+      {
+        text: textToPaste,
+        mode: "dictation",
+        currentAppId: args.currentApp?.id ?? null,
+        // The concurrent row already stores this exact text. Pinning the
+        // review off keeps a preference flipped mid-delivery from opening
+        // a review whose Save would write a second, edited row.
+        skipReview: concurrentPersistence ? true : undefined,
+      },
+      args.trace ?? null,
+      this.routeOutputHooks,
+    );
+    const editedText =
+      result.delivered &&
+      result.deliveredText !== null &&
+      result.deliveredText !== textToPaste
+        ? result.deliveredText
+        : null;
+    return { result, editedText };
+  }
+
+  private reportRemoteDelivery(
+    state: BulkTranscriptState,
+    result: Awaited<ReturnType<typeof routeTranscriptOutput>>,
+  ): void {
+    if (!result.remote || !result.delivered) return;
+    state.remoteStatus = "sent";
+    showSnackbar("Transcript sent to paired receiver.", {
+      mode: "success",
+    });
+  }
+
+  private handleDeliveryFailure(
+    state: BulkTranscriptState,
+    error: unknown,
+  ): void {
+    getLogger().error(`Failed to route transcription output: ${error}`);
+    // A delivery failure is a failure of this utterance, so it rides on the
+    // row the same way a post-processing failure does: on the serial path via
+    // the warning list, on the concurrent row via the append.
+    this.recordBulkFailureWarning(
+      state,
+      error instanceof Error ? error.message : "An error occurred.",
+    );
+    showErrorSnackbar(
+      error instanceof Error
+        ? error.message
+        : String(error) || "Unable to insert transcription.",
+    );
   }
 
   async handleTranscript(
