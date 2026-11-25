@@ -232,6 +232,27 @@ export const formatVoquillIssueSummary = (
         defaultMessage:
           "A previous Voquill import attempt was interrupted before finishing.",
       });
+    case "partial_asset_copy":
+      if (issue.category === "models") {
+        return intl.formatMessage({
+          defaultMessage:
+            "Some local transcription model files could not be copied.",
+        });
+      }
+      if (issue.category === "audio") {
+        return intl.formatMessage({
+          defaultMessage: "Some saved audio recordings could not be copied.",
+        });
+      }
+      if (issue.category === "storage") {
+        return intl.formatMessage({
+          defaultMessage: "Some app icon assets could not be copied.",
+        });
+      }
+      return intl.formatMessage({
+        defaultMessage:
+          "Part of the Voquill import could not be completed. Your original Voquill files were not modified.",
+      });
     case "models_copy_incomplete":
       return intl.formatMessage({
         defaultMessage:

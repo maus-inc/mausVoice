@@ -80,7 +80,14 @@ const makeReport = (
       providers: [],
     },
   ],
-  issues: [],
+  issues: [
+    {
+      category: "models",
+      code: "partial_asset_copy",
+      detail:
+        "1 local model file(s) could not be imported (permission denied).",
+    },
+  ],
   ...overrides,
 });
 
@@ -155,6 +162,9 @@ describe("VoquillMigrationSettingsSection", () => {
     expect(container.textContent).toContain("Audio: Imported");
     expect(container.textContent).toContain(
       "Previous Voquill Cloud settings were reset to local or off",
+    );
+    expect(container.textContent).toContain(
+      "Some local transcription model files could not be copied.",
     );
 
     const reviewBtn = Array.from(container.querySelectorAll("button")).find(
