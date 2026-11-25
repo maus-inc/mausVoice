@@ -16,7 +16,10 @@ pub mod tone;
 pub mod transcription;
 pub mod user;
 
-pub use api_key::{ApiKey, ApiKeyCreateRequest, ApiKeyUpdateRequest, ApiKeyView};
+pub use api_key::{
+    ApiKey, ApiKeyCreateRequest, ApiKeyCredentialIssue, ApiKeyCredentialStatus,
+    ApiKeyUpdateRequest, ApiKeyView,
+};
 pub use app_target::{AppTarget, EVT_REGISTER_CURRENT_APP};
 pub use chat_message::ChatMessage;
 pub use conversation::Conversation;

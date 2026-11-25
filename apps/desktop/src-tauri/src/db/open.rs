@@ -693,6 +693,46 @@ async fn retire_versions(pool: &SqlitePool, retired: &[i64]) -> Result<(), OpenE
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StrictOpenError {
+    Integrity(String),
+    SchemaIncompatible(String),
+    Other(String),
+}
+
+impl StrictOpenError {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Integrity(message) | Self::SchemaIncompatible(message) | Self::Other(message) => {
+                message
+            }
+        }
+    }
+}
+
+/// Open and migrate a database strictly without quarantining or replacing
+/// damaged files. Used during staged legacy Voquill migration so corrupt or
+/// schema-incompatible legacy databases fail truthfully instead of being
+/// silently replaced with an empty database.
+pub async fn open_app_database_strict(path: &Path) -> Result<SqlitePool, StrictOpenError> {
+    match try_open(path).await {
+        Ok(pool) => Ok(pool),
+        Err(OpenError::Integrity(message)) => Err(StrictOpenError::Integrity(message)),
+        Err(OpenError::Other(message)) => {
+            let lowered = message.to_ascii_lowercase();
+            if lowered.contains("migration")
+                && (lowered.contains("not in the current migration set")
+                    || lowered.contains("has been modified")
+                    || lowered.contains("left incomplete"))
+            {
+                Err(StrictOpenError::SchemaIncompatible(message))
+            } else {
+                Err(StrictOpenError::Other(message))
+            }
+        }
+    }
+}
+
 /// Open the app database, applying migrations.
 ///
 /// Only file-level damage (a corrupt or non-SQLite file) quarantines the broken

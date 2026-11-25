@@ -327,7 +327,7 @@ use crate::platform::{ChunkCallback, LevelCallback};
 
 #[path = "../../../../packages/rust_transcription/src/audio.rs"]
 mod shared_audio;
-use crate::system::crypto::{protect_api_key, reveal_api_key};
+use crate::system::crypto::protect_api_key;
 use crate::system::StorageRepo;
 use rodio::Source;
 use sqlx::Row;
@@ -3217,6 +3217,30 @@ fn current_timestamp_millis() -> Result<i64, String> {
         .map_err(|_| "System timestamp out of representable range".to_string())
 }
 
+fn api_key_to_view(api_key: ApiKey) -> ApiKeyView {
+    let inspection = crate::system::crypto::inspect_api_key_credential(
+        &api_key.provider,
+        &api_key.salt,
+        &api_key.key_ciphertext,
+        api_key.base_url.as_deref(),
+        api_key.azure_region.as_deref(),
+    );
+    if inspection.status != crate::domain::ApiKeyCredentialStatus::Usable {
+        log::warn!(
+            "API key {} (provider={}) is not usable (status={:?}, issue={:?})",
+            api_key.id,
+            api_key.provider,
+            inspection.status,
+            inspection.issue
+        );
+    }
+    ApiKeyView::from(api_key).with_credential_state(
+        inspection.key_full,
+        inspection.status,
+        inspection.issue,
+    )
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn api_key_create(
@@ -3258,7 +3282,7 @@ pub async fn api_key_create(
 
     crate::db::api_key_queries::insert_api_key(database.pool(), &stored)
         .await
-        .map(|saved| ApiKeyView::from(saved).with_full_key(Some(key)))
+        .map(api_key_to_view)
         .map_err(|err| err.to_string())
 }
 
@@ -3269,20 +3293,7 @@ pub async fn api_key_list(
 ) -> Result<Vec<ApiKeyView>, String> {
     crate::db::api_key_queries::fetch_api_keys(database.pool())
         .await
-        .map(|api_keys| {
-            api_keys
-                .into_iter()
-                .map(|api_key| {
-                    let full_key = reveal_api_key(&api_key.salt, &api_key.key_ciphertext)
-                        .map_err(|err| {
-                            log::error!("Failed to reveal API key {}: {}", api_key.id, err);
-                            err
-                        })
-                        .ok();
-                    ApiKeyView::from(api_key).with_full_key(full_key)
-                })
-                .collect()
-        })
+        .map(|api_keys| api_keys.into_iter().map(api_key_to_view).collect())
         .map_err(|err| err.to_string())
 }
 
@@ -3305,7 +3316,7 @@ pub async fn api_key_update(
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<ApiKeyView, String> {
     let _write_guard = acquire_local_data_write_guard().await?;
-    let (salt, key_hash, key_ciphertext, key_suffix, full_key) =
+    let (salt, key_hash, key_ciphertext, key_suffix) =
         match request.key.as_deref().filter(|k| !k.is_empty()) {
             Some(raw_key) => {
                 let protected = protect_api_key(raw_key);
@@ -3314,10 +3325,9 @@ pub async fn api_key_update(
                     Some(protected.hash_b64),
                     Some(protected.ciphertext_b64),
                     protected.key_suffix,
-                    Some(raw_key.to_string()),
                 )
             }
-            None => (None, None, None, None, None),
+            None => (None, None, None, None),
         };
 
     crate::db::api_key_queries::update_api_key(
@@ -3331,7 +3341,7 @@ pub async fn api_key_update(
     .await
     .map_err(|err| err.to_string())?;
 
-    // Re-fetch the updated key to return fresh data
+    // Re-fetch the updated key to return fresh, verified credential status.
     let all_keys = crate::db::api_key_queries::fetch_api_keys(database.pool())
         .await
         .map_err(|err| err.to_string())?;
@@ -3341,18 +3351,51 @@ pub async fn api_key_update(
         .find(|k| k.id == request.id)
         .ok_or_else(|| "API key not found after update".to_string())?;
 
-    let revealed = if full_key.is_some() {
-        full_key
-    } else {
-        reveal_api_key(&updated.salt, &updated.key_ciphertext)
-            .map_err(|err| {
-                log::error!("Failed to reveal API key {}: {}", updated.id, err);
-                err
-            })
-            .ok()
-    };
+    Ok(api_key_to_view(updated))
+}
 
-    Ok(ApiKeyView::from(updated).with_full_key(revealed))
+#[tauri::command]
+#[specta::specta]
+pub async fn voquill_migration_status(
+    app: AppHandle,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
+    let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
+        .map_err(|err| err.to_string())?;
+    let pool = database.pool();
+    Ok(crate::system::voquill_migration::refresh_migration_report(dirs, pool).await)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn voquill_migration_dismiss(
+    app: AppHandle,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
+    let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
+        .map_err(|err| err.to_string())?;
+    let pool = database.pool();
+    crate::system::voquill_migration::dismiss_migration_notice(dirs, pool).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn voquill_migration_retry(
+    app: AppHandle,
+) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
+    let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
+        .map_err(|err| err.to_string())?;
+    let db = app
+        .state::<crate::state::OptionKeyDatabase>()
+        .inner()
+        .clone();
+    let _write_guard = acquire_local_data_write_guard().await?;
+    let runtime_handle = tokio::runtime::Handle::current();
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime_handle.block_on(crate::system::voquill_migration::retry_migration(dirs, db))
+    })
+    .await
+    .map_err(|err| format!("Migration retry task failed: {err}"))?
 }
 
 #[tauri::command]
@@ -3583,6 +3626,11 @@ pub async fn clear_local_data(
     crate::system::paths::delete_legacy_database(&app).map_err(|error| {
         log::error!("Failed to delete the legacy Voquill database during clear: {error}");
         format!("Database cleared, but legacy database cleanup failed: {error}")
+    })?;
+
+    crate::system::voquill_migration::clear_migration_artifacts(&config_dir).map_err(|error| {
+        log::error!("Failed to delete Voquill migration metadata during clear: {error}");
+        format!("Database cleared, but migration state cleanup failed: {error}")
     })?;
 
     if let Err(err) = sqlx::query("VACUUM").execute(&pool).await {

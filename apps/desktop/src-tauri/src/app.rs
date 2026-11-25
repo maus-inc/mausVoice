@@ -582,6 +582,30 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     )
     .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
 
+    // Run staged Voquill migration before opening `mausvoice.db`, unless we are
+    // recovering an interrupted local-data clear (which must finish wiping
+    // before any new data is admitted).
+    if !clear_recovery_pending {
+        match crate::system::voquill_migration::MigrationDirs::from_app(app.handle()) {
+            Ok(migration_dirs) => {
+                let report = tauri::async_runtime::block_on(
+                    crate::system::voquill_migration::run_startup_migration(&migration_dirs),
+                );
+                if report.legacy_detected {
+                    log::info!(
+                        "Voquill startup migration completed with status={:?}, db={:?}, attention_keys={}",
+                        report.status,
+                        report.database_phase,
+                        report.counts.providers_needing_attention
+                    );
+                }
+            }
+            Err(err) => {
+                log::error!("Failed to resolve Voquill migration directories: {err}");
+            }
+        }
+    }
+
     let db_path = {
         let handle = app.handle();
         crate::system::paths::database_path(handle)
@@ -981,6 +1005,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::api_key_list,
             crate::commands::api_key_delete,
             crate::commands::api_key_update,
+            crate::commands::voquill_migration_status,
+            crate::commands::voquill_migration_dismiss,
+            crate::commands::voquill_migration_retry,
             crate::commands::tone_upsert,
             crate::commands::tone_list,
             crate::commands::tone_get,
