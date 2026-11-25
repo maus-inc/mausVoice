@@ -78,6 +78,45 @@ const ApiKeyStatusChip = ({ apiKey }: { apiKey: ApiKey | null }) => {
   );
 };
 
+const selectedKeyNeedsAttention = (
+  apiKeyById: Record<string, ApiKey | undefined>,
+  mode: string | null | undefined,
+  selectedApiKeyId: string | null | undefined,
+): boolean => {
+  if (mode !== "api" || !selectedApiKeyId) {
+    return false;
+  }
+  const key = apiKeyById[selectedApiKeyId];
+  return key != null && !isApiKeyUsable(key);
+};
+
+const AiModelsAttentionBanner = ({
+  attentionKeyCount,
+  removedCloudModesCount,
+}: {
+  attentionKeyCount: number;
+  removedCloudModesCount: number;
+}) => {
+  if (attentionKeyCount > 0) {
+    return (
+      <Alert severity="warning" sx={{ mb: 3, boxShadow: "none" }}>
+        <FormattedMessage
+          defaultMessage="{count, plural, one {# saved API key cannot be unlocked and needs to be re-entered before it can be used.} other {# saved API keys cannot be unlocked and need to be re-entered before they can be used.}}"
+          values={{ count: attentionKeyCount }}
+        />
+      </Alert>
+    );
+  }
+  if (removedCloudModesCount > 0) {
+    return (
+      <Alert severity="info" sx={{ mb: 3, boxShadow: "none" }}>
+        <FormattedMessage defaultMessage="Previous Voquill Cloud mode selections were reset to local or off during migration. Choose a local model or personal API provider below." />
+      </Alert>
+    );
+  }
+  return null;
+};
+
 export default function AiModelsSettingsPage() {
   const intl = useIntl();
   const availability = useSettingsAvailability();
@@ -112,39 +151,34 @@ export default function AiModelsSettingsPage() {
     disableAutoStyleLoading,
     fastStyleShortDictationsEnabled,
     postProcessingMode,
-  ] = useAppStore((state) => {
-    const selectedTranscriptionKey = state.settings.aiTranscription
-      .selectedApiKeyId
-      ? state.apiKeyById[state.settings.aiTranscription.selectedApiKeyId]
-      : null;
-    const selectedPostProcessingKey = state.settings.aiPostProcessing
-      .selectedApiKeyId
-      ? state.apiKeyById[state.settings.aiPostProcessing.selectedApiKeyId]
-      : null;
-    const selectedAgentKey = state.settings.agentMode.selectedApiKeyId
-      ? state.apiKeyById[state.settings.agentMode.selectedApiKeyId]
-      : null;
-
-    return [
-      findPersonalApiKey(state.settings.apiKeys, "deepgram"),
-      findPersonalApiKey(state.settings.apiKeys, "groq"),
-      countApiKeysNeedingAttention(state.settings.apiKeys),
-      state.settings.aiTranscription.mode === "api" &&
-        selectedTranscriptionKey != null &&
-        !isApiKeyUsable(selectedTranscriptionKey),
-      state.settings.aiPostProcessing.mode === "api" &&
-        selectedPostProcessingKey != null &&
-        !isApiKeyUsable(selectedPostProcessingKey),
-      state.settings.agentMode.mode === "api" &&
-        selectedAgentKey != null &&
-        !isApiKeyUsable(selectedAgentKey),
-      state.voquillMigration.report?.removedModesReset.length ?? 0,
-      getEffectiveStylingMode(state),
-      state.local.disableAutoStyleLoading ?? false,
-      getMyUserPreferences(state)?.fastStyleShortDictationsEnabled ?? true,
-      state.settings.aiPostProcessing.mode,
-    ] as const;
-  });
+  ] = useAppStore(
+    (state) =>
+      [
+        findPersonalApiKey(state.settings.apiKeys, "deepgram"),
+        findPersonalApiKey(state.settings.apiKeys, "groq"),
+        countApiKeysNeedingAttention(state.settings.apiKeys),
+        selectedKeyNeedsAttention(
+          state.apiKeyById,
+          state.settings.aiTranscription.mode,
+          state.settings.aiTranscription.selectedApiKeyId,
+        ),
+        selectedKeyNeedsAttention(
+          state.apiKeyById,
+          state.settings.aiPostProcessing.mode,
+          state.settings.aiPostProcessing.selectedApiKeyId,
+        ),
+        selectedKeyNeedsAttention(
+          state.apiKeyById,
+          state.settings.agentMode.mode,
+          state.settings.agentMode.selectedApiKeyId,
+        ),
+        state.voquillMigration.report?.removedModesReset.length ?? 0,
+        getEffectiveStylingMode(state),
+        state.local.disableAutoStyleLoading ?? false,
+        getMyUserPreferences(state)?.fastStyleShortDictationsEnabled ?? true,
+        state.settings.aiPostProcessing.mode,
+      ] as const,
+  );
 
   const handleStylingModeChange = (value: StylingMode) => {
     logOnRejection(setStylingMode(value), "settings page: setStylingMode");
@@ -169,19 +203,10 @@ export default function AiModelsSettingsPage() {
 
   return (
     <>
-      {attentionKeyCount > 0 && (
-        <Alert severity="warning" sx={{ mb: 3, boxShadow: "none" }}>
-          <FormattedMessage
-            defaultMessage="{count, plural, one {# saved API key cannot be unlocked and needs to be re-entered before it can be used.} other {# saved API keys cannot be unlocked and need to be re-entered before they can be used.}}"
-            values={{ count: attentionKeyCount }}
-          />
-        </Alert>
-      )}
-      {attentionKeyCount === 0 && removedCloudModesCount > 0 && (
-        <Alert severity="info" sx={{ mb: 3, boxShadow: "none" }}>
-          <FormattedMessage defaultMessage="Previous Voquill Cloud mode selections were reset to local or off during migration. Choose a local model or personal API provider below." />
-        </Alert>
-      )}
+      <AiModelsAttentionBanner
+        attentionKeyCount={attentionKeyCount}
+        removedCloudModesCount={removedCloudModesCount}
+      />
       <SettingGroup title={<FormattedMessage defaultMessage="Transcription" />}>
         <SettingRow
           settingKey="deepgram_api_key"

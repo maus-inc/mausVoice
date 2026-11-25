@@ -39,11 +39,7 @@ const parseOpenRouterConfig = (
   }
 };
 
-const fromLocalApiKey = (apiKey: LocalApiKey): ApiKey => ({
-  id: apiKey.id,
-  name: apiKey.name,
-  provider: apiKey.provider,
-  createdAt: dayjs(apiKey.createdAt).toISOString(),
+const extractOptionalLocalApiKeyFields = (apiKey: LocalApiKey) => ({
   keySuffix: apiKey.keySuffix ?? null,
   keyFull: apiKey.keyFull ?? null,
   credentialStatus: apiKey.credentialStatus,
@@ -55,6 +51,14 @@ const fromLocalApiKey = (apiKey: LocalApiKey): ApiKey => ({
   azureRegion: apiKey.azureRegion ?? null,
   includeV1Path: apiKey.includeV1Path ?? null,
   transcriptionPath: apiKey.transcriptionPath ?? null,
+});
+
+const fromLocalApiKey = (apiKey: LocalApiKey): ApiKey => ({
+  id: apiKey.id,
+  name: apiKey.name,
+  provider: apiKey.provider,
+  createdAt: dayjs(apiKey.createdAt).toISOString(),
+  ...extractOptionalLocalApiKeyFields(apiKey),
 });
 
 export type CreateApiKeyPayload = {

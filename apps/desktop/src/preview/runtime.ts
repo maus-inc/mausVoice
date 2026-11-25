@@ -367,6 +367,13 @@ const toLocalTone = (tone: PreviewData["customTones"][number]): WireRecord => ({
   exampleInputOutput: tone.exampleInputOutput ?? null,
 });
 
+const toLocalApiKeyCredentialFields = (
+  apiKey: PreviewData["apiKeys"][number],
+): WireRecord => ({
+  credentialStatus: apiKey.credentialStatus ?? "usable",
+  credentialIssue: apiKey.credentialIssue ?? null,
+});
+
 const toLocalApiKey = (apiKey: PreviewData["apiKeys"][number]): WireRecord => ({
   id: apiKey.id,
   name: apiKey.name,
@@ -374,8 +381,7 @@ const toLocalApiKey = (apiKey: PreviewData["apiKeys"][number]): WireRecord => ({
   createdAt: new Date(apiKey.createdAt).valueOf(),
   keySuffix: apiKey.keySuffix ?? null,
   keyFull: apiKey.keyFull ?? null,
-  credentialStatus: apiKey.credentialStatus ?? "usable",
-  credentialIssue: apiKey.credentialIssue ?? null,
+  ...toLocalApiKeyCredentialFields(apiKey),
   transcriptionModel: apiKey.transcriptionModel ?? null,
   postProcessingModel: apiKey.postProcessingModel ?? null,
   openRouterConfig: apiKey.openRouterConfig

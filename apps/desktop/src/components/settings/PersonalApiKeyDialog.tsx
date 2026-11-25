@@ -90,7 +90,45 @@ const PROVIDER_COPY: Record<PersonalApiKeyProvider, ProviderCopy> = {
  * controls, and the page used to carry a copy of each. The provider decides the
  * copy, the console link and the action; everything else is shared.
  */
-export const PersonalApiKeyDialog = ({
+const PersonalKeyAttentionAlert = ({
+  issue,
+}: {
+  issue: ReturnType<typeof getApiKeyCredentialIssue>;
+}) => (
+  <Alert severity="warning" sx={{ boxShadow: "none" }}>
+    {issue === "legacy_encryption" ? (
+      <FormattedMessage defaultMessage="This key was imported from Voquill's older encryption format and could not be unlocked. Enter your key again to re-encrypt it with mausVoice." />
+    ) : issue === "decryption_failed" ? (
+      <FormattedMessage defaultMessage="The saved key could not be decrypted on this computer. Enter your key again to replace it." />
+    ) : (
+      <FormattedMessage defaultMessage="The saved key configuration is incomplete or invalid. Enter a valid key to continue." />
+    )}
+  </Alert>
+);
+
+const PersonalKeyTestAlert = ({
+  outcome,
+}: {
+  outcome: "success" | "error" | null;
+}) => {
+  if (outcome === "success") {
+    return (
+      <Alert severity="success" role="status">
+        <FormattedMessage defaultMessage="Key verified." />
+      </Alert>
+    );
+  }
+  if (outcome === "error") {
+    return (
+      <Alert severity="error" role="status">
+        <FormattedMessage defaultMessage="Could not verify this key. Check the key and try again." />
+      </Alert>
+    );
+  }
+  return null;
+};
+
+const usePersonalApiKeyForm = ({
   provider,
   open,
   onClose,
@@ -101,41 +139,36 @@ export const PersonalApiKeyDialog = ({
 }) => {
   const intl = useIntl();
   const copy = PROVIDER_COPY[provider];
-  const currentKey = useAppStore((state) =>
-    findPersonalApiKey(state.settings.apiKeys, provider),
-  );
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testOutcome, setTestOutcome] = useState<"success" | "error" | null>(
     null,
   );
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const saveInFlight = useRef(false);
   const testInFlight = useRef(false);
-  const keyRef = useRef<HTMLInputElement | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (open) {
-      setValue("");
-      setErrorMessage(null);
-      setSaving(false);
-      setTesting(false);
-      setTestOutcome(null);
-    }
+    if (!open) return;
+    setValue("");
+    setErrorMessage(null);
+    setSaving(false);
+    setTesting(false);
+    setTestOutcome(null);
   }, [open, provider]);
 
+  const busy = saving || testing;
+
   const close = () => {
-    if (!saving && !saveInFlight.current && !testing && !testInFlight.current) {
+    if (!busy && !saveInFlight.current && !testInFlight.current) {
       onClose();
     }
   };
 
   const handleTest = async () => {
     const trimmed = value.trim();
-    if (!trimmed || saving || testing || testInFlight.current) {
-      return;
-    }
+    if (!trimmed || busy || testInFlight.current) return;
 
     testInFlight.current = true;
     setTesting(true);
@@ -154,9 +187,7 @@ export const PersonalApiKeyDialog = ({
 
   const save = async () => {
     const trimmed = value.trim();
-    if (!trimmed || saving || saveInFlight.current || testing) {
-      return;
-    }
+    if (!trimmed || busy || saveInFlight.current) return;
 
     saveInFlight.current = true;
     setSaving(true);
@@ -177,6 +208,48 @@ export const PersonalApiKeyDialog = ({
       setSaving(false);
     }
   };
+
+  return {
+    copy,
+    value,
+    setValue,
+    saving,
+    testing,
+    testOutcome,
+    setTestOutcome,
+    errorMessage,
+    close,
+    handleTest,
+    save,
+  };
+};
+
+export const PersonalApiKeyDialog = ({
+  provider,
+  open,
+  onClose,
+}: {
+  provider: PersonalApiKeyProvider;
+  open: boolean;
+  onClose: () => void;
+}) => {
+  const currentKey = useAppStore((state) =>
+    findPersonalApiKey(state.settings.apiKeys, provider),
+  );
+  const keyRef = useRef<HTMLInputElement | null>(null);
+  const {
+    copy,
+    value,
+    setValue,
+    saving,
+    testing,
+    testOutcome,
+    setTestOutcome,
+    errorMessage,
+    close,
+    handleTest,
+    save,
+  } = usePersonalApiKeyForm({ provider, open, onClose });
 
   const currentKeyIssue = getApiKeyCredentialIssue(currentKey);
   const currentKeyNeedsAttention = apiKeyNeedsAttention(currentKey);
@@ -226,15 +299,7 @@ export const PersonalApiKeyDialog = ({
             {copy.description}
           </Typography>
           {currentKeyNeedsAttention && (
-            <Alert severity="warning" sx={{ boxShadow: "none" }}>
-              {currentKeyIssue === "legacy_encryption" ? (
-                <FormattedMessage defaultMessage="This key was imported from Voquill's older encryption format and could not be unlocked. Enter your key again to re-encrypt it with mausVoice." />
-              ) : currentKeyIssue === "decryption_failed" ? (
-                <FormattedMessage defaultMessage="The saved key could not be decrypted on this computer. Enter your key again to replace it." />
-              ) : (
-                <FormattedMessage defaultMessage="The saved key configuration is incomplete or invalid. Enter a valid key to continue." />
-              )}
-            </Alert>
+            <PersonalKeyAttentionAlert issue={currentKeyIssue} />
           )}
           {currentKey?.keySuffix && (
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
@@ -245,16 +310,7 @@ export const PersonalApiKeyDialog = ({
             </Typography>
           )}
           {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
-          {testOutcome === "success" && (
-            <Alert severity="success" role="status">
-              <FormattedMessage defaultMessage="Key verified." />
-            </Alert>
-          )}
-          {testOutcome === "error" && (
-            <Alert severity="error" role="status">
-              <FormattedMessage defaultMessage="Could not verify this key. Check the key and try again." />
-            </Alert>
-          )}
+          <PersonalKeyTestAlert outcome={testOutcome} />
           <TextField
             inputRef={keyRef}
             fullWidth

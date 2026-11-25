@@ -57,8 +57,6 @@ export const loadVoquillMigrationStatus = async (
   return loadPromise;
 };
 
-export { refreshVoquillMigrationStatusIfActive } from "./voquill-migration-refresh";
-
 export const dismissVoquillMigration =
   async (): Promise<VoquillMigrationReport | null> => {
     if (getAppState().voquillMigration.dismissing) {

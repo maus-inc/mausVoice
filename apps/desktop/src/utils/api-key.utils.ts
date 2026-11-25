@@ -5,11 +5,46 @@ import type {
   ApiKeyProvider,
 } from "@maus-inc/types";
 
-export const KEYLESS_API_KEY_PROVIDERS = new Set<ApiKeyProvider>([
+const KEYLESS_API_KEY_PROVIDERS = new Set<ApiKeyProvider>([
   "ollama",
   "openai-compatible",
   "speaches",
 ]);
+
+type CredentialInspectableKey = Pick<
+  ApiKey,
+  "provider" | "keyFull" | "credentialStatus" | "baseUrl" | "azureRegion"
+>;
+
+const EXPLICIT_CREDENTIAL_STATUSES = new Set<ApiKeyCredentialStatus>([
+  "usable",
+  "needs_reentry",
+  "invalid_format",
+]);
+
+const isBlankOptionalString = (value: string | null | undefined): boolean =>
+  value !== undefined && (!value || value.trim().length === 0);
+
+const hasMissingProviderConfig = (apiKey: CredentialInspectableKey): boolean =>
+  (apiKey.provider === "openai-compatible" &&
+    isBlankOptionalString(apiKey.baseUrl)) ||
+  (apiKey.provider === "azure" && isBlankOptionalString(apiKey.azureRegion));
+
+const inferKeyValueStatus = (
+  apiKey: CredentialInspectableKey,
+): ApiKeyCredentialStatus => {
+  if (apiKey.keyFull === undefined) {
+    return "usable";
+  }
+  const requiresKey = !KEYLESS_API_KEY_PROVIDERS.has(apiKey.provider);
+  if (!requiresKey) {
+    return "usable";
+  }
+  if (apiKey.keyFull === null) {
+    return "needs_reentry";
+  }
+  return apiKey.keyFull.trim().length === 0 ? "invalid_format" : "usable";
+};
 
 /**
  * Resolves the truthful usability status of a stored API key.
@@ -23,65 +58,26 @@ export const KEYLESS_API_KEY_PROVIDERS = new Set<ApiKeyProvider>([
  * explicitly supplied `keyFull` value.
  */
 export const getApiKeyCredentialStatus = (
-  apiKey:
-    | Pick<
-        ApiKey,
-        "provider" | "keyFull" | "credentialStatus" | "baseUrl" | "azureRegion"
-      >
-    | null
-    | undefined,
+  apiKey: CredentialInspectableKey | null | undefined,
 ): ApiKeyCredentialStatus => {
   if (!apiKey) {
     return "invalid_format";
   }
-
-  if (apiKey.credentialStatus === "needs_reentry") {
-    return "needs_reentry";
+  if (
+    apiKey.credentialStatus &&
+    EXPLICIT_CREDENTIAL_STATUSES.has(apiKey.credentialStatus)
+  ) {
+    return apiKey.credentialStatus;
   }
-
-  if (apiKey.credentialStatus === "invalid_format") {
+  if (hasMissingProviderConfig(apiKey)) {
     return "invalid_format";
   }
-
-  if (apiKey.credentialStatus === "usable") {
-    return "usable";
-  }
-
-  // Fallback when `credentialStatus` was omitted by a caller/test fixture.
-  if (apiKey.provider === "openai-compatible" && apiKey.baseUrl !== undefined) {
-    if (!apiKey.baseUrl || apiKey.baseUrl.trim().length === 0) {
-      return "invalid_format";
-    }
-  }
-  if (apiKey.provider === "azure" && apiKey.azureRegion !== undefined) {
-    if (!apiKey.azureRegion || apiKey.azureRegion.trim().length === 0) {
-      return "invalid_format";
-    }
-  }
-  if (apiKey.keyFull !== undefined) {
-    const requiresKey = !KEYLESS_API_KEY_PROVIDERS.has(apiKey.provider);
-    if (apiKey.keyFull === null) {
-      return requiresKey ? "needs_reentry" : "usable";
-    }
-    if (requiresKey && apiKey.keyFull.trim().length === 0) {
-      return "invalid_format";
-    }
-  }
-
-  return "usable";
+  return inferKeyValueStatus(apiKey);
 };
 
 export const getApiKeyCredentialIssue = (
   apiKey:
-    | Pick<
-        ApiKey,
-        | "provider"
-        | "keyFull"
-        | "credentialStatus"
-        | "credentialIssue"
-        | "baseUrl"
-        | "azureRegion"
-      >
+    | (CredentialInspectableKey & Pick<ApiKey, "credentialIssue">)
     | null
     | undefined,
 ): ApiKeyCredentialIssue | null => {
@@ -97,55 +93,37 @@ export const getApiKeyCredentialIssue = (
   }
   if (
     apiKey.provider === "openai-compatible" &&
-    apiKey.baseUrl !== undefined &&
-    (!apiKey.baseUrl || apiKey.baseUrl.trim().length === 0)
+    isBlankOptionalString(apiKey.baseUrl)
   ) {
     return "missing_endpoint";
   }
   if (
     apiKey.provider === "azure" &&
-    apiKey.azureRegion !== undefined &&
-    (!apiKey.azureRegion || apiKey.azureRegion.trim().length === 0)
+    isBlankOptionalString(apiKey.azureRegion)
   ) {
     return "missing_region";
   }
-  if (status === "needs_reentry") {
-    return "decryption_failed";
-  }
-  return "invalid_key_format";
+  return status === "needs_reentry"
+    ? "decryption_failed"
+    : "invalid_key_format";
 };
 
 export const isApiKeyUsable = (
-  apiKey:
-    | Pick<
-        ApiKey,
-        "provider" | "keyFull" | "credentialStatus" | "baseUrl" | "azureRegion"
-      >
-    | null
-    | undefined,
+  apiKey: CredentialInspectableKey | null | undefined,
 ): boolean => Boolean(apiKey) && getApiKeyCredentialStatus(apiKey) === "usable";
 
 export const apiKeyNeedsAttention = (
-  apiKey:
-    | Pick<
-        ApiKey,
-        "provider" | "keyFull" | "credentialStatus" | "baseUrl" | "azureRegion"
-      >
-    | null
-    | undefined,
+  apiKey: CredentialInspectableKey | null | undefined,
 ): boolean => Boolean(apiKey) && getApiKeyCredentialStatus(apiKey) !== "usable";
 
 export const apiKeyNeedsReentry = (
-  apiKey:
-    | Pick<
-        ApiKey,
-        "provider" | "keyFull" | "credentialStatus" | "baseUrl" | "azureRegion"
-      >
-    | null
-    | undefined,
+  apiKey: CredentialInspectableKey | null | undefined,
 ): boolean =>
   Boolean(apiKey) && getApiKeyCredentialStatus(apiKey) === "needs_reentry";
 
 export const countApiKeysNeedingAttention = (
-  apiKeys: readonly ApiKey[],
+  apiKeys: readonly Pick<
+    ApiKey,
+    "provider" | "keyFull" | "credentialStatus" | "baseUrl" | "azureRegion"
+  >[],
 ): number => apiKeys.filter((apiKey) => apiKeyNeedsAttention(apiKey)).length;

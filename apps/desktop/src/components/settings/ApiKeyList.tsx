@@ -289,6 +289,28 @@ type EditApiKeyCardProps = {
   context: ApiKeyListContext;
 };
 
+const EditApiKeyAttentionAlert = ({ apiKey }: { apiKey: SettingsApiKey }) => {
+  if (!apiKeyNeedsAttention(apiKey)) {
+    return null;
+  }
+  const issue = getApiKeyCredentialIssue(apiKey);
+  return (
+    <Alert severity="warning" sx={{ py: 0.5, boxShadow: "none" }}>
+      {issue === "legacy_encryption" ? (
+        <FormattedMessage defaultMessage="This key was imported from Voquill's older encryption format and could not be unlocked. Enter your key again to re-encrypt it with mausVoice." />
+      ) : issue === "decryption_failed" ? (
+        <FormattedMessage defaultMessage="The saved key could not be decrypted on this computer. Enter your key again to replace it." />
+      ) : issue === "missing_endpoint" ? (
+        <FormattedMessage defaultMessage="Enter a valid endpoint URL to use this provider." />
+      ) : issue === "missing_region" ? (
+        <FormattedMessage defaultMessage="Enter an Azure region to use this provider." />
+      ) : (
+        <FormattedMessage defaultMessage="The saved key configuration is incomplete or invalid. Enter a valid key to continue." />
+      )}
+    </Alert>
+  );
+};
+
 const EditApiKeyCard = ({
   apiKey,
   onSave,
@@ -424,21 +446,7 @@ const EditApiKeyCard = ({
           />
         </Typography>
       </Stack>
-      {apiKeyNeedsAttention(apiKey) && (
-        <Alert severity="warning" sx={{ py: 0.5, boxShadow: "none" }}>
-          {getApiKeyCredentialIssue(apiKey) === "legacy_encryption" ? (
-            <FormattedMessage defaultMessage="This key was imported from Voquill's older encryption format and could not be unlocked. Enter your key again to re-encrypt it with mausVoice." />
-          ) : getApiKeyCredentialIssue(apiKey) === "decryption_failed" ? (
-            <FormattedMessage defaultMessage="The saved key could not be decrypted on this computer. Enter your key again to replace it." />
-          ) : getApiKeyCredentialIssue(apiKey) === "missing_endpoint" ? (
-            <FormattedMessage defaultMessage="Enter a valid endpoint URL to use this provider." />
-          ) : getApiKeyCredentialIssue(apiKey) === "missing_region" ? (
-            <FormattedMessage defaultMessage="Enter an Azure region to use this provider." />
-          ) : (
-            <FormattedMessage defaultMessage="The saved key configuration is incomplete or invalid. Enter a valid key to continue." />
-          )}
-        </Alert>
-      )}
+      <EditApiKeyAttentionAlert apiKey={apiKey} />
       <TextField
         label={<FormattedMessage defaultMessage="Key name" />}
         value={name}
@@ -749,6 +757,99 @@ const ApiKeyCardAction = ({
   </Tooltip>
 );
 
+const ApiKeyCardAttentionMessage = ({
+  issue,
+}: {
+  issue: ReturnType<typeof getApiKeyCredentialIssue>;
+}) => {
+  switch (issue) {
+    case "legacy_encryption":
+      return (
+        <FormattedMessage defaultMessage="Imported from Voquill's older encryption format. Re-enter this key to unlock it." />
+      );
+    case "decryption_failed":
+      return (
+        <FormattedMessage defaultMessage="Could not decrypt the saved key on this computer. Re-enter it to continue." />
+      );
+    case "missing_endpoint":
+      return (
+        <FormattedMessage defaultMessage="Enter a valid endpoint URL to use this provider." />
+      );
+    case "missing_region":
+      return (
+        <FormattedMessage defaultMessage="Enter an Azure region to use this provider." />
+      );
+    default:
+      return (
+        <FormattedMessage defaultMessage="This saved key is incomplete or invalid." />
+      );
+  }
+};
+
+const ApiKeyCardAttentionBadge = ({
+  needsAttention,
+  needsReentry,
+}: {
+  needsAttention: boolean;
+  needsReentry: boolean;
+}) =>
+  needsAttention ? (
+    <Chip
+      size="small"
+      color="warning"
+      label={
+        needsReentry ? (
+          <FormattedMessage defaultMessage="Re-enter key" />
+        ) : (
+          <FormattedMessage defaultMessage="Needs attention" />
+        )
+      }
+    />
+  ) : null;
+
+const ApiKeyCardAttentionAlert = ({
+  apiKey,
+  needsReentry,
+  disabled,
+  onEdit,
+}: {
+  apiKey: SettingsApiKey;
+  needsReentry: boolean;
+  disabled: boolean;
+  onEdit: () => void;
+}) => (
+  <Alert
+    severity="warning"
+    sx={{
+      py: 0.5,
+      boxShadow: "none",
+      alignItems: "center",
+      "& .MuiAlert-action": {
+        pt: 0,
+        alignItems: "center",
+        pl: 1.5,
+      },
+    }}
+    action={
+      <Button
+        size="small"
+        color="inherit"
+        onClick={onEdit}
+        disabled={disabled}
+        sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
+      >
+        {needsReentry ? (
+          <FormattedMessage defaultMessage="Re-enter key" />
+        ) : (
+          <FormattedMessage defaultMessage="Edit" />
+        )}
+      </Button>
+    }
+  >
+    <ApiKeyCardAttentionMessage issue={getApiKeyCredentialIssue(apiKey)} />
+  </Alert>
+);
+
 const ApiKeyCard = ({
   apiKey,
   selected,
@@ -781,7 +882,6 @@ const ApiKeyCard = ({
   const currentModel = getModelForContext(apiKey, context);
   const needsAttention = apiKeyNeedsAttention(apiKey);
   const needsReentry = apiKeyNeedsReentry(apiKey);
-  const credentialIssue = getApiKeyCredentialIssue(apiKey);
 
   return (
     <Paper
@@ -884,19 +984,10 @@ const ApiKeyCard = ({
               >
                 {apiKey.name}
               </Typography>
-              {needsAttention && (
-                <Chip
-                  size="small"
-                  color="warning"
-                  label={
-                    needsReentry ? (
-                      <FormattedMessage defaultMessage="Re-enter key" />
-                    ) : (
-                      <FormattedMessage defaultMessage="Needs attention" />
-                    )
-                  }
-                />
-              )}
+              <ApiKeyCardAttentionBadge
+                needsAttention={needsAttention}
+                needsReentry={needsReentry}
+              />
               {selected && (
                 <Check
                   size={16}
@@ -977,46 +1068,12 @@ const ApiKeyCard = ({
         </Stack>
       </Stack>
       {needsAttention && (
-        <Alert
-          severity="warning"
-          sx={{
-            py: 0.5,
-            boxShadow: "none",
-            alignItems: "center",
-            "& .MuiAlert-action": {
-              pt: 0,
-              alignItems: "center",
-              pl: 1.5,
-            },
-          }}
-          action={
-            <Button
-              size="small"
-              color="inherit"
-              onClick={onEdit}
-              disabled={deleting || testing}
-              sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
-            >
-              {needsReentry ? (
-                <FormattedMessage defaultMessage="Re-enter key" />
-              ) : (
-                <FormattedMessage defaultMessage="Edit" />
-              )}
-            </Button>
-          }
-        >
-          {credentialIssue === "legacy_encryption" ? (
-            <FormattedMessage defaultMessage="Imported from Voquill's older encryption format. Re-enter this key to unlock it." />
-          ) : credentialIssue === "decryption_failed" ? (
-            <FormattedMessage defaultMessage="Could not decrypt the saved key on this computer. Re-enter it to continue." />
-          ) : credentialIssue === "missing_endpoint" ? (
-            <FormattedMessage defaultMessage="Enter a valid endpoint URL to use this provider." />
-          ) : credentialIssue === "missing_region" ? (
-            <FormattedMessage defaultMessage="Enter an Azure region to use this provider." />
-          ) : (
-            <FormattedMessage defaultMessage="This saved key is incomplete or invalid." />
-          )}
-        </Alert>
+        <ApiKeyCardAttentionAlert
+          apiKey={apiKey}
+          needsReentry={needsReentry}
+          disabled={deleting || testing}
+          onEdit={onEdit}
+        />
       )}
       <ModelPickerForProvider
         apiKey={apiKey}

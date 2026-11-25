@@ -10,7 +10,7 @@ export const LEGACY_ASSISTANT_MODE_ENABLED_KEY =
   "voquill:assistant-mode-enabled";
 export const LEGACY_POWER_MODE_ENABLED_KEY = "voquill:power-mode-enabled";
 
-export const LEGACY_CHECKLIST_STORAGE_MAPPINGS: ReadonlyArray<{
+const LEGACY_CHECKLIST_STORAGE_MAPPINGS: ReadonlyArray<{
   legacyKey: string;
   currentKey: string;
 }> = [
@@ -46,6 +46,9 @@ const isStringRecord = (value: unknown): value is Record<string, string> =>
   isPlainObject(value) &&
   Object.values(value).every((entry) => typeof entry === "string");
 
+const isNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0;
+
 const isTimingAggregateRecord = (
   value: unknown,
 ): value is LocalState["providerTiming"] => {
@@ -60,6 +63,71 @@ const isTimingAggregateRecord = (
   );
 };
 
+type LocalFieldSpec = {
+  key: keyof LocalState;
+  validate: (value: unknown) => boolean;
+  clone?: (value: unknown) => unknown;
+};
+
+const LOCAL_STATE_FIELD_SPECS: readonly LocalFieldSpec[] = [
+  { key: "assistantModeEnabled", validate: (v) => typeof v === "boolean" },
+  { key: "powerModeEnabled", validate: (v) => typeof v === "boolean" },
+  { key: "disablePillRewards", validate: (v) => typeof v === "boolean" },
+  {
+    key: "hasHiddenTrialExtensionCard",
+    validate: (v) => typeof v === "boolean",
+  },
+  { key: "disableAutoStyleLoading", validate: (v) => typeof v === "boolean" },
+  {
+    key: "lastDictationReminderShownAt",
+    validate: isFiniteNumberOrNull,
+  },
+  { key: "lastDictatedAt", validate: isFiniteNumberOrNull },
+  {
+    key: "lastSeenTrialExtensionClaimedAt",
+    validate: isStringOrNull,
+  },
+  { key: "featureSeenAt", validate: isStringOrNull },
+  { key: "onboardingFlowVersion", validate: isNonNegativeInteger },
+  {
+    key: "dismissedTipIds",
+    validate: isStringArray,
+    clone: (v) => [...(v as string[])],
+  },
+  {
+    key: "completedPrerequisites",
+    validate: isStringArray,
+    clone: (v) => [...(v as string[])],
+  },
+  { key: "onboardingNameDraft", validate: (v) => typeof v === "string" },
+  { key: "onboardingNameDraftUserId", validate: isStringOrNull },
+  { key: "onboardingSessionUserId", validate: isStringOrNull },
+  { key: "providerTiming", validate: isTimingAggregateRecord },
+  {
+    key: "profileImageByUserId",
+    validate: isStringRecord,
+    clone: (v) => ({ ...(v as Record<string, string>) }),
+  },
+];
+
+const parseJsonObject = (raw: string): Record<string, unknown> | null => {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isPlainObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const extractCandidateLocal = (
+  parsed: Record<string, unknown>,
+): Record<string, unknown> | null => {
+  if (isPlainObject(parsed.state) && isPlainObject(parsed.state.local)) {
+    return parsed.state.local;
+  }
+  return isPlainObject(parsed.local) ? parsed.local : null;
+};
+
 /**
  * Validates and sanitizes a raw legacy `voquill-local-state` JSON payload into
  * a safe Zustand persisted envelope for `mausvoice-local-state`.
@@ -72,110 +140,27 @@ const isTimingAggregateRecord = (
 export const sanitizeLegacyPersistedLocalState = (
   raw: string,
 ): string | null => {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
+  const parsed = parseJsonObject(raw);
+  if (!parsed) {
     return null;
   }
 
-  if (!isPlainObject(parsed)) {
+  const candidateLocal = extractCandidateLocal(parsed);
+  if (!candidateLocal) {
     return null;
   }
 
-  let candidateLocal: unknown = null;
-  if (isPlainObject(parsed.state) && isPlainObject(parsed.state.local)) {
-    candidateLocal = parsed.state.local;
-  } else if (isPlainObject(parsed.local)) {
-    candidateLocal = parsed.local;
-  }
-
-  if (!isPlainObject(candidateLocal)) {
-    return null;
-  }
-
-  const sanitized: Partial<LocalState> = {
+  const sanitized: Record<string, unknown> = {
     ephemeralSessionActive: INITIAL_LOCAL_STATE.ephemeralSessionActive,
   };
   let acceptedFieldCount = 0;
 
-  const copyBoolean = (
-    key:
-      | "assistantModeEnabled"
-      | "powerModeEnabled"
-      | "disablePillRewards"
-      | "hasHiddenTrialExtensionCard"
-      | "disableAutoStyleLoading",
-  ) => {
-    const value = candidateLocal[key];
-    if (typeof value === "boolean") {
-      sanitized[key] = value;
+  for (const spec of LOCAL_STATE_FIELD_SPECS) {
+    const value = candidateLocal[spec.key];
+    if (spec.validate(value)) {
+      sanitized[spec.key] = spec.clone ? spec.clone(value) : value;
       acceptedFieldCount += 1;
     }
-  };
-
-  copyBoolean("assistantModeEnabled");
-  copyBoolean("powerModeEnabled");
-  copyBoolean("disablePillRewards");
-  copyBoolean("hasHiddenTrialExtensionCard");
-  copyBoolean("disableAutoStyleLoading");
-
-  if (isFiniteNumberOrNull(candidateLocal.lastDictationReminderShownAt)) {
-    sanitized.lastDictationReminderShownAt =
-      candidateLocal.lastDictationReminderShownAt;
-    acceptedFieldCount += 1;
-  }
-  if (isFiniteNumberOrNull(candidateLocal.lastDictatedAt)) {
-    sanitized.lastDictatedAt = candidateLocal.lastDictatedAt;
-    acceptedFieldCount += 1;
-  }
-  if (isStringOrNull(candidateLocal.lastSeenTrialExtensionClaimedAt)) {
-    sanitized.lastSeenTrialExtensionClaimedAt =
-      candidateLocal.lastSeenTrialExtensionClaimedAt;
-    acceptedFieldCount += 1;
-  }
-  if (isStringOrNull(candidateLocal.featureSeenAt)) {
-    sanitized.featureSeenAt = candidateLocal.featureSeenAt;
-    acceptedFieldCount += 1;
-  }
-  if (
-    typeof candidateLocal.onboardingFlowVersion === "number" &&
-    Number.isInteger(candidateLocal.onboardingFlowVersion) &&
-    candidateLocal.onboardingFlowVersion >= 0
-  ) {
-    sanitized.onboardingFlowVersion = candidateLocal.onboardingFlowVersion;
-    acceptedFieldCount += 1;
-  }
-  if (isStringArray(candidateLocal.dismissedTipIds)) {
-    sanitized.dismissedTipIds = [...candidateLocal.dismissedTipIds];
-    acceptedFieldCount += 1;
-  }
-  if (isStringArray(candidateLocal.completedPrerequisites)) {
-    sanitized.completedPrerequisites = [
-      ...candidateLocal.completedPrerequisites,
-    ];
-    acceptedFieldCount += 1;
-  }
-  if (typeof candidateLocal.onboardingNameDraft === "string") {
-    sanitized.onboardingNameDraft = candidateLocal.onboardingNameDraft;
-    acceptedFieldCount += 1;
-  }
-  if (isStringOrNull(candidateLocal.onboardingNameDraftUserId)) {
-    sanitized.onboardingNameDraftUserId =
-      candidateLocal.onboardingNameDraftUserId;
-    acceptedFieldCount += 1;
-  }
-  if (isStringOrNull(candidateLocal.onboardingSessionUserId)) {
-    sanitized.onboardingSessionUserId = candidateLocal.onboardingSessionUserId;
-    acceptedFieldCount += 1;
-  }
-  if (isTimingAggregateRecord(candidateLocal.providerTiming)) {
-    sanitized.providerTiming = candidateLocal.providerTiming;
-    acceptedFieldCount += 1;
-  }
-  if (isStringRecord(candidateLocal.profileImageByUserId)) {
-    sanitized.profileImageByUserId = { ...candidateLocal.profileImageByUserId };
-    acceptedFieldCount += 1;
   }
 
   // If the parsed object held zero recognizable LocalState keys (e.g. an empty
@@ -211,6 +196,54 @@ const parseJsonBoolean = (raw: string): boolean | null => {
   }
 };
 
+type StorageAccess = Pick<Storage, "getItem" | "setItem">;
+
+const migrateSingleStorageKey = ({
+  storage,
+  write,
+  legacyKey,
+  currentKey,
+  transform,
+  result,
+}: {
+  storage: StorageAccess;
+  write: (fn: () => void) => void;
+  legacyKey: string;
+  currentKey: string;
+  transform: (raw: string) => string | null;
+  result: ClientStorageMigrationResult;
+}): void => {
+  try {
+    if (storage.getItem(currentKey) !== null) {
+      result.skippedKeys.push(currentKey);
+      return;
+    }
+    const legacyRaw = storage.getItem(legacyKey);
+    if (legacyRaw === null) {
+      return;
+    }
+    const migratedValue = transform(legacyRaw);
+    if (migratedValue === null) {
+      result.invalidKeys.push(legacyKey);
+      return;
+    }
+    write(() => {
+      storage.setItem(currentKey, migratedValue);
+    });
+    result.migratedKeys.push(currentKey);
+  } catch {
+    result.invalidKeys.push(legacyKey);
+  }
+};
+
+const transformBooleanFlag = (raw: string): string | null => {
+  const parsed = parseJsonBoolean(raw);
+  return parsed === null ? null : JSON.stringify(parsed);
+};
+
+const transformThemeMode = (raw: string): string | null =>
+  VALID_THEME_MODES.has(raw) ? raw : null;
+
 /**
  * Non-destructively and idempotently migrates legacy Voquill client-side
  * `localStorage` keys into their mausVoice equivalents.
@@ -222,7 +255,7 @@ const parseJsonBoolean = (raw: string): boolean | null => {
  *   cannot poison mausVoice state.
  */
 export const migrateLegacyVoquillClientStorage = (
-  storage: Pick<Storage, "getItem" | "setItem">,
+  storage: StorageAccess,
   write: (fn: () => void) => void = (fn) => fn(),
   currentStateKey: string = LOCAL_STATE_STORAGE_KEY,
 ): ClientStorageMigrationResult => {
@@ -232,88 +265,49 @@ export const migrateLegacyVoquillClientStorage = (
     invalidKeys: [],
   };
 
-  // 1. Zustand persisted local slice: voquill-local-state -> mausvoice-local-state
-  try {
-    const current = storage.getItem(currentStateKey);
-    if (current !== null) {
-      result.skippedKeys.push(currentStateKey);
-    } else {
-      const legacy = storage.getItem(LEGACY_LOCAL_STATE_STORAGE_KEY);
-      if (legacy !== null) {
-        const sanitized = sanitizeLegacyPersistedLocalState(legacy);
-        if (sanitized !== null) {
-          write(() => {
-            storage.setItem(currentStateKey, sanitized);
-          });
-          result.migratedKeys.push(currentStateKey);
-        } else {
-          result.invalidKeys.push(LEGACY_LOCAL_STATE_STORAGE_KEY);
-        }
-      }
-    }
-  } catch {
-    result.invalidKeys.push(LEGACY_LOCAL_STATE_STORAGE_KEY);
-  }
+  migrateSingleStorageKey({
+    storage,
+    write,
+    legacyKey: LEGACY_LOCAL_STATE_STORAGE_KEY,
+    currentKey: currentStateKey,
+    transform: sanitizeLegacyPersistedLocalState,
+    result,
+  });
 
-  // 2. Onboarding / getting-started checklist booleans
   for (const { legacyKey, currentKey } of LEGACY_CHECKLIST_STORAGE_MAPPINGS) {
-    try {
-      if (storage.getItem(currentKey) !== null) {
-        result.skippedKeys.push(currentKey);
-        continue;
-      }
-      const legacyRaw = storage.getItem(legacyKey);
-      if (legacyRaw === null) continue;
-      const parsedBool = parseJsonBoolean(legacyRaw);
-      if (parsedBool === null) {
-        result.invalidKeys.push(legacyKey);
-        continue;
-      }
-      write(() => {
-        storage.setItem(currentKey, JSON.stringify(parsedBool));
-      });
-      result.migratedKeys.push(currentKey);
-    } catch {
-      result.invalidKeys.push(legacyKey);
-    }
+    migrateSingleStorageKey({
+      storage,
+      write,
+      legacyKey,
+      currentKey,
+      transform: transformBooleanFlag,
+      result,
+    });
   }
 
-  // 3. Theme mode: legacy `mode` -> `mui-mode`
-  try {
-    if (storage.getItem(THEME_MODE_STORAGE_KEY) !== null) {
-      result.skippedKeys.push(THEME_MODE_STORAGE_KEY);
-    } else {
-      const legacyMode = storage.getItem(LEGACY_THEME_MODE_STORAGE_KEY);
-      if (legacyMode !== null) {
-        if (VALID_THEME_MODES.has(legacyMode)) {
-          write(() => {
-            storage.setItem(THEME_MODE_STORAGE_KEY, legacyMode);
-          });
-          result.migratedKeys.push(THEME_MODE_STORAGE_KEY);
-        } else {
-          result.invalidKeys.push(LEGACY_THEME_MODE_STORAGE_KEY);
-        }
-      }
-    }
-  } catch {
-    result.invalidKeys.push(LEGACY_THEME_MODE_STORAGE_KEY);
-  }
+  migrateSingleStorageKey({
+    storage,
+    write,
+    legacyKey: LEGACY_THEME_MODE_STORAGE_KEY,
+    currentKey: THEME_MODE_STORAGE_KEY,
+    transform: transformThemeMode,
+    result,
+  });
 
   return result;
 };
 
 /**
- * Reads a legacy Voquill boolean flag (`voquill:assistant-mode-enabled`,
- * `voquill:power-mode-enabled`) strictly, returning `null` if absent or invalid.
+ * Reads a legacy standalone boolean flag (`"true"` / `"false"`) from storage
+ * without mutating the source key. Returns `null` when absent or malformed.
  */
 export const readValidatedLegacyBooleanFlag = (
   storage: Pick<Storage, "getItem">,
-  key: string,
+  legacyKey: string,
 ): boolean | null => {
   try {
-    const raw = storage.getItem(key);
-    if (raw === null) return null;
-    return parseJsonBoolean(raw);
+    const raw = storage.getItem(legacyKey);
+    return raw === null ? null : parseJsonBoolean(raw);
   } catch {
     return null;
   }

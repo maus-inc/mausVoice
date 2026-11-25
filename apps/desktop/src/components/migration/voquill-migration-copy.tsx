@@ -3,11 +3,94 @@ import type {
   VoquillMigrationPhaseStatus,
   VoquillMigrationReport,
 } from "@maus-inc/desktop-native-apis";
-import type { IntlShape } from "react-intl";
+import { ArrowRight, RefreshCw } from "lucide-react";
+import { Button, CircularProgress } from "@mui/material";
+import { useCallback } from "react";
+import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
+import { useNavigate } from "react-router-dom";
+import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { runVoquillMigrationRetry } from "../../actions/voquill-migration.actions";
+import { settingsPagePath } from "../settings/settings-routes";
 
-export const hasVoquillMigrationActionItems = (
-  report: VoquillMigrationReport,
-): boolean => report.actionItems.length > 0;
+export const useVoquillMigrationRetry = () => {
+  const intl = useIntl();
+  return useCallback(async () => {
+    try {
+      const updated = await runVoquillMigrationRetry();
+      if (updated.status === "completed") {
+        showSnackbar(
+          intl.formatMessage({ defaultMessage: "Voquill import completed." }),
+          { mode: "success" },
+        );
+      } else if (updated.status === "skipped_existing_profile") {
+        showSnackbar(
+          intl.formatMessage({
+            defaultMessage: "Kept your existing mausVoice profile.",
+          }),
+          { mode: "info" },
+        );
+      }
+    } catch {
+      showErrorSnackbar(
+        intl.formatMessage({
+          defaultMessage: "Could not retry the Voquill import.",
+        }),
+      );
+    }
+  }, [intl]);
+};
+
+export const VoquillMigrationReviewKeysButton = ({
+  variant,
+}: {
+  variant: "contained" | "outlined";
+}) => {
+  const navigate = useNavigate();
+  return (
+    <Button
+      size="small"
+      variant={variant}
+      endIcon={<ArrowRight size={14} strokeWidth={1.9} />}
+      onClick={() => navigate(settingsPagePath("ai-models"))}
+    >
+      <FormattedMessage defaultMessage="Review API keys" />
+    </Button>
+  );
+};
+
+export const VoquillMigrationRetryButton = ({
+  variant,
+  isPartial,
+  retrying,
+  disabled,
+  onRetry,
+}: {
+  variant: "contained" | "outlined";
+  isPartial: boolean;
+  retrying: boolean;
+  disabled?: boolean;
+  onRetry: () => void;
+}) => (
+  <Button
+    size="small"
+    variant={variant}
+    onClick={onRetry}
+    disabled={disabled || retrying}
+    startIcon={
+      retrying ? (
+        <CircularProgress size={14} color="inherit" />
+      ) : (
+        <RefreshCw size={14} strokeWidth={1.9} />
+      )
+    }
+  >
+    {isPartial ? (
+      <FormattedMessage defaultMessage="Retry missing files" />
+    ) : (
+      <FormattedMessage defaultMessage="Retry import" />
+    )}
+  </Button>
+);
 
 export const formatVoquillMigrationCountsSummary = (
   intl: IntlShape,

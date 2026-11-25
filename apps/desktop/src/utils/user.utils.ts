@@ -299,49 +299,90 @@ export const getSelectedTranscriptionProvider = (
     : null;
 };
 
+const getExplicitUnusableApiKeyWarning = (
+  selectedApiKey: AppState["apiKeyById"][string],
+): string | null => {
+  if (
+    selectedApiKey.credentialStatus === undefined ||
+    isApiKeyUsable(selectedApiKey)
+  ) {
+    return null;
+  }
+  return apiKeyNeedsReentry(selectedApiKey)
+    ? "Selected API key must be re-entered in AI Models settings before it can be used."
+    : "Selected API key configuration is incomplete.";
+};
+
+const getGenerativeUnusableKeyWarning = (
+  selectedApiKey: AppState["apiKeyById"][string] | undefined,
+  context: string,
+): string | null => {
+  if (!selectedApiKey || isApiKeyUsable(selectedApiKey)) {
+    return null;
+  }
+  return apiKeyNeedsReentry(selectedApiKey)
+    ? `Selected API key for ${context} must be re-entered in AI Models settings before it can be used.`
+    : `Selected API key configuration for ${context} is incomplete.`;
+};
+
+const canDispatchApiTranscriptionKey = (
+  selectedApiKey: AppState["apiKeyById"][string],
+  provider: ApiKeyProvider,
+): boolean => {
+  const keylessTranscriptionProvider =
+    provider === "speaches" || provider === "openai-compatible";
+  return (
+    isApiKeyUsable(selectedApiKey) &&
+    Boolean(selectedApiKey.keyFull || keylessTranscriptionProvider)
+  );
+};
+
+const resolveApiTranscriptionPrefs = (
+  state: AppState,
+  warnings: string[],
+): TranscriptionPrefs | null => {
+  const config = state.settings.aiTranscription;
+  const selectedApiKey = getRec(state.apiKeyById, config.selectedApiKeyId);
+  const provider = selectedApiKey?.provider as ApiKeyProvider | undefined;
+  if (
+    !selectedApiKey ||
+    !provider ||
+    !TRANSCRIPTION_CAPABLE_PROVIDERS.has(provider)
+  ) {
+    warnings.push("No transcription-capable API key selected.");
+    return null;
+  }
+
+  const explicitWarning = getExplicitUnusableApiKeyWarning(selectedApiKey);
+  if (explicitWarning) {
+    warnings.push(explicitWarning);
+    return null;
+  }
+
+  if (canDispatchApiTranscriptionKey(selectedApiKey, provider)) {
+    return {
+      mode: "api",
+      provider,
+      apiKeyId: config.selectedApiKeyId!,
+      apiKeyValue: selectedApiKey.keyFull ?? "",
+      transcriptionModel: selectedApiKey.transcriptionModel ?? null,
+      warnings,
+    };
+  }
+
+  warnings.push("No API key configured for API transcription.");
+  return null;
+};
+
 export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {
   const config = state.settings.aiTranscription;
   const mode = getEffectiveTranscriptionMode(state);
   const warnings: string[] = [];
 
   if (mode === "api") {
-    const selectedApiKey = getRec(state.apiKeyById, config.selectedApiKeyId);
-    const provider = selectedApiKey?.provider as ApiKeyProvider | undefined;
-    // A stale selection (e.g. an Ollama key saved before Ollama lost
-    // transcription capability) must not reach the dispatch path. Treat it as
-    // if nothing were selected: fall back to local mode and warn, mirroring
-    // the no-API-key path.
-    const keylessTranscriptionProvider =
-      provider === "speaches" || provider === "openai-compatible";
-    if (
-      !selectedApiKey ||
-      !provider ||
-      !TRANSCRIPTION_CAPABLE_PROVIDERS.has(provider)
-    ) {
-      warnings.push("No transcription-capable API key selected.");
-    } else if (
-      selectedApiKey.credentialStatus !== undefined &&
-      !isApiKeyUsable(selectedApiKey)
-    ) {
-      warnings.push(
-        apiKeyNeedsReentry(selectedApiKey)
-          ? "Selected API key must be re-entered in AI Models settings before it can be used."
-          : "Selected API key configuration is incomplete.",
-      );
-    } else if (
-      isApiKeyUsable(selectedApiKey) &&
-      (selectedApiKey.keyFull || keylessTranscriptionProvider)
-    ) {
-      return {
-        mode: "api",
-        provider,
-        apiKeyId: config.selectedApiKeyId!,
-        apiKeyValue: selectedApiKey.keyFull ?? "",
-        transcriptionModel: selectedApiKey.transcriptionModel ?? null,
-        warnings,
-      };
-    } else {
-      warnings.push("No API key configured for API transcription.");
+    const apiPrefs = resolveApiTranscriptionPrefs(state, warnings);
+    if (apiPrefs) {
+      return apiPrefs;
     }
   }
 
@@ -395,12 +436,12 @@ const getGenPrefsInternal = ({
     const provider = selectedApiKey?.provider;
     const noKeyRequired =
       provider === "ollama" || provider === "openai-compatible";
-    if (selectedApiKey && !isApiKeyUsable(selectedApiKey)) {
-      warnings.push(
-        apiKeyNeedsReentry(selectedApiKey)
-          ? `Selected API key for ${context} must be re-entered in AI Models settings before it can be used.`
-          : `Selected API key configuration for ${context} is incomplete.`,
-      );
+    const unusableWarning = getGenerativeUnusableKeyWarning(
+      selectedApiKey,
+      context,
+    );
+    if (unusableWarning) {
+      warnings.push(unusableWarning);
     } else if (apiKey || noKeyRequired) {
       return {
         mode: "api",

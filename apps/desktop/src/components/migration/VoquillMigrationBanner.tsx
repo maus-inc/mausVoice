@@ -1,15 +1,8 @@
-import {
-  AlertTriangle,
-  ArrowRight,
-  CheckCircle2,
-  Info,
-  RefreshCw,
-  X,
-} from "lucide-react";
+import type { VoquillMigrationReport } from "@maus-inc/desktop-native-apis";
+import { AlertTriangle, CheckCircle2, Info, X } from "lucide-react";
 import {
   Box,
   Button,
-  CircularProgress,
   IconButton,
   Paper,
   Stack,
@@ -17,17 +10,137 @@ import {
 } from "@mui/material";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useNavigate } from "react-router-dom";
-import {
-  dismissVoquillMigration,
-  runVoquillMigrationRetry,
-} from "../../actions/voquill-migration.actions";
-import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { dismissVoquillMigration } from "../../actions/voquill-migration.actions";
 import { useAppStore } from "../../store";
 import { settingAnchorId, settingsPagePath } from "../settings/settings-routes";
 import {
+  VoquillMigrationRetryButton,
+  VoquillMigrationReviewKeysButton,
   formatVoquillIssueSummary,
   formatVoquillMigrationCountsSummary,
+  useVoquillMigrationRetry,
 } from "./voquill-migration-copy";
+
+type BannerTone = "error" | "warning" | "info" | "success";
+
+const resolveBannerTone = (
+  report: VoquillMigrationReport,
+  needsFollowUp: boolean,
+): BannerTone => {
+  if (report.status === "failed") return "error";
+  if (report.status === "partial" || needsFollowUp) return "warning";
+  if (report.status === "skipped_existing_profile") return "info";
+  return "success";
+};
+
+const BannerTitle = ({
+  report,
+  needsFollowUp,
+}: {
+  report: VoquillMigrationReport;
+  needsFollowUp: boolean;
+}) => {
+  if (report.status === "failed") {
+    return (
+      <FormattedMessage defaultMessage="Could not import your Voquill data" />
+    );
+  }
+  if (report.status === "partial") {
+    return (
+      <FormattedMessage defaultMessage="Imported from Voquill — some files were skipped" />
+    );
+  }
+  if (report.status === "skipped_existing_profile") {
+    return (
+      <FormattedMessage defaultMessage="Existing mausVoice profile kept" />
+    );
+  }
+  if (needsFollowUp) {
+    return (
+      <FormattedMessage defaultMessage="Imported from Voquill — action needed" />
+    );
+  }
+  return <FormattedMessage defaultMessage="Imported from Voquill" />;
+};
+
+const BannerToneIcon = ({ tone }: { tone: BannerTone }) => {
+  if (tone === "error" || tone === "warning") {
+    return <AlertTriangle size={18} strokeWidth={1.9} />;
+  }
+  if (tone === "info") {
+    return <Info size={18} strokeWidth={1.9} />;
+  }
+  return <CheckCircle2 size={18} strokeWidth={1.9} />;
+};
+
+const BannerBody = ({
+  report,
+  countsSummary,
+  primaryIssue,
+}: {
+  report: VoquillMigrationReport;
+  countsSummary: string | null;
+  primaryIssue: string | null;
+}) => {
+  const isFailureOrSkipped =
+    report.status === "failed" || report.status === "skipped_existing_profile";
+  if (isFailureOrSkipped) {
+    return (
+      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+        {primaryIssue ?? (
+          <FormattedMessage defaultMessage="Your original Voquill files were left untouched." />
+        )}
+      </Typography>
+    );
+  }
+
+  return (
+    <>
+      {countsSummary && (
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {countsSummary}
+        </Typography>
+      )}
+      {report.counts.providersNeedingAttention > 0 && (
+        <Typography
+          variant="body2"
+          sx={{ color: "text.primary", fontWeight: 500 }}
+        >
+          <FormattedMessage
+            defaultMessage="{count, plural, one {# saved API key could not be unlocked from Voquill's older encryption format and needs to be re-entered.} other {# saved API keys could not be unlocked from Voquill's older encryption format and need to be re-entered.}}"
+            values={{ count: report.counts.providersNeedingAttention }}
+          />
+        </Typography>
+      )}
+      {report.removedModesReset.length > 0 && (
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          <FormattedMessage defaultMessage="Previous Voquill Cloud settings were reset to local or off because hosted cloud mode is not included in mausVoice." />
+        </Typography>
+      )}
+      {report.status === "partial" && primaryIssue && (
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          {primaryIssue}
+        </Typography>
+      )}
+    </>
+  );
+};
+
+const isBannerVisible = (
+  report: VoquillMigrationReport | null,
+): report is VoquillMigrationReport =>
+  Boolean(
+    report &&
+    report.legacyDetected &&
+    report.status !== "not_needed" &&
+    report.dismissedAt === null,
+  );
 
 /**
  * One-time, dismissible Voquill-to-mausVoice migration summary card on Home.
@@ -42,89 +155,20 @@ export const VoquillMigrationBanner = () => {
   const report = useAppStore((state) => state.voquillMigration.report);
   const retrying = useAppStore((state) => state.voquillMigration.retrying);
   const dismissing = useAppStore((state) => state.voquillMigration.dismissing);
+  const handleRetry = useVoquillMigrationRetry();
 
-  if (
-    !report ||
-    !report.legacyDetected ||
-    report.status === "not_needed" ||
-    report.dismissedAt !== null
-  ) {
+  if (!isBannerVisible(report)) {
     return null;
   }
 
-  const needsKeyAttention = report.counts.providersNeedingAttention > 0;
-  const hasRemovedCloudModes = report.removedModesReset.length > 0;
-  const isFailure = report.status === "failed";
-  const isPartial = report.status === "partial";
-  const isSkipped = report.status === "skipped_existing_profile";
-  const isAttention =
-    isFailure || isPartial || needsKeyAttention || hasRemovedCloudModes;
-
-  const accentColor = isFailure
-    ? "error.main"
-    : isAttention
-      ? "warning.main"
-      : isSkipped
-        ? "info.main"
-        : "success.main";
-
+  const needsFollowUp =
+    report.counts.providersNeedingAttention > 0 ||
+    report.removedModesReset.length > 0;
+  const tone = resolveBannerTone(report, needsFollowUp);
   const countsSummary = formatVoquillMigrationCountsSummary(intl, report);
   const primaryIssue = report.issues[0]
     ? formatVoquillIssueSummary(intl, report.issues[0])
     : null;
-
-  const title = (() => {
-    if (isFailure) {
-      return (
-        <FormattedMessage defaultMessage="Could not import your Voquill data" />
-      );
-    }
-    if (isPartial) {
-      return (
-        <FormattedMessage defaultMessage="Imported from Voquill — some files were skipped" />
-      );
-    }
-    if (isSkipped) {
-      return (
-        <FormattedMessage defaultMessage="Existing mausVoice profile kept" />
-      );
-    }
-    if (needsKeyAttention || hasRemovedCloudModes) {
-      return (
-        <FormattedMessage defaultMessage="Imported from Voquill — action needed" />
-      );
-    }
-    return <FormattedMessage defaultMessage="Imported from Voquill" />;
-  })();
-
-  const handleDismiss = () => {
-    void dismissVoquillMigration();
-  };
-
-  const handleRetry = async () => {
-    try {
-      const updated = await runVoquillMigrationRetry();
-      if (updated.status === "completed") {
-        showSnackbar(
-          intl.formatMessage({ defaultMessage: "Voquill import completed." }),
-          { mode: "success" },
-        );
-      } else if (updated.status === "skipped_existing_profile") {
-        showSnackbar(
-          intl.formatMessage({
-            defaultMessage: "Kept your existing mausVoice profile.",
-          }),
-          { mode: "info" },
-        );
-      }
-    } catch {
-      showErrorSnackbar(
-        intl.formatMessage({
-          defaultMessage: "Could not retry the Voquill import.",
-        }),
-      );
-    }
-  };
 
   return (
     <Paper
@@ -138,11 +182,12 @@ export const VoquillMigrationBanner = () => {
         p: 2,
         borderRadius: 2,
         bgcolor: "level1",
-        borderColor: isFailure
-          ? `rgb(${theme.vars?.palette?.error.mainChannel} / 0.45)`
-          : isAttention
-            ? `rgb(${theme.vars?.palette?.warning.mainChannel} / 0.45)`
-            : "divider",
+        borderColor:
+          tone === "error"
+            ? `rgb(${theme.vars?.palette?.error.mainChannel} / 0.45)`
+            : tone === "warning"
+              ? `rgb(${theme.vars?.palette?.warning.mainChannel} / 0.45)`
+              : "divider",
       })}
     >
       <Stack spacing={1.25}>
@@ -161,76 +206,23 @@ export const VoquillMigrationBanner = () => {
           >
             <Box
               sx={{
-                color: accentColor,
+                color: `${tone}.main`,
                 display: "inline-flex",
                 mt: "2px",
                 flexShrink: 0,
               }}
             >
-              {isFailure || isAttention ? (
-                <AlertTriangle size={18} strokeWidth={1.9} />
-              ) : isSkipped ? (
-                <Info size={18} strokeWidth={1.9} />
-              ) : (
-                <CheckCircle2 size={18} strokeWidth={1.9} />
-              )}
+              <BannerToneIcon tone={tone} />
             </Box>
             <Stack spacing={0.5} sx={{ minWidth: 0 }}>
               <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                {title}
+                <BannerTitle report={report} needsFollowUp={needsFollowUp} />
               </Typography>
-
-              {isFailure || isSkipped ? (
-                <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                  {primaryIssue ?? (
-                    <FormattedMessage defaultMessage="Your original Voquill files were left untouched." />
-                  )}
-                </Typography>
-              ) : (
-                <>
-                  {countsSummary && (
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        color: "text.secondary",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {countsSummary}
-                    </Typography>
-                  )}
-                  {needsKeyAttention && (
-                    <Typography
-                      variant="body2"
-                      sx={{ color: "text.primary", fontWeight: 500 }}
-                    >
-                      <FormattedMessage
-                        defaultMessage="{count, plural, one {# saved API key could not be unlocked from Voquill's older encryption format and needs to be re-entered.} other {# saved API keys could not be unlocked from Voquill's older encryption format and need to be re-entered.}}"
-                        values={{
-                          count: report.counts.providersNeedingAttention,
-                        }}
-                      />
-                    </Typography>
-                  )}
-                  {hasRemovedCloudModes && (
-                    <Typography
-                      variant="body2"
-                      sx={{ color: "text.secondary" }}
-                    >
-                      <FormattedMessage defaultMessage="Previous Voquill Cloud settings were reset to local or off because hosted cloud mode is not included in mausVoice." />
-                    </Typography>
-                  )}
-                  {isPartial && primaryIssue && (
-                    <Typography
-                      variant="body2"
-                      sx={{ color: "text.secondary" }}
-                    >
-                      {primaryIssue}
-                    </Typography>
-                  )}
-                </>
-              )}
-
+              <BannerBody
+                report={report}
+                countsSummary={countsSummary}
+                primaryIssue={primaryIssue}
+              />
               {report.legacySourcePreserved && (
                 <Typography variant="caption" sx={{ color: "text.secondary" }}>
                   <FormattedMessage defaultMessage="Your original Voquill files were left untouched." />
@@ -241,7 +233,7 @@ export const VoquillMigrationBanner = () => {
 
           <IconButton
             size="small"
-            onClick={handleDismiss}
+            onClick={() => void dismissVoquillMigration()}
             disabled={dismissing || retrying}
             aria-label={intl.formatMessage({
               defaultMessage: "Dismiss Voquill migration notice",
@@ -262,40 +254,17 @@ export const VoquillMigrationBanner = () => {
             pl: { xs: 0, sm: 3.75 },
           }}
         >
-          {(needsKeyAttention || hasRemovedCloudModes) && (
-            <Button
-              size="small"
-              variant="contained"
-              endIcon={<ArrowRight size={14} strokeWidth={1.9} />}
-              onClick={() => navigate(settingsPagePath("ai-models"))}
-            >
-              <FormattedMessage defaultMessage="Review API keys" />
-            </Button>
+          {needsFollowUp && (
+            <VoquillMigrationReviewKeysButton variant="contained" />
           )}
           {report.canRetry && (
-            <Button
-              size="small"
-              variant={
-                needsKeyAttention || hasRemovedCloudModes
-                  ? "outlined"
-                  : "contained"
-              }
-              onClick={() => void handleRetry()}
-              disabled={retrying || dismissing}
-              startIcon={
-                retrying ? (
-                  <CircularProgress size={14} color="inherit" />
-                ) : (
-                  <RefreshCw size={14} strokeWidth={1.9} />
-                )
-              }
-            >
-              {isPartial ? (
-                <FormattedMessage defaultMessage="Retry missing files" />
-              ) : (
-                <FormattedMessage defaultMessage="Retry import" />
-              )}
-            </Button>
+            <VoquillMigrationRetryButton
+              variant={needsFollowUp ? "outlined" : "contained"}
+              isPartial={report.status === "partial"}
+              retrying={retrying}
+              disabled={dismissing}
+              onRetry={() => void handleRetry()}
+            />
           )}
           <Button
             size="small"
