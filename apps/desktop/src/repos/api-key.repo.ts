@@ -1,4 +1,10 @@
-import { ApiKey, ApiKeyProvider, OpenRouterConfig } from "@maus-inc/types";
+import {
+  ApiKey,
+  ApiKeyCredentialIssue,
+  ApiKeyCredentialStatus,
+  ApiKeyProvider,
+  OpenRouterConfig,
+} from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
@@ -11,6 +17,8 @@ type LocalApiKey = {
   createdAt: number;
   keySuffix?: string | null;
   keyFull?: string | null;
+  credentialStatus?: ApiKeyCredentialStatus;
+  credentialIssue?: ApiKeyCredentialIssue | null;
   transcriptionModel?: string | null;
   postProcessingModel?: string | null;
   openRouterConfig?: string | null;
@@ -38,6 +46,8 @@ const fromLocalApiKey = (apiKey: LocalApiKey): ApiKey => ({
   createdAt: dayjs(apiKey.createdAt).toISOString(),
   keySuffix: apiKey.keySuffix ?? null,
   keyFull: apiKey.keyFull ?? null,
+  credentialStatus: apiKey.credentialStatus,
+  credentialIssue: apiKey.credentialIssue ?? null,
   transcriptionModel: apiKey.transcriptionModel ?? null,
   postProcessingModel: apiKey.postProcessingModel ?? null,
   openRouterConfig: parseOpenRouterConfig(apiKey.openRouterConfig),

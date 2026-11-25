@@ -15,6 +15,7 @@ import {
   LOCAL_MODEL_OPTIONS,
   normalizeLocalWhisperModel,
 } from "../../../utils/local-transcription.utils";
+import { apiKeyNeedsReentry } from "../../../utils/api-key.utils";
 import {
   getAgentModePrefs,
   getEffectiveAgentMode,
@@ -136,6 +137,9 @@ export const YourModelsCard = () => {
   const notConfigured = intl.formatMessage({
     defaultMessage: "Not configured",
   });
+  const reenterKey = intl.formatMessage({
+    defaultMessage: "Re-enter key",
+  });
   const off = intl.formatMessage({ defaultMessage: "Off" });
 
   // Where the work happens, in the app's own words: the local engine's row says
@@ -157,6 +161,18 @@ export const YourModelsCard = () => {
     context: ApiKeyListContext,
     dispatches: boolean,
   ): ModelSummary => {
+    if (
+      key &&
+      key.credentialStatus === "needs_reentry" &&
+      apiKeyNeedsReentry(key)
+    ) {
+      return {
+        model: reenterKey,
+        location: null,
+        attention: true,
+        provider: hasProviderLogo(key.provider) ? key.provider : undefined,
+      };
+    }
     // A selection the runtime will not use is not a configured provider, and
     // "Cloud" beside it would describe a request the app never makes. The page
     // that owns the setting is one click away and names the missing piece.

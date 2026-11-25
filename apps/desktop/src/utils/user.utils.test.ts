@@ -326,3 +326,26 @@ describe("setUserPreferences realtime/review exclusivity", () => {
     expect(draft.settings.reviewBeforeInsert).toBe(true);
   });
 });
+
+describe("getTranscriptionPrefs credential truthfulness", () => {
+  it("falls back to local mode when the selected API key needs re-entry", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.apiKeyById["legacy-groq"] = {
+      id: "legacy-groq",
+      name: "Groq",
+      provider: "groq",
+      keyFull: null,
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    state.settings.aiTranscription = {
+      ...state.settings.aiTranscription,
+      mode: "api",
+      selectedApiKeyId: "legacy-groq",
+    };
+
+    const prefs = getTranscriptionPrefs(state);
+    expect(prefs.mode).toBe("local");
+  });
+});

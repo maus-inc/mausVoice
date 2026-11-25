@@ -377,4 +377,28 @@ describe("ApiKeyList", () => {
       document.querySelector('input[aria-label="Transcription model"]'),
     ).toBeNull();
   });
+
+  it("flags migrated legacy keys needing re-entry, skips model fetches, and disables Test", async () => {
+    const legacyKey: SettingsApiKey = {
+      ...groqKey,
+      id: "key-legacy-groq",
+      keyFull: null,
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+    };
+    seedApiKeys([legacyKey]);
+    await renderList("transcription", "key-legacy-groq");
+
+    expect(document.body.textContent).toContain("Re-enter key");
+    expect(document.body.textContent).toContain(
+      "Imported from Voquill's older encryption format. Re-enter this key to unlock it.",
+    );
+    // Unusable migrated key must not auto-fetch remote model lists.
+    expect(mocks.getTranscriptionModels).not.toHaveBeenCalled();
+
+    const testButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "Test",
+    ) as HTMLButtonElement | undefined;
+    expect(testButton?.disabled).toBe(true);
+  });
 });

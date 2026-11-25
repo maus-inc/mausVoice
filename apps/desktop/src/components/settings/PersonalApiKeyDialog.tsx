@@ -10,6 +10,10 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import {
+  deepgramTestIntegration,
+  groqTestIntegration,
+} from "@maus-inc/voice-ai";
 import { useEffect, useRef, useState } from "react";
 import {
   defineMessage,
@@ -24,7 +28,12 @@ import {
   savePersonalGroqApiKey,
 } from "../../actions/personal-use.actions";
 import { useAppStore } from "../../store";
+import {
+  apiKeyNeedsAttention,
+  getApiKeyCredentialIssue,
+} from "../../utils/api-key.utils";
 import { findPersonalApiKey } from "../../utils/personal-use.utils";
+import { secureFetch } from "../../utils/secure-fetch.utils";
 import { ProviderLogo } from "../common/provider-logos/ProviderLogo";
 
 export type PersonalApiKeyProvider = "groq" | "deepgram";
@@ -40,6 +49,7 @@ type ProviderCopy = {
    *  there is an `intl` to ask. */
   savedMessage: MessageDescriptor;
   save: (key: string) => Promise<unknown>;
+  testKey: (key: string) => Promise<boolean>;
 };
 
 const PROVIDER_COPY: Record<PersonalApiKeyProvider, ProviderCopy> = {
@@ -54,6 +64,7 @@ const PROVIDER_COPY: Record<PersonalApiKeyProvider, ProviderCopy> = {
       defaultMessage: "Deepgram API key saved",
     }),
     save: savePersonalDeepgramApiKey,
+    testKey: (apiKey) => deepgramTestIntegration({ apiKey }),
   },
   groq: {
     title: <FormattedMessage defaultMessage="Groq API key" />,
@@ -67,6 +78,8 @@ const PROVIDER_COPY: Record<PersonalApiKeyProvider, ProviderCopy> = {
       defaultMessage: "Groq API key saved",
     }),
     save: savePersonalGroqApiKey,
+    testKey: (apiKey) =>
+      groqTestIntegration({ apiKey, customFetch: secureFetch }),
   },
 };
 
@@ -93,7 +106,12 @@ export const PersonalApiKeyDialog = ({
   );
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testOutcome, setTestOutcome] = useState<"success" | "error" | null>(
+    null,
+  );
   const saveInFlight = useRef(false);
+  const testInFlight = useRef(false);
   const keyRef = useRef<HTMLInputElement | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -102,24 +120,48 @@ export const PersonalApiKeyDialog = ({
       setValue("");
       setErrorMessage(null);
       setSaving(false);
+      setTesting(false);
+      setTestOutcome(null);
     }
   }, [open, provider]);
 
   const close = () => {
-    if (!saving && !saveInFlight.current) {
+    if (!saving && !saveInFlight.current && !testing && !testInFlight.current) {
       onClose();
+    }
+  };
+
+  const handleTest = async () => {
+    const trimmed = value.trim();
+    if (!trimmed || saving || testing || testInFlight.current) {
+      return;
+    }
+
+    testInFlight.current = true;
+    setTesting(true);
+    setTestOutcome(null);
+    setErrorMessage(null);
+    try {
+      const ok = await copy.testKey(trimmed);
+      setTestOutcome(ok ? "success" : "error");
+    } catch {
+      setTestOutcome("error");
+    } finally {
+      testInFlight.current = false;
+      setTesting(false);
     }
   };
 
   const save = async () => {
     const trimmed = value.trim();
-    if (!trimmed || saving || saveInFlight.current) {
+    if (!trimmed || saving || saveInFlight.current || testing) {
       return;
     }
 
     saveInFlight.current = true;
     setSaving(true);
     setErrorMessage(null);
+    setTestOutcome(null);
     try {
       await copy.save(trimmed);
       showSnackbar(intl.formatMessage(copy.savedMessage), {
@@ -135,6 +177,9 @@ export const PersonalApiKeyDialog = ({
       setSaving(false);
     }
   };
+
+  const currentKeyIssue = getApiKeyCredentialIssue(currentKey);
+  const currentKeyNeedsAttention = apiKeyNeedsAttention(currentKey);
 
   return (
     <Dialog
@@ -180,6 +225,17 @@ export const PersonalApiKeyDialog = ({
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             {copy.description}
           </Typography>
+          {currentKeyNeedsAttention && (
+            <Alert severity="warning" sx={{ boxShadow: "none" }}>
+              {currentKeyIssue === "legacy_encryption" ? (
+                <FormattedMessage defaultMessage="This key was imported from Voquill's older encryption format and could not be unlocked. Enter your key again to re-encrypt it with mausVoice." />
+              ) : currentKeyIssue === "decryption_failed" ? (
+                <FormattedMessage defaultMessage="The saved key could not be decrypted on this computer. Enter your key again to replace it." />
+              ) : (
+                <FormattedMessage defaultMessage="The saved key configuration is incomplete or invalid. Enter a valid key to continue." />
+              )}
+            </Alert>
+          )}
           {currentKey?.keySuffix && (
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
               <FormattedMessage
@@ -189,6 +245,16 @@ export const PersonalApiKeyDialog = ({
             </Typography>
           )}
           {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
+          {testOutcome === "success" && (
+            <Alert severity="success" role="status">
+              <FormattedMessage defaultMessage="Key verified." />
+            </Alert>
+          )}
+          {testOutcome === "error" && (
+            <Alert severity="error" role="status">
+              <FormattedMessage defaultMessage="Could not verify this key. Check the key and try again." />
+            </Alert>
+          )}
           <TextField
             inputRef={keyRef}
             fullWidth
@@ -197,8 +263,11 @@ export const PersonalApiKeyDialog = ({
             label={<FormattedMessage defaultMessage="API key" />}
             placeholder={copy.placeholder}
             value={value}
-            disabled={saving}
-            onChange={(event) => setValue(event.target.value)}
+            disabled={saving || testing}
+            onChange={(event) => {
+              setValue(event.target.value);
+              if (testOutcome !== null) setTestOutcome(null);
+            }}
             autoComplete="off"
             slotProps={{
               inputLabel: { shrink: true },
@@ -219,13 +288,25 @@ export const PersonalApiKeyDialog = ({
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={close} disabled={saving}>
+        <Button
+          onClick={() => void handleTest()}
+          disabled={!value.trim() || saving || testing}
+          aria-busy={testing || undefined}
+          sx={{ mr: "auto" }}
+        >
+          {testing ? (
+            <FormattedMessage defaultMessage="Testing..." />
+          ) : (
+            <FormattedMessage defaultMessage="Test key" />
+          )}
+        </Button>
+        <Button onClick={close} disabled={saving || testing}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
         <Button
           variant="contained"
           onClick={() => void save()}
-          disabled={!value.trim() || saving}
+          disabled={!value.trim() || saving || testing}
           aria-busy={saving || undefined}
         >
           {saving ? (

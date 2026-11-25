@@ -61,6 +61,11 @@ export const useSettingsAvailability = (): SettingAvailability => {
       deleteAccount: loggedIn,
       // Provider-dependent availability remains unknown until the list loads.
       apiKeysKnown: state.settings.apiKeysStatus === "success",
+      voquillMigrationKnown: state.voquillMigration.status === "success",
+      voquillMigrationDetected: Boolean(
+        state.voquillMigration.report?.legacyDetected &&
+        state.voquillMigration.report.status !== "not_needed",
+      ),
     };
   });
 
@@ -78,6 +83,8 @@ export const useSettingsAvailability = (): SettingAvailability => {
     signOut,
     deleteAccount,
     apiKeysKnown,
+    voquillMigrationKnown,
+    voquillMigrationDetected,
   } = snapshot;
 
   return useMemo(
@@ -108,6 +115,9 @@ export const useSettingsAvailability = (): SettingAvailability => {
       change_password: changePassword,
       sign_out: signOut,
       delete_account: deleteAccount,
+      voquill_migration: voquillMigrationKnown
+        ? voquillMigrationDetected
+        : undefined,
     }),
     [
       dictationLimitEnabled,
@@ -123,6 +133,8 @@ export const useSettingsAvailability = (): SettingAvailability => {
       signOut,
       deleteAccount,
       apiKeysKnown,
+      voquillMigrationKnown,
+      voquillMigrationDetected,
     ],
   );
 };

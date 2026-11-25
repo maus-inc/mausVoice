@@ -1,8 +1,10 @@
 import { Check, Pencil, Plus, Trash2 } from "lucide-react";
 import {
+  Alert,
   Autocomplete,
   Box,
   Button,
+  Chip,
   CircularProgress,
   Dialog,
   Divider,
@@ -43,6 +45,12 @@ import { getModelProviderRepo } from "../../repos";
 import type { FetchModelsOptions } from "../../repos/model-provider.repo";
 import { cssEase, duration, easeOutQuint } from "../../styles/motion";
 import { selectedOutlineSx } from "../../styles/selection";
+import {
+  apiKeyNeedsAttention,
+  apiKeyNeedsReentry,
+  getApiKeyCredentialIssue,
+  isApiKeyUsable,
+} from "../../utils/api-key.utils";
 import { getProviderFormConfig } from "./api-key-provider-config";
 import { OllamaModelPicker } from "./OllamaModelPicker";
 import { OpenAICompatibleModelPicker } from "./OpenAICompatibleModelPicker";
@@ -416,6 +424,21 @@ const EditApiKeyCard = ({
           />
         </Typography>
       </Stack>
+      {apiKeyNeedsAttention(apiKey) && (
+        <Alert severity="warning" sx={{ py: 0.5, boxShadow: "none" }}>
+          {getApiKeyCredentialIssue(apiKey) === "legacy_encryption" ? (
+            <FormattedMessage defaultMessage="This key was imported from Voquill's older encryption format and could not be unlocked. Enter your key again to re-encrypt it with mausVoice." />
+          ) : getApiKeyCredentialIssue(apiKey) === "decryption_failed" ? (
+            <FormattedMessage defaultMessage="The saved key could not be decrypted on this computer. Enter your key again to replace it." />
+          ) : getApiKeyCredentialIssue(apiKey) === "missing_endpoint" ? (
+            <FormattedMessage defaultMessage="Enter a valid endpoint URL to use this provider." />
+          ) : getApiKeyCredentialIssue(apiKey) === "missing_region" ? (
+            <FormattedMessage defaultMessage="Enter an Azure region to use this provider." />
+          ) : (
+            <FormattedMessage defaultMessage="The saved key configuration is incomplete or invalid. Enter a valid key to continue." />
+          )}
+        </Alert>
+      )}
       <TextField
         label={<FormattedMessage defaultMessage="Key name" />}
         value={name}
@@ -515,6 +538,10 @@ const ModelPickerForProvider = ({
   onModelChange: (model: string | null) => void;
   disabled: boolean;
 }) => {
+  if (!isApiKeyUsable(apiKey)) {
+    return null;
+  }
+
   if (apiKey.provider === "openrouter" && context === "post-processing") {
     return (
       <ModelSetupSection context={context}>
@@ -752,6 +779,9 @@ const ApiKeyCard = ({
     [apiKey.provider, context],
   );
   const currentModel = getModelForContext(apiKey, context);
+  const needsAttention = apiKeyNeedsAttention(apiKey);
+  const needsReentry = apiKeyNeedsReentry(apiKey);
+  const credentialIssue = getApiKeyCredentialIssue(apiKey);
 
   return (
     <Paper
@@ -759,7 +789,7 @@ const ApiKeyCard = ({
       sx={[
         {
           p: 2,
-          borderColor: "divider",
+          borderColor: needsAttention ? "warning.main" : "divider",
           borderWidth: 1,
           display: "flex",
           flexDirection: "column",
@@ -854,6 +884,19 @@ const ApiKeyCard = ({
               >
                 {apiKey.name}
               </Typography>
+              {needsAttention && (
+                <Chip
+                  size="small"
+                  color="warning"
+                  label={
+                    needsReentry ? (
+                      <FormattedMessage defaultMessage="Re-enter key" />
+                    ) : (
+                      <FormattedMessage defaultMessage="Needs attention" />
+                    )
+                  }
+                />
+              )}
               {selected && (
                 <Check
                   size={16}
@@ -910,7 +953,7 @@ const ApiKeyCard = ({
             variant="outlined"
             size="small"
             onClick={onTest}
-            disabled={testing || deleting}
+            disabled={testing || deleting || needsReentry}
           >
             {testing ? (
               <FormattedMessage defaultMessage="Testing..." />
@@ -933,6 +976,48 @@ const ApiKeyCard = ({
           />
         </Stack>
       </Stack>
+      {needsAttention && (
+        <Alert
+          severity="warning"
+          sx={{
+            py: 0.5,
+            boxShadow: "none",
+            alignItems: "center",
+            "& .MuiAlert-action": {
+              pt: 0,
+              alignItems: "center",
+              pl: 1.5,
+            },
+          }}
+          action={
+            <Button
+              size="small"
+              color="inherit"
+              onClick={onEdit}
+              disabled={deleting || testing}
+              sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
+            >
+              {needsReentry ? (
+                <FormattedMessage defaultMessage="Re-enter key" />
+              ) : (
+                <FormattedMessage defaultMessage="Edit" />
+              )}
+            </Button>
+          }
+        >
+          {credentialIssue === "legacy_encryption" ? (
+            <FormattedMessage defaultMessage="Imported from Voquill's older encryption format. Re-enter this key to unlock it." />
+          ) : credentialIssue === "decryption_failed" ? (
+            <FormattedMessage defaultMessage="Could not decrypt the saved key on this computer. Re-enter it to continue." />
+          ) : credentialIssue === "missing_endpoint" ? (
+            <FormattedMessage defaultMessage="Enter a valid endpoint URL to use this provider." />
+          ) : credentialIssue === "missing_region" ? (
+            <FormattedMessage defaultMessage="Enter an Azure region to use this provider." />
+          ) : (
+            <FormattedMessage defaultMessage="This saved key is incomplete or invalid." />
+          )}
+        </Alert>
+      )}
       <ModelPickerForProvider
         apiKey={apiKey}
         context={context}
@@ -981,14 +1066,17 @@ export const ApiKeyList = ({
       return;
     }
 
+    const preferredDefault =
+      apiKeys.find((key) => isApiKeyUsable(key)) ?? apiKeys[0];
+
     if (selectedApiKeyId === null) {
-      onChange(apiKeys[0]?.id ?? null);
+      onChange(preferredDefault?.id ?? null);
       return;
     }
 
     const exists = apiKeys.some((key) => key.id === selectedApiKeyId);
     if (!exists) {
-      onChange(apiKeys[0]?.id ?? null);
+      onChange(preferredDefault?.id ?? null);
     }
   }, [apiKeys, selectedApiKeyId, onChange]);
 

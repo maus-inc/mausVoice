@@ -939,4 +939,80 @@ describe("browser preview transport", () => {
       } satisfies Partial<PreviewOperationError>);
     }
   });
+
+  it("handles voquill_migration_* commands and returns credentialStatus on api_key_create", async () => {
+    const status = await invokePreviewCommand<{
+      status: string;
+      legacyDetected: boolean;
+    }>("voquill_migration_status");
+    expect(status.status).toBe("not_needed");
+    expect(status.legacyDetected).toBe(false);
+
+    const dismissed = await invokePreviewCommand<{ status: string }>(
+      "voquill_migration_dismiss",
+    );
+    expect(dismissed.status).toBe("not_needed");
+
+    const retried = await invokePreviewCommand<{ status: string }>(
+      "voquill_migration_retry",
+    );
+    expect(retried.status).toBe("not_needed");
+
+    await invokePreviewCommand("api_key_create", {
+      apiKey: {
+        id: "preview-groq-key",
+        name: "Preview Groq",
+        provider: "groq",
+        key: `${"gsk"}_preview_1234`,
+      },
+    });
+    const keys = await invokePreviewCommand<
+      {
+        id: string;
+        credentialStatus: string;
+        credentialIssue: string | null;
+      }[]
+    >("api_key_list");
+    const created = keys.find((key) => key.id === "preview-groq-key");
+    expect(created?.credentialStatus).toBe("usable");
+    expect(created?.credentialIssue).toBeNull();
+  });
+
+  it("recomputes Voquill migration action items dynamically as keys are re-entered or dismissed", async () => {
+    applyPreviewScenario("voquill-migration");
+
+    const initial = await invokePreviewCommand<{
+      status: string;
+      dismissedAt: string | null;
+      counts: { providersNeedingAttention: number };
+      actionItems: { kind: string; count: number; providers: string[] }[];
+    }>("voquill_migration_status");
+    expect(initial.status).toBe("completed");
+    expect(initial.counts.providersNeedingAttention).toBe(2);
+    expect(initial.actionItems[0]).toMatchObject({
+      kind: "reenter_api_keys",
+      providers: ["groq", "openai"],
+    });
+
+    await invokePreviewCommand("api_key_update", {
+      request: { id: "personal-groq", key: `${"gsk"}_reentered_1` },
+    });
+    await invokePreviewCommand("api_key_delete", { id: "voquill-openai-key" });
+
+    const resolved = await invokePreviewCommand<{
+      status: string;
+      counts: { providersNeedingAttention: number };
+      actionItems: { kind: string }[];
+    }>("voquill_migration_status");
+    expect(resolved.status).toBe("completed");
+    expect(resolved.counts.providersNeedingAttention).toBe(0);
+    expect(
+      resolved.actionItems.some((item) => item.kind === "reenter_api_keys"),
+    ).toBe(false);
+
+    const dismissed = await invokePreviewCommand<{
+      dismissedAt: string | null;
+    }>("voquill_migration_dismiss");
+    expect(dismissed.dismissedAt).not.toBeNull();
+  });
 });

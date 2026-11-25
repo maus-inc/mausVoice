@@ -19,6 +19,7 @@ import { DEFAULT_LOCALE, type Locale } from "../i18n/config";
 import type { TranscriptionPrefs } from "../types/transcription-prefs.types";
 import type { AppState } from "../state/app.state";
 import { applyAiPreferences } from "./ai.utils";
+import { apiKeyNeedsReentry, isApiKeyUsable } from "./api-key.utils";
 import { registerUsers } from "./app.utils";
 import { getAdditionalLanguageEntries } from "./keyboard.utils";
 import {
@@ -318,7 +319,19 @@ export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {
       !TRANSCRIPTION_CAPABLE_PROVIDERS.has(provider)
     ) {
       warnings.push("No transcription-capable API key selected.");
-    } else if (selectedApiKey.keyFull || keylessTranscriptionProvider) {
+    } else if (
+      selectedApiKey.credentialStatus !== undefined &&
+      !isApiKeyUsable(selectedApiKey)
+    ) {
+      warnings.push(
+        apiKeyNeedsReentry(selectedApiKey)
+          ? "Selected API key must be re-entered in AI Models settings before it can be used."
+          : "Selected API key configuration is incomplete.",
+      );
+    } else if (
+      isApiKeyUsable(selectedApiKey) &&
+      (selectedApiKey.keyFull || keylessTranscriptionProvider)
+    ) {
       return {
         mode: "api",
         provider,
@@ -382,7 +395,13 @@ const getGenPrefsInternal = ({
     const provider = selectedApiKey?.provider;
     const noKeyRequired =
       provider === "ollama" || provider === "openai-compatible";
-    if (apiKey || noKeyRequired) {
+    if (selectedApiKey && !isApiKeyUsable(selectedApiKey)) {
+      warnings.push(
+        apiKeyNeedsReentry(selectedApiKey)
+          ? `Selected API key for ${context} must be re-entered in AI Models settings before it can be used.`
+          : `Selected API key configuration for ${context} is incomplete.`,
+      );
+    } else if (apiKey || noKeyRequired) {
       return {
         mode: "api",
         provider: provider ?? "groq",

@@ -11,6 +11,7 @@ import {
 import { toLocalMonthKey } from "../../utils/date.utils";
 import { DictationInstruction } from "../common/DictationInstruction";
 import { DashboardEntryLayout } from "../dashboard/DashboardEntryLayout";
+import { VoquillMigrationBanner } from "../migration/VoquillMigrationBanner";
 import { GettingStartedList } from "./GettingStartedList";
 import { HomeAnalyticsGrid } from "./HomeAnalyticsGrid";
 import { HomeRecentTranscriptions } from "./HomeRecentTranscriptions";
@@ -65,6 +66,10 @@ export default function HomePage() {
               />
             </Typography>
             <DictationInstruction use3dKeycaps />
+          </Box>
+
+          <Box sx={{ px: 3.5, mb: 3, "&:empty": { display: "none" } }}>
+            <VoquillMigrationBanner />
           </Box>
 
           <HomeAnalyticsGrid

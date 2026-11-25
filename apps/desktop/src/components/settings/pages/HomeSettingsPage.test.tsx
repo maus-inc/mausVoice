@@ -350,6 +350,35 @@ describe("HomeSettingsPage", () => {
     expect(text).not.toContain("Cloud");
   });
 
+  it("shows Re-enter key for a selected migrated key that cannot be decrypted", () => {
+    act(() => {
+      setAppState((state) => ({
+        ...state,
+        apiKeyById: {
+          "key-legacy": {
+            id: "key-legacy",
+            name: "Groq",
+            provider: "groq",
+            keyFull: null,
+            credentialStatus: "needs_reentry",
+            credentialIssue: "legacy_encryption",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+        settings: {
+          ...state.settings,
+          aiPostProcessing: { mode: "api", selectedApiKeyId: "key-legacy" },
+        },
+      }));
+    });
+
+    render();
+
+    const text = row("AI post processing")?.textContent ?? "";
+    expect(text).toContain("Re-enter key");
+    expect(text).not.toContain("Cloud");
+  });
+
   it("does not call an endpoint it cannot place Cloud", () => {
     // An endpoint provider is whatever the person configured: a server on the
     // office network is not "Cloud", and it is not "On this computer" either,

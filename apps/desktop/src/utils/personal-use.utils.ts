@@ -2,6 +2,7 @@ import { DEEPGRAM_TRANSCRIPTION_MODELS } from "@maus-inc/voice-ai";
 import type { ApiKey } from "@maus-inc/types";
 import type { UpdateApiKeyPayload } from "../repos/api-key.repo";
 import type { TranscriptionMode } from "../types/ai.types";
+import { isApiKeyUsable } from "./api-key.utils";
 
 export const PERSONAL_GROQ_API_KEY_ID = "personal-groq";
 export const PERSONAL_GROQ_API_KEY_NAME = "Personal Groq";
@@ -69,7 +70,7 @@ export const buildPersonalGroqKeyUpdate = (
   if (existing.name !== PERSONAL_GROQ_API_KEY_NAME) {
     update.name = PERSONAL_GROQ_API_KEY_NAME;
   }
-  if (existing.keyFull !== configuredKey) {
+  if (!isApiKeyUsable(existing) || existing.keyFull !== configuredKey) {
     update.key = configuredKey;
   }
   if (

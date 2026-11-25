@@ -1,7 +1,7 @@
 import { AudioLines, Bot, WandSparkles } from "lucide-react";
 import { ProviderLogo } from "../../common/provider-logos/ProviderLogo";
-import { Chip } from "@mui/material";
-import type { StylingMode } from "@maus-inc/types";
+import { Alert, Chip } from "@mui/material";
+import type { ApiKey, StylingMode } from "@maus-inc/types";
 import type { ChangeEvent } from "react";
 import { useEffect, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -13,6 +13,12 @@ import {
 } from "../../../actions/user.actions";
 import { logOnRejection } from "../../../utils/promise.utils";
 import { getEffectiveStylingMode } from "../../../utils/feature.utils";
+import {
+  apiKeyNeedsAttention,
+  apiKeyNeedsReentry,
+  countApiKeysNeedingAttention,
+  isApiKeyUsable,
+} from "../../../utils/api-key.utils";
 import { findPersonalApiKey } from "../../../utils/personal-use.utils";
 import { SegmentedControl } from "../../common/SegmentedControl";
 import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
@@ -35,19 +41,42 @@ const openDialog = (
   });
 };
 
-const ConfiguredChip = ({ configured }: { configured: boolean }) => (
-  <Chip
-    size="small"
-    color={configured ? "success" : "default"}
-    label={
-      configured ? (
-        <FormattedMessage defaultMessage="Configured" />
-      ) : (
-        <FormattedMessage defaultMessage="Not configured" />
-      )
-    }
-  />
-);
+const ApiKeyStatusChip = ({ apiKey }: { apiKey: ApiKey | null }) => {
+  if (!apiKey) {
+    return (
+      <Chip
+        size="small"
+        color="default"
+        label={<FormattedMessage defaultMessage="Not configured" />}
+      />
+    );
+  }
+  if (apiKeyNeedsReentry(apiKey)) {
+    return (
+      <Chip
+        size="small"
+        color="warning"
+        label={<FormattedMessage defaultMessage="Re-enter key" />}
+      />
+    );
+  }
+  if (apiKeyNeedsAttention(apiKey)) {
+    return (
+      <Chip
+        size="small"
+        color="warning"
+        label={<FormattedMessage defaultMessage="Needs attention" />}
+      />
+    );
+  }
+  return (
+    <Chip
+      size="small"
+      color="success"
+      label={<FormattedMessage defaultMessage="Configured" />}
+    />
+  );
+};
 
 export default function AiModelsSettingsPage() {
   const intl = useIntl();
@@ -72,20 +101,50 @@ export default function AiModelsSettingsPage() {
   );
 
   const [
-    hasDeepgramKey,
-    hasGroqKey,
+    deepgramKey,
+    groqKey,
+    attentionKeyCount,
+    transcriptionNeedsAttention,
+    postProcessingNeedsAttention,
+    agentNeedsAttention,
+    removedCloudModesCount,
     stylingMode,
     disableAutoStyleLoading,
     fastStyleShortDictationsEnabled,
     postProcessingMode,
-  ] = useAppStore((state) => [
-    findPersonalApiKey(state.settings.apiKeys, "deepgram") !== null,
-    findPersonalApiKey(state.settings.apiKeys, "groq") !== null,
-    getEffectiveStylingMode(state),
-    state.local.disableAutoStyleLoading ?? false,
-    getMyUserPreferences(state)?.fastStyleShortDictationsEnabled ?? true,
-    state.settings.aiPostProcessing.mode,
-  ]);
+  ] = useAppStore((state) => {
+    const selectedTranscriptionKey = state.settings.aiTranscription
+      .selectedApiKeyId
+      ? state.apiKeyById[state.settings.aiTranscription.selectedApiKeyId]
+      : null;
+    const selectedPostProcessingKey = state.settings.aiPostProcessing
+      .selectedApiKeyId
+      ? state.apiKeyById[state.settings.aiPostProcessing.selectedApiKeyId]
+      : null;
+    const selectedAgentKey = state.settings.agentMode.selectedApiKeyId
+      ? state.apiKeyById[state.settings.agentMode.selectedApiKeyId]
+      : null;
+
+    return [
+      findPersonalApiKey(state.settings.apiKeys, "deepgram"),
+      findPersonalApiKey(state.settings.apiKeys, "groq"),
+      countApiKeysNeedingAttention(state.settings.apiKeys),
+      state.settings.aiTranscription.mode === "api" &&
+        selectedTranscriptionKey != null &&
+        !isApiKeyUsable(selectedTranscriptionKey),
+      state.settings.aiPostProcessing.mode === "api" &&
+        selectedPostProcessingKey != null &&
+        !isApiKeyUsable(selectedPostProcessingKey),
+      state.settings.agentMode.mode === "api" &&
+        selectedAgentKey != null &&
+        !isApiKeyUsable(selectedAgentKey),
+      state.voquillMigration.report?.removedModesReset.length ?? 0,
+      getEffectiveStylingMode(state),
+      state.local.disableAutoStyleLoading ?? false,
+      getMyUserPreferences(state)?.fastStyleShortDictationsEnabled ?? true,
+      state.settings.aiPostProcessing.mode,
+    ] as const;
+  });
 
   const handleStylingModeChange = (value: StylingMode) => {
     logOnRejection(setStylingMode(value), "settings page: setStylingMode");
@@ -110,6 +169,19 @@ export default function AiModelsSettingsPage() {
 
   return (
     <>
+      {attentionKeyCount > 0 && (
+        <Alert severity="warning" sx={{ mb: 3, boxShadow: "none" }}>
+          <FormattedMessage
+            defaultMessage="{count, plural, one {# saved API key cannot be unlocked and needs to be re-entered before it can be used.} other {# saved API keys cannot be unlocked and need to be re-entered before they can be used.}}"
+            values={{ count: attentionKeyCount }}
+          />
+        </Alert>
+      )}
+      {attentionKeyCount === 0 && removedCloudModesCount > 0 && (
+        <Alert severity="info" sx={{ mb: 3, boxShadow: "none" }}>
+          <FormattedMessage defaultMessage="Previous Voquill Cloud mode selections were reset to local or off during migration. Choose a local model or personal API provider below." />
+        </Alert>
+      )}
       <SettingGroup title={<FormattedMessage defaultMessage="Transcription" />}>
         <SettingRow
           settingKey="deepgram_api_key"
@@ -118,7 +190,7 @@ export default function AiModelsSettingsPage() {
             <FormattedMessage defaultMessage="Your own Deepgram key, for fast streaming transcription." />
           }
           icon={<ProviderLogo provider="deepgram" size={22} />}
-          control={<ConfiguredChip configured={hasDeepgramKey} />}
+          control={<ApiKeyStatusChip apiKey={deepgramKey} />}
           onClick={() => setKeyDialog("deepgram")}
         />
         <SettingRow
@@ -128,6 +200,15 @@ export default function AiModelsSettingsPage() {
             <FormattedMessage defaultMessage="Where speech becomes text: on this computer, or through a provider." />
           }
           icon={<AudioLines size={22} strokeWidth={1.9} />}
+          control={
+            transcriptionNeedsAttention ? (
+              <Chip
+                size="small"
+                color="warning"
+                label={<FormattedMessage defaultMessage="Re-enter key" />}
+              />
+            ) : undefined
+          }
           onClick={() => openDialog("aiTranscriptionDialogOpen")}
         />
       </SettingGroup>
@@ -142,7 +223,7 @@ export default function AiModelsSettingsPage() {
             <FormattedMessage defaultMessage="Your own Groq key, for transcription and text generation." />
           }
           icon={<ProviderLogo provider="groq" size={22} />}
-          control={<ConfiguredChip configured={hasGroqKey} />}
+          control={<ApiKeyStatusChip apiKey={groqKey} />}
           onClick={() => setKeyDialog("groq")}
         />
         <SettingRow
@@ -152,6 +233,15 @@ export default function AiModelsSettingsPage() {
             <FormattedMessage defaultMessage="Cleanup and rewriting applied to dictated text before it is inserted." />
           }
           icon={<WandSparkles size={22} strokeWidth={1.9} />}
+          control={
+            postProcessingNeedsAttention ? (
+              <Chip
+                size="small"
+                color="warning"
+                label={<FormattedMessage defaultMessage="Re-enter key" />}
+              />
+            ) : undefined
+          }
           onClick={() => openDialog("aiPostProcessingDialogOpen")}
         />
         {postProcessingMode !== "none" && (
@@ -178,11 +268,19 @@ export default function AiModelsSettingsPage() {
           }
           icon={<Bot size={22} strokeWidth={1.9} />}
           control={
-            <Chip
-              size="small"
-              color="primary"
-              label={<FormattedMessage defaultMessage="Beta" />}
-            />
+            agentNeedsAttention ? (
+              <Chip
+                size="small"
+                color="warning"
+                label={<FormattedMessage defaultMessage="Re-enter key" />}
+              />
+            ) : (
+              <Chip
+                size="small"
+                color="primary"
+                label={<FormattedMessage defaultMessage="Beta" />}
+              />
+            )
           }
           onClick={() => openDialog("agentModeDialogOpen")}
         />

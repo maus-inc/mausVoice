@@ -67,6 +67,12 @@ const SETTINGS_SOURCES = [
     page: "system" as SettingsPageId,
     source: readSource("../components/settings/UpdateChannelSetting.tsx"),
   },
+  {
+    page: "privacy-data" as SettingsPageId,
+    source: readSource(
+      "../components/settings/VoquillMigrationSettingsSection.tsx",
+    ),
+  },
 ];
 
 function pageFileOf(page: SettingsPageId): string {

@@ -9,10 +9,10 @@ import { createWithEqualityFn } from "zustand/traditional";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { INITIAL_LOCAL_STATE } from "../state/local.state";
 import {
-  LEGACY_LOCAL_STATE_STORAGE_KEY,
   LOCAL_STATE_STORAGE_KEY,
   PREVIEW_LOCAL_STATE_STORAGE_KEY,
 } from "../utils/local-storage.utils";
+import { migrateLegacyVoquillClientStorage } from "../utils/voquill-client-migration.utils";
 import {
   type LocalDataWriteLease,
   getSynchronousLocalDataWriteLease,
@@ -27,7 +27,6 @@ const IS_BROWSER_PREVIEW = import.meta.env.VITE_PREVIEW === "true";
 const CURRENT_STORAGE_KEY = IS_BROWSER_PREVIEW
   ? PREVIEW_LOCAL_STATE_STORAGE_KEY
   : LOCAL_STATE_STORAGE_KEY;
-const LEGACY_STORAGE_KEY = LEGACY_LOCAL_STATE_STORAGE_KEY;
 
 const guardedStateStorage: StateStorage = {
   getItem(name) {
@@ -65,22 +64,18 @@ const appStateStorage = createJSONStorage<PersistedAppState>(
   () => guardedStateStorage,
 );
 
-// The rebrand renamed the persisted Zustand key from "voquill-local-state" to
-// "mausvoice-local-state", which would otherwise reset users' local settings.
-// Copy it once, before hydration, only from the main window.
+// Migrate legacy Voquill client-side localStorage keys once before Zustand
+// hydration, validating each payload and never overwriting existing mausVoice
+// keys or deleting the legacy Voquill keys (safe rollback).
 function migrateLegacyPersistedState(): void {
   try {
-    const current = localStorage.getItem(CURRENT_STORAGE_KEY);
-    if (current !== null) {
-      return;
-    }
-    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
-    if (legacy === null) {
-      return;
-    }
-    withLocalDataWriteSync(() => {
-      localStorage.setItem(CURRENT_STORAGE_KEY, legacy);
-    });
+    migrateLegacyVoquillClientStorage(
+      localStorage,
+      (write) => {
+        withLocalDataWriteSync(write);
+      },
+      CURRENT_STORAGE_KEY,
+    );
   } catch {
     // Storage unavailable; the store will use its defaults.
   }

@@ -218,4 +218,20 @@ describe("buildPersonalGroqKeyUpdate", () => {
       transcriptionModel: PERSONAL_GROQ_TRANSCRIPTION_MODEL,
     });
   });
+
+  it("always rewrites a migrated key whose credentialStatus needs re-entry", () => {
+    const update = buildPersonalGroqKeyUpdate(
+      personalGroqKey({
+        keyFull: null,
+        credentialStatus: "needs_reentry",
+        credentialIssue: "legacy_encryption",
+      }),
+      "gsk_reentered",
+    );
+
+    expect(update).toEqual({
+      id: PERSONAL_GROQ_API_KEY_ID,
+      key: "gsk_reentered",
+    });
+  });
 });

@@ -10,6 +10,7 @@ import { registerApiKeys } from "../utils/app.utils";
 import { withLocalDataWrite } from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
 import { updateUserPreferences } from "./user.actions";
+import { refreshVoquillMigrationStatusIfActive } from "./voquill-migration-refresh";
 
 let loadApiKeysPromise: Promise<void> | null = null;
 
@@ -73,6 +74,7 @@ export const createApiKey = async (
         draft.settings.apiKeysStatus = "success";
       }, lease);
 
+      void refreshVoquillMigrationStatusIfActive();
       return created;
     } catch (error) {
       console.error("Failed to create API key", error);
@@ -116,6 +118,8 @@ export const deleteApiKey = async (id: string): Promise<void> =>
         undefined,
         { existingLease: lease },
       );
+
+      void refreshVoquillMigrationStatusIfActive();
     } catch (error) {
       console.error("Failed to delete API key", error);
       showErrorSnackbar(
@@ -142,6 +146,7 @@ export const updateApiKey = async (
         }
       }, lease);
 
+      void refreshVoquillMigrationStatusIfActive();
       return updated;
     } catch (error) {
       console.error("Failed to update API key", error);

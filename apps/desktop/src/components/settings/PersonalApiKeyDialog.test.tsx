@@ -6,9 +6,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   saveDeepgram: vi.fn(),
   saveGroq: vi.fn(),
+  testDeepgram: vi.fn(),
+  testGroq: vi.fn(),
   showSnackbar: vi.fn(),
   showErrorSnackbar: vi.fn(),
 }));
+
+vi.mock("@maus-inc/voice-ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@maus-inc/voice-ai")>();
+  return {
+    ...actual,
+    deepgramTestIntegration: (...args: unknown[]) =>
+      mocks.testDeepgram(...args),
+    groqTestIntegration: (...args: unknown[]) => mocks.testGroq(...args),
+  };
+});
 
 vi.mock("../../actions/app.actions", () => ({
   showSnackbar: (...args: unknown[]) => mocks.showSnackbar(...args),
@@ -242,5 +254,57 @@ describe("PersonalApiKeyDialog", () => {
 
     expect(saveButton()?.disabled).toBe(true);
     expect(mocks.saveDeepgram).not.toHaveBeenCalled();
+  });
+
+  it("explains legacy Voquill encryption and tests a key only on explicit user click", async () => {
+    mocks.testGroq
+      .mockReset()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    setAppState((state) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        apiKeys: [
+          {
+            id: "personal-groq",
+            name: "Personal Groq",
+            provider: "groq",
+            keyFull: null,
+            keySuffix: "9876",
+            credentialStatus: "needs_reentry",
+            credentialIssue: "legacy_encryption",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      },
+    }));
+
+    render("groq");
+
+    expect(dialog()?.textContent).toContain(
+      de.this_key_was_imported_from_voquill_s_older_encryption_format,
+    );
+    // Opening the dialog must never auto-probe any provider over the network.
+    expect(mocks.testGroq).not.toHaveBeenCalled();
+
+    const testButton = () =>
+      Array.from(dialog()?.querySelectorAll("button") ?? []).find((button) =>
+        button.textContent?.includes(de.test_key),
+      ) as HTMLButtonElement | undefined;
+
+    expect(testButton()?.disabled).toBe(true);
+
+    type("gsk_reentered_1234");
+    await click(testButton());
+    expect(mocks.testGroq).toHaveBeenCalledTimes(1);
+    expect(dialog()?.textContent).toContain(de.key_verified);
+
+    type("gsk_invalid_1234");
+    await click(testButton());
+    expect(mocks.testGroq).toHaveBeenCalledTimes(2);
+    expect(dialog()?.textContent).toContain(
+      de.could_not_verify_this_key_check_the_key_and_try_again,
+    );
   });
 });

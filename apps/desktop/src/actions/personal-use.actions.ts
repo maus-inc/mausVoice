@@ -2,6 +2,7 @@ import type { ApiKey } from "@maus-inc/types";
 import { createApiKey, loadApiKeys, updateApiKey } from "./api-key.actions";
 import { updateUserPreferences } from "./user.actions";
 import { getAppState } from "../store";
+import { isApiKeyUsable } from "../utils/api-key.utils";
 import { getLogger } from "../utils/log.utils";
 import {
   PERSONAL_DEEPGRAM_API_KEY_ID,
@@ -81,7 +82,7 @@ const upsertPersonalDeepgramApiKey = async (
   if (existing.name !== PERSONAL_DEEPGRAM_API_KEY_NAME) {
     updatePayload.name = PERSONAL_DEEPGRAM_API_KEY_NAME;
   }
-  if (existing.keyFull !== configuredKey) {
+  if (!isApiKeyUsable(existing) || existing.keyFull !== configuredKey) {
     updatePayload.key = configuredKey;
   }
   // Backfills keys created before the preset existed, which left the model
@@ -172,10 +173,10 @@ export const savePersonalGroqApiKey = async (key: string): Promise<ApiKey> => {
   const groqApiKey = await upsertPersonalGroqApiKey(key.trim());
   await applyPersonalGenerationDefaults(groqApiKey);
   const deepgramApiKey = getPersonalDeepgramApiKey();
-  await applyPersonalTranscriptionDefault(
-    deepgramApiKey?.id ?? null,
-    groqApiKey.id,
-  );
+  const usableDeepgramId = isApiKeyUsable(deepgramApiKey)
+    ? (deepgramApiKey?.id ?? null)
+    : null;
+  await applyPersonalTranscriptionDefault(usableDeepgramId, groqApiKey.id);
   return groqApiKey;
 };
 
@@ -184,25 +185,30 @@ export const savePersonalDeepgramApiKey = async (
 ): Promise<ApiKey> => {
   const deepgramApiKey = await upsertPersonalDeepgramApiKey(key.trim());
   const groqApiKey = getPersonalGroqApiKey();
-  await applyPersonalTranscriptionDefault(
-    deepgramApiKey.id,
-    groqApiKey?.id ?? null,
-  );
+  const usableGroqId = isApiKeyUsable(groqApiKey)
+    ? (groqApiKey?.id ?? null)
+    : null;
+  await applyPersonalTranscriptionDefault(deepgramApiKey.id, usableGroqId);
   return deepgramApiKey;
 };
 
 // Applies the personal-use selection defaults from the locally stored keys
 // (entered via onboarding / Settings). Keys are never read from the
-// environment; this only points transcription/post-processing at the keys the
-// user has already configured.
+// environment; this only points transcription/post-processing at usable keys
+// the user has already configured. Unreadable migrated keys are skipped until
+// re-entered.
 export const configurePersonalDefaults = async (): Promise<void> => {
   if (!isPersonalUseEnabled()) {
     return;
   }
 
   await loadApiKeys();
-  const groqApiKey = getPersonalGroqApiKey();
-  const deepgramApiKey = getPersonalDeepgramApiKey();
+  const rawGroqApiKey = getPersonalGroqApiKey();
+  const rawDeepgramApiKey = getPersonalDeepgramApiKey();
+  const groqApiKey = isApiKeyUsable(rawGroqApiKey) ? rawGroqApiKey : null;
+  const deepgramApiKey = isApiKeyUsable(rawDeepgramApiKey)
+    ? rawDeepgramApiKey
+    : null;
 
   if (!groqApiKey && !deepgramApiKey) {
     return;
