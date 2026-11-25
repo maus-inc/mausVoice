@@ -18,17 +18,17 @@ This guide follows a single dictation from the key press to the text in the targ
 
 <Figure
   id="dictation-pill-states"
-  alt="The pill in recording, transcribing, and done states"
-  title="Recording, transcribing, and done"
+  alt="The pill idle on hover, recording a waveform, and loading with a stage label"
+  title="Idle, recording, and loading"
   caption="The pill keeps its position between states, so a state change never moves the thing you are watching."
   annotations={[
-    { n: 1, title: "Recording", detail: "Capture is live. The status dot uses the danger tint and pulses. Release the shortcut to stop." },
-    { n: 2, title: "Transcribing", detail: "Audio is being converted. The first local transcription after launch also loads the model, so it takes longer than later ones." },
-    { n: 3, title: "Done", detail: "The text has been delivered. The pill reports the result and returns to idle on its own." },
+    { n: 1, title: "Idle on hover", detail: "The pill shows its idle label. It stays a fixed size whether or not you are dictating." },
+    { n: 2, title: "Recording", detail: "Capture is live and the pill widens into a scrolling waveform. Release the shortcut to stop." },
+    { n: 3, title: "Loading with a stage", detail: "Audio is being converted. The stage label names the current step, such as Polishing while post-processing runs. The first local transcription after launch also loads the model, so it takes longer than later ones." },
   ]}
 />
 
-The three states are mutually exclusive. A pill that stays in Transcribing has not delivered anything yet, and a pill that returns to idle without a Done confirmation did not finish a delivery.
+The pill has four states: idle, recording, paused, and loading. Only one is active at a time. A pill that stays in loading has not delivered anything yet, and the pill returns to idle on its own when the work ends. A successful delivery adds no pill message, because the text appearing in the field is the confirmation.
 
 ## Walk through one dictation
 
@@ -64,7 +64,7 @@ The three states are mutually exclusive. A pill that stays in Transcribing has n
   <Step
     title="The text is delivered to the focused target"
     image="dictation-step-5-deliver"
-    alt="Text delivered into the focused field with the pill reporting Inserted"
+    alt="Text delivered into the focused field after the pill returns to idle"
   >
     Paste sends the text through the clipboard. Simulated typing sends keystrokes instead. Focus is read at delivery time, not at the start, so if you click into another field while a network provider is still working, the field with focus when delivery runs receives the text. This is the single most common cause of "it typed into the wrong place".
   </Step>
@@ -74,12 +74,12 @@ The three states are mutually exclusive. A pill that stays in Transcribing has n
 
 <Figure
   id="dictation-delivery"
-  alt="A draft message field receiving the transcript while the pill reports Inserted"
+  alt="A draft message field holding the transcript, with the pill back at its idle label"
   title="Delivery targets the focused field"
   caption="The window shown is any other application. mausVoice does not own the insertion point."
   annotations={[
     { n: 1, title: "Focused field at delivery time", detail: "The only thing that decides where the text goes. Check it before you release if you have moved between apps." },
-    { n: 2, title: "Result", detail: "The pill confirms the delivery. If the clipboard strategy was used, the previous clipboard contents are restored after the paste." },
+    { n: 2, title: "Back to idle", detail: "Delivery adds no pill message, so the text itself is the confirmation. With the clipboard strategy, the previous clipboard contents come back after the paste, unless the field was not editable and the text is left on the clipboard instead." },
   ]}
 />
 
@@ -87,7 +87,7 @@ A failed insertion does not imply a failed transcription. The text may already b
 
 ## Cancel and pause
 
-The pill carries two side controls. Pause and resume sit on the left, cancel sits on the right, and both sit fully outside the pill body so a press on the pill itself still means the pill. Pressing **Escape** uses the cancel-transcription shortcut and produces the same result as the cancel control.
+The pill carries two side controls. Pause and resume sit on the left, cancel sits on the right, and both sit fully outside the pill body so a press on the pill itself still means the pill. **Escape** runs the same cancel action as the right control, so either route asks for one confirmation, and a second press within five seconds discards the recording. When a live-streaming provider already has the audio, the prompt says so, because that audio cannot be recalled.
 
 <Figure
   id="dictation-controls"
@@ -96,7 +96,7 @@ The pill carries two side controls. Pause and resume sit on the left, cancel sit
   caption="A cancelled dictation inserts nothing and leaves no failed row."
   annotations={[
     { n: 1, title: "Pause and resume", detail: "Left control. The session stays open while capture is suspended, so you can think without ending the dictation." },
-    { n: 2, title: "Cancel", detail: "Right control, or the cancel shortcut. Ends the session without inserting text." },
+    { n: 2, title: "Cancel", detail: "Right control, or the cancel shortcut. The first press asks for confirmation and the second ends the session without inserting text." },
     { n: 3, title: "Cancelled state", detail: "The pill reports the outcome, then returns to idle." },
   ]}
 />
@@ -111,7 +111,7 @@ Unless Incognito is on, the app stores the transcription record and attempts to 
 
 ## When review is enabled
 
-With **Review before insert** on, the transcript stops before delivery and opens in the pill's editable panel. Insert, Copy, Open, and Cancel decide what happens next, and an unanswered review expires after five minutes. The [review guide](./transcript-review/) walks through all five outcomes, the queue, and the expiry.
+With **Review before insert** on, the transcript stops before delivery and opens in the pill's editable panel. Insert, Edit, Copy, and Cancel sit in the action row. Edit and the open icon in the header both hand the text to the desktop composer window. An unanswered review expires after five minutes. The [review guide](./transcript-review/) walks through each decision, the queue, and the expiry.
 
 ## Related pages
 

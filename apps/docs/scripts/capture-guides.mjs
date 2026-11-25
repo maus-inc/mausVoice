@@ -13,7 +13,8 @@
  * `chromium`, or named with CHROMIUM_BIN.
  */
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -21,7 +22,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const docsRoot = resolve(here, "..");
 const stageFile = join(here, "figure-stage.html");
 const outputDir = join(docsRoot, "public", "guides");
-const port = 9333;
 const browserBin = process.env.CHROMIUM_BIN ?? "chromium";
 
 const args = process.argv.slice(2);
@@ -32,7 +32,21 @@ const scale = scaleIndex >= 0 ? Number(args[scaleIndex + 1]) : 2;
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-const connect = async () => {
+const readPort = async (profileDir) => {
+  const marker = join(profileDir, "DevToolsActivePort");
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      const [port] = (await readFile(marker, "utf8")).split("\n");
+      if (port) return Number(port);
+    } catch {
+      // Chromium writes the marker once the DevTools listener is up.
+    }
+    await sleep(250);
+  }
+  throw new Error("Chromium did not report a DevTools port");
+};
+
+const connect = async (port) => {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`);
@@ -156,6 +170,7 @@ const captureTheme = async (client, theme) => {
 
 const main = async () => {
   await mkdir(outputDir, { recursive: true });
+  const profileDir = await mkdtemp(join(tmpdir(), "mausvoice-figures-"));
   const browser = spawn(
     browserBin,
     [
@@ -165,15 +180,23 @@ const main = async () => {
       "--hide-scrollbars",
       "--allow-file-access-from-files",
       "--force-device-scale-factor=1",
-      `--remote-debugging-port=${port}`,
+      "--remote-debugging-port=0",
+      `--user-data-dir=${profileDir}`,
       "--window-size=1440,1200",
       "about:blank",
     ],
-    { stdio: "ignore" },
+    { stdio: ["ignore", "pipe", "pipe"] },
   );
+  let browserLog = "";
+  for (const stream of [browser.stdout, browser.stderr]) {
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk) => {
+      browserLog = (browserLog + chunk).slice(-4000);
+    });
+  }
 
   try {
-    const socketUrl = await connect();
+    const socketUrl = await connect(await readPort(profileDir));
     const client = createClient(socketUrl);
     await client.ready;
     await client.send("Page.enable");
@@ -190,8 +213,13 @@ const main = async () => {
     client.close();
     console.log(`captured ${light.length + dark.length} images`);
     for (const file of [...light, ...dark]) console.log(`  ${file}`);
+  } catch (error) {
+    // Chromium's own output is the only clue when the launch fails.
+    if (browserLog) console.error(browserLog.trimEnd());
+    throw error;
   } finally {
     browser.kill("SIGTERM");
+    await rm(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 };
 

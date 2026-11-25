@@ -22,7 +22,7 @@ const { id, alt, title, caption, annotations = [] } = Astro.props;
   <FigureImage id={id} alt={alt} />
   <figcaption class="mv-figure__caption">
     <span class="mv-figure__title">{title}</span>
-    {caption && <span set:html={caption} />}
+    {caption && <span>{caption}</span>}
     {
       annotations.length > 0 && (
         <ol class="mv-annotations">
@@ -31,7 +31,7 @@ const { id, alt, title, caption, annotations = [] } = Astro.props;
               <span class="mv-annotations__n">{annotation.n}</span>
               <span class="mv-annotations__body">
                 <strong>{annotation.title}</strong>
-                <span set:html={annotation.detail} />
+                <span>{annotation.detail}</span>
               </span>
             </li>
           ))}

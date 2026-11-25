@@ -22,7 +22,7 @@ This guide covers the parts that are easy to miss: where the switch lives, what 
   title="Chats appears only when Assistant mode is on"
   caption="The Chats route is hidden for everyone else, so the rail does not advertise a feature with no provider behind it."
   annotations={[
-    { n: 1, title: "Chats", detail: "Lists assistant conversations. A review decision of Open lands here as a pending card." },
+    { n: 1, title: "Chats", detail: "Lists assistant conversations. The open icon on an agent Paste review lands here as a pending card." },
     { n: 2, title: "Conversation", detail: "Each command starts or continues a conversation. Tool steps and permission prompts stay inside it, and the last step is not always the last response." },
   ]}
 />
@@ -31,18 +31,18 @@ This guide covers the parts that are easy to miss: where the switch lives, what 
 
 <Steps>
   <Step
-    title="Open Settings → AI and processing → Assistant mode"
+    title="Open Settings → AI and models → Assistant"
     image="assistant-step-1-settings"
-    alt="The Assistant hotkey, Assistant mode, and Power mode rows"
+    alt="The Assistant mode dialog with its provider segment, Assistant hotkey, Assistant mode, and Power mode rows"
   >
-    The dialog carries a Beta chip and three rows: **Assistant hotkey**, **Assistant mode**, and **Power mode**. Assistant mode is off by default. Nothing in the assistant runs until you turn it on.
+    The **Assistant mode** row opens a dialog whose title carries a Beta chip. Inside it, the provider configuration sits above three settings: **Assistant hotkey**, **Assistant mode**, and **Power mode**. Assistant mode is off by default, and nothing in the assistant runs until you turn it on.
   </Step>
   <Step
     title="Choose a generative credential"
     image="assistant-step-2-provider"
     alt="The assistant provider set to API with a credential selected"
   >
-    Set the assistant provider to **API** and pick a credential whose provider supports generative text. **Off** leaves the assistant without an LLM backend, so a command has nowhere to go. The assistant has its own provider selection. Changing the transcription provider or the post-processing provider does not move it.
+    Set the assistant provider to **API** and pick a credential whose provider supports generative text. **Off** leaves the assistant without an LLM backend, so a command has nowhere to go. The API segment also carries **Maximum iterations**, **Permission timeout (seconds)**, and the **Enabled tools** list. The assistant has its own provider selection. Changing the transcription provider or the post-processing provider does not move it.
   </Step>
   <Step
     title="Set the assistant hotkey"
@@ -54,40 +54,40 @@ This guide covers the parts that are easy to miss: where the switch lives, what 
   <Step
     title="Watch the tool steps"
     image="assistant-step-3-tools"
-    alt="Two tool steps, one allowed once and one pending"
+    alt="A completed tool step above a pending Paste request"
   >
-    A command can take several model and tool steps. Each permissioned step names the tool and the reason. Approving the first step does not approve the rest, and a conversation is not finished after the first response.
+    A command can take several model and tool steps. A finished step stays in the transcript as a dimmed line, and the step that needs you becomes a card. Allow covers that one call. Always Allow covers later calls of the same tool in the same conversation, and nothing else. A conversation is not finished after the first response.
   </Step>
 </Steps>
 
 ## Permission prompts
 
-The built-in tools can read the focused field and surrounding screen context, paste into the focused field, and close the pill conversation. A permissioned request offers **Deny**, **Allow**, and **Always allow**.
+The built-in tools can read the focused field and surrounding screen context, paste into the focused field, and close the pill conversation. A permissioned request offers **Deny**, **Allow**, and **Always Allow**. The card stays open for the permission timeout, 60 seconds by default, and a card nobody answers is denied rather than approved.
 
 <Figure
   id="assistant-permission"
-  alt="A tool request with Deny, Allow, and Always allow"
+  alt="A tool request card with Deny, Allow, and Always Allow"
   title="A tool request"
-  caption="Read the stated reason and the parameters before approving."
+  caption="Read the stated reason before approving. The card names the tool, and the reason is the model's own words."
   annotations={[
     { n: 1, title: "Tool and reason", detail: "Names what the assistant wants to do and why it says it needs it. A vague reason is a reason to deny." },
-    { n: 2, title: "Deny, Allow, Always allow", detail: "Always allow is remembered per tool in the app's webview local storage. Prefer Allow for anything sensitive, so each use stays visible." },
+    { n: 2, title: "Deny, Allow, Always Allow", detail: "Always Allow is remembered per tool and per conversation in the app's webview local storage. Prefer Allow for anything sensitive, so each use stays visible." },
   ]}
 />
 
-<Callout title="Always allow outlives the conversation">
-  The approval is stored per tool, not per command, and it survives a restart. Clear local data removes these saved approvals from app-owned browser storage.
+<Callout title="Always allow is scoped to one conversation">
+  The approval is stored per tool and per conversation, not per command, and it survives a restart. A new conversation asks again, because a grant made while one task was running should not silently authorise the next. Clear local data removes these saved approvals from app-owned browser storage.
 </Callout>
 
 ## Power mode
 
-Power mode adds the `run_terminal_command` tool. The Rust backend validates each command against an allowlist and runs it directly, without a shell. Shell metacharacters such as `/`, `\`, `;`, `|`, `&`, and `$` are rejected anywhere in an argument, a bare `..` argument is refused, and absolute paths and subdirectory paths are not allowed. Enabling it requires a warning confirmation and a restart before the tool is available.
+Power mode adds the `run_terminal_command` tool. The Rust backend validates each command against an allowlist and runs it directly, without a shell. Shell metacharacters such as `/`, `\`, `;`, `|`, `&`, and `$` are rejected anywhere in an argument, a bare `..` argument is refused, and absolute paths and subdirectory paths are not allowed. Enabling it takes a warning confirmation, and the Power mode row asks you to restart mausVoice before the tool can run. Start a new conversation after the restart.
 
 Commands run with the mausVoice process's full user permissions. Keep power mode off unless the task genuinely needs shell access, and never approve a command you do not understand. The [assistant mode reference](../using-mausvoice/assistant-mode/) lists the exact allowlist for each platform.
 
 ## How a review reaches an agent's Paste
 
-When the assistant's Paste tool is the thing that needs the transcript, the same review panel appears. The difference is the Open decision. For an agent Paste, Open saves a pending card in **Chats** instead of inserting, because opening the main window changes focus and the original target is gone.
+When the assistant's Paste tool is the thing that needs the transcript, the same review panel appears. The difference is the open icon in the header. For an agent Paste it saves a pending card in **Chats** instead of inserting, because opening the main window changes focus and the original target is gone. A dictation review uses the same icon to open the desktop composer.
 
 <Figure
   id="assistant-open"
@@ -95,14 +95,15 @@ When the assistant's Paste tool is the thing that needs the transcript, the same
   title="Open from an agent's Paste"
   caption="Insert still works when the target still has focus. Open is the recovery path when it does not."
   annotations={[
-    { n: 1, title: "Review", detail: "Same five decisions as a dictation review, including the five-minute expiry and the cancel-wins rule." },
-    { n: 2, title: "Pending card in Chats", detail: "Holds the edited text after an Open. Nothing is inserted automatically, so copy it from the card and paste it where you want it." },
+    { n: 1, title: "Review", detail: "The same panel as a dictation review: four action buttons, the open icon in the header, the five-minute expiry, and the cancel-wins rule." },
+    { n: 2, title: "Pending card in Chats", detail: "Holds the edited text after an Open. Nothing is inserted automatically, so use Copy for manual paste on the card, focus the destination, and paste there." },
   ]}
 />
 
 <Steps>
   <Step
     title="The Paste tool asks, the panel opens"
+    image="assistant-paste-review"
     alt="The review panel opened by the Paste tool"
   >
     The Paste tool reports Copy, Open, expiry, and failure back to the assistant, so the conversation knows what you decided instead of assuming the paste happened.

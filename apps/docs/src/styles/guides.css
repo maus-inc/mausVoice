@@ -21,12 +21,11 @@
   --mv-danger: #b3261e;
   --mv-heat-0: #ece8e1;
   --mv-heat-1: #f0dac5;
-  --mv-heat-2: #e6b38d;
-  --mv-heat-3: #d88454;
-  --mv-heat-4: #b75c2b;
+  --mv-heat-2: #b75c2b;
   --mv-pill: #fdfbf8;
   --mv-pill-ink: rgba(26, 23, 18, 0.92);
   --mv-shadow: 0 18px 40px rgba(26, 23, 18, 0.12);
+  --mv-radius-control: 8px;
 }
 
 [data-theme="dark"] {
@@ -43,9 +42,7 @@
   --mv-danger: #f2b8b5;
   --mv-heat-0: #281c14;
   --mv-heat-1: #573822;
-  --mv-heat-2: #92512f;
-  --mv-heat-3: #ca6d39;
-  --mv-heat-4: #ef8f50;
+  --mv-heat-2: #ef8f50;
   --mv-pill: #161617;
   --mv-pill-ink: rgba(242, 241, 238, 0.94);
   --mv-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
@@ -133,7 +130,7 @@
   gap: 10px;
   height: 32px;
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: var(--mv-radius-control);
   font-size: 13px;
   color: var(--mv-ink-soft);
 }
@@ -147,9 +144,9 @@
 .mv-rail__glyph {
   width: 16px;
   height: 16px;
-  border-radius: 4px;
-  border: 1.5px solid currentColor;
-  opacity: 0.55;
+  display: grid;
+  place-items: center;
+  opacity: 0.6;
 }
 
 .mv-canvas {
@@ -202,208 +199,323 @@
   gap: 12px;
 }
 
-/* Heatmap mock */
+/* Dictation pill, drawn to packages/rust_macos_pill: a black 120x32
+   rounded bar with a live waveform, a loading bar, or the idle label. */
 
-.mv-heat {
-  display: flex;
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.mv-heat__days {
-  display: grid;
-  grid-template-rows: repeat(7, 10px);
-  gap: 4px;
-  width: 13px;
-  font-size: 8px;
-  line-height: 10px;
-  color: var(--mv-ink-faint);
-  text-align: right;
-}
-
-.mv-heat__grid {
-  display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(7, 10px);
-  gap: 4px;
-}
-
-.mv-heat__cell {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  background: var(--mv-heat-0);
-}
-
-.mv-heat__cell--1 {
-  background: var(--mv-heat-1);
-}
-
-.mv-heat__cell--2 {
-  background: var(--mv-heat-2);
-}
-
-.mv-heat__cell--3 {
-  background: var(--mv-heat-3);
-}
-
-.mv-heat__cell--4 {
-  background: var(--mv-heat-4);
-}
-
-.mv-heat__cell--future {
-  background: transparent;
-  border: 1px dashed var(--mv-hairline);
-}
-
-.mv-heat__cell--focus {
-  outline: 2px solid var(--mv-accent);
-  outline-offset: 2px;
-}
-
-.mv-legend {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  margin-top: 10px;
-  font-size: 11px;
-  color: var(--mv-ink-faint);
-}
-
-.mv-legend__swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-}
-
-/* Pill mock */
-
-.mv-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  height: 40px;
-  padding: 0 18px;
-  border-radius: 999px;
-  background: var(--mv-pill);
-  color: var(--mv-pill-ink);
-  border: 1px solid var(--mv-hairline);
-  box-shadow: var(--mv-shadow);
-  font-size: 13px;
-  font-weight: 550;
-  letter-spacing: 0.01em;
-}
-
-.mv-pill__glyph {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--mv-accent);
-}
-
-.mv-pill__glyph--recording {
-  background: var(--mv-danger);
-}
-
-.mv-pill__glyph--pulse {
-  animation: mv-pulse 1.6s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .mv-pill__glyph--pulse {
-    animation: none;
-  }
-}
-
-@keyframes mv-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.55;
-    transform: scale(0.82);
-  }
-}
-
-.mv-pill__control {
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  border: 1px solid var(--mv-hairline);
-  background: var(--mv-surface);
+.mv-dpill {
+  box-sizing: border-box;
+  position: relative;
+  width: 120px;
+  height: 32px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   display: grid;
   place-items: center;
-  font-size: 10px;
-  color: var(--mv-ink-soft);
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
 }
 
-.mv-pill__controls {
-  display: flex;
-  gap: 28px;
-  align-items: center;
+.mv-dpill--blue {
+  border-color: #7cb8ff;
+  box-shadow:
+    0 0 0 2px rgba(124, 184, 255, 0.35),
+    0 0 14px rgba(124, 184, 255, 0.45);
 }
 
-.mv-pill__note {
+.mv-dpill__wave {
+  width: 92px;
+  height: 22px;
+  display: block;
+}
+
+.mv-dpill__track,
+.mv-dpill__fill {
+  position: absolute;
+  top: 15px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.mv-dpill__track {
+  left: 3px;
+  right: 3px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.mv-dpill__fill {
+  left: 3px;
+  width: 58px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.mv-dpill--stage .mv-dpill__track {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mv-dpill--stage .mv-dpill__fill {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.mv-pillwrap {
+  position: relative;
+  display: inline-block;
+}
+
+.mv-dpill__stage {
+  position: relative;
   font-size: 11px;
-  color: var(--mv-ink-soft);
-  text-align: center;
-  max-width: 46ch;
+  color: rgba(255, 255, 255, 0.9);
 }
 
-/* Review panel mock */
-
-.mv-review {
-  width: min(520px, 100%);
-  border-radius: 14px;
-  border: 1px solid var(--mv-hairline);
-  background: var(--mv-surface);
-  box-shadow: var(--mv-shadow);
-  padding: 12px;
-  color: var(--mv-ink);
+.mv-dpill__pausedbar {
+  width: 92px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.85);
 }
 
-.mv-review__entry {
+.mv-dpill-side {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+  color: #858585;
+}
+
+/* A plain editable field, standing in for whichever application has focus */
+
+.mv-field {
+  box-sizing: border-box;
+  width: 100%;
   border-radius: 10px;
   border: 1px solid var(--mv-hairline);
-  background: var(--mv-raised);
-  padding: 10px 12px;
+  background: var(--mv-surface);
+  color: var(--mv-ink);
+  padding: 14px 16px;
   font-size: 14px;
-  line-height: 1.5;
-  min-height: 62px;
+  line-height: 1.55;
+  min-height: 86px;
+}
+
+.mv-field__caret {
+  display: inline-block;
+  width: 1px;
+  height: 15px;
+  margin-left: 1px;
+  background: currentColor;
+  vertical-align: -2px;
+}
+
+.mv-pill-row {
+  display: flex;
+  gap: 26px;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 18px 6px 4px;
+}
+
+.pill-col {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+
+/* Pill panel mock, drawn to the geometry in packages/rust_macos_pill:
+   a black 572x258 panel, 24px radius, icon buttons at the top left, a
+   transcript label and body, a fixed action row, then the entry bar. */
+
+.mv-pillpanel {
+  position: relative;
+  box-sizing: border-box;
+  width: 572px;
+  min-height: 258px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.96);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 10px 24px 0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--mv-shadow);
+}
+
+.mv-pillpanel--wide {
+  width: 704px;
+}
+
+.mv-pillpanel--center {
+  margin-inline: auto;
+}
+
+.mv-pillpanel__icons {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 4px;
+}
+
+.mv-pillpanel__icon {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.mv-pillpanel__body {
+  padding-top: 46px;
+  flex: 1;
+}
+
+.mv-pillpanel__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.mv-pillpanel__text {
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: rgba(255, 255, 255, 0.92);
   white-space: pre-wrap;
 }
 
-.mv-review__actions {
+.mv-pillpanel__actions {
   display: flex;
-  gap: 8px;
-  margin-top: 10px;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 44px;
 }
 
-.mv-review__button {
-  height: 28px;
-  padding: 0 12px;
-  border-radius: 8px;
-  border: 1px solid var(--mv-hairline);
-  background: var(--mv-surface);
-  font-size: 12px;
-  color: var(--mv-ink);
+.mv-pillpanel__hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mv-pillpanel__row {
+  display: flex;
+  gap: 6px;
+}
+
+.mv-pillpanel__row--left {
+  margin-right: auto;
+}
+
+.mv-pillbutton {
+  box-sizing: border-box;
+  height: 26px;
+  min-width: 64px;
+  padding: 0 10px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.92);
 }
 
-.mv-review__button--primary {
-  background: var(--mv-ink);
-  color: var(--mv-canvas);
-  border-color: transparent;
+.mv-pillbutton--edit {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.mv-pillbutton--copy {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.mv-pillbutton--cancel {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.mv-pillbutton--focus {
+  outline: 2px solid rgba(255, 255, 255, 0.75);
+  outline-offset: 2px;
+}
+
+.mv-pillpanel__input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 48px;
+  margin: 0 -24px;
+  padding: 0 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.mv-pillpanel__input > span:first-child {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+.mv-pillpanel__caret {
+  display: inline-block;
+  width: 1px;
+  height: 16px;
+  margin-left: 1px;
+  background: rgba(255, 255, 255, 0.85);
+  vertical-align: -2px;
+}
+
+.mv-pillpanel__send {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: rgba(0, 0, 0, 0.88);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.mv-pillpanel__input .mv-pillpanel__send {
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Toast, as the app renders a transient report */
+
+.mv-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: #2a2a2c;
+  color: #f2f1ee;
+  font-size: 13px;
+  box-shadow: var(--mv-shadow);
+}
+
+.mv-toast__action {
+  font-size: 12px;
   font-weight: 600;
-}
-
-.mv-review__button--quiet {
-  color: var(--mv-ink-soft);
+  color: #f2f1ee;
+  border-bottom: 1px solid rgba(242, 241, 238, 0.6);
 }
 
 /* Markers and annotation list */
@@ -433,6 +545,37 @@
   box-shadow:
     0 0 0 3px var(--mv-canvas),
     0 6px 14px rgba(0, 0, 0, 0.18);
+}
+
+.mv-anchor--start::after {
+  top: 50%;
+  left: -20px;
+  transform: translateY(-50%);
+}
+
+.mv-anchor--gutter::after {
+  top: 50%;
+  left: -36px;
+  transform: translateY(-50%);
+}
+
+.mv-anchor--after::after {
+  top: -10px;
+  left: calc(100% + 2px);
+}
+
+.mv-anchor--above::after {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.mv-anchor--above-start::after {
+  top: auto;
+  bottom: calc(100% + 4px);
+  left: 0;
+  transform: none;
 }
 
 .mv-anchor--right::after {
@@ -578,6 +721,82 @@
   }
 }
 
+/* Daily-word heatmap mock. Geometry mirrors activity-heatmap.ts: 10px cells,
+   4px gaps, and a 13px weekday rail. */
+.mv-heat {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.mv-heat__days {
+  display: grid;
+  grid-template-rows: repeat(7, 10px);
+  row-gap: 4px;
+  width: 13px;
+  font-size: 9px;
+  line-height: 10px;
+  text-align: right;
+  color: var(--mv-ink-faint);
+}
+
+.mv-heat__grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 10px);
+  grid-auto-columns: 10px;
+  gap: 4px;
+}
+
+.mv-heat__cell {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--mv-heat-0);
+}
+
+.mv-heat__cell--1 {
+  background: var(--mv-heat-1);
+}
+
+.mv-heat__cell--2,
+.mv-heat__cell--3 {
+  background: var(--mv-heat-2);
+}
+
+.mv-heat__cell--future {
+  background: transparent;
+}
+
+.mv-heat__cell--hover {
+  transform: scale(1.35);
+  outline: 1px solid var(--mv-ink);
+  outline-offset: 1px;
+  z-index: 1;
+}
+
+.mv-heat__cell--focus {
+  outline: 1px solid var(--mv-ink);
+  outline-offset: 1px;
+}
+
+.mv-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 9px;
+  color: var(--mv-ink-soft);
+}
+
+.mv-legend__swatch {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
 /* Captured figures */
 
 .mv-shot {
@@ -605,4 +824,300 @@
 .mv-step__figure {
   display: block;
   margin-top: 0.7rem;
+}
+
+/* Settings dialog mock, following the MUI dialog the app opens */
+
+.mv-dialog {
+  width: 560px;
+  border-radius: 16px;
+  border: 1px solid var(--mv-hairline);
+  background: var(--mv-surface);
+  box-shadow: var(--mv-shadow);
+  color: var(--mv-ink);
+  overflow: hidden;
+}
+
+.mv-dialog__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 20px 14px;
+}
+
+.mv-dialog__title {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.mv-dialog__chip {
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--mv-accent-wash);
+  color: var(--mv-accent);
+  font-size: 11px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+}
+
+.mv-dialog__body {
+  display: grid;
+  gap: 16px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--mv-hairline);
+}
+
+.mv-dialog__intro {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--mv-ink-soft);
+}
+
+.mv-dialog__foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 20px;
+  border-top: 1px solid var(--mv-hairline);
+}
+
+.mv-keycard {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--mv-hairline);
+  border-radius: 10px;
+  background: var(--mv-surface);
+}
+
+.mv-keycard__provider {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mv-keycard__meta {
+  font-size: 12px;
+  color: var(--mv-muted);
+}
+
+.mv-switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--mv-elevated);
+  border: 1px solid var(--mv-hairline);
+}
+
+.mv-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--mv-surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.mv-switch--on {
+  background: var(--mv-accent);
+  border-color: transparent;
+}
+
+.mv-switch--on::after {
+  left: 16px;
+  background: #fff;
+}
+
+.mv-dialog__close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: var(--mv-ink-soft);
+}
+
+.mv-segment {
+  display: inline-flex;
+  border: 1px solid var(--mv-hairline);
+  border-radius: var(--mv-radius-control);
+  overflow: hidden;
+}
+
+.mv-segment__item {
+  padding: 5px 14px;
+  font-size: 12.5px;
+  color: var(--mv-ink-soft);
+}
+
+.mv-segment__item--on {
+  background: var(--mv-elevated);
+  color: var(--mv-ink);
+  font-weight: 600;
+}
+
+.mv-input {
+  height: 34px;
+  border-radius: var(--mv-radius-control);
+  border: 1px solid var(--mv-hairline);
+  background: var(--mv-elevated);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--mv-ink);
+}
+
+.mv-help {
+  font-size: 11px;
+  color: var(--mv-ink-faint);
+}
+
+/* Pending paste card, following PendingPasteReviewBubble */
+
+.mv-pcard {
+  max-width: 82%;
+  border: 1px solid var(--mv-hairline);
+  border-radius: var(--mv-radius-control);
+  background: var(--mv-elevated);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.mv-pcard__title {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mv-pcard__body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mv-ink-soft);
+}
+
+.mv-pcard__text {
+  border: 1px solid var(--mv-hairline);
+  border-radius: 6px;
+  background: var(--mv-surface);
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  min-height: 58px;
+}
+
+.mv-pcard__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mv-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  border: 1px solid transparent;
+}
+
+.mv-btn--primary {
+  background: var(--mv-accent);
+  color: #fff;
+}
+
+.mv-btn--ghost {
+  border-color: var(--mv-hairline);
+  color: var(--mv-ink-soft);
+}
+
+.mv-chat {
+  display: grid;
+  gap: 10px;
+}
+
+.mv-bubble {
+  max-width: 80%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mv-bubble--user {
+  justify-self: end;
+  background: var(--mv-raised);
+  border: 1px solid var(--mv-hairline);
+  color: var(--mv-ink);
+}
+
+.mv-bubble--assistant {
+  justify-self: start;
+  background: var(--mv-elevated);
+  border: 1px solid var(--mv-hairline);
+}
+
+.mv-toolline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.mv-toolline svg {
+  flex: none;
+}
+
+/* Permission card drawn inside the dark pill panel */
+
+.mv-permcard {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.mv-permcard__tool {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.mv-permcard__reason {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: -4px;
+}
+
+.mv-permcard__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.mv-permbtn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 11px;
+  display: grid;
+  place-items: center;
+}
+
+.mv-permbtn--quiet {
+  color: rgba(255, 255, 255, 0.5);
 }

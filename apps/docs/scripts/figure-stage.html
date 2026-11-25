@@ -214,8 +214,8 @@
         gap: 6px;
         padding: 6px 9px;
         border-radius: 8px;
-        background: var(--mv-ink);
-        color: var(--mv-canvas);
+        background: #3d3a36;
+        color: #faf8f5;
         font-size: 12px;
         font-variant-numeric: tabular-nums;
         box-shadow: 0 8px 18px rgba(0, 0, 0, 0.2);
@@ -269,85 +269,64 @@
     <!-- ===================== dictation ===================== -->
 
     <section class="fig" data-figure="dictation-pill-states">
-      <div class="frame">
-        <div class="pill-row">
+      <div class="frame panel">
+        <div class="mv-pill-row">
           <div class="pill-col">
-            <span class="mv-pill mv-anchor" data-n="1"><span class="mv-pill__glyph mv-pill__glyph--recording mv-pill__glyph--pulse"></span>Listening</span>
+            <span class="mv-pillwrap mv-anchor mv-anchor--above" data-n="1"><span class="mv-dpill"><span class="mv-dpill__stage">Click to dictate</span></span></span>
+            <span class="caption caption--inline">Idle, on hover</span>
+          </div>
+          <div class="pill-col">
+            <span class="mv-pillwrap mv-anchor mv-anchor--above" data-n="2"><span class="mv-dpill"><svg class="mv-dpill__wave" viewBox="0 0 92 22" aria-hidden="true"><polyline points="2.0,11.0 3.9,10.1 5.8,9.1 7.7,8.2 9.7,7.3 11.6,6.5 13.5,5.7 15.4,5.0 17.3,4.4 19.2,3.8 21.1,3.3 23.0,2.9 25.0,2.6 26.9,2.5 28.8,2.4 30.7,2.4 32.6,2.5 34.5,2.7 36.4,3.0 38.3,3.4 40.3,3.9 42.2,4.5 44.1,5.2 46.0,5.9 47.9,6.7 49.8,7.6 51.7,8.4 53.7,9.4 55.6,10.3 57.5,11.2 59.4,12.2 61.3,13.1 63.2,14.0 65.1,14.9 67.0,15.7 69.0,16.5 70.9,17.2 72.8,17.8 74.7,18.3 76.6,18.8 78.5,19.1 80.4,19.4 82.3,19.6 84.3,19.6 86.2,19.6 88.1,19.5 90.0,19.2" fill="none" stroke="rgba(255,255,255,1.0)" stroke-width="1.6" stroke-linecap="round"/><polyline points="2.0,5.5 3.9,4.9 5.8,4.4 7.7,4.1 9.7,3.8 11.6,3.7 13.5,3.7 15.4,3.9 17.3,4.2 19.2,4.6 21.1,5.2 23.0,5.8 25.0,6.6 26.9,7.4 28.8,8.3 30.7,9.2 32.6,10.2 34.5,11.2 36.4,12.2 38.3,13.2 40.3,14.1 42.2,15.0 44.1,15.8 46.0,16.5 47.9,17.1 49.8,17.6 51.7,17.9 53.7,18.2 55.6,18.3 57.5,18.3 59.4,18.1 61.3,17.8 63.2,17.4 65.1,16.8 67.0,16.2 69.0,15.4 70.9,14.6 72.8,13.7 74.7,12.8 76.6,11.8 78.5,10.8 80.4,9.8 82.3,8.8 84.3,7.9 86.2,7.0 88.1,6.2 90.0,5.5" fill="none" stroke="rgba(255,255,255,0.78)" stroke-width="1.6" stroke-linecap="round"/><polyline points="2.0,5.4 3.9,5.6 5.8,5.9 7.7,6.5 9.7,7.1 11.6,7.9 13.5,8.7 15.4,9.6 17.3,10.6 19.2,11.5 21.1,12.5 23.0,13.4 25.0,14.2 26.9,15.0 28.8,15.6 30.7,16.1 32.6,16.4 34.5,16.6 36.4,16.7 38.3,16.5 40.3,16.2 42.2,15.8 44.1,15.2 46.0,14.5 47.9,13.6 49.8,12.8 51.7,11.8 53.7,10.8 55.6,9.9 57.5,9.0 59.4,8.1 61.3,7.3 63.2,6.6 65.1,6.1 67.0,5.7 69.0,5.4 70.9,5.3 72.8,5.4 74.7,5.6 76.6,6.0 78.5,6.6 80.4,7.2 82.3,8.0 84.3,8.9 86.2,9.8 88.1,10.8 90.0,11.7" fill="none" stroke="rgba(255,255,255,0.56)" stroke-width="1.6" stroke-linecap="round"/></svg></span></span>
             <span class="caption caption--inline">Recording</span>
           </div>
           <div class="pill-col">
-            <span class="mv-pill mv-anchor" data-n="2"><span class="mv-pill__glyph mv-pill__glyph--pulse"></span>Transcribing</span>
-            <span class="caption caption--inline">Transcribing</span>
-          </div>
-          <div class="pill-col">
-            <span class="mv-pill mv-anchor" data-n="3"><span class="mv-pill__glyph"></span>Inserted</span>
-            <span class="caption caption--inline">Done</span>
+            <span class="mv-pillwrap mv-anchor mv-anchor--above" data-n="3"><span class="mv-dpill mv-dpill--stage"><span class="mv-dpill__track"></span><span class="mv-dpill__fill"></span><span class="mv-dpill__stage">Polishing</span></span></span>
+            <span class="caption caption--inline">Loading, with a stage</span>
           </div>
         </div>
       </div>
     </section>
 
     <section class="fig" data-figure="dictation-delivery">
-      <div class="frame">
-        <div class="mv-window">
-          <div class="mv-window__bar">
-            <span class="mv-window__dot mv-window__dot--live"></span>
-            <span class="mv-window__dot"></span>
-            <span class="mv-window__dot"></span>
-            <span class="mv-window__title">Another application</span>
-          </div>
-          <div class="mv-window__body">
-            <nav class="mv-rail" aria-hidden="true">
-              <span class="mv-rail__item mv-rail__item--active"><span class="mv-rail__glyph"></span>Home</span>
-              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>History</span>
-              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>Dictionary</span>
-            </nav>
-            <div class="mv-canvas">
-              <h3 class="mv-canvas__heading">Draft message</h3>
-              <p class="mv-canvas__sub">The focused field receives the transcript</p>
-              <div class="mv-review__entry mv-anchor" data-n="1" style="min-height: 92px;">
-                Send the updated invoice to the client by Friday, and copy me on the message.<span style="display:inline-block;width:1px;height:14px;background:var(--mv-ink);vertical-align:-2px;margin-left:2px;"></span>
-              </div>
-              <div style="margin-top: 18px; display:flex; align-items:center; gap: 12px;">
-                <span class="mv-pill mv-anchor mv-anchor--right" data-n="2"><span class="mv-pill__glyph"></span>Inserted</span>
-                <span class="caption caption--inline">The pill reports the result, then returns to idle.</span>
-              </div>
-            </div>
+      <div class="frame panel">
+        <div style="display: grid; gap: 18px;">
+                  <div class="mv-field mv-anchor mv-anchor--start" data-n="1">Send the updated invoice to the client by Friday, and copy me on the message.<span class="mv-field__caret"></span></div>
+          <div style="display: flex; align-items: center; gap: 14px;">
+            <span class="mv-pillwrap mv-anchor mv-anchor--above" data-n="2"><span class="mv-dpill"><span class="mv-dpill__stage">Click to dictate</span></span></span>
+            <span class="caption caption--inline">Back to idle once the text lands.</span>
           </div>
         </div>
       </div>
     </section>
 
     <section class="fig" data-figure="dictation-controls">
-      <div class="frame">
-        <div class="panel" style="display: grid; gap: 22px; justify-items: center;">
-          <div class="mv-pill__controls">
-            <span class="mv-pill__control mv-anchor" data-n="1">II</span>
-            <span class="mv-pill"><span class="mv-pill__glyph mv-pill__glyph--recording mv-pill__glyph--pulse"></span>Listening</span>
-            <span class="mv-pill__control mv-anchor mv-anchor--right" data-n="2">×</span>
+      <div class="frame panel">
+        <div style="display: grid; gap: 20px; justify-items: center; padding: 10px 0 2px;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span class="mv-dpill-side mv-anchor mv-anchor--below" data-n="1">&#10074;&#10074;</span>
+            <span class="mv-dpill"><svg class="mv-dpill__wave" viewBox="0 0 92 22" aria-hidden="true"><polyline points="2.0,11.0 3.9,10.1 5.8,9.1 7.7,8.2 9.7,7.3 11.6,6.5 13.5,5.7 15.4,5.0 17.3,4.4 19.2,3.8 21.1,3.3 23.0,2.9 25.0,2.6 26.9,2.5 28.8,2.4 30.7,2.4 32.6,2.5 34.5,2.7 36.4,3.0 38.3,3.4 40.3,3.9 42.2,4.5 44.1,5.2 46.0,5.9 47.9,6.7 49.8,7.6 51.7,8.4 53.7,9.4 55.6,10.3 57.5,11.2 59.4,12.2 61.3,13.1 63.2,14.0 65.1,14.9 67.0,15.7 69.0,16.5 70.9,17.2 72.8,17.8 74.7,18.3 76.6,18.8 78.5,19.1 80.4,19.4 82.3,19.6 84.3,19.6 86.2,19.6 88.1,19.5 90.0,19.2" fill="none" stroke="rgba(255,255,255,1.0)" stroke-width="1.6" stroke-linecap="round"/><polyline points="2.0,5.5 3.9,4.9 5.8,4.4 7.7,4.1 9.7,3.8 11.6,3.7 13.5,3.7 15.4,3.9 17.3,4.2 19.2,4.6 21.1,5.2 23.0,5.8 25.0,6.6 26.9,7.4 28.8,8.3 30.7,9.2 32.6,10.2 34.5,11.2 36.4,12.2 38.3,13.2 40.3,14.1 42.2,15.0 44.1,15.8 46.0,16.5 47.9,17.1 49.8,17.6 51.7,17.9 53.7,18.2 55.6,18.3 57.5,18.3 59.4,18.1 61.3,17.8 63.2,17.4 65.1,16.8 67.0,16.2 69.0,15.4 70.9,14.6 72.8,13.7 74.7,12.8 76.6,11.8 78.5,10.8 80.4,9.8 82.3,8.8 84.3,7.9 86.2,7.0 88.1,6.2 90.0,5.5" fill="none" stroke="rgba(255,255,255,0.78)" stroke-width="1.6" stroke-linecap="round"/><polyline points="2.0,5.4 3.9,5.6 5.8,5.9 7.7,6.5 9.7,7.1 11.6,7.9 13.5,8.7 15.4,9.6 17.3,10.6 19.2,11.5 21.1,12.5 23.0,13.4 25.0,14.2 26.9,15.0 28.8,15.6 30.7,16.1 32.6,16.4 34.5,16.6 36.4,16.7 38.3,16.5 40.3,16.2 42.2,15.8 44.1,15.2 46.0,14.5 47.9,13.6 49.8,12.8 51.7,11.8 53.7,10.8 55.6,9.9 57.5,9.0 59.4,8.1 61.3,7.3 63.2,6.6 65.1,6.1 67.0,5.7 69.0,5.4 70.9,5.3 72.8,5.4 74.7,5.6 76.6,6.0 78.5,6.6 80.4,7.2 82.3,8.0 84.3,8.9 86.2,9.8 88.1,10.8 90.0,11.7" fill="none" stroke="rgba(255,255,255,0.56)" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+            <span class="mv-dpill-side mv-anchor mv-anchor--below" data-n="2">&#10005;</span>
           </div>
-          <span class="mv-pill__note">Pause and resume sit on the left. Cancel sits on the right. Both are fully outside the pill body.</span>
-          <span class="mv-pill mv-anchor" data-n="3"><span class="mv-pill__glyph"></span>Cancelled</span>
+          <span class="caption caption--inline">Pause and resume on the left, cancel on the right. Both sit outside the pill body.</span>
         </div>
       </div>
     </section>
 
     <section class="fig" data-figure="dictation-step-1-hold">
       <div class="frame panel">
-        <p class="panel__title">Hold to dictate</p>
         <p class="panel__sub">Platform defaults. A saved custom binding replaces the default for that action.</p>
         <div class="row" style="gap: 34px; flex-wrap: wrap;">
           <div class="stack" style="gap: 6px;">
             <span class="caption caption--inline">macOS</span>
-            <div class="keys"><span class="key mv-anchor mv-anchor--below" data-n="1">Fn</span></div>
+            <div class="keys"><span class="key">Fn</span></div>
           </div>
           <div class="stack" style="gap: 6px;">
             <span class="caption caption--inline">Windows</span>
-            <div class="keys"><span class="key">Win</span><span class="arrow">+</span><span class="key mv-anchor mv-anchor--below" data-n="2">Ctrl</span></div>
+            <div class="keys"><span class="key">Win</span><span class="arrow">+</span><span class="key">Ctrl</span></div>
           </div>
           <div class="stack" style="gap: 6px;">
             <span class="caption caption--inline">Linux</span>
-            <div class="keys"><span class="key">Ctrl</span><span class="arrow">+</span><span class="key">Alt</span><span class="arrow">+</span><span class="key mv-anchor mv-anchor--below" data-n="3">Space</span></div>
+            <div class="keys"><span class="key">Ctrl</span><span class="arrow">+</span><span class="key">Alt</span><span class="arrow">+</span><span class="key">Space</span></div>
           </div>
         </div>
       </div>
@@ -355,63 +334,39 @@
 
     <section class="fig" data-figure="dictation-step-2-speak">
       <div class="frame panel">
-        <div class="row row--between">
-          <div class="stack" style="gap: 6px;">
-            <span class="panel__title">Capture is live</span>
-            <span class="panel__sub panel__sub--tight">The selected microphone streams while the shortcut stays held.</span>
-          </div>
-          <span class="mv-pill mv-anchor mv-anchor--right" data-n="1"><span class="mv-pill__glyph mv-pill__glyph--recording mv-pill__glyph--pulse"></span>Listening</span>
-        </div>
-        <div class="wave mv-anchor mv-anchor--below" data-n="2" style="margin-top: 18px;">
-          <span style="height: 8px"></span><span style="height: 18px"></span><span style="height: 12px"></span><span style="height: 24px"></span><span style="height: 16px"></span><span style="height: 22px"></span><span style="height: 10px"></span><span style="height: 20px"></span><span style="height: 14px"></span><span style="height: 26px"></span><span style="height: 12px"></span><span style="height: 18px"></span>
+        <div style="display: grid; gap: 16px; justify-items: center; padding: 8px 0 4px;">
+          <span class="mv-pillwrap"><span class="mv-dpill"><svg class="mv-dpill__wave" viewBox="0 0 92 22" aria-hidden="true"><polyline points="2.0,11.0 3.9,10.1 5.8,9.1 7.7,8.2 9.7,7.3 11.6,6.5 13.5,5.7 15.4,5.0 17.3,4.4 19.2,3.8 21.1,3.3 23.0,2.9 25.0,2.6 26.9,2.5 28.8,2.4 30.7,2.4 32.6,2.5 34.5,2.7 36.4,3.0 38.3,3.4 40.3,3.9 42.2,4.5 44.1,5.2 46.0,5.9 47.9,6.7 49.8,7.6 51.7,8.4 53.7,9.4 55.6,10.3 57.5,11.2 59.4,12.2 61.3,13.1 63.2,14.0 65.1,14.9 67.0,15.7 69.0,16.5 70.9,17.2 72.8,17.8 74.7,18.3 76.6,18.8 78.5,19.1 80.4,19.4 82.3,19.6 84.3,19.6 86.2,19.6 88.1,19.5 90.0,19.2" fill="none" stroke="rgba(255,255,255,1.0)" stroke-width="1.6" stroke-linecap="round"/><polyline points="2.0,5.5 3.9,4.9 5.8,4.4 7.7,4.1 9.7,3.8 11.6,3.7 13.5,3.7 15.4,3.9 17.3,4.2 19.2,4.6 21.1,5.2 23.0,5.8 25.0,6.6 26.9,7.4 28.8,8.3 30.7,9.2 32.6,10.2 34.5,11.2 36.4,12.2 38.3,13.2 40.3,14.1 42.2,15.0 44.1,15.8 46.0,16.5 47.9,17.1 49.8,17.6 51.7,17.9 53.7,18.2 55.6,18.3 57.5,18.3 59.4,18.1 61.3,17.8 63.2,17.4 65.1,16.8 67.0,16.2 69.0,15.4 70.9,14.6 72.8,13.7 74.7,12.8 76.6,11.8 78.5,10.8 80.4,9.8 82.3,8.8 84.3,7.9 86.2,7.0 88.1,6.2 90.0,5.5" fill="none" stroke="rgba(255,255,255,0.78)" stroke-width="1.6" stroke-linecap="round"/><polyline points="2.0,5.4 3.9,5.6 5.8,5.9 7.7,6.5 9.7,7.1 11.6,7.9 13.5,8.7 15.4,9.6 17.3,10.6 19.2,11.5 21.1,12.5 23.0,13.4 25.0,14.2 26.9,15.0 28.8,15.6 30.7,16.1 32.6,16.4 34.5,16.6 36.4,16.7 38.3,16.5 40.3,16.2 42.2,15.8 44.1,15.2 46.0,14.5 47.9,13.6 49.8,12.8 51.7,11.8 53.7,10.8 55.6,9.9 57.5,9.0 59.4,8.1 61.3,7.3 63.2,6.6 65.1,6.1 67.0,5.7 69.0,5.4 70.9,5.3 72.8,5.4 74.7,5.6 76.6,6.0 78.5,6.6 80.4,7.2 82.3,8.0 84.3,8.9 86.2,9.8 88.1,10.8 90.0,11.7" fill="none" stroke="rgba(255,255,255,0.56)" stroke-width="1.6" stroke-linecap="round"/></svg></span></span>
+          <span class="caption caption--inline">The waveform tracks the microphone you selected in Settings.</span>
         </div>
       </div>
     </section>
 
     <section class="fig" data-figure="dictation-step-3-release">
       <div class="frame panel">
-        <div class="row row--between">
-          <div class="stack" style="gap: 6px;">
-            <span class="panel__title">Release ends capture</span>
-            <span class="panel__sub panel__sub--tight">Audio goes to the active engine: the local sidecar or the selected API provider.</span>
-          </div>
-          <span class="mv-pill mv-anchor mv-anchor--right" data-n="1"><span class="mv-pill__glyph mv-pill__glyph--pulse"></span>Transcribing</span>
-        </div>
-        <div class="chips mv-anchor" data-n="2" style="margin-top: 16px;">
-          <span class="chip chip--on">Whisper sidecar</span>
-          <span class="chip">Parakeet</span>
-          <span class="chip">Canary</span>
-          <span class="chip">SenseVoice</span>
-          <span class="chip">API provider</span>
+        <div style="display: grid; gap: 16px; justify-items: center; padding: 8px 0 4px;">
+          <span class="mv-pillwrap"><span class="mv-dpill"><span class="mv-dpill__track"></span><span class="mv-dpill__fill"></span></span></span>
+          <span class="caption caption--inline">The bar runs while the engine converts the audio.</span>
         </div>
       </div>
     </section>
 
     <section class="fig" data-figure="dictation-step-4-process">
       <div class="frame panel">
-        <p class="panel__title">Processing runs in a fixed order</p>
-        <p class="panel__sub">Each stage can change the text. The order is why a replacement applies before post-processing, not after.</p>
-        <div class="row" style="gap: 8px; flex-wrap: wrap;">
-          <span class="chip mv-anchor" data-n="1">Dictionary</span><span class="arrow">→</span>
-          <span class="chip">Silence filter</span><span class="arrow">→</span>
-          <span class="chip">Spoken commands</span><span class="arrow">→</span>
-          <span class="chip">Symbols</span><span class="arrow">→</span>
-          <span class="chip chip--on mv-anchor" data-n="2">Post-processing</span>
+        <div style="display: grid; gap: 16px; justify-items: center; padding: 30px 0 4px;">
+          <span class="mv-pillwrap"><span class="mv-dpill mv-dpill--stage"><span class="mv-dpill__track"></span><span class="mv-dpill__fill"></span><span class="mv-dpill__stage">Polishing</span></span></span>
+          <span class="caption caption--inline">A stage name replaces the bare bar while that stage runs.</span>
         </div>
       </div>
     </section>
 
     <section class="fig" data-figure="dictation-step-5-deliver">
       <div class="frame panel">
-        <div class="row row--between" style="margin-bottom: 14px;">
-          <div class="stack" style="gap: 6px;">
-            <span class="panel__title">Delivery targets the focused field</span>
-            <span class="panel__sub panel__sub--tight">Paste uses the clipboard. Simulated typing sends keystrokes.</span>
+        <div style="display: grid; gap: 18px;">
+                  <div class="mv-field">Send the updated invoice to the client by Friday, and copy me on the message.<span class="mv-field__caret"></span></div>
+          <div style="display: flex; align-items: center; gap: 14px;">
+            <span class="mv-pillwrap"><span class="mv-dpill mv-dpill--blue"><svg class="mv-dpill__wave" viewBox="0 0 92 22" aria-hidden="true"><polyline points="2.0,11.0 3.9,10.1 5.8,9.1 7.7,8.2 9.7,7.3 11.6,6.5 13.5,5.7 15.4,5.0 17.3,4.4 19.2,3.8 21.1,3.3 23.0,2.9 25.0,2.6 26.9,2.5 28.8,2.4 30.7,2.4 32.6,2.5 34.5,2.7 36.4,3.0 38.3,3.4 40.3,3.9 42.2,4.5 44.1,5.2 46.0,5.9 47.9,6.7 49.8,7.6 51.7,8.4 53.7,9.4 55.6,10.3 57.5,11.2 59.4,12.2 61.3,13.1 63.2,14.0 65.1,14.9 67.0,15.7 69.0,16.5 70.9,17.2 72.8,17.8 74.7,18.3 76.6,18.8 78.5,19.1 80.4,19.4 82.3,19.6 84.3,19.6 86.2,19.6 88.1,19.5 90.0,19.2" fill="none" stroke="rgba(255,255,255,1.0)" stroke-width="1.6" stroke-linecap="round"/><polyline points="2.0,5.5 3.9,4.9 5.8,4.4 7.7,4.1 9.7,3.8 11.6,3.7 13.5,3.7 15.4,3.9 17.3,4.2 19.2,4.6 21.1,5.2 23.0,5.8 25.0,6.6 26.9,7.4 28.8,8.3 30.7,9.2 32.6,10.2 34.5,11.2 36.4,12.2 38.3,13.2 40.3,14.1 42.2,15.0 44.1,15.8 46.0,16.5 47.9,17.1 49.8,17.6 51.7,17.9 53.7,18.2 55.6,18.3 57.5,18.3 59.4,18.1 61.3,17.8 63.2,17.4 65.1,16.8 67.0,16.2 69.0,15.4 70.9,14.6 72.8,13.7 74.7,12.8 76.6,11.8 78.5,10.8 80.4,9.8 82.3,8.8 84.3,7.9 86.2,7.0 88.1,6.2 90.0,5.5" fill="none" stroke="rgba(255,255,255,0.78)" stroke-width="1.6" stroke-linecap="round"/><polyline points="2.0,5.4 3.9,5.6 5.8,5.9 7.7,6.5 9.7,7.1 11.6,7.9 13.5,8.7 15.4,9.6 17.3,10.6 19.2,11.5 21.1,12.5 23.0,13.4 25.0,14.2 26.9,15.0 28.8,15.6 30.7,16.1 32.6,16.4 34.5,16.6 36.4,16.7 38.3,16.5 40.3,16.2 42.2,15.8 44.1,15.2 46.0,14.5 47.9,13.6 49.8,12.8 51.7,11.8 53.7,10.8 55.6,9.9 57.5,9.0 59.4,8.1 61.3,7.3 63.2,6.6 65.1,6.1 67.0,5.7 69.0,5.4 70.9,5.3 72.8,5.4 74.7,5.6 76.6,6.0 78.5,6.6 80.4,7.2 82.3,8.0 84.3,8.9 86.2,9.8 88.1,10.8 90.0,11.7" fill="none" stroke="rgba(255,255,255,0.56)" stroke-width="1.6" stroke-linecap="round"/></svg></span></span>
+            <span class="caption caption--inline">The pill flashes blue once the text lands.</span>
           </div>
-          <span class="mv-pill mv-anchor mv-anchor--right" data-n="2"><span class="mv-pill__glyph"></span>Inserted</span>
-        </div>
-        <div class="mv-review__entry mv-anchor" data-n="1">
-          Send the updated invoice to the client by Friday, and copy me on the message.
         </div>
       </div>
     </section>
@@ -419,98 +374,183 @@
     <!-- ===================== transcript review ===================== -->
 
     <section class="fig" data-figure="review-panel">
-      <div class="frame">
-        <div class="panel" style="display: grid; justify-items: center;">
-          <div class="mv-review" style="width: 620px;">
-            <div class="mv-review__entry mv-anchor" data-n="1">Send the updated invoice to the client by Friday, and copy me on the message.</div>
-            <div class="mv-review__actions">
-              <span class="mv-review__button mv-review__button--primary mv-anchor" data-n="2">Insert</span>
-              <span class="mv-review__button mv-anchor" data-n="3">Copy</span>
-              <span class="mv-review__button mv-anchor" data-n="4">Open</span>
-              <span class="mv-review__button mv-review__button--quiet mv-anchor" data-n="5">Cancel</span>
-            </div>
+      <div class="frame panel">
+      <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 0;">
+        <div class="mv-pillpanel__icons">
+          <span class="mv-pillpanel__icon">&#10005;</span>
+          <span class="mv-pillpanel__icon mv-anchor mv-anchor--above" data-n="6">&#8599;</span>
+        </div>
+        <div class="mv-pillpanel__body" style="padding-top: 66px;">
+          <div class="mv-pillpanel__label mv-anchor mv-anchor--above-start" data-n="1">Review transcript</div>
+          <p class="mv-pillpanel__text">Send the updated invoice to the client by Friday, and copy me on the message.</p>
+        </div>
+        <div class="mv-pillpanel__actions">
+          <span class="mv-pillpanel__hint">Enter inserts · Shift+Enter for a new line</span>
+          <div class="mv-pillpanel__row">
+          <span class="mv-pillbutton mv-pillbutton--cancel mv-anchor mv-anchor--above" data-n="5">Cancel</span>
+          <span class="mv-pillbutton mv-pillbutton--copy mv-anchor mv-anchor--above" data-n="4">Copy</span>
+          <span class="mv-pillbutton mv-pillbutton--edit mv-anchor mv-anchor--above" data-n="3">Edit</span>
+          <span class="mv-pillbutton  mv-anchor mv-anchor--above" data-n="2">Insert</span>
           </div>
         </div>
+        <div class="mv-pillpanel__input"><span>Send the updated invoice to the client by Friday, and copy me on the message.</span><span class="mv-pillpanel__send" aria-hidden="true">&#8593;</span></div>
+      </div>
       </div>
     </section>
 
     <section class="fig" data-figure="review-queue">
       <div class="frame panel">
-        <div class="stack">
-          <div class="row row--between">
-            <span class="panel__title mv-anchor" data-n="1">Open review</span>
-            <span class="timer">4:12</span>
-          </div>
-          <div class="mv-review__entry">Send the updated invoice to the client by Friday.</div>
-          <div class="row row--between mv-anchor" data-n="2" style="opacity: 0.75; border: 1px dashed var(--mv-hairline); border-radius: 12px; padding: 12px 14px;">
-            <span style="font-size: 13px;">Second transcript, waiting</span>
-            <span class="chip">Queued</span>
+        <p class="caption caption--inline" style="margin-bottom: 8px;">The first transcript, open now.</p>
+      <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 0;">
+        <div class="mv-pillpanel__icons">
+          <span class="mv-pillpanel__icon">&#10005;</span>
+          <span class="mv-pillpanel__icon">&#8599;</span>
+        </div>
+        <div class="mv-pillpanel__body">
+          <div class="mv-pillpanel__label">Review transcript</div>
+          <p class="mv-pillpanel__text">Send the updated invoice to the client by Friday, and copy me on the message.</p>
+        </div>
+        <div class="mv-pillpanel__actions">
+          <span class="mv-pillpanel__hint">Enter inserts · Shift+Enter for a new line</span>
+          <div class="mv-pillpanel__row">
+          <span class="mv-pillbutton mv-pillbutton--cancel">Cancel</span>
+          <span class="mv-pillbutton mv-pillbutton--copy">Copy</span>
+          <span class="mv-pillbutton mv-pillbutton--edit">Edit</span>
+          <span class="mv-pillbutton ">Insert</span>
           </div>
         </div>
+        <div class="mv-pillpanel__input"><span>Send the updated invoice to the client by Friday, and copy me on the message.</span><span class="mv-pillpanel__send" aria-hidden="true">&#8593;</span></div>
+      </div>
+        <p class="caption" style="margin: 18px 0 8px;">The second transcript arrives while the first is open. It takes the same panel once the first is decided.</p>
+      <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 0;">
+        <div class="mv-pillpanel__icons">
+          <span class="mv-pillpanel__icon">&#10005;</span>
+          <span class="mv-pillpanel__icon">&#8599;</span>
+        </div>
+        <div class="mv-pillpanel__body">
+          <div class="mv-pillpanel__label">Review transcript</div>
+          <p class="mv-pillpanel__text">Book the standup room for Monday at nine, and add the agenda.</p>
+        </div>
+        <div class="mv-pillpanel__actions">
+          <span class="mv-pillpanel__hint">Enter inserts · Shift+Enter for a new line</span>
+          <div class="mv-pillpanel__row">
+          <span class="mv-pillbutton mv-pillbutton--cancel">Cancel</span>
+          <span class="mv-pillbutton mv-pillbutton--copy">Copy</span>
+          <span class="mv-pillbutton mv-pillbutton--edit">Edit</span>
+          <span class="mv-pillbutton ">Insert</span>
+          </div>
+        </div>
+        <div class="mv-pillpanel__input"><span>Book the standup room for Monday at nine, and add the agenda.</span><span class="mv-pillpanel__send" aria-hidden="true">&#8593;</span></div>
+      </div>
       </div>
     </section>
 
     <section class="fig" data-figure="review-expiry">
       <div class="frame panel">
-        <div class="stack" style="gap: 14px;">
-          <div class="row row--between">
-            <span class="panel__title">Unanswered review</span>
-            <span class="timer mv-anchor mv-anchor--right" data-n="1">0:00</span>
-          </div>
-          <div class="toast mv-anchor" data-n="2">
-            <span style="width: 8px; height: 8px; border-radius: 999px; background: var(--mv-accent);"></span>
-            The review expired. Nothing was inserted. The transcript is in History.
-          </div>
+        <div class="mv-toast">
+          <span>Review expired &mdash; the transcript is kept in your history.</span>
+          <span class="mv-toast__action">Open history</span>
         </div>
       </div>
     </section>
 
     <section class="fig" data-figure="review-step-1-open">
       <div class="frame panel">
-        <div class="row row--between">
-          <div class="stack" style="gap: 6px;">
-            <span class="panel__title">The panel opens after processing</span>
-            <span class="panel__sub panel__sub--tight">Before insertion, and only when Review before insert is on.</span>
-          </div>
-          <span class="mv-pill mv-anchor mv-anchor--right" data-n="1"><span class="mv-pill__glyph"></span>Review transcript</span>
+      <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 0;">
+        <div class="mv-pillpanel__icons">
+          <span class="mv-pillpanel__icon">&#10005;</span>
+          <span class="mv-pillpanel__icon">&#8599;</span>
         </div>
+        <div class="mv-pillpanel__body">
+          <div class="mv-pillpanel__label">Review transcript</div>
+          <p class="mv-pillpanel__text">Send the updated invoice to the client by Friday, and copy me on the message.</p>
+        </div>
+        <div class="mv-pillpanel__actions">
+          <span class="mv-pillpanel__hint">Enter inserts · Shift+Enter for a new line</span>
+          <div class="mv-pillpanel__row">
+          <span class="mv-pillbutton mv-pillbutton--cancel">Cancel</span>
+          <span class="mv-pillbutton mv-pillbutton--copy">Copy</span>
+          <span class="mv-pillbutton mv-pillbutton--edit">Edit</span>
+          <span class="mv-pillbutton ">Insert</span>
+          </div>
+        </div>
+        <div class="mv-pillpanel__input"><span>Send the updated invoice to the client by Friday, and copy me on the message.</span><span class="mv-pillpanel__send" aria-hidden="true">&#8593;</span></div>
+      </div>
       </div>
     </section>
 
     <section class="fig" data-figure="review-step-2-edit">
       <div class="frame panel">
-        <p class="panel__title">Edit in place</p>
-        <p class="panel__sub">The entry holds the processed text and is multiline. Edit keeps the panel open and records the changed text.</p>
-        <div class="mv-review__entry mv-anchor" data-n="1">Send the updated invoice to the client by Friday, and copy me on the message.<span style="display:inline-block;width:1px;height:14px;background:var(--mv-ink);vertical-align:-2px;margin-left:2px;"></span></div>
+      <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 0;">
+        <div class="mv-pillpanel__icons">
+          <span class="mv-pillpanel__icon">&#10005;</span>
+          <span class="mv-pillpanel__icon">&#8599;</span>
+        </div>
+        <div class="mv-pillpanel__body">
+          <div class="mv-pillpanel__label">Review transcript</div>
+          <p class="mv-pillpanel__text">Send the revised invoice to Priya by Friday, and copy me on it.</p>
+        </div>
+        <div class="mv-pillpanel__actions">
+          <span class="mv-pillpanel__hint">Enter inserts · Shift+Enter for a new line</span>
+          <div class="mv-pillpanel__row">
+          <span class="mv-pillbutton mv-pillbutton--cancel">Cancel</span>
+          <span class="mv-pillbutton mv-pillbutton--copy">Copy</span>
+          <span class="mv-pillbutton mv-pillbutton--edit">Edit</span>
+          <span class="mv-pillbutton ">Insert</span>
+          </div>
+        </div>
+        <div class="mv-pillpanel__input"><span>Send the revised invoice to Priya by Friday, and copy me on it.<span class="mv-pillpanel__caret"></span></span><span class="mv-pillpanel__send" aria-hidden="true">&#8593;</span></div>
+      </div>
       </div>
     </section>
 
     <section class="fig" data-figure="review-step-3-decide">
       <div class="frame panel">
-        <p class="panel__title">Four decisions, one insert</p>
-        <p class="panel__sub">Insert delivers. Copy and Open move the text elsewhere. Cancel inserts nothing.</p>
-        <div class="mv-review__actions">
-          <span class="mv-review__button mv-review__button--primary mv-anchor" data-n="1">Insert</span>
-          <span class="mv-review__button mv-anchor" data-n="2">Copy</span>
-          <span class="mv-review__button mv-anchor" data-n="3">Open</span>
-          <span class="mv-review__button mv-review__button--quiet mv-anchor" data-n="4">Cancel</span>
+      <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 0;">
+        <div class="mv-pillpanel__icons">
+          <span class="mv-pillpanel__icon">&#10005;</span>
+          <span class="mv-pillpanel__icon">&#8599;</span>
         </div>
+        <div class="mv-pillpanel__body">
+          <div class="mv-pillpanel__label">Review transcript</div>
+          <p class="mv-pillpanel__text">Send the updated invoice to the client by Friday, and copy me on the message.</p>
+        </div>
+        <div class="mv-pillpanel__actions">
+          <span class="mv-pillpanel__hint">Enter inserts · Shift+Enter for a new line</span>
+          <div class="mv-pillpanel__row">
+          <span class="mv-pillbutton mv-pillbutton--cancel">Cancel</span>
+          <span class="mv-pillbutton mv-pillbutton--copy">Copy</span>
+          <span class="mv-pillbutton mv-pillbutton--edit">Edit</span>
+          <span class="mv-pillbutton  mv-pillbutton--focus">Insert</span>
+          </div>
+        </div>
+        <div class="mv-pillpanel__input"><span>Send the updated invoice to the client by Friday, and copy me on the message.</span><span class="mv-pillpanel__send" aria-hidden="true">&#8593;</span></div>
+      </div>
       </div>
     </section>
 
     <section class="fig" data-figure="review-step-4-cancel">
       <div class="frame panel">
-        <div class="row row--between">
-          <div class="stack" style="gap: 6px;">
-            <span class="panel__title">Cancel wins over a pending Open save</span>
-            <span class="panel__sub panel__sub--tight">The save is aborted and the review settles as cancelled, so Chats cannot open behind you.</span>
+      <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 0;">
+        <div class="mv-pillpanel__icons">
+          <span class="mv-pillpanel__icon">&#10005;</span>
+          <span class="mv-pillpanel__icon">&#8599;</span>
+        </div>
+        <div class="mv-pillpanel__body">
+          <div class="mv-pillpanel__label">Review transcript</div>
+          <p class="mv-pillpanel__text">Send the updated invoice to the client by Friday, and copy me on the message.</p>
+        </div>
+        <div class="mv-pillpanel__actions">
+          <span class="mv-pillpanel__hint">Enter inserts · Shift+Enter for a new line</span>
+          <div class="mv-pillpanel__row">
+          <span class="mv-pillbutton mv-pillbutton--cancel mv-pillbutton--focus">Cancel</span>
+          <span class="mv-pillbutton mv-pillbutton--copy">Copy</span>
+          <span class="mv-pillbutton mv-pillbutton--edit">Edit</span>
+          <span class="mv-pillbutton ">Insert</span>
           </div>
-          <span class="chip chip--on mv-anchor mv-anchor--right" data-n="2">Open saving…</span>
         </div>
-        <div class="mv-review__actions" style="margin-top: 16px;">
-          <span class="mv-review__button mv-review__button--quiet mv-anchor" data-n="1" style="border-color: var(--mv-accent);">Cancel</span>
-          <span class="chip">Aborts the save</span>
-        </div>
+        <div class="mv-pillpanel__input"><span>Send the updated invoice to the client by Friday, and copy me on the message.</span><span class="mv-pillpanel__send" aria-hidden="true">&#8593;</span></div>
+      </div>
       </div>
     </section>
 
@@ -527,19 +567,29 @@
           </div>
           <div class="mv-window__body">
             <nav class="mv-rail" aria-hidden="true">
-              <span class="mv-rail__item mv-rail__item--active"><span class="mv-rail__glyph"></span>Home</span>
-              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>History</span>
-              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>Dictionary</span>
+              <span class="mv-rail__item mv-rail__item--active"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 7.5 8 3l5.5 4.5V13H2.5z"/></svg></span>Home</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2.2 1.3" stroke-linecap="round"/></svg></span>History</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 5.2c0-1 .8-1.7 1.8-1.7h2.7v8H9.8c-1 0-1.8.8-1.8 1.7"/><path d="M8 5.2c0-1-.8-1.7-1.8-1.7H3.5v8h2.7c1 0 1.8.8 1.8 1.7"/></svg></span>Dictionary</span>
               <span class="mv-rail__item"><span class="mv-rail__glyph"></span>Styles</span>
             </nav>
             <div class="mv-canvas">
               <h3 class="mv-canvas__heading">Home</h3>
-              <p class="mv-canvas__sub">Your dictation activity, by local date</p>
-              <div class="mv-row--metrics mv-anchor" data-n="5" style="margin-bottom: 12px;">
-                <div class="mv-card"><div class="mv-card__label">Current streak</div><div class="mv-card__value">6 days</div></div>
-                <div class="mv-card"><div class="mv-card__label">Words this month</div><div class="mv-card__value">4,182</div></div>
+              <p class="mv-canvas__sub" style="margin-bottom: 34px;">Your dictation activity, by local date</p>
+              <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: 'streak total' 'month .' 'activity activity'; gap: 12px; align-items: stretch;">
+                <div class="mv-card mv-anchor mv-anchor--above-start" data-n="4" style="grid-area: streak; padding: 12px 14px;">
+                  <div class="mv-card__value" style="font-size: 22px;">6</div>
+                  <div class="mv-card__label">Day streak</div>
+                </div>
+                <div class="mv-card" style="grid-area: total; padding: 12px 14px; text-align: right;">
+                  <div class="mv-card__value" style="font-size: 22px;">62,410</div>
+                  <div class="mv-card__label">Words total</div>
+                </div>
+                <div class="mv-card" style="grid-area: month; padding: 12px 14px;">
+                  <div class="mv-card__value" style="font-size: 22px;">4,182</div>
+                  <div class="mv-card__label">Words this month</div>
+                </div>
+                <div id="heatmap-host" style="grid-area: activity; justify-self: center; margin-top: 34px;"></div>
               </div>
-              <div id="heatmap-host"></div>
             </div>
           </div>
         </div>
@@ -570,9 +620,9 @@
       <div class="frame panel">
         <p class="panel__title">Monday first, one column per week</p>
         <p class="panel__sub">Seven rows. Every other weekday is labelled, so the rail stays quiet at ten-pixel cells.</p>
-        <div class="row" style="gap: 10px; align-items: flex-start;">
-          <div class="mv-heat__days mv-anchor mv-anchor--below" data-n="1"><span>M</span><span></span><span>W</span><span></span><span>F</span><span></span><span>S</span></div>
-          <div id="week-host" class="mv-anchor" data-n="2"></div>
+        <div class="row" style="gap: 10px; align-items: flex-start; margin-top: 26px; justify-content: center;">
+          <div class="mv-heat__days"><span>M</span><span></span><span>W</span><span></span><span>F</span><span></span><span>S</span></div>
+          <div id="week-host"></div>
         </div>
       </div>
     </section>
@@ -580,34 +630,20 @@
     <section class="fig" data-figure="home-step-2-read">
       <div class="frame panel">
         <p class="panel__title">Read one day</p>
-        <p class="panel__sub">Hover scales the cell to 1.35 and outlines it. The tooltip states the date and the word count.</p>
-        <div class="row" style="gap: 18px; align-items: center;">
-          <span class="mv-heat__cell mv-heat__cell--3 mv-anchor" data-n="1" style="width: 14px; height: 14px; transform: scale(1.35); outline: 1px solid var(--mv-ink);"></span>
-          <span class="tooltip mv-anchor" data-n="2">Jan 14, 2026: 312 words</span>
-          <span class="caption caption--inline">Today carries a standing outline. Future dates carry none and cannot be hovered.</span>
+        <p class="panel__sub">Hover scales the cell and outlines it. The tooltip gives the date and the count.</p>
+        <div class="row" style="gap: 20px; align-items: center; margin-top: 28px; justify-content: center;">
+          <div id="hover-host"></div>
+          <span class="tooltip">Jan 14, 2026: 312 words</span>
         </div>
+        <p class="caption" style="margin: 20px 0 0;">The scaled cell is under the pointer. Today keeps a standing outline.</p>
       </div>
     </section>
 
     <section class="fig" data-figure="home-step-3-summary">
       <div class="frame panel">
-        <div class="row row--between">
-          <div class="stack" style="gap: 4px;">
-            <span class="panel__title">Summary and legend</span>
-            <span class="panel__sub panel__sub--tight">Active days and total words exclude future dates.</span>
-          </div>
-          <div class="mv-legend mv-anchor mv-anchor--below" data-n="1" style="margin: 0;">
-            <span>Less</span>
-            <span class="mv-legend__swatch" style="background: var(--mv-heat-0)"></span>
-            <span class="mv-legend__swatch" style="background: var(--mv-heat-1)"></span>
-            <span class="mv-legend__swatch" style="background: var(--mv-heat-4)"></span>
-            <span>More</span>
-          </div>
-        </div>
-        <div class="row mv-anchor" data-n="2" style="gap: 10px; margin-top: 16px;">
-          <span class="chip">148 active days</span>
-          <span class="chip">62,410 words</span>
-        </div>
+        <p class="panel__title">Three tones, one direction</p>
+        <p class="panel__sub">The legend repeats the three tones the grid draws. Exact counts come from the cell tooltip, not from the colour.</p>
+        <div id="legend-host"></div>
       </div>
     </section>
 
@@ -616,30 +652,19 @@
     <section class="fig" data-figure="assistant-chats">
       <div class="frame">
         <div class="mv-window">
-          <div class="mv-window__bar">
-            <span class="mv-window__dot mv-window__dot--live"></span>
-            <span class="mv-window__dot"></span>
-            <span class="mv-window__dot"></span>
-            <span class="mv-window__title">mausVoice</span>
-          </div>
           <div class="mv-window__body">
             <nav class="mv-rail" aria-hidden="true">
-              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>Home</span>
-              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>History</span>
-              <span class="mv-rail__item"><span class="mv-rail__glyph"></span>Dictionary</span>
-              <span class="mv-rail__item mv-rail__item--active mv-anchor" data-n="1"><span class="mv-rail__glyph"></span>Chats</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 7.5 8 3l5.5 4.5V13H2.5z"/></svg></span>Home</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2.2 1.3" stroke-linecap="round"/></svg></span>History</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 5.2c0-1 .8-1.7 1.8-1.7h2.7v8H9.8c-1 0-1.8.8-1.8 1.7"/><path d="M8 5.2c0-1-.8-1.7-1.8-1.7H3.5v8h2.7c1 0 1.8.8 1.8 1.7"/></svg></span>Dictionary</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><circle cx="6" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="10" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="8" cy="10.5" r="1" fill="currentColor" stroke="none"/></svg></span>Styles</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1"/><path d="M8 11.2v.1"/></svg></span>Help</span>
+              <span class="mv-rail__item mv-rail__item--active mv-anchor mv-anchor--below" data-n="1"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.8 3.5h10.4v6.3H6.6L3.4 12.3v-2.5H2.8z"/></svg></span>Chats</span>
             </nav>
             <div class="mv-canvas">
-              <h3 class="mv-canvas__heading">Chats</h3>
-              <p class="mv-canvas__sub">Assistant conversations</p>
-              <div class="mv-card mv-anchor" data-n="2" style="margin-bottom: 10px;">
-                <div class="mv-card__label">Today</div>
-                <div style="font-size: 13px; margin-top: 4px;">Summarize the page I am looking at and draft a reply.</div>
-                <div style="font-size: 12px; color: var(--mv-ink-soft); margin-top: 6px;">Pasted a 4-line reply into the focused field after approval.</div>
-              </div>
-              <div class="mv-card" style="border-style: dashed;">
-                <div class="mv-card__label">Pending</div>
-                <div style="font-size: 13px; margin-top: 4px;">Reviewed text saved from the pill. Copy it into the app you want.</div>
+              <div class="mv-chat">
+                <div class="mv-bubble mv-bubble--user">Summarise what I have open and draft a reply to the client.</div>
+                <div class="mv-bubble mv-bubble--assistant mv-anchor mv-anchor--right" data-n="2">The focused field holds a client email. I can draft a reply and paste it back into the field once you approve.</div>
               </div>
             </div>
           </div>
@@ -649,13 +674,17 @@
 
     <section class="fig" data-figure="assistant-permission">
       <div class="frame panel" style="display: grid; justify-items: center;">
-        <div class="mv-review" style="width: 560px;">
-          <div class="mv-card__label mv-anchor" data-n="1">Tool request</div>
-          <div style="font-size: 13px; margin-top: 6px;">Paste the drafted reply into the focused field.</div>
-          <div class="mv-review__actions">
-            <span class="mv-review__button mv-review__button--quiet mv-anchor" data-n="2">Deny</span>
-            <span class="mv-review__button mv-review__button--primary">Allow</span>
-            <span class="mv-review__button">Always allow</span>
+        <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 168px; justify-content: center;">
+          <div class="mv-permcard mv-anchor mv-anchor--above-start" data-n="1" style="width: 520px;">
+            <div class="mv-permcard__tool">Paste text</div>
+            <div class="mv-permcard__reason">Insert the drafted reply into the focused field.</div>
+            <div class="mv-permcard__actions">
+              <div class="mv-anchor mv-anchor--above" data-n="2" style="display: inline-flex; gap: 8px;">
+                <span class="mv-permbtn mv-permbtn--quiet">Deny</span>
+                <span class="mv-permbtn">Allow</span>
+                <span class="mv-permbtn">Always Allow</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -663,39 +692,117 @@
 
     <section class="fig" data-figure="assistant-open">
       <div class="frame panel">
-        <div class="stack" style="gap: 14px;">
-          <div class="row row--between">
-            <span class="panel__title">Open from an agent's Paste</span>
-            <span class="mv-pill mv-anchor mv-anchor--right" data-n="1"><span class="mv-pill__glyph"></span>Review transcript</span>
+        <div class="stack" style="gap: 30px; align-items: center;">
+          <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 0;">
+            <div class="mv-pillpanel__icons">
+              <span class="mv-pillpanel__icon">&#10005;</span>
+              <span class="mv-pillpanel__icon mv-anchor mv-anchor--above" data-n="1">&#8599;</span>
+            </div>
+            <div class="mv-pillpanel__body">
+              <div class="mv-pillpanel__label">Review transcript</div>
+              <p class="mv-pillpanel__text">Send the updated invoice to the client by Friday, and copy me on the message.</p>
+            </div>
+            <div class="mv-pillpanel__actions">
+              <span class="mv-pillpanel__hint">Enter inserts · Shift+Enter for a new line</span>
+              <div class="mv-pillpanel__row">
+                <span class="mv-pillbutton mv-pillbutton--cancel">Cancel</span>
+                <span class="mv-pillbutton mv-pillbutton--copy">Copy</span>
+                <span class="mv-pillbutton mv-pillbutton--edit">Edit</span>
+                <span class="mv-pillbutton">Insert</span>
+              </div>
+            </div>
+            <div class="mv-pillpanel__input"><span>Send the updated invoice to the client by Friday, and copy me on the message.</span><span class="mv-pillpanel__send" aria-hidden="true">&#8593;</span></div>
           </div>
-          <div class="mv-card mv-anchor" data-n="2" style="border-style: dashed;">
-            <div class="mv-card__label">Saved to Chats</div>
-            <div style="font-size: 13px; margin-top: 4px;">Reviewed text, waiting for you to copy it into the target app.</div>
+          <div class="mv-pcard mv-anchor mv-anchor--above-start" data-n="2" style="max-width: 520px; width: 520px;">
+            <div class="mv-pcard__title">Paste action waiting for you</div>
+            <div class="mv-pcard__body">Opening Chats changes the focused app. Copy this text, then focus the destination and paste it there.</div>
+            <div class="mv-pcard__text">Send the updated invoice to the client by Friday, and copy me on the message.</div>
+            <div class="mv-pcard__actions">
+              <span class="mv-btn mv-btn--primary">Copy for manual paste</span>
+              <span class="mv-btn mv-btn--ghost">Cancel</span>
+            </div>
           </div>
         </div>
       </div>
     </section>
 
     <section class="fig" data-figure="assistant-step-1-settings">
-      <div class="frame panel">
-        <p class="panel__title">Settings → AI and processing → Assistant mode</p>
-        <p class="panel__sub">The dialog carries a Beta chip and three rows.</p>
-        <div class="stack">
-          <div class="setting mv-anchor" data-n="1"><div><div class="setting__name">Assistant hotkey</div><div class="setting__desc">Press this key combination to start assistant mode.</div></div><span class="key">⌘</span></div>
-          <div class="setting mv-anchor" data-n="2"><div><div class="setting__name">Assistant mode</div><div class="setting__desc">Off by default. This capture shows it enabled.</div></div><span class="toggle toggle--on"></span></div>
-          <div class="setting mv-anchor" data-n="3"><div><div class="setting__name">Power mode</div><div class="setting__desc">Adds the terminal tool after a warning and a restart.</div></div><span class="toggle"></span></div>
+      <div class="frame panel" style="display: grid; justify-items: center;">
+        <div class="mv-dialog">
+          <div class="mv-dialog__head">
+            <span class="mv-dialog__title">Assistant mode</span>
+            <span class="mv-dialog__chip">Beta</span>
+            <span class="mv-dialog__close">&#10005;</span>
+          </div>
+          <div class="mv-dialog__body" style="padding-left: 62px; padding-right: 28px;">
+            <p class="mv-dialog__intro" style="margin: 0;">Assistant mode follows commands you dictate instead of just cleaning up text.</p>
+            <div>
+              <span class="mv-segment"><span class="mv-segment__item mv-segment__item--on">API</span><span class="mv-segment__item">Off</span></span>
+            </div>
+            <div>
+              <div class="setting__name">Assistant hotkey</div>
+              <div class="setting__desc">Press this key combination to start assistant mode.</div>
+              <span class="mv-input" style="width: 140px;">Fn</span>
+            </div>
+            <div class="row row--between">
+              <div>
+                <div class="setting__name">Assistant mode</div>
+                <div class="setting__desc">Assistant mode is disabled by default. This is a new experimental feature.</div>
+              </div>
+              <span class="mv-switch"></span>
+            </div>
+            <div class="row row--between">
+              <div>
+                <div class="setting__name">Power mode</div>
+                <div class="setting__desc">Allow the assistant to run terminal commands on your behalf. This is a temporary guardrail that will be removed in a future update. Restart mausVoice to apply changes.</div>
+              </div>
+              <span class="mv-switch"></span>
+            </div>
+          </div>
+          <div class="mv-dialog__foot"><span class="mv-btn mv-btn--ghost">Done</span></div>
         </div>
       </div>
     </section>
 
 
     <section class="fig" data-figure="assistant-step-2-provider">
-      <div class="frame panel">
-        <p class="panel__title">Give the assistant a generative credential</p>
-        <p class="panel__sub">Off leaves the assistant without an LLM backend. The assistant provider is separate from transcription and post-processing.</p>
-        <div class="stack">
-          <div class="setting mv-anchor" data-n="1"><div><div class="setting__name">Assistant provider</div><div class="setting__desc">Select the API provider the assistant sends commands to.</div></div><span class="chips"><span class="chip">Off</span><span class="chip chip--on">API</span></span></div>
-          <div class="setting mv-anchor" data-n="2"><div><div class="setting__name">Credential</div><div class="setting__desc">Only providers that support generative text appear here.</div></div><span class="chip">Groq · llama-3.3-70b</span></div>
+      <div class="frame panel" style="display: grid; justify-items: center;">
+        <div class="mv-dialog" style="width: 620px;">
+          <div class="mv-dialog__head">
+            <span class="mv-dialog__title">Assistant mode</span>
+            <span class="mv-dialog__chip">Beta</span>
+            <span class="mv-dialog__close">&#10005;</span>
+          </div>
+          <div class="mv-dialog__body" style="padding-left: 62px; padding-right: 28px;">
+            <div>
+              <span class="mv-segment"><span class="mv-segment__item mv-segment__item--on">API</span><span class="mv-segment__item">Off</span></span>
+            </div>
+            <div class="mv-keycard" style="border-color: var(--mv-ink);">
+              <span class="mv-keycard__provider">Groq</span>
+              <span class="mv-keycard__meta">Ends with ab12</span>
+            </div>
+            <div style="display: grid; gap: 6px;">
+              <span class="mv-help">Maximum iterations</span>
+              <div class="mv-input">20</div>
+              <span class="mv-help">Limits how many tool-use turns one request can run.</span>
+            </div>
+            <div style="display: grid; gap: 6px;">
+              <span class="mv-help">Permission timeout (seconds)</span>
+              <div class="mv-input">60</div>
+              <span class="mv-help">How long the assistant waits for approval before denying a tool call.</span>
+            </div>
+            <div style="display: grid; gap: 10px;">
+              <span class="mv-help" style="font-weight: 600; font-size: 13px;">Enabled tools</span>
+              <div class="row row--between">
+                <span style="font-size: 13px;">Paste text</span>
+                <span class="mv-switch mv-switch--on"></span>
+              </div>
+              <div class="row row--between">
+                <span style="font-size: 13px;">Read screen context</span>
+                <span class="mv-switch mv-switch--on"></span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -704,33 +811,55 @@
       <div class="frame panel">
         <div class="row row--between">
           <div class="stack" style="gap: 6px;">
-            <span class="panel__title">Hold the assistant hotkey</span>
+            <span class="panel__title">Hold the assistant hotkey and speak</span>
             <span class="panel__sub panel__sub--tight">The command is transcribed with the active transcription settings, then sent as a chat message.</span>
           </div>
-          <span class="mv-pill mv-anchor mv-anchor--right" data-n="1"><span class="mv-pill__glyph mv-pill__glyph--recording mv-pill__glyph--pulse"></span>Listening</span>
+          <span class="mv-dpill"><svg class="mv-dpill__wave" viewBox="0 0 92 22" aria-hidden="true"><polyline points="2.0,11.0 3.9,10.2 5.8,9.5 7.7,8.8 9.7,8.1 11.6,7.4 13.5,6.8 15.4,6.2 17.3,5.7 19.2,5.2 21.1,4.9 23.0,4.6 25.0,4.3 26.9,4.2 28.8,4.1 30.7,4.1 32.6,4.2 34.5,4.4 36.4,4.6 38.3,5.0 40.3,5.4 42.2,5.8 44.1,6.4 46.0,6.9 47.9,7.6 49.8,8.2 51.7,9.0 53.7,9.7 55.6,10.4 57.5,11.2 59.4,11.9 61.3,12.7 63.2,13.4 65.1,14.1 67.0,14.8 69.0,15.4 70.9,15.9 72.8,16.4 74.7,16.9 76.6,17.2 78.5,17.5 80.4,17.7 82.3,17.9 84.3,17.9 86.2,17.9 88.1,17.8 90.0,17.6" fill="none" stroke="rgba(255,255,255,1.0)" stroke-width="1.6" stroke-linecap="round"/><polyline points="2.0,6.6 3.9,6.1 5.8,5.7 7.7,5.4 9.7,5.3 11.6,5.2 13.5,5.2 15.4,5.3 17.3,5.6 19.2,5.9 21.1,6.3 23.0,6.9 25.0,7.5 26.9,8.1 28.8,8.8 30.7,9.6 32.6,10.4 34.5,11.2 36.4,12.0 38.3,12.7 40.3,13.5 42.2,14.2 44.1,14.8 46.0,15.4 47.9,15.9 49.8,16.3 51.7,16.6 53.7,16.7 55.6,16.8 57.5,16.8 59.4,16.7 61.3,16.4 63.2,16.1 65.1,15.7 67.0,15.1 69.0,14.5 70.9,13.9 72.8,13.2 74.7,12.4 76.6,11.6 78.5,10.8 80.4,10.0 82.3,9.3 84.3,8.5 86.2,7.8 88.1,7.2 90.0,6.6" fill="none" stroke="rgba(255,255,255,0.78)" stroke-width="1.6" stroke-linecap="round"/><polyline points="2.0,6.5 3.9,6.7 5.8,7.0 7.7,7.4 9.7,7.9 11.6,8.5 13.5,9.2 15.4,9.9 17.3,10.7 19.2,11.4 21.1,12.2 23.0,12.9 25.0,13.6 26.9,14.2 28.8,14.7 30.7,15.1 32.6,15.4 34.5,15.5 36.4,15.5 38.3,15.4 40.3,15.2 42.2,14.8 44.1,14.3 46.0,13.8 47.9,13.1 49.8,12.4 51.7,11.7 53.7,10.9 55.6,10.1 57.5,9.4 59.4,8.7 61.3,8.0 63.2,7.5 65.1,7.1 67.0,6.7 69.0,6.5 70.9,6.5 72.8,6.5 74.7,6.7 76.6,7.0 78.5,7.5 80.4,8.0 82.3,8.6 84.3,9.3 86.2,10.0 88.1,10.8 90.0,11.6" fill="none" stroke="rgba(255,255,255,0.56)" stroke-width="1.6" stroke-linecap="round"/></svg></span>
         </div>
       </div>
     </section>
 
     <section class="fig" data-figure="assistant-step-3-tools">
-      <div class="frame panel">
-        <p class="panel__title">Tools stay visible</p>
-        <p class="panel__sub">Each permissioned step names the tool and the reason. A conversation can take several steps.</p>
-        <div class="stack">
-          <div class="setting mv-anchor" data-n="1"><div><div class="setting__name">Read the focused field</div><div class="setting__desc">Allowed once</div></div><span class="chip">Allow</span></div>
-          <div class="setting mv-anchor" data-n="2"><div><div class="setting__name">Paste the drafted reply</div><div class="setting__desc">Waiting for your decision</div></div><span class="chip chip--on">Pending</span></div>
+      <div class="frame panel" style="display: grid; place-items: center;">
+        <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 0; gap: 12px; padding-bottom: 18px; justify-content: center;">
+          <div class="mv-toolline" style="width: 520px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0 5 5L21 10l-1 1-9.5 9.5a2.1 2.1 0 0 1-3-3L17 8l1-1z"/></svg><span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Get accessibility information about the currently focused UI element</span></div>
+          <div class="mv-permcard" style="width: 520px;">
+            <div class="mv-permcard__tool">Paste text</div>
+            <div class="mv-permcard__reason">Insert the drafted reply into the focused field.</div>
+            <div class="mv-permcard__actions">
+              <span class="mv-permbtn mv-permbtn--quiet">Deny</span>
+              <span class="mv-permbtn">Allow</span>
+              <span class="mv-permbtn">Always Allow</span>
+            </div>
+          </div>
         </div>
       </div>
     </section>
 
     <section class="fig" data-figure="assistant-step-4-open">
-      <div class="frame panel">
-        <div class="stack" style="gap: 12px;">
-          <div class="row row--between">
-            <span class="panel__title">Open keeps the text</span>
-            <span class="chip chip--on mv-anchor mv-anchor--right" data-n="1">Saved to Chats</span>
+      <div class="frame">
+        <div class="mv-window">
+          <div class="mv-window__body">
+            <nav class="mv-rail" aria-hidden="true">
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 7.5 8 3l5.5 4.5V13H2.5z"/></svg></span>Home</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2.2 1.3" stroke-linecap="round"/></svg></span>History</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 5.2c0-1 .8-1.7 1.8-1.7h2.7v8H9.8c-1 0-1.8.8-1.8 1.7"/><path d="M8 5.2c0-1-.8-1.7-1.8-1.7H3.5v8h2.7c1 0 1.8.8 1.8 1.7"/></svg></span>Dictionary</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><circle cx="6" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="10" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="8" cy="10.5" r="1" fill="currentColor" stroke="none"/></svg></span>Styles</span>
+              <span class="mv-rail__item"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1"/><path d="M8 11.2v.1"/></svg></span>Help</span>
+              <span class="mv-rail__item mv-rail__item--active"><span class="mv-rail__glyph"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.8 3.5h10.4v6.3H6.6L3.4 12.3v-2.5H2.8z"/></svg></span>Chats</span>
+            </nav>
+            <div class="mv-canvas">
+              <div class="mv-pcard">
+                <div class="mv-pcard__title">Paste action waiting for you</div>
+                <div class="mv-pcard__body">Opening Chats changes the focused app. Copy this text, then focus the destination and paste it there.</div>
+                <div class="mv-pcard__text">Send the updated invoice to the client by Friday, and copy me on the message.</div>
+                <div class="mv-pcard__actions">
+                  <span class="mv-btn mv-btn--primary">Copy for manual paste</span>
+                  <span class="mv-btn mv-btn--ghost">Cancel</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="mv-review__entry mv-anchor" data-n="2">Reviewed text, waiting for you to copy it into the target app.</div>
         </div>
       </div>
     </section>
@@ -738,17 +867,37 @@
 
     <section class="fig" data-figure="assistant-step-5-copy">
       <div class="frame panel">
-        <div class="stack" style="gap: 12px;">
-          <div class="row row--between">
-            <span class="panel__title">Copy from the pending card</span>
-            <span class="chip">Pending</span>
-          </div>
-          <div class="mv-review__entry mv-anchor" data-n="1">Reviewed text, waiting for you to copy it into the target app.</div>
-          <div class="row mv-anchor" data-n="2" style="gap: 10px;">
-            <span class="mv-review__button mv-review__button--primary">Copy text</span>
-            <span class="caption caption--inline">Nothing is retried in the background after you copy.</span>
+        <div class="mv-pcard" style="max-width: 620px;">
+          <div class="mv-pcard__title">Paste action waiting for you</div>
+          <div class="mv-pcard__body">Copied for manual paste</div>
+          <div class="mv-pcard__text">Send the updated invoice to the client by Friday, and copy me on the message.</div>
+        </div>
+        <span class="caption caption--inline" style="margin-top: 12px;">The card stops offering actions once it is resolved. Nothing is retried in the background.</span>
+      </div>
+    </section>
+
+    <section class="fig" data-figure="assistant-paste-review">
+      <div class="frame panel">
+      <div class="mv-pillpanel mv-pillpanel--center" style="min-height: 0;">
+        <div class="mv-pillpanel__icons">
+          <span class="mv-pillpanel__icon">&#10005;</span>
+          <span class="mv-pillpanel__icon">&#8599;</span>
+        </div>
+        <div class="mv-pillpanel__body">
+          <div class="mv-pillpanel__label">Review transcript</div>
+          <p class="mv-pillpanel__text">Move the launch review to Thursday and tell the team in #general.</p>
+        </div>
+        <div class="mv-pillpanel__actions">
+          <span class="mv-pillpanel__hint">Enter inserts · Shift+Enter for a new line</span>
+          <div class="mv-pillpanel__row">
+          <span class="mv-pillbutton mv-pillbutton--cancel">Cancel</span>
+          <span class="mv-pillbutton mv-pillbutton--copy">Copy</span>
+          <span class="mv-pillbutton mv-pillbutton--edit">Edit</span>
+          <span class="mv-pillbutton ">Insert</span>
           </div>
         </div>
+        <div class="mv-pillpanel__input"><span>Move the launch review to Thursday and tell the team in #general.</span><span class="mv-pillpanel__send" aria-hidden="true">&#8593;</span></div>
+      </div>
       </div>
     </section>
 
@@ -762,13 +911,14 @@
         grid.className = "mv-heat__grid";
         for (let index = 0; index < weeks * 7; index += 1) {
           const sample = (index * 37 + 11) % 13;
-          const intensity =
-            sample < 4 ? 0 : sample < 6 ? 1 : sample < 8 ? 2 : sample < 10 ? 3 : 4;
+          const total = weeks * 7;
+          const inStreak = index >= total - 11 && index <= total - 5;
+          const intensity = inStreak ? 2 : sample < 4 ? 0 : sample < 8 ? 1 : 2;
           const cell = document.createElement("span");
           cell.className = "mv-heat__cell";
           if (intensity > 0) cell.classList.add(`mv-heat__cell--${intensity}`);
           if (index >= weeks * 7 - 4) cell.classList.add("mv-heat__cell--future");
-          if (index === weeks * 7 - 12) cell.classList.add("mv-heat__cell--focus");
+          if (index === weeks * 7 - 5) cell.classList.add("mv-heat__cell--focus");
           grid.appendChild(cell);
         }
         return grid;
@@ -786,29 +936,66 @@
           .join("");
         wrap.appendChild(days);
         const grid = buildGrid(26);
-        grid.classList.add("mv-anchor");
+        grid.classList.add("mv-anchor", "mv-anchor--above");
         grid.dataset.n = "2";
-        wrap.appendChild(grid);
+        const focusCell = grid.querySelector(".mv-heat__cell--focus");
+        if (focusCell) {
+          focusCell.classList.add("mv-anchor", "mv-anchor--after");
+          focusCell.dataset.n = "3";
+        }
+        const gridWrap = document.createElement("div");
+        gridWrap.appendChild(grid);
+        wrap.appendChild(gridWrap);
         heatHost.appendChild(wrap);
 
         const legend = document.createElement("div");
-        legend.className = "mv-legend mv-anchor mv-anchor--below";
-        legend.dataset.n = "3";
+        legend.className = "mv-legend";
+        legend.style.justifyContent = "flex-end";
         legend.innerHTML =
-          '<span>Less</span><span class="mv-legend__swatch" style="background: var(--mv-heat-0)"></span><span class="mv-legend__swatch" style="background: var(--mv-heat-1)"></span><span class="mv-legend__swatch" style="background: var(--mv-heat-4)"></span><span>More</span>';
+          '<span>Less</span><span class="mv-legend__swatch" style="background: var(--mv-heat-0)"></span><span class="mv-legend__swatch" style="background: var(--mv-heat-1)"></span><span class="mv-legend__swatch" style="background: var(--mv-heat-2)"></span><span>More</span>';
         heatHost.appendChild(legend);
-
-        const summary = document.createElement("div");
-        summary.className = "mv-anchor";
-        summary.dataset.n = "4";
-        summary.style.cssText = "display:flex;gap:10px;margin-top:10px;";
-        summary.innerHTML =
-          '<span class="chip">148 active days</span><span class="chip">62,410 words</span>';
-        heatHost.appendChild(summary);
       }
 
       const weekHost = document.getElementById("week-host");
-      if (weekHost) weekHost.appendChild(buildGrid(9));
+      if (weekHost) weekHost.appendChild(buildGrid(26));
+
+      const hoverHost = document.getElementById("hover-host");
+      if (hoverHost) {
+        const fragment = buildGrid(3);
+        fragment
+          .querySelectorAll(".mv-heat__cell--future, .mv-heat__cell--focus")
+          .forEach((cell) =>
+            cell.classList.remove(
+              "mv-heat__cell--future",
+              "mv-heat__cell--focus",
+            ),
+          );
+        const hovered = fragment.children[9];
+        hovered.className = "mv-heat__cell mv-heat__cell--2 mv-heat__cell--hover";
+        fragment.children[19].classList.add("mv-heat__cell--focus");
+        hoverHost.appendChild(fragment);
+      }
+
+      const legendHost = document.getElementById("legend-host");
+      if (legendHost) {
+        const strip = buildGrid(12);
+        strip.style.cssText = "width: max-content; margin-left: auto;";
+        strip
+          .querySelectorAll(".mv-heat__cell--future, .mv-heat__cell--focus")
+          .forEach((cell) =>
+            cell.classList.remove(
+              "mv-heat__cell--future",
+              "mv-heat__cell--focus",
+            ),
+          );
+        legendHost.appendChild(strip);
+        const legend = document.createElement("div");
+        legend.className = "mv-legend";
+        legend.style.cssText = "width: max-content; margin-left: auto;";
+        legend.innerHTML =
+          '<span>Less</span><span class="mv-legend__swatch" style="background: var(--mv-heat-0)"></span><span class="mv-legend__swatch" style="background: var(--mv-heat-1)"></span><span class="mv-legend__swatch" style="background: var(--mv-heat-2)"></span><span>More</span>';
+        legendHost.appendChild(legend);
+      }
     </script>
   </body>
 </html>

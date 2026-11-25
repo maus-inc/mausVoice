@@ -18,15 +18,14 @@ The heatmap is the part people ask about, because its colour scale is compressed
 
 <Figure
   id="home-heatmap"
-  alt="The Home dashboard with the daily-word heatmap, metrics, legend, and summary"
+  alt="The Home dashboard with the daily-word heatmap, its three metric cards, and the legend"
   title="Anatomy of the daily-word heatmap"
   caption="The capture shows a shortened range for legibility. The shipped grid runs 53 weeks, Monday first."
   annotations={[
     { n: 1, title: "Weekday rail", detail: "Seven rows, Monday at the top. Only every other label is drawn, so the rail stays quiet at ten-pixel cells." },
     { n: 2, title: "One cell per local date", detail: "The colour is the word count for that date. Dates group by the device's local calendar, not UTC, so a dictation at 23:50 belongs to the day you experienced." },
     { n: 3, title: "Latest week", detail: "The grid scrolls horizontally and opens on the most recent week. Older weeks are one scroll to the left, and resizing the window keeps the latest week in view." },
-    { n: 4, title: "Summary", detail: "Active days and total words for the visible range. Future dates are excluded from both." },
-    { n: 5, title: "Metric stack", detail: "Streak, words this month, and lifetime words sit beside the chart on a wide window and above it on a narrow one." },
+    { n: 4, title: "Metric stack", detail: "Streak, words this month, and lifetime words sit beside the chart on a wide window and above it on a narrow one." },
   ]}
 />
 
@@ -40,7 +39,7 @@ The grid is a compact year view, not a calendar. One column is one week, one row
     image="home-step-1-week"
     alt="The weekday rail beside the week columns"
   >
-    Monday is the top row. The rail labels Monday, Wednesday, Friday, and Saturday, and leaves the rows between them blank. The blank rows are still real days. A cell is never missing, it is only unlabelled, so a gap in the colour pattern means a day with no words, not a day that did not exist.
+    Monday is the top row. The rail labels Monday, Wednesday, Friday, and Sunday, and leaves the rows between them blank. The blank rows are still real days. A cell is never missing, it is only unlabelled, so a gap in the colour pattern means a day with no words, not a day that did not exist.
   </Step>
   <Step
     title="Hover a dated cell"
@@ -50,11 +49,11 @@ The grid is a compact year view, not a calendar. One column is one week, one row
     Hovering a dated cell scales it to 1.35 and outlines it for 150ms, and the tooltip states the date and the count in one line, for example "Jan 14, 2026: 312 words". Today's cell carries a standing outline, so the current day is findable without hovering. Touch has no hover state, and reduced motion removes the scale. The cells are informational, not controls, so they never take focus and never open a panel.
   </Step>
   <Step
-    title="Read the legend and the summary together"
+    title="Read the legend, then hover for the exact count"
     image="home-step-3-summary"
-    alt="The Less to More legend beside the active-days and total-words summary"
+    alt="A strip of heatmap cells above the Less to More legend"
   >
-    The legend runs Less to More with three swatches, and the grid is drawn in three visual levels: no words, 1 to 499 words, and 500 or more words. Two days with very different counts can therefore share a colour. The summary is the precise number: active days and total words for the visible range, with future dates excluded. Read the legend for shape and the summary for totals.
+    The legend runs Less to More with three swatches, and the grid draws those same three tones: no words, 1 to 499 words, and 500 or more words. The scale compresses five count bands into three colours, so a day with 120 words and a day with 1,400 words share a tone. The colour shows shape, not magnitude. For the exact number, hover the cell and read the tooltip, or open History.
   </Step>
 </Steps>
 
@@ -76,7 +75,7 @@ A date in the future is drawn as a transparent cell with no tooltip and no point
 
 ## Accessibility
 
-The chart does not rely on colour alone. The summary states active days and total words as text, the legend states the direction of the scale, and the same data is exposed as a list of daily word counts for a screen reader. A cell's description has the same shape as its tooltip, so a sighted reader and a screen-reader user get the same sentence.
+The chart does not rely on colour alone. A visually hidden summary states the active days and the total words for the past year, the legend states the direction of the scale, and the same data is exposed as a list of daily word counts. A cell's description has the same shape as its tooltip, so a sighted reader and a screen-reader user get the same sentence.
 
 ## Layout
 
