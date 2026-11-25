@@ -186,4 +186,30 @@ describe("voquill-migration.actions", () => {
     expect(refreshCurrentUserMock).not.toHaveBeenCalled();
     expect(loadApiKeysMock).not.toHaveBeenCalled();
   });
+
+  it("coalesces concurrent retry calls behind a single in-flight backend invocation", async () => {
+    let resolveRetry!: (report: VoquillMigrationReport) => void;
+    retryMigrationMock.mockImplementationOnce(
+      () =>
+        new Promise<VoquillMigrationReport>((resolve) => {
+          resolveRetry = resolve;
+        }),
+    );
+
+    const first = runVoquillMigrationRetry();
+    const second = runVoquillMigrationRetry();
+    expect(retryMigrationMock).toHaveBeenCalledTimes(1);
+
+    const completed = makeReport({
+      status: "completed",
+      databasePhase: "migrated",
+      canRetry: false,
+    });
+    resolveRetry(completed);
+
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toEqual(completed);
+    expect(b).toEqual(completed);
+    expect(getAppState().voquillMigration.retrying).toBe(false);
+  });
 });

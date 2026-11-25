@@ -1,5 +1,9 @@
 import { fetchVoquillMigrationStatus } from "../repos/voquill-migration.repo";
 import { getAppState, produceAppState } from "../store";
+import {
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
+} from "../utils/local-data-write-gate";
 import { getLogger } from "../utils/log.utils";
 
 /**
@@ -12,11 +16,21 @@ import { getLogger } from "../utils/log.utils";
  */
 export const refreshVoquillMigrationStatusIfActive =
   async (): Promise<void> => {
-    if (!getAppState().voquillMigration.report?.legacyDetected) {
+    if (
+      isLocalDataClearRequested() ||
+      !getAppState().voquillMigration.report?.legacyDetected
+    ) {
       return;
     }
+    const clearGeneration = getLocalDataClearGeneration();
     try {
       const report = await fetchVoquillMigrationStatus();
+      if (
+        isLocalDataClearRequested() ||
+        getLocalDataClearGeneration() !== clearGeneration
+      ) {
+        return;
+      }
       produceAppState((draft) => {
         draft.voquillMigration.report = report;
         draft.voquillMigration.status = "success";

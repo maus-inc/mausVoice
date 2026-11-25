@@ -148,14 +148,20 @@ const usePersonalApiKeyForm = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const saveInFlight = useRef(false);
   const testInFlight = useRef(false);
+  const sessionIdRef = useRef(0);
 
   useEffect(() => {
-    if (!open) return;
-    setValue("");
-    setErrorMessage(null);
-    setSaving(false);
-    setTesting(false);
-    setTestOutcome(null);
+    sessionIdRef.current += 1;
+    if (open) {
+      setValue("");
+      setErrorMessage(null);
+      setSaving(false);
+      setTesting(false);
+      setTestOutcome(null);
+    }
+    return () => {
+      sessionIdRef.current += 1;
+    };
   }, [open, provider]);
 
   const busy = saving || testing;
@@ -170,18 +176,25 @@ const usePersonalApiKeyForm = ({
     const trimmed = value.trim();
     if (!trimmed || busy || testInFlight.current) return;
 
+    const sessionId = sessionIdRef.current;
     testInFlight.current = true;
     setTesting(true);
     setTestOutcome(null);
     setErrorMessage(null);
     try {
       const ok = await copy.testKey(trimmed);
-      setTestOutcome(ok ? "success" : "error");
+      if (sessionIdRef.current === sessionId) {
+        setTestOutcome(ok ? "success" : "error");
+      }
     } catch {
-      setTestOutcome("error");
+      if (sessionIdRef.current === sessionId) {
+        setTestOutcome("error");
+      }
     } finally {
       testInFlight.current = false;
-      setTesting(false);
+      if (sessionIdRef.current === sessionId) {
+        setTesting(false);
+      }
     }
   };
 
@@ -189,6 +202,7 @@ const usePersonalApiKeyForm = ({
     const trimmed = value.trim();
     if (!trimmed || busy || saveInFlight.current) return;
 
+    const sessionId = sessionIdRef.current;
     saveInFlight.current = true;
     setSaving(true);
     setErrorMessage(null);
@@ -198,14 +212,20 @@ const usePersonalApiKeyForm = ({
       showSnackbar(intl.formatMessage(copy.savedMessage), {
         mode: "success",
       });
-      onClose();
+      if (sessionIdRef.current === sessionId) {
+        onClose();
+      }
     } catch {
-      setErrorMessage(
-        intl.formatMessage({ defaultMessage: "Could not save the API key." }),
-      );
+      if (sessionIdRef.current === sessionId) {
+        setErrorMessage(
+          intl.formatMessage({ defaultMessage: "Could not save the API key." }),
+        );
+      }
     } finally {
       saveInFlight.current = false;
-      setSaving(false);
+      if (sessionIdRef.current === sessionId) {
+        setSaving(false);
+      }
     }
   };
 
