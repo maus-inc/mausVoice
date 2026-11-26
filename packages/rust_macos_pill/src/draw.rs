@@ -668,19 +668,10 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
     ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(12.0);
-    let left_aligned = layout.texts_left_aligned();
-    for (index, line) in layout.lines.iter().enumerate() {
-        if line.is_empty() {
-            continue;
-        }
+    for (index, line, x) in layout.text_runs(|l| ctx.text_extents(l).width) {
         let extents = ctx.text_extents(line);
-        let line_x = if left_aligned {
-            layout.text.x
-        } else {
-            layout.text.line_x(extents.width)
-        };
-        let line_y = layout.text.line_top(index, extents.height);
-        ctx.move_to(line_x - extents.x_bearing, line_y - extents.y_bearing);
+        let y = layout.text.line_top(index, extents.height);
+        ctx.move_to(x - extents.x_bearing, y - extents.y_bearing);
         ctx.show_text(line);
     }
 

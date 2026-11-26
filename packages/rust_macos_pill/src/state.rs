@@ -158,8 +158,6 @@ pub(crate) struct PillState {
 
     // Flash message / toast
     pub(crate) flash_message: RefCell<String>,
-    /// Lines the banner painted last frame; the celebration's tick reads it
-    /// because that tick runs before the paint that measures the wrap.
     pub(crate) flash_lines: Cell<usize>,
     pub(crate) flash_visible: Cell<bool>,
     pub(crate) flash_t: Cell<f64>,
@@ -368,3 +366,4 @@ impl std::ops::Deref for PillState {
 }
 
 rust_pill_shared::impl_flash_host!(crate::state::PillState);
+rust_pill_shared::impl_celebration_host!(crate::state::PillState);

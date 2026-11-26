@@ -8,6 +8,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
 pub(crate) use rust_pill_shared::clock::monotonic_now as drag_clock_now;
+use rust_pill_shared::flash_banner::CelebrationHost;
 use rust_pill_shared::flash_banner::FlashHost;
 use rust_pill_shared::restore::ParkedWindow;
 
@@ -2498,20 +2499,8 @@ fn tick_fireworks(state: &PillState) {
     let ww = state.draw_width.get();
     let wh = state.draw_height.get();
     let (_, pill_y, ..) = draw::pill_position(state, ww, wh);
-    rust_pill_shared::fireworks::Fireworks {
-        active: &state.fireworks_active,
-        elapsed: &state.fireworks_elapsed,
-        next_launch: &state.fireworks_next_launch,
-        rockets: &state.fireworks_rockets,
-    }
-    .tick(
-        dt,
-        state.celebration_origin(
-            ww / 2.0,
-            pill_y,
-            rust_pill_shared::flash_banner::FlashBannerConstants::canonical(),
-        ),
-    );
+    let origin = state.celebration_origin(ww / 2.0, pill_y, Default::default());
+    state.tick_fireworks(dt, origin);
 }
 
 /// The flame, swaying on its own schedule.

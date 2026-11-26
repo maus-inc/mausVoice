@@ -906,25 +906,20 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     cr.set_source_rgba(bg_r, bg_g, bg_b, 0.92 * alpha);
     let _ = cr.fill();
 
-    // Message text, one painted line per entry the shared wrap produced. A
-    // button keeps the block left aligned against its padding; without one the
-    // line is centred, which is the compact look a short toast has always had.
-    let left_aligned = layout.texts_left_aligned();
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
     let line_layout = pangocairo::functions::create_layout(cr);
     line_layout.set_font_description(Some(&font));
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    for (index, line) in layout.lines.iter().enumerate() {
-        if line.is_empty() {
-            continue;
-        }
+    for (index, line, x) in layout.text_runs(|l| {
+        line_layout.set_text(l);
+        line_layout.pixel_size().0 as f64
+    }) {
         line_layout.set_text(line);
-        let (line_w, line_h) = line_layout.pixel_size();
-        let line_x = if left_aligned {
-            layout.text.x
-        } else {
-            layout.text.line_x(line_w as f64)
-        };
-        cr.move_to(line_x, layout.text.line_top(index, line_h as f64));
+        cr.move_to(
+            x,
+            layout
+                .text
+                .line_top(index, line_layout.pixel_size().1 as f64),
+        );
         pangocairo::functions::show_layout(cr, &line_layout);
     }
 

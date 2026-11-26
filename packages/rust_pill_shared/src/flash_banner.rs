@@ -158,6 +158,14 @@ impl FlashBannerConstants {
     }
 }
 
+impl Default for FlashBannerConstants {
+    /// The geometry the three pills share, so a caller that just wants the
+    /// standard toast does not have to name the constructor.
+    fn default() -> Self {
+        Self::canonical()
+    }
+}
+
 impl FlashBannerSpec {
     /// Builds the spec from a pill's own constants and the widths it measured.
     ///
@@ -311,6 +319,35 @@ impl FlashBannerLayout {
     /// the point celebration particles launch from.
     pub fn center(&self) -> (f64, f64) {
         (self.banner.center_x(), self.banner.center_y())
+    }
+
+    /// The lines to paint, each with the x its baseline starts at.
+    ///
+    /// The alignment rule and the per-line geometry are the same on every
+    /// platform; only the measuring and the painting are not. Resolving the
+    /// positions here means a draw site paints a list rather than re-deriving
+    /// where each line goes, and a three-line loop is short enough that no
+    /// platform's copy of it is a duplicate of another's.
+    ///
+    /// `measure` returns the width of one painted line.
+    pub fn text_runs<F>(&self, measure: F) -> Vec<(usize, &str, f64)>
+    where
+        F: Fn(&str) -> f64,
+    {
+        let left_aligned = self.texts_left_aligned();
+        self.lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| !line.is_empty())
+            .map(|(index, line)| {
+                let x = if left_aligned {
+                    self.text.x
+                } else {
+                    self.text.line_x(measure(line))
+                };
+                (index, line.as_str(), x)
+            })
+            .collect()
     }
 
     /// Whether the message is left aligned rather than centred.
@@ -560,6 +597,58 @@ where
         action,
         lines,
     }
+}
+
+/// The four fields a pill's fireworks state lives in.
+///
+/// Separate from [`FlashHost`] because a pill animates its fireworks whether or
+/// not it is showing a banner: the group is its own small bundle so the tick can
+/// be written once without the banner's eleven fields in the way.
+pub trait CelebrationHost {
+    /// Whether the burst is running.
+    fn fireworks_active(&self) -> &Cell<bool>;
+    /// Seconds since the burst started.
+    fn fireworks_elapsed(&self) -> &Cell<f64>;
+    /// Index of the next rocket to launch.
+    fn fireworks_next_launch(&self) -> &Cell<usize>;
+    /// The rockets in flight.
+    fn fireworks_rockets(&self) -> &RefCell<Vec<crate::fireworks::Rocket>>;
+    /// The burst's state as the shared fireworks animation wants it.
+    fn fireworks(&self) -> crate::fireworks::Fireworks<'_> {
+        crate::fireworks::Fireworks {
+            active: self.fireworks_active(),
+            elapsed: self.fireworks_elapsed(),
+            next_launch: self.fireworks_next_launch(),
+            rockets: self.fireworks_rockets(),
+        }
+    }
+
+    /// Advances the burst one frame from this pill's own banner centre.
+    fn tick_fireworks(&self, dt: f64, origin: (f64, f64)) {
+        self.fireworks().tick(dt, origin);
+    }
+}
+
+/// Writes [`CelebrationHost`] for a state whose fireworks fields carry the
+/// shared names, so the accessors are generated rather than copied.
+#[macro_export]
+macro_rules! impl_celebration_host {
+    ($ty:ty) => {
+        impl $crate::flash_banner::CelebrationHost for $ty {
+            fn fireworks_active(&self) -> &std::cell::Cell<bool> {
+                &self.fireworks_active
+            }
+            fn fireworks_elapsed(&self) -> &std::cell::Cell<f64> {
+                &self.fireworks_elapsed
+            }
+            fn fireworks_next_launch(&self) -> &std::cell::Cell<usize> {
+                &self.fireworks_next_launch
+            }
+            fn fireworks_rockets(&self) -> &std::cell::RefCell<Vec<$crate::fireworks::Rocket>> {
+                &self.fireworks_rockets
+            }
+        }
+    };
 }
 
 /// One painted frame of the banner, resolved from a measured message.

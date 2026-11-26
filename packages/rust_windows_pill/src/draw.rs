@@ -656,26 +656,10 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     // Message text, one painted line per entry the shared wrap produced. A
     // button keeps the block left aligned against its padding; without one the
     // line is centred, which is the compact look a short toast has always had.
-    let left_aligned = layout.texts_left_aligned();
-    for (index, line) in layout.lines.iter().enumerate() {
-        if line.is_empty() {
-            continue;
-        }
-        let (line_w, line_h) = gfx.measure_text(line, 12.0, true);
-        let line_x = if left_aligned {
-            layout.text.x
-        } else {
-            layout.text.line_x(line_w)
-        };
-        gfx.draw_text_top_left(
-            line,
-            line_x,
-            layout.text.line_top(index, line_h),
-            12.0,
-            true,
-            false,
-            [1.0, 1.0, 1.0, 0.9 * alpha],
-        );
+    for (index, line, x) in layout.text_runs(|l| gfx.measure_text(l, 12.0, true).0) {
+        let (_, line_h) = gfx.measure_text(line, 12.0, true);
+        let y = layout.text.line_top(index, line_h);
+        gfx.draw_text_top_left(line, x, y, 12.0, true, false, [1.0, 1.0, 1.0, 0.9 * alpha]);
     }
 
     for (rect, button) in layout.buttons() {
