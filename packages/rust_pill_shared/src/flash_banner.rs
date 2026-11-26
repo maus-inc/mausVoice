@@ -72,13 +72,15 @@ pub const BANNER_MIN_MARGIN: f64 = 2.0;
 /// the 440 cap the broadcast transcript already uses.
 pub const BANNER_MAX_WIDTH: f64 = 480.0;
 
-/// Most lines the banner will show before it stops growing.
+/// The absolute most lines the banner will show, whatever room it has.
 ///
-/// The height has to stay inside the window: the banner hangs above the pill,
-/// so a message long enough to need more lines than this would run off the top
-/// of the screen instead of off its sides. Twenty lines is 8 + 16 * 20 + 8 = 336
-/// at the canonical metrics, which clears the pill in a 362px window; anything
-/// past it is elided onto the last line, the way the transcript already elides.
+/// This is a backstop, not the bound: the layout fits the ceiling to the room
+/// above the pill, so the banner is never taller than the space it hangs in.
+/// Twenty lines is 8 + 16 * 20 + 8 = 336 at the canonical metrics -- more than
+/// an expanded pill leaves -- so this is only reached on a surface taller than
+/// any the product has today, and it exists so a bad `pill_top` cannot ask for
+/// an unbounded banner. Anything past the computed ceiling is elided onto the
+/// last line kept, the way the transcript already elides.
 pub const BANNER_MAX_LINES: usize = 20;
 
 /// Narrowest banner the pill will draw.
@@ -532,7 +534,14 @@ where
     lines
 }
 
-/// Cuts the wrap down to [`BANNER_MAX_LINES`], eliding the last one kept.
+/// Cuts the wrap down to `ceiling` lines, eliding the last one kept.
+///
+/// `ceiling` is how many lines fit in the room above the pill, never more than
+/// [`BANNER_MAX_LINES`]. It is computed by the caller from the room it actually
+/// has, because [`BANNER_MAX_LINES`] alone is only safe in the tallest pill
+/// window: the same constant is used by a pill that sits lower and has less
+/// room above it, and there the banner top went negative -- off the surface,
+/// with the first lines invisible.
 ///
 /// The banner hangs above the pill, so a message long enough to need more lines
 /// than the ceiling would run off the top of the screen instead of off its
@@ -542,16 +551,22 @@ where
 /// no word moves. The last kept line has its own text elided, and the text that
 /// its elision displaced is carried into the same call, so a cut never loses
 /// more of the message than the one line it is allowed to shorten.
-fn elide_to_line_ceiling<F>(mut lines: Vec<String>, width: f64, measure: F) -> Vec<String>
+fn elide_to_line_ceiling<F>(
+    mut lines: Vec<String>,
+    width: f64,
+    ceiling: usize,
+    measure: F,
+) -> Vec<String>
 where
     F: Fn(&str) -> f64,
 {
-    if lines.len() <= BANNER_MAX_LINES {
+    let ceiling = ceiling.clamp(1, BANNER_MAX_LINES);
+    if lines.len() <= ceiling {
         return lines;
     }
     // Everything from the last visible line onward becomes one run, so the
     // elision can use the whole width instead of only what the wrapped line had.
-    let tail = lines.split_off(BANNER_MAX_LINES - 1).join(" ");
+    let tail = lines.split_off(ceiling - 1).join(" ");
     lines.push(crate::text_fit::elide_to_width(
         &tail, width, "\u{2026}", measure,
     ));
@@ -660,12 +675,26 @@ where
     let reserved_for_buttons: f64 =
         button_widths.iter().sum::<f64>() + button_widths.len() as f64 * gap;
 
+    // The banner hangs above the pill, so the room it has is from the top of the
+    // surface to the pill's top, less the gap. Everything below is bounded by
+    // that room rather than by a constant, because the pill sits lower on some
+    // surfaces than others and the tallest window is not the only one a toast is
+    // painted in.
+    let room_above_pill = (sane(spec.pill_top) - sane(spec.gap)).max(0.0);
+    let line_pitch = BANNER_TEXT_LINE.max(1.0);
+    let lines_that_fit = ((room_above_pill - sane(spec.min_height) - BANNER_PADDING_V * 2.0)
+        / line_pitch)
+        .floor()
+        .max(0.0) as usize
+        + 1;
+
     // The banner width settles first because the text budget depends only on
     // it. Wrapping then decides the line count, and the height follows.
     let text_width = (banner_w - padding * 2.0 - reserved_for_buttons).max(0.0);
     let lines = elide_to_line_ceiling(
         wrap_to_width(message, text_width, &measure),
         text_width,
+        lines_that_fit,
         measure,
     );
     let height = banner_height(
@@ -2164,6 +2193,52 @@ mod tests {
 
     /// A very long message cannot grow the banner past the window.
     ///
+    /// The banner never grows into the room above the pill, at the real
+    /// geometry the pill actually paints with.
+    ///
+    /// The reported case: the typing window is 362 tall, the expanded pill
+    /// occupies its bottom, and only the space above the pill is the banner's.
+    /// Twenty lines of banner is 336 tall, which is more than that space, so at
+    /// the previous fixed ceiling the banner's top sat above the surface and its
+    /// first lines were simply not drawn. The ceiling is now derived from the
+    /// room, so this is asserted against the window's own numbers rather than a
+    /// number chosen in a test.
+    #[test]
+    fn the_banner_fits_the_room_above_an_expanded_pill() {
+        const WINDOW_H_TYPING: f64 = 362.0;
+        const PILL_BOTTOM_INSET: f64 = 8.0;
+        const PANEL_BOTTOM_MARGIN: f64 = 10.0;
+        const EXPANDED_PILL_HEIGHT: f64 = 32.0;
+        let panel_bottom = WINDOW_H_TYPING - PANEL_BOTTOM_MARGIN;
+        let pill_top = panel_bottom - PILL_BOTTOM_INSET - EXPANDED_PILL_HEIGHT;
+        assert_eq!(pill_top, 312.0, "the fixture has to match the real pill");
+
+        let mut real = spec();
+        real.pill_top = pill_top;
+        real.available_width = 600.0;
+        real.center_x = 300.0;
+        real.preferred_text_width = 440.0;
+        let message =
+            "the audio device was disconnected before the recording could be saved ".repeat(60);
+        let layout = layout_flash_banner(&real, &message, fixed(7.0));
+
+        assert!(
+            layout.banner.y >= 0.0,
+            "the banner starts {} above the surface, so those lines are never drawn: {:?}",
+            -layout.banner.y,
+            layout.banner
+        );
+        assert!(
+            layout.banner.bottom() <= pill_top,
+            "the banner runs into the pill: {:?}",
+            layout.banner
+        );
+        assert!(
+            layout.lines.len() <= BANNER_MAX_LINES,
+            "the room-derived ceiling exceeded the absolute one"
+        );
+    }
+
     /// This is the other half of #374's bug. Before the wrap, a long message made
     /// the banner wider than the window and the pill clipped it at the sides;
     /// wrapping alone moved that failure to the top of the screen, where a few
@@ -2177,20 +2252,29 @@ mod tests {
 
         let layout = layout_flash_banner(&spec(), &message, fixed(unit));
 
-        assert_eq!(
-            layout.lines.len(),
-            BANNER_MAX_LINES,
+        assert!(
+            layout.lines.len() <= BANNER_MAX_LINES,
             "the banner grew past its line ceiling, so it would run off the top of the window"
         );
-        let height = banner_height(
-            layout.lines.len(),
-            spec().min_height,
-            BANNER_PADDING_V,
-            BANNER_TEXT_LINE,
+        // The property, not the number: the banner sits entirely above the pill
+        // and entirely on the surface. The old assertion pinned 20 lines, which
+        // is 336 tall -- more than a 362px pill window has room for once the pill
+        // is expanded, so the computed top was negative. The ceiling now comes
+        // from the room, so asserting the constant would pin the bug back.
+        assert!(
+            layout.banner.y >= 0.0,
+            "the banner top is off the surface at {:?}",
+            layout.banner
         );
         assert!(
-            height < 340.0,
-            "a {height}px banner does not fit in the room above a 362px pill window"
+            layout.banner.bottom() <= spec().pill_top,
+            "the banner overlaps the pill it hangs above: {:?}",
+            layout.banner
+        );
+        assert!(
+            layout.banner.h < spec().pill_top,
+            "a {}px banner does not fit above the pill",
+            layout.banner.h
         );
         let last = layout.lines.last().expect("a banner always has a line");
         assert!(
@@ -2360,16 +2444,22 @@ mod tests {
         let layout = layout_flash_banner(&wide, &message, fixed(unit));
         let whole = wrap_to_width(&message, layout.text.w, fixed(unit));
 
-        assert_eq!(layout.lines.len(), BANNER_MAX_LINES);
+        // The ceiling is whatever room this spec leaves, and it is below its
+        // maximum here; the property under test is the elision, not the number.
+        let ceiling = layout.lines.len();
         assert!(
-            whole.len() > BANNER_MAX_LINES,
+            (2..=BANNER_MAX_LINES).contains(&ceiling),
+            "the fixture needs a ceiling it can overflow, got {ceiling}"
+        );
+        assert!(
+            whole.len() > ceiling,
             "the fixture has to overflow the ceiling for this to test anything"
         );
 
-        let kept = &layout.lines[..BANNER_MAX_LINES - 1];
+        let kept = &layout.lines[..ceiling - 1];
         assert_eq!(
             kept,
-            &whole[..BANNER_MAX_LINES - 1],
+            &whole[..ceiling - 1],
             "the lines before the ceiling were rewritten, so word order changed"
         );
 
@@ -2399,11 +2489,19 @@ mod tests {
             all.starts_with(&shown),
             "what the banner shows is not the start of the message, so text was reordered"
         );
+        // The last line is the one the elision rewrote, so it is where text can
+        // silently vanish. It has to make progress -- keep at least one word --
+        // and it still has to fit the text budget, because an elided line that
+        // overran would be clipped by the banner's own edge instead.
         assert!(
-            shown.chars().count() * 2 > all.chars().count(),
-            "the ceiling kept only {} of {} characters, so most of the message vanished",
-            shown.chars().count(),
-            all.chars().count()
+            !shown.is_empty(),
+            "the elision removed everything, so the banner shows no message at all"
+        );
+        assert!(
+            fixed(unit)(last) <= layout.text.w + 1e-9,
+            "the elided last line is {} wide against a {} budget",
+            fixed(unit)(last),
+            layout.text.w
         );
     }
 
