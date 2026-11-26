@@ -513,6 +513,31 @@ pub fn wrap_to_width<F>(text: &str, max_width: f64, measure: F) -> Vec<String>
 where
     F: Fn(&str) -> f64,
 {
+    wrap_to_width_bounded(text, max_width, usize::MAX, measure)
+}
+
+/// Wraps `text`, stopping once `max_lines` lines exist.
+///
+/// The stop is the point. A banner shows at most a couple of dozen lines, but the
+/// message can be arbitrarily long: an error can carry a transcript, a path list
+/// or a whole server response. Wrapping all of it to throw almost all of it away
+/// costs one font-engine measurement per word, and the banner is laid out again
+/// on every repaint while it is visible, so the waste is paid every frame. The
+/// wrap therefore stops one line past what it will keep -- one past, not at it,
+/// because the caller needs to know whether text was left over in order to elide
+/// the last line it keeps.
+///
+/// The result is identical to wrapping the whole text and then truncating: the
+/// greedy rule means line N depends only on the lines before it.
+pub fn wrap_to_width_bounded<F>(
+    text: &str,
+    max_width: f64,
+    max_lines: usize,
+    measure: F,
+) -> Vec<String>
+where
+    F: Fn(&str) -> f64,
+{
     let budget = sane(max_width);
     // A budget of zero is not a width any glyph fits into, so breaking against
     // it would put one character on every line. That is worse than an overrun
@@ -520,9 +545,15 @@ where
     let can_break = budget > 0.0;
     let mut lines: Vec<String> = Vec::new();
 
-    for paragraph in text.split('\n') {
+    // `max_lines` of 0 would underflow the `+ 1` below; a caller that wants
+    // nothing still gets the one line that says so.
+    let stop_after = max_lines.max(1).saturating_add(1);
+    'paragraphs: for paragraph in text.split('\n') {
         let mut current = String::new();
         for (word, gap) in words_with_gaps(paragraph) {
+            if lines.len() >= stop_after {
+                break 'paragraphs;
+            }
             if !current.is_empty() {
                 let candidate = format!("{current}{gap}{word}");
                 if measure(&candidate) <= budget {
@@ -738,8 +769,12 @@ where
     // The banner width settles first because the text budget depends only on
     // it. Wrapping then decides the line count, and the height follows.
     let text_width = (banner_w - padding * 2.0 - reserved_for_buttons).max(0.0);
+    // The wrap is given the ceiling up front so it stops there instead of
+    // measuring every word of a message that will mostly be discarded. It stops
+    // one line past the ceiling so `elide_to_line_ceiling` still knows there was
+    // text left over and can elide the last line it keeps.
     let lines = elide_to_line_ceiling(
-        wrap_to_width(message, text_width, &measure),
+        wrap_to_width_bounded(message, text_width, lines_that_fit, &measure),
         text_width,
         lines_that_fit,
         measure,
@@ -2649,6 +2684,49 @@ mod tests {
         assert!(
             layout.lines.len() <= BANNER_MAX_LINES,
             "the ceiling did not bound the line count"
+        );
+    }
+
+    /// A huge message is not measured in full before being thrown away.
+    ///
+    /// `measure` is a font engine call, and the banner is laid out again on every
+    /// repaint while it is visible. Wrapping a message that will keep at most a
+    /// couple of dozen lines therefore has to stop, not wrap everything and
+    /// discard the tail. This counts the calls rather than trusting the reader:
+    /// the fixture is 6000 words and the ceiling is two lines, so a full wrap
+    /// would be thousands of calls.
+    #[test]
+    fn a_huge_message_stops_being_measured_at_the_line_ceiling() {
+        use std::cell::Cell;
+
+        let calls = Cell::new(0usize);
+        let counting = |text: &str| {
+            calls.set(calls.get() + 1);
+            fixed(7.0)(text)
+        };
+
+        let message = "alpha beta gamma delta epsilon ".repeat(1200);
+        let words = message.split_whitespace().count();
+        assert!(words > 5000, "the fixture has to be big enough to matter");
+
+        // Two lines of room: the surface is short enough that only two lines fit
+        // above the pill, so the ceiling is two whatever the text does.
+        let mut tiny = spec();
+        tiny.available_height = 96.0;
+        tiny.pill_top = 76.0;
+        tiny.available_width = 120.0;
+        tiny.preferred_text_width = 1.0;
+        let layout = layout_flash_banner(&tiny, &message, counting);
+
+        assert!(
+            layout.lines.len() <= 2,
+            "the fixture was supposed to hit a two-line ceiling, got {}",
+            layout.lines.len()
+        );
+        let measured = calls.get();
+        assert!(
+            measured < words / 4,
+            "the wrap measured {measured} times for {words} words, so it did not stop at the ceiling"
         );
     }
 
