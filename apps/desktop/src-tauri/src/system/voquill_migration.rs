@@ -6870,10 +6870,20 @@ mod tests {
 
     #[tokio::test]
     async fn recover_missing_current_db_clears_promote_sync_failed_and_keeps_asset_issues() {
+        // Case A: Re-promotion succeeds with a real current audio copy failure ->
+        // `promote_sync_failed` must be cleared while the current audio issue is kept.
         let ws = unique_workspace("missing-db-clears-promote-sync");
         let dirs = make_dirs(&ws);
         let legacy_db = dirs.legacy_db_path().unwrap();
         seed_voquill_db(&legacy_db, 96, false).await;
+        let legacy_audio = dirs.legacy_data_dir.as_ref().unwrap().join(AUDIO_DIR_NAME);
+        fs::create_dir_all(&legacy_audio).unwrap();
+        fs::write(legacy_audio.join("blocked.wav"), b"RIFFblocked").unwrap();
+        let blocked_dst = dirs
+            .current_data_dir
+            .join(AUDIO_DIR_NAME)
+            .join("blocked.wav");
+        fs::create_dir_all(&blocked_dst).unwrap();
 
         let initial_report = new_startup_report(
             now_iso(),
@@ -6882,7 +6892,7 @@ mod tests {
             VoquillMigrationPhaseStatus::Pending,
             false,
         );
-        let mut unsynced =
+        let unsynced =
             finish_startup_database_and_assets_with_sync(&dirs, initial_report, true, |_| {
                 Err(io::Error::other("simulated post-rename dir sync failure"))
             })
@@ -6892,16 +6902,11 @@ mod tests {
             .iter()
             .any(|issue| issue.code == "promote_sync_failed"));
 
-        // Preserve a simulated asset issue while losing the unsynced DB entry before next launch.
-        unsynced.issues.push(VoquillMigrationIssue {
-            category: "audio".to_string(),
-            code: "audio_copy_failed".to_string(),
-            detail: "Simulated asset error".to_string(),
-        });
-        save_manifest(&dirs.current_config_dir, &unsynced).unwrap();
+        // Simulate crash loss of the unsynced DB entry before next launch.
         fs::remove_file(dirs.current_db_path()).unwrap();
 
         let recovered = run_startup_migration(&dirs).await;
+        assert_eq!(recovered.status, VoquillMigrationStatus::Partial);
         assert_eq!(
             recovered.database_phase,
             VoquillMigrationPhaseStatus::Migrated
@@ -6917,9 +6922,36 @@ mod tests {
             recovered
                 .issues
                 .iter()
-                .any(|issue| issue.code == "audio_copy_failed"),
+                .any(|issue| issue.category == "audio" && issue.code == "partial_asset_copy"),
             "current asset errors must be preserved"
         );
+
+        // Case B: Re-promotion succeeds with no asset errors -> `Completed` with no stale issue.
+        let ws_b = unique_workspace("missing-db-clears-promote-sync-clean");
+        let dirs_b = make_dirs(&ws_b);
+        let legacy_db_b = dirs_b.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db_b, 96, false).await;
+        let initial_b = new_startup_report(
+            now_iso(),
+            VoquillMigrationStatus::Partial,
+            VoquillMigrationPhaseStatus::Pending,
+            VoquillMigrationPhaseStatus::Pending,
+            false,
+        );
+        let unsynced_b =
+            finish_startup_database_and_assets_with_sync(&dirs_b, initial_b, true, |_| {
+                Err(io::Error::other("simulated post-rename dir sync failure"))
+            })
+            .await;
+        assert!(unsynced_b
+            .issues
+            .iter()
+            .any(|issue| issue.code == "promote_sync_failed"));
+        fs::remove_file(dirs_b.current_db_path()).unwrap();
+
+        let completed_b = run_startup_migration(&dirs_b).await;
+        assert_eq!(completed_b.status, VoquillMigrationStatus::Completed);
+        assert!(completed_b.issues.is_empty());
     }
 
     #[tokio::test]
