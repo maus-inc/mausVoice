@@ -896,6 +896,7 @@
   "return_home": "홈으로 돌아가기",
   "revert_to_default_hotkey": "기본 단축키로 되돌리기",
   "review": "검토",
+  "review_ai_models": "AI 및 모델 확인",
   "review_api_keys": "API 키 확인",
   "review_before_insert": "삽입 전 검토",
   "review_before_it_inserts": "삽입 전 검토",

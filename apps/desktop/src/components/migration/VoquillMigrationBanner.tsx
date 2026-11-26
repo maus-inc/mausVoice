@@ -192,7 +192,12 @@ const BannerActions = ({
       pl: { xs: 0, sm: 3.75 },
     }}
   >
-    {needsFollowUp && <VoquillMigrationReviewKeysButton variant="contained" />}
+    {needsFollowUp && (
+      <VoquillMigrationReviewKeysButton
+        variant="contained"
+        hasKeyAttention={report.counts.providersNeedingAttention > 0}
+      />
+    )}
     {report.canRetry && (
       <VoquillMigrationRetryButton
         variant={needsFollowUp ? "outlined" : "contained"}

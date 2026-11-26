@@ -239,7 +239,10 @@ export const VoquillMigrationSettingsSection = () => {
               sx={{ flexWrap: "wrap", pt: 0.25 }}
             >
               {needsFollowUp && (
-                <VoquillMigrationReviewKeysButton variant="outlined" />
+                <VoquillMigrationReviewKeysButton
+                  variant="outlined"
+                  hasKeyAttention={needsKeyAttention}
+                />
               )}
               {report.canRetry && (
                 <VoquillMigrationRetryButton

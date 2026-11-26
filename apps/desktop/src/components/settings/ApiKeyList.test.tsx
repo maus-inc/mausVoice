@@ -441,4 +441,50 @@ describe("ApiKeyList", () => {
       }),
     );
   });
+
+  it("keeps the edit form Test button disabled for needs_reentry keys until a replacement key is entered", async () => {
+    const legacyCompatible: SettingsApiKey = {
+      id: "key-legacy-compatible",
+      name: "Custom OpenAI",
+      provider: "openai-compatible",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      keyFull: null,
+      baseUrl: "https://example.invalid/v1",
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+    };
+    seedApiKeys([legacyCompatible]);
+    await renderList("post-processing", "key-legacy-compatible");
+
+    const editButton = document
+      .querySelector("svg.lucide-pencil")
+      ?.closest("button") as HTMLButtonElement | null;
+    expect(editButton).not.toBeNull();
+    await act(async () => {
+      editButton?.click();
+      await Promise.resolve();
+    });
+
+    const editTestButton = () =>
+      [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent?.trim() === "Test",
+      );
+    expect(editTestButton()?.disabled).toBe(true);
+
+    const passwordInput = document.querySelector<HTMLInputElement>(
+      'input[type="password"]',
+    );
+    expect(passwordInput).not.toBeNull();
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    await act(async () => {
+      nativeValueSetter?.call(passwordInput, `${"sk"}-reentered-123`);
+      passwordInput?.dispatchEvent(new Event("input", { bubbles: true }));
+      passwordInput?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(editTestButton()?.disabled).toBe(false);
+  });
 });

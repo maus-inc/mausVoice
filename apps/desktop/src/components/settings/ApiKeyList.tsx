@@ -84,6 +84,7 @@ const ApiKeyFormActions = ({
   canSave,
   onTest,
   testing,
+  testDisabled,
 }: {
   onCancel: () => void;
   onSave: () => void;
@@ -91,6 +92,7 @@ const ApiKeyFormActions = ({
   canSave: boolean;
   onTest?: () => void;
   testing?: boolean;
+  testDisabled?: boolean;
 }) => {
   return (
     <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
@@ -99,7 +101,7 @@ const ApiKeyFormActions = ({
           variant="outlined"
           size="small"
           onClick={onTest}
-          disabled={testing || saving}
+          disabled={testing || saving || testDisabled}
         >
           {testing ? (
             <FormattedMessage defaultMessage="Testing..." />
@@ -369,6 +371,24 @@ const buildEditApiKeySavePayload = ({
   };
 };
 
+const buildInitialEditFieldValues = (
+  apiKey: SettingsApiKey,
+): Record<string, string> => {
+  const initial: Record<string, string> = {};
+  if (apiKey.baseUrl) initial.baseUrl = apiKey.baseUrl;
+  if (apiKey.azureRegion) initial.azureRegion = apiKey.azureRegion;
+  if (apiKey.transcriptionModel)
+    initial.transcriptionModel = apiKey.transcriptionModel;
+  if (apiKey.transcriptionPath)
+    initial.transcriptionPath = apiKey.transcriptionPath;
+  return initial;
+};
+
+const isEditTestDisabled = (
+  apiKey: SettingsApiKey,
+  enteredKey: string | undefined,
+): boolean => apiKeyNeedsReentry(apiKey) && !(enteredKey ?? "").trim();
+
 const EditApiKeyCard = ({
   apiKey,
   onSave,
@@ -378,16 +398,9 @@ const EditApiKeyCard = ({
   context,
 }: EditApiKeyCardProps) => {
   const [name, setName] = useState(apiKey.name);
-  const [fieldValues, setFieldValues] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {};
-    if (apiKey.baseUrl) initial.baseUrl = apiKey.baseUrl;
-    if (apiKey.azureRegion) initial.azureRegion = apiKey.azureRegion;
-    if (apiKey.transcriptionModel)
-      initial.transcriptionModel = apiKey.transcriptionModel;
-    if (apiKey.transcriptionPath)
-      initial.transcriptionPath = apiKey.transcriptionPath;
-    return initial;
-  });
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>(() =>
+    buildInitialEditFieldValues(apiKey),
+  );
   const [includeV1Path, setIncludeV1Path] = useState(
     apiKey.includeV1Path ?? true,
   );
@@ -400,6 +413,7 @@ const EditApiKeyCard = ({
   const canResetToKeyless =
     apiKeyNeedsReentry(apiKey) &&
     !config.fields.some((f) => f.key === "apiKey" && f.required);
+  const testDisabled = isEditTestDisabled(apiKey, fieldValues.apiKey);
 
   const canSave =
     !!name &&
@@ -514,6 +528,7 @@ const EditApiKeyCard = ({
         canSave={canSave}
         onTest={handleTest}
         testing={testing}
+        testDisabled={testDisabled}
       />
     </Paper>
   );
@@ -1290,6 +1305,10 @@ export const ApiKeyList = ({
 
   const handleTestEditingApiKey = useCallback(
     async (apiKey: SettingsApiKey, overrides: Partial<SettingsApiKey>) => {
+      if (apiKeyNeedsReentry(apiKey) && !(overrides.keyFull ?? "").trim()) {
+        showErrorSnackbar("Re-enter the API key before testing.");
+        return;
+      }
       const merged = { ...apiKey, ...overrides };
       if (
         apiKey.provider === "openai-compatible" &&

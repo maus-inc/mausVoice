@@ -563,41 +563,120 @@ class PreviewRuntime {
   private hasControlCharacter(value: string): boolean {
     for (const ch of value) {
       const code = ch.codePointAt(0);
-      if (code !== undefined && (code <= 0x1f || code === 0x7f)) {
+      if (
+        code !== undefined &&
+        (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
+      ) {
         return true;
       }
     }
     return false;
   }
 
-  private applyUpdatedApiKeySecret(apiKey: WireRecord, rawKey: string): void {
-    const keylessProvider =
-      apiKey.provider === "ollama" ||
-      apiKey.provider === "speaches" ||
-      apiKey.provider === "openai-compatible";
+  private isKeylessProvider(provider: unknown): boolean {
+    return (
+      provider === "ollama" ||
+      provider === "speaches" ||
+      provider === "openai-compatible"
+    );
+  }
+
+  private isValidHttpEndpoint(value: unknown): boolean {
+    if (typeof value !== "string") return false;
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    try {
+      const parsed = new URL(trimmed);
+      return (
+        (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+        parsed.hostname.length > 0
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private resolveAzureStructureIssue(
+    baseUrl: string,
+    azureRegion: string,
+  ): "missing_endpoint" | "missing_region" | null {
+    if (baseUrl.length > 0) {
+      return this.isValidHttpEndpoint(baseUrl) ? null : "missing_endpoint";
+    }
+    return azureRegion.length > 0 ? null : "missing_region";
+  }
+
+  private resolveProviderStructureIssue(
+    apiKey: WireRecord,
+  ): "missing_endpoint" | "missing_region" | null {
+    const baseUrl =
+      typeof apiKey.baseUrl === "string" ? apiKey.baseUrl.trim() : "";
+    if (apiKey.provider === "openai-compatible") {
+      return baseUrl.length > 0 && !this.isValidHttpEndpoint(baseUrl)
+        ? "missing_endpoint"
+        : null;
+    }
+    if (apiKey.provider === "azure") {
+      const azureRegion =
+        typeof apiKey.azureRegion === "string" ? apiKey.azureRegion.trim() : "";
+      return this.resolveAzureStructureIssue(baseUrl, azureRegion);
+    }
+    return null;
+  }
+
+  private applyProviderStructureStatus(apiKey: WireRecord): void {
+    const issue = this.resolveProviderStructureIssue(apiKey);
+    apiKey.credentialStatus = issue ? "invalid_format" : "usable";
+    apiKey.credentialIssue = issue;
+  }
+
+  private applyPreviewApiKeySecret(
+    apiKey: WireRecord,
+    rawKey: string,
+    treatEmptyAsOmitted: boolean,
+  ): void {
     const trimmedKey = rawKey.trim();
     if (trimmedKey.length > 0) {
       // Do not keep an entered secret in the preview's mock transport.
-      const invalidFormat =
-        this.hasControlCharacter(rawKey) || trimmedKey !== rawKey;
       apiKey.keyFull = null;
       apiKey.keySuffix = "…preview";
-      apiKey.credentialStatus = invalidFormat ? "invalid_format" : "usable";
-      apiKey.credentialIssue = invalidFormat ? "invalid_key_format" : null;
+      if (this.hasControlCharacter(rawKey) || trimmedKey !== rawKey) {
+        apiKey.credentialStatus = "invalid_format";
+        apiKey.credentialIssue = "invalid_key_format";
+        return;
+      }
+      this.applyProviderStructureStatus(apiKey);
       return;
     }
-    if (keylessProvider) {
+    if (this.isKeylessProvider(apiKey.provider)) {
       apiKey.keyFull = "";
       apiKey.keySuffix = null;
-      apiKey.credentialStatus = "usable";
-      apiKey.credentialIssue = null;
+      this.applyProviderStructureStatus(apiKey);
       return;
     }
-    if (rawKey.length > 0) {
+    if (!treatEmptyAsOmitted || rawKey.length > 0) {
       apiKey.keyFull = null;
       apiKey.keySuffix = null;
       apiKey.credentialStatus = "needs_reentry";
       apiKey.credentialIssue = "missing_key";
+    }
+  }
+
+  private syncUpdatedApiKeyCredentials(
+    apiKey: WireRecord,
+    request: WireRecord,
+  ): void {
+    if (typeof request.key === "string") {
+      this.applyPreviewApiKeySecret(apiKey, request.key, true);
+      if (request.key !== "" || this.isKeylessProvider(apiKey.provider)) {
+        return;
+      }
+    }
+    if (
+      apiKey.credentialStatus !== "needs_reentry" &&
+      apiKey.credentialIssue !== "invalid_key_format"
+    ) {
+      this.applyProviderStructureStatus(apiKey);
     }
   }
 
@@ -621,9 +700,7 @@ class PreviewRuntime {
         apiKey[field] = value;
       }
     }
-    if (typeof request.key === "string") {
-      this.applyUpdatedApiKeySecret(apiKey, request.key);
-    }
+    this.syncUpdatedApiKeyCredentials(apiKey, request);
     // `transcription_path` is the one column the desktop statement gates on a
     // separate boolean rather than on null, so it keeps its own handling.
     // `update_api_key` computes the stored value before the statement runs: an
@@ -803,13 +880,15 @@ class PreviewRuntime {
       case "api_key_list":
         return getList(this.database.apiKeys);
       case "api_key_create": {
-        const metadata = clone(asRecord(args.apiKey));
+        const rawInput = asRecord(args.apiKey);
+        const rawKey = typeof rawInput.key === "string" ? rawInput.key : "";
+        const metadata = clone(rawInput);
         delete metadata.key;
         const apiKey: WireRecord = {
           ...metadata,
           createdAt: Date.now(),
           // The preview must not retain secrets pasted into a UI experiment.
-          keySuffix: "…preview",
+          keySuffix: null,
           keyFull: null,
           credentialStatus: "usable",
           credentialIssue: null,
@@ -817,6 +896,7 @@ class PreviewRuntime {
           postProcessingModel: null,
           openRouterConfig: null,
         };
+        this.applyPreviewApiKeySecret(apiKey, rawKey, false);
         this.database.apiKeys.set(String(apiKey.id), apiKey);
         return clone(apiKey);
       }

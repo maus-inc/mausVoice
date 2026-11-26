@@ -42,8 +42,10 @@ export const useVoquillMigrationRetry = () => {
 
 export const VoquillMigrationReviewKeysButton = ({
   variant,
+  hasKeyAttention = true,
 }: {
   variant: "contained" | "outlined";
+  hasKeyAttention?: boolean;
 }) => {
   const navigate = useNavigate();
   return (
@@ -53,7 +55,11 @@ export const VoquillMigrationReviewKeysButton = ({
       endIcon={<ArrowRight size={14} strokeWidth={1.9} />}
       onClick={() => navigate(settingsPagePath("ai-models"))}
     >
-      <FormattedMessage defaultMessage="Review API keys" />
+      {hasKeyAttention ? (
+        <FormattedMessage defaultMessage="Review API keys" />
+      ) : (
+        <FormattedMessage defaultMessage="Review AI Models" />
+      )}
     </Button>
   );
 };

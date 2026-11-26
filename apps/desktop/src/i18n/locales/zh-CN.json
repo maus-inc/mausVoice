@@ -896,6 +896,7 @@
   "return_home": "返回首页",
   "revert_to_default_hotkey": "恢复默认快捷键",
   "review": "审阅",
+  "review_ai_models": "检查 AI 与模型",
   "review_api_keys": "检查 API 密钥",
   "review_before_insert": "插入前审阅",
   "review_before_it_inserts": "插入前先审核",

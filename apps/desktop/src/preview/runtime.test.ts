@@ -1057,4 +1057,68 @@ describe("browser preview transport", () => {
       providers: ["groq", "openai"],
     });
   });
+
+  it("rejects C1 control characters, validates Azure region on create/update, and flags missing required secrets", async () => {
+    const withC1Control = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_create", {
+      apiKey: {
+        id: "preview-c1-control",
+        name: "Bad C1 key",
+        provider: "openai",
+        key: `${"sk"}_bad\u0085key`,
+      },
+    });
+    expect(withC1Control.credentialStatus).toBe("invalid_format");
+    expect(withC1Control.credentialIssue).toBe("invalid_key_format");
+
+    const missingRequiredSecret = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+      keySuffix: string | null;
+    }>("api_key_create", {
+      apiKey: {
+        id: "preview-missing-secret",
+        name: "Empty OpenAI",
+        provider: "openai",
+        key: "",
+      },
+    });
+    expect(missingRequiredSecret.credentialStatus).toBe("needs_reentry");
+    expect(missingRequiredSecret.credentialIssue).toBe("missing_key");
+    expect(missingRequiredSecret.keySuffix).toBeNull();
+
+    const createdAzure = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_create", {
+      apiKey: {
+        id: "preview-azure-no-region",
+        name: "Azure Speech",
+        provider: "azure",
+        key: "azure-test-secret",
+      },
+    });
+    expect(createdAzure.credentialStatus).toBe("invalid_format");
+    expect(createdAzure.credentialIssue).toBe("missing_region");
+
+    const reenteredStillMissingRegion = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_update", {
+      request: { id: "preview-azure-no-region", key: "azure-updated-secret" },
+    });
+    expect(reenteredStillMissingRegion.credentialStatus).toBe("invalid_format");
+    expect(reenteredStillMissingRegion.credentialIssue).toBe("missing_region");
+
+    const fixedAzureRegion = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_update", {
+      request: { id: "preview-azure-no-region", azureRegion: "eastus" },
+    });
+    expect(fixedAzureRegion.credentialStatus).toBe("usable");
+    expect(fixedAzureRegion.credentialIssue).toBeNull();
+  });
 });

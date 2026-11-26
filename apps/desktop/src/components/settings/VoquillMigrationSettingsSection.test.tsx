@@ -176,4 +176,36 @@ describe("VoquillMigrationSettingsSection", () => {
       "/dashboard/settings/ai-models",
     );
   });
+
+  it("shows Review AI Models instead of Review API keys when only cloud modes were reset", () => {
+    setAppState((s) => ({
+      ...s,
+      voquillMigration: {
+        ...s.voquillMigration,
+        status: "success",
+        report: makeReport({
+          counts: {
+            ...makeReport().counts,
+            providersNeedingAttention: 0,
+          },
+          removedModesReset: ["cloud"],
+        }),
+      },
+    }));
+
+    render();
+
+    const buttons = Array.from(container.querySelectorAll("button"));
+    expect(
+      buttons.find((b) => b.textContent?.includes("Review API keys")),
+    ).toBeUndefined();
+    const reviewModelsBtn = buttons.find((b) =>
+      b.textContent?.includes("Review AI Models"),
+    );
+    expect(reviewModelsBtn).toBeDefined();
+    act(() => reviewModelsBtn!.click());
+    expect(container.querySelector("#location")?.textContent).toBe(
+      "/dashboard/settings/ai-models",
+    );
+  });
 });
