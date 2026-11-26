@@ -25,15 +25,21 @@ import {
   useVoiceRecorderMessages,
 } from "./useComposerVoiceEdit";
 
+/**
+ * The composer window's scroll owner. The app viewport clips, and the document
+ * never scrolls, so this shell is what keeps a long transcript reachable at
+ * the minimum window height. The card centres with `margin: auto`: centring
+ * with the flex container would hide the top of a card taller than the window
+ * behind an unreachable scroll range.
+ */
 const ComposerShell = ({ children }: { children: React.ReactNode }) => (
   <Box
     sx={{
-      minHeight: "100vh",
+      height: "100%",
+      overflowY: "auto",
       bgcolor: "background.default",
       p: { xs: 2, sm: 3 },
       display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
     }}
   >
     <Paper
@@ -41,6 +47,7 @@ const ComposerShell = ({ children }: { children: React.ReactNode }) => (
       sx={{
         width: "100%",
         maxWidth: 640,
+        m: "auto",
         borderRadius: 3,
         p: { xs: 2, sm: 3 },
       }}
