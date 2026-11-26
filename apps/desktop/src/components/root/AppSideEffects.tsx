@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { combineLatest, from, Observable, of } from "rxjs";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { openAssistantModeSettings } from "../../actions/assistant-mode.actions";
 import { createGlossaryTerms } from "../../actions/dictionary.actions";
 import {
   pushPillPlacementToNative,
@@ -904,12 +905,12 @@ export const AppSideEffects = () => {
 
   useToastAction((payload) => {
     if (payload.action === "open_agent_settings") {
-      // Surfacing is a side effect: it swallows its own errors and coalesces
-      // concurrent calls, and the dialog state below must not wait on the IPC.
-      surfaceMainWindowDetached();
-      produceAppState((draft) => {
-        draft.settings.agentModeDialogOpen = true;
-      });
+      // The toast is raised where the person is: the pill, or a window that
+      // has no settings surface mounted at all. `AIAgentModeDialog` lives in
+      // the settings root, so setting its flag from here changed state and
+      // showed nothing. The action now navigates to the row itself, which
+      // works from any window and lands with the row highlighted.
+      openAssistantModeSettings();
     } else if (payload.action === "open_post_processing_settings") {
       surfaceMainWindowDetached();
       openPostProcessingSettings();
