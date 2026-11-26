@@ -116,6 +116,15 @@ describe("ActivityHeatmap", () => {
     expect(viewportStyle.overflowY).toBe("clip");
     expect(viewportStyle.overflowX).toBe("auto");
 
+    // Only the viewport scrolls and clips. A wrapper or an inner div that
+    // clipped the rows again would defeat the room reserved above, and that is
+    // invisible to a jsdom box model, so assert no other clip exists on the
+    // path between the viewport and a cell.
+    expect(viewport!.querySelectorAll("*")).not.toHaveLength(0);
+    for (const box of viewport!.querySelectorAll("*")) {
+      expect(window.getComputedStyle(box).overflowY).toBe("visible");
+    }
+
     // The rail sits beside the plot, so it carries the same top offset and the
     // weekday labels stay level with their rows.
     expect(parseFloat(window.getComputedStyle(weekdayRail!).paddingTop)).toBe(
