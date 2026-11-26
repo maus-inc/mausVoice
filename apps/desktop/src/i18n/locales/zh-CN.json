@@ -840,6 +840,7 @@
   "raw_transcript_unavailable": "原始转录不可用。",
   "raw_transcription": "原始转录",
   "re_enter_key": "重新输入密钥",
+  "re_enter_the_api_key_before_testing": "测试前请重新输入 API 密钥。",
   "real_time_output": "实时输出",
   "reason": "：{reason}",
   "receive_transcript_from_another_device": "从其他设备接收文字稿",

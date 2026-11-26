@@ -840,6 +840,7 @@
   "raw_transcript_unavailable": "원본 텍스트를 사용할 수 없습니다.",
   "raw_transcription": "원본 음성 인식",
   "re_enter_key": "키 다시 입력",
+  "re_enter_the_api_key_before_testing": "테스트하기 전에 API 키를 다시 입력하세요.",
   "real_time_output": "실시간 출력",
   "reason": "- {reason}",
   "receive_transcript_from_another_device": "다른 기기에서 전사 받기",

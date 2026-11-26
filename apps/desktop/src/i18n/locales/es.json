@@ -840,6 +840,7 @@
   "raw_transcript_unavailable": "Transcripción sin procesar no disponible.",
   "raw_transcription": "Transcripción sin procesar",
   "re_enter_key": "Volver a introducir clave",
+  "re_enter_the_api_key_before_testing": "Vuelve a introducir la clave API antes de probar.",
   "real_time_output": "Salida en tiempo real",
   "reason": "- {reason}",
   "receive_transcript_from_another_device": "Recibir transcripción de otro dispositivo",

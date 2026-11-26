@@ -840,6 +840,7 @@
   "raw_transcript_unavailable": "Raw transcript unavailable.",
   "raw_transcription": "Raw transcription",
   "re_enter_key": "Re-enter key",
+  "re_enter_the_api_key_before_testing": "Re-enter the API key before testing.",
   "real_time_output": "Real-time output",
   "reason": "- {reason}",
   "receive_transcript_from_another_device": "Receive transcript from another device",

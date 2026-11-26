@@ -840,6 +840,7 @@
   "raw_transcript_unavailable": "Trascrizione grezza non disponibile.",
   "raw_transcription": "Trascrizione grezza",
   "re_enter_key": "Reinserisci chiave",
+  "re_enter_the_api_key_before_testing": "Inserisci di nuovo la chiave API prima di testare.",
   "real_time_output": "Output in tempo reale",
   "reason": "- {reason}",
   "receive_transcript_from_another_device": "Ricevi la trascrizione da un altro dispositivo",

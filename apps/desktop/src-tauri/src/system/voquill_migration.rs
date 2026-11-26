@@ -526,7 +526,14 @@ fn remove_asset_progress(config_dir: &Path) {
     }
 }
 
-fn save_manifest(config_dir: &Path, report: &VoquillMigrationReport) -> io::Result<()> {
+fn save_manifest_with_sync<F>(
+    config_dir: &Path,
+    report: &VoquillMigrationReport,
+    sync_dir: F,
+) -> io::Result<()>
+where
+    F: FnOnce(&Path) -> io::Result<()>,
+{
     fs::create_dir_all(config_dir)?;
     let target = config_dir.join(MANIFEST_FILENAME);
     let tmp = config_dir.join(format!("{MANIFEST_FILENAME}.tmp"));
@@ -539,8 +546,12 @@ fn save_manifest(config_dir: &Path, report: &VoquillMigrationReport) -> io::Resu
     drop(file);
 
     fs::rename(&tmp, &target)?;
-    sync_dir_best_effort(config_dir)?;
+    sync_dir(config_dir)?;
     Ok(())
+}
+
+fn save_manifest(config_dir: &Path, report: &VoquillMigrationReport) -> io::Result<()> {
+    save_manifest_with_sync(config_dir, report, sync_dir_best_effort)
 }
 
 fn load_manifest(config_dir: &Path) -> Option<VoquillMigrationReport> {
@@ -2351,12 +2362,14 @@ async fn recover_missing_current_db(
     };
     if !legacy_db_present {
         existing.database_phase = VoquillMigrationPhaseStatus::Failed;
+        existing.legacy_source_preserved = legacy_source_still_present(dirs);
         existing.issues.push(VoquillMigrationIssue {
             category: "database".to_string(),
             code: "legacy_source_missing".to_string(),
             detail: "The previous Voquill import was interrupted and the Voquill database could no longer be found.".to_string(),
         });
         finalize_status_and_actions(&mut existing, Vec::new());
+        existing.can_retry = false;
         let _ = save_manifest(&dirs.current_config_dir, &existing);
         return existing;
     }
@@ -2401,19 +2414,7 @@ fn reset_skipped_asset_phases_to_pending(report: &mut VoquillMigrationReport) {
 }
 
 fn clear_resolved_database_promotion_issues(report: &mut VoquillMigrationReport) {
-    report.issues.retain(|issue| {
-        !matches!(
-            issue.code.as_str(),
-            "interrupted_previous_attempt"
-                | "recovery_open_failed"
-                | "recovery_audit_failed"
-                | "recovery_marker_io_error"
-                | "promote_sync_failed"
-                | "wal_checkpoint_failed"
-                | "database_checkpoint_failed"
-                | "manifest_save_failed"
-        )
-    });
+    report.issues.retain(|issue| issue.category != "database");
 }
 
 fn apply_recovered_database_audit(
@@ -2729,6 +2730,22 @@ pub async fn run_startup_migration(dirs: &MigrationDirs) -> VoquillMigrationRepo
         return resume_existing_manifest(dirs, existing, had_interrupted_staging).await;
     }
 
+    // Check for an orphaned promotion recovery marker BEFORE returning
+    // `NotNeeded` when legacy Voquill data is gone (e.g., power loss lost the
+    // initial manifest after DB promotion and the user later removed Voquill).
+    // Routing directly into marker-verified recovery lets startup settle or
+    // retire the marker instead of tripping `ensure_no_pending_promotion_recovery`.
+    if path_exists_no_follow(&dirs.promotion_marker_path()).await {
+        let pending_recovery = new_startup_report(
+            now_iso(),
+            VoquillMigrationStatus::Partial,
+            VoquillMigrationPhaseStatus::Pending,
+            VoquillMigrationPhaseStatus::Pending,
+            true,
+        );
+        return recover_pending_database_migration(dirs, pending_recovery).await;
+    }
+
     if !has_any_legacy_source(dirs) {
         return VoquillMigrationReport::not_needed();
     }
@@ -2741,21 +2758,7 @@ pub async fn run_startup_migration(dirs: &MigrationDirs) -> VoquillMigrationRepo
     let current_db_exists = path_exists_no_follow(&dirs.current_db_path()).await;
 
     // Never overwrite or copy legacy assets into an already-established mausVoice profile.
-    // However, if a promotion marker is present (e.g., power loss lost an initial
-    // manifest write after DB promotion), delegate to marker-verified recovery:
-    // a matching marker resumes cleanly, while any mismatch still records
-    // `SkippedExistingProfile` without touching `current_db`.
     if current_db_exists {
-        if path_exists_no_follow(&dirs.promotion_marker_path()).await {
-            let pending_recovery = new_startup_report(
-                now,
-                VoquillMigrationStatus::Partial,
-                VoquillMigrationPhaseStatus::Pending,
-                VoquillMigrationPhaseStatus::Pending,
-                true,
-            );
-            return recover_pending_database_migration(dirs, pending_recovery).await;
-        }
         let base_report = new_startup_report(
             now,
             VoquillMigrationStatus::SkippedExistingProfile,
@@ -2940,13 +2943,27 @@ pub async fn dismiss_migration_notice(
     dirs: MigrationDirs,
     pool: SqlitePool,
 ) -> Result<VoquillMigrationReport, String> {
+    dismiss_migration_notice_with_sync(dirs, pool, sync_dir_best_effort).await
+}
+
+async fn dismiss_migration_notice_with_sync<F>(
+    dirs: MigrationDirs,
+    pool: SqlitePool,
+    sync_dir: F,
+) -> Result<VoquillMigrationReport, String>
+where
+    F: Fn(&Path) -> io::Result<()>,
+{
     let Some(mut report) = load_manifest(&dirs.current_config_dir) else {
         return Ok(VoquillMigrationReport::not_needed());
     };
     if report.dismissed_at.is_none() {
         report.dismissed_at = Some(now_iso());
-        save_manifest(&dirs.current_config_dir, &report)
+        save_manifest_with_sync(&dirs.current_config_dir, &report, &sync_dir)
             .map_err(|err| format!("Could not save migration dismissal: {err}"))?;
+    } else {
+        sync_dir(&dirs.current_config_dir)
+            .map_err(|err| format!("Could not sync migration dismissal: {err}"))?;
     }
     Ok(refresh_migration_report(dirs, pool).await)
 }
@@ -4120,42 +4137,83 @@ fn sync_file_for_write(path: &Path) -> io::Result<()> {
 }
 
 fn copy_file_and_sync(src: &Path, dst: &Path) -> io::Result<()> {
+    match fs::remove_file(dst) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
     let mut src_file = File::open(src)?;
-    let mut dst_file = File::create(dst)?;
-    io::copy(&mut src_file, &mut dst_file)?;
-    dst_file.sync_all()?;
+    let mut dst_file = OpenOptions::new().write(true).create_new(true).open(dst)?;
+    let copy_res = (|| -> io::Result<()> {
+        io::copy(&mut src_file, &mut dst_file)?;
+        dst_file.sync_all()?;
+        Ok(())
+    })();
+    drop(dst_file);
+    if let Err(err) = copy_res {
+        let _ = fs::remove_file(dst);
+        return Err(err);
+    }
     Ok(())
 }
 
-fn publish_temp_db_no_replace(tmp_dest: &Path, dst: &Path) -> io::Result<()> {
-    match fs::hard_link(tmp_dest, dst) {
+fn publish_temp_db_no_replace_with<F>(tmp_dest: &Path, dst: &Path, link_fn: F) -> io::Result<()>
+where
+    F: FnOnce(&Path, &Path) -> io::Result<()>,
+{
+    match link_fn(tmp_dest, dst) {
         Ok(()) => {
             let _ = fs::remove_file(tmp_dest);
             Ok(())
         }
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Err(err),
-        Err(err)
-            if matches!(
-                err.kind(),
-                io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
-            ) =>
-        {
-            let mut dst_file = OpenOptions::new().write(true).create_new(true).open(dst)?;
-            let copy_res = (|| -> io::Result<()> {
-                let mut src_file = File::open(tmp_dest)?;
-                io::copy(&mut src_file, &mut dst_file)?;
-                dst_file.sync_all()?;
-                Ok(())
-            })();
-            drop(dst_file);
-            if let Err(copy_err) = copy_res {
-                let _ = fs::remove_file(dst);
-                return Err(copy_err);
+        Err(err) => {
+            if fs::symlink_metadata(dst).is_ok() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "destination database already exists",
+                ));
             }
-            let _ = fs::remove_file(tmp_dest);
-            Ok(())
+            Err(err)
         }
-        Err(err) => Err(err),
+    }
+}
+
+fn install_file_no_replace_via_copy_fallback_with<F>(
+    staged_db: &Path,
+    current_db: &Path,
+    primary_err: &io::Error,
+    link_fn: F,
+) -> Result<(), PromoteError>
+where
+    F: FnOnce(&Path, &Path) -> io::Result<()>,
+{
+    let tmp_dest = current_db.with_file_name(format!("{DB_FILENAME}{PROMOTION_TEMP_SUFFIX}"));
+    if let Err(copy_err) = copy_file_and_sync(staged_db, &tmp_dest) {
+        return Err(PromoteError::NotInstalled(VoquillMigrationIssue {
+            category: "database".to_string(),
+            code: "promote_io_error".to_string(),
+            detail: format!(
+                "Could not stage verified database for promotion (link: {primary_err}; copy: {copy_err})"
+            ),
+        }));
+    }
+    match publish_temp_db_no_replace_with(&tmp_dest, current_db, link_fn) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(&tmp_dest);
+            Err(PromoteError::NotInstalled(existing_profile_conflict_issue()))
+        }
+        Err(publish_err) => {
+            let _ = fs::remove_file(&tmp_dest);
+            Err(PromoteError::NotInstalled(VoquillMigrationIssue {
+                category: "database".to_string(),
+                code: "promote_io_error".to_string(),
+                detail: format!(
+                    "Could not atomically promote verified database (link: {primary_err}; publish: {publish_err})"
+                ),
+            }))
+        }
     }
 }
 
@@ -4164,26 +4222,12 @@ fn install_file_no_replace_via_copy_fallback(
     current_db: &Path,
     primary_err: &io::Error,
 ) -> Result<(), PromoteError> {
-    let tmp_dest = current_db.with_file_name(format!("{DB_FILENAME}{PROMOTION_TEMP_SUFFIX}"));
-    let publish_result = copy_file_and_sync(staged_db, &tmp_dest)
-        .and_then(|()| publish_temp_db_no_replace(&tmp_dest, current_db));
-    match publish_result {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-            let _ = fs::remove_file(&tmp_dest);
-            Err(PromoteError::NotInstalled(existing_profile_conflict_issue()))
-        }
-        Err(copy_err) => {
-            let _ = fs::remove_file(&tmp_dest);
-            Err(PromoteError::NotInstalled(VoquillMigrationIssue {
-                category: "database".to_string(),
-                code: "promote_io_error".to_string(),
-                detail: format!(
-                    "Could not promote verified database (link: {primary_err}; copy: {copy_err})"
-                ),
-            }))
-        }
-    }
+    install_file_no_replace_via_copy_fallback_with(
+        staged_db,
+        current_db,
+        primary_err,
+        fs::hard_link,
+    )
 }
 
 fn promote_staged_file_with_sync<F>(
@@ -5628,6 +5672,7 @@ mod tests {
         assert_eq!(recovered.audio_phase, VoquillMigrationPhaseStatus::Migrated);
         assert_eq!(recovered.counts.audio_files_migrated, 1);
         assert_eq!(recovered.removed_modes_reset, staged.removed_modes_reset);
+        assert!(recovered.issues.is_empty());
         assert!(!dirs.promotion_marker_path().exists());
         assert!(!backup_path.exists());
         assert!(dirs
@@ -7237,5 +7282,194 @@ mod tests {
             .unwrap();
         assert_eq!(ping, 1);
         recovered_pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn dismiss_migration_notice_retries_dir_sync_when_timestamp_already_visible() {
+        let ws = unique_workspace("dismiss-retry-dir-sync");
+        let dirs = make_dirs(&ws);
+        fs::create_dir_all(&dirs.current_config_dir).unwrap();
+        let pool = open_app_database(&dirs.current_db_path()).await.unwrap();
+
+        let completed = VoquillMigrationReport {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            status: VoquillMigrationStatus::Completed,
+            legacy_detected: true,
+            legacy_source_preserved: true,
+            detected_at: Some(now_iso()),
+            completed_at: Some(now_iso()),
+            dismissed_at: None,
+            attempt_count: 1,
+            database_phase: VoquillMigrationPhaseStatus::Migrated,
+            models_phase: VoquillMigrationPhaseStatus::NotFound,
+            audio_phase: VoquillMigrationPhaseStatus::NotFound,
+            storage_phase: VoquillMigrationPhaseStatus::NotFound,
+            counts: VoquillMigrationCounts::default(),
+            removed_modes_reset: Vec::new(),
+            issues: Vec::new(),
+            action_items: Vec::new(),
+            can_retry: false,
+        };
+        save_manifest(&dirs.current_config_dir, &completed).unwrap();
+
+        let err1 = dismiss_migration_notice_with_sync(dirs.clone(), pool.clone(), |_| {
+            Err(io::Error::other("simulated config dir sync failure 1"))
+        })
+        .await
+        .expect_err("first dismiss must fail when dir sync fails");
+        assert!(err1.contains("simulated config dir sync failure 1"));
+
+        let saved_first = load_manifest(&dirs.current_config_dir).unwrap();
+        let first_ts = saved_first.dismissed_at.unwrap();
+
+        let err2 = dismiss_migration_notice_with_sync(dirs.clone(), pool.clone(), |_| {
+            Err(io::Error::other("simulated config dir sync failure 2"))
+        })
+        .await
+        .expect_err("second dismiss must retry dir sync and propagate failure");
+        assert!(err2.contains("simulated config dir sync failure 2"));
+
+        let saved = load_manifest(&dirs.current_config_dir).unwrap();
+        assert_eq!(saved.dismissed_at.as_deref(), Some(first_ts.as_str()));
+
+        let ok_report = dismiss_migration_notice_with_sync(
+            dirs.clone(),
+            pool.clone(),
+            sync_dir_best_effort,
+        )
+        .await
+        .unwrap();
+        assert_eq!(ok_report.dismissed_at.as_deref(), Some(first_ts.as_str()));
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn startup_recovers_orphaned_promotion_marker_when_legacy_source_removed() {
+        // Case A: DB was promoted and marker written, manifest was lost, and
+        // legacy Voquill files were deleted before relaunch.
+        let ws_a = unique_workspace("orphan-marker-no-legacy-promoted");
+        let dirs_a = make_dirs(&ws_a);
+        let legacy_db = dirs_a.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db, 96, false).await;
+        let (staged_db, staged) = stage_validate_in_staging_only(&dirs_a).await.unwrap();
+        let (full_sha, payload_sha) = hash_staged_database(&staged_db).unwrap();
+        fs::create_dir_all(&dirs_a.current_config_dir).unwrap();
+        write_promotion_marker(
+            &dirs_a.promotion_marker_path(),
+            "startup",
+            full_sha,
+            payload_sha,
+            staged.removed_modes_reset.clone(),
+        )
+        .unwrap();
+        fs::copy(&staged_db, dirs_a.current_db_path()).unwrap();
+        cleanup_staging(&dirs_a.staging_dir());
+        fs::remove_dir_all(dirs_a.legacy_config_dir.as_ref().unwrap()).unwrap();
+        fs::remove_dir_all(dirs_a.legacy_data_dir.as_ref().unwrap()).unwrap();
+
+        let recovered_a = run_startup_migration(&dirs_a).await;
+        assert_eq!(recovered_a.status, VoquillMigrationStatus::Completed);
+        assert_eq!(
+            recovered_a.database_phase,
+            VoquillMigrationPhaseStatus::Migrated
+        );
+        assert!(!recovered_a.legacy_source_preserved);
+        assert!(!dirs_a.promotion_marker_path().exists());
+        ensure_no_pending_promotion_recovery(&dirs_a).unwrap();
+
+        // Case B: Marker exists without current_db, manifest, or legacy source.
+        let ws_b = unique_workspace("orphan-marker-no-legacy-missing-db");
+        let dirs_b = make_dirs(&ws_b);
+        fs::create_dir_all(&dirs_b.current_config_dir).unwrap();
+        write_promotion_marker(
+            &dirs_b.promotion_marker_path(),
+            "startup",
+            "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+            Vec::new(),
+        )
+        .unwrap();
+
+        let recovered_b = run_startup_migration(&dirs_b).await;
+        assert_eq!(recovered_b.status, VoquillMigrationStatus::Failed);
+        assert!(!recovered_b.can_retry);
+        assert!(recovered_b
+            .issues
+            .iter()
+            .any(|issue| issue.code == "legacy_source_missing"));
+        assert!(!dirs_b.promotion_marker_path().exists());
+        ensure_no_pending_promotion_recovery(&dirs_b).unwrap();
+    }
+
+    #[test]
+    fn copy_fallback_clears_stale_temp_and_never_creates_live_db_when_atomic_link_unavailable() {
+        let ws = unique_workspace("copy-fallback-atomic-no-replace");
+        let config_dir = ws.join("config");
+        let staging_dir = ws.join("staging");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::create_dir_all(&staging_dir).unwrap();
+
+        let staged_db = staging_dir.join(DB_FILENAME);
+        let current_db = config_dir.join(DB_FILENAME);
+        let tmp_dest = config_dir.join(format!("{DB_FILENAME}{PROMOTION_TEMP_SUFFIX}"));
+        let simulated_xdev = io::Error::other("simulated cross-device link");
+        fs::write(&staged_db, b"verified-staged-bytes").unwrap();
+
+        // Stale leftover temp file from an interrupted run must be replaced cleanly.
+        fs::write(&tmp_dest, b"stale-temp-bytes").unwrap();
+        install_file_no_replace_via_copy_fallback(&staged_db, &current_db, &simulated_xdev)
+            .unwrap();
+        assert_eq!(fs::read(&current_db).unwrap(), b"verified-staged-bytes");
+        assert!(!tmp_dest.exists());
+
+        // On Unix, a symlink at the temp path must be unlinked without truncating its target.
+        #[cfg(unix)]
+        {
+            fs::remove_file(&current_db).unwrap();
+            let sentinel = ws.join("sentinel.txt");
+            fs::write(&sentinel, b"must-not-be-truncated").unwrap();
+            std::os::unix::fs::symlink(&sentinel, &tmp_dest).unwrap();
+            install_file_no_replace_via_copy_fallback(&staged_db, &current_db, &simulated_xdev)
+                .unwrap();
+            assert_eq!(fs::read(&sentinel).unwrap(), b"must-not-be-truncated");
+            assert_eq!(fs::read(&current_db).unwrap(), b"verified-staged-bytes");
+            assert!(!tmp_dest.exists());
+        }
+
+        // If atomic no-replace publication is unsupported and current_db is absent,
+        // fail BEFORE creating current_db rather than copying into the live path.
+        fs::remove_file(&current_db).unwrap();
+        let unsupported_err = install_file_no_replace_via_copy_fallback_with(
+            &staged_db,
+            &current_db,
+            &simulated_xdev,
+            |_, _| Err(io::Error::new(io::ErrorKind::Unsupported, "no hard links")),
+        )
+        .expect_err("unsupported atomic link must fail without creating live db");
+        match unsupported_err {
+            PromoteError::NotInstalled(issue) => assert_eq!(issue.code, "promote_io_error"),
+            PromoteError::InstalledButNotSynced(_) => panic!("expected NotInstalled"),
+        }
+        assert!(!current_db.exists());
+        assert!(!tmp_dest.exists());
+
+        // If atomic no-replace publication is unsupported while current_db exists,
+        // preserve existing_profile_conflict and keep current_db untouched.
+        fs::write(&current_db, b"existing-profile-bytes").unwrap();
+        let conflict_err = install_file_no_replace_via_copy_fallback_with(
+            &staged_db,
+            &current_db,
+            &simulated_xdev,
+            |_, _| Err(io::Error::new(io::ErrorKind::Unsupported, "no hard links")),
+        )
+        .expect_err("existing destination must still report conflict");
+        match conflict_err {
+            PromoteError::NotInstalled(issue) => {
+                assert_eq!(issue.code, "existing_profile_conflict");
+            }
+            PromoteError::InstalledButNotSynced(_) => panic!("expected NotInstalled"),
+        }
+        assert_eq!(fs::read(&current_db).unwrap(), b"existing-profile-bytes");
+        assert!(!tmp_dest.exists());
     }
 }

@@ -840,6 +840,7 @@
   "raw_transcript_unavailable": "Rohtranskript nicht verfügbar.",
   "raw_transcription": "Rohtranskription",
   "re_enter_key": "Schlüssel neu eingeben",
+  "re_enter_the_api_key_before_testing": "Gib den API-Schlüssel vor dem Testen erneut ein.",
   "real_time_output": "Echtzeit‑Ausgabe",
   "reason": "- {reason}",
   "receive_transcript_from_another_device": "Transkript von einem anderen Gerät empfangen",

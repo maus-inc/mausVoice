@@ -1134,6 +1134,7 @@ export const ApiKeyList = ({
   context,
   compactCards = false,
 }: ApiKeyListProps) => {
+  const intl = useIntl();
   const allApiKeys = useAppStore((state) => state.settings.apiKeys);
 
   const apiKeys = allApiKeys.filter((key) => supportsContext(key, context));
@@ -1306,7 +1307,11 @@ export const ApiKeyList = ({
   const handleTestEditingApiKey = useCallback(
     async (apiKey: SettingsApiKey, overrides: Partial<SettingsApiKey>) => {
       if (apiKeyNeedsReentry(apiKey) && !(overrides.keyFull ?? "").trim()) {
-        showErrorSnackbar("Re-enter the API key before testing.");
+        showErrorSnackbar(
+          intl.formatMessage({
+            defaultMessage: "Re-enter the API key before testing.",
+          }),
+        );
         return;
       }
       const merged = { ...apiKey, ...overrides };
@@ -1334,7 +1339,7 @@ export const ApiKeyList = ({
         setTestingApiKeyId(null);
       }
     },
-    [context],
+    [context, intl],
   );
 
   const loadingState = (

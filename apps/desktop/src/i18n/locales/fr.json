@@ -840,6 +840,7 @@
   "raw_transcript_unavailable": "Transcription brute non disponible.",
   "raw_transcription": "Transcription brute",
   "re_enter_key": "Ressaisir la clé",
+  "re_enter_the_api_key_before_testing": "Saisissez à nouveau la clé API avant de tester.",
   "real_time_output": "Sortie en temps réel",
   "reason": "- {reason}",
   "receive_transcript_from_another_device": "Recevoir la transcription depuis un autre appareil",
