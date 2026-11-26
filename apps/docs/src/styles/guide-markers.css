@@ -1,13 +1,13 @@
 /*
  * Numbered markers for guide figures.
  *
- * One badge style serves both surfaces: `figure-stage.html` adds `.mv-anchor`
- * to the element it marks, and the preview capture paints the same class in an
- * overlay sized to the target box. The capture injects this file unchanged, so
- * a change here reaches both.
+ * `capture-app.mjs` injects this file into the running app, then adds
+ * `.mv-anchor` to each element a figure marks and paints the badge in an
+ * overlay sized to that element's box, so a badge cannot point at a control the
+ * app no longer renders.
  *
- * The colour variables fall back to the dark theme values, because the preview
- * app does not define `--mv-*`. `--mv-marker-ring` is set by the capture to the
+ * The colour variables fall back to the dark theme values, because the app does
+ * not define `--mv-*`. `--mv-marker-ring` is set by the capture to the
  * background behind the badge, so the ring reads as a gap on any surface.
  */
 
