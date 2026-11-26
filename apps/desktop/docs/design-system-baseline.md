@@ -35,8 +35,10 @@ two never drift apart.
   copy. Provider marks are brand artwork via `ProviderLogo`, at the same
   22px box.
 - **Settings rows all lead with a glyph**, on `SettingRow` and
-  `SettingToggleRow` alike, in a fixed-width lane so titles align whether the
-  leading mark is a glyph, a provider logo or an avatar. Glyphs are
+  `SettingToggleRow` alike, in one lane of fixed width so titles align whether
+  the leading mark is a glyph, a provider logo or an avatar. A minimum width is
+  not enough: the widest mark would widen its own lane, which is the shift the
+  lane exists to remove. Glyphs are
   `aria-hidden`; the accessible name is the title. Colour is
   `text.secondary`, lifted to `error.main` only for a destructive row.
 - **No icon tiles.** A neutral glyph never sits on a filled square, and no

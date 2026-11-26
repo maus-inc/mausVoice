@@ -252,9 +252,13 @@ choice below names what it rules out.
   `setting-row-chassis.tsx` (22px, stroke 1.9). Never a per-row literal, and
   never a different family: a Material magnifier beside a lucide microphone is
   visible in the same eyeful.
-- The glyph sits in a fixed-width lane (`leadingGlyphSx`), so titles line up
-  whether a row leads with an icon, a provider logo, or the person's avatar.
-  The lane is the alignment; do not pad individual titles to fake it.
+- The glyph sits in a lane of fixed `width` (`leadingGlyphSx`), so titles line
+  up whether a row leads with an icon, a provider logo, or the person's avatar.
+  A `minWidth` would let the widest mark grow the lane, which is how the 48px
+  identity avatar would push its one title 26px right of every other title. A
+  mark wider than the lane is centred in it and overhangs evenly, and its own
+  `flexShrink` is off so it is never squeezed; the lane's width is the
+  alignment, so do not pad individual titles to fake it.
 - Glyphs are `aria-hidden` decoration. A row's accessible name is its title,
   its description is the description, and neither ever includes the mark.
 - Colour is `text.secondary`, or `text.secondary` lifted to `error.main` on a

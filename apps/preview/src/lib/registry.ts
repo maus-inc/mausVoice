@@ -1597,8 +1597,8 @@ export const REGISTRY: RegistryEntry[] = [
           kind: "source",
           file: `${D}components/settings/setting-row-chassis.tsx`,
         },
-        mapsTo: `${D}components/settings/setting-row-chassis.tsx → leadingGlyphSx minWidth/minHeight 22, flexShrink 0, color text.secondary, aria-hidden — patch-only`,
-        patch: `minWidth: settingGlyphProps.size, minHeight: settingGlyphProps.size,`,
+        mapsTo: `${D}components/settings/setting-row-chassis.tsx → leadingGlyphSx fixed width/height 22, flexShrink 0, children flexShrink 0, color text.secondary, aria-hidden; a wider avatar overhangs rather than widening the lane — patch-only`,
+        patch: `width: settingGlyphProps.size,\nheight: settingGlyphProps.size,`,
       },
       {
         key: "tone",

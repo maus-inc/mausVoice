@@ -94,23 +94,34 @@ export const contentControlColumnSx: SystemStyleObject<Theme> = {
 export const settingGlyphProps = { size: 22, strokeWidth: 1.9 } as const;
 
 /**
- * The one lane a row's leading glyph sits in.
+ * The one lane a row's leading mark sits in.
  *
  * A glyph names the kind of thing a row controls, so it is part of the row's
  * shape rather than decoration on it. The lane is the shared glyph size wide,
  * not the width of whatever was passed in, so a provider mark, a lucide glyph
- * and an avatar cannot each start their row's title somewhere different.
- * `minWidth` rather than `width` is deliberate, because the identity row leads
- * with a larger avatar and clipping that to a glyph's box would cut it.
+ * and the person's picture cannot each start their row's title somewhere
+ * different.
+ *
+ * `width` rather than `minWidth` is the whole point. A minimum lets its
+ * content grow the lane, and the identity row leads with a 48px avatar, so the
+ * one row whose mark is biggest would have started its title 26px right of
+ * every other row in the surface. The lane is fixed and the mark is centred in
+ * it; an avatar wider than the lane overhangs it evenly on both sides, which is
+ * what keeps the title on the common edge while the exception stays legible.
+ * The row's own `overflow` is visible, so the overhang is drawn, not clipped.
  */
 const leadingGlyphSx: SystemStyleObject<Theme> = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
   flexShrink: 0,
-  minWidth: settingGlyphProps.size,
-  minHeight: settingGlyphProps.size,
+  width: settingGlyphProps.size,
+  height: settingGlyphProps.size,
   color: "text.secondary",
+  // A flex item shrinks by default, and the one mark wider than this lane is
+  // the identity row's avatar. Without this the lane would squeeze the picture
+  // to 22px and crop the face, which is the failure a fixed lane invites.
+  "& > *": { flexShrink: 0 },
 };
 
 /** A destructive row's glyph, in the palette's destructive colour. */
@@ -123,6 +134,10 @@ const settingRowLabelSx: SystemStyleObject<Theme> = {
   gap: 2,
   flexGrow: 1,
   minWidth: 0,
+  // The identity row's avatar is wider than the glyph lane and is meant to
+  // overhang it. Clipping here would crop the picture, so the label block keeps
+  // its own overflow visible and the lane's fixed width does the aligning.
+  overflow: "visible",
 };
 
 export type SettingIconTone = "secondary" | "danger";

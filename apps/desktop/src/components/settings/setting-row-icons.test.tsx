@@ -44,6 +44,28 @@ const asComputedColor = (hex: string): string => {
  * same shape, the glyph stays out of the accessible name, and the lane is the
  * same width whether a glyph is present or not.
  */
+/**
+ * The generated CSS rule for one element, as the theme emitted it.
+ *
+ * jsdom resolves no layout and no descendant selectors, so a claim about the
+ * lane's width or about a child staying at its own size cannot be read from a
+ * computed box. The rule the app actually ships can, and that is the thing the
+ * browser applies, so the assertions read the stylesheet and address the rule by
+ * the class Emotion put on the element.
+ */
+const ruleOf = (element: Element): string => {
+  const generated = Array.from(element.classList).find((name) =>
+    name.startsWith("css-"),
+  );
+  if (!generated) throw new Error("element carries no generated class");
+  const css = Array.from(document.querySelectorAll("style"))
+    .map((style) => style.textContent ?? "")
+    .join("");
+  const start = css.indexOf(`.${generated}{`);
+  if (start < 0) throw new Error(`no rule for .${generated}`);
+  return css.slice(start, css.indexOf("}", start) + 1);
+};
+
 describe("settings row icons", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -100,8 +122,14 @@ describe("settings row icons", () => {
     // assertion is on the CSS the theme generated, not on jsdom's layout, which
     // computes nothing.
     for (const glyph of [rowGlyph, toggleGlyph]) {
-      expect(getComputedStyle(glyph).minWidth).toBe("22px");
-      expect(getComputedStyle(glyph).flexShrink).toBe("0");
+      const rule = ruleOf(glyph);
+      // `width`, not `min-width`: a minimum lets a wider mark grow the lane and
+      // start its title further right than every other row in the surface.
+      expect(rule).toContain("width:22px");
+      expect(rule).toContain("height:22px");
+      expect(rule).not.toContain("min-width:22px");
+      expect(rule).toContain("flex-shrink:0");
+      expect(rule).toContain("color:rgba(0, 0, 0, 0.6)");
     }
   });
 
@@ -195,5 +223,38 @@ describe("settings row icons", () => {
     );
     expect(getComputedStyle(row).flexWrap).toBe("wrap");
     expect(getComputedStyle(label).flexBasis).toBe("min(200px, 100%)");
+  });
+
+  it("keeps a wide avatar overhanging the lane instead of widening it", () => {
+    // The identity row leads with a 48px picture. If the lane grew to fit it,
+    // that one title would start 26px right of every other title on the
+    // surface, which is the misalignment the lane exists to remove. A fixed
+    // lane plus a centred, non-shrinking child is what keeps the title edge
+    // common and the face uncropped.
+    render(
+      <SettingGroup title="Profile">
+        <SettingRow
+          settingKey="name"
+          title="Name"
+          icon={createElement("span", { "data-testid": "avatar" })}
+        />
+      </SettingGroup>,
+    );
+
+    const glyph = glyphOf("name");
+    const lane = ruleOf(glyph);
+    expect(lane).toContain("width:22px");
+    expect(lane).toContain("justify-content:center");
+
+    // The guard that keeps a 48px picture whole inside a 22px lane: without it
+    // the avatar is a flex item that shrinks to the lane and the face is cut.
+    const generated = Array.from(glyph.classList).find((name) =>
+      name.startsWith("css-"),
+    );
+    const css = Array.from(document.querySelectorAll("style"))
+      .map((style) => style.textContent ?? "")
+      .join("");
+    expect(css).toContain(`.${generated}>*{`);
+    expect(css).toMatch(new RegExp(`\\.${generated}>\\*\\{[^}]*flex-shrink:0`));
   });
 });

@@ -75,6 +75,67 @@ const rowBlocks = (source: string): string[] => {
 const settingKeyOf = (block: string): string | null =>
   /settingKey="([a-z0-9_]+)"/.exec(block)?.[1] ?? null;
 
+/** The whole opening tag of each row, parsed into the props it passes. */
+const rowOf = (source: string): string => {
+  const [block] = rowBlocks(source);
+  return block ?? "";
+};
+
+/** The `icon={...}` initializer of a row, from `{` to its matching `}`. */
+const iconInitializerOf = (block: string): string | null => {
+  const start = /\bicon=\{/.exec(block);
+  if (!start) return null;
+  let index = start.index + start[0].length;
+  let depth = 1;
+  const from = index;
+  while (index < block.length && depth > 0) {
+    if (block[index] === "{") depth += 1;
+    else if (block[index] === "}") depth -= 1;
+    index += 1;
+  }
+  return block.slice(from, index - 1);
+};
+
+/** The one JSX element inside an icon initializer, when it is exactly one. */
+const iconElementOf = (initializer: string): string | null => {
+  const start = initializer.indexOf("<");
+  if (start < 0) return null;
+  let index = start;
+  let braces = 0;
+  while (index < initializer.length) {
+    if (initializer[index] === "{") braces += 1;
+    else if (initializer[index] === "}") braces -= 1;
+    else if (initializer[index] === ">" && braces === 0) break;
+    index += 1;
+  }
+  return initializer.slice(start, index + 1);
+};
+
+/** Props that would re-set the size or stroke the shared object already set. */
+const hasOwnSizing = (element: string): boolean =>
+  /\b(size|strokeWidth|fontSize)\s*=/.test(element);
+
+/**
+ * Whether a row's leading mark is drawn from the shared props.
+ *
+ * The element is inspected rather than the whole row block, because the two are
+ * not the same claim: a row whose *control* mentions `settingGlyphProps` while
+ * its icon carries its own `size` satisfies the looser check and still draws a
+ * glyph at the wrong scale.
+ */
+const leadsWithGlyphProps = (block: string): boolean => {
+  const initializer = iconInitializerOf(block);
+  if (initializer === null) return false;
+  const element = iconElementOf(initializer);
+  if (element === null) return false;
+  // A provider's own artwork and the person's picture are identity rather than
+  // icons: they carry no stroke of their own, and their size is about the mark
+  // (a face is 48px, a logo 22px), not about the icon scale this rule holds.
+  if (/^<(ProviderLogo|UserAvatar)\b/.test(element)) return true;
+  if (hasOwnSizing(element)) return false;
+  return /\{\.\.\.settingGlyphProps\}/.test(element);
+};
+
 /** The element a row passes as its leading mark, when it passes one. */
 const glyphOf = (block: string): string | null =>
   /icon=\{\s*<([A-Za-z0-9]+)/.exec(block)?.[1] ?? null;
@@ -104,16 +165,47 @@ describe("settings row icon coverage", () => {
     const overdrawn: string[] = [];
     for (const { path, source } of sources) {
       for (const block of rowBlocks(source)) {
-        const leadsWithOwnMark =
-          block.includes("settingGlyphProps") ||
-          block.includes("<ProviderLogo") ||
-          block.includes("<UserAvatar");
-        if (!leadsWithOwnMark) {
+        if (!leadsWithGlyphProps(block)) {
           overdrawn.push(`${path}: ${settingKeyOf(block) ?? "unnamed row"}`);
         }
       }
     }
     expect(overdrawn).toEqual([]);
+  });
+
+  it("rejects a glyph that overrides the shared size or stroke", () => {
+    // The check above would pass on `<Mic {...settingGlyphProps} size={40} />`
+    // and on a row whose *control* spread the props, so the extraction has to be
+    // held to its own standard. A spread before a literal is an override in
+    // JSX, so it is rejected the same way the literal alone is.
+    expect(
+      leadsWithGlyphProps(rowOf("<SettingRow icon={<Mic size={40} />} />")),
+    ).toBe(false);
+    expect(
+      leadsWithGlyphProps(
+        rowOf("<SettingRow icon={<Mic {...settingGlyphProps} size={40} />} />"),
+      ),
+    ).toBe(false);
+    expect(
+      leadsWithGlyphProps(
+        rowOf('<SettingRow title="x" icon={<Mic {...settingGlyphProps} />} />'),
+      ),
+    ).toBe(true);
+    // A spread of some other object is not the shared props, whatever it holds.
+    expect(
+      leadsWithGlyphProps(
+        rowOf("<SettingRow icon={<Mic {...glyphProps} />} />"),
+      ),
+    ).toBe(false);
+    // A provider mark is fitted into its own square rather than drawn at the
+    // glyph size, so it is allowed as a leading mark and needs no spread.
+    expect(
+      leadsWithGlyphProps(
+        rowOf(
+          '<SettingRow icon={<ProviderLogo provider="groq" size={22} />} />',
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("draws no glyph from a second icon family", () => {
