@@ -666,11 +666,7 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 
     for (rect, button) in layout.buttons() {
-        let label = rust_pill_shared::flash_banner::FlashHost::button_label(
-            button,
-            action_text,
-            reject_text,
-        );
+        let label = rust_pill_shared::flash_banner::button_label(button, action_text, reject_text);
         let Some(label) = label else {
             continue;
         };

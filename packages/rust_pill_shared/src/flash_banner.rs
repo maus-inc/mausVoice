@@ -819,26 +819,6 @@ pub trait FlashHost {
         self.flash_lines().set(1);
     }
 
-    /// Which label a painted banner button wants.
-    ///
-    /// A banner can carry either button, both, or neither, and the caller holds
-    /// the two labels separately. Resolving which one a painted rectangle wants
-    /// is the same rule on every platform, so it lives here rather than being
-    /// restated at each paint site.
-    ///
-    /// No `&self`: the rule reads nothing from the pill, and a paint site that
-    /// only needs this should not have to name the host it is painting.
-    fn button_label<'a>(
-        button: BannerButton,
-        action: Option<&'a String>,
-        reject: Option<&'a String>,
-    ) -> Option<&'a String> {
-        match button {
-            BannerButton::Action => action,
-            BannerButton::Reject => reject,
-        }
-    }
-
     /// Where a celebration launches its particles from.
     ///
     /// The banner grows upward with its line count, so its centre moves with
@@ -928,6 +908,27 @@ pub fn dismiss_flash<S: FlashHost>(state: &S, reject: bool, send: impl FnOnce(&s
         send(&action);
     }
     state.clear_flash();
+}
+
+/// Which label a painted banner button wants.
+///
+/// A banner can carry either button, both, or neither, and each paint site holds
+/// the two labels separately. Choosing between them is the same rule on every
+/// platform, so it is written once here.
+///
+/// Free rather than a trait method on purpose: it reads nothing from the pill,
+/// and an associated function with no receiver on a trait cannot infer `Self`
+/// at a call site (E0790), which is how the first attempt at this broke the two
+/// paint sites that a Linux host cannot compile.
+pub fn button_label<'a>(
+    button: BannerButton,
+    action: Option<&'a String>,
+    reject: Option<&'a String>,
+) -> Option<&'a String> {
+    match button {
+        BannerButton::Action => action,
+        BannerButton::Reject => reject,
+    }
 }
 
 /// The banner's centre without wrapping the message.
@@ -1683,6 +1684,27 @@ mod tests {
         }
     }
 
+    /// `button_label` resolves each button and is callable with no host.
+    ///
+    /// This is the compile proof for the shape that broke CI: the two paint sites
+    /// that cannot compile on a Linux host call exactly this. If the signature
+    /// ever needs `Self` again, this stops compiling here first.
+    #[test]
+    fn button_label_resolves_each_button_without_a_host() {
+        let action = String::from("Accept");
+        let reject = String::from("Decline");
+
+        assert_eq!(
+            button_label(BannerButton::Action, Some(&action), Some(&reject)),
+            Some(&action)
+        );
+        assert_eq!(
+            button_label(BannerButton::Reject, Some(&action), None),
+            None,
+            "a reject rectangle with no reject label must paint nothing"
+        );
+    }
+
     /// A paint site must call only things this module still provides.
     ///
     /// A method that moves off `FlashHost` breaks every caller, and the break is
@@ -1702,9 +1724,15 @@ mod tests {
                 !source.contains("state.button_label("),
                 "{path} calls button_label as a method, but it takes no receiver"
             );
+            // E0790: an associated function with no receiver on a trait cannot
+            // infer Self, so naming the trait here does not compile either.
+            assert!(
+                !source.contains("FlashHost::button_label("),
+                "{path} calls button_label through the trait, which cannot infer Self"
+            );
             if source.contains("button_label(") {
                 assert!(
-                    source.contains("FlashHost::button_label("),
+                    source.contains("flash_banner::button_label("),
                     "{path} resolves a banner button's label some other way"
                 );
             }
