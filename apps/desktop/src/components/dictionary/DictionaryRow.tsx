@@ -74,8 +74,8 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
         sx={{
           alignItems: "flex-start",
           py: 1,
-          // Keep both fields aligned when one displays a validation message.
-          "& > svg": { mt: "12px" },
+          // Hold the row actions near the top: a validation message or a
+          // wrapped replacement grows the fields downward, not the actions.
           "& > .MuiIconButton-root, & > span": { mt: "4px" },
         }}
       >

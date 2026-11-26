@@ -1,7 +1,14 @@
 import { ArrowRight } from "lucide-react";
-import { TextField } from "@mui/material";
+import { Box, TextField } from "@mui/material";
 import { FormattedMessage, useIntl } from "react-intl";
 import type { DictionaryDraft } from "./use-dictionary-draft";
+
+/**
+ * The small outlined TextField's control box: 8.5px of vertical padding either
+ * side of the 1.4375em input line box. The replacement arrow rides this box so
+ * a helper text or a wrapped replacement cannot move it off the input's line.
+ */
+export const FIELD_CONTROL_HEIGHT = 40;
 
 export const DictionaryTermFields = ({
   draft,
@@ -45,7 +52,20 @@ export const DictionaryTermFields = ({
       />
       {isReplacement ? (
         <>
-          <ArrowRight size={16} strokeWidth={1.9} aria-hidden />
+          {/* A margin cannot hold this line: Stack resets the margin of every
+              direct child, and the field it belongs to grows downward. */}
+          <Box
+            data-dictionary-arrow=""
+            sx={{
+              alignSelf: "flex-start",
+              display: "flex",
+              alignItems: "center",
+              flexShrink: 0,
+              height: FIELD_CONTROL_HEIGHT,
+            }}
+          >
+            <ArrowRight size={16} strokeWidth={1.9} aria-hidden />
+          </Box>
           <TextField
             variant="outlined"
             size="small"
