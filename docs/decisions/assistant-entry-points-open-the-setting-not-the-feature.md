@@ -56,11 +56,14 @@ have already bound, and it is wrong for a key that fires.
   The Help card's label becomes **Open settings** while the feature is off, and
   the shortcut rows stay visible and explain that the switch is needed. Hiding a
   key leaves the person who bound it with no way back to it.
-- The copy follows what the key really does. **Open chat** opens the row, so its
-  hint says so; the Assistant hold key stays disabled while the switch is off,
-  so its hint says only that the switch is needed rather than promising a
-  recovery the gesture cannot perform. Routing a hold gesture to a settings page
-  mid-press would be a worse surprise than a key that does nothing.
+- The copy follows what the key really does. **Open chat** while the feature is
+  off carries the hint **Opens the Assistant mode setting while the feature is
+  off**, because that is the press; its normal description is about opening a
+  conversation, which is what the switch buys. The Assistant hold key stays
+  disabled while the switch is off, so its hint says only that the switch is
+  needed rather than promising a recovery the gesture cannot perform. Routing a
+  hold gesture to a settings page mid-press would be a worse surprise than a key
+  that does nothing.
 - Arriving from another page moves focus too. `useSettingsAnchor` focused the
   row only when a request came from inside settings, which left a link followed
   from Help with focus on `<body>` and a keyboard user at the top of a page they

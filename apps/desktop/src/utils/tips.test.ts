@@ -8,6 +8,42 @@ import { settingEntryOf, SETTINGS_PAGES } from "./settings-registry";
 import { ONBOARDING_TIPS, tipAction, type OnboardingTip } from "./tips";
 
 /**
+ * The `TIP_COPY` literals in `TipCard.tsx`, keyed by tip id, with the default
+ * message text of each label.
+ *
+ * Reading the map is what makes the assertion per tip. Importing the module
+ * would be better still, but it pulls MUI, react-intl and a PNG into a plain
+ * node test file for the sake of two strings, and the source is the thing that
+ * decides which literal sits under which id.
+ */
+const TIP_COPY_SOURCE = (
+  source: string,
+): Map<string, { action?: string; setupAction?: string }> => {
+  const start = source.indexOf("export const TIP_COPY");
+  if (start < 0) throw new Error("TIP_COPY is not in TipCard.tsx");
+  const body = source.slice(start);
+  const entries = new Map<string, { action?: string; setupAction?: string }>();
+
+  // Each tip is a quoted id followed by its object, up to the next quoted id.
+  const idPattern = /^  "([a-z-]+)": \{$/gm;
+  const matches = [...body.matchAll(idPattern)];
+  matches.forEach((match, index) => {
+    const from = match.index ?? 0;
+    const to = matches[index + 1]?.index ?? body.length;
+    const block = body.slice(from, to);
+    const text = (field: string): string | undefined =>
+      new RegExp(`${field}: <FormattedMessage defaultMessage="([^"]+)"`).exec(
+        block,
+      )?.[1];
+    entries.set(match[1], {
+      action: text("action"),
+      setupAction: text("setupAction"),
+    });
+  });
+  return entries;
+};
+
+/**
  * A tip's action is a destination, and one of them sits behind a feature switch.
  * These pin both answers, so the Help listing cannot send someone into a
  * feature that is off the way it did in issue #355.
@@ -120,16 +156,46 @@ describe("tip actions", () => {
     expect(help).toMatch(/tipAction\(/);
   });
 
-  it("gives every gated tip the label its setup action needs", () => {
+  /*
+   * The label is per tip, not a headcount. Counting `setupAction:` occurrences
+   * against the number of gated tips passes when the label moves to an ungated
+   * tip, and the gated one silently falls back to "Open chat" over a click that
+   * opens settings — the same lie as the dead end this fixed. So this reads the
+   * copy map itself and asks which tip owns which label.
+   */
+  it("gives each gated tip its own setup label and leaves the rest alone", () => {
     const source = readFileSync(
       new URL("../components/onboarding/TipCard.tsx", import.meta.url),
       "utf8",
     );
-    const gated = ONBOARDING_TIPS.filter((tip) => tip.gate).length;
-    const labelled = source.match(/setupAction:/g)?.length ?? 0;
-    // A gate without its own label would render "Open chat" over a click that
-    // opens settings, which is the same lie as the dead end this fixed.
-    expect(labelled).toBe(gated);
+    const copy = TIP_COPY_SOURCE(source);
+    const gated = ONBOARDING_TIPS.filter((tip) => tip.gate);
+
+    // A gated tip's button opens the setting row, so its label has to name that
+    // destination rather than the feature's own page.
+    for (const tip of gated) {
+      const tipCopy = copy.get(tip.id);
+      expect(tipCopy, `${tip.id} has copy`).toBeDefined();
+      expect(
+        tipCopy?.setupAction,
+        `${tip.id} labels its setup action`,
+      ).toBeDefined();
+      expect(tipCopy?.setupAction, `${tip.id} names where the click goes`).toBe(
+        "Open settings",
+      );
+      expect(
+        tipCopy?.action,
+        `${tip.id} keeps the enabled label separate`,
+      ).not.toBe(tipCopy?.setupAction);
+    }
+
+    // Nothing that stays on its own route grows a label describing a detour:
+    // an ungated tip with a setup label is the misplacement above, seen from
+    // the other side.
+    for (const [id, tipCopy] of copy) {
+      if (gated.some((tip) => tip.id === id)) continue;
+      expect(tipCopy.setupAction, `${id} has no setup label`).toBeUndefined();
+    }
   });
 
   it("gates the assistant tip on the assistant switch the row toggles", () => {
