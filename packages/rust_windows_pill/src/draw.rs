@@ -632,7 +632,7 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             &message,
             measure,
             widths,
-            (pill_y, WINDOW_W_TYPING as f64),
+            (pill_y, WINDOW_W_TYPING as f64, ww),
             flash_t,
             (&state.banner_lines, &state.banner_center),
         );

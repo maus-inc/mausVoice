@@ -211,18 +211,22 @@ impl FlashBannerSpec {
 
     /// Builds the spec for a toast painted in a pill window.
     ///
-    /// The drawing space is shifted by the content offset before a paint runs,
-    /// so the pill's centre sits at `window_width / 2` in it while the window
-    /// still extends its full typing width around that point. The banner
-    /// therefore has the whole window to read in, in every mode, even when the
-    /// pill's own box is narrower: a long error during dictation is not
-    /// squeezed to the compact width.
+    /// Two different widths matter here, and conflating them put the banner on
+    /// the wrong axis. The *banner* may use the whole `window_width`, so a long
+    /// error during dictation is not squeezed into the pill's compact box. But
+    /// the banner must be *centred* on the pill, and the pill's box is
+    /// `pill_draw_width`, which is the draw width the paint already has: it
+    /// starts at 200 in dictation and springs to 600 when the pill expands.
     ///
-    /// Every pill composed this the same way, and the numbers are the same on
-    /// all three, so the composition lives here rather than being written out
-    /// at each draw site.
+    /// The drawing space is shifted by the content offset before a paint runs,
+    /// and that offset is `(window_width - pill_draw_width) / 2`, so the pill's
+    /// centre is `pill_draw_width / 2` in painter space. Centring on
+    /// `window_width / 2` instead leaves the banner `(window_width -
+    /// pill_draw_width) / 2` to the right of the pill for the whole expand
+    /// animation, which is what the reviewers caught.
     pub fn for_window(
         window_width: f64,
+        pill_draw_width: f64,
         pill_top: f64,
         constants: FlashBannerConstants,
         preferred_text_width: f64,
@@ -231,7 +235,7 @@ impl FlashBannerSpec {
     ) -> Self {
         Self::new(
             window_width,
-            window_width / 2.0,
+            sane(pill_draw_width) / 2.0,
             pill_top,
             constants,
             preferred_text_width,
@@ -419,6 +423,41 @@ pub fn banner_height(line_count: usize, min_height: f64, padding_v: f64, line_he
     sane(min_height).max(stack)
 }
 
+/// Yields each word with the run of whitespace that preceded it.
+///
+/// `split_whitespace` reports the words and throws the gaps away, which forces
+/// the wrap to invent a single space between them. A message that says
+/// `/tmp/Client  Files` -- two spaces, and a real path a user can be told about --
+/// came back as `/tmp/Client Files`, naming something that does not exist. The
+/// gap is therefore carried as it was written and only the gap a line break
+/// lands on is dropped, which is what a line break means.
+///
+/// The leading gap of a paragraph is dropped: it is indentation from the source,
+/// not part of the sentence, and keeping it would shift the first line right by
+/// an amount the caller never asked for. Newlines are never part of a gap here,
+/// because paragraphs are already split on them.
+fn words_with_gaps(paragraph: &str) -> impl Iterator<Item = (&str, &str)> {
+    let mut rest = paragraph.trim_start_matches([' ', '\t']);
+    // The gap is found trailing the word it followed, so it is held here until
+    // the next word comes back to claim it. A trailing gap is never claimed,
+    // which is what drops trailing whitespace.
+    let mut pending = "";
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let word_end = rest.find([' ', '\t']).unwrap_or(rest.len());
+        let (word, after) = rest.split_at(word_end);
+        let gap_end = after
+            .find(|c: char| c != ' ' && c != '\t')
+            .unwrap_or(after.len());
+        let (gap, after_gap) = after.split_at(gap_end);
+        rest = after_gap;
+        let leading = std::mem::replace(&mut pending, gap);
+        Some((word, leading))
+    })
+}
+
 /// Wraps `text` to `max_width`, word first and characters when a word alone
 /// will not fit.
 ///
@@ -427,7 +466,8 @@ pub fn banner_height(line_count: usize, min_height: f64, padding_v: f64, line_he
 /// next word would overrun, then start a new one. An explicit `\n` starts a new
 /// line and is not drawn. A word wider than the whole budget is broken across
 /// lines instead of being allowed to overrun, which is the case a URL or a long
-/// file path reaches.
+/// file path reaches. The gaps between words are kept as they were written, so
+/// a message that quotes a path still quotes the path.
 ///
 /// `measure` returns the width of a rendered string. It must be monotonic in
 /// the length of its argument, which a font's advance widths are.
@@ -444,13 +484,15 @@ where
 
     for paragraph in text.split('\n') {
         let mut current = String::new();
-        for word in paragraph.split_whitespace() {
+        for (word, gap) in words_with_gaps(paragraph) {
             if !current.is_empty() {
-                let candidate = format!("{current} {word}");
+                let candidate = format!("{current}{gap}{word}");
                 if measure(&candidate) <= budget {
                     current = candidate;
                     continue;
                 }
+                // The gap is what the break lands on: a line does not end in
+                // trailing space, and the next one does not start with it.
                 lines.push(std::mem::take(&mut current));
             }
             // A word starting a line still has to fit it. One wider than the
@@ -511,23 +553,31 @@ where
 
 /// Splits one over-wide word into a head that fits and the remainder.
 ///
-/// Binary search over character boundaries rather than a linear scan, for the
-/// same reason [`crate::text_fit::elide_to_width`] uses one: each step is a font
-/// engine call and the word can be long. The prefix is taken on a character
-/// boundary, so a multi-byte character is never cut in half.
+/// Binary search over *grapheme cluster* boundaries rather than a linear scan,
+/// for the same reason [`crate::text_fit::elide_to_width`] uses one: each step is
+/// a font engine call and the word can be long.
+///
+/// Clusters, not `char`s, are the unit. A `char` boundary is not a place a font
+/// may be cut: splitting there separates a family emoji into two unrelated
+/// people, drops the variation selector that makes a glyph emoji-presenting, or
+/// strands a combining accent on the wrong base. Each of those renders as a
+/// visible defect in the middle of the message, and the pieces do not rejoin
+/// when the next line starts.
 fn break_word<F>(word: &str, budget: f64, measure: F) -> (String, String)
 where
     F: Fn(&str) -> f64,
 {
-    let chars: Vec<char> = word.chars().collect();
-    if chars.len() < 2 {
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let clusters: Vec<&str> = word.graphemes(true).collect();
+    if clusters.len() < 2 {
         return (word.to_string(), String::new());
     }
-    let (mut lo, mut hi) = (1usize, chars.len() - 1);
+    let (mut lo, mut hi) = (1usize, clusters.len() - 1);
     let mut best = 1usize;
     while lo <= hi {
         let mid = lo + (hi - lo) / 2;
-        let prefix: String = chars[..mid].iter().collect();
+        let prefix: String = clusters[..mid].concat();
         if measure(&prefix) <= budget {
             best = mid;
             lo = mid + 1;
@@ -535,8 +585,8 @@ where
             hi = mid - 1;
         }
     }
-    let head: String = chars[..best].iter().collect();
-    let tail: String = chars[best..].iter().collect();
+    let head: String = clusters[..best].concat();
+    let tail: String = clusters[best..].concat();
     (head, tail)
 }
 
@@ -562,7 +612,7 @@ where
     let min_width = sane(spec.min_width);
     let max_width = banner_max_width(spec.available_width, min_width);
 
-    let button_widths: Vec<f64> = [spec.action_width, spec.reject_width]
+    let requested_buttons: Vec<f64> = [spec.action_width, spec.reject_width]
         .into_iter()
         .flatten()
         .map(sane)
@@ -572,12 +622,36 @@ where
     // message a gap's worth of room it does not have, and the last word of the
     // first line would sit under the button.
     let gap = sane(spec.action_gap);
+    let padding = sane(spec.padding_h);
+    // The banner is first made as wide as the buttons ask for, but never wider
+    // than the window allows. That settles the width.
+    let preferred = (sane(spec.preferred_text_width)
+        + padding * 2.0
+        + requested_buttons.iter().sum::<f64>()
+        + requested_buttons.len() as f64 * gap)
+        .max(min_width);
+    let banner_w = preferred.min(max_width);
+
+    // Buttons are then held to the room that width actually leaves them. A
+    // button that did not fit would be painted past the rounded edge -- still
+    // visible, still clickable, no longer part of the message -- and the reject
+    // button placed relative to it would be pushed out of the other side. The
+    // widths are shared out in proportion so a pair never loses one of itself,
+    // and a banner with no room at all gets zero-width buttons rather than
+    // negative ones.
+    let room_for_buttons =
+        (banner_w - padding * 2.0 - requested_buttons.len() as f64 * gap).max(0.0);
+    let requested_total: f64 = requested_buttons.iter().sum();
+    let button_widths: Vec<f64> = if requested_total > room_for_buttons && requested_total > 0.0 {
+        requested_buttons
+            .iter()
+            .map(|width| width * room_for_buttons / requested_total)
+            .collect()
+    } else {
+        requested_buttons
+    };
     let reserved_for_buttons: f64 =
         button_widths.iter().sum::<f64>() + button_widths.len() as f64 * gap;
-    let padding = sane(spec.padding_h);
-    let preferred =
-        (sane(spec.preferred_text_width) + padding * 2.0 + reserved_for_buttons).max(min_width);
-    let banner_w = preferred.min(max_width);
 
     // The banner width settles first because the text budget depends only on
     // it. Wrapping then decides the line count, and the height follows.
@@ -615,18 +689,23 @@ where
 
     let action_h = sane(spec.action_height);
     let action_y = banner.y + (height - action_h) / 2.0;
-    let action = spec.action_width.map(|width| BannerRect {
-        x: banner.right() - padding - sane(width),
-        y: action_y,
-        w: sane(width),
-        h: action_h,
-    });
-    let reject = spec.reject_width.map(|width| {
-        let offset = action.map_or(0.0, |rect| rect.w + sane(spec.action_gap));
+    let mut widths = button_widths.iter().copied();
+    let action = spec.action_width.map(|_| {
+        let width = widths.next().unwrap_or(0.0);
         BannerRect {
-            x: banner.right() - padding - offset - sane(width),
+            x: banner.right() - padding - width,
             y: action_y,
-            w: sane(width),
+            w: width,
+            h: action_h,
+        }
+    });
+    let reject = spec.reject_width.map(|_| {
+        let width = widths.next().unwrap_or(0.0);
+        let offset = action.map_or(0.0, |rect| rect.w + gap);
+        BannerRect {
+            x: banner.right() - padding - offset - width,
+            y: action_y,
+            w: width,
             h: action_h,
         }
     });
@@ -661,6 +740,22 @@ pub trait CelebrationHost {
     fn fireworks_next_launch(&self) -> &Cell<usize>;
     /// The rockets in flight.
     fn fireworks_rockets(&self) -> &RefCell<Vec<crate::fireworks::Rocket>>;
+
+    /// Ends the burst and forgets everything it was doing.
+    ///
+    /// A celebration's banner and the burst it announces are one lifetime: the
+    /// message stays up for `FIREWORKS_TOTAL_DURATION` and so does the burst.
+    /// When the banner goes away the burst must not be able to resume later
+    /// from state that belongs to a message the user has already seen and lost,
+    /// so cancelling resets the clock and the schedule rather than only
+    /// clearing a flag.
+    fn cancel_celebration(&self) {
+        self.fireworks_active().set(false);
+        self.fireworks_elapsed().set(0.0);
+        self.fireworks_next_launch().set(0);
+        self.fireworks_rockets().borrow_mut().clear();
+    }
+
     /// The burst's state as the shared fireworks animation wants it.
     fn fireworks(&self) -> crate::fireworks::Fireworks<'_> {
         crate::fireworks::Fireworks {
@@ -673,20 +768,21 @@ pub trait CelebrationHost {
 
     /// Advances the burst one frame from where the banner was last painted.
     ///
-    /// Only the paint knows how the message wrapped, so it records the centre
-    /// and this reads it back. Before the first paint there is no recorded
-    /// centre, and the burst waits: a celebration always paints a message
-    /// before it launches, so the fallback that used to be derived per platform
-    /// was never reached. Dropping it removes arithmetic each pill had its own
-    /// copy of, and removes the case where two platforms disagreed about where
-    /// an unpainted banner would have been.
+    /// A rocket's flight is independent of where the banner is: once one is in
+    /// the air it has its own trajectory, and the origin only matters when a
+    /// new one launches. So the burst is advanced every tick and the origin is
+    /// optional: `None` means "advance, but launch nothing this frame".
+    ///
+    /// Two review findings meet here. A burst that starts while the banner is
+    /// unpainted -- GTK does not paint it while the assistant is open -- used to
+    /// wait for an origin that never came, so its elapsed time froze and it
+    /// resumed stale when a banner finally painted. And a burst whose banner
+    /// expired had nothing to resume from at all.
     fn tick_celebration(&self, dt: f64)
     where
         Self: FlashHost,
     {
-        if let Some(origin) = self.banner_center().get() {
-            self.fireworks().tick(dt, origin);
-        }
+        self.fireworks().tick(dt, self.banner_center().get());
     }
 }
 
@@ -744,7 +840,7 @@ impl FlashFrame {
         message: &str,
         measure: F,
         (preferred, action, reject): (f64, Option<f64>, Option<f64>),
-        (pill_top, window_width): (f64, f64),
+        (pill_top, window_width, pill_draw_width): (f64, f64, f64),
         fade_t: f64,
         (flash_lines, banner_center): (&Cell<usize>, &Cell<Option<(f64, f64)>>),
     ) -> (FlashBannerLayout, f64, f64, (f64, f64))
@@ -753,6 +849,7 @@ impl FlashFrame {
     {
         let spec = FlashBannerSpec::for_window(
             window_width,
+            pill_draw_width,
             pill_top,
             FlashBannerConstants::canonical(),
             preferred,
@@ -977,13 +1074,16 @@ pub fn button_label<'a>(
 /// All three pills wrote this out: if the banner is up, subtract the step from
 /// its timer, and dismiss it once the timer reaches zero. The rule belongs with
 /// the rest of the banner's state, not beside each platform's frame loop.
-pub fn tick_banner_timer<S: FlashHost>(state: &S, dt: f64) {
+pub fn tick_banner_timer<S: FlashHost + CelebrationHost>(state: &S, dt: f64) {
     if !state.flash_visible().get() {
         return;
     }
     let remaining = state.flash_timer().get() - dt;
     if remaining <= 0.0 {
         state.clear_flash();
+        // The message this burst was announcing is gone, so the burst goes with
+        // it. Leaving it active lets it resume into a later banner.
+        state.cancel_celebration();
     } else {
         state.flash_timer().set(remaining);
     }
@@ -1437,6 +1537,48 @@ mod tests {
         assert!(buttoned.lines.len() >= plain.lines.len());
     }
 
+    /// Buttons wider than the banner are held inside it, not painted past it.
+    ///
+    /// The reported case: two 230-wide buttons and a normal banner. Reserving
+    /// their full widths would leave the message a zero budget and, worse, put
+    /// the action button's right edge 224 units past the banner's own right edge
+    /// and the reject button outside its left edge. Both are painted from these
+    /// rectangles, so both would be visible outside the rounded rectangle.
+    #[test]
+    fn buttons_too_wide_for_the_banner_are_held_inside_it() {
+        let oversized = FlashBannerSpec {
+            action_width: Some(230.0),
+            reject_width: Some(230.0),
+            ..spec()
+        };
+        let layout = layout_flash_banner(&oversized, "Continue?", fixed(7.0));
+        let banner = layout.banner;
+        let action = layout.action.expect("the fixture asks for an action");
+        let reject = layout.reject.expect("the fixture asks for a reject");
+
+        for (name, button) in [("action", action), ("reject", reject)] {
+            assert!(
+                button.x >= banner.x - 0.001,
+                "the {name} button starts left of the banner: {button:?} against {banner:?}"
+            );
+            assert!(
+                button.right() <= banner.right() + 0.001,
+                "the {name} button runs past the banner: {button:?} against {banner:?}"
+            );
+            assert!(button.w > 0.0, "the {name} button was squeezed to nothing");
+        }
+
+        // The two share the room in proportion, so neither is starved.
+        assert!(
+            (action.w - reject.w).abs() < 0.001,
+            "equal buttons were not treated equally: {action:?} and {reject:?}"
+        );
+
+        // And the message keeps what is left rather than a negative budget.
+        assert!(layout.text.w >= 0.0);
+        assert!(!layout.text.w.is_nan());
+    }
+
     #[test]
     fn a_button_wide_enough_to_fill_the_banner_leaves_no_negative_budget() {
         let dominated = FlashBannerSpec {
@@ -1489,6 +1631,126 @@ mod tests {
             assert!(
                 line.chars().count() <= 4,
                 "{line:?} is wider than the 40-unit budget"
+            );
+        }
+        assert_eq!(lines.concat(), text);
+    }
+
+    /// The gap between two words survives the wrap as it was written.
+    ///
+    /// A path reported in a message -- `/tmp/Client  Files` -- is two spaces
+    /// wide, and collapsing it to one turns a path the user can open into a
+    /// path that does not exist. Only a gap a line break lands on is dropped,
+    /// and that is invisible because the break itself says the same thing.
+    #[test]
+    fn the_gap_between_words_is_kept_exactly() {
+        let lines = wrap_to_width("/tmp/Client  Files", 1000.0, fixed(10.0));
+        assert_eq!(lines, vec!["/tmp/Client  Files".to_string()]);
+    }
+
+    /// And a tab is a gap too, not a word boundary to be normalised away.
+    #[test]
+    fn a_tab_between_words_is_not_replaced_by_a_space() {
+        let lines = wrap_to_width("a\tb", 1000.0, fixed(10.0));
+        assert_eq!(lines, vec!["a\tb".to_string()]);
+    }
+
+    /// A break consumes the gap it lands on and nothing else.
+    #[test]
+    fn a_break_drops_the_gap_it_lands_on_and_keeps_the_rest() {
+        // Nine characters is 90 units, so 80 fits "aa  bb" (60) but not the
+        // whole line. The break lands on the gap between "bb" and "cc" and that
+        // gap goes; the interior two-space gap is kept.
+        let lines = wrap_to_width("aa  bb  cc", 80.0, fixed(10.0));
+        assert_eq!(
+            lines,
+            vec!["aa  bb".to_string(), "cc".to_string()],
+            "the interior gap was collapsed or left dangling"
+        );
+        for line in &lines {
+            assert!(
+                !line.starts_with(' ') && !line.ends_with(' '),
+                "{line:?} kept whitespace at a line edge"
+            );
+        }
+    }
+
+    /// A wrap never invents or loses a character except the gaps it breaks on.
+    #[test]
+    fn wrapping_loses_nothing_but_the_gaps_it_breaks_on() {
+        let text = "  hello   world this  is a message  ";
+        let lines = wrap_to_width(text, 100.0, fixed(10.0));
+        let rejoined = lines.join(" ");
+        assert_eq!(
+            rejoined.split_whitespace().collect::<Vec<_>>(),
+            text.split_whitespace().collect::<Vec<_>>(),
+            "a word was lost or reordered"
+        );
+        assert_eq!(lines[0], "hello", "leading indentation was kept");
+    }
+
+    /// An over-wide word is broken between grapheme clusters, not characters.
+    ///
+    /// Splitting on `char`s cuts inside a cluster, and the halves are visibly
+    /// broken: a ZWJ family becomes two separate people, a flag becomes two
+    /// regional-indicator letters, and a base plus its combining accent are
+    /// pulled apart onto different lines. Counting clusters rather than `char`s
+    /// keeps every cluster whole across the break.
+    #[test]
+    fn an_over_wide_word_is_broken_between_grapheme_clusters() {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        // Four family emoji: one cluster each, twelve `char`s each.
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+        let text = family.repeat(4);
+        assert_eq!(
+            text.graphemes(true).count(),
+            4,
+            "the fixture is four clusters"
+        );
+        assert!(text.chars().count() > 4);
+
+        let lines = wrap_to_width(&text, 30.0, fixed(10.0));
+        assert!(lines.len() > 1, "the word had to be broken");
+        for line in &lines {
+            assert_eq!(
+                line.graphemes(true).count(),
+                1,
+                "{line:?} is not a whole number of clusters, so one was cut"
+            );
+            assert_eq!(
+                line.chars().count(),
+                family.chars().count(),
+                "{line:?} lost part of its cluster across the break"
+            );
+        }
+        assert_eq!(lines.concat(), text, "nothing was lost");
+    }
+
+    /// The same rule for a base plus its combining marks.
+    #[test]
+    fn combining_marks_stay_with_their_base_across_a_break() {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        // e + acute written as a combining sequence, four times: four clusters.
+        let text = "e\u{301}e\u{301}e\u{301}e\u{301}";
+        assert_eq!(text.graphemes(true).count(), 4);
+        assert_eq!(text.chars().count(), 8);
+
+        // A 12-unit budget takes one cluster (one measured unit) at a time, so
+        // any split on `char` boundaries shows up as a line ending in a bare
+        // base or beginning with a stranded accent.
+        let lines = wrap_to_width(text, 12.0, fixed(10.0));
+        assert!(lines.len() > 1, "the word had to be broken");
+        for line in &lines {
+            assert_eq!(
+                line.graphemes(true).count(),
+                1,
+                "{line:?} did not keep its base and combining mark together"
+            );
+            assert!(
+                !line.starts_with('\u{301}'),
+                "{line:?} begins with a stranded combining mark"
             );
         }
         assert_eq!(lines.concat(), text);
@@ -1688,18 +1950,102 @@ mod tests {
         );
     }
 
-    /// And a tick with nothing painted launches nothing, rather than guessing.
+    /// A burst with nowhere to launch from still advances its clock.
+    ///
+    /// This is the finding that my first version of this got wrong. The banner is
+    /// not painted while GTK's assistant panel is open, so a burst that starts in
+    /// that state has no recorded centre. Skipping the tick entirely froze its
+    /// elapsed time, and it then resumed stale once a banner finally painted.
     #[test]
-    fn a_tick_before_the_first_paint_does_not_launch_rockets() {
+    fn a_burst_advances_even_before_any_banner_paints() {
         let state = StubState::default();
         state.activate_burst();
         assert_eq!(state.indicator.banner_center.get(), None);
 
         state.tick_celebration(0.5);
 
+        assert_eq!(
+            state.fireworks_elapsed.get(),
+            0.5,
+            "the burst's clock did not advance while the banner was unpainted"
+        );
         assert!(
             state.fireworks_rockets.borrow().is_empty(),
-            "rockets launched before any banner had painted, so their origin was invented"
+            "a rocket launched with no origin, so its start point was invented"
+        );
+    }
+
+    /// A burst does not outlive the banner that announced it.
+    ///
+    /// The other half of the same finding: even with the clock running, a burst
+    /// left active after `clear_flash` would wake up under whatever message came
+    /// next. The banner's countdown is therefore what ends it.
+    #[test]
+    fn the_banner_countdown_ends_the_burst() {
+        let state = StubState::default();
+        state.activate_burst();
+        state.flash_visible().set(true);
+        state.flash_timer().set(0.1);
+        state.tick_celebration(0.5);
+        assert!(state.fireworks_active().get(), "the burst was already over");
+
+        tick_banner_timer(&state, 0.2);
+
+        assert!(!state.flash_visible().get(), "the banner did not expire");
+        assert!(
+            !state.fireworks_active().get(),
+            "the burst outlived its banner"
+        );
+        assert_eq!(
+            state.fireworks_elapsed().get(),
+            0.0,
+            "the clock was left behind"
+        );
+        assert_eq!(
+            state.fireworks_next_launch().get(),
+            0,
+            "the schedule was left behind"
+        );
+        assert!(
+            state.fireworks_rockets().borrow().is_empty(),
+            "rockets were left behind"
+        );
+    }
+
+    /// And the held launch goes out as soon as there is an origin.
+    ///
+    /// Withholding the origin must not consume the launch schedule: the rocket
+    /// that was due while the banner was unpainted still leaves, from the centre
+    /// the first paint recorded.
+    #[test]
+    fn a_held_launch_leaves_once_the_banner_paints() {
+        let state = StubState::default();
+        state.activate_burst();
+
+        // Long enough that several launches are due, but nothing can leave yet.
+        state.tick_celebration(1.0);
+        assert!(
+            state.fireworks_rockets.borrow().is_empty(),
+            "a rocket left with no recorded centre"
+        );
+        assert_eq!(
+            state.fireworks_next_launch.get(),
+            0,
+            "the schedule was consumed"
+        );
+
+        state.indicator.banner_center.set(Some((300.0, 100.0)));
+        state.tick_celebration(1.0 / 60.0);
+
+        let rockets = state.fireworks_rockets.borrow();
+        assert!(
+            !rockets.is_empty(),
+            "the held launch never left after the banner painted"
+        );
+        assert_eq!(
+            rockets[0].trail[0],
+            (300.0, 100.0),
+            "the held rocket launched from somewhere other than the painted centre"
         );
     }
 
