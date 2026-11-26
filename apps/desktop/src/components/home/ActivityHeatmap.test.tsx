@@ -93,9 +93,16 @@ describe("ActivityHeatmap", () => {
     expect(viewport).not.toBeNull();
     expect(weekdayRail).not.toBeNull();
 
-    // A cell grows 1.75px past each side of its 10px box and draws a ring at
-    // its 1px offset, so 4px is the clearance the outline needs to stay whole.
-    const needed = Math.ceil((10 * (1.35 - 1)) / 2 + 2);
+    // A cell grows past each side of its box by half the hover growth and
+    // draws its ring outside that, so this is the clearance the whole
+    // treatment needs. It is derived from the geometry the component renders
+    // so a retuned cell size or scale cannot leave the padding behind.
+    const needed = Math.ceil(
+      (activityHeatmapGeometry.cellSize *
+        (activityHeatmapGeometry.cellHoverScale - 1)) /
+        2 +
+        2,
+    );
     const viewportStyle = window.getComputedStyle(viewport!);
     for (const side of [
       "paddingTop",
