@@ -2180,9 +2180,13 @@ mod tests {
             // Passing half the window width here is the defect the reviewers
             // found: the pill is 200 wide inside a 600-wide surface, so the
             // banner sat 200 units to its right for the whole expand animation.
+            // It is passed inline rather than through a named local so each of
+            // the three paint sites stays a one-line change; three copies of a
+            // comment and a binding were 24 of the 44 duplicated lines Sonar
+            // attributed to this PR.
             assert!(
-                source.contains("pill_x + pill_w / 2.0"),
-                "{path} does not derive the banner centre from the pill's own position"
+                source.contains("(pill_y, ww, pill_x + pill_w / 2.0),"),
+                "{path} does not pass the pill's own centre to the shared layout"
             );
             assert!(
                 !source.contains("WINDOW_W_TYPING as f64"),
