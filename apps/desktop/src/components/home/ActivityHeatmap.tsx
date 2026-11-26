@@ -152,6 +152,9 @@ const ActivityHeatmapGrid = ({
           gridTemplateRows: `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
           rowGap: `${activityHeatmapGeometry.cellGap}px`,
           alignItems: "center",
+          // Start the rail on the first row of the plot, not on the room the
+          // viewport reserves above it for the top row's hover treatment.
+          pt: `${activityHeatmapGeometry.cellHoverReach}px`,
           "@container home-page (min-width: 560px)": {
             flex: `0 0 ${activityHeatmapGeometry.desktopLabelColumnWidth}px`,
           },
@@ -193,7 +196,11 @@ const ActivityHeatmapGrid = ({
           flex: "1 1 auto",
           minWidth: 0,
           overflowX: "auto",
-          pb: theme.spacing(0.5),
+          // A box that scrolls horizontally cannot leave the cross axis
+          // visible, so name the clip instead of letting the browser compute
+          // it, and reserve the room a grown cell needs on every edge.
+          overflowY: "clip",
+          p: `${activityHeatmapGeometry.cellHoverReach}px`,
         }}
       >
         <Box
@@ -257,7 +264,7 @@ const ActivityHeatmapGrid = ({
                         ? {}
                         : {
                             "&:hover": {
-                              transform: "scale(1.35)",
+                              transform: `scale(${activityHeatmapGeometry.cellHoverScale})`,
                               outline: `1px solid ${theme.palette.text.primary}`,
                               zIndex: 1,
                             },

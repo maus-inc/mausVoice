@@ -73,10 +73,46 @@ describe("ActivityHeatmap", () => {
       labelColumnWidth: 22,
       desktopLabelColumnWidth: 13,
       dayGridWidth: 738,
+      cellHoverScale: 1.35,
+      cellHoverReach: 4,
       desktopRightInset: 9,
       desktopTopPadding: 30,
       viewportWidth: 274,
     });
+  });
+
+  it("reserves room on every viewport edge for a hovered edge cell", () => {
+    renderHeatmap(5);
+
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-viewport"]',
+    );
+    const weekdayRail = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-labels"]',
+    );
+    expect(viewport).not.toBeNull();
+    expect(weekdayRail).not.toBeNull();
+
+    // A cell grows 1.75px past each side of its 10px box and draws a ring at
+    // its 1px offset, so 4px is the clearance the outline needs to stay whole.
+    const needed = Math.ceil((10 * (1.35 - 1)) / 2 + 2);
+    const viewportStyle = window.getComputedStyle(viewport!);
+    for (const side of [
+      "paddingTop",
+      "paddingRight",
+      "paddingBottom",
+      "paddingLeft",
+    ] as const) {
+      expect(parseFloat(viewportStyle[side])).toBeGreaterThanOrEqual(needed);
+    }
+    expect(viewportStyle.overflowY).toBe("clip");
+    expect(viewportStyle.overflowX).toBe("auto");
+
+    // The rail sits beside the plot, so it carries the same top offset and the
+    // weekday labels stay level with their rows.
+    expect(parseFloat(window.getComputedStyle(weekdayRail!).paddingTop)).toBe(
+      parseFloat(viewportStyle.paddingTop),
+    );
   });
 
   it("opens on the current weeks while keeping older activity scrollable", () => {
@@ -249,9 +285,16 @@ describe("ActivityHeatmap", () => {
       .replace(/\s+/g, "");
 
     expect(styles).toContain("@media(hover:hover)and(pointer:fine)");
-    expect(styles).toContain("scale(1.35)");
+    expect(styles).toContain(
+      `scale(${activityHeatmapGeometry.cellHoverScale})`,
+    );
     expect(styles).toContain("@media(prefers-reduced-motion:reduce)");
     expect(styles).toContain("transform:none");
+    // The reduced-motion branch cancels the scale, so the clearance the
+    // viewport reserves is never needed and never removed either.
+    expect(styles).toContain(
+      `padding:${activityHeatmapGeometry.cellHoverReach}px`,
+    );
   });
 
   it("does not report zero activity before the initial load completes", () => {
