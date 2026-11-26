@@ -560,6 +560,47 @@ class PreviewRuntime {
     return this.scenario;
   }
 
+  private hasControlCharacter(value: string): boolean {
+    for (let i = 0; i < value.length; i += 1) {
+      const code = value.charCodeAt(i);
+      if (code <= 0x1f || code === 0x7f) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private applyUpdatedApiKeySecret(apiKey: WireRecord, rawKey: string): void {
+    const keylessProvider =
+      apiKey.provider === "ollama" ||
+      apiKey.provider === "speaches" ||
+      apiKey.provider === "openai-compatible";
+    const trimmedKey = rawKey.trim();
+    if (trimmedKey.length > 0) {
+      // Do not keep an entered secret in the preview's mock transport.
+      const invalidFormat =
+        this.hasControlCharacter(rawKey) || trimmedKey !== rawKey;
+      apiKey.keyFull = null;
+      apiKey.keySuffix = "…preview";
+      apiKey.credentialStatus = invalidFormat ? "invalid_format" : "usable";
+      apiKey.credentialIssue = invalidFormat ? "invalid_key_format" : null;
+      return;
+    }
+    if (keylessProvider) {
+      apiKey.keyFull = "";
+      apiKey.keySuffix = null;
+      apiKey.credentialStatus = "usable";
+      apiKey.credentialIssue = null;
+      return;
+    }
+    if (rawKey.length > 0) {
+      apiKey.keyFull = null;
+      apiKey.keySuffix = null;
+      apiKey.credentialStatus = "needs_reentry";
+      apiKey.credentialIssue = "missing_key";
+    }
+  }
+
   /**
    * Applies the same omit-versus-clear semantics the desktop statement uses, so
    * the preview cannot diverge from the real transport on a column the caller
@@ -581,35 +622,7 @@ class PreviewRuntime {
       }
     }
     if (typeof request.key === "string") {
-      const keylessProvider =
-        apiKey.provider === "ollama" ||
-        apiKey.provider === "speaches" ||
-        apiKey.provider === "openai-compatible";
-      const trimmedKey = request.key.trim();
-      if (trimmedKey.length > 0) {
-        // Do not keep an entered secret in the preview's mock transport.
-        apiKey.keyFull = null;
-        apiKey.keySuffix = "…preview";
-        const hasControlChar = Array.from(request.key).some((ch) => {
-          const code = ch.charCodeAt(0);
-          return code <= 0x1f || code === 0x7f;
-        });
-        const hasInvalidFormat = hasControlChar || trimmedKey !== request.key;
-        apiKey.credentialStatus = hasInvalidFormat
-          ? "invalid_format"
-          : "usable";
-        apiKey.credentialIssue = hasInvalidFormat ? "invalid_key_format" : null;
-      } else if (keylessProvider) {
-        apiKey.keyFull = "";
-        apiKey.keySuffix = null;
-        apiKey.credentialStatus = "usable";
-        apiKey.credentialIssue = null;
-      } else if (request.key.length > 0) {
-        apiKey.keyFull = null;
-        apiKey.keySuffix = null;
-        apiKey.credentialStatus = "needs_reentry";
-        apiKey.credentialIssue = "missing_key";
-      }
+      this.applyUpdatedApiKeySecret(apiKey, request.key);
     }
     // `transcription_path` is the one column the desktop statement gates on a
     // separate boolean rather than on null, so it keeps its own handling.

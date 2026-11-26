@@ -57,26 +57,58 @@ function isTestFile(rel) {
   );
 }
 
+function isFormattedMessageTag(tag) {
+  if (!tag) return false;
+  const isJsxTag =
+    ts.isJsxSelfClosingElement(tag) || ts.isJsxOpeningElement(tag);
+  return (
+    isJsxTag &&
+    ts.isIdentifier(tag.tagName) &&
+    tag.tagName.text === "FormattedMessage"
+  );
+}
+
 function isFormattedMessageDescription(node) {
   const parent = node.parent;
-  if (!parent) return false;
-  if (
-    ts.isJsxAttribute(parent) &&
-    ts.isIdentifier(parent.name) &&
-    parent.name.text === "description"
-  ) {
-    const jsxAttrs = parent.parent;
-    const tag = jsxAttrs?.parent;
-    if (
-      tag &&
-      (ts.isJsxSelfClosingElement(tag) || ts.isJsxOpeningElement(tag)) &&
-      ts.isIdentifier(tag.tagName) &&
-      tag.tagName.text === "FormattedMessage"
-    ) {
-      return true;
-    }
+  if (!parent || !ts.isJsxAttribute(parent)) return false;
+  if (!ts.isIdentifier(parent.name) || parent.name.text !== "description") {
+    return false;
   }
-  return false;
+  return isFormattedMessageTag(parent.parent?.parent);
+}
+
+const STRING_LIKE_KINDS = new Set([
+  ts.SyntaxKind.StringLiteral,
+  ts.SyntaxKind.NoSubstitutionTemplateLiteral,
+  ts.SyntaxKind.TemplateHead,
+  ts.SyntaxKind.TemplateMiddle,
+  ts.SyntaxKind.TemplateTail,
+]);
+
+function checkDashNode(node, sourceFile, rel, issues) {
+  if (STRING_LIKE_KINDS.has(node.kind)) {
+    if (isFormattedMessageDescription(node)) return;
+    const hit = findProhibitedProductionDash(node.text);
+    if (!hit) return;
+    const { line } = sourceFile.getLineAndCharacterOfPosition(
+      node.getStart(sourceFile),
+    );
+    issues.push(
+      `${rel}:${line + 1}: prohibited dash ${JSON.stringify(hit)} in string literal`,
+    );
+    return;
+  }
+  if (!ts.isJsxText(node)) return;
+  const hit =
+    findProhibitedProductionDash(node.text) ??
+    findProhibitedProductionDash(node.getText(sourceFile));
+  if (!hit) return;
+  const { line } = sourceFile.getLineAndCharacterOfPosition(
+    node.getStart(sourceFile),
+  );
+  issues.push(
+    `${rel}:${line + 1}: prohibited dash ${JSON.stringify(hit)} in JSX text`,
+  );
 }
 
 export function scanSourceDashes(rel, text) {
@@ -98,38 +130,7 @@ export function scanSourceDashes(rel, text) {
   );
 
   const visit = (node) => {
-    if (
-      ts.isStringLiteral(node) ||
-      ts.isNoSubstitutionTemplateLiteral(node) ||
-      ts.isTemplateHead(node) ||
-      ts.isTemplateMiddle(node) ||
-      ts.isTemplateTail(node)
-    ) {
-      if (!isFormattedMessageDescription(node)) {
-        const hit = findProhibitedProductionDash(node.text);
-        if (hit) {
-          const { line } = sourceFile.getLineAndCharacterOfPosition(
-            node.getStart(sourceFile),
-          );
-          issues.push(
-            `${rel}:${line + 1}: prohibited dash ${JSON.stringify(hit)} in string literal`,
-          );
-        }
-      }
-    } else if (ts.isJsxText(node)) {
-      const raw = node.getText(sourceFile);
-      const hit =
-        findProhibitedProductionDash(node.text) ??
-        findProhibitedProductionDash(raw);
-      if (hit) {
-        const { line } = sourceFile.getLineAndCharacterOfPosition(
-          node.getStart(sourceFile),
-        );
-        issues.push(
-          `${rel}:${line + 1}: prohibited dash ${JSON.stringify(hit)} in JSX text`,
-        );
-      }
-    }
+    checkDashNode(node, sourceFile, rel, issues);
     ts.forEachChild(node, visit);
   };
 

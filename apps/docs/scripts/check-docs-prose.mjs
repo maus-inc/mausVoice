@@ -13,6 +13,18 @@ const CHECKED_EXTS = new Set([".md", ".mdx", ".astro", ".ts", ".tsx"]);
 
 const failures = [];
 
+function scanFile(fullPath, rel) {
+  const lines = readFileSync(fullPath, "utf8").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = PROHIBITED_DASH_RE.exec(lines[i]);
+    if (match) {
+      failures.push(
+        `${rel}:${i + 1}: prohibited dash ${JSON.stringify(match[0])} in published docs`,
+      );
+    }
+  }
+}
+
 function walk(dir) {
   for (const name of readdirSync(dir)) {
     const fullPath = join(dir, name);
@@ -21,16 +33,7 @@ function walk(dir) {
       continue;
     }
     if (!CHECKED_EXTS.has(extname(fullPath))) continue;
-    const rel = relative(srcRoot, fullPath).replaceAll("\\", "/");
-    const lines = readFileSync(fullPath, "utf8").split(/\r?\n/);
-    for (let i = 0; i < lines.length; i += 1) {
-      const match = PROHIBITED_DASH_RE.exec(lines[i]);
-      if (match) {
-        failures.push(
-          `${rel}:${i + 1}: prohibited dash ${JSON.stringify(match[0])} in published docs`,
-        );
-      }
-    }
+    scanFile(fullPath, relative(srcRoot, fullPath).replaceAll("\\", "/"));
   }
 }
 
