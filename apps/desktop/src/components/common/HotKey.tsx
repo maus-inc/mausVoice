@@ -3,6 +3,7 @@ import Typography from "@mui/material/Typography";
 import { useId, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { useAppStore } from "../../store";
+import { HotkeyBadge } from "./HotkeyBadge";
 import { hotkeyRecorderStyles } from "./hotkey-recorder.styles";
 import {
   createRecorderHandlers,
@@ -25,6 +26,53 @@ type HotKeyProps = {
   disabled?: boolean;
   ariaLabel?: string;
   ariaLabelledBy?: string;
+};
+
+const RecorderDisplay = ({
+  describedBy,
+  tone,
+  value,
+  label,
+}: {
+  describedBy?: string;
+  tone: keyof typeof TONE_COLOR;
+  value?: string[];
+  label: string;
+}) => {
+  if (tone === "strong" && value && value.length > 0) {
+    return (
+      <Box
+        id={describedBy}
+        sx={{ display: "inline-flex", alignItems: "center" }}
+      >
+        <Box
+          component="span"
+          sx={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            overflow: "hidden",
+            clipPath: "inset(50%)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </Box>
+        <Box
+          component="span"
+          aria-hidden="true"
+          sx={{ display: "inline-flex" }}
+        >
+          <HotkeyBadge keys={value} appearance="3d" />
+        </Box>
+      </Box>
+    );
+  }
+  return (
+    <Typography id={describedBy} variant="body2" color={TONE_COLOR[tone]}>
+      {label}
+    </Typography>
+  );
 };
 
 export const HotKey = ({
@@ -92,13 +140,12 @@ export const HotKey = ({
       {...handlers}
       sx={hotkeyRecorderStyles(focused, 200, disabled)}
     >
-      <Typography
-        id={a11y.describedBy}
-        variant="body2"
-        color={TONE_COLOR[tone]}
-      >
-        {label}
-      </Typography>
+      <RecorderDisplay
+        describedBy={a11y.describedBy}
+        tone={tone}
+        value={value}
+        label={label}
+      />
     </Box>
   );
 };
