@@ -243,6 +243,8 @@ struct PromotionMarker {
     staged_sha256: String,
     #[serde(default)]
     staged_payload_sha256: String,
+    #[serde(default)]
+    removed_modes_reset: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -253,6 +255,18 @@ struct AssetMigrationProgress {
     audio: HashSet<String>,
     #[serde(default)]
     storage: HashSet<String>,
+}
+
+fn sync_dir_best_effort(dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        File::open(dir)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+    }
+    Ok(())
 }
 
 fn sha256_file_from_offset_hex(path: &Path, skip_bytes: u64) -> io::Result<String> {
@@ -327,6 +341,9 @@ fn write_atomic_json<T: Serialize>(target: &Path, value: &T) -> io::Result<()> {
         file.sync_all()?;
         drop(file);
         fs::rename(&tmp, target)?;
+        if let Some(parent) = target.parent() {
+            sync_dir_best_effort(parent)?;
+        }
         Ok(())
     })();
 
@@ -341,6 +358,7 @@ fn write_promotion_marker(
     mode: &str,
     staged_sha256: String,
     staged_payload_sha256: String,
+    removed_modes_reset: Vec<String>,
 ) -> io::Result<()> {
     write_atomic_json(
         path,
@@ -348,6 +366,7 @@ fn write_promotion_marker(
             mode: mode.to_string(),
             staged_sha256,
             staged_payload_sha256,
+            removed_modes_reset,
         },
     )
 }
@@ -357,20 +376,71 @@ fn read_promotion_marker(path: &Path) -> Option<PromotionMarker> {
     serde_json::from_slice::<PromotionMarker>(&raw).ok()
 }
 
-fn load_asset_progress(config_dir: &Path) -> AssetMigrationProgress {
-    let path = config_dir.join(ASSET_PROGRESS_FILENAME);
-    fs::read(&path)
-        .ok()
-        .and_then(|raw| serde_json::from_slice::<AssetMigrationProgress>(&raw).ok())
-        .unwrap_or_default()
+fn apply_progress_log_line(progress: &mut AssetMigrationProgress, line: &str) {
+    let Some(first) = line.as_bytes().first().copied() else {
+        return;
+    };
+    let Some((cat, key)) = line[1..].split_once('\t') else {
+        return;
+    };
+    let set = match cat {
+        "m" => &mut progress.models,
+        "a" => &mut progress.audio,
+        "s" => &mut progress.storage,
+        _ => return,
+    };
+    match first {
+        b'+' => {
+            set.insert(key.to_string());
+        }
+        b'-' => {
+            set.remove(key);
+        }
+        _ => {}
+    }
 }
 
-fn save_asset_progress(config_dir: &Path, progress: &AssetMigrationProgress) -> io::Result<()> {
-    write_atomic_json(&config_dir.join(ASSET_PROGRESS_FILENAME), progress)
+fn load_asset_progress(config_dir: &Path) -> AssetMigrationProgress {
+    let path = config_dir.join(ASSET_PROGRESS_FILENAME);
+    let Ok(raw) = fs::read(&path) else {
+        return AssetMigrationProgress::default();
+    };
+    let text = String::from_utf8_lossy(&raw);
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('{') {
+        if let Ok(parsed) = serde_json::from_str::<AssetMigrationProgress>(trimmed) {
+            return parsed;
+        }
+    }
+    let mut progress = AssetMigrationProgress::default();
+    for line in text.lines() {
+        apply_progress_log_line(&mut progress, line);
+    }
+    progress
+}
+
+fn append_asset_progress_entry(
+    config_dir: &Path,
+    op: char,
+    category: AssetCategory,
+    encoded_key: &str,
+) -> io::Result<()> {
+    fs::create_dir_all(config_dir)?;
+    let path = config_dir.join(ASSET_PROGRESS_FILENAME);
+    let created = fs::symlink_metadata(&path).is_err();
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    writeln!(file, "{op}{}\t{encoded_key}", category.code())?;
+    file.sync_all()?;
+    if created {
+        sync_dir_best_effort(config_dir)?;
+    }
+    Ok(())
 }
 
 fn remove_asset_progress(config_dir: &Path) {
-    let _ = fs::remove_file(config_dir.join(ASSET_PROGRESS_FILENAME));
+    if fs::remove_file(config_dir.join(ASSET_PROGRESS_FILENAME)).is_ok() {
+        let _ = sync_dir_best_effort(config_dir);
+    }
 }
 
 fn save_manifest(config_dir: &Path, report: &VoquillMigrationReport) -> io::Result<()> {
@@ -624,63 +694,47 @@ async fn inspect_legacy_removed_modes(pool: SqlitePool) -> Vec<String> {
     .await
     .unwrap_or(0);
 
-    if prefs_exists > 0 {
-        let columns: BTreeSet<String> =
-            sqlx::query("SELECT name FROM pragma_table_info('user_preferences')")
-                .fetch_all(&pool)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|row| row.try_get::<String, _>("name").ok())
-                .collect();
-
-        for (column, label) in [
-            ("transcription_mode", "transcription:cloud"),
-            ("post_processing_mode", "post_processing:cloud"),
-            ("agent_mode", "agent:cloud"),
-        ] {
-            if columns.contains(column) {
-                let query = format!(
-                    "SELECT DISTINCT lower(trim({column})) FROM user_preferences \
-                     WHERE {column} IS NOT NULL"
-                );
-                let modes: Vec<String> = sqlx::query_scalar(&query)
-                    .fetch_all(&pool)
-                    .await
-                    .unwrap_or_default();
-                if modes.iter().any(|mode| mode == "cloud") {
-                    found.insert(label.to_string());
-                }
-            }
-        }
+    // Older Voquill schemas (versions 10-15) stored AI modes directly on
+    // user_profiles before 015_user_preferences migrated them.
+    let (table, checks): (&str, &[(&str, &str)]) = if prefs_exists > 0 {
+        (
+            "user_preferences",
+            &[
+                ("transcription_mode", "transcription:cloud"),
+                ("post_processing_mode", "post_processing:cloud"),
+                ("agent_mode", "agent:cloud"),
+            ],
+        )
     } else {
-        // Older Voquill schemas (versions 10-15) stored AI modes directly on
-        // user_profiles before 015_user_preferences migrated them.
-        let columns: BTreeSet<String> =
-            sqlx::query("SELECT name FROM pragma_table_info('user_profiles')")
+        (
+            "user_profiles",
+            &[
+                ("preferred_transcription_mode", "transcription:cloud"),
+                ("preferred_post_processing_mode", "post_processing:cloud"),
+            ],
+        )
+    };
+
+    let pragma_query = format!("SELECT name FROM pragma_table_info('{table}')");
+    let columns: BTreeSet<String> = sqlx::query(&pragma_query)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|row| row.try_get::<String, _>("name").ok())
+        .collect();
+
+    for &(column, label) in checks {
+        if columns.contains(column) {
+            let query = format!(
+                "SELECT DISTINCT lower(trim({column})) FROM {table} WHERE {column} IS NOT NULL"
+            );
+            let modes: Vec<String> = sqlx::query_scalar(&query)
                 .fetch_all(&pool)
                 .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|row| row.try_get::<String, _>("name").ok())
-                .collect();
-
-        for (column, label) in [
-            ("preferred_transcription_mode", "transcription:cloud"),
-            ("preferred_post_processing_mode", "post_processing:cloud"),
-        ] {
-            if columns.contains(column) {
-                let query = format!(
-                    "SELECT DISTINCT lower(trim({column})) FROM user_profiles \
-                     WHERE {column} IS NOT NULL"
-                );
-                let modes: Vec<String> = sqlx::query_scalar(&query)
-                    .fetch_all(&pool)
-                    .await
-                    .unwrap_or_default();
-                if modes.iter().any(|mode| mode == "cloud") {
-                    found.insert(label.to_string());
-                }
+                .unwrap_or_default();
+            if modes.iter().any(|mode| mode == "cloud") {
+                found.insert(label.to_string());
             }
         }
     }
@@ -834,12 +888,14 @@ async fn stage_validate_and_promote_database(
             })?;
 
     let marker_for_write = marker_path.clone();
+    let marker_modes = staged.removed_modes_reset.clone();
     let write_marker_result = tokio::task::spawn_blocking(move || {
         write_promotion_marker(
             &marker_for_write,
             "startup",
             staged_sha256,
             staged_payload_sha256,
+            marker_modes,
         )
     })
     .await
@@ -918,6 +974,83 @@ impl AssetCopyOutcome {
     }
 }
 
+pub const ASSET_COPY_TEMP_PREFIX: &str = ".voquill-asset-tmp-";
+
+/// Removes orphaned `.voquill-asset-tmp-*` staging directories left behind in
+/// `data_dir` by an interrupted Voquill asset migration. Never follows symlinks
+/// and never touches any directory or file without the exact temp prefix.
+pub fn sweep_orphaned_asset_copy_temp_dirs(data_dir: &Path) -> Result<(), String> {
+    let meta = match fs::symlink_metadata(data_dir) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(format!(
+                "Failed to inspect data directory for orphaned migration temp dirs: {err}"
+            ));
+        }
+    };
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(
+            "Refusing to sweep migration temp directories: data directory is not a regular directory"
+                .to_string(),
+        );
+    }
+
+    let dir = cap_std::fs::Dir::open_ambient_dir(data_dir, cap_std::ambient_authority())
+        .map_err(|err| format!("Failed to open data directory for migration temp sweep: {err}"))?;
+    let entries = dir
+        .entries()
+        .map_err(|err| format!("Failed to list data directory for migration temp sweep: {err}"))?;
+
+    let mut removed_any = false;
+    let mut errors = Vec::new();
+    for entry_res in entries {
+        let entry = match entry_res {
+            Ok(entry) => entry,
+            Err(err) => {
+                errors.push(format!("read entry: {err}"));
+                continue;
+            }
+        };
+        let file_name = entry.file_name();
+        if !file_name
+            .as_encoded_bytes()
+            .starts_with(ASSET_COPY_TEMP_PREFIX.as_bytes())
+        {
+            continue;
+        }
+        let entry_meta = match dir.symlink_metadata(&file_name) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                errors.push(format!("stat {}: {err}", file_name.to_string_lossy()));
+                continue;
+            }
+        };
+        if entry_meta.is_symlink() || !entry_meta.is_dir() {
+            continue;
+        }
+        match dir.remove_dir_all(&file_name) {
+            Ok(()) => removed_any = true,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => errors.push(format!("remove {}: {err}", file_name.to_string_lossy())),
+        }
+    }
+
+    if removed_any {
+        let _ = sync_dir_best_effort(data_dir);
+    }
+
+    if !errors.is_empty() {
+        return Err(format!(
+            "Failed to remove orphaned migration temp directories: {}",
+            errors.join("; ")
+        ));
+    }
+
+    Ok(())
+}
+
 struct AssetCopyTempDir(PathBuf);
 
 impl AssetCopyTempDir {
@@ -925,7 +1058,10 @@ impl AssetCopyTempDir {
         let base_parent = dst_root.parent().unwrap_or(dst_root);
         fs::create_dir_all(base_parent)?;
         let seq = ASSET_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = base_parent.join(format!(".voquill-asset-tmp-{}-{seq}", std::process::id()));
+        let dir = base_parent.join(format!(
+            "{ASSET_COPY_TEMP_PREFIX}{}-{seq}",
+            std::process::id()
+        ));
         fs::create_dir(&dir)?;
         Ok(Self(dir))
     }
@@ -955,6 +1091,14 @@ enum AssetCategory {
 }
 
 impl AssetCategory {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Models => "m",
+            Self::Audio => "a",
+            Self::Storage => "s",
+        }
+    }
+
     fn paths_mut(self, progress: &mut AssetMigrationProgress) -> &mut HashSet<String> {
         match self {
             Self::Models => &mut progress.models,
@@ -978,7 +1122,8 @@ struct AssetCopyContext<'a> {
     config_dir: &'a Path,
     category: AssetCategory,
     progress: &'a mut AssetMigrationProgress,
-    seen_in_pass: &'a mut HashSet<String>,
+    seen_in_pass: &'a mut HashSet<PathBuf>,
+    dirs_to_sync: &'a mut BTreeSet<PathBuf>,
 }
 
 fn ensure_destination_ancestors_no_symlink(dst_root: &Path, dst: &Path) -> io::Result<()> {
@@ -1036,11 +1181,103 @@ fn check_existing_destination(dst: &Path) -> io::Result<bool> {
     }
 }
 
+fn ensure_parent_dirs_and_track_sync(
+    dst_root: &Path,
+    parent: &Path,
+    dirs_to_sync: &mut BTreeSet<PathBuf>,
+) -> io::Result<()> {
+    let mut missing = Vec::new();
+    let mut cursor = parent.to_path_buf();
+    let stop_root = dst_root.parent().unwrap_or(dst_root);
+    while fs::symlink_metadata(&cursor).is_err() {
+        missing.push(cursor.clone());
+        if cursor == stop_root {
+            break;
+        }
+        let Some(next) = cursor.parent() else {
+            break;
+        };
+        cursor = next.to_path_buf();
+    }
+
+    fs::create_dir_all(parent)?;
+    if !missing.is_empty() {
+        // Also sync the existing ancestor directory that received the first new
+        // subdirectory entry, plus every newly created directory in the chain.
+        dirs_to_sync.insert(cursor);
+        for dir in missing {
+            dirs_to_sync.insert(dir);
+        }
+    }
+    dirs_to_sync.insert(parent.to_path_buf());
+    Ok(())
+}
+
+/// Publishes an already-copied, fsynced temporary file at `dst` without ever
+/// overwriting an existing entry at `dst`.
+///
+/// Uses `fs::hard_link(&tmp_dst, dst)` (which fails atomically with
+/// `AlreadyExists` if `dst` appeared concurrently) followed by unlinking
+/// `tmp_dst`, keeping `dst` an independent file (`nlink == 1`) with no link to
+/// the legacy source. Falls back to `create_new(true)` copy on filesystems that
+/// disallow hard links.
+fn publish_temp_file_no_replace(tmp_dst: &Path, dst: &Path) -> io::Result<bool> {
+    match fs::hard_link(tmp_dst, dst) {
+        Ok(()) => {
+            let _ = fs::remove_file(tmp_dst);
+            Ok(true)
+        }
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(tmp_dst);
+            if check_existing_destination(dst)? {
+                Ok(false)
+            } else {
+                Err(err)
+            }
+        }
+        Err(err)
+            if matches!(
+                err.kind(),
+                io::ErrorKind::Unsupported
+                    | io::ErrorKind::PermissionDenied
+                    | io::ErrorKind::CrossesDevices
+            ) =>
+        {
+            let mut dst_file = match OpenOptions::new().write(true).create_new(true).open(dst) {
+                Ok(file) => file,
+                Err(open_err) if open_err.kind() == io::ErrorKind::AlreadyExists => {
+                    let _ = fs::remove_file(tmp_dst);
+                    if check_existing_destination(dst)? {
+                        return Ok(false);
+                    }
+                    return Err(open_err);
+                }
+                Err(open_err) => return Err(open_err),
+            };
+            let copy_res = (|| -> io::Result<()> {
+                let mut src_tmp = File::open(tmp_dst)?;
+                io::copy(&mut src_tmp, &mut dst_file)?;
+                dst_file.sync_all()?;
+                Ok(())
+            })();
+            drop(dst_file);
+            if let Err(copy_err) = copy_res {
+                let _ = fs::remove_file(dst);
+                return Err(copy_err);
+            }
+            let _ = fs::remove_file(tmp_dst);
+            Ok(true)
+        }
+        Err(err) => Err(err),
+    }
+}
+
 fn copy_file_non_destructive(
     src: &Path,
     dst_root: &Path,
     dst: &Path,
     temp_dir: &AssetCopyTempDir,
+    dirs_to_sync: &mut BTreeSet<PathBuf>,
     mut before_publish: impl FnMut() -> io::Result<()>,
 ) -> io::Result<bool> {
     ensure_destination_ancestors_no_symlink(dst_root, dst)?;
@@ -1048,12 +1285,12 @@ fn copy_file_non_destructive(
         return Ok(false);
     }
     if let Some(parent) = dst.parent() {
-        fs::create_dir_all(parent)?;
+        ensure_parent_dirs_and_track_sync(dst_root, parent, dirs_to_sync)?;
     }
 
-    // Always produce an independent copy (never hard-link) using an exclusively
-    // created temp file outside the destination filename namespace so later
-    // repairs or imported filenames can never collide or mutate legacy bytes.
+    // Always copy legacy bytes into an exclusively created temp file outside
+    // the destination filename namespace so legacy files are never hard-linked
+    // or mutated, then publish at `dst` without replacing any existing file.
     let (tmp_dst, mut tmp_file) = temp_dir.create_exclusive_file()?;
     let copy_result = (|| -> io::Result<bool> {
         let mut src_file = File::open(src)?;
@@ -1067,10 +1304,9 @@ fn copy_file_non_destructive(
             return Ok(false);
         }
         // Durably record ownership BEFORE publishing `dst` so a crash right
-        // after `fs::rename` never loses attribution of the published file.
+        // after link/publish never loses attribution of the published file.
         before_publish()?;
-        fs::rename(&tmp_dst, dst)?;
-        Ok(true)
+        publish_temp_file_no_replace(&tmp_dst, dst)
     })();
 
     if copy_result.is_err() {
@@ -1080,13 +1316,65 @@ fn copy_file_non_destructive(
     copy_result
 }
 
+#[cfg(not(windows))]
+fn encode_bytes_lossless(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for &byte in bytes {
+        let safe_ascii = byte.is_ascii_graphic() && !matches!(byte, b'%' | b'/' | b'\\');
+        if safe_ascii || byte == b' ' {
+            out.push(byte as char);
+        } else {
+            let _ = write!(&mut out, "%{byte:02x}");
+        }
+    }
+    out
+}
+
+fn encode_component_lossless(component: &std::ffi::OsStr) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        encode_bytes_lossless(component.as_bytes())
+    }
+
+    #[cfg(windows)]
+    {
+        use std::fmt::Write as _;
+        use std::os::windows::ffi::OsStrExt;
+        let mut out = String::new();
+        for unit in component.encode_wide() {
+            if unit < 0x80 {
+                let byte = unit as u8;
+                let safe_ascii = byte.is_ascii_graphic() && !matches!(byte, b'%' | b'/' | b'\\');
+                if safe_ascii || byte == b' ' {
+                    out.push(byte as char);
+                    continue;
+                }
+            }
+            let _ = write!(&mut out, "%u{unit:04x}");
+        }
+        out
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        encode_bytes_lossless(component.to_string_lossy().as_bytes())
+    }
+}
+
 fn relative_asset_key(dst_root: &Path, dst: &Path) -> String {
     dst.strip_prefix(dst_root)
         .unwrap_or(dst)
         .components()
-        .map(|c| c.as_os_str().to_string_lossy())
+        .map(|c| encode_component_lossless(c.as_os_str()))
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn revert_asset_progress_entry(ctx: &mut AssetCopyContext<'_>, rel_key: &str) {
+    ctx.category.paths_mut(ctx.progress).remove(rel_key);
+    let _ = append_asset_progress_entry(ctx.config_dir, '-', ctx.category, rel_key);
 }
 
 fn copy_regular_asset_file(
@@ -1095,35 +1383,46 @@ fn copy_regular_asset_file(
     ctx: &mut AssetCopyContext<'_>,
     outcome: &mut AssetCopyOutcome,
 ) {
-    let rel_key = relative_asset_key(ctx.dst_root, dst_path);
-    if !ctx.seen_in_pass.insert(rel_key.clone()) {
+    let rel_path = dst_path
+        .strip_prefix(ctx.dst_root)
+        .unwrap_or(dst_path)
+        .to_path_buf();
+    if !ctx.seen_in_pass.insert(rel_path) {
         return;
     }
+    let rel_key = relative_asset_key(ctx.dst_root, dst_path);
     let was_already_recorded = ctx.category.contains(ctx.progress, &rel_key);
     let mut recorded_for_publish = false;
-    let copy_result =
-        copy_file_non_destructive(src_path, ctx.dst_root, dst_path, ctx.temp_dir, || {
+    let copy_result = copy_file_non_destructive(
+        src_path,
+        ctx.dst_root,
+        dst_path,
+        ctx.temp_dir,
+        ctx.dirs_to_sync,
+        || {
             if !was_already_recorded {
+                append_asset_progress_entry(ctx.config_dir, '+', ctx.category, &rel_key)?;
                 ctx.category.paths_mut(ctx.progress).insert(rel_key.clone());
-                if let Err(err) = save_asset_progress(ctx.config_dir, ctx.progress) {
-                    ctx.category.paths_mut(ctx.progress).remove(&rel_key);
-                    return Err(err);
-                }
                 recorded_for_publish = true;
             }
             Ok(())
-        });
+        },
+    );
 
     match copy_result {
         Ok(true) => outcome.copied = outcome.copied.saturating_add(1),
         Ok(false) if was_already_recorded => {
             outcome.previously_migrated = outcome.previously_migrated.saturating_add(1);
         }
-        Ok(false) => outcome.skipped_existing = outcome.skipped_existing.saturating_add(1),
+        Ok(false) => {
+            if recorded_for_publish {
+                revert_asset_progress_entry(ctx, &rel_key);
+            }
+            outcome.skipped_existing = outcome.skipped_existing.saturating_add(1);
+        }
         Err(err) => {
             if recorded_for_publish {
-                ctx.category.paths_mut(ctx.progress).remove(&rel_key);
-                let _ = save_asset_progress(ctx.config_dir, ctx.progress);
+                revert_asset_progress_entry(ctx, &rel_key);
             }
             outcome.record_failure(format!("could not copy file: {err}"));
         }
@@ -1239,6 +1538,7 @@ fn run_asset_category(
         }
     };
     let mut seen_in_pass = HashSet::new();
+    let mut dirs_to_sync = BTreeSet::new();
     let mut ctx = AssetCopyContext {
         dst_root,
         temp_dir: &temp_dir,
@@ -1246,6 +1546,7 @@ fn run_asset_category(
         category,
         progress,
         seen_in_pass: &mut seen_in_pass,
+        dirs_to_sync: &mut dirs_to_sync,
     };
     for src_dir in sources {
         copy_directory_tree_non_destructive(
@@ -1255,6 +1556,11 @@ fn run_asset_category(
             &mut ctx,
             &mut outcome,
         );
+    }
+    for dir in &dirs_to_sync {
+        if let Err(err) = sync_dir_best_effort(dir) {
+            outcome.record_failure(format!("could not sync destination directory: {err}"));
+        }
     }
     outcome
 }
@@ -1619,6 +1925,14 @@ fn mark_existing_profile_conflict(
     report
 }
 
+async fn remove_promotion_marker(marker_path: &Path) {
+    if tokio::fs::remove_file(marker_path).await.is_ok() {
+        if let Some(parent) = marker_path.parent().map(Path::to_path_buf) {
+            let _ = tokio::task::spawn_blocking(move || sync_dir_best_effort(&parent)).await;
+        }
+    }
+}
+
 async fn finish_startup_database_and_assets(
     dirs: &MigrationDirs,
     mut report: VoquillMigrationReport,
@@ -1628,8 +1942,25 @@ async fn finish_startup_database_and_assets(
     let marker_path = dirs.promotion_marker_path();
 
     if legacy_db_present {
-        // Persist in-progress state before staging so crashes remain observable.
-        let _ = save_manifest(&dirs.current_config_dir, &report);
+        // Persist in-progress state before staging/promoting so crashes remain
+        // observable. If the initial manifest cannot be persisted, abort before
+        // touching `mausvoice.db` so we never leave an untracked promoted DB.
+        if let Err(err) = save_manifest(&dirs.current_config_dir, &report) {
+            log::warn!(
+                "Failed to persist initial Voquill migration manifest; aborting database promotion: {err}"
+            );
+            report.database_phase = VoquillMigrationPhaseStatus::Failed;
+            report.models_phase = VoquillMigrationPhaseStatus::Skipped;
+            report.audio_phase = VoquillMigrationPhaseStatus::Skipped;
+            report.storage_phase = VoquillMigrationPhaseStatus::Skipped;
+            report.issues.push(VoquillMigrationIssue {
+                category: "database".to_string(),
+                code: "manifest_save_failed".to_string(),
+                detail: format!("Could not persist initial Voquill migration state: {err}"),
+            });
+            finalize_status_and_actions(&mut report, Vec::new());
+            return report;
+        }
 
         match stage_validate_and_promote_database(dirs).await {
             Ok(staged) => {
@@ -1647,7 +1978,7 @@ async fn finish_startup_database_and_assets(
                 // so a manifest write failure keeps the marker for recovery.
                 match save_manifest(&dirs.current_config_dir, &report) {
                     Ok(()) => {
-                        let _ = tokio::fs::remove_file(&marker_path).await;
+                        remove_promotion_marker(&marker_path).await;
                     }
                     Err(err) => {
                         log::warn!(
@@ -1657,7 +1988,7 @@ async fn finish_startup_database_and_assets(
                 }
             }
             Err(issue) => {
-                let _ = tokio::fs::remove_file(&marker_path).await;
+                remove_promotion_marker(&marker_path).await;
                 report.database_phase = VoquillMigrationPhaseStatus::Failed;
                 report.models_phase = VoquillMigrationPhaseStatus::Skipped;
                 report.audio_phase = VoquillMigrationPhaseStatus::Skipped;
@@ -1680,7 +2011,7 @@ async fn finish_startup_database_and_assets(
         match save_manifest(&dirs.current_config_dir, &report) {
             Ok(()) => {
                 if report.database_phase == VoquillMigrationPhaseStatus::Migrated {
-                    let _ = tokio::fs::remove_file(&marker_path).await;
+                    remove_promotion_marker(&marker_path).await;
                 }
                 remove_asset_progress_if_settled(&dirs.current_config_dir, &report);
             }
@@ -1694,17 +2025,18 @@ async fn finish_startup_database_and_assets(
     report
 }
 
-fn verify_promoted_db_matches_marker(current_db: &Path, marker_path: &Path) -> bool {
-    let Some(marker) = read_promotion_marker(marker_path) else {
-        return false;
-    };
+fn verify_promoted_db_matches_marker(
+    current_db: &Path,
+    marker_path: &Path,
+) -> Option<PromotionMarker> {
+    let marker = read_promotion_marker(marker_path)?;
     if marker.staged_sha256.is_empty() {
-        return false;
+        return None;
     }
     let full_matches = sha256_file_hex(current_db)
         .map(|actual| actual == marker.staged_sha256)
         .unwrap_or(false);
-    match marker.mode.as_str() {
+    let verified = match marker.mode.as_str() {
         "startup" => full_matches,
         "retry" => {
             full_matches
@@ -1714,7 +2046,8 @@ fn verify_promoted_db_matches_marker(current_db: &Path, marker_path: &Path) -> b
                         .unwrap_or(false))
         }
         _ => false,
-    }
+    };
+    verified.then_some(marker)
 }
 
 async fn verify_and_audit_recovered_db(
@@ -1797,6 +2130,58 @@ fn reset_skipped_asset_phases_to_pending(report: &mut VoquillMigrationReport) {
     }
 }
 
+fn apply_recovered_database_audit(
+    report: &mut VoquillMigrationReport,
+    counts: VoquillMigrationCounts,
+    removed_modes_reset: Vec<String>,
+) {
+    report.counts = counts;
+    report.removed_modes_reset = removed_modes_reset;
+    report.database_phase = VoquillMigrationPhaseStatus::Migrated;
+    reset_skipped_asset_phases_to_pending(report);
+    report.status = VoquillMigrationStatus::Partial;
+    report.can_retry = true;
+    report.completed_at = None;
+    report.issues.retain(|issue| {
+        !matches!(
+            issue.code.as_str(),
+            "interrupted_previous_attempt"
+                | "recovery_open_failed"
+                | "recovery_audit_failed"
+                | "manifest_checkpoint_failed"
+                | "manifest_save_failed"
+        )
+    });
+}
+
+fn new_startup_report(
+    detected_at: String,
+    status: VoquillMigrationStatus,
+    database_phase: VoquillMigrationPhaseStatus,
+    assets_phase: VoquillMigrationPhaseStatus,
+    can_retry: bool,
+) -> VoquillMigrationReport {
+    VoquillMigrationReport {
+        schema_version: MANIFEST_SCHEMA_VERSION,
+        status,
+        legacy_detected: true,
+        legacy_source_preserved: true,
+        detected_at: Some(detected_at),
+        completed_at: None,
+        dismissed_at: None,
+        attempt_count: 1,
+        database_phase,
+        models_phase: assets_phase,
+        audio_phase: assets_phase,
+        storage_phase: assets_phase,
+        counts: VoquillMigrationCounts::default(),
+        removed_modes_reset: Vec::new(),
+        issues: Vec::new(),
+        action_items: Vec::new(),
+        can_retry,
+    }
+}
+
 async fn recover_pending_database_migration(
     dirs: &MigrationDirs,
     mut existing: VoquillMigrationReport,
@@ -1814,15 +2199,16 @@ async fn recover_pending_database_migration(
     // unrelated profile database.
     let check_db = current_db.clone();
     let check_marker = marker_path.clone();
-    let marker_matches = tokio::task::spawn_blocking(move || {
+    let verified_marker = tokio::task::spawn_blocking(move || {
         verify_promoted_db_matches_marker(&check_db, &check_marker)
     })
     .await
-    .unwrap_or(false);
-    if !marker_matches {
-        let _ = tokio::fs::remove_file(&marker_path).await;
+    .ok()
+    .flatten();
+    let Some(verified_marker) = verified_marker else {
+        remove_promotion_marker(&marker_path).await;
         return mark_existing_profile_conflict(&dirs.current_config_dir, existing);
-    }
+    };
 
     let audit = match verify_and_audit_recovered_db(&current_db).await {
         Ok(audit) => audit,
@@ -1831,22 +2217,11 @@ async fn recover_pending_database_migration(
         }
     };
 
-    existing.counts = audit.counts;
-    existing.database_phase = VoquillMigrationPhaseStatus::Migrated;
-    reset_skipped_asset_phases_to_pending(&mut existing);
-    existing.status = VoquillMigrationStatus::Partial;
-    existing.can_retry = true;
-    existing.completed_at = None;
-    existing.issues.retain(|issue| {
-        !matches!(
-            issue.code.as_str(),
-            "interrupted_previous_attempt"
-                | "recovery_open_failed"
-                | "recovery_audit_failed"
-                | "manifest_checkpoint_failed"
-                | "manifest_save_failed"
-        )
-    });
+    apply_recovered_database_audit(
+        &mut existing,
+        audit.counts,
+        verified_marker.removed_modes_reset,
+    );
 
     if let Err(err) = save_manifest(&dirs.current_config_dir, &existing) {
         log::warn!(
@@ -1865,7 +2240,7 @@ async fn recover_pending_database_migration(
     finalize_status_and_actions(&mut existing, audit.attention_providers);
     match save_manifest(&dirs.current_config_dir, &existing) {
         Ok(()) => {
-            let _ = tokio::fs::remove_file(&marker_path).await;
+            remove_promotion_marker(&marker_path).await;
             remove_asset_progress_if_settled(&dirs.current_config_dir, &existing);
         }
         Err(err) => {
@@ -2002,52 +2377,42 @@ pub async fn run_startup_migration(dirs: &MigrationDirs) -> VoquillMigrationRepo
     let current_db_exists = path_exists_no_follow(&dirs.current_db_path()).await;
 
     // Never overwrite or copy legacy assets into an already-established mausVoice profile.
+    // However, if a promotion marker is present (e.g., power loss lost an initial
+    // manifest write after DB promotion), delegate to marker-verified recovery:
+    // a matching marker resumes cleanly, while any mismatch still records
+    // `SkippedExistingProfile` without touching `current_db`.
     if current_db_exists {
-        let base_report = VoquillMigrationReport {
-            schema_version: MANIFEST_SCHEMA_VERSION,
-            status: VoquillMigrationStatus::SkippedExistingProfile,
-            legacy_detected: true,
-            legacy_source_preserved: true,
-            detected_at: Some(now),
-            completed_at: None,
-            dismissed_at: None,
-            attempt_count: 1,
-            database_phase: VoquillMigrationPhaseStatus::Skipped,
-            models_phase: VoquillMigrationPhaseStatus::Skipped,
-            audio_phase: VoquillMigrationPhaseStatus::Skipped,
-            storage_phase: VoquillMigrationPhaseStatus::Skipped,
-            counts: VoquillMigrationCounts::default(),
-            removed_modes_reset: Vec::new(),
-            issues: Vec::new(),
-            action_items: Vec::new(),
-            can_retry: false,
-        };
+        if path_exists_no_follow(&dirs.promotion_marker_path()).await {
+            let pending_recovery = new_startup_report(
+                now,
+                VoquillMigrationStatus::Partial,
+                VoquillMigrationPhaseStatus::Pending,
+                VoquillMigrationPhaseStatus::Pending,
+                true,
+            );
+            return recover_pending_database_migration(dirs, pending_recovery).await;
+        }
+        let base_report = new_startup_report(
+            now,
+            VoquillMigrationStatus::SkippedExistingProfile,
+            VoquillMigrationPhaseStatus::Skipped,
+            VoquillMigrationPhaseStatus::Skipped,
+            false,
+        );
         return mark_existing_profile_conflict(&dirs.current_config_dir, base_report);
     }
 
-    let mut report = VoquillMigrationReport {
-        schema_version: MANIFEST_SCHEMA_VERSION,
-        status: VoquillMigrationStatus::Partial,
-        legacy_detected: true,
-        legacy_source_preserved: true,
-        detected_at: Some(now),
-        completed_at: None,
-        dismissed_at: None,
-        attempt_count: 1,
-        database_phase: if legacy_db_present {
+    let mut report = new_startup_report(
+        now,
+        VoquillMigrationStatus::Partial,
+        if legacy_db_present {
             VoquillMigrationPhaseStatus::Pending
         } else {
             VoquillMigrationPhaseStatus::NotFound
         },
-        models_phase: VoquillMigrationPhaseStatus::Pending,
-        audio_phase: VoquillMigrationPhaseStatus::Pending,
-        storage_phase: VoquillMigrationPhaseStatus::Pending,
-        counts: VoquillMigrationCounts::default(),
-        removed_modes_reset: Vec::new(),
-        issues: Vec::new(),
-        action_items: Vec::new(),
-        can_retry: false,
-    };
+        VoquillMigrationPhaseStatus::Pending,
+        false,
+    );
 
     if had_interrupted_staging {
         report.issues.push(VoquillMigrationIssue {
@@ -2207,11 +2572,16 @@ fn swap_retry_database_on_disk(
     marker_path: &Path,
     staged_sha256: String,
     staged_payload_sha256: String,
+    removed_modes_reset: Vec<String>,
 ) -> Result<Vec<&'static str>, RetrySwapError> {
     let moved_suffixes = move_current_db_to_rollback_backup(current_db)?;
-    if let Err(err) =
-        write_promotion_marker(marker_path, "retry", staged_sha256, staged_payload_sha256)
-    {
+    if let Err(err) = write_promotion_marker(
+        marker_path,
+        "retry",
+        staged_sha256,
+        staged_payload_sha256,
+        removed_modes_reset,
+    ) {
         let restored_ok = restore_rollback_backup(current_db, &moved_suffixes).is_ok();
         return Err(RetrySwapError {
             issue: VoquillMigrationIssue {
@@ -2326,6 +2696,7 @@ async fn retry_database_promotion(
     let promote_src = staged_db_path.clone();
     let promote_dst = current_db_path.clone();
     let promote_marker = marker_path.clone();
+    let marker_modes = staged.removed_modes_reset.clone();
     let swap_result = tokio::task::spawn_blocking(move || {
         swap_retry_database_on_disk(
             &promote_src,
@@ -2333,6 +2704,7 @@ async fn retry_database_promotion(
             &promote_marker,
             staged_sha256,
             staged_payload_sha256,
+            marker_modes,
         )
     })
     .await
@@ -2412,7 +2784,7 @@ async fn retry_database_promotion(
     let _ = database.replace_pool(new_pool);
     let backup_cleanup_path = current_db_path.clone();
     let _ = tokio::task::spawn_blocking(move || remove_rollback_backup(&backup_cleanup_path)).await;
-    let _ = tokio::fs::remove_file(&marker_path).await;
+    remove_promotion_marker(&marker_path).await;
 
     Ok(Some(staged.audit.attention_providers))
 }
@@ -2426,36 +2798,23 @@ async fn recover_promoted_db_during_retry(
     let marker_path = dirs.promotion_marker_path();
     let check_db = current_db.clone();
     let check_marker = marker_path.clone();
-    let marker_matches = tokio::task::spawn_blocking(move || {
+    let verified_marker = tokio::task::spawn_blocking(move || {
         verify_promoted_db_matches_marker(&check_db, &check_marker)
     })
     .await
-    .unwrap_or(false);
-    if !marker_matches {
-        let _ = tokio::fs::remove_file(&marker_path).await;
+    .ok()
+    .flatten();
+    let Some(verified_marker) = verified_marker else {
+        remove_promotion_marker(&marker_path).await;
         *report = mark_existing_profile_conflict(&dirs.current_config_dir, report.clone());
         return Ok(None);
-    }
+    };
 
     let live_pool = ensure_usable_pool(dirs, database).await?;
     let audit = audit_migrated_database(live_pool)
         .await
         .map_err(|err| format!("Could not audit promoted database during retry recovery: {err}"))?;
-    report.counts = audit.counts;
-    report.database_phase = VoquillMigrationPhaseStatus::Migrated;
-    reset_skipped_asset_phases_to_pending(report);
-    report.status = VoquillMigrationStatus::Partial;
-    report.can_retry = true;
-    report.completed_at = None;
-    report.issues.retain(|issue| {
-        !matches!(
-            issue.code.as_str(),
-            "interrupted_previous_attempt"
-                | "recovery_open_failed"
-                | "recovery_audit_failed"
-                | "manifest_save_failed"
-        )
-    });
+    apply_recovered_database_audit(report, audit.counts, verified_marker.removed_modes_reset);
     save_manifest(&dirs.current_config_dir, report)
         .map_err(|err| format!("Could not save recovered migration state: {err}"))?;
     let cleanup_db = current_db.clone();
@@ -2527,7 +2886,7 @@ pub async fn retry_migration(
     save_manifest(&dirs.current_config_dir, &report)
         .map_err(|err| format!("Could not save migration state: {err}"))?;
     if report.database_phase == VoquillMigrationPhaseStatus::Migrated {
-        let _ = tokio::fs::remove_file(dirs.promotion_marker_path()).await;
+        remove_promotion_marker(&dirs.promotion_marker_path()).await;
     }
     remove_asset_progress_if_settled(&dirs.current_config_dir, &report);
 
@@ -3136,6 +3495,9 @@ fn move_current_db_to_rollback_backup(
         }
         moved.push((suffix, src, bak));
     }
+    if let Some(parent) = current_db.parent() {
+        let _ = sync_dir_best_effort(parent);
+    }
     Ok(moved.into_iter().map(|(suffix, _, _)| suffix).collect())
 }
 
@@ -3148,14 +3510,25 @@ fn restore_rollback_backup(current_db: &Path, suffixes: &[&str]) -> io::Result<(
             fs::rename(&bak, &dst)?;
         }
     }
+    if let Some(parent) = current_db.parent() {
+        let _ = sync_dir_best_effort(parent);
+    }
     Ok(())
 }
 
 fn remove_rollback_backup(current_db: &Path) {
+    let mut removed_any = false;
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let bak =
             current_db.with_file_name(format!("{DB_FILENAME}{suffix}{PRE_RETRY_BACKUP_SUFFIX}"));
-        let _ = fs::remove_file(&bak);
+        if fs::remove_file(&bak).is_ok() {
+            removed_any = true;
+        }
+    }
+    if removed_any {
+        if let Some(parent) = current_db.parent() {
+            let _ = sync_dir_best_effort(parent);
+        }
     }
 }
 
@@ -3175,6 +3548,14 @@ fn promote_staged_file(staged_db: &Path, current_db: &Path) -> Result<(), Voquil
                     ),
                 }
             })?;
+    }
+
+    if let Some(parent) = current_db.parent() {
+        sync_dir_best_effort(parent).map_err(|err| VoquillMigrationIssue {
+            category: "database".to_string(),
+            code: "promote_io_error".to_string(),
+            detail: format!("Could not sync destination directory after database promotion: {err}"),
+        })?;
     }
 
     Ok(())
@@ -4356,6 +4737,7 @@ mod tests {
             &marker_path,
             "deadbeef".to_string(),
             "cafebabe".to_string(),
+            Vec::new(),
         )
         .expect_err("missing staged db must fail promotion");
         assert_eq!(err.issue.code, "promote_io_error");
@@ -4443,6 +4825,7 @@ mod tests {
             "startup",
             "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
             "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+            vec!["transcription:cloud".to_string()],
         )
         .unwrap();
 
@@ -4469,6 +4852,7 @@ mod tests {
 
         let res_a = run_startup_migration(&dirs_a).await;
         assert_eq!(res_a.status, VoquillMigrationStatus::SkippedExistingProfile);
+        assert!(res_a.removed_modes_reset.is_empty());
         assert!(!dirs_a
             .current_data_dir
             .join(AUDIO_DIR_NAME)
@@ -4489,6 +4873,7 @@ mod tests {
             "startup",
             corrupt_sha,
             String::new(),
+            Vec::new(),
         )
         .unwrap();
         save_manifest(&dirs_b.current_config_dir, &pending_manifest).unwrap();
@@ -4517,13 +4902,14 @@ mod tests {
         fs::create_dir_all(&legacy_audio).unwrap();
         fs::write(legacy_audio.join("retry-clip.wav"), b"RIFFretry").unwrap();
 
-        let _ = stage_validate_and_promote_database(&dirs).await.unwrap();
+        let staged = stage_validate_and_promote_database(&dirs).await.unwrap();
         let (full_sha, payload_sha) = hash_staged_database(&dirs.current_db_path()).unwrap();
         write_promotion_marker(
             &dirs.promotion_marker_path(),
             "retry",
             full_sha,
             payload_sha,
+            staged.removed_modes_reset.clone(),
         )
         .unwrap();
 
@@ -4571,6 +4957,7 @@ mod tests {
         );
         assert_eq!(recovered.audio_phase, VoquillMigrationPhaseStatus::Migrated);
         assert_eq!(recovered.counts.audio_files_migrated, 1);
+        assert_eq!(recovered.removed_modes_reset, staged.removed_modes_reset);
         assert!(!dirs.promotion_marker_path().exists());
         assert!(!backup_path.exists());
         assert!(dirs
@@ -4603,12 +4990,14 @@ mod tests {
             "retry",
             "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
             "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+            vec!["transcription:cloud".to_string()],
         )
         .unwrap();
         save_manifest(&dirs_b.current_config_dir, &failed_manifest).unwrap();
 
         let res_b = run_startup_migration(&dirs_b).await;
         assert_eq!(res_b.status, VoquillMigrationStatus::SkippedExistingProfile);
+        assert!(res_b.removed_modes_reset.is_empty());
         let check_pool = open_app_database(&dirs_b.current_db_path()).await.unwrap();
         let preserved: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM terms WHERE id = 'unrelated-term'")
@@ -4633,6 +5022,7 @@ mod tests {
             "startup",
             full_sha,
             payload_sha,
+            Vec::new(),
         )
         .unwrap();
 
@@ -4703,9 +5093,13 @@ mod tests {
         fs::write(dst_audio.join("clip1.wav"), b"A1").unwrap();
         fs::write(dst_audio.join("preexisting.wav"), b"LOCAL").unwrap();
 
-        let mut progress = AssetMigrationProgress::default();
-        progress.audio.insert("clip1.wav".to_string());
-        save_asset_progress(&dirs.current_config_dir, &progress).unwrap();
+        append_asset_progress_entry(
+            &dirs.current_config_dir,
+            '+',
+            AssetCategory::Audio,
+            "clip1.wav",
+        )
+        .unwrap();
 
         let mut report = VoquillMigrationReport {
             schema_version: MANIFEST_SCHEMA_VERSION,
@@ -5077,13 +5471,14 @@ mod tests {
         fs::create_dir_all(&legacy_audio).unwrap();
         fs::write(legacy_audio.join("pending.wav"), b"RIFFpending").unwrap();
 
-        let _ = stage_validate_and_promote_database(&dirs).await.unwrap();
+        let staged = stage_validate_and_promote_database(&dirs).await.unwrap();
         let (full_sha, payload_sha) = hash_staged_database(&dirs.current_db_path()).unwrap();
         write_promotion_marker(
             &dirs.promotion_marker_path(),
             "retry",
             full_sha,
             payload_sha,
+            staged.removed_modes_reset.clone(),
         )
         .unwrap();
 
@@ -5128,6 +5523,289 @@ mod tests {
             VoquillMigrationPhaseStatus::Migrated
         );
         assert_eq!(retried.audio_phase, VoquillMigrationPhaseStatus::Migrated);
+        assert_eq!(retried.removed_modes_reset, staged.removed_modes_reset);
         assert!(!dirs.promotion_marker_path().exists());
+    }
+
+    #[test]
+    fn sweep_orphaned_asset_copy_temp_dirs_removes_only_temp_dirs_without_following_symlinks() {
+        let ws = unique_workspace("sweep-orphaned-asset-tmp");
+        let data_dir = ws.join("data");
+        let keep_dir = data_dir.join("models");
+        let orphan_a = data_dir.join(format!("{ASSET_COPY_TEMP_PREFIX}999-0"));
+        let orphan_b = data_dir.join(format!("{ASSET_COPY_TEMP_PREFIX}999-1"));
+        fs::create_dir_all(&keep_dir).unwrap();
+        fs::create_dir_all(&orphan_a).unwrap();
+        fs::create_dir_all(&orphan_b).unwrap();
+        fs::write(keep_dir.join("ggml-tiny.bin"), b"keep").unwrap();
+        fs::write(orphan_a.join("copy-1.tmp"), b"stale").unwrap();
+        fs::write(orphan_b.join("copy-2.tmp"), b"stale").unwrap();
+        fs::write(
+            data_dir.join(format!("{ASSET_COPY_TEMP_PREFIX}regular-file")),
+            b"file",
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        let outside_dir = ws.join("outside-target");
+        #[cfg(unix)]
+        {
+            fs::create_dir_all(&outside_dir).unwrap();
+            fs::write(outside_dir.join("precious.txt"), b"do-not-delete").unwrap();
+            std::os::unix::fs::symlink(
+                &outside_dir,
+                data_dir.join(format!("{ASSET_COPY_TEMP_PREFIX}symlink")),
+            )
+            .unwrap();
+        }
+
+        sweep_orphaned_asset_copy_temp_dirs(&data_dir).unwrap();
+
+        assert!(!orphan_a.exists());
+        assert!(!orphan_b.exists());
+        assert!(keep_dir.join("ggml-tiny.bin").exists());
+        assert!(data_dir
+            .join(format!("{ASSET_COPY_TEMP_PREFIX}regular-file"))
+            .exists());
+        #[cfg(unix)]
+        {
+            assert!(
+                outside_dir.join("precious.txt").exists(),
+                "symlink target must never be traversed or deleted"
+            );
+            assert!(
+                fs::symlink_metadata(data_dir.join(format!("{ASSET_COPY_TEMP_PREFIX}symlink")))
+                    .is_ok(),
+                "symlink entry itself must not be removed by directory sweep"
+            );
+        }
+    }
+
+    #[test]
+    fn copy_file_non_destructive_does_not_replace_concurrent_destination_and_reverts_journal() {
+        let ws = unique_workspace("no-replace-publish");
+        let dirs = make_dirs(&ws);
+        fs::create_dir_all(&dirs.current_config_dir).unwrap();
+        let src_dir = ws.join("src");
+        let dst_root = dirs.current_data_dir.join(AUDIO_DIR_NAME);
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_root).unwrap();
+        let src_file = src_dir.join("race.wav");
+        let dst_file = dst_root.join("race.wav");
+        fs::write(&src_file, b"LEGACY-BYTES").unwrap();
+
+        let temp_dir = AssetCopyTempDir::create_near(&dst_root).unwrap();
+        let mut dirs_to_sync = BTreeSet::new();
+        let result = copy_file_non_destructive(
+            &src_file,
+            &dst_root,
+            &dst_file,
+            &temp_dir,
+            &mut dirs_to_sync,
+            || {
+                // Simulate a concurrent native write creating `dst_file` right
+                // before publish happens.
+                fs::write(&dst_file, b"NATIVE-NEW-BYTES")?;
+                append_asset_progress_entry(
+                    &dirs.current_config_dir,
+                    '+',
+                    AssetCategory::Audio,
+                    "race.wav",
+                )
+            },
+        )
+        .unwrap();
+
+        assert!(
+            !result,
+            "concurrently created destination must be skipped, not replaced"
+        );
+        assert_eq!(
+            fs::read(&dst_file).unwrap(),
+            b"NATIVE-NEW-BYTES",
+            "existing destination bytes must remain intact"
+        );
+
+        // Now verify `revert_asset_progress_entry` undoes the `+` entry in the
+        // append-only log cleanly.
+        let mut progress = load_asset_progress(&dirs.current_config_dir);
+        assert!(progress.audio.contains("race.wav"));
+        let mut seen = HashSet::new();
+        let mut ctx = AssetCopyContext {
+            dst_root: &dst_root,
+            temp_dir: &temp_dir,
+            config_dir: &dirs.current_config_dir,
+            category: AssetCategory::Audio,
+            progress: &mut progress,
+            seen_in_pass: &mut seen,
+            dirs_to_sync: &mut dirs_to_sync,
+        };
+        revert_asset_progress_entry(&mut ctx, "race.wav");
+        let reloaded = load_asset_progress(&dirs.current_config_dir);
+        assert!(!reloaded.audio.contains("race.wav"));
+    }
+
+    #[test]
+    fn append_only_asset_progress_log_replays_entries_and_supports_legacy_json() {
+        let ws = unique_workspace("append-only-progress-log");
+        let config_dir = ws.join("config");
+        fs::create_dir_all(&config_dir).unwrap();
+
+        // Legacy JSON format remains readable for upgrades from earlier builds.
+        fs::write(
+            config_dir.join(ASSET_PROGRESS_FILENAME),
+            r#"{"models":["ggml-tiny.bin"],"audio":["a.wav"],"storage":[]}"#,
+        )
+        .unwrap();
+        let legacy = load_asset_progress(&config_dir);
+        assert!(legacy.models.contains("ggml-tiny.bin"));
+        assert!(legacy.audio.contains("a.wav"));
+
+        // Append-only log format replays `+` and `-` deterministically.
+        remove_asset_progress(&config_dir);
+        append_asset_progress_entry(&config_dir, '+', AssetCategory::Models, "m1.bin").unwrap();
+        append_asset_progress_entry(&config_dir, '+', AssetCategory::Audio, "sub/a.wav").unwrap();
+        append_asset_progress_entry(&config_dir, '+', AssetCategory::Storage, "s.png").unwrap();
+        append_asset_progress_entry(&config_dir, '-', AssetCategory::Audio, "sub/a.wav").unwrap();
+
+        let replayed = load_asset_progress(&config_dir);
+        assert!(replayed.models.contains("m1.bin"));
+        assert!(!replayed.audio.contains("sub/a.wav"));
+        assert!(replayed.storage.contains("s.png"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_non_utf8_asset_filenames_do_not_collide_in_pass_or_progress_log() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let ws = unique_workspace("unix-non-utf8-assets");
+        let dirs = make_dirs(&ws);
+        fs::create_dir_all(&dirs.current_config_dir).unwrap();
+        let src_dir = dirs.legacy_data_dir.as_ref().unwrap().join(AUDIO_DIR_NAME);
+        let dst_dir = dirs.current_data_dir.join(AUDIO_DIR_NAME);
+        fs::create_dir_all(&src_dir).unwrap();
+
+        let name_a = OsStr::from_bytes(b"clip-\xff.wav");
+        let name_b = OsStr::from_bytes(b"clip-\xfe.wav");
+        fs::write(src_dir.join(name_a), b"BYTES-FF").unwrap();
+        fs::write(src_dir.join(name_b), b"BYTES-FE").unwrap();
+
+        let mut progress = AssetMigrationProgress::default();
+        let outcome = run_asset_category(
+            &dirs,
+            &[src_dir.clone()],
+            &dst_dir,
+            false,
+            AssetCategory::Audio,
+            &mut progress,
+        );
+        assert_eq!(outcome.copied, 2, "both distinct non-UTF-8 files must copy");
+        assert_eq!(outcome.failed, 0);
+        assert_eq!(fs::read(dst_dir.join(name_a)).unwrap(), b"BYTES-FF");
+        assert_eq!(fs::read(dst_dir.join(name_b)).unwrap(), b"BYTES-FE");
+
+        let reloaded = load_asset_progress(&dirs.current_config_dir);
+        assert_eq!(
+            reloaded.audio.len(),
+            2,
+            "distinct non-UTF-8 filenames must produce distinct persisted keys"
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_aborts_on_initial_manifest_failure_and_recovers_no_manifest_with_marker() {
+        // Case A: Initial manifest write fails -> must abort BEFORE promoting DB.
+        let ws_a = unique_workspace("abort-on-initial-manifest-failure");
+        let dirs_a = make_dirs(&ws_a);
+        let legacy_db_a = dirs_a.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db_a, 96, false).await;
+        fs::create_dir_all(dirs_a.current_config_dir.join(MANIFEST_FILENAME)).unwrap();
+
+        let res_a = run_startup_migration(&dirs_a).await;
+        assert_eq!(res_a.database_phase, VoquillMigrationPhaseStatus::Failed);
+        assert!(res_a
+            .issues
+            .iter()
+            .any(|issue| issue.code == "manifest_save_failed"));
+        assert!(
+            !dirs_a.current_db_path().exists(),
+            "DB must never be promoted if initial manifest cannot be persisted"
+        );
+
+        // Case B: Promoted DB + verified promotion marker with NO manifest file
+        // -> must recover cleanly, migrate pending assets, and restore
+        // `removed_modes_reset`.
+        let ws_b = unique_workspace("no-manifest-verified-marker-recovery");
+        let dirs_b = make_dirs(&ws_b);
+        let legacy_db_b = dirs_b.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db_b, 96, false).await;
+        let legacy_audio_b = dirs_b
+            .legacy_data_dir
+            .as_ref()
+            .unwrap()
+            .join(AUDIO_DIR_NAME);
+        fs::create_dir_all(&legacy_audio_b).unwrap();
+        fs::write(legacy_audio_b.join("recover.wav"), b"RIFFrec").unwrap();
+
+        let staged_b = stage_validate_and_promote_database(&dirs_b).await.unwrap();
+        assert!(
+            !staged_b.removed_modes_reset.is_empty(),
+            "seeded Voquill DB includes cloud modes that were reset"
+        );
+        let (full_sha, payload_sha) = hash_staged_database(&dirs_b.current_db_path()).unwrap();
+        write_promotion_marker(
+            &dirs_b.promotion_marker_path(),
+            "startup",
+            full_sha,
+            payload_sha,
+            staged_b.removed_modes_reset.clone(),
+        )
+        .unwrap();
+        assert!(!dirs_b.current_config_dir.join(MANIFEST_FILENAME).exists());
+
+        let res_b = run_startup_migration(&dirs_b).await;
+        assert_eq!(res_b.status, VoquillMigrationStatus::Completed);
+        assert_eq!(res_b.database_phase, VoquillMigrationPhaseStatus::Migrated);
+        assert_eq!(res_b.audio_phase, VoquillMigrationPhaseStatus::Migrated);
+        assert_eq!(res_b.removed_modes_reset, staged_b.removed_modes_reset);
+        assert!(res_b
+            .action_items
+            .iter()
+            .any(|item| item.kind == "review_removed_cloud_mode"));
+        assert!(!dirs_b.promotion_marker_path().exists());
+
+        // Case C: Unrelated DB + mismatched marker with NO manifest file ->
+        // must still treat as `SkippedExistingProfile` and never leak marker modes.
+        let ws_c = unique_workspace("no-manifest-mismatched-marker");
+        let dirs_c = make_dirs(&ws_c);
+        fs::create_dir_all(&dirs_c.current_config_dir).unwrap();
+        let legacy_audio_c = dirs_c
+            .legacy_data_dir
+            .as_ref()
+            .unwrap()
+            .join(AUDIO_DIR_NAME);
+        fs::create_dir_all(&legacy_audio_c).unwrap();
+        fs::write(legacy_audio_c.join("skip.wav"), b"RIFFskip").unwrap();
+        let unrelated_pool = open_app_database(&dirs_c.current_db_path()).await.unwrap();
+        unrelated_pool.close().await;
+        write_promotion_marker(
+            &dirs_c.promotion_marker_path(),
+            "startup",
+            "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            String::new(),
+            vec!["transcription:cloud".to_string()],
+        )
+        .unwrap();
+
+        let res_c = run_startup_migration(&dirs_c).await;
+        assert_eq!(res_c.status, VoquillMigrationStatus::SkippedExistingProfile);
+        assert!(res_c.removed_modes_reset.is_empty());
+        assert!(!dirs_c
+            .current_data_dir
+            .join(AUDIO_DIR_NAME)
+            .join("skip.wav")
+            .exists());
     }
 }

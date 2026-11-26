@@ -3378,11 +3378,19 @@ pub async fn api_key_update(
     Ok(api_key_to_view(updated))
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn voquill_migration_status(
+async fn run_voquill_migration_pool_command<F, Fut>(
     app: AppHandle,
-) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
+    task_label: &'static str,
+    op: F,
+) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String>
+where
+    F: FnOnce(crate::system::voquill_migration::MigrationDirs, sqlx::SqlitePool) -> Fut
+        + Send
+        + 'static,
+    Fut: std::future::Future<
+            Output = Result<crate::system::voquill_migration::VoquillMigrationReport, String>,
+        > + Send,
+{
     let _write_guard = acquire_local_data_write_guard().await?;
     let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
         .map_err(|err| err.to_string())?;
@@ -3393,14 +3401,23 @@ pub async fn voquill_migration_status(
     let runtime_handle = tokio::runtime::Handle::current();
     tauri::async_runtime::spawn_blocking(move || {
         runtime_handle.block_on(async move {
-            let pool = crate::system::voquill_migration::ensure_usable_pool(&dirs, &db)
-                .await
-                .unwrap_or_else(|_| db.pool());
-            crate::system::voquill_migration::refresh_migration_report(dirs, pool).await
+            let pool = crate::system::voquill_migration::ensure_usable_pool(&dirs, &db).await?;
+            op(dirs, pool).await
         })
     })
     .await
-    .map_err(|err| format!("Migration status task failed: {err}"))
+    .map_err(|err| format!("{task_label} task failed: {err}"))?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn voquill_migration_status(
+    app: AppHandle,
+) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
+    run_voquill_migration_pool_command(app, "Migration status", |dirs, pool| async move {
+        Ok(crate::system::voquill_migration::refresh_migration_report(dirs, pool).await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3408,24 +3425,10 @@ pub async fn voquill_migration_status(
 pub async fn voquill_migration_dismiss(
     app: AppHandle,
 ) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
-    let _write_guard = acquire_local_data_write_guard().await?;
-    let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
-        .map_err(|err| err.to_string())?;
-    let db = app
-        .state::<crate::state::OptionKeyDatabase>()
-        .inner()
-        .clone();
-    let runtime_handle = tokio::runtime::Handle::current();
-    tauri::async_runtime::spawn_blocking(move || {
-        runtime_handle.block_on(async move {
-            let pool = crate::system::voquill_migration::ensure_usable_pool(&dirs, &db)
-                .await
-                .unwrap_or_else(|_| db.pool());
-            crate::system::voquill_migration::dismiss_migration_notice(dirs, pool).await
-        })
+    run_voquill_migration_pool_command(app, "Migration dismiss", |dirs, pool| {
+        crate::system::voquill_migration::dismiss_migration_notice(dirs, pool)
     })
     .await
-    .map_err(|err| format!("Migration dismiss task failed: {err}"))?
 }
 
 #[tauri::command]
@@ -3672,6 +3675,14 @@ pub async fn clear_local_data(
         );
         format!("Database cleared, but database backup cleanup failed: {error}")
     })?;
+    crate::system::voquill_migration::sweep_orphaned_asset_copy_temp_dirs(&app_data_dir).map_err(
+        |error| {
+            log::error!(
+                "Failed to sweep orphaned Voquill asset temp directories during clear: {error}"
+            );
+            format!("Database cleared, but audio cleanup failed: {error}")
+        },
+    )?;
 
     crate::system::paths::delete_legacy_database(&app).map_err(|error| {
         log::error!("Failed to delete the legacy Voquill database during clear: {error}");

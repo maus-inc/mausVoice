@@ -1,8 +1,9 @@
 import type { ApiKey } from "@maus-inc/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { listApiKeysMock } = vi.hoisted(() => ({
+const { listApiKeysMock, clearGenerationRef } = vi.hoisted(() => ({
   listApiKeysMock: vi.fn(),
+  clearGenerationRef: { current: 0 },
 }));
 
 vi.mock("../repos", () => ({
@@ -10,6 +11,15 @@ vi.mock("../repos", () => ({
     listApiKeys: (...args: unknown[]) => listApiKeysMock(...args),
   }),
 }));
+
+vi.mock("../utils/local-data-write-gate", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../utils/local-data-write-gate")>();
+  return {
+    ...actual,
+    getLocalDataClearGeneration: () => clearGenerationRef.current,
+  };
+});
 
 vi.mock("./app.actions", () => ({
   showErrorSnackbar: vi.fn(),
@@ -42,6 +52,39 @@ describe("loadApiKeys", () => {
   beforeEach(() => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
     listApiKeysMock.mockReset();
+    clearGenerationRef.current = 0;
+  });
+
+  it("ignores an in-flight forced load that resolves or rejects after a local-data clear starts", async () => {
+    let resolveKeys!: (keys: ApiKey[]) => void;
+    let rejectKeys!: (error: Error) => void;
+    listApiKeysMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<ApiKey[]>((resolve) => {
+            resolveKeys = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<ApiKey[]>((_, reject) => {
+            rejectKeys = reject;
+          }),
+      );
+
+    const pendingResolve = loadApiKeys({ force: true });
+    clearGenerationRef.current += 1;
+    resolveKeys([makeKey("key-pre-clear", "Stale Key")]);
+    await pendingResolve;
+    expect(getAppState().settings.apiKeys).toEqual([]);
+    expect(getAppState().settings.apiKeysStatus).toBe("loading");
+
+    const pendingReject = loadApiKeys({ force: true });
+    clearGenerationRef.current += 1;
+    rejectKeys(new Error("aborted by clear"));
+    await pendingReject;
+    expect(getAppState().settings.apiKeys).toEqual([]);
+    expect(getAppState().settings.apiKeysStatus).toBe("loading");
   });
 
   it("bypasses and invalidates an in-flight load when forced after DB promotion", async () => {

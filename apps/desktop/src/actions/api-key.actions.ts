@@ -7,7 +7,10 @@ import type {
 } from "../repos/api-key.repo";
 import { getAppState, produceAppState } from "../store";
 import { registerApiKeys } from "../utils/app.utils";
-import { withLocalDataWrite } from "../utils/local-data-write-gate";
+import {
+  getLocalDataClearGeneration,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
 import { updateUserPreferences } from "./user.actions";
 import { refreshVoquillMigrationStatusIfActive } from "./voquill-migration-refresh";
@@ -36,6 +39,10 @@ export const loadApiKeys = async (options?: {
 
   loadApiKeysGeneration += 1;
   const generation = loadApiKeysGeneration;
+  const clearGeneration = getLocalDataClearGeneration();
+  const isCurrentLoad = () =>
+    generation === loadApiKeysGeneration &&
+    clearGeneration === getLocalDataClearGeneration();
 
   produceAppState((draft) => {
     draft.settings.apiKeysStatus = "loading";
@@ -44,7 +51,7 @@ export const loadApiKeys = async (options?: {
   const activePromise = getApiKeyRepo()
     .listApiKeys()
     .then((apiKeys) => {
-      if (generation !== loadApiKeysGeneration) {
+      if (!isCurrentLoad()) {
         return;
       }
       produceAppState((draft) => {
@@ -54,7 +61,7 @@ export const loadApiKeys = async (options?: {
       });
     })
     .catch((error) => {
-      if (generation !== loadApiKeysGeneration) {
+      if (!isCurrentLoad()) {
         return;
       }
       console.error("Failed to load API keys", error);
