@@ -57,7 +57,7 @@ The pill has four states: idle, recording, paused, and loading. Only one is acti
   <Step
     title="Processing runs in a fixed order"
   >
-    The raw transcript passes dictionary replacements, the silence hallucination filter, spoken commands, symbol conversion, and optional post-processing, in that order. The order matters. A dictionary replacement applies before post-processing, so a style cannot undo it. Post-processing itself is deterministic on the device for a short English prose dictation in a prose style, and goes to the generative provider for longer text, another language, a structured style, or a custom style.
+    The silence hallucination filter runs on the engine's own output first, and again after dictionary replacements, because it reads per-segment confidence that only the engine can supply. Dictionary replacements, spoken commands, symbol conversion, and optional post-processing then run in that order. A dictionary replacement applies before post-processing, so a style cannot undo it. Post-processing itself is deterministic on the device for a short English prose dictation in a prose style, and goes to the generative provider for longer text, another language, a structured style, or a custom style.
   </Step>
   <Step
     title="The text is delivered to the focused target"
@@ -88,7 +88,7 @@ A failed insertion does not imply a failed transcription. The text may already b
 
 The pill carries two side controls. Pause and resume sit on the left, cancel sits on the right, and both sit fully outside the pill body so a press on the pill itself still means the pill. **Escape** runs the same cancel action as the right control, so either route asks for one confirmation, and a second press within five seconds discards the recording. When a live-streaming provider already has the audio, the prompt says so, because that audio cannot be recalled.
 
-A cancelled dictation inserts nothing and leaves no failed row. A cancelled dictation also writes no History row.
+A cancelled dictation that has not delivered yet inserts nothing, leaves no failed row, and writes no History row. With **Real-time output** on, segments the provider already committed are in the target field, and a cancel cannot take them back, so delete them in that application. The [real-time output page](../using-mausvoice/real-time-output/) states the full condition.
 
 <Callout title="Cancelling is not the same as a provider failure">
   A cancel ends the session on purpose and leaves no diagnostic evidence. A provider failure leaves a failed status and a reason you can act on. The [troubleshooting first response](../troubleshooting/first-response/) separates the two before you change any settings.

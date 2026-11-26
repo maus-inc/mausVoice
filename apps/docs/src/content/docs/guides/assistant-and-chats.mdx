@@ -63,6 +63,8 @@ The card names the tool and states the model's own reason for the call. A vague 
 
 <Callout title="Always allow is scoped to one conversation">
   The approval is stored per tool and per conversation, not per command, and it survives a restart. A new conversation asks again, because a grant made while one task was running should not silently authorise the next. Clear local data removes these saved approvals from app-owned browser storage.
+
+  One exception is worth knowing. A grant saved by a build older than per-conversation scoping sits under an unscoped key that mausVoice still reads as a global allow, so that tool can run without a prompt in a new conversation. Revoking the tool's always-allow, or clearing local data, deletes the old key.
 </Callout>
 
 ## Power mode
