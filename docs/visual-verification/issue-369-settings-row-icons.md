@@ -52,6 +52,48 @@ are shell chrome, not settings rows; and the provider marks on `ai-models` are
 `ProviderLogo` images, which carry no `stroke-width`, placed in the same 22px box
 so the titles beside them land on the same edge as glyph rows.
 
+## Stageshow gate
+
+Mode: illustrated, because these files are captures of the product (`docs/assets/*.png`,
+`docs/visual-verification/**`). Read for this pass: `SKILL.md` (The one idea and the five
+failures), `references/verify.md` in full, and the mode split in
+`engineering/design-skills.md` (`Stageshow on every UI touch`, including the sandbox
+notes that kept this gate a stated hypothesis until now).
+
+Stageshow's `film.mjs --gate` judges a `.ss-stage` composition, which these are not: they
+are the real product, so `layout.mjs` is the matching check. It reports box fit and
+authored insets for ordinary host controls outside a Stage. Run on the production
+preview build at 1157×1000, against `main`, on all eight pages, in both schemes:
+
+```
+light home         : 8 controls, 0 padded containers  → no-issues-detected
+light dictation    : 3 controls, 7 padded containers  → no-issues-detected
+light ai-models    : 5 controls, 4 padded containers  → no-issues-detected
+light shortcuts    : 2 controls, 0 padded containers  → no-issues-detected
+light appearance   : 5 controls, 8 padded containers  → no-issues-detected
+light privacy-data : 1 control, 12 padded containers  → no-issues-detected
+light system       : 5 controls, 8 padded containers  → no-issues-detected
+light account      : 4 controls, 0 padded containers  → no-issues-detected
+dark  (same eight) : identical coverage, every page → no-issues-detected
+```
+
+What that does not cover, and what was checked by eye instead, is the part the script
+says it defers: optical centring, shape contours, interaction states and motion. The
+You see / You do lines this surface would print, walked against the frames above:
+
+- `fat row` — no. Rows sit at their own pitch; the description wraps to two lines only
+  where the text needs it, and the row grows with it.
+- `loose list` — no. Pitch is even within a card and across pages.
+- `empty pane` — no. No void under a list on any of the eight pages.
+- `mixed icons`, `clipped glyph`, `emoji icon`, `invented mark` — none. One family, one
+  size, one stroke, measured above, and the marks are lucide's own drawing.
+- `unit wrapped` / centred-amount — not applicable; no figures in this lane.
+
+The one composition fault the skill names first, a whole window floating with even
+margins, is not what a screenshot of a running app is meant to be, and these are
+in-window frames rather than figures on a page. The card at the top of this report is a
+crop of the product's own pane, not a plate under a mockup.
+
 ## States checked
 
 - **Hover**: the row takes `background-color` `rgba(0, 0, 0, 0.04)` on the level1
@@ -75,8 +117,10 @@ stack where Satoshi is unavailable in the capture browser, so letterforms differ
 slightly from a packaged build while the glyph lane, spacing and alignment do not
 depend on them.
 
-The one-off browser used `@sparticuz/chromium` with Puppeteer Core, run outside the
-repository; no browser, automation package or test harness was added to it. The
-sandbox has no Debian mirror access, so the two shared libraries that build needs
-(`libnspr4`, `libnss3`) were compiled from NSS and NSPR sources fetched from GitHub
-and linked from `/tmp` for the capture process only.
+The one-off browser used `@sparticuz/chromium` with Puppeteer Core for the captures and
+with `playwright-core` for the `layout.mjs` runs, all outside the repository; no
+browser, automation package or test harness was added to it. The sandbox has no Debian
+mirror access, so the two shared libraries that build needs (`libnspr4`, `libnss3`) were
+compiled from NSS and NSPR sources fetched from GitHub and linked from `/tmp` for the
+capture process only. The gate scripts were run from a `/tmp` copy, as the execution
+limits in `docs/decisions/stageshow-on-every-ui-touch.md` require.
