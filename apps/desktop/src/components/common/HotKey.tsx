@@ -28,6 +28,34 @@ type HotKeyProps = {
   ariaLabelledBy?: string;
 };
 
+const RecorderDisplay = ({
+  describedBy,
+  tone,
+  value,
+  label,
+}: {
+  describedBy?: string;
+  tone: keyof typeof TONE_COLOR;
+  value?: string[];
+  label: string;
+}) => {
+  if (tone === "strong" && value && value.length > 0) {
+    return (
+      <Box
+        id={describedBy}
+        sx={{ display: "inline-flex", alignItems: "center" }}
+      >
+        <HotkeyBadge keys={value} appearance="3d" />
+      </Box>
+    );
+  }
+  return (
+    <Typography id={describedBy} variant="body2" color={TONE_COLOR[tone]}>
+      {label}
+    </Typography>
+  );
+};
+
 export const HotKey = ({
   value,
   onChange,
@@ -93,22 +121,12 @@ export const HotKey = ({
       {...handlers}
       sx={hotkeyRecorderStyles(focused, 200, disabled)}
     >
-      {tone === "strong" && value && value.length > 0 ? (
-        <Box
-          id={a11y.describedBy}
-          sx={{ display: "inline-flex", alignItems: "center" }}
-        >
-          <HotkeyBadge keys={value} appearance="3d" />
-        </Box>
-      ) : (
-        <Typography
-          id={a11y.describedBy}
-          variant="body2"
-          color={TONE_COLOR[tone]}
-        >
-          {label}
-        </Typography>
-      )}
+      <RecorderDisplay
+        describedBy={a11y.describedBy}
+        tone={tone}
+        value={value}
+        label={label}
+      />
     </Box>
   );
 };
