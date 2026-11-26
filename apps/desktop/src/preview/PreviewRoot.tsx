@@ -15,6 +15,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ContextMenuProvider } from "../components/common/ContextMenu";
+import { AppViewport } from "../components/root/AppViewport";
 import { RootConfetti } from "../components/root/RootConfetti";
 import { RootDialogs } from "../components/root/RootDialogs";
 import { SnackbarEmitter } from "../components/root/SnackbarEmitter";
@@ -177,12 +178,12 @@ const PreviewToolbar = () => {
  */
 export const PreviewRoot = () => (
   <ContextMenuProvider>
-    <Box sx={{ height: "100dvh", width: "100vw", overflow: "hidden" }}>
+    <AppViewport>
       <RootConfetti />
       <SnackbarEmitter />
       <RootDialogs />
       <Outlet />
       <PreviewToolbar />
-    </Box>
+    </AppViewport>
   </ContextMenuProvider>
 );
