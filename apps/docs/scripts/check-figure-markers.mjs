@@ -18,7 +18,7 @@ import { APP_FIGURES } from "./figures.mjs";
 const docsRoot = fileURLToPath(new URL("..", import.meta.url));
 const contentDir = join(docsRoot, "src/content/docs");
 
-const filesIn = (dir, entry) => {
+const filesIn = async (dir, entry) => {
   const path = join(dir, entry.name);
   if (entry.isDirectory()) return mdxFiles(path);
   return entry.name.endsWith(".mdx") ? [path] : [];
