@@ -5,7 +5,7 @@
  * markup. Each marker is resolved to an element inside the capture root and
  * painted into an overlay span sized to that element's box. The badge itself
  * comes from `src/styles/guide-markers.css`, which is injected unchanged, so
- * the capture and the stage figures share one badge style.
+ * every figure in the guides draws the same badge.
  *
  * The overlay never touches the target's layout or scroll container, and it is
  * removed after the screenshot, so the next figure starts clean.
