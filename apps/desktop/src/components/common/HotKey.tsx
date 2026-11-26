@@ -3,6 +3,7 @@ import Typography from "@mui/material/Typography";
 import { useId, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { useAppStore } from "../../store";
+import { HotkeyBadge } from "./HotkeyBadge";
 import { hotkeyRecorderStyles } from "./hotkey-recorder.styles";
 import {
   createRecorderHandlers,
@@ -92,13 +93,22 @@ export const HotKey = ({
       {...handlers}
       sx={hotkeyRecorderStyles(focused, 200, disabled)}
     >
-      <Typography
-        id={a11y.describedBy}
-        variant="body2"
-        color={TONE_COLOR[tone]}
-      >
-        {label}
-      </Typography>
+      {tone === "strong" && value && value.length > 0 ? (
+        <Box
+          id={a11y.describedBy}
+          sx={{ display: "inline-flex", alignItems: "center" }}
+        >
+          <HotkeyBadge keys={value} appearance="3d" />
+        </Box>
+      ) : (
+        <Typography
+          id={a11y.describedBy}
+          variant="body2"
+          color={TONE_COLOR[tone]}
+        >
+          {label}
+        </Typography>
+      )}
     </Box>
   );
 };
