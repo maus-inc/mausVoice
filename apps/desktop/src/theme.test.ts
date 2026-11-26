@@ -261,16 +261,18 @@ describe("document scroll ownership", () => {
     if (typeof overrides !== "function") {
       throw new Error("Expected the baseline overrides to be a function");
     }
-    const styles = overrides(theme) as Record<string, Record<string, unknown>>;
+    const styles = overrides(theme);
+    const clipping = {
+      height: "100%",
+      overflow: "hidden",
+      overscrollBehavior: "none",
+    };
 
-    for (const element of ["html", "body"]) {
-      expect(styles[element]).toMatchObject({
-        height: "100%",
-        overflow: "hidden",
-        overscrollBehavior: "none",
-      });
-    }
-    expect(styles["#root"]).toMatchObject({ height: "100%" });
+    expect(styles).toMatchObject({
+      html: clipping,
+      body: clipping,
+      "#root": { height: "100%" },
+    });
   });
 });
 

@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "@mui/material/styles";
 import { afterEach, describe, expect, it } from "vitest";
+import { requireElement } from "../../../test/helpers/dom";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 import { THEME_PROVIDER_CONFIG, theme } from "../../theme";
 import { AppViewport } from "./AppViewport";
@@ -36,10 +37,10 @@ describe("app viewport", () => {
   it("takes the height the 100% chain already gives it", () => {
     const { root, host: container } = renderViewport();
     try {
-      const viewport = container.firstElementChild;
-      if (!(viewport instanceof HTMLElement)) {
-        throw new Error("Expected the viewport element to render");
-      }
+      const viewport = requireElement(
+        container.firstElementChild,
+        "the viewport",
+      );
       // jsdom has no layout, so the computed declaration is the contract:
       // viewport units would be sized as if scrollbars do not exist and would
       // overflow the window once one appears.
