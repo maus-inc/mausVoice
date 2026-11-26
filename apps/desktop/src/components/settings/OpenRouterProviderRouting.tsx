@@ -175,6 +175,12 @@ export const OpenRouterProviderRouting = ({
           cursor: disabled ? "default" : "pointer",
           opacity: disabled ? 0.5 : 1,
           py: 0.5,
+          // The chevron rests muted and lifts to the title's tone on hover, so
+          // the header answers the pointer. Without the resting colour it would
+          // inherit `text.primary` and the hover rule would change nothing.
+          "& .expand-icon": {
+            color: disabled ? "action.disabled" : "text.secondary",
+          },
           "&:hover": {
             "& .expand-icon": {
               color: disabled ? "action.disabled" : "text.primary",
