@@ -585,17 +585,30 @@ class PreviewRuntime {
         apiKey.provider === "ollama" ||
         apiKey.provider === "speaches" ||
         apiKey.provider === "openai-compatible";
-      if (request.key.length > 0) {
+      const trimmedKey = request.key.trim();
+      if (trimmedKey.length > 0) {
         // Do not keep an entered secret in the preview's mock transport.
         apiKey.keyFull = null;
         apiKey.keySuffix = "…preview";
-        apiKey.credentialStatus = "usable";
-        apiKey.credentialIssue = null;
+        const hasControlChar = Array.from(request.key).some((ch) => {
+          const code = ch.charCodeAt(0);
+          return code <= 0x1f || code === 0x7f;
+        });
+        const hasInvalidFormat = hasControlChar || trimmedKey !== request.key;
+        apiKey.credentialStatus = hasInvalidFormat
+          ? "invalid_format"
+          : "usable";
+        apiKey.credentialIssue = hasInvalidFormat ? "invalid_key_format" : null;
       } else if (keylessProvider) {
         apiKey.keyFull = "";
         apiKey.keySuffix = null;
         apiKey.credentialStatus = "usable";
         apiKey.credentialIssue = null;
+      } else if (request.key.length > 0) {
+        apiKey.keyFull = null;
+        apiKey.keySuffix = null;
+        apiKey.credentialStatus = "needs_reentry";
+        apiKey.credentialIssue = "missing_key";
       }
     }
     // `transcription_path` is the one column the desktop statement gates on a

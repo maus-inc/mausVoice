@@ -1015,4 +1015,22 @@ describe("browser preview transport", () => {
     }>("voquill_migration_dismiss");
     expect(dismissed.dismissedAt).not.toBeNull();
   });
+
+  it("marks whitespace-only key updates as needs_reentry for required-key providers", async () => {
+    applyPreviewScenario("voquill-migration");
+
+    const updated = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_update", {
+      request: { id: "personal-groq", key: "   " },
+    });
+    expect(updated.credentialStatus).toBe("needs_reentry");
+    expect(updated.credentialIssue).toBe("missing_key");
+
+    const status = await invokePreviewCommand<{
+      counts: { providersNeedingAttention: number };
+    }>("voquill_migration_status");
+    expect(status.counts.providersNeedingAttention).toBe(2);
+  });
 });

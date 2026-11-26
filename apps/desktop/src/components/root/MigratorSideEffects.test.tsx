@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { getAppState, produceAppState, setAppState } from "../../store";
+import { ASSISTANT_MODE_ENABLED_KEY } from "../../utils/assistant-mode.utils";
 import * as localStorageUtils from "../../utils/local-storage.utils";
 import { LOCAL_STATE_STORAGE_KEY } from "../../utils/local-storage.utils";
 import {
@@ -159,6 +160,47 @@ describe("MigratorSideEffects", () => {
 
     const unmountSecond = mountMigrator();
     expect(getAppState().local.assistantModeEnabled).toBe(true);
+    expect(window.localStorage.getItem(LEGACY_MODE_FLAGS_MIGRATED_KEY)).toBe(
+      "1",
+    );
+    unmountSecond();
+  });
+
+  it("keeps the standalone source key when Zustand persistence fails, allowing retry on restart", () => {
+    window.localStorage.setItem(ASSISTANT_MODE_ENABLED_KEY, "true");
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const originalSetItem = window.localStorage.setItem.bind(
+      window.localStorage,
+    );
+    const setItemSpy = vi
+      .spyOn(window.localStorage, "setItem")
+      .mockImplementation((key: string, value: string) => {
+        if (key === LOCAL_STATE_STORAGE_KEY) {
+          throw new Error("quota exceeded");
+        }
+        return originalSetItem(key, value);
+      });
+
+    const unmountFirst = mountMigrator();
+    expect(window.localStorage.getItem(ASSISTANT_MODE_ENABLED_KEY)).toBe(
+      "true",
+    );
+    expect(
+      window.localStorage.getItem(LEGACY_MODE_FLAGS_MIGRATED_KEY),
+    ).toBeNull();
+    unmountFirst();
+
+    setItemSpy.mockRestore();
+    errorSpy.mockRestore();
+
+    // Simulate restart: in-memory state resets to defaults, source key still exists.
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+    window.localStorage.removeItem(LOCAL_STATE_STORAGE_KEY);
+
+    const unmountSecond = mountMigrator();
+    expect(getAppState().local.assistantModeEnabled).toBe(true);
+    expect(window.localStorage.getItem(ASSISTANT_MODE_ENABLED_KEY)).toBeNull();
     expect(window.localStorage.getItem(LEGACY_MODE_FLAGS_MIGRATED_KEY)).toBe(
       "1",
     );

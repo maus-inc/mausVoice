@@ -43,7 +43,7 @@ export function findProhibitedProductionDash(value) {
   if (typeof value !== "string" || value.length === 0) {
     return null;
   }
-  const match = value.match(PROHIBITED_DASH_RE);
+  const match = PROHIBITED_DASH_RE.exec(value);
   return match ? match[0] : null;
 }
 

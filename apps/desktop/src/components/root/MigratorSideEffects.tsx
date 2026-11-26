@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { getAppState, produceAppState } from "../../store";
+import { getAppState, produceAppState, useAppStore } from "../../store";
 import {
   ASSISTANT_MODE_ENABLED_KEY,
   POWER_MODE_ENABLED_KEY,
@@ -10,6 +10,7 @@ import {
   withLocalDataWriteSync,
 } from "../../utils/local-data-write-gate";
 import {
+  LOCAL_STATE_STORAGE_KEY,
   getLocalStorage,
   getLocalStorageBool,
 } from "../../utils/local-storage.utils";
@@ -26,23 +27,51 @@ type MigratedPreference = {
   update: (value: boolean) => void;
 };
 
+const isPersistedLocalFlagEqual = (
+  storage: Storage,
+  field: LegacyModeFlagField,
+  expected: boolean,
+): boolean => {
+  const storageKey =
+    useAppStore.persist.getOptions().name ?? LOCAL_STATE_STORAGE_KEY;
+  const raw = storage.getItem(storageKey);
+  if (!raw) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(raw) as {
+      state?: { local?: Record<string, unknown> };
+    };
+    return parsed?.state?.local?.[field] === expected;
+  } catch {
+    return false;
+  }
+};
+
 const migrateSinglePreference = (
   storage: Storage,
   lease: LocalDataWriteLease,
   migration: MigratedPreference,
   legacyShouldEnable: boolean,
-): void => {
+): boolean => {
   if (storage.getItem(migration.key) !== null) {
-    migration.update(getLocalStorageBool(migration.key));
+    const nextValue = getLocalStorageBool(migration.key);
+    migration.update(nextValue);
+    if (!isPersistedLocalFlagEqual(storage, migration.field, nextValue)) {
+      return false;
+    }
     withLocalDataWriteSync(() => {
       storage.removeItem(migration.key);
     }, lease);
-    return;
+    return true;
   }
 
   if (legacyShouldEnable && !migration.getCurrent()) {
     migration.update(true);
+    return isPersistedLocalFlagEqual(storage, migration.field, true);
   }
+
+  return true;
 };
 
 const buildModeMigrations = (
@@ -110,12 +139,15 @@ const runModeFlagMigrations = (
 
   for (const migration of buildModeMigrations(lease)) {
     try {
-      migrateSinglePreference(
+      const persisted = migrateSinglePreference(
         storage,
         lease,
         migration,
         allowLegacyHydration && pendingLegacyUpdates[migration.field] === true,
       );
+      if (!persisted) {
+        allSucceeded = false;
+      }
     } catch (error) {
       allSucceeded = false;
       console.error(

@@ -24,7 +24,7 @@ function walk(dir) {
     const rel = relative(srcRoot, fullPath).replaceAll("\\", "/");
     const lines = readFileSync(fullPath, "utf8").split(/\r?\n/);
     for (let i = 0; i < lines.length; i += 1) {
-      const match = lines[i].match(PROHIBITED_DASH_RE);
+      const match = PROHIBITED_DASH_RE.exec(lines[i]);
       if (match) {
         failures.push(
           `${rel}:${i + 1}: prohibited dash ${JSON.stringify(match[0])} in published docs`,
