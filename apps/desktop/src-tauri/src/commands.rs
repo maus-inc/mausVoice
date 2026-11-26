@@ -3592,13 +3592,20 @@ pub async fn clear_local_data(
         if current_pool.is_closed() {
             let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
                 .map_err(|err| err.to_string())?;
-            crate::system::voquill_migration::ensure_usable_pool(&dirs, database.inner())
-                .await
-                .map_err(|err| {
-                    format!(
-                        "Could not reopen the local database before clearing local data; restart the app or retry clearing: {err}"
-                    )
-                })?
+            let db = database.inner().clone();
+            let runtime_handle = tokio::runtime::Handle::current();
+            tauri::async_runtime::spawn_blocking(move || {
+                runtime_handle.block_on(async move {
+                    crate::system::voquill_migration::ensure_usable_pool(&dirs, &db).await
+                })
+            })
+            .await
+            .map_err(|err| format!("Database pool recovery task failed: {err}"))?
+            .map_err(|err| {
+                format!(
+                    "Could not reopen the local database before clearing local data; restart the app or retry clearing: {err}"
+                )
+            })?
         } else {
             current_pool
         }
