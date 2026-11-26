@@ -90,6 +90,15 @@ The window is a flat canvas with two chrome surfaces on it. The routed content a
 - The rail is flush against the window's left edge, square there and rounded on its right. It draws a hairline only on that right edge: the other three run into the window frame or into bare canvas, where a 1px line has nothing to separate.
 - Corner radius 16 for the rail, against 14 for cards inside it, and 12 for the caption buttons.
 
+## Scrolling
+
+The window does not scroll. The document clips itself in `MuiCssBaseline`, `AppViewport` is the one viewport-sized box, and each route owns the scroll its content needs. A route that lacks room opens a pane with `overflow-y: auto` on a box that is already constrained, never the document. `PageLayout`'s body is that pane for the pre-dashboard pages, the dashboard rail and content pane each own one, and the composer window's shell owns the composer's.
+
+- One scrollbar per direction. A second one means a pane is competing with the window, and the fix belongs in that pane's height chain, not in a global scrollbar rule.
+- `AppViewport` takes `height: 100%` and `width: 100%` from the baseline chain rather than `100dvh` and `100vw`. A viewport unit is sized as if no scrollbar exists (`css-values-4`), so it overflows the moment a pane's scrollbar appears.
+- Sighted-silent content imports `visuallyHidden` from `styles/a11y.ts`. It pins the clipped box to `top` and `left`, because an unpinned box keeps its static position, and the last pixel of that position is what made the document scroll (issue #366).
+- The scroll position belongs to the pane. Switching routes resets the incoming pane, and the rail keeps its own position, so one scroll never moves another surface.
+
 ## Window controls
 
 The Windows and Linux caption buttons are three square targets inset from the bar edges, not three flush strips, so the bar's own material is visible between them and against the window edge. That is what separates a control cluster from a row of divider lines. Geometry lives in `titleBarGeometry.ts`, which the resize grips also read, so the cluster and the grips cannot disagree.

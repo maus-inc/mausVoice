@@ -18,6 +18,7 @@ import {
   type ActivityGrid,
   type ActivityGridCell,
 } from "../../utils/activity-grid.utils";
+import { visuallyHidden } from "../../styles/a11y";
 import { activityHeatmap } from "../../styles/palette";
 import { activityHeatmapGeometry } from "../../styles/activity-heatmap";
 import { cssEase, duration, easeOutQuint } from "../../styles/motion";
@@ -72,19 +73,7 @@ const ActivityHeatmapHeader = ({
   status: DailyActivityStatus;
   activeDaysLabel: string;
 }) => (
-  <Box
-    sx={{
-      position: "absolute",
-      width: "1px",
-      height: "1px",
-      p: 0,
-      m: "-1px",
-      overflow: "hidden",
-      clip: "rect(0, 0, 0, 0)",
-      whiteSpace: "nowrap",
-      border: 0,
-    }}
-  >
+  <Box sx={visuallyHidden}>
     <Typography id="home-activity-heading">
       <FormattedMessage defaultMessage="Daily activity" />
     </Typography>
@@ -339,17 +328,7 @@ const AccessibleActivityList = ({
   <Box
     component="ol"
     aria-label={intl.formatMessage({ defaultMessage: "Daily word counts" })}
-    sx={{
-      position: "absolute",
-      width: "1px",
-      height: "1px",
-      p: 0,
-      m: "-1px",
-      overflow: "hidden",
-      clip: "rect(0, 0, 0, 0)",
-      whiteSpace: "nowrap",
-      border: 0,
-    }}
+    sx={visuallyHidden}
   >
     {cells.map((cell) => (
       <li key={cell.localDate}>

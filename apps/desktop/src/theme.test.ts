@@ -255,6 +255,27 @@ describe("theme mode configuration", () => {
   });
 });
 
+describe("document scroll ownership", () => {
+  it("clips the document so the app viewport is the only window box", () => {
+    const overrides = theme.components?.MuiCssBaseline?.styleOverrides;
+    if (typeof overrides !== "function") {
+      throw new Error("Expected the baseline overrides to be a function");
+    }
+    const styles = overrides(theme);
+    const clipping = {
+      height: "100%",
+      overflow: "hidden",
+      overscrollBehavior: "none",
+    };
+
+    expect(styles).toMatchObject({
+      html: clipping,
+      body: clipping,
+      "#root": { height: "100%" },
+    });
+  });
+});
+
 describe("palette variable consumers", () => {
   it.each([
     "./components/common/CopyableCommand.tsx",

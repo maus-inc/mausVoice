@@ -63,6 +63,19 @@ disabled, and loading where relevant.
 - The pill is the one place where movement conveys state (recording,
   transcribing, done) rather than decoration. It still must not bounce.
 
+## Layout and scrolling
+
+- **The window never scrolls.** `MuiCssBaseline` clips `html` and `body`, and
+  `AppViewport` is the only viewport-sized box, sized from the `100%` chain
+  rather than `100dvh`/`100vw`.
+- **Each route owns its scroll.** A surface that needs room puts
+  `overflow-y: auto` on a box that is already constrained. Never re-enable the
+  document scroller to make one page fit.
+- **Sighted-silent content imports `visuallyHidden`** from `styles/a11y.ts`
+  instead of copying the declaration set. The helper pins the clipped box with
+  `top` and `left`; an unpinned box keeps its static position and the last
+  pixel of it opens a window scrollbar.
+
 ## Native pill parity
 
 The pill is drawn three times (Direct2D, Core Graphics, Cairo). Keep the three
@@ -89,7 +102,8 @@ in agreement:
 1. Colours come from tokens; no `palette.mode` branch in `styleOverrides`.
 2. Hover, focus-visible and active states are all present.
 3. Motion is 120–180ms ease-out on named properties.
-4. Verified in **both** light and dark.
+4. Verified in **both** light and dark, with one scrollbar per direction and no
+   scrollbar on the window itself.
 5. For pill work: draw and hit-test share one helper, and the controls do not
    overlap the pill body.
 6. Stageshow walked: `.agents/skills/stageshow/references/craft.md` read before the

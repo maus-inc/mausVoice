@@ -1,9 +1,9 @@
-import { Box } from "@mui/material";
 import { isReadyForFullApp } from "../../actions/elevation.actions";
 import { useElevationStartupReady } from "../../hooks/elevation.hooks";
 import Router from "../../router";
 import { useAppStore } from "../../store";
 import { AppSideEffects } from "./AppSideEffects";
+import { AppViewport } from "./AppViewport";
 import { DictationSideEffects } from "./DictationSideEffects";
 import { ElevationDeclinedDialog } from "./ElevationDeclinedDialog";
 import { EditWatchSideEffects } from "./EditWatchSideEffects";
@@ -39,9 +39,7 @@ export const AppWithLoading = () => {
           <SessionSideEffects />
         </>
       )}
-      <Box sx={{ height: "100dvh", width: "100vw", overflow: "hidden" }}>
-        {readyForApp ? <Router /> : <LoadingApp />}
-      </Box>
+      <AppViewport>{readyForApp ? <Router /> : <LoadingApp />}</AppViewport>
     </>
   );
 };
