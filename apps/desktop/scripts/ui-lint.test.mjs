@@ -62,6 +62,14 @@ describe("ui-lint production dash guardrails", () => {
             defaultMessage="1\u20133 sentences"
             description="Translator note \u2014 never rendered"
           />
+          <FormattedMessage
+            defaultMessage="Expression description"
+            description={"Translator \u2014 expression note"}
+          />
+          <FormattedMessage
+            defaultMessage="Template description"
+            description={\`Translator \u2014 template note\`}
+          />
         </div>
       );
     `;

@@ -73,6 +73,13 @@ export const loadApiKeys = async (options?: {
     .finally(() => {
       if (loadApiKeysPromise === activePromise) {
         loadApiKeysPromise = null;
+        if (getAppState().settings.apiKeysStatus === "loading") {
+          produceAppState((draft) => {
+            if (draft.settings.apiKeysStatus === "loading") {
+              draft.settings.apiKeysStatus = "idle";
+            }
+          });
+        }
       }
     });
 

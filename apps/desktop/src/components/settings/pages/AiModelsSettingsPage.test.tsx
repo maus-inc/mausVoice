@@ -137,4 +137,52 @@ describe("AiModelsSettingsPage", () => {
       "Previous Voquill Cloud mode selections were reset to local or off during migration. Choose a local model or personal API provider below.",
     );
   });
+
+  it("omits Not configured and missing-key attention chips until API keys have loaded", () => {
+    for (const status of ["idle", "loading", "error"] as const) {
+      act(() => {
+        setAppState((s) => ({
+          ...s,
+          apiKeyById: {},
+          settings: {
+            ...s.settings,
+            apiKeys: [],
+            apiKeysStatus: status,
+            aiTranscription: {
+              ...s.settings.aiTranscription,
+              mode: "api",
+              selectedApiKeyId: "key-pending-load",
+            },
+          },
+        }));
+      });
+
+      render();
+
+      expect(container.textContent).not.toContain("Not configured");
+      expect(container.textContent).not.toContain("Needs attention");
+    }
+
+    act(() => {
+      setAppState((s) => ({
+        ...s,
+        apiKeyById: {},
+        settings: {
+          ...s.settings,
+          apiKeys: [],
+          apiKeysStatus: "success",
+          aiTranscription: {
+            ...s.settings.aiTranscription,
+            mode: "api",
+            selectedApiKeyId: "key-actually-missing",
+          },
+        },
+      }));
+    });
+
+    render();
+
+    expect(container.textContent).toContain("Not configured");
+    expect(container.textContent).toContain("Needs attention");
+  });
 });

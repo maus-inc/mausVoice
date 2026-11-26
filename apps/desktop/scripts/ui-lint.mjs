@@ -68,13 +68,20 @@ function isFormattedMessageTag(tag) {
   );
 }
 
+function enclosingJsxAttribute(node) {
+  let parent = node.parent;
+  if (parent && ts.isJsxExpression(parent)) {
+    parent = parent.parent;
+  }
+  return parent && ts.isJsxAttribute(parent) ? parent : null;
+}
+
 function isFormattedMessageDescription(node) {
-  const parent = node.parent;
-  if (!parent || !ts.isJsxAttribute(parent)) return false;
-  if (!ts.isIdentifier(parent.name) || parent.name.text !== "description") {
+  const attr = enclosingJsxAttribute(node);
+  if (!attr || !ts.isIdentifier(attr.name) || attr.name.text !== "description") {
     return false;
   }
-  return isFormattedMessageTag(parent.parent?.parent);
+  return isFormattedMessageTag(attr.parent?.parent);
 }
 
 const STRING_LIKE_KINDS = new Set([

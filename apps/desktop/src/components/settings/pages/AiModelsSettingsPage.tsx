@@ -6,6 +6,7 @@ import type { ChangeEvent } from "react";
 import { useEffect, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../../store";
+import type { ActionStatus } from "../../../types/state.types";
 import { getMyUserPreferences } from "../../../utils/user.utils";
 import {
   setFastStyleShortDictationsEnabled,
@@ -41,8 +42,17 @@ const openDialog = (
   });
 };
 
-const ApiKeyStatusChip = ({ apiKey }: { apiKey: ApiKey | null }) => {
+const ApiKeyStatusChip = ({
+  apiKey,
+  apiKeysStatus,
+}: {
+  apiKey: ApiKey | null;
+  apiKeysStatus: ActionStatus;
+}) => {
   if (!apiKey) {
+    if (apiKeysStatus !== "success") {
+      return null;
+    }
     return (
       <Chip
         size="small"
@@ -84,13 +94,14 @@ const getSelectedKeyAttentionState = (
   apiKeyById: Record<string, ApiKey | undefined>,
   mode: string | null | undefined,
   selectedApiKeyId: string | null | undefined,
+  apiKeysStatus: ActionStatus,
 ): SelectedKeyAttentionState => {
   if (mode !== "api" || !selectedApiKeyId) {
     return null;
   }
   const key = apiKeyById[selectedApiKeyId];
   if (!key) {
-    return "attention";
+    return apiKeysStatus === "success" ? "attention" : null;
   }
   if (isApiKeyUsable(key)) {
     return null;
@@ -115,6 +126,14 @@ const SelectedKeyAttentionChip = ({
     }
   />
 );
+
+const renderPersonalKeyChip = (
+  apiKey: ApiKey | null,
+  apiKeysStatus: ActionStatus,
+) =>
+  apiKey || apiKeysStatus === "success" ? (
+    <ApiKeyStatusChip apiKey={apiKey} apiKeysStatus={apiKeysStatus} />
+  ) : undefined;
 
 const AiModelsAttentionBanner = ({
   attentionKeyCount,
@@ -168,6 +187,7 @@ export default function AiModelsSettingsPage() {
   );
 
   const [
+    apiKeysStatus,
     deepgramKey,
     groqKey,
     attentionKeyCount,
@@ -182,6 +202,7 @@ export default function AiModelsSettingsPage() {
   ] = useAppStore(
     (state) =>
       [
+        state.settings.apiKeysStatus,
         findPersonalApiKey(state.settings.apiKeys, "deepgram"),
         findPersonalApiKey(state.settings.apiKeys, "groq"),
         countApiKeysNeedingAttention(state.settings.apiKeys),
@@ -189,16 +210,19 @@ export default function AiModelsSettingsPage() {
           state.apiKeyById,
           state.settings.aiTranscription.mode,
           state.settings.aiTranscription.selectedApiKeyId,
+          state.settings.apiKeysStatus,
         ),
         getSelectedKeyAttentionState(
           state.apiKeyById,
           state.settings.aiPostProcessing.mode,
           state.settings.aiPostProcessing.selectedApiKeyId,
+          state.settings.apiKeysStatus,
         ),
         getSelectedKeyAttentionState(
           state.apiKeyById,
           state.settings.agentMode.mode,
           state.settings.agentMode.selectedApiKeyId,
+          state.settings.apiKeysStatus,
         ),
         state.voquillMigration.report?.removedModesReset.length ?? 0,
         getEffectiveStylingMode(state),
@@ -243,7 +267,7 @@ export default function AiModelsSettingsPage() {
             <FormattedMessage defaultMessage="Your own Deepgram key, for fast streaming transcription." />
           }
           icon={<ProviderLogo provider="deepgram" size={22} />}
-          control={<ApiKeyStatusChip apiKey={deepgramKey} />}
+          control={renderPersonalKeyChip(deepgramKey, apiKeysStatus)}
           onClick={() => setKeyDialog("deepgram")}
         />
         <SettingRow
@@ -272,7 +296,7 @@ export default function AiModelsSettingsPage() {
             <FormattedMessage defaultMessage="Your own Groq key, for transcription and text generation." />
           }
           icon={<ProviderLogo provider="groq" size={22} />}
-          control={<ApiKeyStatusChip apiKey={groqKey} />}
+          control={renderPersonalKeyChip(groqKey, apiKeysStatus)}
           onClick={() => setKeyDialog("groq")}
         />
         <SettingRow

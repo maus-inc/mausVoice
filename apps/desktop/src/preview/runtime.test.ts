@@ -1033,4 +1033,28 @@ describe("browser preview transport", () => {
     }>("voquill_migration_status");
     expect(status.counts.providersNeedingAttention).toBe(2);
   });
+
+  it("counts invalid_format credentials in Voquill migration attention totals and action items", async () => {
+    applyPreviewScenario("voquill-migration");
+
+    const updated = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_update", {
+      request: { id: "personal-groq", key: ` ${"gsk"}_padded_1 ` },
+    });
+    expect(updated.credentialStatus).toBe("invalid_format");
+    expect(updated.credentialIssue).toBe("invalid_key_format");
+
+    const status = await invokePreviewCommand<{
+      counts: { providersNeedingAttention: number };
+      actionItems: { kind: string; count: number; providers: string[] }[];
+    }>("voquill_migration_status");
+    expect(status.counts.providersNeedingAttention).toBe(2);
+    expect(status.actionItems[0]).toMatchObject({
+      kind: "reenter_api_keys",
+      count: 2,
+      providers: ["groq", "openai"],
+    });
+  });
 });

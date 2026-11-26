@@ -77,14 +77,22 @@ describe("loadApiKeys", () => {
     resolveKeys([makeKey("key-pre-clear", "Stale Key")]);
     await pendingResolve;
     expect(getAppState().settings.apiKeys).toEqual([]);
-    expect(getAppState().settings.apiKeysStatus).toBe("loading");
+    expect(getAppState().settings.apiKeysStatus).toBe("idle");
 
     const pendingReject = loadApiKeys({ force: true });
     clearGenerationRef.current += 1;
     rejectKeys(new Error("aborted by clear"));
     await pendingReject;
     expect(getAppState().settings.apiKeys).toEqual([]);
-    expect(getAppState().settings.apiKeysStatus).toBe("loading");
+    expect(getAppState().settings.apiKeysStatus).toBe("idle");
+
+    // A subsequent non-forced load can recover cleanly (e.g. if clear failed).
+    const recoveredKey = makeKey("key-after-failed-clear", "Recovered Key");
+    listApiKeysMock.mockResolvedValueOnce([recoveredKey]);
+    await loadApiKeys();
+    expect(listApiKeysMock).toHaveBeenCalledTimes(3);
+    expect(getAppState().settings.apiKeys).toEqual([recoveredKey]);
+    expect(getAppState().settings.apiKeysStatus).toBe("success");
   });
 
   it("bypasses and invalidates an in-flight load when forced after DB promotion", async () => {

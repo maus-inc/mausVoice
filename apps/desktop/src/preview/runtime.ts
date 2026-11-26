@@ -871,7 +871,8 @@ class PreviewRuntime {
     const reentryProviders = new Set<string>();
     let providersNeedingAttention = 0;
     for (const apiKey of this.database.apiKeys.values()) {
-      if (apiKey.credentialStatus === "needs_reentry") {
+      const status = apiKey.credentialStatus ?? "usable";
+      if (status !== "usable") {
         providersNeedingAttention += 1;
         if (typeof apiKey.provider === "string") {
           reentryProviders.add(apiKey.provider);

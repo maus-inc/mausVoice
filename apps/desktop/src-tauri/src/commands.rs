@@ -3229,7 +3229,7 @@ fn api_key_to_view(api_key: ApiKey) -> ApiKeyView {
         log::warn!(
             "API key {} (provider={}) is not usable (status={:?}, issue={:?})",
             api_key.id,
-            api_key.provider,
+            crate::system::voquill_migration::safe_provider_display_name(&api_key.provider),
             inspection.status,
             inspection.issue
         );
@@ -3568,7 +3568,6 @@ pub async fn clear_local_data(
     // their reservation lock through the wipe so pre-clear inserts cannot run
     // between cancellation and cleanup. This lock comes before the native
     // local-data gate because transcription inserts acquire them in that order.
-    let pool = database.pool();
     // Refuse new recording claims before anything else observes the wipe, and
     // keep refusing them until the reset finishes. Combined with the native
     // clear gate below, no recorder can be admitted mid-wipe.
@@ -3582,6 +3581,10 @@ pub async fn clear_local_data(
     let native_clear_guard = crate::db::local_data_write_gate::begin_local_data_clear()
         .await
         .map_err(|err| err.to_string())?;
+    // Read the database pool only after acquiring the write gate so an active
+    // Voquill migration retry cannot swap out and close the captured pool
+    // before the clear query executes.
+    let pool = database.pool();
     // Discard in-memory composer drafts and close floating review windows so no
     // secondary WebView retains pre-clear transcripts or an active recognizer.
     floating_window_state.clear_all_composer_text();
