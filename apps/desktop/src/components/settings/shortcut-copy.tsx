@@ -73,8 +73,11 @@ const openChat: ShortcutCopy = {
   description: (
     <FormattedMessage defaultMessage="Open the current assistant conversation in the main window." />
   ),
+  // The key routes here rather than being inert, so the hint names the press
+  // and not the state it would unlock: "turn on the feature to open a
+  // conversation" reads as a condition, while this says what will happen.
   setupHint: (
-    <FormattedMessage defaultMessage="Turn on Assistant mode to open a conversation." />
+    <FormattedMessage defaultMessage="Opens the Assistant mode setting while the feature is off." />
   ),
 };
 
