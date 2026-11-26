@@ -2249,10 +2249,7 @@ enum MarkerVerification {
     IoError(String),
 }
 
-fn verify_promoted_db_matches_marker(
-    current_db: &Path,
-    marker_path: &Path,
-) -> MarkerVerification {
+fn verify_promoted_db_matches_marker(current_db: &Path, marker_path: &Path) -> MarkerVerification {
     let marker = match read_promotion_marker(marker_path) {
         Ok(Some(marker)) => marker,
         Ok(None) => return MarkerVerification::Mismatch,
@@ -2933,24 +2930,19 @@ struct RetrySwapMarkerSpec {
     removed_modes_reset: Vec<String>,
 }
 
-struct RetrySwapSyncHooks<FM, FP, FR> {
-    marker_sync: FM,
-    promote_sync: FP,
-    retire_sync: FR,
+struct RetrySwapSyncHooks {
+    marker_sync: fn(&Path) -> io::Result<()>,
+    promote_sync: fn(&Path) -> io::Result<()>,
+    retire_sync: fn(&Path) -> io::Result<()>,
 }
 
-fn swap_retry_database_on_disk_with_sync<FM, FP, FR>(
+fn swap_retry_database_on_disk_with_sync(
     staged_db: &Path,
     current_db: &Path,
     marker_path: &Path,
     spec: RetrySwapMarkerSpec,
-    sync_hooks: RetrySwapSyncHooks<FM, FP, FR>,
-) -> Result<Vec<&'static str>, RetrySwapError>
-where
-    FM: FnOnce(&Path) -> io::Result<()>,
-    FP: FnOnce(&Path) -> io::Result<()>,
-    FR: FnOnce(&Path) -> io::Result<()>,
-{
+    sync_hooks: RetrySwapSyncHooks,
+) -> Result<Vec<&'static str>, RetrySwapError> {
     let pre_retry_payload_sha256 = sha256_db_payload_hex(current_db).ok();
     let moved_suffixes = move_current_db_to_rollback_backup(current_db)?;
     let marker = PromotionMarker {
@@ -5249,9 +5241,11 @@ mod tests {
             &missing_staged,
             &current_db,
             &marker_path,
-            "deadbeef".to_string(),
-            "cafebabe".to_string(),
-            Vec::new(),
+            RetrySwapMarkerSpec {
+                staged_sha256: "deadbeef".to_string(),
+                staged_payload_sha256: "cafebabe".to_string(),
+                removed_modes_reset: Vec::new(),
+            },
         )
         .expect_err("missing staged db must fail promotion");
         assert_eq!(err.issue.code, "promote_io_error");
@@ -6582,12 +6576,9 @@ mod tests {
             false,
         );
 
-        let res = finish_startup_database_and_assets_with_sync(
-            &dirs,
-            initial_report,
-            true,
-            |_| Err(io::Error::other("simulated post-rename dir sync failure")),
-        )
+        let res = finish_startup_database_and_assets_with_sync(&dirs, initial_report, true, |_| {
+            Err(io::Error::other("simulated post-rename dir sync failure"))
+        })
         .await;
 
         assert_eq!(res.status, VoquillMigrationStatus::Partial);
