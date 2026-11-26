@@ -35,27 +35,34 @@ const boxExpression = (target) => `
   })()
 `;
 
+const captureFigure = async (client, id, recipe, loaded, scale) => {
+  if (recipe.route !== loaded.route) {
+    await navigate(client, `${baseUrl}${recipe.route}`);
+    loaded.route = recipe.route;
+  }
+  const box = await waitForBox(client, boxExpression(recipe.target ?? id));
+  if (!box) throw new Error(`capture target ${id} never rendered`);
+  return captureBox(client, box, scale, id);
+};
+
+const captureAll = async (client, scale, only) => {
+  const loaded = { route: null };
+  const files = [];
+  for (const [id, recipe] of Object.entries(PREVIEW_FIGURES)) {
+    if (!only || id === only) {
+      files.push(await captureFigure(client, id, recipe, loaded, scale));
+    }
+  }
+  return files;
+};
+
 const { only, scale } = readOptions(process.argv.slice(2));
 
 runCapture(async (client) => {
   await client.send("Emulation.setEmulatedMedia", {
     features: [{ name: "prefers-color-scheme", value: "dark" }],
   });
-
-  const files = [];
-  let loadedRoute = null;
-  for (const [id, recipe] of Object.entries(PREVIEW_FIGURES)) {
-    if (only && id !== only) continue;
-    if (recipe.route !== loadedRoute) {
-      await navigate(client, `${baseUrl}${recipe.route}`);
-      loadedRoute = recipe.route;
-    }
-
-    const box = await waitForBox(client, boxExpression(recipe.target ?? id));
-    if (!box) throw new Error(`capture target ${id} never rendered`);
-    files.push(await captureBox(client, box, scale, id));
-  }
-  return files;
+  return captureAll(client, scale, only);
 }).catch((error) => {
   console.error(error);
   process.exitCode = 1;

@@ -13,7 +13,7 @@ import { sleep, withChromium } from "./chromium.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const outputDir = resolve(here, "..", "..", "public", "guides");
+const outputDir = resolve(here, "..", "..", "public", "guides");
 
 export const readOptions = (argv) => {
   const onlyIndex = argv.indexOf("--only");
@@ -52,6 +52,15 @@ export const captureBox = async (client, box, scale, id) => {
   const file = join(outputDir, `${id}.png`);
   await writeFile(file, Buffer.from(shot.data, "base64"));
   return file;
+};
+
+/** Capture every box that survives `keep`, skipping ids the caller rejects. */
+export const captureBoxes = async (client, boxes, scale, keep = () => true) => {
+  const files = [];
+  for (const box of boxes) {
+    if (keep(box)) files.push(await captureBox(client, box, scale, box.id));
+  }
+  return files;
 };
 
 /**

@@ -14,7 +14,7 @@
  */
 import { PREVIEW_FIGURES } from "./figures.mjs";
 import {
-  captureBox,
+  captureBoxes,
   navigate,
   readOptions,
   runCapture,
@@ -41,13 +41,13 @@ runCapture(async (client) => {
   await navigate(client, `${stageUrl.href}?theme=dark`);
 
   const boxes = await client.evaluate(stageBoxes);
-  const files = [];
-  for (const box of boxes) {
-    if (only && box.id !== only) continue;
-    if (box.id in PREVIEW_FIGURES) continue;
-    files.push(await captureBox(client, box, scale, box.id));
-  }
-  return files;
+  return captureBoxes(
+    client,
+    boxes,
+    scale,
+    (box) =>
+      (!only || box.id === only) && !(box.id in PREVIEW_FIGURES),
+  );
 }).catch((error) => {
   console.error(error);
   process.exitCode = 1;
