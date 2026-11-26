@@ -23,13 +23,13 @@ The reference pages state what a control does. These guides show you where it si
 
 <Figure
   id="dictation-pill-states"
-  alt="The native pill in its recording, transcribing, and done states"
+  alt="The native pill on hover, while recording, and while loading a stage"
   title="One figure, three states"
   caption="Markers are keyed to the list under the figure. The list is the accessible copy of everything the markers point at."
   annotations={[
-    { n: 1, title: "Recording", detail: "Capture is live. The status dot uses the danger tint and pulses until you release the shortcut." },
-    { n: 2, title: "Transcribing", detail: "The audio is being converted, locally or through the selected provider." },
-    { n: 3, title: "Done", detail: "The text has been delivered. The pill reports the result, then returns to idle." },
+    { n: 1, title: "Idle, on hover", detail: "The pill at rest expands under the pointer and shows Click to dictate. Hovering never starts capture; the shortcut does." },
+    { n: 2, title: "Recording", detail: "Capture is live and the waveform follows the microphone level. Release the shortcut to stop." },
+    { n: 3, title: "Loading, with a stage", detail: "The audio is being transcribed. The label names the current stage, and a bar sweeps along the track beneath it until the transcript is ready." },
   ]}
 />
 
