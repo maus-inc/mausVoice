@@ -885,7 +885,7 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
             &message,
             measure,
             (preferred_w, action_w, reject_w),
-            (pill_y, ww, pill_x + pill_w / 2.0),
+            (pill_y, ww, wh, pill_x + pill_w / 2.0),
             flash_t,
             (&state.banner_lines, &state.banner_center),
         );

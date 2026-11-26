@@ -107,6 +107,14 @@ pub struct FlashBannerSpec {
     /// long error during dictation has the whole window to read in, and the
     /// window is also what clips, so it is the honest ceiling.
     pub available_width: f64,
+    /// How much vertical room the banner's surface has.
+    ///
+    /// This is how tall the painter's canvas is, and it is what bounds the
+    /// banner's height -- not the room above the pill, which is often smaller
+    /// than one line on the dictation canvas. The paint scales the banner down
+    /// about its centre to fit, and the frame's tests hold the wrap and the line
+    /// count across every surface size, so the surface is the honest bound.
+    pub available_height: f64,
     /// The pill's horizontal centre, which the banner is centred on.
     pub center_x: f64,
     /// Offset of the pill's top edge, so the banner can keep its gap above it.
@@ -186,6 +194,7 @@ impl FlashBannerSpec {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         available_width: f64,
+        available_height: f64,
         center_x: f64,
         pill_top: f64,
         constants: FlashBannerConstants,
@@ -195,6 +204,7 @@ impl FlashBannerSpec {
     ) -> Self {
         Self {
             available_width,
+            available_height,
             center_x,
             pill_top,
             gap: constants.gap,
@@ -234,7 +244,7 @@ impl FlashBannerSpec {
     /// `pill_top` is where the banner hangs from, and the room above it bounds
     /// the height.
     pub fn for_window(
-        window_width: f64,
+        (window_width, window_height): (f64, f64),
         pill_center_x: f64,
         pill_top: f64,
         constants: FlashBannerConstants,
@@ -244,6 +254,7 @@ impl FlashBannerSpec {
     ) -> Self {
         Self::new(
             window_width,
+            window_height,
             pill_center_x,
             pill_top,
             constants,
@@ -693,15 +704,33 @@ where
     let reserved_for_buttons: f64 =
         button_widths.iter().sum::<f64>() + button_widths.len() as f64 * gap;
 
-    // The banner hangs above the pill, so the room it has is from the top of the
-    // surface to the pill's top, less the gap. Everything below is bounded by
-    // that room rather than by a constant, because the pill sits lower on some
-    // surfaces than others and the tallest window is not the only one a toast is
-    // painted in.
+    // How tall the banner may be is the room above the pill, and only that room.
+    //
+    // The paint scales the banner down towards `BANNER_MIN_SCALE` while it fades
+    // in, but that is a transition, not a licence: a banner at full opacity is
+    // drawn at scale 1 and has to fit. So the budget is the room, unscaled.
+    //
+    // This is deliberately not the surface height. The typing surface is 362
+    // tall, but only 306 of it is above the pill, and bounding by the surface
+    // let a 336-unit banner through whose top came out at -30 -- the first lines
+    // off the canvas, which is the defect this exists to prevent. It also cannot
+    // ignore the room entirely: the same code paints into far less room on
+    // other surfaces, where a fixed ceiling would overrun by more.
+    //
+    // A room too small for even one line still yields the one-line floor, so a
+    // tiny surface shows a short banner rather than none; `banner_height` floors
+    // at `min_height` for exactly that reason.
+    let surface_height = sane(spec.available_height);
     let room_above_pill = (coordinate(spec.pill_top) - sane(spec.gap)).max(0.0);
+    // Never more than the surface even if the caller reports a room past it, and
+    // never more than the room when the room is the smaller of the two.
+    let room = if surface_height > 0.0 {
+        room_above_pill.min(surface_height)
+    } else {
+        room_above_pill
+    };
     let line_pitch = BANNER_TEXT_LINE.max(1.0);
-    let lines_that_fit = ((room_above_pill - sane(spec.min_height) - BANNER_PADDING_V * 2.0)
-        / line_pitch)
+    let lines_that_fit = ((room - sane(spec.min_height) - BANNER_PADDING_V * 2.0) / line_pitch)
         .floor()
         .max(0.0) as usize
         + 1;
@@ -900,7 +929,7 @@ impl FlashFrame {
         message: &str,
         measure: F,
         (preferred, action, reject): (f64, Option<f64>, Option<f64>),
-        (pill_top, window_width, pill_center_x): (f64, f64, f64),
+        (pill_top, window_width, window_height, pill_center_x): (f64, f64, f64, f64),
         fade_t: f64,
         (flash_lines, banner_center): (&Cell<usize>, &Cell<Option<(f64, f64)>>),
     ) -> (FlashBannerLayout, f64, f64, (f64, f64))
@@ -908,7 +937,7 @@ impl FlashFrame {
         F: Fn(&str) -> f64,
     {
         let spec = FlashBannerSpec::for_window(
-            window_width,
+            (window_width, window_height),
             pill_center_x,
             pill_top,
             FlashBannerConstants::canonical(),
@@ -1250,6 +1279,9 @@ mod tests {
     fn spec() -> FlashBannerSpec {
         FlashBannerSpec {
             available_width: 600.0,
+            // The typing surface. The fixture uses the window the reviewers
+            // measured against, so the room arithmetic is the real one.
+            available_height: 362.0,
             center_x: 300.0,
             pill_top: 300.0,
             gap: 6.0,
@@ -1469,6 +1501,49 @@ mod tests {
         assert!(
             layout.banner.y < -60.0,
             "the banner did not move with the dragged pill: {:?}",
+            layout.banner
+        );
+    }
+
+    /// The dictation surface is 86 tall, and its banner still wraps.
+    ///
+    /// This was raised as a regression: if the line ceiling is computed from the
+    /// room above the pill, the small canvas would leave so little of it that a
+    /// long message collapsed to one elided line. The arithmetic says otherwise
+    /// -- `74 - 6 = 68` units is two lines of 48 -- and this pins it so that a
+    /// later change to the floor or the padding cannot quietly take the second
+    /// line away without a test failing.
+    #[test]
+    fn a_banner_on_the_short_dictation_surface_still_wraps() {
+        // What `pill_position` computes: bottom-anchored with a 6-unit inset.
+        let (wh, pill_h, bottom_inset) = (86.0, 6.0, 6.0);
+        let pill_top = wh - bottom_inset - pill_h;
+        assert_eq!(pill_top, 74.0, "the fixture has to match the real pill");
+
+        let dictation = FlashBannerSpec {
+            available_width: 200.0,
+            available_height: wh,
+            pill_top,
+            center_x: 100.0,
+            preferred_text_width: 180.0,
+            ..spec()
+        };
+        let message = "the audio device was disconnected before the recording could be saved";
+        let layout = layout_flash_banner(&dictation, message, fixed(7.0));
+
+        assert!(
+            layout.lines.len() >= 2,
+            "the short surface collapsed the message to {} line(s)",
+            layout.lines.len()
+        );
+        assert!(
+            layout.banner.y >= 0.0,
+            "the banner left the short surface: {:?}",
+            layout.banner
+        );
+        assert!(
+            layout.banner.bottom() <= pill_top,
+            "the banner overlaps the pill: {:?}",
             layout.banner
         );
     }
@@ -2327,12 +2402,15 @@ mod tests {
             // Passing half the window width here is the defect the reviewers
             // found: the pill is 200 wide inside a 600-wide surface, so the
             // banner sat 200 units to its right for the whole expand animation.
-            // It is passed inline rather than through a named local so each of
-            // the three paint sites stays a one-line change; three copies of a
-            // comment and a binding were 24 of the 44 duplicated lines Sonar
-            // attributed to this PR.
+            // `wh` is the painter's own canvas height, which is what bounds the
+            // banner's height: on the dictation surface that is 86, not the 362
+            // of the typing window, and the room above the pill is measured
+            // against it. It is passed inline rather than through a named local
+            // so each of the three paint sites stays a one-line change; three
+            // copies of a comment and a binding were 24 of the 44 duplicated
+            // lines Sonar attributed to this PR.
             assert!(
-                source.contains("(pill_y, ww, pill_x + pill_w / 2.0),"),
+                source.contains("(pill_y, ww, wh, pill_x + pill_w / 2.0),"),
                 "{path} does not pass the pill's own centre to the shared layout"
             );
             assert!(
