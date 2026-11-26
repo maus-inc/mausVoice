@@ -9,23 +9,18 @@
  * dark colour scheme, screenshots the element carrying `data-capture="<id>"`,
  * and writes `apps/docs/public/guides/<id>.png`.
  */
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { PREVIEW_FIGURES } from "./figures.mjs";
-import { sleep, withChromium } from "./lib/chromium.mjs";
+import {
+  captureBox,
+  navigate,
+  readOptions,
+  runCapture,
+  waitForBox,
+} from "./lib/capture.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const outputDir = resolve(here, "..", "public", "guides");
 const baseUrl = process.env.PREVIEW_URL ?? "http://127.0.0.1:5193";
 
-const args = process.argv.slice(2);
-const onlyIndex = args.indexOf("--only");
-const only = onlyIndex >= 0 ? args[onlyIndex + 1] : null;
-const scaleIndex = args.indexOf("--scale");
-const scale = scaleIndex >= 0 ? Number(args[scaleIndex + 1]) : 2;
-
-const boxFor = (target) => `
+const boxExpression = (target) => `
   (() => {
     const node = document.querySelector('[data-capture="${target}"]');
     if (!node) return null;
@@ -40,49 +35,28 @@ const boxFor = (target) => `
   })()
 `;
 
-const main = async () => {
-  await mkdir(outputDir, { recursive: true });
-  const written = await withChromium(async (client) => {
-    await client.send("Emulation.setEmulatedMedia", {
-      features: [{ name: "prefers-color-scheme", value: "dark" }],
-    });
+const { only, scale } = readOptions(process.argv.slice(2));
 
-    const files = [];
-    let loadedRoute = null;
-    for (const [id, recipe] of Object.entries(PREVIEW_FIGURES)) {
-      if (only && id !== only) continue;
-      if (recipe.route !== loadedRoute) {
-        const loaded = client.once("Page.loadEventFired");
-        await client.send("Page.navigate", { url: `${baseUrl}${recipe.route}` });
-        await loaded;
-        await client.evaluate("document.fonts.ready.then(() => true)");
-        loadedRoute = recipe.route;
-      }
-
-      let box = null;
-      for (let attempt = 0; attempt < 60 && !box; attempt += 1) {
-        box = await client.evaluate(boxFor(recipe.target ?? id));
-        if (!box) await sleep(250);
-      }
-      if (!box) throw new Error(`capture target ${id} never rendered`);
-
-      const shot = await client.send("Page.captureScreenshot", {
-        format: "png",
-        captureBeyondViewport: true,
-        clip: { ...box, scale },
-      });
-      const file = join(outputDir, `${id}.png`);
-      await writeFile(file, Buffer.from(shot.data, "base64"));
-      files.push(file);
-    }
-    return files;
+runCapture(async (client) => {
+  await client.send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-color-scheme", value: "dark" }],
   });
 
-  console.log(`captured ${written.length} images`);
-  for (const file of written) console.log(`  ${file}`);
-};
+  const files = [];
+  let loadedRoute = null;
+  for (const [id, recipe] of Object.entries(PREVIEW_FIGURES)) {
+    if (only && id !== only) continue;
+    if (recipe.route !== loadedRoute) {
+      await navigate(client, `${baseUrl}${recipe.route}`);
+      loadedRoute = recipe.route;
+    }
 
-main().catch((error) => {
+    const box = await waitForBox(client, boxExpression(recipe.target ?? id));
+    if (!box) throw new Error(`capture target ${id} never rendered`);
+    files.push(await captureBox(client, box, scale, id));
+  }
+  return files;
+}).catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

@@ -9,7 +9,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const browserBin = process.env.CHROMIUM_BIN ?? "chromium";
+const browserBin = process.env.CHROMIUM_BIN ?? "chromium";
 export const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 const readPort = async (profileDir) => {
@@ -41,7 +41,7 @@ const connect = async (port) => {
   throw new Error("Chromium DevTools endpoint did not become ready");
 };
 
-export const createClient = (url) => {
+const createClient = (url) => {
   const socket = new WebSocket(url);
   let nextId = 1;
   const pending = new Map();
