@@ -72,6 +72,15 @@ pub const BANNER_MIN_MARGIN: f64 = 2.0;
 /// the 440 cap the broadcast transcript already uses.
 pub const BANNER_MAX_WIDTH: f64 = 480.0;
 
+/// Most lines the banner will show before it stops growing.
+///
+/// The height has to stay inside the window: the banner hangs above the pill,
+/// so a message long enough to need more lines than this would run off the top
+/// of the screen instead of off its sides. Twenty lines is 8 + 16 * 20 + 8 = 336
+/// at the canonical metrics, which clears the pill in a 362px window; anything
+/// past it is elided onto the last line, the way the transcript already elides.
+pub const BANNER_MAX_LINES: usize = 20;
+
 /// Narrowest banner the pill will draw.
 ///
 /// A one-word toast still needs to read as a banner rather than a pill, so the
@@ -472,6 +481,32 @@ where
     lines
 }
 
+/// Cuts the wrap down to [`BANNER_MAX_LINES`], eliding the last one kept.
+///
+/// The banner hangs above the pill, so a message long enough to need more lines
+/// than the ceiling would run off the top of the screen instead of off its
+/// sides -- the same failure #374 reports, moved from the edges to the ceiling.
+///
+/// The lines that fit are kept as they were wrapped, so nothing is re-flowed and
+/// no word moves. The last kept line has its own text elided, and the text that
+/// its elision displaced is carried into the same call, so a cut never loses
+/// more of the message than the one line it is allowed to shorten.
+fn elide_to_line_ceiling<F>(mut lines: Vec<String>, width: f64, measure: F) -> Vec<String>
+where
+    F: Fn(&str) -> f64,
+{
+    if lines.len() <= BANNER_MAX_LINES {
+        return lines;
+    }
+    // Everything from the last visible line onward becomes one run, so the
+    // elision can use the whole width instead of only what the wrapped line had.
+    let tail = lines.split_off(BANNER_MAX_LINES - 1).join(" ");
+    lines.push(crate::text_fit::elide_to_width(
+        &tail, width, "\u{2026}", measure,
+    ));
+    lines
+}
+
 /// Splits one over-wide word into a head that fits and the remainder.
 ///
 /// Binary search over character boundaries rather than a linear scan, for the
@@ -545,7 +580,11 @@ where
     // The banner width settles first because the text budget depends only on
     // it. Wrapping then decides the line count, and the height follows.
     let text_width = (banner_w - padding * 2.0 - reserved_for_buttons).max(0.0);
-    let lines = wrap_to_width(message, text_width, &measure);
+    let lines = elide_to_line_ceiling(
+        wrap_to_width(message, text_width, &measure),
+        text_width,
+        measure,
+    );
     let height = banner_height(
         lines.len(),
         spec.min_height,
@@ -1699,6 +1738,146 @@ mod tests {
                 "{path} still paints the banner at the fixed one-line height"
             );
         }
+    }
+
+    /// A very long message cannot grow the banner past the window.
+    ///
+    /// This is the other half of #374's bug. Before the wrap, a long message made
+    /// the banner wider than the window and the pill clipped it at the sides;
+    /// wrapping alone moved that failure to the top of the screen, where a few
+    /// thousand characters produced a 512px banner in a 362px window. The line
+    /// ceiling is what keeps the height inside the room the banner hangs in.
+    #[test]
+    fn a_very_long_message_stops_at_the_line_ceiling() {
+        let unit = 7.0;
+        let message =
+            "the audio device was disconnected before the recording could be saved ".repeat(60);
+
+        let layout = layout_flash_banner(&spec(), &message, fixed(unit));
+
+        assert_eq!(
+            layout.lines.len(),
+            BANNER_MAX_LINES,
+            "the banner grew past its line ceiling, so it would run off the top of the window"
+        );
+        let height = banner_height(
+            layout.lines.len(),
+            spec().min_height,
+            BANNER_PADDING_V,
+            BANNER_TEXT_LINE,
+        );
+        assert!(
+            height < 340.0,
+            "a {height}px banner does not fit in the room above a 362px pill window"
+        );
+        let last = layout.lines.last().expect("a banner always has a line");
+        assert!(
+            last.ends_with('\u{2026}'),
+            "the overflow was dropped instead of being elided, so words went missing: {last:?}"
+        );
+    }
+
+    /// The exact shape of the report: a 1960-character error, a 600px window.
+    ///
+    /// This is the fixture that produced a 512px banner in a 362px window before
+    /// the ceiling existed, so it is the one to keep: the banner now stays inside
+    /// the room it hangs in.
+    #[test]
+    fn a_thousands_of_characters_long_error_fits_above_the_pill() {
+        let unit = 7.0;
+        let message =
+            "the audio device was disconnected before the recording could be saved ".repeat(28);
+
+        let mut window = spec();
+        window.available_width = 600.0;
+        window.preferred_text_width = 4000.0;
+
+        let layout = layout_flash_banner(&window, &message, fixed(unit));
+        let height = banner_height(
+            layout.lines.len(),
+            window.min_height,
+            BANNER_PADDING_V,
+            BANNER_TEXT_LINE,
+        );
+
+        // 362px is the pill window; the banner hangs above the pill, so its
+        // bottom sits at the pill's top and its top must stay on screen.
+        assert!(
+            height <= 362.0 - 20.0,
+            "a {height}px banner does not fit above the pill in a 362px window"
+        );
+        assert!(
+            layout.lines.len() <= BANNER_MAX_LINES,
+            "the ceiling did not bound the line count"
+        );
+    }
+
+    /// And nothing is swallowed when the ceiling is reached.
+    ///
+    /// The ceiling keeps the banner's height bounded, and the risk it introduces
+    /// is silently dropping the tail. So this compares the elided banner against
+    /// the un-elided wrap of the same message word for word: every word up to the
+    /// last line must appear in the same order, and the last line must say it was
+    /// truncated.
+    #[test]
+    fn reaching_the_line_ceiling_keeps_every_word_it_shows() {
+        let unit = 7.0;
+        let message = "alpha beta gamma delta epsilon zeta eta theta iota kappa ".repeat(40);
+
+        // A message wide enough to be capped at the ceiling's width, which is the
+        // case a real window reaches. `spec()` on its own is a minimum-width
+        // banner of about five characters a line, and the ratio below would then
+        // measure the fixture rather than the elision.
+        let mut wide = spec();
+        wide.preferred_text_width = 1000.0;
+        let layout = layout_flash_banner(&wide, &message, fixed(unit));
+        let whole = wrap_to_width(&message, layout.text.w, fixed(unit));
+
+        assert_eq!(layout.lines.len(), BANNER_MAX_LINES);
+        assert!(
+            whole.len() > BANNER_MAX_LINES,
+            "the fixture has to overflow the ceiling for this to test anything"
+        );
+
+        let kept = &layout.lines[..BANNER_MAX_LINES - 1];
+        assert_eq!(
+            kept,
+            &whole[..BANNER_MAX_LINES - 1],
+            "the lines before the ceiling were rewritten, so word order changed"
+        );
+
+        let last = layout.lines.last().expect("a banner always has a line");
+        assert!(
+            last.ends_with('\u{2026}'),
+            "the tail was dropped without saying so: {last:?}"
+        );
+        // Compare on whole lines joined by a space: the wrap's lines are already
+        // word-bounded, and the elision trims the space before its own ellipsis,
+        // so this is the comparison that is about content rather than spacing.
+        let shown = kept
+            .iter()
+            .chain(std::iter::once(last))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let shown = shown
+            .split_once('\u{2026}')
+            .map_or(shown.as_str(), |(head, _)| head)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let all = whole.join(" ");
+
+        assert!(
+            all.starts_with(&shown),
+            "what the banner shows is not the start of the message, so text was reordered"
+        );
+        assert!(
+            shown.chars().count() * 2 > all.chars().count(),
+            "the ceiling kept only {} of {} characters, so most of the message vanished",
+            shown.chars().count(),
+            all.chars().count()
+        );
     }
 
     /// A visible banner counts down, and clears itself when the time is up.
