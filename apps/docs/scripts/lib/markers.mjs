@@ -77,7 +77,7 @@ const mountScript = (root) => `(() => {
   return true;
 })()`;
 
-const PAINT_BODY = String.raw`
+const PAINT_BODY = `
   const root = document.querySelector(__ROOT__);
   const layer = document.getElementById("guide-marker-layer");
   if (!root || !layer) throw new Error("marker layer is not mounted");

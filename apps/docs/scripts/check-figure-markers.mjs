@@ -18,15 +18,15 @@ import { APP_FIGURES } from "./figures.mjs";
 const docsRoot = fileURLToPath(new URL("..", import.meta.url));
 const contentDir = join(docsRoot, "src/content/docs");
 
+const filesIn = (dir, entry) => {
+  const path = join(dir, entry.name);
+  if (entry.isDirectory()) return mdxFiles(path);
+  return entry.name.endsWith(".mdx") ? [path] : [];
+};
+
 const mdxFiles = async (dir) => {
   const entries = await readdir(dir, { withFileTypes: true });
-  const nested = await Promise.all(
-    entries.map((entry) =>
-      entry.isDirectory()
-        ? mdxFiles(join(dir, entry.name))
-        : Promise.resolve(entry.name.endsWith(".mdx") ? [join(dir, entry.name)] : []),
-    ),
-  );
+  const nested = await Promise.all(entries.map((entry) => filesIn(dir, entry)));
   return nested.flat();
 };
 
@@ -48,11 +48,16 @@ const drawnMarkers = new Map(
   ]),
 );
 
+const sources = await Promise.all(
+  (await mdxFiles(contentDir)).map(async (file) => ({
+    name: file.slice(contentDir.length + 1),
+    source: await readFile(file, "utf8"),
+  })),
+);
+
 const failures = [];
 const rows = [];
-for (const file of await mdxFiles(contentDir)) {
-  const name = file.slice(contentDir.length + 1);
-  const source = await readFile(file, "utf8");
+for (const { name, source } of sources) {
   for (const { id, count } of figureBlocks(source)) {
     const drawn = drawnMarkers.get(id);
     if (drawn === undefined) {

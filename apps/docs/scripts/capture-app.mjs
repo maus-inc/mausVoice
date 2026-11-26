@@ -75,18 +75,19 @@ const waitForMarkers = async (session, id, recipe) => {
  * the product, but a card covering the panel a figure documents is not. The
  * cards mount after the page paints, so the click repeats until none is left.
  */
-const dismissTips = async (session) => {
-  const remaining = () =>
-    session.execute(
-      `return document.querySelectorAll('[data-tip-card]').length`,
-    );
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    if ((await remaining()) === 0) return;
-    await session.execute(
-      `document.querySelectorAll('[data-tip-card] button[aria-label]').forEach((button) => button.click())`,
-    );
-    await sleepFor(300); // NOSONAR javascript:S9382 dismissal is ordered per card
-  }
+const TIP_DISMISS_ATTEMPTS = 8;
+
+const dismissTips = async (session, attemptsLeft = TIP_DISMISS_ATTEMPTS) => {
+  if (attemptsLeft === 0) return;
+  const remaining = await session.execute(
+    `return document.querySelectorAll('[data-tip-card]').length`,
+  );
+  if (remaining === 0) return;
+  await session.execute(
+    `document.querySelectorAll('[data-tip-card] button[aria-label]').forEach((button) => button.click())`,
+  );
+  await sleepFor(300);
+  await dismissTips(session, attemptsLeft - 1);
 };
 
 const scrollTargetScript = (recipe) => {
