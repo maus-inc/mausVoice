@@ -7366,7 +7366,7 @@ mod tests {
         fs::copy(&staged_db, dirs_a.current_db_path()).unwrap();
         cleanup_staging(&dirs_a.staging_dir());
         fs::remove_dir_all(dirs_a.legacy_config_dir.as_ref().unwrap()).unwrap();
-        fs::remove_dir_all(dirs_a.legacy_data_dir.as_ref().unwrap()).unwrap();
+        assert!(!has_any_legacy_source(&dirs_a));
 
         let recovered_a = run_startup_migration(&dirs_a).await;
         assert_eq!(recovered_a.status, VoquillMigrationStatus::Completed);
