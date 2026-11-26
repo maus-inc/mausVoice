@@ -1,14 +1,21 @@
 // @vitest-environment jsdom
 import { Box } from "@mui/material";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requireElement } from "../../test/helpers/dom";
-import { ensureUiHarness } from "../../test/helpers/jsdom-ui-harness";
+import {
+  ensureUiHarness,
+  setMatchMedia,
+} from "../../test/helpers/jsdom-ui-harness";
 import { mountWithTheme } from "../../test/helpers/render";
 import { visuallyHidden } from "./a11y";
 
 ensureUiHarness();
 
 let mounted: ReturnType<typeof mountWithTheme> | null = null;
+
+beforeEach(() => {
+  setMatchMedia(false);
+});
 
 afterEach(() => {
   mounted?.unmount();
