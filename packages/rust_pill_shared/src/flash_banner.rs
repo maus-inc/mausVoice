@@ -1942,6 +1942,62 @@ mod tests {
         );
     }
 
+    /// Every field the generated impls read is declared by all three states.
+    ///
+    /// `impl_flash_host!` and `impl_celebration_host!` name fields that only the
+    /// pill crates declare, so a rename in one of them is a compile error on a
+    /// host this suite does not run on. That happened on this branch with the
+    /// banner's line count: three declarations had to be edited together, and
+    /// nothing here would have noticed one being missed. This asserts the set,
+    /// so a divergence fails on the host that can run.
+    #[test]
+    fn all_three_states_declare_the_fields_the_shared_impls_read() {
+        // Exactly the names `impl_flash_host!` and `impl_celebration_host!`
+        // reach for, plus the indicator the two caches live on.
+        let required = [
+            "flash_message",
+            "flash_is_error",
+            "flash_visible",
+            "flash_t",
+            "flash_velocity",
+            "flash_timer",
+            "flash_action",
+            "flash_action_label",
+            "flash_reject_action",
+            "flash_reject_action_label",
+            "fireworks_active",
+            "fireworks_elapsed",
+            "fireworks_next_launch",
+            "fireworks_rockets",
+            "indicator",
+        ];
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        for crate_dir in ["rust_gtk_pill", "rust_macos_pill", "rust_windows_pill"] {
+            let path = format!("../{crate_dir}/src/state.rs");
+            let source = std::fs::read_to_string(format!("{manifest}/{path}"))
+                .unwrap_or_else(|err| panic!("read {path}: {err}"));
+            for field in required {
+                // The declaration, not a mere occurrence: a renamed field still
+                // contains the old text as a prefix, which is exactly how a weak
+                // version of this assertion passed on a mutation.
+                let declared = format!("pub(crate) {field}:");
+                assert!(
+                    source.contains(&declared),
+                    "{path} does not declare `{field}`, which the shared impls read, so the \
+                     {crate_dir} crate cannot compile"
+                );
+            }
+            assert!(
+                source.contains("impl_flash_host!(crate::state::PillState)"),
+                "{path} does not wire up the shared flash impl"
+            );
+            assert!(
+                source.contains("impl_celebration_host!(crate::state::PillState)"),
+                "{path} does not wire up the shared celebration impl"
+            );
+        }
+    }
+
     /// A paint site must call only things this module still provides.
     ///
     /// A method that moves off `FlashHost` breaks every caller, and the break is
