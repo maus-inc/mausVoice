@@ -55,8 +55,8 @@ trade the issue asked for: a visible defect on one route instead of a second scr
 everywhere, and the composer's previous clipping became reachable through its own shell
 in the same change.
 
-The 39 generated specs needed nothing, because the shell is a property of the entry
-point rather than of a component's surface. The preview app needed one change of its own,
+The generated specs under `apps/preview/specs` needed nothing, because the shell is a
+property of the entry point rather than of a component's surface. The preview app needed one change of its own,
 `100vh` to `100%` on its shell and rail, since the baseline now clips the document there
 too.
 
