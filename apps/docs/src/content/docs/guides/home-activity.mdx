@@ -18,14 +18,14 @@ The heatmap is the part people ask about, because its colour scale is compressed
 
 <Figure
   id="home-heatmap"
-  alt="The Home dashboard with the daily-word heatmap, its three metric cards, and the legend"
+  alt="The Home analytics grid: streak, words this month, lifetime words and dictation speed around the daily-word heatmap and its legend"
   title="Anatomy of the daily-word heatmap"
-  caption="The capture shows a shortened range for legibility. The shipped grid runs 53 weeks, Monday first."
+  caption="Captured from the shipped Home analytics component in the dark theme. The grid runs 53 weeks, Monday first."
   annotations={[
     { n: 1, title: "Weekday rail", detail: "Seven rows, Monday at the top. Only every other label is drawn, so the rail stays quiet at ten-pixel cells." },
     { n: 2, title: "One cell per local date", detail: "The colour is the word count for that date. Dates group by the device's local calendar, not UTC, so a dictation at 23:50 belongs to the day you experienced." },
     { n: 3, title: "Latest week", detail: "The grid scrolls horizontally and opens on the most recent week. Older weeks are one scroll to the left, and resizing the window keeps the latest week in view." },
-    { n: 4, title: "Metric stack", detail: "Streak, words this month, and lifetime words sit beside the chart on a wide window and above it on a narrow one." },
+    { n: 4, title: "Metric stack", detail: "Day streak and words this month sit to the left of the chart, words total and dictation speed to the right. On a narrow window the chart moves to its own row under the metrics." },
   ]}
 />
 

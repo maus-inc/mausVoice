@@ -10,17 +10,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <span class="mv-shot">
   <img
-    class="mv-shot__light"
-    src={`${base}/guides/${id}-light.png`}
+    src={`${base}/guides/${id}.png`}
     alt={alt}
-    loading="lazy"
-    decoding="async"
-  />
-  <img
-    class="mv-shot__dark"
-    src={`${base}/guides/${id}-dark.png`}
-    alt=""
-    aria-hidden="true"
     loading="lazy"
     decoding="async"
   />

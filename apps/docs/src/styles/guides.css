@@ -809,18 +809,6 @@
   vertical-align: top;
 }
 
-.mv-shot__dark {
-  display: none;
-}
-
-[data-theme="dark"] .mv-shot__light {
-  display: none;
-}
-
-[data-theme="dark"] .mv-shot__dark {
-  display: block;
-}
-
 .mv-step__figure {
   display: block;
   margin-top: 0.7rem;

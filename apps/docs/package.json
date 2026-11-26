@@ -9,7 +9,8 @@
     "preview": "astro preview",
     "lint": "echo 'no lint configured'",
     "check-types": "astro check",
-    "figures": "node scripts/capture-guides.mjs"
+    "figures": "node scripts/capture-guides.mjs",
+    "figures:preview": "node scripts/capture-preview.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.3",

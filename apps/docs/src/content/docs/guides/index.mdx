@@ -10,7 +10,14 @@ import Steps from "../../../components/guides/Steps.astro";
 import Step from "../../../components/guides/Step.astro";
 import Callout from "../../../components/guides/Callout.astro";
 
-The reference pages state what a control does. These guides show you where it sits, what it looks like at each stage, and what happens next. Every figure is a capture of the shipped interface, in the theme you are reading, with numbered markers keyed to the list beneath it.
+The reference pages state what a control does. These guides show you where it sits, what it looks like at each stage, and what happens next. Every figure is drawn from the shipped interface and rendered in the dark theme, with numbered markers keyed to the list beneath it.
+
+<Callout title="Where a figure comes from">
+  Two surfaces need two methods, and each figure says which one it used.
+
+  - **The React surfaces**, which is the Home analytics grid and the settings and chat panels, are captured from the running component in `apps/preview`, the same harness the design system is verified against. Those images are pixel output of shipped code.
+  - **The pill and its review panel** are drawn by the Rust layer with Cairo and GTK, not by the web renderer, so there is no DOM to screenshot. Their figures are recreations rendered from the same geometry, radii, colours and type values the Rust code draws with, in `apps/docs/scripts/figure-stage.html`. They are accurate to those values, and they are not screenshots.
+</Callout>
 
 ## How to read a figure
 
@@ -30,7 +37,7 @@ Three conventions apply to every guide in this section.
 
 - A marker sits on the element it describes, at that element's top-left corner. A marker with a line under it marks a region rather than a control.
 - The figure caption states the precondition. A review panel, for example, only appears when **Review before insert** is on.
-- Light and dark are captured separately. If a colour or hairline looks wrong in one theme, the other theme shows what the value was meant to be.
+- Figures ship in the dark theme only. The dark palette carries the hairline contrast the annotations rely on, and one theme per figure keeps the set small and the review diff readable.
 
 ## The guides
 
@@ -65,16 +72,18 @@ Three conventions apply to every guide in this section.
   </Step>
 </Steps>
 
-<Callout title="Why captured figures and not one screenshot">
-  A single screenshot freezes one window size, one theme, and one version. These figures are captured per theme from the same tokens the app draws with, they stay legible at any width, and the capture script lives beside them, so a surface change is a one-command refresh rather than a scavenger hunt for a stale image.
+<Callout title="Why rendered figures and not one screenshot">
+  A single screenshot freezes one window size, one theme, and one version. These figures are rendered from the same tokens the app draws with, they stay legible at any width, and the capture scripts live beside them, so a surface change is a one-command refresh rather than a scavenger hunt for a stale image.
 </Callout>
 
 ## Regenerating the figures
 
-The figures are generated from `apps/docs/scripts/figure-stage.html` by `apps/docs/scripts/capture-guides.mjs`. The script drives headless Chromium over the DevTools protocol and writes both themes into `apps/docs/public/guides/`.
+Both scripts drive headless Chromium over the DevTools protocol and write one dark PNG per figure into `apps/docs/public/guides/`.
 
 ```bash
-pnpm --filter docs figures
+pnpm --filter docs figures          # the stage figures
+pnpm --filter @maus-inc/preview dev # then, in a second shell
+pnpm --filter docs figures:preview  # the figures captured from real components
 ```
 
-Run it after any change to a surface the guides show. The stage file and the captures are committed together, so a review can diff what changed.
+`apps/docs/scripts/figures.mjs` records which figures belong to the preview capture, so the two scripts never write the same file. Run both after a change to a surface the guides show. The stage file and the captures are committed together, so a review can diff what changed.
