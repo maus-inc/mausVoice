@@ -33,6 +33,9 @@
 
 use std::cell::{Cell, RefCell};
 
+/// The smallest scale the banner shrinks to as it fades in.
+pub const BANNER_MIN_SCALE: f64 = 0.5;
+
 /// Vertical padding above and below the banner text.
 ///
 /// Chosen with [`BANNER_TEXT_LINE`] so a single line lands on the banner's
@@ -187,6 +190,37 @@ impl FlashBannerSpec {
             // is the same number the draw sites used to pass on its own.
             preferred_text_width,
         }
+    }
+
+    /// Builds the spec for a toast painted in a pill window.
+    ///
+    /// The drawing space is shifted by the content offset before a paint runs,
+    /// so the pill's centre sits at `window_width / 2` in it while the window
+    /// still extends its full typing width around that point. The banner
+    /// therefore has the whole window to read in, in every mode, even when the
+    /// pill's own box is narrower: a long error during dictation is not
+    /// squeezed to the compact width.
+    ///
+    /// Every pill composed this the same way, and the numbers are the same on
+    /// all three, so the composition lives here rather than being written out
+    /// at each draw site.
+    pub fn for_window(
+        window_width: f64,
+        pill_top: f64,
+        constants: FlashBannerConstants,
+        preferred_text_width: f64,
+        action_width: Option<f64>,
+        reject_width: Option<f64>,
+    ) -> Self {
+        Self::new(
+            window_width,
+            window_width / 2.0,
+            pill_top,
+            constants,
+            preferred_text_width,
+            action_width,
+            reject_width,
+        )
     }
 }
 
@@ -525,6 +559,53 @@ where
         reject,
         action,
         lines,
+    }
+}
+
+/// One painted frame of the banner, resolved from a measured message.
+///
+/// The draw sites all did the same three things after measuring: lay the banner
+/// out, derive the scale and alpha from the fade spring, and publish the line
+/// count for the celebration tick that runs before the next paint. Those are
+/// the same decisions on every platform, so they are made here once.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlashFrame {
+    /// Where the banner, its text block and its buttons go.
+    pub layout: FlashBannerLayout,
+    /// The scale every painted coordinate is multiplied by.
+    pub scale: f64,
+    /// The alpha every painted colour is multiplied by.
+    pub alpha: f64,
+}
+
+impl FlashFrame {
+    /// Lay the banner out and derive the frame's scale and alpha.
+    ///
+    /// The line count the celebration needs is published to `flash_lines`
+    /// before returning, because the tick that launches the particles runs
+    /// before the paint that will measure this banner again.
+    pub fn resolve<F>(
+        spec: &FlashBannerSpec,
+        message: &str,
+        measure: F,
+        fade_t: f64,
+        flash_lines: &Cell<usize>,
+    ) -> Self
+    where
+        F: Fn(&str) -> f64,
+    {
+        let layout = layout_flash_banner(spec, message, measure);
+        flash_lines.set(layout.lines.len());
+        Self {
+            layout,
+            scale: BANNER_MIN_SCALE + (1.0 - BANNER_MIN_SCALE) * fade_t,
+            alpha: fade_t,
+        }
+    }
+
+    /// The point the banner is scaled about.
+    pub fn center(&self) -> (f64, f64) {
+        self.layout.center()
     }
 }
 
@@ -1317,8 +1398,12 @@ mod tests {
             let source = std::fs::read_to_string(format!("{manifest}/{path}"))
                 .unwrap_or_else(|err| panic!("read {path}: {err}"));
             assert!(
-                source.contains("flash_banner::layout_flash_banner("),
+                source.contains("flash_banner::FlashFrame::resolve("),
                 "{path} does not lay the flash banner out through the shared module"
+            );
+            assert!(
+                !source.contains("flash_banner::layout_flash_banner("),
+                "{path} lays the banner out directly, so the frame's scale and line count are decided there too"
             );
             assert!(
                 !source.contains("let flash_w ="),

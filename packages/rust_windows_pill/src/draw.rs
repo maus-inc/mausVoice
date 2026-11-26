@@ -635,15 +635,11 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let reject_w = button_width(reject_text);
 
     let (_, pill_y, _, _) = pill_position(state, ww, wh);
-    // The drawing space is shifted by the content offset before this runs, so
-    // the pill's centre sits at `ww / 2` in it while the window still extends
-    // `WINDOW_W_TYPING` wide around that point. The banner therefore has the
-    // whole window to read in, in every mode, even when the pill's own box is
-    // narrower: a long error during dictation is not squeezed to 200px.
-    let layout = rust_pill_shared::flash_banner::layout_flash_banner(
-        &rust_pill_shared::flash_banner::FlashBannerSpec::new(
+    // Layout, fade and the line count the celebration launches from: shared, so
+    // the three pills cannot disagree about any of them.
+    let frame = rust_pill_shared::flash_banner::FlashFrame::resolve(
+        &rust_pill_shared::flash_banner::FlashBannerSpec::for_window(
             WINDOW_W_TYPING as f64,
-            ww / 2.0,
             pill_y,
             flash_banner_constants(),
             preferred_w,
@@ -652,15 +648,13 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         ),
         &message,
         measure,
+        flash_t,
+        &state.flash_lines,
     );
-    // The celebration launches from the banner's centre and ticks before this
-    // runs, so the line count it needs is published here for the next frame.
-    state.flash_lines.set(layout.lines.len());
-
-    let scale = FLASH_MIN_SCALE + (1.0 - FLASH_MIN_SCALE) * flash_t;
-    let alpha = flash_t;
-
-    let (center_x, center_y) = layout.center();
+    let (center_x, center_y) = frame.center();
+    let layout = frame.layout;
+    let scale = frame.scale;
+    let alpha = frame.alpha;
 
     gfx.save();
     gfx.scale_around(center_x, center_y, scale, scale);

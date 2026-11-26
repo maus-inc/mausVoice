@@ -126,7 +126,6 @@ pub(crate) const WINDOW_H_TYPING: i32 = 362;
 // ── Flash message / toast ────────────────────────────────────────
 pub(crate) const FLASH_DURATION: f64 = 2.5;
 pub(crate) const FLASH_RADIUS: f64 = 12.0;
-pub(crate) const FLASH_MIN_SCALE: f64 = 0.5;
 pub(crate) const FLASH_ACTION_PADDING_H: f64 = 10.0;
 pub(crate) const FLASH_ACTION_RADIUS: f64 = 6.0;
 
