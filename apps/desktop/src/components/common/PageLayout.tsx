@@ -21,7 +21,6 @@ export const PageLayout = ({ header, footer, children }: PageLayoutProps) => (
     <Stack
       sx={{
         flexShrink: 0,
-        overscrollBehavior: "contain",
         px: { xs: 0.5, sm: 1 },
         pt: 0.5,
       }}
