@@ -887,7 +887,7 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
             (preferred_w, action_w, reject_w),
             (pill_y, WINDOW_W_TYPING as f64),
             flash_t,
-            &state.banner_lines,
+            (&state.banner_lines, &state.banner_center),
         );
 
     cr.save().ok();

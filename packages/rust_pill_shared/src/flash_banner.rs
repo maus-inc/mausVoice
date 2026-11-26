@@ -630,18 +630,14 @@ pub trait CelebrationHost {
         }
     }
 
-    /// Advances the burst one frame, launching from this pill's banner centre.
+    /// Advances the burst one frame from where the banner was last painted.
     ///
-    /// A pill's tick knows only its own width and where the pill sits; both the
-    /// banner centre and the burst's four fields are resolved here, so every
-    /// platform's tick is this one call.
-    fn tick_celebration(&self, dt: f64, pill_center_x: f64, pill_top: f64)
-    where
-        Self: FlashHost,
-    {
-        let origin =
-            self.celebration_origin(pill_center_x, pill_top, FlashBannerConstants::canonical());
-        self.fireworks().tick(dt, origin);
+    /// Only the paint knows how the message wrapped, so it records the centre
+    /// and this reads it back. A burst that arrives before any banner has
+    /// painted launches from `fallback`, which the caller derives from the
+    /// pill's own position.
+    fn tick_celebration(&self, dt: f64, fallback: (f64, f64), banner_center: Option<(f64, f64)>) {
+        self.fireworks().tick(dt, banner_center.unwrap_or(fallback));
     }
 }
 
@@ -701,7 +697,7 @@ impl FlashFrame {
         (preferred, action, reject): (f64, Option<f64>, Option<f64>),
         (pill_top, window_width): (f64, f64),
         fade_t: f64,
-        flash_lines: &Cell<usize>,
+        (flash_lines, banner_center): (&Cell<usize>, &Cell<Option<(f64, f64)>>),
     ) -> (FlashBannerLayout, f64, f64, (f64, f64))
     where
         F: Fn(&str) -> f64,
@@ -717,6 +713,7 @@ impl FlashFrame {
         let layout = layout_flash_banner(&spec, message, measure);
         flash_lines.set(layout.lines.len());
         let center = layout.center();
+        banner_center.set(Some(center));
         (
             layout,
             BANNER_MIN_SCALE + (1.0 - BANNER_MIN_SCALE) * fade_t,
@@ -871,6 +868,27 @@ macro_rules! impl_flash_host {
             }
         }
     };
+}
+
+/// Answers a toast button, then clears the toast.
+///
+/// The three pills wove this the same way: read the token for the button that
+/// was clicked, send it if there is one, and clear the banner either way. Only
+/// the send is the platform's, so it arrives as a callback and the decision
+/// order is written once here.
+///
+/// The clear happens after the send, so a send that fails cannot leave live
+/// buttons on a banner that is already on its way out.
+pub fn dismiss_flash<S: FlashHost>(state: &S, reject: bool, send: impl FnOnce(&str)) {
+    let token = if reject {
+        state.flash_reject_action()
+    } else {
+        state.flash_action()
+    };
+    if let Some(action) = token.borrow().clone() {
+        send(&action);
+    }
+    state.clear_flash();
 }
 
 /// The banner's centre without wrapping the message.

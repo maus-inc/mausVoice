@@ -2498,7 +2498,7 @@ fn tick_fireworks(state: &PillState) {
     let ww = state.draw_width.get();
     let wh = state.draw_height.get();
     let (_, pill_y, ..) = draw::pill_position(state, ww, wh);
-    state.tick_celebration(dt, ww / 2.0, pill_y);
+    state.tick_celebration(dt, (ww / 2.0, pill_y), state.banner_center.get());
 }
 
 /// The flame, swaying on its own schedule.

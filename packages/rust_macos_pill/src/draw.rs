@@ -646,7 +646,7 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             widths,
             (pill_y, WINDOW_W_TYPING as f64),
             flash_t,
-            &state.banner_lines,
+            (&state.banner_lines, &state.banner_center),
         );
 
     ctx.save();
