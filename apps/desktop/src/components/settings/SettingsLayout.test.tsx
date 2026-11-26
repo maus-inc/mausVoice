@@ -337,7 +337,7 @@ describe("SettingsLayout", () => {
     expect(getComputedStyle(column).zIndex).toBe("10");
   });
 
-  it("keeps the heading with its page, so the two centre as one block", async () => {
+  it("keeps the heading with its page, at the top of the surface", async () => {
     await render("/dashboard/settings/appearance");
 
     const heading = requireElement(
@@ -367,11 +367,9 @@ describe("SettingsLayout", () => {
     );
 
     // The heading and the page are wrapped in a block of their own rather than
-    // standing as two separate children of the column. That block is what
-    // carries the `auto` margins that centre the pair when the page is shorter
-    // than the surface. Centring the page alone left the heading stranded at
-    // the top and split the free space into two gaps — one under the heading,
-    // one under the page — which is the composition this keeps together.
+    // standing as two separate children of the column: the heading names the
+    // page below it, so the two scroll together and a page never slides under
+    // a heading that has stopped naming it.
     expect(contentColumn.children).toHaveLength(1);
     const block = requireElement(
       contentColumn.firstElementChild,
@@ -379,6 +377,13 @@ describe("SettingsLayout", () => {
     );
     expect(block.contains(heading)).toBe(true);
     expect(block.children.length).toBeGreaterThan(1);
+
+    // And that block starts at the top of the surface. It used to take `auto`
+    // margins, which centred a short page in the window: the heading then sat
+    // at a different height on every page, and the shortest page floated
+    // halfway down while the longest one started at the top.
+    expect(parseFloat(getComputedStyle(block).marginTop)).toBe(0);
+    expect(parseFloat(getComputedStyle(block).marginBottom)).toBe(0);
   });
 
   it.each([{ isComposing: true }, { keyCode: 229 }])(

@@ -236,6 +236,7 @@ export const YourModelsCard = () => {
           <FormattedMessage defaultMessage="Manage models" />
         </SettingGroupLink>
       }
+      leadsWith="tile"
     >
       <SettingSummaryRow
         linksTo="ai_transcription"

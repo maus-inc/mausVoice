@@ -1,0 +1,1112 @@
+{
+  "sizes": [
+    {
+      "width": 1280,
+      "height": 900,
+      "page": "home",
+      "heading": {
+        "text": "Overview",
+        "x": 520,
+        "y": 20,
+        "w": 736,
+        "h": 42
+      },
+      "labelColumns": [
+        977
+      ],
+      "headingColumns": [
+        593,
+        977
+      ],
+      "groups": [
+        {
+          "title": "Shortcuts",
+          "rows": 1,
+          "top": 177.2,
+          "height": 46.3,
+          "labelX": null,
+          "headingX": 593
+        },
+        {
+          "title": "Your models",
+          "rows": 3,
+          "top": 209.2,
+          "height": 257.9,
+          "labelX": 977,
+          "headingX": 977
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "page": "dictation",
+      "heading": {
+        "text": "Dictation",
+        "x": 520,
+        "y": 20,
+        "w": 736,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Microphone and feedback",
+          "rows": 2,
+          "top": 177.2,
+          "height": 153.3,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Language",
+          "rows": 2,
+          "top": 406.5,
+          "height": 153.3,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "While you dictate",
+          "rows": 3,
+          "top": 635.7,
+          "height": 259.3,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Output",
+          "rows": 5,
+          "top": 971,
+          "height": 390.3,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "page": "ai-models",
+      "heading": {
+        "text": "AI and models",
+        "x": 520,
+        "y": 20,
+        "w": 736,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Transcription",
+          "rows": 2,
+          "top": 177.2,
+          "height": 133,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Post processing",
+          "rows": 3,
+          "top": 386.2,
+          "height": 218.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Assistant",
+          "rows": 1,
+          "top": 681,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Styles",
+          "rows": 1,
+          "top": 824.5,
+          "height": 108,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "page": "shortcuts",
+      "heading": {
+        "text": "Shortcuts",
+        "x": 520,
+        "y": 20,
+        "w": 736,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Dictation",
+          "rows": 1,
+          "top": 177.2,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Styles",
+          "rows": 1,
+          "top": 320.7,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "page": "appearance",
+      "heading": {
+        "text": "Appearance",
+        "x": 520,
+        "y": 20,
+        "w": 736,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Pill",
+          "rows": 2,
+          "top": 177.2,
+          "height": 234.3,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Menu bar",
+          "rows": 1,
+          "top": 487.5,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Celebrations",
+          "rows": 1,
+          "top": 651.2,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "page": "privacy-data",
+      "heading": {
+        "text": "Privacy and data",
+        "x": 520,
+        "y": 20,
+        "w": 736,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "History and storage",
+          "rows": 2,
+          "top": 177.2,
+          "height": 153.3,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Dictionary learning",
+          "rows": 2,
+          "top": 406.5,
+          "height": 153.3,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Devices",
+          "rows": 1,
+          "top": 635.7,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "page": "system",
+      "heading": {
+        "text": "System",
+        "x": 520,
+        "y": 20,
+        "w": 736,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Startup",
+          "rows": 1,
+          "top": 177.2,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Input permissions",
+          "rows": 1,
+          "top": 367.2,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Updates",
+          "rows": 3,
+          "top": 510.7,
+          "height": 218.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Support",
+          "rows": 1,
+          "top": 805.5,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Legal",
+          "rows": 1,
+          "top": 949,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "page": "account",
+      "heading": {
+        "text": "Account",
+        "x": 520,
+        "y": 20,
+        "w": 736,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Profile",
+          "rows": 1,
+          "top": 177.2,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Danger zone",
+          "rows": 1,
+          "top": 328.9,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1100,
+      "height": 700,
+      "page": "home",
+      "heading": {
+        "text": "Overview",
+        "x": 520,
+        "y": 20,
+        "w": 556,
+        "h": 42
+      },
+      "labelColumns": [
+        593
+      ],
+      "headingColumns": [
+        593
+      ],
+      "groups": [
+        {
+          "title": "Shortcuts",
+          "rows": 1,
+          "top": 177.2,
+          "height": 46.3,
+          "labelX": null,
+          "headingX": 593
+        },
+        {
+          "title": "Your models",
+          "rows": 3,
+          "top": 331.5,
+          "height": 191.5,
+          "labelX": 593,
+          "headingX": 593
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1100,
+      "height": 700,
+      "page": "dictation",
+      "heading": {
+        "text": "Dictation",
+        "x": 520,
+        "y": 20,
+        "w": 556,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Microphone and feedback",
+          "rows": 2,
+          "top": 177.2,
+          "height": 153.3,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Language",
+          "rows": 2,
+          "top": 406.5,
+          "height": 173.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "While you dictate",
+          "rows": 3,
+          "top": 656,
+          "height": 299.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Output",
+          "rows": 5,
+          "top": 1031.7,
+          "height": 491.5,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1100,
+      "height": 700,
+      "page": "ai-models",
+      "heading": {
+        "text": "AI and models",
+        "x": 520,
+        "y": 20,
+        "w": 556,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Transcription",
+          "rows": 2,
+          "top": 177.2,
+          "height": 173.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Post processing",
+          "rows": 3,
+          "top": 426.7,
+          "height": 279.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Assistant",
+          "rows": 1,
+          "top": 782.2,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Styles",
+          "rows": 1,
+          "top": 946,
+          "height": 148.5,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1100,
+      "height": 700,
+      "page": "shortcuts",
+      "heading": {
+        "text": "Shortcuts",
+        "x": 520,
+        "y": 20,
+        "w": 556,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Dictation",
+          "rows": 1,
+          "top": 177.2,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Styles",
+          "rows": 1,
+          "top": 341,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1100,
+      "height": 700,
+      "page": "appearance",
+      "heading": {
+        "text": "Appearance",
+        "x": 520,
+        "y": 20,
+        "w": 556,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Pill",
+          "rows": 2,
+          "top": 177.2,
+          "height": 300.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Menu bar",
+          "rows": 1,
+          "top": 553.7,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Celebrations",
+          "rows": 1,
+          "top": 717.5,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1100,
+      "height": 700,
+      "page": "privacy-data",
+      "heading": {
+        "text": "Privacy and data",
+        "x": 520,
+        "y": 20,
+        "w": 556,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "History and storage",
+          "rows": 2,
+          "top": 177.2,
+          "height": 193.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Dictionary learning",
+          "rows": 2,
+          "top": 447,
+          "height": 173.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Devices",
+          "rows": 1,
+          "top": 696.5,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1100,
+      "height": 700,
+      "page": "system",
+      "heading": {
+        "text": "System",
+        "x": 520,
+        "y": 20,
+        "w": 556,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Startup",
+          "rows": 1,
+          "top": 177.2,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Input permissions",
+          "rows": 1,
+          "top": 387.5,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Updates",
+          "rows": 3,
+          "top": 551.2,
+          "height": 279.5,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Support",
+          "rows": 1,
+          "top": 906.7,
+          "height": 87.8,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Legal",
+          "rows": 1,
+          "top": 1070.5,
+          "height": 67.5,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 1100,
+      "height": 700,
+      "page": "account",
+      "heading": {
+        "text": "Account",
+        "x": 520,
+        "y": 20,
+        "w": 556,
+        "h": 42
+      },
+      "labelColumns": [
+        577
+      ],
+      "headingColumns": [
+        577
+      ],
+      "groups": [
+        {
+          "title": "Profile",
+          "rows": 1,
+          "top": 177.2,
+          "height": 108,
+          "labelX": 577,
+          "headingX": 577
+        },
+        {
+          "title": "Danger zone",
+          "rows": 1,
+          "top": 349.1,
+          "height": 128.3,
+          "labelX": 577,
+          "headingX": 577
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 800,
+      "height": 600,
+      "page": "home",
+      "heading": {
+        "text": "Overview",
+        "x": 256,
+        "y": 126.6,
+        "w": 520,
+        "h": 42
+      },
+      "labelColumns": [
+        329
+      ],
+      "headingColumns": [
+        329
+      ],
+      "groups": [
+        {
+          "title": "Shortcuts",
+          "rows": 1,
+          "top": 307,
+          "height": 46.3,
+          "labelX": null,
+          "headingX": 329
+        },
+        {
+          "title": "Your models",
+          "rows": 3,
+          "top": 461.3,
+          "height": 191.5,
+          "labelX": 329,
+          "headingX": 329
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 800,
+      "height": 600,
+      "page": "dictation",
+      "heading": {
+        "text": "Dictation",
+        "x": 256,
+        "y": 126.6,
+        "w": 520,
+        "h": 42
+      },
+      "labelColumns": [
+        313
+      ],
+      "headingColumns": [
+        313
+      ],
+      "groups": [
+        {
+          "title": "Microphone and feedback",
+          "rows": 2,
+          "top": 283.8,
+          "height": 153.3,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Language",
+          "rows": 2,
+          "top": 513,
+          "height": 173.5,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "While you dictate",
+          "rows": 3,
+          "top": 762.5,
+          "height": 299.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Output",
+          "rows": 5,
+          "top": 1138.3,
+          "height": 511.8,
+          "labelX": 313,
+          "headingX": 313
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 800,
+      "height": 600,
+      "page": "ai-models",
+      "heading": {
+        "text": "AI and models",
+        "x": 256,
+        "y": 126.6,
+        "w": 520,
+        "h": 42
+      },
+      "labelColumns": [
+        313
+      ],
+      "headingColumns": [
+        313
+      ],
+      "groups": [
+        {
+          "title": "Transcription",
+          "rows": 2,
+          "top": 307,
+          "height": 173.5,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Post processing",
+          "rows": 3,
+          "top": 556.5,
+          "height": 299.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Assistant",
+          "rows": 1,
+          "top": 932.3,
+          "height": 87.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Styles",
+          "rows": 1,
+          "top": 1096,
+          "height": 151.3,
+          "labelX": 313,
+          "headingX": 313
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 800,
+      "height": 600,
+      "page": "shortcuts",
+      "heading": {
+        "text": "Shortcuts",
+        "x": 256,
+        "y": 126.6,
+        "w": 520,
+        "h": 42
+      },
+      "labelColumns": [
+        313
+      ],
+      "headingColumns": [
+        313
+      ],
+      "groups": [
+        {
+          "title": "Dictation",
+          "rows": 1,
+          "top": 283.8,
+          "height": 87.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Styles",
+          "rows": 1,
+          "top": 447.5,
+          "height": 87.8,
+          "labelX": 313,
+          "headingX": 313
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 800,
+      "height": 600,
+      "page": "appearance",
+      "heading": {
+        "text": "Appearance",
+        "x": 256,
+        "y": 126.6,
+        "w": 520,
+        "h": 42
+      },
+      "labelColumns": [
+        313
+      ],
+      "headingColumns": [
+        313
+      ],
+      "groups": [
+        {
+          "title": "Pill",
+          "rows": 2,
+          "top": 283.8,
+          "height": 300.5,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Menu bar",
+          "rows": 1,
+          "top": 660.3,
+          "height": 87.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Celebrations",
+          "rows": 1,
+          "top": 824,
+          "height": 87.8,
+          "labelX": 313,
+          "headingX": 313
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 800,
+      "height": 600,
+      "page": "privacy-data",
+      "heading": {
+        "text": "Privacy and data",
+        "x": 256,
+        "y": 126.6,
+        "w": 520,
+        "h": 42
+      },
+      "labelColumns": [
+        313
+      ],
+      "headingColumns": [
+        313
+      ],
+      "groups": [
+        {
+          "title": "History and storage",
+          "rows": 2,
+          "top": 283.8,
+          "height": 193.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Dictionary learning",
+          "rows": 2,
+          "top": 553.5,
+          "height": 193.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Devices",
+          "rows": 1,
+          "top": 823.3,
+          "height": 67.5,
+          "labelX": 313,
+          "headingX": 313
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 800,
+      "height": 600,
+      "page": "system",
+      "heading": {
+        "text": "System",
+        "x": 256,
+        "y": 126.6,
+        "w": 520,
+        "h": 42
+      },
+      "labelColumns": [
+        313
+      ],
+      "headingColumns": [
+        313
+      ],
+      "groups": [
+        {
+          "title": "Startup",
+          "rows": 1,
+          "top": 283.8,
+          "height": 87.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Input permissions",
+          "rows": 1,
+          "top": 514.3,
+          "height": 87.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Updates",
+          "rows": 3,
+          "top": 678,
+          "height": 279.5,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Support",
+          "rows": 1,
+          "top": 1033.5,
+          "height": 87.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Legal",
+          "rows": 1,
+          "top": 1197.3,
+          "height": 67.5,
+          "labelX": 313,
+          "headingX": 313
+        }
+      ],
+      "overflowX": 0
+    },
+    {
+      "width": 800,
+      "height": 600,
+      "page": "account",
+      "heading": {
+        "text": "Account",
+        "x": 256,
+        "y": 126.6,
+        "w": 520,
+        "h": 42
+      },
+      "labelColumns": [
+        313
+      ],
+      "headingColumns": [
+        313
+      ],
+      "groups": [
+        {
+          "title": "Profile",
+          "rows": 1,
+          "top": 283.8,
+          "height": 87.8,
+          "labelX": 313,
+          "headingX": 313
+        },
+        {
+          "title": "Danger zone",
+          "rows": 1,
+          "top": 435.5,
+          "height": 108,
+          "labelX": 313,
+          "headingX": 313
+        }
+      ],
+      "overflowX": 0
+    }
+  ],
+  "consoleErrors": [],
+  "failedRequests": [],
+  "problems": []
+}

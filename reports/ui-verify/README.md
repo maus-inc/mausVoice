@@ -22,6 +22,7 @@ pnpm --filter @maus-inc/preview dev --port 5193
 # in another
 node scripts/verify/shot-home.mjs
 node scripts/verify/shot-mic-dialog.mjs
+node scripts/verify/shot-settings.mjs
 node scripts/verify/sweep-preview.mjs
 ```
 
@@ -36,12 +37,22 @@ Which URL each one reads:
 | `shot-home.mjs` | `PREVIEW_URL` | `http://127.0.0.1:5193` |
 | `sweep-preview.mjs` | `argv[2]`, then `PREVIEW_URL` | `http://127.0.0.1:5193` |
 | `shot-mic-dialog.mjs` | `HARNESS_URL` | `http://127.0.0.1:5193/verify-harness/mic-dialog.html` |
+| `shot-settings.mjs` | `HARNESS_URL` | `http://127.0.0.1:5193/verify-harness/settings.html` |
 
 The dialog has its own variable because it does not screenshot the ordinary app:
 it loads the verification harness, which mounts the dialog against faked native
 commands so every state is reachable in one page.
 
-All three write to `reports/ui-verify`, resolved from the script's own location
+`shot-settings.mjs` reads the same variable for the same reason. It walks every
+settings page at each window size the app allows (1280x900, 1100x700 and the
+800x600 minimum) and asserts the geometry rather than only recording it: every
+page starts on the same line, every row's label starts on one column within a
+page, every group heading sits on that column, no group draws a heading over an
+empty card, and nothing clips or overflows. Its report,
+`settings-layout.json`, keeps the derived columns per page so a layout change
+shows up as a readable diff.
+
+Every one of them writes to `reports/ui-verify`, resolved from the script's own location
 rather than the working directory. `OUT_DIR` overrides it.
 
 A binary screenshot in a diff is a review cost that a reviewer cannot read in a

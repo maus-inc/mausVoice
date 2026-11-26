@@ -87,7 +87,10 @@ describe("SettingRow", () => {
       "the control row",
     );
     expect(getComputedStyle(row).flexWrap).toBe("wrap");
-    const label = requireElement(row.firstElementChild, "the row text");
+    const label = requireElement(
+      row.querySelector(".setting-row-label"),
+      "the row text",
+    );
     const control = requireElement(row.lastElementChild, "the control column");
     expect(getComputedStyle(label).flexBasis).toBe("min(200px, 100%)");
     expect(getComputedStyle(control).flexBasis).not.toBe("min(200px, 100%)");
@@ -310,6 +313,127 @@ describe("SettingRow", () => {
 
     click(container.querySelector("#setting-spoken_commands input") as Element);
     expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens every row with the same leading column, icon or not", () => {
+    render(
+      <SettingGroup title="Mixed">
+        <SettingRow
+          settingKey="with_icon"
+          title="Leaves"
+          icon={<span>*</span>}
+        />
+        <SettingRow settingKey="without_icon" title="Stays" />
+        <SettingToggleRow
+          settingKey="toggles"
+          title="Toggles"
+          checked={false}
+          onChange={() => undefined}
+        />
+      </SettingGroup>,
+    );
+
+    const widths = ["with_icon", "without_icon", "toggles"].map((key) => {
+      const row = requireElement(
+        container.querySelector(`#setting-${key}`),
+        `the ${key} row`,
+      );
+      const slot = requireElement(
+        row.firstElementChild,
+        `the ${key} row's leading slot`,
+      );
+      expect(slot.getAttribute("aria-hidden")).toBe("true");
+      // The label follows the slot in every row. A row that sized its own
+      // slot, or dropped it when it had no icon, started its words on a
+      // different column from the row beside it.
+      expect(row.children[1]?.classList.contains("setting-row-label")).toBe(
+        true,
+      );
+      return Number.parseFloat(getComputedStyle(slot).width);
+    });
+
+    expect(new Set(widths).size).toBe(1);
+    expect(widths[0]).toBeGreaterThan(0);
+  });
+
+  it("sets a group heading on the column its rows' labels start on", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <SettingGroup title="Audio">
+          <SettingRow settingKey="audio" title="Audio" />
+        </SettingGroup>
+      </ThemeProvider>,
+    );
+
+    const row = requireElement(
+      container.querySelector("#setting-audio"),
+      "the row",
+    );
+    const slot = requireElement(row.firstElementChild, "the leading slot");
+    const heading = requireElement(
+      container.querySelector("h2"),
+      "the group heading",
+    );
+    const headingLine = requireElement(
+      heading.parentElement,
+      "the heading's line",
+    );
+    const rowInset = getComputedStyle(row).paddingLeft;
+    const slotWidth = getComputedStyle(slot).width;
+
+    // The heading is outside the card, so its inset is the card's content
+    // inset (the row's) plus the leading slot and the gap after it, which is
+    // the whole distance a row takes before its label starts. jsdom reports
+    // the theme's spacing as the `calc()` expression it is, so the assertion
+    // is on the composition; the rendered column is measured by the capture
+    // harness.
+    const headingInset = getComputedStyle(headingLine).paddingLeft;
+    expect(rowInset).not.toBe("0");
+    expect(slotWidth).not.toBe("0px");
+    expect(headingInset).toContain(rowInset);
+    expect(headingInset).toContain(slotWidth);
+  });
+
+  it("sets a tile-led group's heading on the width its rows lead with", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <SettingGroup title="Glyph-led">
+          <SettingRow settingKey="glyph" title="Glyph" />
+        </SettingGroup>
+        <SettingGroup title="Tile-led" leadsWith="tile">
+          <SettingRow settingKey="tile" title="Tile" />
+        </SettingGroup>
+      </ThemeProvider>,
+    );
+
+    const insets = ["Glyph-led", "Tile-led"].map((title) => {
+      const heading = requireElement(
+        Array.from(container.querySelectorAll("h2")).find(
+          (candidate) => candidate.textContent === title,
+        ),
+        `the ${title} heading`,
+      );
+      return getComputedStyle(requireElement(heading.parentElement, "the line"))
+        .paddingLeft;
+    });
+
+    // A summary row leads with a 40px tile where an ordinary row leads with a
+    // 24px glyph. A heading set once for the card has to be told which it is
+    // over, or it lines up with the wrong column by exactly that difference.
+    expect(insets[0]).toContain("24px");
+    expect(insets[1]).toContain("40px");
+    expect(insets[1]).not.toBe(insets[0]);
+  });
+
+  it("draws nothing for a group with no rows to show", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <SettingGroup title="Security">{false}</SettingGroup>
+        <SettingGroup title="Danger zone">{[]}</SettingGroup>
+      </ThemeProvider>,
+    );
+
+    expect(container.textContent).toBe("");
   });
 
   it("renders a group heading that a search result can name", () => {
