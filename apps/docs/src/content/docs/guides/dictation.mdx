@@ -14,19 +14,27 @@ One dictation crosses the same stages every time, and the pill is the only surfa
 
 This guide follows a single dictation from the key press to the text in the target field. The [dictation workflow reference](../using-mausvoice/dictation-workflow/) states the same stages as a list. This page shows them.
 
+## Where the input is configured
+
+<Figure
+  id="dictation-controls"
+  alt="Settings, Dictation, showing the Microphone and Audio rows under Microphone and feedback, and the Language section below them"
+  title="The microphone and the language"
+  caption="Captured from Settings, Dictation. The microphone row picks the input device, the audio row picks the chime, and the language row decides which language the transcriber expects."
+/>
+
+The microphone row lists the input devices the system reports. Auto follows the system default and switches when it changes. The audio row is about the recording, not the input: it sets the chime that marks the start and the stop, and holds the **Capture system audio** toggle where the platform supports it. The language row sets what the transcriber expects to hear, which is not the same as the language of the window you are typing into.
+
 ## What the pill reports
 
 <Figure
-  id="dictation-pill-states"
-  alt="The pill idle on hover, recording a waveform, and loading with a stage label"
-  title="Idle, recording, and loading"
-  caption="The pill keeps its position between states, so a state change never moves the thing you are watching."
-  annotations={[
-    { n: 1, title: "Idle on hover", detail: "The pill shows its idle label. It stays a fixed size whether or not you are dictating." },
-    { n: 2, title: "Recording", detail: "Capture is live and the pill widens into a scrolling waveform. Release the shortcut to stop." },
-    { n: 3, title: "Loading with a stage", detail: "Audio is being converted. The stage label names the current step, such as Polishing while post-processing runs. The first local transcription after launch also loads the model, so it takes longer than later ones." },
-  ]}
+  id="appearance"
+  alt="Settings, Appearance, showing the Pill visibility segment with Persistent, While active and Hidden, and the Reset pill position buttons"
+  title="Where the pill sits, and whether it stays"
+  caption="Captured from Settings, Appearance. Pill visibility decides whether the pill stays on screen between dictations, and the reset buttons bring it back to the current monitor or the one holding the pointer."
 />
+
+
 
 The pill has four states: idle, recording, paused, and loading. Only one is active at a time. A pill that stays in loading has not delivered anything yet, and the pill returns to idle on its own when the work ends. A successful delivery adds no pill message, because the text appearing in the field is the confirmation.
 
@@ -35,36 +43,26 @@ The pill has four states: idle, recording, paused, and loading. Only one is acti
 <Steps>
   <Step
     title="Hold the dictation shortcut"
-    image="dictation-step-1-hold"
-    alt="The macOS, Windows, and Linux default hold-to-dictate shortcuts"
   >
     The defaults are `Fn` on macOS, Left Windows/Meta plus Left Control on Windows, and Left Control plus Left Alt plus Space on Linux. Dictation is a hold action: the press starts capture and the release stops it. A saved custom binding replaces the default once it exists, and the reset button restores the platform default. The [default shortcuts reference](../reference/default-shortcuts/) lists the full set, including the actions that ship with no key at all.
   </Step>
   <Step
     title="Speak while the pill shows Listening"
-    image="dictation-step-2-speak"
-    alt="The pill in the recording state with a live capture waveform"
   >
     Capture uses the microphone selected in **Settings → Dictation → Microphone**. With **Real-time output** enabled, a session that emits committed segments, and **Verbatim** selected, each committed segment is inserted while you are still speaking. Any other style or provider delivers the text only when you release. [Real-time output](../using-mausvoice/real-time-output/) states the full condition, including the provider caveat. If the pill never leaves idle, the shortcut did not reach the app. The [hotkey troubleshooting guide](../troubleshooting/hotkeys/) separates a reserved combination from a permission problem.
   </Step>
   <Step
     title="Release to stop and pick an engine"
-    image="dictation-step-3-release"
-    alt="The pill in the transcribing state with the available transcription engines"
   >
     Releasing the shortcut ends capture. The audio goes to whichever engine the transcription settings select: the local sidecar running Whisper, Parakeet, Canary, or SenseVoice, or an API provider. Local engines keep audio on the device. A network provider sends the audio to that provider under its own retention terms, which the [data flow page](../privacy-security/data-flow/) states per provider.
   </Step>
   <Step
     title="Processing runs in a fixed order"
-    image="dictation-step-4-process"
-    alt="The processing stages in order: dictionary, silence filter, spoken commands, symbols, post-processing"
   >
     The raw transcript passes dictionary replacements, the silence hallucination filter, spoken commands, symbol conversion, and optional post-processing, in that order. The order matters. A dictionary replacement applies before post-processing, so a style cannot undo it. Post-processing itself is deterministic on the device for a short English prose dictation in a prose style, and goes to the generative provider for longer text, another language, a structured style, or a custom style.
   </Step>
   <Step
     title="The text is delivered to the focused target"
-    image="dictation-step-5-deliver"
-    alt="Text delivered into the focused field after the pill returns to idle"
   >
     Paste sends the text through the clipboard. Simulated typing sends keystrokes instead. Focus is read at delivery time, not at the start, so if you click into another field while a network provider is still working, the field with focus when delivery runs receives the text. This is the single most common cause of "it typed into the wrong place".
   </Step>
@@ -74,14 +72,18 @@ The pill has four states: idle, recording, paused, and loading. Only one is acti
 
 <Figure
   id="dictation-delivery"
-  alt="A draft message field holding the transcript, with the pill back at its idle label"
-  title="Delivery targets the focused field"
-  caption="The window shown is any other application. mausVoice does not own the insertion point."
-  annotations={[
-    { n: 1, title: "Focused field at delivery time", detail: "The only thing that decides where the text goes. Check it before you release if you have moved between apps." },
-    { n: 2, title: "Back to idle", detail: "Delivery adds no pill message, so the text itself is the confirmation. With the clipboard strategy, the previous clipboard contents come back after the paste, unless the field was not editable and the text is left on the clipboard instead." },
-  ]}
+  alt="Settings, Dictation, Output section: fast insertion options, real-time output, review before insert, dictation limit, and hands-free output delay"
+  title="The Output section decides how the text arrives"
+  caption="Captured from Settings, Dictation. Every row here changes what happens after the transcript is ready."
 />
+
+- **Fast insertion options** opens the delivery method. Paste goes through the clipboard, simulated typing sends keystrokes, and the list under it carries the per-app overrides and the choice that survives a restart.
+- **Real-time output** streams committed segments while you speak instead of pasting once at the end. It applies to Verbatim mode on the providers that emit segments.
+- **Review before insert** stops the transcript in the pill and asks you to decide, which the [review guide](./transcript-review/) covers.
+- **Dictation limit** stops a recording that runs past the set number of minutes.
+- **Hands-free output delay** waits a moment after you stop speaking before it delivers, so a pause mid-sentence does not end the dictation.
+
+The application that has focus at delivery time is the one that receives the text, not the one that had focus when you started.
 
 A failed insertion does not imply a failed transcription. The text may already be in History or on the clipboard. Check both before you change any provider setting, then work through focus, permissions, the paste shortcut, and the typing delay in that order.
 
@@ -89,22 +91,20 @@ A failed insertion does not imply a failed transcription. The text may already b
 
 The pill carries two side controls. Pause and resume sit on the left, cancel sits on the right, and both sit fully outside the pill body so a press on the pill itself still means the pill. **Escape** runs the same cancel action as the right control, so either route asks for one confirmation, and a second press within five seconds discards the recording. When a live-streaming provider already has the audio, the prompt says so, because that audio cannot be recalled.
 
-<Figure
-  id="dictation-controls"
-  alt="The pill with pause on the left and cancel on the right, and the cancelled state"
-  title="Cancel is a decision, not a failure"
-  caption="A cancelled dictation inserts nothing and leaves no failed row."
-  annotations={[
-    { n: 1, title: "Pause and resume", detail: "Left control. The session stays open while capture is suspended, so you can think without ending the dictation." },
-    { n: 2, title: "Cancel", detail: "Right control, or the cancel shortcut. The first press asks for confirmation and the second ends the session without inserting text." },
-  ]}
-/>
+A cancelled dictation inserts nothing and leaves no failed row. A cancelled dictation also writes no History row.
 
 <Callout title="Cancelling is not the same as a provider failure">
   A cancel ends the session on purpose and leaves no diagnostic evidence. A provider failure leaves a failed status and a reason you can act on. The [troubleshooting first response](../troubleshooting/first-response/) separates the two before you change any settings.
 </Callout>
 
 ## What is stored
+
+<Figure
+  id="privacy-data"
+  alt="Settings, Privacy and data, showing Incognito mode, Preserve audio on failure, Auto-learn dictionary and the Devices section"
+  title="The three retention switches"
+  caption="Captured from Settings, Privacy and data. Incognito stops the save entirely, Preserve audio on failure keeps the audio of a failed transcription, and Auto-learn dictionary keeps the names and words you correct."
+/>
 
 Unless Incognito is on, the app stores the transcription record and attempts to keep its audio snapshot. Automatic cleanup keeps managed audio for only the 20 newest rows that have audio, so a transcription older than that keeps its text and loses its audio. Incognito skips the saved row entirely, and **Include incognito in stats** decides whether the word count still reaches the Home heatmap.
 

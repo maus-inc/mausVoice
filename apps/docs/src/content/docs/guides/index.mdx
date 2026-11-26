@@ -10,81 +10,75 @@ import Steps from "../../../components/guides/Steps.astro";
 import Step from "../../../components/guides/Step.astro";
 import Callout from "../../../components/guides/Callout.astro";
 
-The reference pages state what a control does. These guides show you where it sits, what it looks like at each stage, and what happens next. Every figure comes from the shipped interface or from the values the native layer draws with, renders in the dark theme, and carries numbered markers keyed to the list beneath it.
+The reference pages state what a control does. These guides show you where it sits and what it looks like at each stage. Every figure is a screenshot of the running desktop app, in the dark theme, taken from the shipped build rather than redrawn for the page.
 
-<Callout title="Where a figure comes from">
-  Two surfaces need two methods, and each figure says which one it used.
+<Callout title="How a figure is made">
+  `apps/docs/scripts/capture-app.mjs` drives the built app through WebDriver. It
+  opens the route a figure documents, waits for the element the figure is
+  cropped to, closes any onboarding tip card in the way, and crops the region at
+  twice the display scale. The capture runs against a database filled by
+  `apps/docs/scripts/seed-guide-data.mjs`, so the figures show a plausible week
+  of dictation rather than an empty first run.
 
-  - **The React surfaces**, which is the Home analytics grid and the settings and chat panels, are captured from the running component in `apps/preview`, the same harness the design system is verified against. Those images are pixel output of shipped code.
-  - **The pill and its review panel** are drawn by the Rust layer with Cairo and GTK, not by the web renderer, so there is no DOM to screenshot. Their figures are recreations rendered from the same geometry, radii, colours and type values the Rust code draws with, in `apps/docs/scripts/figure-stage.html`. They are accurate to those values, and they are not screenshots.
+  A numbered badge is drawn over a live element, so a badge cannot point at
+  something the app no longer renders. Where a surface has no stable hook to
+  anchor a badge to, the figure carries a caption instead of a numbered list.
 </Callout>
 
 ## How to read a figure
 
 <Figure
-  id="dictation-pill-states"
-  alt="The native pill on hover, while recording, and while loading a stage"
-  title="One figure, three states"
-  caption="Markers are keyed to the list under the figure. The list is the accessible copy of everything the markers point at."
+  id="home-heatmap"
+  alt="The Home analytics grid: day streak, words this month, the daily-word heatmap with its weekday rail and legend, and the lifetime word count"
+  title="One figure, the whole analytics grid"
+  caption="Captured from the running app. Markers are keyed to the list under the figure."
   annotations={[
-    { n: 1, title: "Idle, on hover", detail: "The pill at rest expands under the pointer and shows Click to dictate. Hovering never starts capture; the shortcut does." },
-    { n: 2, title: "Recording", detail: "Capture is live and the waveform follows the microphone level. Release the shortcut to stop." },
-    { n: 3, title: "Loading, with a stage", detail: "The audio is being transcribed. The label names the current stage, and a bar sweeps along the track beneath it until the transcript is ready." },
+    { n: 1, title: "Weekday rail", detail: "Seven rows, Monday at the top. Only every other label is drawn, so the rail stays quiet at ten-pixel cells." },
+    { n: 2, title: "One cell per local date", detail: "The colour is the word count for that date, grouped by the device's local calendar rather than UTC." },
+    { n: 3, title: "Day streak", detail: "Consecutive days with at least one saved word. It sits beside the chart, not inside it." },
+    { n: 4, title: "Words total", detail: "The lifetime count, on the right. Dictation speed joins it once saved recordings carry an audio duration." },
   ]}
 />
 
 Three conventions apply to every guide in this section.
 
-- A marker sits on the element it describes, at that element's top-left corner. A marker with a line under it marks a region rather than a control.
-- A figure captured from a real component carries no drawn markers, because it is a screenshot. Its list names the regions in reading order, and the caption says so.
-- The figure caption states the precondition. A review panel, for example, only appears when **Review before insert** is on.
-- Figures ship in the dark theme only. The dark palette carries the hairline contrast the annotations rely on, and one theme per figure keeps the set small and the review diff readable.
+- A badge sits on the element it describes, at that element's top-left corner, or above it when the corner is crowded.
+- The number in the image and the number in the list under it always name the same thing. `scripts/check-figure-markers.mjs` fails the build when they disagree.
+- Figures ship in the dark theme only. One theme per figure keeps the set small and the review diff readable.
 
 ## The guides
 
 <Steps>
-  <Step
-    title="The dictation lifecycle"
-    image="dictation-step-1-hold"
-    alt="The platform default hold-to-dictate shortcuts"
-  >
-    From holding the shortcut to text appearing in the focused field, with the pill state at each stage, the two side controls, and the cancel path. [Open the dictation guide](./dictation/).
+  <Step title="The dictation lifecycle">
+    From holding the shortcut to text appearing in the focused field, the pill
+    state at each stage, the Output settings that decide how the text arrives,
+    and the cancel path. [Open the dictation guide](./dictation/).
   </Step>
-  <Step
-    title="Review before insert"
-    image="review-step-3-decide"
-    alt="The four decision buttons in the review panel"
-  >
-    The pill's panel, its four decisions plus the open icon, the five-minute expiry, and the queue that keeps a second transcript from overwriting the first. [Open the review guide](./transcript-review/).
+  <Step title="Review before insert">
+    Where **Review before insert** lives, what the panel holds, the expiry, and
+    why a second transcript waits instead of overwriting the first. [Open the
+    review guide](./transcript-review/).
   </Step>
-  <Step
-    title="Home activity"
-    image="home-step-2-read"
-    alt="A heatmap cell with its date and word-count tooltip"
-  >
-    The 53-week heatmap cell by cell, the three visual levels in the legend, the tooltip, the empty and future states, and the summary a screen reader gets. [Open the Home guide](./home-activity/).
+  <Step title="Home activity">
+    The 53-week heatmap cell by cell, the three legend levels, the tooltip, the
+    empty and future states, and the summary a screen reader gets. [Open the
+    Home guide](./home-activity/).
   </Step>
-  <Step
-    title="Assistant mode and Chats"
-    image="assistant-step-1-settings"
-    alt="The Assistant hotkey, Assistant mode, and Power mode rows"
-  >
-    The beta assistant, its permission prompts, power mode, and what an Open decision does to an agent's Paste. [Open the assistant guide](./assistant-and-chats/).
+  <Step title="Assistant mode and Chats">
+    The beta assistant, the provider it uses, its permission prompts, power
+    mode, and what an Open decision does to an agent's Paste. [Open the
+    assistant guide](./assistant-and-chats/).
   </Step>
 </Steps>
 
-<Callout title="Why rendered figures and not one screenshot">
-  A single screenshot freezes one window size, one theme, and one version. These figures are rendered from the same tokens the app draws with, they stay legible at any width, and the capture scripts live beside them, so a surface change is a one-command refresh rather than a scavenger hunt for a stale image.
-</Callout>
-
 ## Regenerating the figures
 
-Both scripts drive headless Chromium over the DevTools protocol and write one dark PNG per figure into `apps/docs/public/guides/`.
+The capture needs the built desktop app and a WebDriver host. Run it after a change to any surface a guide shows.
 
 ```bash
-pnpm --filter docs figures          # the stage figures
-pnpm --filter @maus-inc/preview dev # then, in a second shell
-pnpm --filter docs figures:preview  # the figures captured from real components
+pnpm --filter docs figures            # every figure in figures.mjs
+pnpm --filter docs figures -- --only home-heatmap   # one figure while iterating
+pnpm --filter docs figures:check      # marker counts against the annotation lists
 ```
 
-`apps/docs/scripts/figures.mjs` records which figures belong to the preview capture, so the two scripts never write the same file. Run both after a change to a surface the guides show. The stage file and the captures are committed together, so a review can diff what changed.
+`apps/docs/scripts/figures.mjs` is the list. Each entry names the route, the element the shot is cropped to, and the badges to draw. The PNGs land in `apps/docs/public/guides/` and are committed with the script change, so a review can diff what moved.

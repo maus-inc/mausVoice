@@ -1,7 +1,7 @@
 # Guide figures are captured, not screenshotted by hand
 
 Date: 2026-11-24
-Status: accepted, corrected 2026-11-26
+Status: superseded 2026-11-26, see the correction at the end
 
 ## Context
 
@@ -73,3 +73,18 @@ swap in `FigureImage.astro`. All three were wrong once the Home figure moved to
 a real capture and the set went dark-only, and the guides index also claimed
 every figure was a screenshot of the shipped interface, which was never true for
 the Rust-drawn pill. The record and the guides now state the split.
+
+## Correction, 2026-11-26: the stage is deleted and the figures come from the app
+
+The split above was reversed the same day. The stage file, `capture-guides.mjs`, `capture-preview.mjs` and the Chromium driver are gone, and every figure now comes from the built desktop app through WebDriver.
+
+The reason is that a recreation is not evidence. A stage that redrew the pill from copied geometry could drift from the pixels the Rust layer actually paints, and nothing in the pipeline noticed. A figure taken from the running app cannot drift. If a selector stops matching, the capture fails.
+
+What replaced it:
+
+- `apps/docs/scripts/capture-app.mjs` launches the debug build, drives it with tauri-driver and WebKitWebDriver, and crops the region each figure names.
+- `apps/docs/scripts/seed-guide-data.mjs` seeds transcriptions, dictionary terms, a chat thread, app targets, ten weeks of daily activity and the profile counters, so a figure shows a plausible history rather than zeros.
+- `apps/docs/scripts/figures.mjs` keeps one entry per figure, with the route, the crop target, and the optional marker list.
+- The guides annotate only what the captured surface can point at. Where the app has no stable hook for a badge, the figure carries a caption and the copy moves into the page.
+
+Surfaces the app never paints in its webview, which is the pill and its review panel, no longer appear as figures at all. The guides describe them in prose and show the settings that control them, which is what a reader can open and check.
