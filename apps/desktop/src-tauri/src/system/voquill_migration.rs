@@ -35,6 +35,7 @@ const ASSET_PROGRESS_FILENAME: &str = "voquill-migration-assets-progress.json";
 const STAGING_DIR_NAME: &str = ".voquill-migration-staging";
 const STAGED_DB_FILENAME: &str = "staged.db";
 const PROMOTION_MARKER_FILENAME: &str = ".voquill-db-promoting";
+const PROMOTION_TEMP_SUFFIX: &str = ".migrating.tmp";
 const PRE_RETRY_BACKUP_SUFFIX: &str = ".pre-retry.bak";
 const SQLITE_HEADER_MAGIC: &[u8; 16] = b"SQLite format 3\0";
 const SQLITE_MIN_HEADER_BYTES: usize = 100;
@@ -448,7 +449,14 @@ fn read_promotion_marker(path: &Path) -> Result<Option<PromotionMarker>, io::Err
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err),
     };
-    Ok(serde_json::from_slice::<PromotionMarker>(&raw).ok())
+    serde_json::from_slice::<PromotionMarker>(&raw)
+        .map(Some)
+        .map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Malformed Voquill promotion marker JSON: {err}"),
+            )
+        })
 }
 
 fn apply_progress_log_line(progress: &mut AssetMigrationProgress, line: &str) {
@@ -531,6 +539,7 @@ fn save_manifest(config_dir: &Path, report: &VoquillMigrationReport) -> io::Resu
     drop(file);
 
     fs::rename(&tmp, &target)?;
+    sync_dir_best_effort(config_dir)?;
     Ok(())
 }
 
@@ -561,10 +570,12 @@ fn load_manifest(config_dir: &Path) -> Option<VoquillMigrationReport> {
 }
 
 fn remove_staging_and_markers(config_dir: &Path) -> io::Result<()> {
+    let promotion_temp_filename = format!("{DB_FILENAME}{PROMOTION_TEMP_SUFFIX}");
     for filename in [
         "voquill-migration-state.json.tmp",
         PROMOTION_MARKER_FILENAME,
         ASSET_PROGRESS_FILENAME,
+        promotion_temp_filename.as_str(),
     ] {
         let path = config_dir.join(filename);
         match fs::remove_file(&path) {
@@ -930,12 +941,7 @@ where
     let current_db = dirs.current_db_path();
     if path_exists_no_follow(&current_db).await {
         cleanup_staging(&staging_dir);
-        return Err(PromoteError::NotInstalled(VoquillMigrationIssue {
-            category: "database".to_string(),
-            code: "existing_profile_conflict".to_string(),
-            detail: "An existing mausVoice database already exists and was kept untouched."
-                .to_string(),
-        }));
+        return Err(PromoteError::NotInstalled(existing_profile_conflict_issue()));
     }
 
     if let Some(parent) = current_db.parent() {
@@ -2156,9 +2162,7 @@ where
                 report.counts = staged.audit.counts;
                 report.removed_modes_reset = staged.removed_modes_reset;
                 attention_providers = staged.audit.attention_providers;
-                report
-                    .issues
-                    .retain(|issue| issue.code != "interrupted_previous_attempt");
+                clear_resolved_database_promotion_issues(&mut report);
                 // Checkpoint DB completion before removing the promotion marker
                 // so a manifest write failure keeps the marker for recovery.
                 match save_manifest(&dirs.current_config_dir, &report) {
@@ -2191,6 +2195,9 @@ where
             }
             Err(PromoteError::NotInstalled(issue)) => {
                 let _ = retire_promotion_marker_async(&marker_path).await;
+                if issue.code == "existing_profile_conflict" {
+                    return mark_existing_profile_conflict(&dirs.current_config_dir, report);
+                }
                 report.database_phase = VoquillMigrationPhaseStatus::Failed;
                 report.models_phase = VoquillMigrationPhaseStatus::Skipped;
                 report.audio_phase = VoquillMigrationPhaseStatus::Skipped;
@@ -2393,18 +2400,7 @@ fn reset_skipped_asset_phases_to_pending(report: &mut VoquillMigrationReport) {
     }
 }
 
-fn apply_recovered_database_audit(
-    report: &mut VoquillMigrationReport,
-    counts: VoquillMigrationCounts,
-    removed_modes_reset: Vec<String>,
-) {
-    report.counts = counts;
-    report.removed_modes_reset = removed_modes_reset;
-    report.database_phase = VoquillMigrationPhaseStatus::Migrated;
-    reset_skipped_asset_phases_to_pending(report);
-    report.status = VoquillMigrationStatus::Partial;
-    report.can_retry = true;
-    report.completed_at = None;
+fn clear_resolved_database_promotion_issues(report: &mut VoquillMigrationReport) {
     report.issues.retain(|issue| {
         !matches!(
             issue.code.as_str(),
@@ -2417,6 +2413,21 @@ fn apply_recovered_database_audit(
                 | "manifest_save_failed"
         )
     });
+}
+
+fn apply_recovered_database_audit(
+    report: &mut VoquillMigrationReport,
+    counts: VoquillMigrationCounts,
+    removed_modes_reset: Vec<String>,
+) {
+    report.counts = counts;
+    report.removed_modes_reset = removed_modes_reset;
+    report.database_phase = VoquillMigrationPhaseStatus::Migrated;
+    reset_skipped_asset_phases_to_pending(report);
+    report.status = VoquillMigrationStatus::Partial;
+    report.can_retry = true;
+    report.completed_at = None;
+    clear_resolved_database_promotion_issues(report);
 }
 
 fn new_startup_report(
@@ -2477,10 +2488,43 @@ async fn recover_pending_database_migration(
     let verified_marker = match verification {
         MarkerVerification::MatchesPromoted(marker) => marker,
         MarkerVerification::MatchesRolledBackPreRetry => {
+            let mut rolled_back = existing.clone();
+            rolled_back.database_phase = VoquillMigrationPhaseStatus::Failed;
+            for phase in [
+                &mut rolled_back.models_phase,
+                &mut rolled_back.audio_phase,
+                &mut rolled_back.storage_phase,
+            ] {
+                if *phase == VoquillMigrationPhaseStatus::Pending {
+                    *phase = VoquillMigrationPhaseStatus::Skipped;
+                }
+            }
+            rolled_back
+                .issues
+                .retain(|issue| issue.code != "recovery_marker_io_error");
+            if rolled_back.issues.is_empty() {
+                rolled_back.issues.push(VoquillMigrationIssue {
+                    category: "database".to_string(),
+                    code: "interrupted_previous_attempt".to_string(),
+                    detail: "A previous Voquill retry rolled back to the empty mausVoice database. Retry to import your Voquill profile.".to_string(),
+                });
+            }
+            finalize_status_and_actions(&mut rolled_back, Vec::new());
+            rolled_back.can_retry = true;
+            // Persist the verified rolled-back manifest before retiring the
+            // promotion marker so a crash or save failure keeps the marker
+            // intact instead of stranding `mausvoice.db` without a manifest.
+            if let Err(err) = save_manifest(&dirs.current_config_dir, &rolled_back) {
+                log::warn!(
+                    "Failed to persist rolled-back Voquill migration manifest; keeping recovery marker: {err}"
+                );
+                mark_manifest_save_failure(&mut existing, &err);
+                return existing;
+            }
             if let Err(err) = retire_promotion_marker_async(&marker_path).await {
                 return record_recovery_verification_failure(
                     &dirs.current_config_dir,
-                    existing,
+                    rolled_back,
                     VoquillMigrationIssue {
                         category: "database".to_string(),
                         code: "recovery_marker_io_error".to_string(),
@@ -2490,29 +2534,7 @@ async fn recover_pending_database_migration(
                     },
                 );
             }
-            existing.database_phase = VoquillMigrationPhaseStatus::Failed;
-            for phase in [
-                &mut existing.models_phase,
-                &mut existing.audio_phase,
-                &mut existing.storage_phase,
-            ] {
-                if *phase == VoquillMigrationPhaseStatus::Pending {
-                    *phase = VoquillMigrationPhaseStatus::Skipped;
-                }
-            }
-            if existing.issues.is_empty() {
-                existing.issues.push(VoquillMigrationIssue {
-                    category: "database".to_string(),
-                    code: "interrupted_previous_attempt".to_string(),
-                    detail: "A previous Voquill retry rolled back to the empty mausVoice database. Retry to import your Voquill profile.".to_string(),
-                });
-            }
-            finalize_status_and_actions(&mut existing, Vec::new());
-            existing.can_retry = true;
-            if let Err(err) = save_manifest(&dirs.current_config_dir, &existing) {
-                log::warn!("Failed to persist rolled-back Voquill migration manifest: {err}");
-            }
-            return existing;
+            return rolled_back;
         }
         MarkerVerification::IoError(detail) => {
             return record_recovery_verification_failure(
@@ -2825,38 +2847,78 @@ pub async fn refresh_migration_report(
         VoquillMigrationPhaseStatus::Failed | VoquillMigrationPhaseStatus::Pending
     ) {
         let marker_path = dirs.promotion_marker_path();
-        let has_recovery_marker = path_exists_no_follow(&marker_path).await;
-        if has_recovery_marker {
+        if path_exists_no_follow(&marker_path).await {
             let check_db = dirs.current_db_path();
             let check_marker = marker_path.clone();
-            let is_rolled_back_marker = matches!(
-                tokio::task::spawn_blocking(move || {
-                    verify_promoted_db_matches_marker(&check_db, &check_marker)
-                })
-                .await,
-                Ok(MarkerVerification::MatchesRolledBackPreRetry)
-            );
-            if !is_rolled_back_marker {
-                report.status = VoquillMigrationStatus::Partial;
-                report.can_retry = true;
-                if !report.issues.iter().any(|issue| {
-                    matches!(
-                        issue.code.as_str(),
-                        "manifest_save_failed"
-                            | "recovery_open_failed"
-                            | "recovery_audit_failed"
-                            | "recovery_marker_io_error"
-                            | "promote_sync_failed"
-                    )
-                }) {
+            let verification = match tokio::task::spawn_blocking(move || {
+                verify_promoted_db_matches_marker(&check_db, &check_marker)
+            })
+            .await
+            {
+                Ok(result) => result,
+                Err(err) => MarkerVerification::IoError(format!(
+                    "Voquill promotion recovery verification task failed: {err}"
+                )),
+            };
+            match verification {
+                MarkerVerification::MatchesPromoted(_) => {
+                    report.status = VoquillMigrationStatus::Partial;
+                    report.can_retry = true;
+                    if !report.issues.iter().any(|issue| {
+                        matches!(
+                            issue.code.as_str(),
+                            "manifest_save_failed"
+                                | "recovery_open_failed"
+                                | "recovery_audit_failed"
+                                | "recovery_marker_io_error"
+                                | "promote_sync_failed"
+                        )
+                    }) {
+                        report.issues.push(VoquillMigrationIssue {
+                            category: "database".to_string(),
+                            code: "manifest_save_failed".to_string(),
+                            detail: "Voquill database promotion completed, but migration state could not be saved yet. Retry to finish recording migration state and remaining assets.".to_string(),
+                        });
+                    }
+                    rebuild_action_items(&mut report, Vec::new());
+                    return report;
+                }
+                MarkerVerification::IoError(detail) => {
+                    report.status = VoquillMigrationStatus::Partial;
+                    report.can_retry = true;
+                    report
+                        .issues
+                        .retain(|issue| issue.code != "recovery_marker_io_error");
                     report.issues.push(VoquillMigrationIssue {
                         category: "database".to_string(),
-                        code: "manifest_save_failed".to_string(),
-                        detail: "Voquill database promotion completed, but migration state could not be saved yet. Retry to finish recording migration state and remaining assets.".to_string(),
+                        code: "recovery_marker_io_error".to_string(),
+                        detail,
                     });
+                    rebuild_action_items(&mut report, Vec::new());
+                    return report;
                 }
-                rebuild_action_items(&mut report, Vec::new());
-                return report;
+                MarkerVerification::Mismatch => {
+                    report.status = VoquillMigrationStatus::SkippedExistingProfile;
+                    report.database_phase = VoquillMigrationPhaseStatus::Skipped;
+                    report.models_phase = VoquillMigrationPhaseStatus::Skipped;
+                    report.audio_phase = VoquillMigrationPhaseStatus::Skipped;
+                    report.storage_phase = VoquillMigrationPhaseStatus::Skipped;
+                    report.can_retry = false;
+                    if !report
+                        .issues
+                        .iter()
+                        .any(|issue| issue.code == "existing_profile_conflict")
+                    {
+                        report.issues.push(VoquillMigrationIssue {
+                            category: "database".to_string(),
+                            code: "existing_profile_conflict".to_string(),
+                            detail: "An existing mausVoice database does not match the Voquill promotion recovery marker and was kept untouched.".to_string(),
+                        });
+                    }
+                    rebuild_action_items(&mut report, Vec::new());
+                    return report;
+                }
+                MarkerVerification::MatchesRolledBackPreRetry => {}
             }
         }
         let legacy_db_present = match dirs.legacy_db_path() {
@@ -2980,12 +3042,17 @@ fn swap_retry_database_on_disk_with_sync(
             installed_unsynced: true,
         }),
         Err(PromoteError::NotInstalled(issue)) => {
-            let backup_restored = restore_rollback_backup(current_db, &moved_suffixes).is_ok();
-            let marker_retired = backup_restored
+            let backup_handled = if issue.code == "existing_profile_conflict" {
+                remove_rollback_backup(current_db);
+                true
+            } else {
+                restore_rollback_backup(current_db, &moved_suffixes).is_ok()
+            };
+            let marker_retired = backup_handled
                 && retire_promotion_marker_with_sync(marker_path, sync_hooks.retire_sync).is_ok();
             Err(RetrySwapError {
                 issue,
-                restored_ok: backup_restored && marker_retired,
+                restored_ok: backup_handled && marker_retired,
                 installed_unsynced: false,
             })
         }
@@ -3141,6 +3208,16 @@ async fn retry_database_promotion(
                     log::warn!("Could not persist pending Voquill retry manifest: {err}");
                 }
                 return Err(swap_err.issue.detail);
+            }
+            if swap_err.issue.code == "existing_profile_conflict" {
+                *report = mark_existing_profile_conflict(&dirs.current_config_dir, report.clone());
+                if !swap_err.restored_ok {
+                    return Err(
+                        "An existing mausVoice database appeared during retry and was kept untouched, but retiring recovery state failed.".to_string(),
+                    );
+                }
+                reopen_previous_pool(&current_db_path, database).await;
+                return Ok(None);
             }
             record_retry_failure(dirs, report, swap_err.issue);
             if !swap_err.restored_ok {
@@ -4028,6 +4105,86 @@ enum PromoteError {
     InstalledButNotSynced(VoquillMigrationIssue),
 }
 
+fn existing_profile_conflict_issue() -> VoquillMigrationIssue {
+    VoquillMigrationIssue {
+        category: "database".to_string(),
+        code: "existing_profile_conflict".to_string(),
+        detail: "An existing mausVoice database already exists and was kept untouched.".to_string(),
+    }
+}
+
+fn sync_file_for_write(path: &Path) -> io::Result<()> {
+    let file = OpenOptions::new().write(true).open(path)?;
+    file.sync_all()
+}
+
+fn copy_file_and_sync(src: &Path, dst: &Path) -> io::Result<()> {
+    let mut src_file = File::open(src)?;
+    let mut dst_file = File::create(dst)?;
+    io::copy(&mut src_file, &mut dst_file)?;
+    dst_file.sync_all()?;
+    Ok(())
+}
+
+fn publish_temp_db_no_replace(tmp_dest: &Path, dst: &Path) -> io::Result<()> {
+    match fs::hard_link(tmp_dest, dst) {
+        Ok(()) => {
+            let _ = fs::remove_file(tmp_dest);
+            Ok(())
+        }
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Err(err),
+        Err(err)
+            if matches!(
+                err.kind(),
+                io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            let mut dst_file = OpenOptions::new().write(true).create_new(true).open(dst)?;
+            let copy_res = (|| -> io::Result<()> {
+                let mut src_file = File::open(tmp_dest)?;
+                io::copy(&mut src_file, &mut dst_file)?;
+                dst_file.sync_all()?;
+                Ok(())
+            })();
+            drop(dst_file);
+            if let Err(copy_err) = copy_res {
+                let _ = fs::remove_file(dst);
+                return Err(copy_err);
+            }
+            let _ = fs::remove_file(tmp_dest);
+            Ok(())
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn install_file_no_replace_via_copy_fallback(
+    staged_db: &Path,
+    current_db: &Path,
+    primary_err: &io::Error,
+) -> Result<(), PromoteError> {
+    let tmp_dest = current_db.with_file_name(format!("{DB_FILENAME}{PROMOTION_TEMP_SUFFIX}"));
+    let publish_result = copy_file_and_sync(staged_db, &tmp_dest)
+        .and_then(|()| publish_temp_db_no_replace(&tmp_dest, current_db));
+    match publish_result {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(&tmp_dest);
+            Err(PromoteError::NotInstalled(existing_profile_conflict_issue()))
+        }
+        Err(copy_err) => {
+            let _ = fs::remove_file(&tmp_dest);
+            Err(PromoteError::NotInstalled(VoquillMigrationIssue {
+                category: "database".to_string(),
+                code: "promote_io_error".to_string(),
+                detail: format!(
+                    "Could not promote verified database (link: {primary_err}; copy: {copy_err})"
+                ),
+            }))
+        }
+    }
+}
+
 fn promote_staged_file_with_sync<F>(
     staged_db: &Path,
     current_db: &Path,
@@ -4036,21 +4193,25 @@ fn promote_staged_file_with_sync<F>(
 where
     F: FnOnce(&Path) -> io::Result<()>,
 {
-    if let Err(rename_err) = fs::rename(staged_db, current_db) {
-        let tmp_dest = current_db.with_file_name(format!("{DB_FILENAME}.migrating.tmp"));
-        fs::copy(staged_db, &tmp_dest)
-            .and_then(|_| File::open(&tmp_dest).and_then(|f| f.sync_all()))
-            .and_then(|_| fs::rename(&tmp_dest, current_db))
-            .map_err(|copy_err| {
-                let _ = fs::remove_file(&tmp_dest);
-                PromoteError::NotInstalled(VoquillMigrationIssue {
-                    category: "database".to_string(),
-                    code: "promote_io_error".to_string(),
-                    detail: format!(
-                        "Could not promote verified database (rename: {rename_err}; copy: {copy_err})"
-                    ),
-                })
-            })?;
+    if let Err(sync_err) = sync_file_for_write(staged_db) {
+        return Err(PromoteError::NotInstalled(VoquillMigrationIssue {
+            category: "database".to_string(),
+            code: "promote_io_error".to_string(),
+            detail: format!("Could not sync staged database before promotion: {sync_err}"),
+        }));
+    }
+
+    match fs::hard_link(staged_db, current_db) {
+        Ok(()) => {
+            let _ = fs::remove_file(staged_db);
+        }
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            return Err(PromoteError::NotInstalled(existing_profile_conflict_issue()));
+        }
+        Err(link_err) => {
+            install_file_no_replace_via_copy_fallback(staged_db, current_db, &link_err)?;
+            let _ = fs::remove_file(staged_db);
+        }
     }
 
     if let Some(parent) = current_db.parent() {
@@ -6391,8 +6552,7 @@ mod tests {
                 retire_sync: sync_dir_best_effort,
             },
         )
-        .err()
-        .expect("marker dir sync failure must fail retry swap");
+        .expect_err("marker dir sync failure must fail retry swap");
         assert!(err_a.restored_ok);
         assert!(!err_a.installed_unsynced);
         assert!(
@@ -6431,8 +6591,7 @@ mod tests {
                 retire_sync: |_| Err(io::Error::other("simulated retire dir sync failure")),
             },
         )
-        .err()
-        .expect("marker retirement sync failure must fail closed");
+        .expect_err("marker retirement sync failure must fail closed");
         assert!(!err_b.restored_ok);
         cleanup_staging(&dirs_b.staging_dir());
 
@@ -6623,5 +6782,427 @@ mod tests {
             .join(AUDIO_DIR_NAME)
             .join("sync-recover.wav")
             .exists());
+    }
+
+    #[tokio::test]
+    async fn malformed_promotion_marker_json_keeps_recovery_pending_for_startup_and_retry() {
+        let ws = unique_workspace("malformed-marker-json");
+        let dirs = make_dirs(&ws);
+        let legacy_db = dirs.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db, 96, false).await;
+
+        let staged = stage_validate_and_promote_database(&dirs).await.unwrap();
+        let (full_sha, payload_sha) = hash_staged_database(&dirs.current_db_path()).unwrap();
+        fs::write(dirs.promotion_marker_path(), b"{\"mode\":\"startup\"").unwrap();
+
+        let pending_manifest = VoquillMigrationReport {
+            status: VoquillMigrationStatus::Partial,
+            legacy_detected: true,
+            legacy_source_preserved: true,
+            database_phase: VoquillMigrationPhaseStatus::Pending,
+            models_phase: VoquillMigrationPhaseStatus::Pending,
+            audio_phase: VoquillMigrationPhaseStatus::Pending,
+            storage_phase: VoquillMigrationPhaseStatus::Pending,
+            can_retry: true,
+            ..VoquillMigrationReport::not_needed()
+        };
+        save_manifest(&dirs.current_config_dir, &pending_manifest).unwrap();
+
+        let startup_res = run_startup_migration(&dirs).await;
+        assert_eq!(startup_res.status, VoquillMigrationStatus::Partial);
+        assert!(startup_res.can_retry);
+        assert!(startup_res
+            .issues
+            .iter()
+            .any(|issue| issue.code == "recovery_marker_io_error"));
+        assert!(dirs.promotion_marker_path().exists());
+        assert!(ensure_no_pending_promotion_recovery(&dirs).is_err());
+
+        let pool = open_app_database(&dirs.current_db_path()).await.unwrap();
+        let db_state = OptionKeyDatabase::new(pool);
+        let retry_err = retry_migration(dirs.clone(), db_state.clone())
+            .await
+            .expect_err("malformed marker JSON must fail retry without SkippedExistingProfile");
+        assert!(retry_err.contains("Malformed Voquill promotion marker JSON"));
+        assert!(dirs.promotion_marker_path().exists());
+        let saved_after_retry = load_manifest(&dirs.current_config_dir).unwrap();
+        assert_ne!(
+            saved_after_retry.status,
+            VoquillMigrationStatus::SkippedExistingProfile
+        );
+
+        write_promotion_marker(
+            &dirs.promotion_marker_path(),
+            "retry",
+            full_sha,
+            payload_sha,
+            staged.removed_modes_reset,
+        )
+        .unwrap();
+        let recovered = retry_migration(dirs.clone(), db_state).await.unwrap();
+        assert_eq!(recovered.status, VoquillMigrationStatus::Completed);
+        assert_eq!(
+            recovered.database_phase,
+            VoquillMigrationPhaseStatus::Migrated
+        );
+        assert!(!dirs.promotion_marker_path().exists());
+    }
+
+    #[test]
+    fn record_migration_cleared_removes_promotion_temp_file_and_propagates_failure() {
+        let ws = unique_workspace("clear-removes-migrating-tmp");
+        let config_dir = ws.join("config");
+        fs::create_dir_all(&config_dir).unwrap();
+
+        let tmp_db = config_dir.join(format!("{DB_FILENAME}{PROMOTION_TEMP_SUFFIX}"));
+        fs::write(&tmp_db, b"staged-db-copy").unwrap();
+        record_migration_cleared(&config_dir).unwrap();
+        assert!(
+            !tmp_db.exists(),
+            "clear must remove mausvoice.db.migrating.tmp"
+        );
+
+        fs::create_dir_all(&tmp_db).unwrap();
+        record_migration_cleared(&config_dir)
+            .expect_err("directory blocking mausvoice.db.migrating.tmp must propagate error");
+        fs::remove_dir(&tmp_db).unwrap();
+    }
+
+    #[tokio::test]
+    async fn recover_missing_current_db_clears_promote_sync_failed_and_keeps_asset_issues() {
+        let ws = unique_workspace("missing-db-clears-promote-sync");
+        let dirs = make_dirs(&ws);
+        let legacy_db = dirs.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db, 96, false).await;
+
+        let initial_report = new_startup_report(
+            now_iso(),
+            VoquillMigrationStatus::Partial,
+            VoquillMigrationPhaseStatus::Pending,
+            VoquillMigrationPhaseStatus::Pending,
+            false,
+        );
+        let mut unsynced =
+            finish_startup_database_and_assets_with_sync(&dirs, initial_report, true, |_| {
+                Err(io::Error::other("simulated post-rename dir sync failure"))
+            })
+            .await;
+        assert!(unsynced
+            .issues
+            .iter()
+            .any(|issue| issue.code == "promote_sync_failed"));
+
+        // Preserve a simulated asset issue while losing the unsynced DB entry before next launch.
+        unsynced.issues.push(VoquillMigrationIssue {
+            category: "audio".to_string(),
+            code: "audio_copy_failed".to_string(),
+            detail: "Simulated asset error".to_string(),
+        });
+        save_manifest(&dirs.current_config_dir, &unsynced).unwrap();
+        fs::remove_file(dirs.current_db_path()).unwrap();
+
+        let recovered = run_startup_migration(&dirs).await;
+        assert_eq!(
+            recovered.database_phase,
+            VoquillMigrationPhaseStatus::Migrated
+        );
+        assert!(
+            !recovered
+                .issues
+                .iter()
+                .any(|issue| issue.code == "promote_sync_failed"),
+            "successful re-promotion must clear resolved promote_sync_failed issue"
+        );
+        assert!(
+            recovered
+                .issues
+                .iter()
+                .any(|issue| issue.code == "audio_copy_failed"),
+            "current asset errors must be preserved"
+        );
+    }
+
+    #[tokio::test]
+    async fn rolled_back_recovery_persists_manifest_before_retiring_marker_and_resumes_cleanly() {
+        let ws = unique_workspace("rollback-manifest-before-retire");
+        let dirs = make_dirs(&ws);
+        let legacy_db = dirs.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db, 96, false).await;
+        fs::create_dir_all(&dirs.current_config_dir).unwrap();
+
+        let empty_pool = open_app_database(&dirs.current_db_path()).await.unwrap();
+        empty_pool.close().await;
+        let pre_retry_payload = sha256_db_payload_hex(&dirs.current_db_path()).unwrap();
+
+        let rollback_marker = PromotionMarker {
+            mode: "retry".to_string(),
+            staged_sha256: "a".repeat(64),
+            staged_payload_sha256: "b".repeat(64),
+            pre_retry_payload_sha256: Some(pre_retry_payload),
+            removed_modes_reset: Vec::new(),
+        };
+        write_promotion_marker_record_with_sync(
+            &dirs.promotion_marker_path(),
+            &rollback_marker,
+            sync_dir_best_effort,
+        )
+        .unwrap();
+
+        // Block manifest creation so `save_manifest` fails; marker must remain on disk.
+        let manifest_path = dirs.current_config_dir.join(MANIFEST_FILENAME);
+        fs::create_dir_all(&manifest_path).unwrap();
+        let failed_save = run_startup_migration(&dirs).await;
+        assert_eq!(failed_save.status, VoquillMigrationStatus::Partial);
+        assert!(failed_save
+            .issues
+            .iter()
+            .any(|issue| issue.code == "manifest_save_failed"));
+        assert!(
+            dirs.promotion_marker_path().exists(),
+            "marker must remain when rolled-back manifest save fails"
+        );
+        assert!(ensure_no_pending_promotion_recovery(&dirs).is_err());
+
+        // Unblock manifest path -> startup saves rolled-back manifest and retires marker.
+        fs::remove_dir(&manifest_path).unwrap();
+        let recovered = run_startup_migration(&dirs).await;
+        assert_eq!(recovered.status, VoquillMigrationStatus::Failed);
+        assert_eq!(
+            recovered.database_phase,
+            VoquillMigrationPhaseStatus::Failed
+        );
+        assert!(recovered.can_retry);
+        assert!(!dirs.promotion_marker_path().exists());
+        assert!(ensure_no_pending_promotion_recovery(&dirs).is_ok());
+
+        // Simulate crash between `save_manifest` and marker retirement (both exist on disk).
+        write_promotion_marker_record_with_sync(
+            &dirs.promotion_marker_path(),
+            &rollback_marker,
+            sync_dir_best_effort,
+        )
+        .unwrap();
+        let resumed = run_startup_migration(&dirs).await;
+        assert_eq!(resumed.status, VoquillMigrationStatus::Failed);
+        assert_eq!(resumed.database_phase, VoquillMigrationPhaseStatus::Failed);
+        assert!(resumed.can_retry);
+        assert!(!dirs.promotion_marker_path().exists());
+    }
+
+    #[tokio::test]
+    async fn refresh_migration_report_handles_all_marker_verification_outcomes() {
+        let ws = unique_workspace("refresh-marker-outcomes");
+        let dirs = make_dirs(&ws);
+        let legacy_db = dirs.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db, 96, false).await;
+        fs::create_dir_all(&dirs.current_config_dir).unwrap();
+
+        let pool = open_app_database(&dirs.current_db_path()).await.unwrap();
+        let (full_sha, payload_sha) = hash_staged_database(&dirs.current_db_path()).unwrap();
+
+        let pending_manifest = VoquillMigrationReport {
+            status: VoquillMigrationStatus::Partial,
+            legacy_detected: true,
+            legacy_source_preserved: true,
+            database_phase: VoquillMigrationPhaseStatus::Pending,
+            models_phase: VoquillMigrationPhaseStatus::Pending,
+            audio_phase: VoquillMigrationPhaseStatus::Pending,
+            storage_phase: VoquillMigrationPhaseStatus::Pending,
+            can_retry: true,
+            ..VoquillMigrationReport::not_needed()
+        };
+        save_manifest(&dirs.current_config_dir, &pending_manifest).unwrap();
+
+        // Case A: MatchesPromoted -> reports manifest_save_failed + Partial.
+        write_promotion_marker(
+            &dirs.promotion_marker_path(),
+            "startup",
+            full_sha,
+            payload_sha.clone(),
+            Vec::new(),
+        )
+        .unwrap();
+        let matched = refresh_migration_report(dirs.clone(), pool.clone()).await;
+        assert_eq!(matched.status, VoquillMigrationStatus::Partial);
+        assert!(matched.can_retry);
+        assert!(matched
+            .issues
+            .iter()
+            .any(|issue| issue.code == "manifest_save_failed"));
+
+        // Case B: IoError (malformed marker) -> reports recovery_marker_io_error, NOT manifest_save_failed.
+        fs::write(dirs.promotion_marker_path(), b"{truncated").unwrap();
+        let io_err = refresh_migration_report(dirs.clone(), pool.clone()).await;
+        assert_eq!(io_err.status, VoquillMigrationStatus::Partial);
+        assert!(io_err.can_retry);
+        assert!(io_err
+            .issues
+            .iter()
+            .any(|issue| issue.code == "recovery_marker_io_error"));
+        assert!(!io_err
+            .issues
+            .iter()
+            .any(|issue| issue.code == "manifest_save_failed"));
+
+        // Case C: Mismatch -> reports SkippedExistingProfile + existing_profile_conflict.
+        write_promotion_marker(
+            &dirs.promotion_marker_path(),
+            "startup",
+            "0".repeat(64),
+            String::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        let mismatch = refresh_migration_report(dirs.clone(), pool.clone()).await;
+        assert_eq!(
+            mismatch.status,
+            VoquillMigrationStatus::SkippedExistingProfile
+        );
+        assert!(!mismatch.can_retry);
+        assert!(mismatch
+            .issues
+            .iter()
+            .any(|issue| issue.code == "existing_profile_conflict"));
+        assert!(!mismatch
+            .issues
+            .iter()
+            .any(|issue| issue.code == "manifest_save_failed"));
+
+        // Case D: MatchesRolledBackPreRetry -> stays retryable without falsely claiming promotion completed.
+        write_promotion_marker_record_with_sync(
+            &dirs.promotion_marker_path(),
+            &PromotionMarker {
+                mode: "retry".to_string(),
+                staged_sha256: "1".repeat(64),
+                staged_payload_sha256: "2".repeat(64),
+                pre_retry_payload_sha256: Some(payload_sha),
+                removed_modes_reset: Vec::new(),
+            },
+            sync_dir_best_effort,
+        )
+        .unwrap();
+        let rolled_back = refresh_migration_report(dirs.clone(), pool.clone()).await;
+        assert!(rolled_back.can_retry);
+        assert!(!rolled_back
+            .issues
+            .iter()
+            .any(|issue| issue.code == "manifest_save_failed"));
+        pool.close().await;
+    }
+
+    #[test]
+    fn promote_staged_file_never_replaces_existing_destination_on_primary_or_fallback_path() {
+        let ws = unique_workspace("promote-no-replace");
+        let staging_dir = ws.join("staging");
+        let config_dir = ws.join("config");
+        fs::create_dir_all(&staging_dir).unwrap();
+        fs::create_dir_all(&config_dir).unwrap();
+
+        let staged_db = staging_dir.join(STAGED_DB_FILENAME);
+        let current_db = config_dir.join(DB_FILENAME);
+        let tmp_dest = config_dir.join(format!("{DB_FILENAME}{PROMOTION_TEMP_SUFFIX}"));
+        fs::write(&staged_db, b"staged-voquill-bytes").unwrap();
+        fs::write(&current_db, b"existing-profile-bytes").unwrap();
+
+        // Primary path must fail with existing_profile_conflict and keep current_db untouched.
+        let primary_err =
+            promote_staged_file_with_sync(&staged_db, &current_db, sync_dir_best_effort)
+                .expect_err("primary promote must never replace an existing database");
+        match primary_err {
+            PromoteError::NotInstalled(issue) => {
+                assert_eq!(issue.code, "existing_profile_conflict");
+            }
+            PromoteError::InstalledButNotSynced(_) => {
+                panic!("expected NotInstalled(existing_profile_conflict)");
+            }
+        }
+        assert_eq!(fs::read(&current_db).unwrap(), b"existing-profile-bytes");
+
+        // Copy fallback path must also refuse to replace an existing database and clean tmp_dest.
+        let simulated_xdev = io::Error::other("simulated cross-device link");
+        let fallback_err =
+            install_file_no_replace_via_copy_fallback(&staged_db, &current_db, &simulated_xdev)
+                .expect_err("copy fallback must never replace an existing database");
+        match fallback_err {
+            PromoteError::NotInstalled(issue) => {
+                assert_eq!(issue.code, "existing_profile_conflict");
+            }
+            PromoteError::InstalledButNotSynced(_) => {
+                panic!("expected NotInstalled(existing_profile_conflict)");
+            }
+        }
+        assert_eq!(fs::read(&current_db).unwrap(), b"existing-profile-bytes");
+        assert!(!tmp_dest.exists());
+
+        // When current_db is absent, copy fallback installs cleanly and removes tmp_dest.
+        fs::remove_file(&current_db).unwrap();
+        install_file_no_replace_via_copy_fallback(&staged_db, &current_db, &simulated_xdev)
+            .unwrap();
+        assert_eq!(fs::read(&current_db).unwrap(), b"staged-voquill-bytes");
+        assert!(!tmp_dest.exists());
+
+        // When current_db is absent and dir sync fails, primary path reports InstalledButNotSynced.
+        fs::remove_file(&current_db).unwrap();
+        fs::write(&staged_db, b"staged-voquill-bytes-2").unwrap();
+        let sync_err = promote_staged_file_with_sync(&staged_db, &current_db, |_| {
+            Err(io::Error::other("simulated dir sync failure"))
+        })
+        .expect_err("dir sync failure must report InstalledButNotSynced");
+        match sync_err {
+            PromoteError::InstalledButNotSynced(issue) => {
+                assert_eq!(issue.code, "promote_sync_failed");
+            }
+            PromoteError::NotInstalled(_) => {
+                panic!("expected InstalledButNotSynced(promote_sync_failed)");
+            }
+        }
+        assert_eq!(fs::read(&current_db).unwrap(), b"staged-voquill-bytes-2");
+    }
+
+    #[tokio::test]
+    async fn ensure_usable_pool_recovers_closed_pool_after_unsynced_retry_for_clear() {
+        let ws = unique_workspace("closed-pool-recovery-for-clear");
+        let dirs = make_dirs(&ws);
+        let legacy_db = dirs.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db, 96, false).await;
+        fs::create_dir_all(&dirs.current_config_dir).unwrap();
+
+        let initial_pool = open_app_database(&dirs.current_db_path()).await.unwrap();
+        let db_state = OptionKeyDatabase::new(initial_pool);
+        let (staged_db, staged) = stage_validate_in_staging_only(&dirs).await.unwrap();
+        let (full_sha, payload_sha) = hash_staged_database(&staged_db).unwrap();
+
+        // Simulate retry closing the pool and failing on post-install dir sync.
+        db_state.pool().close().await;
+        let swap_err = swap_retry_database_on_disk_with_sync(
+            &staged_db,
+            &dirs.current_db_path(),
+            &dirs.promotion_marker_path(),
+            RetrySwapMarkerSpec {
+                staged_sha256: full_sha,
+                staged_payload_sha256: payload_sha,
+                removed_modes_reset: staged.removed_modes_reset,
+            },
+            RetrySwapSyncHooks {
+                marker_sync: sync_dir_best_effort,
+                promote_sync: |_| Err(io::Error::other("simulated retry dir sync failure")),
+                retire_sync: sync_dir_best_effort,
+            },
+        )
+        .expect_err("retry promote sync failure must return error");
+        assert!(swap_err.installed_unsynced);
+        assert!(db_state.pool().is_closed());
+        cleanup_staging(&dirs.staging_dir());
+
+        // Clear local data's recovery path reopens the database under the clear lock.
+        let recovered_pool = ensure_usable_pool(&dirs, &db_state).await.unwrap();
+        assert!(!recovered_pool.is_closed());
+        assert!(!db_state.pool().is_closed());
+        let ping: i64 = sqlx::query_scalar("SELECT 1")
+            .fetch_one(&recovered_pool)
+            .await
+            .unwrap();
+        assert_eq!(ping, 1);
+        recovered_pool.close().await;
     }
 }

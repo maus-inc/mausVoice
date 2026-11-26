@@ -3583,8 +3583,26 @@ pub async fn clear_local_data(
         .map_err(|err| err.to_string())?;
     // Read the database pool only after acquiring the write gate so an active
     // Voquill migration retry cannot swap out and close the captured pool
-    // before the clear query executes.
-    let pool = database.pool();
+    // before the clear query executes. If a prior failed migration retry left
+    // the managed pool closed, reconcile any orphaned pre-retry backup and
+    // reopen the database under this same lock before tearing down capture
+    // subsystems or persisting the durable clear recovery marker.
+    let pool = {
+        let current_pool = database.pool();
+        if current_pool.is_closed() {
+            let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
+                .map_err(|err| err.to_string())?;
+            crate::system::voquill_migration::ensure_usable_pool(&dirs, database.inner())
+                .await
+                .map_err(|err| {
+                    format!(
+                        "Could not reopen the local database before clearing local data; restart the app or retry clearing: {err}"
+                    )
+                })?
+        } else {
+            current_pool
+        }
+    };
     // Discard in-memory composer drafts and close floating review windows so no
     // secondary WebView retains pre-clear transcripts or an active recognizer.
     floating_window_state.clear_all_composer_text();
