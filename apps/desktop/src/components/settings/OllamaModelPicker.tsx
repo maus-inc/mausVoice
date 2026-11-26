@@ -1,4 +1,4 @@
-import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
+import { CircleAlert } from "lucide-react";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import { useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
@@ -149,7 +149,10 @@ export const OllamaModelPicker = ({
   if (isAvailable === false) {
     return (
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, py: 1 }}>
-        <ErrorOutlineIcon color="error" fontSize="small" />
+        <CircleAlert
+          size={20}
+          style={{ flexShrink: 0, color: "var(--app-palette-error-main)" }}
+        />
         <Typography variant="body2" color="error">
           <FormattedMessage defaultMessage="Unable to connect to Ollama at the specified URL." />
         </Typography>

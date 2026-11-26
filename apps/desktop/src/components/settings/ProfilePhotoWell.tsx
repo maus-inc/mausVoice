@@ -1,4 +1,4 @@
-import { CameraAltOutlined, DeleteOutlineOutlined } from "@mui/icons-material";
+import { Camera, Trash2 } from "lucide-react";
 import { Alert, Box, Button, Stack, Typography } from "@mui/material";
 import { useRef } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -57,7 +57,7 @@ const AvatarHoverScrim = () => (
       transition: "opacity 150ms ease",
     }}
   >
-    <CameraAltOutlined fontSize="small" />
+    <Camera size={20} />
   </Box>
 );
 
@@ -89,7 +89,7 @@ const AvatarCameraBadge = () => (
       borderColor: "level2",
     }}
   >
-    <CameraAltOutlined sx={{ fontSize: 15 }} />
+    <Camera size={15} />
   </Box>
 );
 
@@ -200,7 +200,7 @@ export const ProfilePhotoWell = ({
         <Button
           size="small"
           color="inherit"
-          startIcon={<CameraAltOutlined sx={{ fontSize: 18 }} />}
+          startIcon={<Camera size={18} />}
           onClick={pickFile}
           disabled={saving}
         >
@@ -210,7 +210,7 @@ export const ProfilePhotoWell = ({
           <Button
             size="small"
             color="inherit"
-            startIcon={<DeleteOutlineOutlined sx={{ fontSize: 18 }} />}
+            startIcon={<Trash2 size={18} />}
             onClick={onRemove}
             disabled={saving}
           >

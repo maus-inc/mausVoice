@@ -54,6 +54,30 @@ const discoveredRowSources = (
     return rendersRow ? [fileURLToPath(child)] : [];
   });
 
+/**
+ * Every `.tsx` source under a directory, test files excluded, with its text.
+ *
+ * The row walk stops at files that render a row, which is the right scope for
+ * "does this row lead with a glyph". The icon-family rule is broader than that:
+ * a dialog belongs to the pane it opens over, so it is read even though it
+ * renders no row of its own.
+ */
+const everySource = (dir: URL): { path: string; source: string }[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) {
+      return everySource(new URL(`${entry.name}/`, dir));
+    }
+    if (!entry.name.endsWith(".tsx") || entry.name.includes(".test.")) {
+      return [];
+    }
+    return [
+      {
+        path: entry.name,
+        source: readFileSync(new URL(entry.name, dir), "utf8"),
+      },
+    ];
+  });
+
 const REPO_ROOT_PATH = fileURLToPath(REPO_ROOT);
 
 /**
@@ -323,5 +347,25 @@ describe("settings row icon coverage", () => {
     expect(
       glyphOf(rowOf('<SettingSummaryRow linksTo="ai_transcription" />')),
     ).toBe(null);
+  });
+
+  it("draws no Material icon anywhere in the settings surface", () => {
+    // The design document says lucide is the only icon family, with Material
+    // surviving only inside the sanctioned third-party mockups. A row can lead
+    // with a lucide glyph and still show a Material one in the dialog it opens,
+    // which is the same pane to the person who opened it. This reads every
+    // source in the folder, dialogs and pickers included, so the rule has one
+    // place to hold rather than one per surface.
+    const settingsRoot = new URL(
+      "apps/desktop/src/components/settings/",
+      REPO_ROOT,
+    );
+    const offenders = everySource(settingsRoot)
+      .filter(({ source }) => source.includes("@mui/icons-material"))
+      .map(({ path }) =>
+        relative(REPO_ROOT_PATH, fileURLToPath(new URL(path, settingsRoot))),
+      );
+
+    expect(offenders).toEqual([]);
   });
 });

@@ -28,7 +28,8 @@ two never drift apart.
 - **One family: lucide at stroke 1.9.** MUI icons survive only inside the
   sanctioned third-party mock-ups. A Material glyph next to a lucide glyph in
   the same pane is the defect this rule exists to catch, and it is visible
-  without measuring anything.
+  without measuring anything. The settings surface is held to this end to end,
+  dialogs and pickers included, by `settings-row-icon-coverage.test.ts`.
 - **One size per context.** 22px for the glyphs that lead rows and rail items
   (spread from the shared `settingGlyphProps`/rail constants, never a per-call
   literal), 20px for chevrons, 16px or smaller only for a mark inside body

@@ -1,4 +1,4 @@
-import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
+import { CircleAlert } from "lucide-react";
 import {
   Autocomplete,
   Box,
@@ -217,7 +217,10 @@ export const OpenAICompatibleModelPicker = ({
   if (isAvailable === false && !useManualInput) {
     return (
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, py: 1 }}>
-        <ErrorOutlineIcon color="error" fontSize="small" />
+        <CircleAlert
+          size={20}
+          style={{ flexShrink: 0, color: "var(--app-palette-error-main)" }}
+        />
         <Typography variant="body2" color="error">
           <FormattedMessage defaultMessage="Unable to connect to the OpenAI-compatible server at the specified URL." />
         </Typography>

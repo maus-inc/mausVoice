@@ -94,6 +94,32 @@ margins, is not what a screenshot of a running app is meant to be, and these are
 in-window frames rather than figures on a page. The card at the top of this report is a
 crop of the product's own pane, not a plate under a mockup.
 
+## Dialogs behind the rows
+
+The row is only half the pane. A review of this change pointed out that the
+settings dialogs still imported Material icons, so the rule held on the list and
+broke the moment a row was opened. Every Material import under
+`components/settings/` is now gone (24 glyphs across 11 files, each mapped to its
+lucide equivalent at the size it had), and the audit that keeps it that way reads
+the whole folder, not just the files that render rows.
+
+Driven in the preview, both schemes, opening each dialog from its row:
+
+| Dialog | Authored glyphs | Material |
+| --- | --- | --- |
+| `Deepgram API key` | 0 | 0 |
+| `Groq API key` | 0 | 0 |
+| `Microphone settings` | 1 | 0 authored (1 library) |
+| `Audio` | 0 | 0 |
+| `Dictation language` | 2 | 0 authored (1 library) |
+| `Diagnostics` | 2 lucide | 0 |
+| `Edit profile` | 3 lucide | 0 |
+
+"Library" is MUI's own `Select` arrow, which the theme draws once for every
+dropdown in the app. It is not an authored icon and the design document now says
+so, rather than leaving a reader to wonder why one Material shape survives
+inside a page the rule covers.
+
 ## States checked
 
 - **Hover**: the row takes `background-color` `rgba(0, 0, 0, 0.04)` on the level1

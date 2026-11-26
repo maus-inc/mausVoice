@@ -1,4 +1,4 @@
-import CloseIcon from "@mui/icons-material/Close";
+import { X } from "lucide-react";
 import {
   Button,
   Dialog,
@@ -33,7 +33,7 @@ export const AITranscriptionDialog = () => {
           size="small"
           sx={{ ml: "auto" }}
         >
-          <CloseIcon fontSize="small" />
+          <X size={20} />
         </IconButton>
       </DialogTitle>
       <DialogContent dividers>

@@ -1,4 +1,4 @@
-import { ArrowOutwardRounded, Download } from "@mui/icons-material";
+import { ArrowUpRight, Download } from "lucide-react";
 import {
   Button,
   Dialog,
@@ -229,7 +229,7 @@ export const DiagnosticsDialog = () => {
           sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
         >
           <FormattedMessage defaultMessage="Open" />
-          <ArrowOutwardRounded sx={{ fontSize: 14 }} />
+          <ArrowUpRight size={14} />
         </Link>
       </DialogTitle>
       <DialogContent sx={{ minWidth: "min(400px, 100%)" }}>
@@ -277,7 +277,7 @@ export const DiagnosticsDialog = () => {
         </Button>
         <Button
           variant="contained"
-          startIcon={<Download />}
+          startIcon={<Download size={20} />}
           onClick={handleDownload}
           disabled={exporting}
         >

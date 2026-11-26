@@ -252,6 +252,15 @@ choice below names what it rules out.
   `setting-row-chassis.tsx` (22px, stroke 1.9). Never a per-row literal, and
   never a different family: a Material magnifier beside a lucide microphone is
   visible in the same eyeful.
+- The family rule covers the whole settings surface, not only the rows: a row
+  can lead with a lucide glyph and open a dialog full of Material ones, which is
+  one pane to the person who opened it. Every authored glyph under
+  `components/settings/` is lucide, dialogs, pickers, hotkey controls and the
+  photo well included, and `settings-row-icon-coverage.test.ts` fails on a
+  Material import anywhere in that folder. Library chrome that MUI draws for its
+  own controls — the `Select` dropdown arrow, for one — is one shape in the
+  theme rather than a per-surface choice, so it is not a settings icon and this
+  rule does not reach it.
 - The magnifier inside the settings search field is the one non-row glyph:
   `settingSearchGlyphProps`, 16px at the same stroke. It is declared beside the
   row props so the two sizes are read together.

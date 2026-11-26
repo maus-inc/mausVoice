@@ -1,9 +1,4 @@
-import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
-import CloseIcon from "@mui/icons-material/Close";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import SearchIcon from "@mui/icons-material/Search";
-import StarIcon from "@mui/icons-material/Star";
-import StarBorderIcon from "@mui/icons-material/StarBorder";
+import { Check, ChevronDown, Search, Star, X } from "lucide-react";
 import {
   Box,
   CircularProgress,
@@ -27,7 +22,7 @@ import {
   toggleOpenRouterFavoriteModel,
 } from "../../actions/openrouter.actions";
 import { useAppStore } from "../../store";
-import { activeRowCheckSx, activeRowSx } from "../../styles/selection";
+import { activeRowSx } from "../../styles/selection";
 
 type OpenRouterModelPickerProps = {
   apiKeyId: string;
@@ -113,17 +108,17 @@ const ModelRow = ({
           }}
         >
           {isFavorite ? (
-            <StarIcon fontSize="small" />
+            <Star size={20} fill="currentColor" />
           ) : (
-            <StarBorderIcon fontSize="small" />
+            <Star size={20} />
           )}
         </IconButton>
       )}
       {selected && (
-        <CheckRoundedIcon
-          fontSize="small"
-          sx={activeRowCheckSx}
-          titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
+        <Check
+          size={20}
+          style={{ color: "var(--app-palette-text-primary)", flexShrink: 0 }}
+          aria-label={intl.formatMessage({ defaultMessage: "Selected" })}
         />
       )}
     </Box>
@@ -289,7 +284,7 @@ export const OpenRouterModelPicker = ({
             )}
           </Typography>
         </Box>
-        <ExpandMoreIcon color="action" />
+        <ChevronDown size={20} />
       </Paper>
     );
   }
@@ -315,13 +310,13 @@ export const OpenRouterModelPicker = ({
             input: {
               startAdornment: (
                 <InputAdornment position="start">
-                  <SearchIcon fontSize="small" color="action" />
+                  <Search size={20} />
                 </InputAdornment>
               ),
               endAdornment: (
                 <InputAdornment position="end">
                   <IconButton size="small" onClick={handleCollapse} edge="end">
-                    <CloseIcon fontSize="small" />
+                    <X size={20} />
                   </IconButton>
                 </InputAdornment>
               ),
