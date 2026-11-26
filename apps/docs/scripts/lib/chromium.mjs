@@ -12,34 +12,45 @@ import { join } from "node:path";
 const browserBin = process.env.CHROMIUM_BIN ?? "chromium";
 export const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-const readPort = async (profileDir) => {
-  const marker = join(profileDir, "DevToolsActivePort");
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    try {
-      const [port] = (await readFile(marker, "utf8")).split("\n");
-      if (port) return Number(port);
-    } catch {
-      // Chromium writes the marker once the DevTools listener is up.
-    }
-    await sleep(250);
+/**
+ * Poll `read` until it returns a value. Chromium writes its port marker and
+ * opens its DevTools listener a moment after spawn, so the wait has to be
+ * sequential: a batch of timers would all fire before the browser is up.
+ */
+export const poll = async (read, message, attempts = 40) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const value = await read();
+    if (value) return value;
+    await sleep(250); // NOSONAR javascript:S9382 sequential by design, see above
   }
-  throw new Error("Chromium did not report a DevTools port");
+  throw new Error(message);
 };
 
-const connect = async (port) => {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+const readPort = async (profileDir) => {
+  const marker = join(profileDir, "DevToolsActivePort");
+  return poll(async () => {
+    try {
+      const [port] = (await readFile(marker, "utf8")).split("\n");
+      return port ? Number(port) : null;
+    } catch {
+      // Chromium writes the marker once the DevTools listener is up.
+      return null;
+    }
+  }, "Chromium did not report a DevTools port");
+};
+
+const connect = async (port) =>
+  poll(async () => {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`);
       const targets = await response.json();
       const page = targets.find((target) => target.type === "page");
-      if (page) return page.webSocketDebuggerUrl;
+      return page ? page.webSocketDebuggerUrl : null;
     } catch {
       // Browser is still starting.
+      return null;
     }
-    await sleep(250);
-  }
-  throw new Error("Chromium DevTools endpoint did not become ready");
-};
+  }, "Chromium DevTools endpoint did not become ready");
 
 const createClient = (url) => {
   const socket = new WebSocket(url);

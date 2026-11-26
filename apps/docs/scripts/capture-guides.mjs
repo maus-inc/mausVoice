@@ -37,18 +37,19 @@ const stageBoxes = `
 
 const { only, scale } = readOptions(process.argv.slice(2));
 
-runCapture(async (client) => {
-  await navigate(client, `${stageUrl.href}?theme=dark`);
+try {
+  await runCapture(async (client) => {
+    await navigate(client, `${stageUrl.href}?theme=dark`);
 
-  const boxes = await client.evaluate(stageBoxes);
-  return captureBoxes(
-    client,
-    boxes,
-    scale,
-    (box) =>
-      (!only || box.id === only) && !(box.id in PREVIEW_FIGURES),
-  );
-}).catch((error) => {
+    const boxes = await client.evaluate(stageBoxes);
+    return captureBoxes(
+      client,
+      boxes,
+      scale,
+      (box) => (!only || box.id === only) && !(box.id in PREVIEW_FIGURES),
+    );
+  });
+} catch (error) {
   console.error(error);
   process.exitCode = 1;
-});
+}

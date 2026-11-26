@@ -50,7 +50,8 @@ const captureAll = async (client, scale, only) => {
   const files = [];
   for (const [id, recipe] of Object.entries(PREVIEW_FIGURES)) {
     if (!only || id === only) {
-      files.push(await captureFigure(client, id, recipe, loaded, scale));
+      // One page, and each figure may navigate it, so the pass is sequential.
+      files.push(await captureFigure(client, id, recipe, loaded, scale)); // NOSONAR javascript:S9382
     }
   }
   return files;
@@ -58,12 +59,14 @@ const captureAll = async (client, scale, only) => {
 
 const { only, scale } = readOptions(process.argv.slice(2));
 
-runCapture(async (client) => {
-  await client.send("Emulation.setEmulatedMedia", {
-    features: [{ name: "prefers-color-scheme", value: "dark" }],
+try {
+  await runCapture(async (client) => {
+    await client.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-color-scheme", value: "dark" }],
+    });
+    return captureAll(client, scale, only);
   });
-  return captureAll(client, scale, only);
-}).catch((error) => {
+} catch (error) {
   console.error(error);
   process.exitCode = 1;
-});
+}

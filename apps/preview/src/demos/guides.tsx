@@ -12,23 +12,24 @@ import { DemoSection } from "../components/demo-ui";
 const TODAY = new Date(2026, 10, 20, 12);
 
 /** Deterministic 53 week history ending today, with a 12 day streak and gaps. */
+const wordCountFor = (date: Date, offset: number): number => {
+  const base = (offset * 37) % 11;
+  if (offset <= 11) return 420 + base * 31;
+  const weekend = date.getDay() === 0 || date.getDay() === 6;
+  if (weekend && offset % 3 === 0) return 0;
+  if (base === 0) return 0;
+  return 120 + base * 68;
+};
+
 const buildActivity = (): DailyWordActivity[] => {
   const days: DailyWordActivity[] = [];
   for (let offset = 370; offset >= 0; offset -= 1) {
     const date = new Date(TODAY);
     date.setDate(date.getDate() - offset);
-    const inStreak = offset <= 11;
-    const weekday = date.getDay();
-    const weekend = weekday === 0 || weekday === 6;
-    const base = (offset * 37) % 11;
-    const wordCount = inStreak
-      ? 420 + base * 31
-      : weekend && offset % 3 === 0
-        ? 0
-        : base === 0
-          ? 0
-          : 120 + base * 68;
-    days.push({ localDate: toLocalDateKey(date), wordCount });
+    days.push({
+      localDate: toLocalDateKey(date),
+      wordCount: wordCountFor(date, offset),
+    });
   }
   return days;
 };

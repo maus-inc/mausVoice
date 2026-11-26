@@ -9,7 +9,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sleep, withChromium } from "./chromium.mjs";
+import { poll, sleep, withChromium } from "./chromium.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -35,12 +35,15 @@ export const navigate = async (client, url) => {
 
 /** Poll an expression until it returns a layout box, so a late render is not a failure. */
 export const waitForBox = async (client, expression, attempts = 60) => {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const box = await client.evaluate(expression);
-    if (box) return box;
-    await sleep(250);
+  try {
+    return await poll(
+      () => client.evaluate(expression),
+      "capture target never rendered",
+      attempts,
+    );
+  } catch {
+    return null;
   }
-  return null;
 };
 
 export const captureBox = async (client, box, scale, id) => {
@@ -58,7 +61,7 @@ export const captureBox = async (client, box, scale, id) => {
 export const captureBoxes = async (client, boxes, scale, keep = () => true) => {
   const files = [];
   for (const box of boxes) {
-    if (keep(box)) files.push(await captureBox(client, box, scale, box.id));
+    if (keep(box)) files.push(await captureBox(client, box, scale, box.id)); // NOSONAR javascript:S9382 one page, captures must serialise
   }
   return files;
 };
