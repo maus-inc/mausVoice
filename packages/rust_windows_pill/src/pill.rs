@@ -1361,7 +1361,7 @@ fn tick(state: &PillState, dt: f64) {
         .shimmer_phase
         .set((state.shimmer_phase.get() + SHIMMER_SPEED * frame_scale) % 1.0);
 
-    tick_fireworks(state, dt);
+    state.tick_celebration(dt);
     tick_flame(state, dt);
     tick_flash_blue(state, dt);
     tick_transcript(state, dt);
@@ -1446,17 +1446,6 @@ fn tick(state: &PillState, dt: f64) {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
         state.scroll_offset.set(max_scroll);
     }
-}
-
-/// The celebration, drawn from just above the pill.
-///
-/// The flight, the burst and the fade are shared with the other two pills -- the
-/// arithmetic here was identical on all three, down to the gravity constant.
-fn tick_fireworks(state: &PillState, dt: f64) {
-    let ww = state.draw_width.get();
-    let wh = state.draw_height.get();
-    let (_, pill_y, _, _) = draw::pill_position(state, ww, wh);
-    state.tick_celebration(dt, (ww / 2.0, pill_y), state.banner_center.get());
 }
 
 /// The flame, swaying on its own schedule.

@@ -2309,7 +2309,7 @@ fn tick(state: &PillState, dt: f64) {
         .set((state.shimmer_phase.get() + SHIMMER_SPEED) % 1.0);
 
     // Fireworks
-    tick_fireworks(state);
+    state.tick_celebration(SPRING_DT);
 
     // Flame
     tick_flame(state);
@@ -2487,18 +2487,6 @@ fn tick_long_press(state: &PillState, dt: f64) {
 /// renderers cannot drift apart.
 fn tick_hold_and_ring(state: &PillState, dt: f64) {
     rust_pill_shared::RingHost::tick_hold_and_ring(state, dt);
-}
-
-/// The celebration, drawn from just above the pill.
-///
-/// The flight, the burst and the fade are shared with the other two pills; this
-/// copy only supplies the origin and the step it was already using.
-fn tick_fireworks(state: &PillState) {
-    let dt = SPRING_DT;
-    let ww = state.draw_width.get();
-    let wh = state.draw_height.get();
-    let (_, pill_y, ..) = draw::pill_position(state, ww, wh);
-    state.tick_celebration(dt, (ww / 2.0, pill_y), state.banner_center.get());
 }
 
 /// The flame, swaying on its own schedule.

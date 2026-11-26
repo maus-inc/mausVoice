@@ -633,11 +633,19 @@ pub trait CelebrationHost {
     /// Advances the burst one frame from where the banner was last painted.
     ///
     /// Only the paint knows how the message wrapped, so it records the centre
-    /// and this reads it back. A burst that arrives before any banner has
-    /// painted launches from `fallback`, which the caller derives from the
-    /// pill's own position.
-    fn tick_celebration(&self, dt: f64, fallback: (f64, f64), banner_center: Option<(f64, f64)>) {
-        self.fireworks().tick(dt, banner_center.unwrap_or(fallback));
+    /// and this reads it back. Before the first paint there is no recorded
+    /// centre, and the burst waits: a celebration always paints a message
+    /// before it launches, so the fallback that used to be derived per platform
+    /// was never reached. Dropping it removes arithmetic each pill had its own
+    /// copy of, and removes the case where two platforms disagreed about where
+    /// an unpainted banner would have been.
+    fn tick_celebration(&self, dt: f64)
+    where
+        Self: FlashHost,
+    {
+        if let Some(origin) = self.banner_center().get() {
+            self.fireworks().tick(dt, origin);
+        }
     }
 }
 
@@ -759,6 +767,8 @@ pub trait FlashHost {
     /// all three states deref to, so the value is declared once rather than
     /// three times.
     fn flash_lines(&self) -> &Cell<usize>;
+    /// Where the banner's centre was on the frame it was last painted.
+    fn banner_center(&self) -> &Cell<Option<(f64, f64)>>;
     /// Clears every field back to "no toast showing".
     ///
     /// The three pills dismiss a toast from several places: the display
@@ -776,6 +786,7 @@ pub trait FlashHost {
         // A cleared banner has no lines. The celebration reads this, so
         // leaving the count from the message that just went away would launch
         // the next one from a height that banner no longer has.
+        self.banner_center().set(None);
         self.flash_lines().set(1);
     }
 
@@ -800,6 +811,11 @@ pub trait FlashHost {
         *self.flash_reject_action_label().borrow_mut() = None;
         self.flash_visible().set(true);
         self.flash_timer().set(duration);
+        // Clearing the recorded centre is the same guard as the line count:
+        // the burst would otherwise launch from where a taller toast used to
+        // sit. It is set again on the frame this message first paints, which
+        // is before any rocket is due, so nothing is lost.
+        self.banner_center().set(None);
         self.flash_lines().set(1);
     }
 
@@ -865,6 +881,9 @@ macro_rules! impl_flash_host {
             }
             fn flash_lines(&self) -> &std::cell::Cell<usize> {
                 &self.indicator.banner_lines
+            }
+            fn banner_center(&self) -> &std::cell::Cell<Option<(f64, f64)>> {
+                &self.indicator.banner_center
             }
         }
     };
@@ -934,6 +953,48 @@ mod tests {
     fn fixed(unit: f64) -> impl Fn(&str) -> f64 {
         move |text: &str| text.chars().count() as f64 * unit
     }
+
+    /// A pill's toast and celebration fields, in the shape the two traits
+    /// expect, so the shared methods can be exercised without a draw site.
+    ///
+    /// Field names match the three real states so `impl_flash_host!` and
+    /// `impl_celebration_host!` generate the impls exactly as they do in a pill.
+    #[derive(Default)]
+    struct StubState {
+        indicator: crate::indicator::DictationIndicator<StubPhase>,
+        flash_message: RefCell<String>,
+        flash_is_error: Cell<bool>,
+        flash_visible: Cell<bool>,
+        flash_t: Cell<f64>,
+        flash_velocity: Cell<f64>,
+        flash_timer: Cell<f64>,
+        flash_action: RefCell<Option<String>>,
+        flash_action_label: RefCell<Option<String>>,
+        flash_reject_action: RefCell<Option<String>>,
+        flash_reject_action_label: RefCell<Option<String>>,
+        fireworks_active: Cell<bool>,
+        fireworks_elapsed: Cell<f64>,
+        fireworks_next_launch: Cell<usize>,
+        fireworks_rockets: RefCell<Vec<crate::fireworks::Rocket>>,
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    struct StubPhase;
+
+    impl crate::indicator::RecordingPhase for StubPhase {
+        const IDLE: Self = StubPhase;
+        const RECORDING: Self = StubPhase;
+        const LOADING: Self = StubPhase;
+    }
+
+    impl StubState {
+        fn activate_burst(&self) {
+            self.fireworks_active.set(true);
+        }
+    }
+
+    impl_flash_host!(StubState);
+    impl_celebration_host!(StubState);
 
     fn spec() -> FlashBannerSpec {
         FlashBannerSpec {
@@ -1498,6 +1559,10 @@ mod tests {
     /// resolves the same centre the paint path does, at the moment it ticks.
     #[test]
     fn all_three_celebration_ticks_launch_from_the_shared_banner_centre() {
+        // The paint records the centre it used; the tick reads it back. A pill
+        // that re-derived the launch point would disagree with its own banner
+        // the moment a message wrapped to a second line, which is the bug this
+        // branch exists to fix.
         let manifest = env!("CARGO_MANIFEST_DIR");
         for path in [
             "../rust_gtk_pill/src/pill.rs",
@@ -1515,6 +1580,48 @@ mod tests {
                 "{path} still halves the fixed one-line height for the launch point"
             );
         }
+    }
+
+    /// A new banner must not inherit the centre of the one before it.
+    ///
+    /// The same hazard as the line count: `celebrate` resets the count because a
+    /// celebration message is short, and it has to reset the centre for exactly
+    /// the reason it resets the count. Otherwise a burst arriving right after a
+    /// tall error toast launches from where that toast's middle used to be.
+    #[test]
+    fn showing_or_clearing_a_banner_forgets_where_the_last_one_painted() {
+        let state = StubState::default();
+        state.indicator.banner_center.set(Some((100.0, 12.0)));
+
+        state.celebrate("Streak", 2.5);
+        assert_eq!(
+            state.indicator.banner_center.get(),
+            None,
+            "a celebration kept the previous banner's centre, so its burst launches from a stale point"
+        );
+
+        state.indicator.banner_center.set(Some((100.0, 40.0)));
+        state.clear_flash();
+        assert_eq!(
+            state.indicator.banner_center.get(),
+            None,
+            "clearing a toast kept its centre, so the next burst launches from where it used to be"
+        );
+    }
+
+    /// And a tick with nothing painted launches nothing, rather than guessing.
+    #[test]
+    fn a_tick_before_the_first_paint_does_not_launch_rockets() {
+        let state = StubState::default();
+        state.activate_burst();
+        assert_eq!(state.indicator.banner_center.get(), None);
+
+        state.tick_celebration(0.5);
+
+        assert!(
+            state.fireworks_rockets.borrow().is_empty(),
+            "rockets launched before any banner had painted, so their origin was invented"
+        );
     }
 
     /// The wiring, not the arithmetic.
