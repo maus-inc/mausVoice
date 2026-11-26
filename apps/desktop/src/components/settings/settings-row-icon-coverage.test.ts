@@ -91,9 +91,22 @@ const rowBlocks = (source: string): string[] => {
   return blocks;
 };
 
-/** Whether the row routes its mark through a helper that owns the choice. */
-const mentionsLeadingMarkHelper = (block: string): boolean =>
-  LEADING_MARK_HELPERS.some((helper) => block.includes(helper));
+/**
+ * Whether the row routes its mark through a helper that owns the choice.
+ *
+ * The helper has to appear inside the `icon` initializer. Scanning the whole
+ * row block would accept a row whose *control* happens to call the helper while
+ * the icon itself is missing, which is the same defect class as reading the
+ * wrong prop: a row that draws no leading mark passes because its neighbour's
+ * code is nearby.
+ */
+const leadsWithMarkHelper = (block: string): boolean => {
+  const initializer = iconInitializerOf(block);
+  return (
+    initializer !== null &&
+    LEADING_MARK_HELPERS.some((helper) => initializer.includes(helper))
+  );
+};
 
 /** The key a row is known by: its anchor, or the page a summary row opens. */
 const settingKeyOf = (block: string): string | null =>
@@ -189,7 +202,7 @@ describe("settings row icon coverage", () => {
     const missing: string[] = [];
     for (const { path, source } of sources) {
       for (const block of rowBlocks(source)) {
-        if (glyphOf(block) === null && !mentionsLeadingMarkHelper(block)) {
+        if (glyphOf(block) === null && !leadsWithMarkHelper(block)) {
           missing.push(`${path}: ${settingKeyOf(block) ?? "unnamed row"}`);
         }
       }
@@ -204,7 +217,7 @@ describe("settings row icon coverage", () => {
     const overdrawn: string[] = [];
     for (const { path, source } of sources) {
       for (const block of rowBlocks(source)) {
-        if (!leadsWithGlyphProps(block) && !mentionsLeadingMarkHelper(block)) {
+        if (!leadsWithGlyphProps(block) && !leadsWithMarkHelper(block)) {
           overdrawn.push(`${path}: ${settingKeyOf(block) ?? "unnamed row"}`);
         }
       }
@@ -236,6 +249,23 @@ describe("settings row icon coverage", () => {
         rowOf("<SettingRow icon={<Mic {...glyphProps} />} />"),
       ),
     ).toBe(false);
+    // A helper is a named decision, but only when it is what the row passes as
+    // its mark: the same call in `control` must not rescue a row with no icon.
+    expect(
+      leadsWithMarkHelper(
+        rowOf(
+          '<SettingRow icon={leadingGlyph(summary, AudioLines)} title="x" />',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      leadsWithMarkHelper(
+        rowOf(
+          '<SettingRow control={leadingGlyph(summary, AudioLines)} title="x" />',
+        ),
+      ),
+    ).toBe(false);
+
     // A provider mark is fitted into its own square rather than drawn at the
     // glyph size, so it is allowed as a leading mark and needs no spread.
     expect(
