@@ -102,7 +102,9 @@ describe("assistant mode entry points", () => {
             ) ||
             /agentModeDialogOpen\s*=\s*true/.test(source)
           ) {
-            hits.push(path.pathname.split("/src/")[1]);
+            const relative = path.pathname.split("/src/").at(-1);
+            if (!relative) throw new Error(`Unexpected path ${path.pathname}`);
+            hits.push(relative);
           }
         }
       }
@@ -146,10 +148,13 @@ describe("assistant mode entry points", () => {
   it("opens the in-window dialog through the same state the toast sets", () => {
     openAssistantModeDialog();
 
-    const update = produceAppStateMock.mock.calls[0]?.[0] as (
-      draft: Record<string, any>,
-    ) => void;
-    const draft = { settings: { agentModeDialogOpen: false } };
+    const update = produceAppStateMock.mock.calls.at(0)?.at(0);
+    if (typeof update !== "function") {
+      throw new Error("The dialog opener did not call produceAppState");
+    }
+    const draft: { settings: { agentModeDialogOpen: boolean } } = {
+      settings: { agentModeDialogOpen: false },
+    };
     update(draft);
     expect(draft.settings.agentModeDialogOpen).toBe(true);
   });
