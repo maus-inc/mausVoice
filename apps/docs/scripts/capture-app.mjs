@@ -13,11 +13,9 @@
  * marker badges are painted into the page and removed after each shot, so they
  * land on the element the annotation list names instead of a guessed pixel.
  */
-import { execFile, spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { APP_FIGURES } from "./figures.mjs";
 import { clearMarkers, drawMarkers } from "./lib/markers.mjs";
 import { captureRegion, openSession, poll, sleep as sleepFor } from "./lib/webdriver.mjs";
@@ -39,8 +37,6 @@ const appBinary =
     "debug",
     "mausVoice",
   );
-
-const run = promisify(execFile);
 
 const readOptions = (argv) => ({
   only: argv.includes("--only") ? argv[argv.indexOf("--only") + 1] : null,
