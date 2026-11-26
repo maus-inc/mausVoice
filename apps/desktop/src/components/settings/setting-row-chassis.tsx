@@ -94,6 +94,20 @@ export const contentControlColumnSx: SystemStyleObject<Theme> = {
 export const settingGlyphProps = { size: 22, strokeWidth: 1.9 } as const;
 
 /**
+ * The one glyph that is not a row's leading mark: the magnifier inside the
+ * settings search field.
+ *
+ * It sits inside an input at the same stroke and a smaller size, so it is a
+ * second entry in the same vocabulary rather than a per-call literal. Written
+ * here instead of next to the field so the two sizes are read together and a
+ * change to the stroke cannot land on only one of them.
+ */
+export const settingSearchGlyphProps = {
+  size: 16,
+  strokeWidth: settingGlyphProps.strokeWidth,
+} as const;
+
+/**
  * The one lane a row's leading mark sits in.
  *
  * A glyph names the kind of thing a row controls, so it is part of the row's

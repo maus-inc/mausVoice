@@ -66,7 +66,12 @@ const REPO_ROOT_PATH = fileURLToPath(REPO_ROOT);
  */
 const rowBlocks = (source: string): string[] => {
   const blocks: string[] = [];
-  for (const match of source.matchAll(/<(SettingRow|SettingToggleRow)\b/g)) {
+  // Every row kind the settings tree renders, including the overview's own:
+  // a summary row leads a card the same way a page row leads a list, and it was
+  // the one shape this walk could see but not read.
+  for (const match of source.matchAll(
+    /<(SettingRow|SettingToggleRow|SettingSummaryRow)\b/g,
+  )) {
     let index = match.index;
     let braces = 0;
     let quote: string | null = null;
@@ -86,8 +91,15 @@ const rowBlocks = (source: string): string[] => {
   return blocks;
 };
 
+/** Whether the row routes its mark through a helper that owns the choice. */
+const mentionsLeadingMarkHelper = (block: string): boolean =>
+  LEADING_MARK_HELPERS.some((helper) => block.includes(helper));
+
+/** The key a row is known by: its anchor, or the page a summary row opens. */
 const settingKeyOf = (block: string): string | null =>
-  /settingKey="([a-z0-9_]+)"/.exec(block)?.[1] ?? null;
+  /settingKey="([a-z0-9_]+)"/.exec(block)?.[1] ??
+  /linksTo="([a-z0-9_]+)"/.exec(block)?.[1] ??
+  null;
 
 /** The whole opening tag of each row, parsed into the props it passes. */
 const rowOf = (source: string): string => {
@@ -150,6 +162,17 @@ const leadsWithGlyphProps = (block: string): boolean => {
   return /\{\.\.\.settingGlyphProps\}/.test(element);
 };
 
+/**
+ * The leading mark a row passes, when it passes one.
+ *
+ * The identity row and the models card both route their mark through a helper
+ * that decides between a provider logo and a glyph at render time, so the mark
+ * is an expression rather than an element literal. That is still a named
+ * decision the row makes, and `leadsWithGlyphProps` reads the helper itself, so
+ * the row is not skipped for not spelling the element out.
+ */
+const LEADING_MARK_HELPERS = ["leadingGlyph("];
+
 /** The element a row passes as its leading mark, when it passes one. */
 const glyphOf = (block: string): string | null =>
   /icon=\{\s*<([A-Za-z0-9]+)/.exec(block)?.[1] ?? null;
@@ -166,7 +189,7 @@ describe("settings row icon coverage", () => {
     const missing: string[] = [];
     for (const { path, source } of sources) {
       for (const block of rowBlocks(source)) {
-        if (glyphOf(block) === null) {
+        if (glyphOf(block) === null && !mentionsLeadingMarkHelper(block)) {
           missing.push(`${path}: ${settingKeyOf(block) ?? "unnamed row"}`);
         }
       }
@@ -181,7 +204,7 @@ describe("settings row icon coverage", () => {
     const overdrawn: string[] = [];
     for (const { path, source } of sources) {
       for (const block of rowBlocks(source)) {
-        if (!leadsWithGlyphProps(block)) {
+        if (!leadsWithGlyphProps(block) && !mentionsLeadingMarkHelper(block)) {
           overdrawn.push(`${path}: ${settingKeyOf(block) ?? "unnamed row"}`);
         }
       }
@@ -252,5 +275,23 @@ describe("settings row icon coverage", () => {
       "apps/desktop/src/components/settings/pages/ShortcutsSettingsPage.tsx",
       "apps/desktop/src/components/settings/pages/SystemSettingsPage.tsx",
     ]);
+  });
+
+  it("holds the models card's own mark helper to the same size", () => {
+    // The three summary rows hand their mark to a helper that chooses between a
+    // provider's artwork and a glyph, so the row blocks themselves carry no
+    // element to inspect. The decision still has to draw at the shared size,
+    // and that is the line this assertion reads.
+    const card = readFileSync(
+      `${REPO_ROOT_PATH}apps/desktop/src/components/settings/home/YourModelsCard.tsx`,
+      "utf8",
+    );
+    expect(card).toContain("<Glyph {...settingGlyphProps} />");
+    expect(card).toContain("<ProviderLogo provider={summary.provider}");
+
+    // And a summary row with no mark at all fails the same way a page row does.
+    expect(
+      glyphOf(rowOf('<SettingSummaryRow linksTo="ai_transcription" />')),
+    ).toBe(null);
   });
 });

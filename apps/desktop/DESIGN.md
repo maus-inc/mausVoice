@@ -252,6 +252,9 @@ choice below names what it rules out.
   `setting-row-chassis.tsx` (22px, stroke 1.9). Never a per-row literal, and
   never a different family: a Material magnifier beside a lucide microphone is
   visible in the same eyeful.
+- The magnifier inside the settings search field is the one non-row glyph:
+  `settingSearchGlyphProps`, 16px at the same stroke. It is declared beside the
+  row props so the two sizes are read together.
 - The glyph sits in a lane of fixed `width` (`leadingGlyphSx`), so titles line
   up whether a row leads with an icon, a provider logo, or the person's avatar.
   A `minWidth` would let the widest mark grow the lane, which is how the 48px

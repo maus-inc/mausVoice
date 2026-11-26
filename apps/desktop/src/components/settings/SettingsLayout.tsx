@@ -40,6 +40,7 @@ import {
 import { revealCurrentSettingsPage } from "./settings-rail-scroll";
 import { useSettingsAnchor } from "./use-settings-anchor";
 import { SettingsSearchResults } from "./SettingsSearchResults";
+import { settingSearchGlyphProps } from "./setting-row-chassis";
 
 /**
  * Rail entry for one page. Links, not buttons: each page is a route, the
@@ -350,7 +351,7 @@ export const SettingsLayout = () => {
                 input: {
                   startAdornment: (
                     <InputAdornment position="start">
-                      <Search size={16} strokeWidth={1.9} />
+                      <Search {...settingSearchGlyphProps} />
                     </InputAdornment>
                   ),
                 },

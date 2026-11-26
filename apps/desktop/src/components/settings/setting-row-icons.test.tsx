@@ -14,36 +14,13 @@ vi.mock("react-intl", async (importOriginal) => {
 });
 
 import { IntlProvider } from "react-intl";
-import { theme } from "../../theme";
+import { ThemeProvider } from "@mui/material";
+import { THEME_PROVIDER_CONFIG, theme } from "../../theme";
 import { SettingGroup, SettingRow, SettingToggleRow } from "./SettingRow";
 import { settingGlyphProps } from "./setting-row-chassis";
 
 ensureUiHarness();
 
-/**
- * A palette hex as the computed style reports it.
- *
- * The comparison is against the palette token, not a literal, so retuning the
- * scheme moves both sides. jsdom hands back the resolved `rgb()` form while the
- * theme holds the authored hex, and that is the only reason for the conversion.
- */
-const asComputedColor = (hex: string): string => {
-  const value = hex.replace("#", "");
-  const [r, g, b] = [0, 2, 4].map((offset) =>
-    Number.parseInt(value.slice(offset, offset + 2), 16),
-  );
-  return `rgb(${r}, ${g}, ${b})`;
-};
-
-/**
- * The icon language of the settings surface, which no single row owns.
- *
- * Three row shapes share one card, and the issue that produced this suite was
- * an icon language that lapsed wherever the shapes alternated. What the tests
- * can hold is the contract: every row kind has a leading-glyph slot with the
- * same shape, the glyph stays out of the accessible name, and the lane is the
- * same width whether a glyph is present or not.
- */
 /**
  * The generated CSS rule for one element, as the theme emitted it.
  *
@@ -76,7 +53,14 @@ describe("settings row icons", () => {
         createElement(
           IntlProvider,
           { locale: "en", messages: en },
-          children as never,
+          // The app's theme provider, not a bare IntlProvider: without it the
+          // rows fall back to stock MUI defaults, and every colour assertion
+          // below would be checking MUI's palette instead of ours.
+          createElement(
+            ThemeProvider,
+            { theme, ...THEME_PROVIDER_CONFIG },
+            children as never,
+          ),
         ),
       );
     });
@@ -129,7 +113,14 @@ describe("settings row icons", () => {
       expect(rule).toContain("height:22px");
       expect(rule).not.toContain("min-width:22px");
       expect(rule).toContain("flex-shrink:0");
-      expect(rule).toContain("color:rgba(0, 0, 0, 0.6)");
+      // The colour is the app's own `text.secondary`, not MUI's stock
+      // `rgba(0, 0, 0, 0.6)`: the two happen to resolve close in light mode and
+      // are nothing alike in dark, so the expectation comes from the palette
+      // the app ships rather than from a literal.
+      // A CSS variable, not a resolved literal: the theme turns the palette
+      // token into `var(--app-palette-text-secondary)`, which is what makes the
+      // glyph follow the scheme instead of freezing to the one that rendered it.
+      expect(rule).toContain("color:var(--app-palette-text-secondary)");
     }
   });
 
@@ -191,15 +182,14 @@ describe("settings row icons", () => {
       </SettingGroup>,
     );
 
-    // The oracle is the palette token, not a literal, so a retuned scheme moves
-    // the expectation with the app instead of failing on a number. The second
-    // row is the negative control: same glyph, no tint.
-    const errorColor = asComputedColor(theme.palette.error.main);
-    expect(getComputedStyle(glyphOf("clear_local_data")).color).toBe(
-      errorColor,
+    // The oracle is the palette token the theme compiled, not a literal red, so
+    // a retuned scheme moves the rule with the app. The second row is the
+    // negative control: same glyph, no tint.
+    expect(ruleOf(glyphOf("clear_local_data"))).toContain(
+      "color:var(--app-palette-error-main)",
     );
-    expect(getComputedStyle(glyphOf("change_password")).color).not.toBe(
-      errorColor,
+    expect(ruleOf(glyphOf("change_password"))).not.toContain(
+      "color:var(--app-palette-error-main)",
     );
   });
 
