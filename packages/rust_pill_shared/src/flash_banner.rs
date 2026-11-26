@@ -579,42 +579,22 @@ pub struct FlashFrame {
 }
 
 impl FlashFrame {
-    /// Lay the banner out for a pill window and derive its fade.
-    ///
-    /// The draw sites all composed this the same way: ask the pill for its
-    /// position, build a spec centred on the window, resolve the frame and pull
-    /// the four values it paints with out of it. That composition is stated
-    /// once here so a paint site supplies only what it measured.
+    /// Lay the banner out and derive its fade.
     ///
     /// The line count the celebration needs is published to `flash_lines`
     /// before returning, because the tick that launches the particles runs
     /// before the paint that will measure this banner again.
-    #[allow(clippy::too_many_arguments)]
-    pub fn for_pill<F>(
-        window_width: f64,
-        pill_top: f64,
-        constants: FlashBannerConstants,
+    pub fn resolve<F>(
+        spec: FlashBannerSpec,
         message: &str,
         measure: F,
-        widths: FlashBannerWidths,
         fade_t: f64,
         flash_lines: &Cell<usize>,
     ) -> Self
     where
         F: Fn(&str) -> f64,
     {
-        let layout = layout_flash_banner(
-            &FlashBannerSpec::for_window(
-                window_width,
-                pill_top,
-                constants,
-                widths.preferred,
-                widths.action,
-                widths.reject,
-            ),
-            message,
-            measure,
-        );
+        let layout = layout_flash_banner(&spec, message, measure);
         flash_lines.set(layout.lines.len());
         Self {
             layout,
@@ -627,17 +607,6 @@ impl FlashFrame {
     pub fn center(&self) -> (f64, f64) {
         self.layout.center()
     }
-}
-
-/// The three widths a draw site measured before it can lay the banner out.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FlashBannerWidths {
-    /// The message's width at its natural, unwrapped size.
-    pub preferred: f64,
-    /// The accept button's width, absent when it has no label.
-    pub action: Option<f64>,
-    /// The reject button's width, absent when it has no label.
-    pub reject: Option<f64>,
 }
 
 /// The banner fields a pill's state carries, reachable by one method.
@@ -717,6 +686,56 @@ pub trait FlashHost {
         self.flash_visible().set(true);
         self.flash_timer().set(duration);
         self.flash_lines().set(1);
+    }
+
+    /// Lays this pill's banner out and resolves the frame its painter needs.
+    ///
+    /// The draw sites all did this identically, so it is a default method on
+    /// the trait: a site supplies what it measured and where its pill sits, and
+    /// the trait owns the rest. That also keeps the call itself short, which
+    /// matters because three copies of a long call are exactly what a
+    /// duplication gate sees.
+    #[allow(clippy::type_complexity)]
+    fn flash_frame<F>(
+        &self,
+        message: &str,
+        measure: F,
+        widths: (f64, Option<f64>, Option<f64>),
+        (pill_top, window_width): (f64, f64),
+        fade_t: f64,
+    ) -> FlashFrame
+    where
+        F: Fn(&str) -> f64,
+    {
+        let (preferred, action, reject) = widths;
+        let constants = FlashBannerConstants::canonical();
+        let spec = FlashBannerSpec::for_window(
+            window_width,
+            pill_top,
+            constants,
+            preferred,
+            action,
+            reject,
+        );
+        FlashFrame::resolve(spec, message, measure, fade_t, self.flash_lines())
+    }
+
+    /// The label of `button`, if the banner is showing that button at all.
+    ///
+    /// A banner can carry either button, both, or neither, and the caller holds
+    /// the two labels separately. Resolving which one a painted rectangle wants
+    /// is the same rule on every platform, so it lives here rather than being
+    /// repeated at each paint site.
+    fn button_label<'a>(
+        &self,
+        button: BannerButton,
+        action: Option<&'a String>,
+        reject: Option<&'a String>,
+    ) -> Option<&'a String> {
+        match button {
+            BannerButton::Action => action,
+            BannerButton::Reject => reject,
+        }
     }
 
     /// Where a celebration launches its particles from.
@@ -1429,7 +1448,7 @@ mod tests {
             let source = std::fs::read_to_string(format!("{manifest}/{path}"))
                 .unwrap_or_else(|err| panic!("read {path}: {err}"));
             assert!(
-                source.contains("flash_banner::FlashFrame::for_pill("),
+                source.contains(".flash_frame("),
                 "{path} does not lay the flash banner out through the shared module"
             );
             assert!(
