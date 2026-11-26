@@ -1779,6 +1779,53 @@ mod tests {
         );
     }
 
+    /// A banner tall enough for its lines also positions its buttons inside it.
+    ///
+    /// This is the user-visible half of the wrap: a taller banner must not leave
+    /// its buttons floating outside the rounded rectangle, and a wrapped message
+    /// must not run underneath them. Both follow from the height and the reserved
+    /// width, so both are asserted against a banner that actually wrapped.
+    #[test]
+    fn a_wrapped_banner_contains_its_own_buttons() {
+        let mut with_button = spec();
+        with_button.preferred_text_width = 900.0;
+        with_button.action_width = Some(64.0);
+        with_button.reject_width = Some(64.0);
+
+        let message = "a message long enough to wrap onto several lines inside the banner";
+        let layout = layout_flash_banner(&with_button, message, fixed(7.0));
+
+        assert!(
+            layout.lines.len() > 1,
+            "the fixture has to wrap for this to test anything"
+        );
+        let banner = layout.banner;
+        let action = layout
+            .action
+            .expect("the fixture asks for an action button");
+        let reject = layout.reject.expect("the fixture asks for a reject button");
+
+        for (name, button) in [("action", action), ("reject", reject)] {
+            assert!(
+                button.x >= banner.x && button.right() <= banner.right(),
+                "the {name} button is outside the banner: {button:?} against {banner:?}"
+            );
+            assert!(
+                button.y >= banner.y && button.bottom() <= banner.bottom(),
+                "the {name} button is outside the banner's height: {button:?} against {banner:?}"
+            );
+        }
+        assert!(
+            action.right() <= reject.x || reject.right() <= action.x,
+            "the two buttons overlap: {action:?} and {reject:?}"
+        );
+        let text = layout.text;
+        assert!(
+            text.right() <= action.x,
+            "the wrapped text runs under the action button: {text:?} against {action:?}"
+        );
+    }
+
     /// A message that is nothing but newlines makes one empty line.
     ///
     /// Found by probing the wrap rather than by a failing user report: `"\n\n\n"`
