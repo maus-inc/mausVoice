@@ -1,0 +1,1005 @@
+//! Geometry for the flash banner the native pill paints above itself.
+//!
+//! The banner carries a short toast ("Transcript copied to clipboard") and the
+//! error notice a failed action produces. Both used to be laid out as one line
+//! `text_width + padding` wide, computed inline in each of the three pill
+//! crates. That is right until the message is longer than the window: then the
+//! banner is wider than the surface under it, the pill clips it at both edges,
+//! and a user reading an error loses its beginning and its end.
+//!
+//! So the banner geometry lives here, once, and every platform asks for it:
+//!
+//! - the banner never leaves the window it is drawn on, less a safe margin, and
+//!   never exceeds a sensible maximum width;
+//! - a message that does not fit is wrapped here, measured through the caller's
+//!   own text engine, so the break points match the glyphs that get painted;
+//! - the height follows the wrapped line count;
+//! - the buttons keep their place on the right and the text keeps its padding.
+//!
+//! Wrapping in this crate rather than in the platform engine is deliberate. The
+//! three engines break lines differently by a word or a comma, and the pill is
+//! meant to be one product on three systems: driving all three from this one
+//! greedy wrap makes the line count, and therefore the banner height, identical
+//! everywhere. It also means no platform needs a new wrapped-text draw API; each
+//! already knows how to paint one line.
+//!
+//! Everything in this module is pure. Measurement arrives as a callback, exactly
+//! as [`crate::text_fit::elide_to_width`] takes it, because the three crates
+//! measure through DirectWrite, CoreText and Pango and none of those types can
+//! live in a crate with no dependencies.
+
+/// Vertical padding above and below the banner text.
+///
+/// Chosen with [`BANNER_TEXT_LINE`] so a single line lands on the banner's
+/// established 32px height: 8 + 16 + 8 is 32.0. A short message therefore keeps
+/// the compact look it already had, and the height only grows once the text
+/// needs a second line.
+pub const BANNER_PADDING_V: f64 = 8.0;
+
+/// Line pitch used to size the banner and to place each line.
+///
+/// This is a layout number rather than a font metric. The platform engines
+/// disagree about leading by a few tenths of a pixel, and the banner has to be
+/// the same height on all three for the pill to read as one product, so the
+/// pitch is fixed here and every line is drawn one pitch below the last. Sixteen
+/// pixels is also the natural line box of the banner's 12px text, so a wrapped
+/// line keeps the same breathing room a single line always had.
+pub const BANNER_TEXT_LINE: f64 = 16.0;
+
+/// The margin a clamp leaves when it has to move the banner to stay inside.
+///
+/// The pill centres its content, so a banner that passed the ceiling is already
+/// inside the window and this never applies. It exists for the case where a
+/// future mode offsets the pill, so the clamp cannot put the rounded corner on
+/// the clip.
+pub const BANNER_MIN_MARGIN: f64 = 2.0;
+
+/// Largest the banner is allowed to grow, however wide the window is.
+///
+/// A banner that spans a wide display reads as a bar rather than as a notice
+/// about the pill, and a wrapped line is harder to track the longer it is, so
+/// the width is capped well below the window. 480 is wider than every pill
+/// surface the product has (the widest window is 600 less its side margins) and
+/// narrow enough that the banner stays a floating card, at the same order as
+/// the 440 cap the broadcast transcript already uses.
+pub const BANNER_MAX_WIDTH: f64 = 480.0;
+
+/// Narrowest banner the pill will draw.
+///
+/// A one-word toast still needs to read as a banner rather than a pill, so the
+/// width has a floor. It used to be a `80.0` literal repeated in all three
+/// crates; it is here so the floor and the ceiling are decided together.
+pub const BANNER_MIN_WIDTH: f64 = 80.0;
+
+/// Everything the banner needs from the caller to answer with a layout.
+///
+/// The caller owns the constants and the pill's own placement; the window and
+/// the pill's layout box are what bound the banner in the first place. All
+/// lengths are in drawing units of the caller's content space.
+#[derive(Debug, Clone, Copy)]
+pub struct FlashBannerSpec {
+    /// How much horizontal room the banner has around the point it is centred
+    /// on.
+    ///
+    /// This is the window, not the pill's own box. The pill draws its content
+    /// into a box that can be narrower than the window (dictation is 200 wide in
+    /// a 600 wide window) and shifts that box to stay centred, so the drawing
+    /// space around the pill's centre extends past the box on both sides. A
+    /// long error during dictation has the whole window to read in, and the
+    /// window is also what clips, so it is the honest ceiling.
+    pub available_width: f64,
+    /// The pill's horizontal centre, which the banner is centred on.
+    pub center_x: f64,
+    /// Offset of the pill's top edge, so the banner can keep its gap above it.
+    pub pill_top: f64,
+    /// Distance the banner keeps above the pill.
+    pub gap: f64,
+    /// Height of a one-line banner, which is also the floor for a wrapped one.
+    pub min_height: f64,
+    /// Horizontal padding between the banner edge and its text.
+    pub padding_h: f64,
+    /// Narrowest the banner is allowed to become.
+    pub min_width: f64,
+    /// Measured width of the action button including its own padding, if the
+    /// caller has an action.
+    pub action_width: Option<f64>,
+    /// Measured width of the reject button including its own padding, if any.
+    pub reject_width: Option<f64>,
+    /// Gap between the buttons and between the buttons and the text.
+    pub action_gap: f64,
+    /// Height of the buttons, which is smaller than the banner so it can be
+    /// centred inside it.
+    pub action_height: f64,
+}
+
+/// A rectangle the caller paints into.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BannerRect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl BannerRect {
+    /// Right edge of the rectangle.
+    pub fn right(self) -> f64 {
+        self.x + self.w
+    }
+
+    /// Bottom edge of the rectangle.
+    pub fn bottom(self) -> f64 {
+        self.y + self.h
+    }
+
+    /// Horizontal centre of the rectangle.
+    pub fn center_x(self) -> f64 {
+        self.x + self.w / 2.0
+    }
+
+    /// Vertical centre of the rectangle.
+    pub fn center_y(self) -> f64 {
+        self.y + self.h / 2.0
+    }
+
+    /// Left edge for a line of `line_width`, centred in the block.
+    ///
+    /// A banner with no buttons centres the message, which is the compact look
+    /// it has always had. A banner with a button left-aligns it against its own
+    /// padding, because a centred line beside a button reads as a gap rather
+    /// than as a message; the caller passes the block's own left edge in that
+    /// case by asking for a full-width line.
+    pub fn line_x(self, line_width: f64) -> f64 {
+        self.x + ((self.w - sane(line_width)) / 2.0).max(0.0)
+    }
+
+    /// Top of the line box at `index`, one line pitch apart.
+    ///
+    /// The pitch is fixed and a platform's line box is not exactly that tall,
+    /// so a line is centred in its own slice of the pitch instead of being
+    /// pinned to its top. That is what keeps the 12px text optically centred on
+    /// the banner when the platform's leading differs by a fraction.
+    pub fn line_top(self, index: usize, line_height: f64) -> f64 {
+        self.y + index as f64 * BANNER_TEXT_LINE + (BANNER_TEXT_LINE - sane(line_height)) / 2.0
+    }
+}
+
+/// The banner, its text block and its buttons, all in the caller's content
+/// space.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlashBannerLayout {
+    /// The banner itself.
+    pub banner: BannerRect,
+    /// Where the text block starts and how much room it has.
+    pub text: BannerRect,
+    /// The reject button, to the left of the action button.
+    pub reject: Option<BannerRect>,
+    /// The action button, on the banner's right edge.
+    pub action: Option<BannerRect>,
+    /// The wrapped message, one entry per painted line.
+    pub lines: Vec<String>,
+}
+
+impl FlashBannerLayout {
+    /// The banner's centre, which is the point its scale animation is about and
+    /// the point celebration particles launch from.
+    pub fn center(&self) -> (f64, f64) {
+        (self.banner.center_x(), self.banner.center_y())
+    }
+}
+
+/// Collapse a measurement into a width that cannot poison the geometry.
+///
+/// A missing glyph or a surface that has not been sized can answer `NaN` or a
+/// negative width, and either one would propagate into every rectangle below
+/// it. An unusable measurement reads as zero, which makes the banner fall back
+/// to its minimum width rather than disappear.
+fn sane(value: f64) -> f64 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        0.0
+    }
+}
+
+/// The widest the banner may be, which is the window less its side margins.
+///
+/// Floored at the caller's minimum: a window narrower than that is not a case
+/// the pill can reach, and clamping to zero would produce an unreadable sliver
+/// rather than the smallest honest banner.
+pub fn banner_max_width(available_width: f64, min_width: f64) -> f64 {
+    let usable = sane(available_width) - BANNER_MIN_MARGIN * 2.0;
+    usable.min(BANNER_MAX_WIDTH).max(sane(min_width))
+}
+
+/// The height the banner needs for `line_count` lines of text.
+///
+/// One line gives back `min_height` exactly, so a short message is unchanged.
+/// Each further line adds one line of pitch, because the top and bottom padding
+/// are already inside the floor.
+pub fn banner_height(line_count: usize, min_height: f64, padding_v: f64, line_height: f64) -> f64 {
+    let lines = line_count.max(1) as f64;
+    let stack = padding_v * 2.0 + lines * line_height;
+    sane(min_height).max(stack)
+}
+
+/// Wraps `text` to `max_width`, word first and characters when a word alone
+/// will not fit.
+///
+/// The greedy rule is the one every platform's native wrapper applies, so the
+/// line count this returns matches what the pill paints: fill a line until the
+/// next word would overrun, then start a new one. An explicit `\n` starts a new
+/// line and is not drawn. A word wider than the whole budget is broken across
+/// lines instead of being allowed to overrun, which is the case a URL or a long
+/// file path reaches.
+///
+/// `measure` returns the width of a rendered string. It must be monotonic in
+/// the length of its argument, which a font's advance widths are.
+pub fn wrap_to_width<F>(text: &str, max_width: f64, measure: F) -> Vec<String>
+where
+    F: Fn(&str) -> f64,
+{
+    let budget = sane(max_width);
+    // A budget of zero is not a width any glyph fits into, so breaking against
+    // it would put one character on every line. That is worse than an overrun
+    // the caller can see, so an unusable budget leaves the text whole.
+    let can_break = budget > 0.0;
+    let mut lines: Vec<String> = Vec::new();
+
+    for paragraph in text.split('\n') {
+        let mut current = String::new();
+        for word in paragraph.split_whitespace() {
+            if !current.is_empty() {
+                let candidate = format!("{current} {word}");
+                if measure(&candidate) <= budget {
+                    current = candidate;
+                    continue;
+                }
+                lines.push(std::mem::take(&mut current));
+            }
+            // A word starting a line still has to fit it. One wider than the
+            // whole banner is broken on character boundaries, repeatedly, so
+            // neither a URL nor a long path can ever overrun the edge.
+            let mut rest = word.to_string();
+            while can_break && measure(&rest) > budget {
+                let (head, tail) = break_word(&rest, budget, &measure);
+                if head.is_empty() || tail == rest {
+                    // No progress is possible on this word; keep it whole
+                    // rather than loop forever.
+                    break;
+                }
+                lines.push(head);
+                rest = tail;
+            }
+            current = rest;
+        }
+        lines.push(current);
+    }
+
+    // Empty paragraphs (a blank line, a trailing newline) collapse rather than
+    // rendering as a gap, but a message that is entirely blank still keeps its
+    // one line so the banner does not vanish.
+    if lines.iter().any(|line| !line.is_empty()) {
+        lines.retain(|line| !line.is_empty());
+    }
+    lines
+}
+
+/// Splits one over-wide word into a head that fits and the remainder.
+///
+/// Binary search over character boundaries rather than a linear scan, for the
+/// same reason [`crate::text_fit::elide_to_width`] uses one: each step is a font
+/// engine call and the word can be long. The prefix is taken on a character
+/// boundary, so a multi-byte character is never cut in half.
+fn break_word<F>(word: &str, budget: f64, measure: F) -> (String, String)
+where
+    F: Fn(&str) -> f64,
+{
+    let chars: Vec<char> = word.chars().collect();
+    if chars.len() < 2 {
+        return (word.to_string(), String::new());
+    }
+    let (mut lo, mut hi) = (1usize, chars.len() - 1);
+    let mut best = 1usize;
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let prefix: String = chars[..mid].iter().collect();
+        if measure(&prefix) <= budget {
+            best = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let head: String = chars[..best].iter().collect();
+    let tail: String = chars[best..].iter().collect();
+    (head, tail)
+}
+
+/// Builds the whole banner layout from the caller's measurements.
+///
+/// `preferred_text_width` is the width the message would take on one unbroken
+/// line, used only to size the banner before it is clamped to the window. It is
+/// a parameter rather than a `measure` call because the macOS pill measures its
+/// flash text a point larger than it draws it, and that extra margin is part of
+/// the banner's current look.
+///
+/// `measure` returns the width of a string rendered in the font the lines will
+/// be painted with. It drives the wrap and the per-line centring, so both agree
+/// with the glyphs on screen.
+pub fn layout_flash_banner<F>(
+    spec: &FlashBannerSpec,
+    preferred_text_width: f64,
+    message: &str,
+    measure: F,
+) -> FlashBannerLayout
+where
+    F: Fn(&str) -> f64,
+{
+    let min_width = sane(spec.min_width);
+    let max_width = banner_max_width(spec.available_width, min_width);
+
+    let button_widths: Vec<f64> = [spec.action_width, spec.reject_width]
+        .into_iter()
+        .flatten()
+        .map(sane)
+        .collect();
+    // Each button is preceded by a gap, so the space the buttons take is their
+    // own widths plus one gap each. Getting this off by one gap would leave the
+    // message a gap's worth of room it does not have, and the last word of the
+    // first line would sit under the button.
+    let gap = sane(spec.action_gap);
+    let reserved_for_buttons: f64 =
+        button_widths.iter().sum::<f64>() + button_widths.len() as f64 * gap;
+    let padding = sane(spec.padding_h);
+    let preferred =
+        (sane(preferred_text_width) + padding * 2.0 + reserved_for_buttons).max(min_width);
+    let banner_w = preferred.min(max_width);
+
+    // The banner width settles first because the text budget depends only on
+    // it. Wrapping then decides the line count, and the height follows.
+    let text_width = (banner_w - padding * 2.0 - reserved_for_buttons).max(0.0);
+    let lines = wrap_to_width(message, text_width, &measure);
+    let height = banner_height(
+        lines.len(),
+        spec.min_height,
+        BANNER_PADDING_V,
+        BANNER_TEXT_LINE,
+    );
+
+    // The banner is centred on the pill and the room is symmetric about that
+    // point, so any banner that passed the ceiling above is already inside the
+    // window and needs no second clamp.
+    let x = sane(spec.center_x) - banner_w / 2.0;
+    let y = sane(spec.pill_top) - sane(spec.gap) - height;
+    let banner = BannerRect {
+        x,
+        y,
+        w: banner_w,
+        h: height,
+    };
+
+    let text = BannerRect {
+        x: banner.x + padding,
+        y: banner.y + BANNER_PADDING_V,
+        w: text_width,
+        h: (height - BANNER_PADDING_V * 2.0).max(0.0),
+    };
+
+    let action_h = sane(spec.action_height);
+    let action_y = banner.y + (height - action_h) / 2.0;
+    let action = spec.action_width.map(|width| BannerRect {
+        x: banner.right() - padding - sane(width),
+        y: action_y,
+        w: sane(width),
+        h: action_h,
+    });
+    let reject = spec.reject_width.map(|width| {
+        let offset = action.map_or(0.0, |rect| rect.w + sane(spec.action_gap));
+        BannerRect {
+            x: banner.right() - padding - offset - sane(width),
+            y: action_y,
+            w: sane(width),
+            h: action_h,
+        }
+    });
+
+    FlashBannerLayout {
+        banner,
+        text,
+        reject,
+        action,
+        lines,
+    }
+}
+
+/// The banner's centre without wrapping the message.
+///
+/// The celebration particles launch from the middle of the banner, and they are
+/// ticked on a different path from the one that paints it. That path has no
+/// layout object and must not pay for a wrap, but the height it launches from
+/// has to be the height the banner will actually be painted at, or the rockets
+/// appear through the middle of a two-line message. So this resolves the same
+/// floor and padding against a line count the caller supplies: the paint path
+/// passes its wrapped count, and the tick path passes the count it cached the
+/// last time it painted.
+pub fn banner_center_y(pill_top: f64, gap: f64, min_height: f64, line_count: usize) -> f64 {
+    let height = banner_height(line_count, min_height, BANNER_PADDING_V, BANNER_TEXT_LINE);
+    sane(pill_top) - sane(gap) - height / 2.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A deterministic stand-in for a font: every character is `unit` wide, so
+    /// the arithmetic in these assertions is exact and the line count is a
+    /// property of the text rather than of a platform's leading.
+    fn fixed(unit: f64) -> impl Fn(&str) -> f64 {
+        move |text: &str| text.chars().count() as f64 * unit
+    }
+
+    fn spec() -> FlashBannerSpec {
+        FlashBannerSpec {
+            available_width: 600.0,
+            center_x: 300.0,
+            pill_top: 300.0,
+            gap: 6.0,
+            min_height: 32.0,
+            padding_h: 16.0,
+            min_width: BANNER_MIN_WIDTH,
+            action_width: None,
+            reject_width: None,
+            action_gap: 8.0,
+            action_height: 22.0,
+        }
+    }
+
+    fn layout(message: &str, text_width: f64, spec: &FlashBannerSpec) -> FlashBannerLayout {
+        layout_flash_banner(spec, text_width, message, fixed(7.0))
+    }
+
+    #[test]
+    fn a_short_message_keeps_its_one_line_height_and_centred_placement() {
+        let layout = layout("Copied text", 118.0, &spec());
+        assert_eq!(layout.banner.h, 32.0, "one line must stay 32px tall");
+        assert_eq!(layout.banner.w, 118.0 + 16.0 * 2.0);
+        assert_eq!(layout.banner.x, (600.0 - 150.0) / 2.0);
+        assert_eq!(layout.banner.y, 300.0 - 6.0 - 32.0);
+        assert_eq!(
+            layout.banner.center_x(),
+            300.0,
+            "the banner is centred on the window"
+        );
+        assert_eq!(layout.lines, vec!["Copied text".to_string()]);
+    }
+
+    #[test]
+    fn a_message_narrower_than_the_minimum_keeps_the_minimum_width() {
+        let layout = layout("ok", 42.0, &spec());
+        assert_eq!(layout.banner.w, BANNER_MIN_WIDTH, "the floor is unchanged");
+        assert_eq!(layout.banner.h, 32.0);
+    }
+
+    #[test]
+    fn a_short_message_centres_its_text_block_on_the_banner() {
+        let layout = layout("Copied text", 118.0, &spec());
+        assert_eq!(
+            layout.text.center_y(),
+            layout.banner.center_y(),
+            "one line sits on the banner's centre line"
+        );
+    }
+
+    #[test]
+    fn a_long_message_wraps_to_several_lines_and_grows_the_banner() {
+        let message = "the microphone could not be opened because another \
+                       application is already holding the audio device";
+        let layout = layout_flash_banner(&spec(), 200.0, message, fixed(7.0));
+        assert!(layout.lines.len() > 1, "the message had to wrap");
+        assert!(
+            layout.banner.h > 32.0,
+            "a wrapped banner must grow, got {}",
+            layout.banner.h
+        );
+        assert_eq!(
+            layout.banner.h,
+            BANNER_PADDING_V * 2.0 + BANNER_TEXT_LINE * layout.lines.len() as f64
+        );
+        // The gap above the pill is unchanged, so the banner grows upward.
+        assert_eq!(layout.banner.bottom(), 300.0 - 6.0);
+        for line in &layout.lines {
+            assert!(fixed(7.0)(line) <= layout.text.w, "{line:?} overran");
+        }
+        assert_eq!(
+            layout
+                .lines
+                .join(" ")
+                .split_whitespace()
+                .collect::<Vec<_>>(),
+            message.split_whitespace().collect::<Vec<_>>(),
+            "wrapping must not lose or reorder a word"
+        );
+    }
+
+    #[test]
+    fn a_longer_message_makes_a_taller_banner() {
+        let short = layout("one line", 200.0, &spec());
+        let long = layout(
+            "a message long enough that it has to be broken across several lines \
+             of the banner before it will fit inside the window at all",
+            200.0,
+            &spec(),
+        );
+        assert!(long.lines.len() > short.lines.len());
+        assert!(long.banner.h > short.banner.h);
+        // Growing upward keeps the pill's own place and the gap intact.
+        assert_eq!(long.banner.bottom(), short.banner.bottom());
+    }
+
+    #[test]
+    fn the_banner_never_leaves_the_window() {
+        // A message far wider than the window would once have painted past
+        // both edges and been clipped away.
+        let narrow = FlashBannerSpec {
+            available_width: 200.0,
+            center_x: 100.0,
+            ..spec()
+        };
+        let layout = layout_flash_banner(&narrow, 4000.0, &"word ".repeat(80), fixed(7.0));
+        assert!(layout.banner.x >= BANNER_MIN_MARGIN, "left edge clipped");
+        assert!(
+            layout.banner.right() <= 200.0 - BANNER_MIN_MARGIN,
+            "right edge clipped"
+        );
+        assert_eq!(layout.banner.center_x(), 100.0);
+        assert!(layout.lines.len() > 4, "the text kept wrapping instead");
+    }
+
+    #[test]
+    fn a_narrow_window_gives_the_text_a_smaller_budget_and_more_lines() {
+        let wide = FlashBannerSpec {
+            available_width: 600.0,
+            ..spec()
+        };
+        let narrow = FlashBannerSpec {
+            available_width: 320.0,
+            center_x: 160.0,
+            ..spec()
+        };
+        let message = "the audio device was disconnected before the recording \
+                       could be saved to disk";
+        // The preferred width is what the message would take on one line, so a
+        // narrower one is a message the banner was already going to wrap.
+        let wide = layout_flash_banner(&wide, 400.0, message, fixed(7.0));
+        let narrow = layout_flash_banner(&narrow, 200.0, message, fixed(7.0));
+        assert!(narrow.banner.w < wide.banner.w);
+        assert!(narrow.text.w < wide.text.w);
+        assert!(
+            narrow.lines.len() > wide.lines.len(),
+            "a narrower banner needs more lines: {} vs {}",
+            narrow.lines.len(),
+            wide.lines.len()
+        );
+        assert!(narrow.banner.h > wide.banner.h);
+    }
+
+    #[test]
+    fn a_narrower_window_gives_the_text_a_smaller_budget() {
+        let narrow = FlashBannerSpec {
+            available_width: 240.0,
+            center_x: 120.0,
+            ..spec()
+        };
+        let layout = layout_flash_banner(&narrow, 900.0, "a message", fixed(7.0));
+        assert!(layout.text.w < layout.banner.w);
+        assert_eq!(
+            layout.text.w,
+            layout.banner.w - spec().padding_h * 2.0,
+            "with no buttons the text owns the banner less its padding"
+        );
+    }
+
+    #[test]
+    fn the_banner_is_centred_on_the_pill_even_when_the_pill_is_off_centre() {
+        // Dictation draws the pill in a narrow box inside a wide window. The
+        // content space is offset, so the pill's centre is not the window's
+        // midpoint; the banner must follow the pill, not the window.
+        let offset = FlashBannerSpec {
+            available_width: 600.0,
+            center_x: 240.0,
+            ..spec()
+        };
+        let layout = layout_flash_banner(&offset, 200.0, "a short notice", fixed(7.0));
+        assert_eq!(layout.banner.center_x(), 240.0);
+        assert!(layout.banner.x >= BANNER_MIN_MARGIN);
+        assert!(layout.banner.right() <= 600.0 - BANNER_MIN_MARGIN);
+    }
+
+    #[test]
+    fn a_banner_wider_than_the_room_is_clamped_not_centred_off_the_edge() {
+        let tight = FlashBannerSpec {
+            available_width: 300.0,
+            center_x: 150.0,
+            ..spec()
+        };
+        let layout = layout_flash_banner(&tight, 900.0, "a very long message here", fixed(7.0));
+        assert!(
+            layout.banner.x >= BANNER_MIN_MARGIN - 1e-9 && layout.banner.right() <= 300.0,
+            "the banner left its room: {:?}",
+            layout.banner
+        );
+        assert_eq!(layout.banner.w, 300.0 - BANNER_MIN_MARGIN * 2.0);
+    }
+
+    #[test]
+    fn a_very_wide_window_still_caps_the_banner_at_a_readable_width() {
+        let display = FlashBannerSpec {
+            available_width: 3840.0,
+            center_x: 1920.0,
+            ..spec()
+        };
+        let layout = layout_flash_banner(&display, 3000.0, &"word ".repeat(200), fixed(7.0));
+        assert_eq!(layout.banner.w, BANNER_MAX_WIDTH, "the cap must apply");
+        assert_eq!(
+            layout.banner.center_x(),
+            1920.0,
+            "and the banner stays on the pill"
+        );
+        assert!(
+            layout.lines.len() > 5,
+            "the message wrapped instead of running wide"
+        );
+    }
+
+    #[test]
+    fn a_narrow_window_still_wins_over_the_cap() {
+        let cap = banner_max_width(3840.0, BANNER_MIN_WIDTH);
+        let narrow = banner_max_width(300.0, BANNER_MIN_WIDTH);
+        assert_eq!(cap, BANNER_MAX_WIDTH);
+        assert_eq!(narrow, 300.0 - BANNER_MIN_MARGIN * 2.0);
+        assert!(narrow < cap);
+    }
+
+    #[test]
+    fn an_odd_subpixel_room_never_pushes_the_banner_off_centre() {
+        // The springs settle on fractional widths, so a half-pixel wide room is
+        // a real state, not a hypothetical one.
+        let odd = FlashBannerSpec {
+            available_width: 452.5,
+            center_x: 226.25,
+            ..spec()
+        };
+        let layout = layout_flash_banner(&odd, 400.0, "a message", fixed(7.0));
+        assert!((layout.banner.center_x() - 226.25).abs() < 1e-9);
+        assert!(layout.banner.right() <= 452.5);
+    }
+
+    #[test]
+    fn buttons_keep_their_place_and_never_squeeze_the_text_off_the_line() {
+        let with_buttons = FlashBannerSpec {
+            action_width: Some(74.0),
+            reject_width: Some(60.0),
+            ..spec()
+        };
+        let layout = layout_flash_banner(&with_buttons, 800.0, "delete it", fixed(7.0));
+        let action = layout.action.expect("an action button was reserved");
+        let reject = layout.reject.expect("a reject button was reserved");
+        assert_eq!(
+            action.right(),
+            layout.banner.right() - spec().padding_h,
+            "the action button sits on the right padding"
+        );
+        assert_eq!(
+            reject.right() + spec().action_gap,
+            action.x,
+            "the reject button leaves the gap before the action button"
+        );
+        assert_eq!(reject.y, action.y, "the buttons share one line");
+        assert_eq!(
+            action.center_y(),
+            layout.banner.center_y(),
+            "the buttons are centred on the banner, not on its first line"
+        );
+        assert!(
+            layout.text.w > 0.0,
+            "the text still has room beside the buttons"
+        );
+        assert!(
+            layout.text.right() <= reject.x,
+            "the text budget must stop before the reject button"
+        );
+    }
+
+    #[test]
+    fn buttons_stay_on_the_banner_when_the_message_wraps() {
+        let with_buttons = FlashBannerSpec {
+            action_width: Some(74.0),
+            ..spec()
+        };
+        let message = "the file could not be transcribed because the format \
+                       is not supported by the installed engine";
+        let layout = layout_flash_banner(&with_buttons, 800.0, message, fixed(7.0));
+        assert!(layout.lines.len() > 1);
+        let action = layout.action.expect("the action is still reported");
+        assert_eq!(
+            action.center_y(),
+            layout.banner.center_y(),
+            "a taller banner must not leave the button behind"
+        );
+        assert!(action.bottom() <= layout.banner.bottom());
+    }
+
+    #[test]
+    fn a_button_and_no_reject_banner_is_wider_than_the_message_alone() {
+        // Regression: the preferred width used to add the button widths but no
+        // gap, while the wrap budget took a gap off. The banner therefore came
+        // out one gap narrower than its own arithmetic, and the text was wrapped
+        // for less room than the banner had.
+        let with_action = FlashBannerSpec {
+            action_width: Some(64.0),
+            ..spec()
+        };
+        let layout = layout_flash_banner(&with_action, 300.0, "delete the file", fixed(7.0));
+        assert_eq!(
+            layout.banner.w,
+            300.0 + 16.0 * 2.0 + 8.0 + 64.0,
+            "padding, one gap and the button"
+        );
+        assert_eq!(
+            layout.text.w, 300.0,
+            "the message keeps the width it was measured at"
+        );
+    }
+
+    #[test]
+    fn an_action_message_wraps_within_the_room_the_button_leaves() {
+        let with_buttons = FlashBannerSpec {
+            action_width: Some(74.0),
+            ..spec()
+        };
+        let message = "the transcript could not be inserted into the focused \
+                       application because it does not accept pasted text";
+        let plain = layout_flash_banner(&spec(), 800.0, message, fixed(7.0));
+        let buttoned = layout_flash_banner(&with_buttons, 800.0, message, fixed(7.0));
+        assert!(
+            buttoned.text.w < plain.text.w,
+            "the button must come out of the text budget"
+        );
+        assert!(buttoned.lines.len() >= plain.lines.len());
+    }
+
+    #[test]
+    fn a_button_wide_enough_to_fill_the_banner_leaves_no_negative_budget() {
+        let dominated = FlashBannerSpec {
+            action_width: Some(4000.0),
+            reject_width: Some(4000.0),
+            available_width: 300.0,
+            center_x: 150.0,
+            ..spec()
+        };
+        let layout = layout_flash_banner(&dominated, 100.0, "hello", fixed(7.0));
+        assert_eq!(layout.text.w, 0.0, "a negative budget must clamp");
+        let action = layout.action.expect("the action is still reported");
+        assert!(!action.w.is_nan());
+        assert!(layout.banner.w <= 300.0 - BANNER_MIN_MARGIN * 2.0);
+    }
+
+    #[test]
+    fn an_explicit_newline_starts_a_new_line() {
+        let lines = wrap_to_width("first\nsecond", 1000.0, fixed(10.0));
+        assert_eq!(lines, vec!["first".to_string(), "second".to_string()]);
+    }
+
+    #[test]
+    fn words_that_fit_are_kept_whole_and_packed_greedily() {
+        // 10 units per character and a 100-unit budget: "aaaa bbbb" is 9
+        // characters and fits, "aaaa bbbb cccc" is 14 and does not.
+        let lines = wrap_to_width("aaaa bbbb cccc", 100.0, fixed(10.0));
+        assert_eq!(lines, vec!["aaaa bbbb".to_string(), "cccc".to_string()]);
+    }
+
+    #[test]
+    fn a_word_wider_than_the_banner_is_broken_rather_than_overrunning() {
+        // A path or a URL: one 20-character word against a 50-unit budget.
+        let lines = wrap_to_width("abcdefghijklmnopqrst", 50.0, fixed(10.0));
+        assert!(lines.len() > 1, "the word had to be broken");
+        for line in &lines {
+            assert!(
+                fixed(10.0)(line) <= 50.0,
+                "{line:?} overran the banner budget"
+            );
+        }
+        assert_eq!(lines.concat(), "abcdefghijklmnopqrst", "nothing was lost");
+    }
+
+    #[test]
+    fn a_multi_byte_word_is_broken_on_a_character_boundary() {
+        let text = "日本語日本語日本語";
+        let lines = wrap_to_width(text, 40.0, fixed(10.0));
+        for line in &lines {
+            assert!(
+                line.chars().count() <= 4,
+                "{line:?} is wider than the 40-unit budget"
+            );
+        }
+        assert_eq!(lines.concat(), text);
+    }
+
+    #[test]
+    fn an_impossible_budget_still_returns_text_rather_than_nothing() {
+        // Dropping the message entirely reads as a banner that lost its text.
+        let lines = wrap_to_width("hello", 0.0, fixed(10.0));
+        assert_eq!(lines.concat(), "hello");
+    }
+
+    #[test]
+    fn a_blank_message_keeps_its_one_line() {
+        assert_eq!(wrap_to_width("", 100.0, fixed(10.0)), vec![String::new()]);
+        assert_eq!(
+            wrap_to_width("   ", 100.0, fixed(10.0)),
+            vec![String::new()]
+        );
+    }
+
+    #[test]
+    fn unusable_measurements_never_produce_a_nan_rectangle() {
+        let broken = FlashBannerSpec {
+            available_width: f64::NAN,
+            center_x: f64::NAN,
+            pill_top: f64::NAN,
+            action_width: Some(f64::NAN),
+            ..spec()
+        };
+        let layout = layout_flash_banner(&broken, f64::NAN, "hello", fixed(7.0));
+        for value in [
+            layout.banner.x,
+            layout.banner.y,
+            layout.banner.w,
+            layout.banner.h,
+            layout.text.x,
+            layout.text.y,
+            layout.text.w,
+            layout.text.h,
+            layout.text.w,
+        ] {
+            assert!(!value.is_nan(), "a NaN reached the layout");
+        }
+        assert!(layout.banner.w > 0.0, "the banner survived as a shape");
+        assert!(layout.banner.h > 0.0);
+    }
+
+    #[test]
+    fn the_centre_matches_the_banner_the_paint_path_draws() {
+        let one_line = layout("Copied text", 118.0, &spec());
+        assert_eq!(
+            banner_center_y(300.0, 6.0, 32.0, one_line.lines.len()),
+            one_line.banner.center_y(),
+            "the tick path and the paint path must agree on the banner's centre"
+        );
+        let tall = layout(
+            "a message long enough that it has to be broken across several lines \
+             of the banner before it will fit inside the window at all",
+            200.0,
+            &spec(),
+        );
+        assert!(tall.lines.len() > 1);
+        assert_eq!(
+            banner_center_y(300.0, 6.0, 32.0, tall.lines.len()),
+            tall.banner.center_y()
+        );
+        assert!(
+            banner_center_y(300.0, 6.0, 32.0, 3) < banner_center_y(300.0, 6.0, 32.0, 1),
+            "a taller banner puts its centre higher"
+        );
+    }
+
+    #[test]
+    fn a_zero_line_count_is_treated_as_one_line() {
+        assert_eq!(banner_height(0, 32.0, 8.0, 16.0), 32.0);
+        assert_eq!(banner_height(1, 32.0, 8.0, 16.0), 32.0);
+        assert!(banner_height(3, 32.0, 8.0, 16.0) > banner_height(2, 32.0, 8.0, 16.0));
+    }
+
+    #[test]
+    fn one_line_fills_the_established_banner_height_exactly() {
+        // The whole reason the padding and the pitch are these numbers: a short
+        // message must not change height, or every existing banner would jump.
+        assert_eq!(
+            BANNER_PADDING_V * 2.0 + BANNER_TEXT_LINE,
+            32.0,
+            "one line must still measure the classic 32px banner"
+        );
+    }
+
+    #[test]
+    fn a_line_is_placed_one_pitch_below_the_last() {
+        let text = BannerRect {
+            x: 10.0,
+            y: 20.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        assert_eq!(
+            text.line_top(0, 10.0),
+            20.0 + (BANNER_TEXT_LINE - 10.0) / 2.0
+        );
+        assert_eq!(text.line_top(2, 10.0), 20.0 + BANNER_TEXT_LINE * 2.0 + 3.0);
+        assert_eq!(
+            text.line_top(0, BANNER_TEXT_LINE),
+            20.0,
+            "a platform whose line box matches the pitch starts at the block top"
+        );
+        assert_eq!(text.line_x(40.0), 10.0 + 30.0);
+        assert_eq!(
+            text.line_x(400.0),
+            10.0,
+            "a line wider than the block starts at its edge"
+        );
+    }
+
+    /// The celebration's launch point, on the wiring.
+    ///
+    /// STRUCTURAL, for the same reason as the test below: the tick lives on a
+    /// different path in each crate and cannot be run from here. The celebration
+    /// leaves from the middle of the flash banner, so when the banner's height
+    /// started following its line count, a hardcoded `FLASH_HEIGHT / 2.0` there
+    /// would have kept launching from where a one-line banner used to be. This
+    /// pins that all three go through [`banner_center_y`], which resolves the
+    /// same height the paint path does.
+    #[test]
+    fn all_three_celebration_ticks_launch_from_the_shared_banner_centre() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        for path in [
+            "../rust_gtk_pill/src/pill.rs",
+            "../rust_macos_pill/src/app.rs",
+            "../rust_windows_pill/src/pill.rs",
+        ] {
+            let source = std::fs::read_to_string(format!("{manifest}/{path}"))
+                .unwrap_or_else(|err| panic!("read {path}: {err}"));
+            assert!(
+                source.contains("flash_banner::banner_center_y("),
+                "{path} launches the celebration from its own idea of the banner height"
+            );
+            assert!(
+                !source.contains("FLASH_HEIGHT / 2.0"),
+                "{path} still halves the fixed one-line height for the launch point"
+            );
+        }
+    }
+
+    /// The wiring, not the arithmetic.
+    ///
+    /// STRUCTURAL, and labelled. The property that broke was never inside this
+    /// module: it was that a draw site had no window bound and no line count, and
+    /// no test in the repository could see a draw site, because rendering one
+    /// needs Direct2D, CoreText or Cairo and a display. So the call is asserted on
+    /// the source of all three, the same instrument `text_fit` uses for the same
+    /// reason. It also pins that the old inline arithmetic cannot come back: a
+    /// `let flash_w =` in any of the three is the regression this exists to catch.
+    #[test]
+    fn all_three_draw_sites_lay_the_banner_out_through_this_module() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        for crate_dir in ["rust_gtk_pill", "rust_macos_pill", "rust_windows_pill"] {
+            let path = format!("../{crate_dir}/src/draw.rs");
+            let source = std::fs::read_to_string(format!("{manifest}/{path}"))
+                .unwrap_or_else(|err| panic!("read {path}: {err}"));
+            assert!(
+                source.contains("flash_banner::layout_flash_banner("),
+                "{path} does not lay the flash banner out through the shared module"
+            );
+            assert!(
+                !source.contains("let flash_w ="),
+                "{path} still computes the banner width inline, so there are two definitions again"
+            );
+            assert!(
+                !source.contains("FLASH_HEIGHT - text"),
+                "{path} still centres the text against the fixed one-line height"
+            );
+            assert!(
+                !source.contains("FLASH_HEIGHT),"),
+                "{path} still paints the banner at the fixed one-line height"
+            );
+        }
+    }
+}

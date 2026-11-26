@@ -155,6 +155,10 @@ fn on_fireworks(message: String, state_tick: &Rc<PillState>) {
         rockets: &state_tick.fireworks_rockets,
     }
     .restart(reduced_motion());
+    // The banner has not been measured yet, and the launch at t=0 happens on the
+    // frame after this. A celebration message is one line, which is what the
+    // first launch should assume rather than the count left by a long error.
+    state_tick.flash_lines.set(1);
 }
 
 /// Applies `InMessage::Flame`.
@@ -166,6 +170,8 @@ fn on_flame(message: String, state_tick: &Rc<PillState>) {
     *state_tick.flash_reject_action.borrow_mut() = None;
     *state_tick.flash_reject_action_label.borrow_mut() = None;
     state_tick.flash_visible.set(true);
+    // Same as the fireworks above: one line until the banner is measured.
+    state_tick.flash_lines.set(1);
     state_tick
         .flash_timer
         .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
@@ -1033,6 +1039,7 @@ fn initial_state(backend: Backend, restored_position: Option<ParkedWindow>) -> R
         cancel_t: Cell::new(0.0),
         cancel_velocity: Cell::new(0.0),
         flash_message: RefCell::default(),
+        flash_lines: Cell::new(1),
         flash_visible: Cell::new(false),
         flash_t: Cell::new(0.0),
         flash_velocity: Cell::new(0.0),
@@ -2210,6 +2217,10 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
 }
 
 fn clear_flash(state: &PillState) {
+    // A cleared banner has no lines. The celebration reads this, so leaving the
+    // count from the message that just went away would launch the next one from
+    // a height that banner no longer has.
+    state.flash_lines.set(1);
     rust_pill_shared::clear_flash_state(
         &state.flash_visible,
         &state.flash_timer,
@@ -2524,7 +2535,18 @@ fn tick_fireworks(state: &PillState) {
         next_launch: &state.fireworks_next_launch,
         rockets: &state.fireworks_rockets,
     }
-    .tick(dt, (ww / 2.0, pill_y - FLASH_GAP - FLASH_HEIGHT / 2.0));
+    .tick(
+        dt,
+        (
+            ww / 2.0,
+            rust_pill_shared::flash_banner::banner_center_y(
+                pill_y,
+                FLASH_GAP,
+                FLASH_HEIGHT,
+                state.flash_lines.get(),
+            ),
+        ),
+    );
 }
 
 /// The flame, swaying on its own schedule.

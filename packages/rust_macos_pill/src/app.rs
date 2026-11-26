@@ -913,6 +913,9 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
                 .flash_timer
                 .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
 
+            // The banner has not been measured yet; a celebration message is one
+            // line, which is what the first launch should assume.
+            ctx.state.flash_lines.set(1);
             rust_pill_shared::fireworks::Fireworks {
                 active: &ctx.state.fireworks_active,
                 elapsed: &ctx.state.fireworks_elapsed,
@@ -929,6 +932,8 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
             *ctx.state.flash_reject_action.borrow_mut() = None;
             *ctx.state.flash_reject_action_label.borrow_mut() = None;
             ctx.state.flash_visible.set(true);
+            // Same as the fireworks above: one line until the banner is measured.
+            ctx.state.flash_lines.set(1);
             ctx.state
                 .flash_timer
                 .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
@@ -1541,6 +1546,10 @@ fn update_hover(view: id, ctx: &AppContext) {
 // ── Animation tick ────────────────────────────────────────────────
 
 fn clear_flash(state: &PillState) {
+    // A cleared banner has no lines. The celebration reads this, so leaving the
+    // count from the message that just went away would launch the next one from
+    // a height that banner no longer has.
+    state.flash_lines.set(1);
     rust_pill_shared::clear_flash_state(
         &state.flash_visible,
         &state.flash_timer,
@@ -1912,7 +1921,18 @@ fn tick_fireworks(state: &PillState, dt: f64) {
         next_launch: &state.fireworks_next_launch,
         rockets: &state.fireworks_rockets,
     }
-    .tick(dt, (ww / 2.0, pill_y - FLASH_GAP - FLASH_HEIGHT / 2.0));
+    .tick(
+        dt,
+        (
+            ww / 2.0,
+            rust_pill_shared::flash_banner::banner_center_y(
+                pill_y,
+                FLASH_GAP,
+                FLASH_HEIGHT,
+                state.flash_lines.get(),
+            ),
+        ),
+    );
 }
 
 /// The flame, swaying on its own schedule.
@@ -3219,6 +3239,7 @@ unsafe fn setup(
         cancel_t: Cell::new(0.0),
         cancel_velocity: Cell::new(0.0),
         flash_message: RefCell::new(String::new()),
+        flash_lines: Cell::new(1),
         flash_visible: Cell::new(false),
         flash_t: Cell::new(0.0),
         flash_velocity: Cell::new(0.0),

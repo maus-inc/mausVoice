@@ -151,6 +151,14 @@ pub(crate) struct PillState {
 
     // Flash message / toast
     pub(crate) flash_message: RefCell<String>,
+    /// How many lines the flash banner painted last frame.
+    ///
+    /// The banner's height follows its line count, and the celebration
+    /// launches from the middle of the banner. The tick that launches it
+    /// runs before the paint that wraps the text, so the count is cached
+    /// here by the painter and read by the tick; without it the rockets
+    /// would leave from where a one-line banner used to be.
+    pub(crate) flash_lines: Cell<usize>,
     pub(crate) flash_visible: Cell<bool>,
     pub(crate) flash_t: Cell<f64>,
     pub(crate) flash_velocity: Cell<f64>,
