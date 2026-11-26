@@ -65,9 +65,11 @@ const resolveApiKeyWarning = (
   warning: string,
   intl: IntlShape,
 ): string | null => {
-  const descriptor =
-    API_KEY_WARNING_BY_CODE[warning as ApiKeyWarningCode] ?? null;
-  return descriptor ? intl.formatMessage(descriptor) : null;
+  if (!Object.hasOwn(API_KEY_WARNING_BY_CODE, warning)) {
+    return null;
+  }
+  const descriptor = API_KEY_WARNING_BY_CODE[warning as ApiKeyWarningCode];
+  return intl.formatMessage(descriptor);
 };
 
 type WarningRow = {

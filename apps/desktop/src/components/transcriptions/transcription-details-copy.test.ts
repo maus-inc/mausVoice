@@ -28,4 +28,17 @@ describe("buildTranscriptionWarnings", () => {
       expect(warning).toContain("AI Models settings");
     }
   });
+
+  it("ignores Object.prototype keys in warnings without throwing", () => {
+    const intl = createIntl({ locale: "en", messages: en }, createIntlCache());
+
+    const warnings = buildTranscriptionWarnings(
+      {
+        warnings: ["constructor", "toString", "__proto__"],
+      } as never,
+      intl,
+    );
+
+    expect(warnings).toEqual(["constructor", "toString", "__proto__"]);
+  });
 });

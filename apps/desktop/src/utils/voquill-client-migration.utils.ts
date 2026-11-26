@@ -292,28 +292,6 @@ const transformBooleanFlag = (raw: string): string | null => {
 const transformThemeMode = (raw: string): string | null =>
   VALID_THEME_MODES.has(raw) ? raw : null;
 
-/**
- * Returns true when `mausvoice-local-state` already persists an explicit
- * boolean value (`true` or `false`) for `field`, distinguishing an explicit
- * `false` from an absent/unmigrated default.
- */
-export const hasPersistedLocalBooleanField = (
-  storage: Pick<Storage, "getItem">,
-  field: LegacyModeFlagField,
-  stateKey: string = LOCAL_STATE_STORAGE_KEY,
-): boolean => {
-  try {
-    const raw = storage.getItem(stateKey);
-    if (raw === null) return false;
-    const parsed = parseJsonObject(raw);
-    if (!parsed) return false;
-    const local = extractCandidateLocal(parsed);
-    return local !== null && typeof local[field] === "boolean";
-  } catch {
-    return false;
-  }
-};
-
 const collectAbsentLegacyModeUpdates = (
   storage: StorageAccess,
   existingLocal: Record<string, unknown> | null,
@@ -326,11 +304,34 @@ const collectAbsentLegacyModeUpdates = (
     if (hasCurrentFlag || hasPersistedBool) {
       continue;
     }
-    if (readValidatedLegacyBooleanFlag(storage, spec.legacyKey) === true) {
+    const raw = storage.getItem(spec.legacyKey);
+    const parsed = raw === null ? null : parseJsonBoolean(raw);
+    if (parsed === true) {
       updates[spec.field] = true;
     }
   }
   return updates;
+};
+
+/**
+ * Computes which legacy Voquill standalone mode flags (`voquill:*-mode-enabled`)
+ * should be hydrated into `local` state before any store mutation persists
+ * sibling default values.
+ *
+ * Throws if storage reads fail so callers do not mark one-time migration
+ * complete prematurely.
+ */
+export const collectPendingLegacyModeFlagUpdates = (
+  storage: Pick<Storage, "getItem">,
+  currentStateKey: string = LOCAL_STATE_STORAGE_KEY,
+): Partial<Record<LegacyModeFlagField, true>> => {
+  const rawState = storage.getItem(currentStateKey);
+  const parsedState = rawState !== null ? parseJsonObject(rawState) : null;
+  const existingLocal = parsedState ? extractCandidateLocal(parsedState) : null;
+  return collectAbsentLegacyModeUpdates(
+    storage as StorageAccess,
+    existingLocal,
+  );
 };
 
 const mergePersistedLocalState = (
@@ -451,20 +452,4 @@ export const migrateLegacyVoquillClientStorage = (
   });
 
   return result;
-};
-
-/**
- * Reads a legacy standalone boolean flag (`"true"` / `"false"`) from storage
- * without mutating the source key. Returns `null` when absent or malformed.
- */
-export const readValidatedLegacyBooleanFlag = (
-  storage: Pick<Storage, "getItem">,
-  legacyKey: string,
-): boolean | null => {
-  try {
-    const raw = storage.getItem(legacyKey);
-    return raw === null ? null : parseJsonBoolean(raw);
-  } catch {
-    return null;
-  }
 };

@@ -14,18 +14,14 @@ import {
   getLocalStorageBool,
 } from "../../utils/local-storage.utils";
 import {
-  LEGACY_ASSISTANT_MODE_ENABLED_KEY,
   LEGACY_MODE_FLAGS_MIGRATED_KEY,
-  LEGACY_POWER_MODE_ENABLED_KEY,
-  hasPersistedLocalBooleanField,
-  readValidatedLegacyBooleanFlag,
+  collectPendingLegacyModeFlagUpdates,
   type LegacyModeFlagField,
 } from "../../utils/voquill-client-migration.utils";
 
 type MigratedPreference = {
   field: LegacyModeFlagField;
   key: string;
-  legacyKey: string;
   getCurrent: () => boolean;
   update: (value: boolean) => void;
 };
@@ -34,7 +30,7 @@ const migrateSinglePreference = (
   storage: Storage,
   lease: LocalDataWriteLease,
   migration: MigratedPreference,
-  allowLegacyHydration: boolean,
+  legacyShouldEnable: boolean,
 ): void => {
   if (storage.getItem(migration.key) !== null) {
     migration.update(getLocalStorageBool(migration.key));
@@ -44,23 +40,104 @@ const migrateSinglePreference = (
     return;
   }
 
-  // Non-destructively hydrate absent legacy Voquill boolean flags at most once
-  // so an explicit `false` preference (persisted before or after migration) is
-  // never overwritten on launch.
-  if (
-    !allowLegacyHydration ||
-    migration.getCurrent() ||
-    hasPersistedLocalBooleanField(storage, migration.field)
-  ) {
+  if (legacyShouldEnable && !migration.getCurrent()) {
+    migration.update(true);
+  }
+};
+
+const buildModeMigrations = (
+  lease: LocalDataWriteLease,
+): MigratedPreference[] => [
+  {
+    field: "assistantModeEnabled",
+    key: ASSISTANT_MODE_ENABLED_KEY,
+    getCurrent: () => getAppState().local.assistantModeEnabled,
+    update: (value) => {
+      produceAppState((draft) => {
+        draft.local.assistantModeEnabled = value;
+      }, lease);
+    },
+  },
+  {
+    field: "powerModeEnabled",
+    key: POWER_MODE_ENABLED_KEY,
+    getCurrent: () => getAppState().local.powerModeEnabled,
+    update: (value) => {
+      produceAppState((draft) => {
+        draft.local.powerModeEnabled = value;
+      }, lease);
+    },
+  },
+];
+
+const readLegacyMigrationSnapshot = (
+  storage: Storage,
+): {
+  allowLegacyHydration: boolean;
+  pendingLegacyUpdates: Partial<Record<LegacyModeFlagField, true>>;
+  readOk: boolean;
+} => {
+  try {
+    const allowLegacyHydration =
+      storage.getItem(LEGACY_MODE_FLAGS_MIGRATED_KEY) === null;
+    const pendingLegacyUpdates = allowLegacyHydration
+      ? collectPendingLegacyModeFlagUpdates(storage)
+      : {};
+    return { allowLegacyHydration, pendingLegacyUpdates, readOk: true };
+  } catch (error) {
+    console.error(
+      "Unable to inspect legacy Voquill mode flags in localStorage:",
+      error,
+    );
+    return {
+      allowLegacyHydration: false,
+      pendingLegacyUpdates: {},
+      readOk: false,
+    };
+  }
+};
+
+const runModeFlagMigrations = (
+  storage: Storage,
+  lease: LocalDataWriteLease,
+): void => {
+  // Snapshot legacy eligibility for all flags before calling any `update`,
+  // so persisting one flag through Zustand cannot mark sibling flags as
+  // already persisted before their turn in the loop.
+  const { allowLegacyHydration, pendingLegacyUpdates, readOk } =
+    readLegacyMigrationSnapshot(storage);
+  let allSucceeded = readOk;
+
+  for (const migration of buildModeMigrations(lease)) {
+    try {
+      migrateSinglePreference(
+        storage,
+        lease,
+        migration,
+        allowLegacyHydration && pendingLegacyUpdates[migration.field] === true,
+      );
+    } catch (error) {
+      allSucceeded = false;
+      console.error(
+        `Unable to migrate localStorage key "${migration.key}":`,
+        error,
+      );
+    }
+  }
+
+  if (!allowLegacyHydration || !allSucceeded) {
     return;
   }
 
-  const legacyValue = readValidatedLegacyBooleanFlag(
-    storage,
-    migration.legacyKey,
-  );
-  if (legacyValue === true) {
-    migration.update(true);
+  try {
+    withLocalDataWriteSync(() => {
+      storage.setItem(LEGACY_MODE_FLAGS_MIGRATED_KEY, "1");
+    }, lease);
+  } catch (error) {
+    console.error(
+      `Unable to persist legacy mode migration marker "${LEGACY_MODE_FLAGS_MIGRATED_KEY}":`,
+      error,
+    );
   }
 };
 
@@ -75,56 +152,8 @@ export const MigratorSideEffects = () => {
       return;
     }
 
-    const migrations: MigratedPreference[] = [
-      {
-        field: "assistantModeEnabled",
-        key: ASSISTANT_MODE_ENABLED_KEY,
-        legacyKey: LEGACY_ASSISTANT_MODE_ENABLED_KEY,
-        getCurrent: () => getAppState().local.assistantModeEnabled,
-        update: (value) => {
-          produceAppState((draft) => {
-            draft.local.assistantModeEnabled = value;
-          }, releaseWrite.lease);
-        },
-      },
-      {
-        field: "powerModeEnabled",
-        key: POWER_MODE_ENABLED_KEY,
-        legacyKey: LEGACY_POWER_MODE_ENABLED_KEY,
-        getCurrent: () => getAppState().local.powerModeEnabled,
-        update: (value) => {
-          produceAppState((draft) => {
-            draft.local.powerModeEnabled = value;
-          }, releaseWrite.lease);
-        },
-      },
-    ];
-
     try {
-      const allowLegacyHydration =
-        storage.getItem(LEGACY_MODE_FLAGS_MIGRATED_KEY) === null;
-
-      for (const migration of migrations) {
-        try {
-          migrateSinglePreference(
-            storage,
-            releaseWrite.lease,
-            migration,
-            allowLegacyHydration,
-          );
-        } catch (error) {
-          console.error(
-            `Unable to migrate localStorage key "${migration.key}":`,
-            error,
-          );
-        }
-      }
-
-      if (allowLegacyHydration) {
-        withLocalDataWriteSync(() => {
-          storage.setItem(LEGACY_MODE_FLAGS_MIGRATED_KEY, "1");
-        }, releaseWrite.lease);
-      }
+      runModeFlagMigrations(storage, releaseWrite.lease);
     } finally {
       releaseWrite();
     }

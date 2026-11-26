@@ -3383,6 +3383,7 @@ pub async fn api_key_update(
 pub async fn voquill_migration_status(
     app: AppHandle,
 ) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
         .map_err(|err| err.to_string())?;
     let db = app

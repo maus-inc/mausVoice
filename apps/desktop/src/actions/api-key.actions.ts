@@ -13,30 +13,40 @@ import { updateUserPreferences } from "./user.actions";
 import { refreshVoquillMigrationStatusIfActive } from "./voquill-migration-refresh";
 
 let loadApiKeysPromise: Promise<void> | null = null;
+let loadApiKeysGeneration = 0;
 
 const sortApiKeys = (apiKeys: ApiKey[]): ApiKey[] =>
   [...apiKeys].sort(
     (a, b) => dayjs(b.createdAt).valueOf() - dayjs(a.createdAt).valueOf(),
   );
 
-export const loadApiKeys = async (): Promise<void> => {
+export const loadApiKeys = async (options?: {
+  force?: boolean;
+}): Promise<void> => {
+  const force = options?.force === true;
   const status = getAppState().settings.apiKeysStatus;
 
-  if (status === "loading" || status === "success") {
+  if (!force && (status === "loading" || status === "success")) {
     return;
   }
 
-  if (loadApiKeysPromise) {
+  if (!force && loadApiKeysPromise) {
     return loadApiKeysPromise;
   }
+
+  loadApiKeysGeneration += 1;
+  const generation = loadApiKeysGeneration;
 
   produceAppState((draft) => {
     draft.settings.apiKeysStatus = "loading";
   });
 
-  loadApiKeysPromise = getApiKeyRepo()
+  const activePromise = getApiKeyRepo()
     .listApiKeys()
     .then((apiKeys) => {
+      if (generation !== loadApiKeysGeneration) {
+        return;
+      }
       produceAppState((draft) => {
         registerApiKeys(draft, apiKeys);
         draft.settings.apiKeys = sortApiKeys(apiKeys);
@@ -44,6 +54,9 @@ export const loadApiKeys = async (): Promise<void> => {
       });
     })
     .catch((error) => {
+      if (generation !== loadApiKeysGeneration) {
+        return;
+      }
       console.error("Failed to load API keys", error);
       produceAppState((draft) => {
         draft.settings.apiKeysStatus = "error";
@@ -51,10 +64,13 @@ export const loadApiKeys = async (): Promise<void> => {
       showErrorSnackbar("Failed to load API keys. Please try again.");
     })
     .finally(() => {
-      loadApiKeysPromise = null;
+      if (loadApiKeysPromise === activePromise) {
+        loadApiKeysPromise = null;
+      }
     });
 
-  return loadApiKeysPromise;
+  loadApiKeysPromise = activePromise;
+  return activePromise;
 };
 
 export const createApiKey = async (

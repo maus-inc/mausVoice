@@ -168,7 +168,7 @@ const executeVoquillMigrationRetry = async (
     if (dbPromoted && isClearStillSame(clearGeneration)) {
       await Promise.allSettled([
         refreshCurrentUser(),
-        loadApiKeys(),
+        loadApiKeys({ force: true }),
         loadHotkeys(),
         loadDictionary(),
         loadTones(),

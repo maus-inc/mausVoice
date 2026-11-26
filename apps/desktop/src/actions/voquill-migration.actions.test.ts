@@ -249,4 +249,65 @@ describe("voquill-migration.actions", () => {
       "2026-11-24T03:00:00Z",
     );
   });
+
+  it("settles loading status when a superseding silent refresh fails", async () => {
+    const existing = makeReport({ legacyDetected: true, dismissedAt: null });
+    setAppState((s) => ({
+      ...s,
+      voquillMigration: {
+        ...s.voquillMigration,
+        status: "success",
+        report: existing,
+      },
+    }));
+
+    let resolveSupersededLoad!: (report: VoquillMigrationReport) => void;
+    fetchStatusMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<VoquillMigrationReport>((resolve) => {
+            resolveSupersededLoad = resolve;
+          }),
+      )
+      .mockRejectedValueOnce(new Error("temporary refresh failure"));
+
+    const loadPromise = loadVoquillMigrationStatus(true);
+    expect(getAppState().voquillMigration.status).toBe("loading");
+
+    // Superseding silent refresh fails -> status must not remain stuck in "loading".
+    await refreshVoquillMigrationStatusIfActive();
+    expect(getAppState().voquillMigration.status).toBe("success");
+
+    // Superseded load resolves later -> stale response must still be ignored.
+    resolveSupersededLoad(makeReport({ dismissedAt: "2026-11-24T09:00:00Z" }));
+    await loadPromise;
+    expect(getAppState().voquillMigration.report?.dismissedAt).toBeNull();
+  });
+
+  it("forces API key reload when retry promotes the database", async () => {
+    setAppState((s) => ({
+      ...s,
+      voquillMigration: {
+        ...s.voquillMigration,
+        status: "success",
+        report: makeReport({
+          status: "failed",
+          databasePhase: "failed",
+          canRetry: true,
+        }),
+      },
+    }));
+
+    retryMigrationMock.mockResolvedValueOnce(
+      makeReport({
+        status: "completed",
+        databasePhase: "migrated",
+        canRetry: false,
+      }),
+    );
+
+    await runVoquillMigrationRetry();
+
+    expect(loadApiKeysMock).toHaveBeenCalledWith({ force: true });
+  });
 });

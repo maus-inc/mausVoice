@@ -153,25 +153,29 @@ const applyPersonalTranscriptionDefault = async (
   groqKeyId: string | null,
   ownedPersonalKeyIds: readonly (string | null | undefined)[] = [],
 ): Promise<void> => {
-  const prefs = getAppState().userPrefs;
-  const target = resolvePersonalTranscriptionTarget({
-    deepgramKeyId,
-    groqKeyId,
-    ownedPersonalKeyIds,
-    currentMode: prefs?.transcriptionMode ?? null,
-    currentApiKeyId: prefs?.transcriptionApiKeyId ?? null,
-  });
-
-  if (!target) {
-    return;
-  }
+  let updated = false;
 
   await updateUserPreferences((preferences) => {
+    const target = resolvePersonalTranscriptionTarget({
+      deepgramKeyId,
+      groqKeyId,
+      ownedPersonalKeyIds,
+      currentMode: preferences.transcriptionMode ?? null,
+      currentApiKeyId: preferences.transcriptionApiKeyId ?? null,
+    });
+
+    if (!target) {
+      return false;
+    }
+
     preferences.transcriptionMode = target.mode;
     preferences.transcriptionApiKeyId = target.apiKeyId;
+    updated = true;
   });
 
-  getLogger().info("Personal transcription default configured");
+  if (updated) {
+    getLogger().info("Personal transcription default configured");
+  }
 };
 
 export const savePersonalGroqApiKey = async (key: string): Promise<ApiKey> => {

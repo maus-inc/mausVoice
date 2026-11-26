@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  collectPendingLegacyModeFlagUpdates,
   LEGACY_ASSISTANT_MODE_ENABLED_KEY,
   LEGACY_POWER_MODE_ENABLED_KEY,
   migrateLegacyVoquillClientStorage,
-  readValidatedLegacyBooleanFlag,
   sanitizeLegacyPersistedLocalState,
 } from "./voquill-client-migration.utils";
 
@@ -148,28 +148,16 @@ describe("voquill-client-migration.utils", () => {
     expect(preserved.state.local.disableAutoStyleLoading).toBe(false);
   });
 
-  it("reads validated legacy assistant/power mode boolean flags strictly", () => {
-    expect(
-      readValidatedLegacyBooleanFlag(
-        window.localStorage,
-        LEGACY_ASSISTANT_MODE_ENABLED_KEY,
-      ),
-    ).toBeNull();
+  it("collects only validated legacy assistant/power mode flags strictly", () => {
+    expect(collectPendingLegacyModeFlagUpdates(window.localStorage)).toEqual(
+      {},
+    );
 
     window.localStorage.setItem(LEGACY_ASSISTANT_MODE_ENABLED_KEY, "true");
     window.localStorage.setItem(LEGACY_POWER_MODE_ENABLED_KEY, "invalid");
 
-    expect(
-      readValidatedLegacyBooleanFlag(
-        window.localStorage,
-        LEGACY_ASSISTANT_MODE_ENABLED_KEY,
-      ),
-    ).toBe(true);
-    expect(
-      readValidatedLegacyBooleanFlag(
-        window.localStorage,
-        LEGACY_POWER_MODE_ENABLED_KEY,
-      ),
-    ).toBeNull();
+    expect(collectPendingLegacyModeFlagUpdates(window.localStorage)).toEqual({
+      assistantModeEnabled: true,
+    });
   });
 });

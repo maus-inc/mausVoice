@@ -59,5 +59,21 @@ export const refreshVoquillMigrationStatusIfActive =
       getLogger().warning(
         `Failed to refresh Voquill migration status: ${error}`,
       );
+      if (
+        !isLocalDataClearRequested() &&
+        getLocalDataClearGeneration() === clearGeneration &&
+        isLatestVoquillMigrationRequestSeq(requestSeq) &&
+        getAppState().voquillMigration.status === "loading"
+      ) {
+        produceAppState((draft) => {
+          if (draft.voquillMigration.report !== null) {
+            draft.voquillMigration.status = "success";
+          } else {
+            draft.voquillMigration.status = "error";
+            draft.voquillMigration.error =
+              error instanceof Error ? error.message : String(error);
+          }
+        });
+      }
     }
   };
