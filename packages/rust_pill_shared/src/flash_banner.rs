@@ -599,15 +599,6 @@ where
     }
 }
 
-/// A pill's banner line count at rest.
-///
-/// The three states declare this field and the three initialisers build it, and
-/// both were spelling out `Cell::new(1)`. One constructor means the type and the
-/// starting value are decided here.
-pub fn resting_lines() -> Cell<usize> {
-    Cell::new(BANNER_LINES_AT_REST)
-}
-
 /// The line count a banner starts with, before it has painted once.
 ///
 /// A pill's initial state, and its celebration reset, both need this number.
@@ -765,11 +756,12 @@ pub trait FlashHost {
     fn flash_reject_action_label(&self) -> &RefCell<Option<String>>;
     /// Lines the banner painted last frame.
     ///
-    /// The tick that launches the celebration's particles runs before the
-    /// paint that wraps the text, so the painter caches the count here for the
-    /// next tick.
+    /// The tick that launches the celebration's particles runs before the paint
+    /// that wraps the text, so the painter caches the count for the next tick.
+    /// The field itself lives on [`crate::indicator::DictationIndicator`], which
+    /// all three states deref to, so the value is declared once rather than
+    /// three times.
     fn flash_lines(&self) -> &Cell<usize>;
-
     /// Clears every field back to "no toast showing".
     ///
     /// The three pills dismiss a toast from several places: the display
@@ -875,7 +867,7 @@ macro_rules! impl_flash_host {
                 &self.flash_reject_action_label
             }
             fn flash_lines(&self) -> &std::cell::Cell<usize> {
-                &self.flash_lines
+                &self.indicator.banner_lines
             }
         }
     };

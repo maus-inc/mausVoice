@@ -3194,7 +3194,6 @@ unsafe fn setup(
         cancel_t: Cell::new(0.0),
         cancel_velocity: Cell::new(0.0),
         flash_message: RefCell::new(String::new()),
-        flash_lines: Cell::new(rust_pill_shared::flash_banner::BANNER_LINES_AT_REST),
         flash_visible: Cell::new(false),
         flash_t: Cell::new(0.0),
         flash_velocity: Cell::new(0.0),

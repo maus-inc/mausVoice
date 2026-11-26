@@ -634,7 +634,7 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             widths,
             (pill_y, WINDOW_W_TYPING as f64),
             flash_t,
-            &state.flash_lines,
+            &state.banner_lines,
         );
 
     gfx.save();

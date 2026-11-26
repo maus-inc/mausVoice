@@ -151,7 +151,6 @@ pub(crate) struct PillState {
 
     // Flash message / toast
     pub(crate) flash_message: RefCell<String>,
-    pub(crate) flash_lines: Cell<usize>,
     pub(crate) flash_visible: Cell<bool>,
     pub(crate) flash_t: Cell<f64>,
     pub(crate) flash_velocity: Cell<f64>,

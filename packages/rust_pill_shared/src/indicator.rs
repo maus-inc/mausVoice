@@ -46,6 +46,14 @@ pub struct DictationIndicator<P: RecordingPhase> {
     pub tooltip_velocity: Cell<f64>,
     pub tooltip_width: Cell<f64>,
     pub style_tooltip_gate: StyleTooltipGate,
+    /// Lines the flash banner painted last frame.
+    ///
+    /// The celebration's tick runs before the paint that wraps the text, so the
+    /// painter caches the count here for the next tick to launch from. It lives
+    /// on the shared indicator rather than on each pill's own state because the
+    /// banner is shared: three declarations of the same field, initialised with
+    /// the same literal, was three chances for the count to mean two things.
+    pub banner_lines: Cell<usize>,
 }
 
 impl<P: RecordingPhase> Default for DictationIndicator<P> {
@@ -68,6 +76,7 @@ impl<P: RecordingPhase> Default for DictationIndicator<P> {
             tooltip_velocity: Cell::default(),
             tooltip_width: Cell::default(),
             style_tooltip_gate: StyleTooltipGate::default(),
+            banner_lines: Cell::new(crate::flash_banner::BANNER_LINES_AT_REST),
         }
     }
 }
