@@ -411,6 +411,24 @@ fn sane(value: f64) -> f64 {
     }
 }
 
+/// Keeps a finite coordinate as it is, including a negative one.
+///
+/// [`sane`] is for *lengths*, where zero is the honest floor: a negative width
+/// is not a width. A *position* is different. The pill is drawn in content
+/// coordinates and a drag can put it partly or wholly off the canvas, so
+/// `pill_top` can be negative while still being a real place. Clamping that to
+/// zero would claim the pill is at the very top of the surface, which is the
+/// opposite of where it is, and the banner would then be placed below it with
+/// no headroom. Only a value that is not a number falls back to zero, because
+/// there is no honest position to use.
+fn coordinate(value: f64) -> f64 {
+    if value.is_finite() {
+        value
+    } else {
+        0.0
+    }
+}
+
 /// The widest the banner may be, which is the window less its side margins.
 ///
 /// Floored at the caller's minimum: a window narrower than that is not a case
@@ -680,7 +698,7 @@ where
     // that room rather than by a constant, because the pill sits lower on some
     // surfaces than others and the tallest window is not the only one a toast is
     // painted in.
-    let room_above_pill = (sane(spec.pill_top) - sane(spec.gap)).max(0.0);
+    let room_above_pill = (coordinate(spec.pill_top) - sane(spec.gap)).max(0.0);
     let line_pitch = BANNER_TEXT_LINE.max(1.0);
     let lines_that_fit = ((room_above_pill - sane(spec.min_height) - BANNER_PADDING_V * 2.0)
         / line_pitch)
@@ -714,7 +732,7 @@ where
     let right_limit =
         (sane(spec.available_width) - banner_w - BANNER_MIN_MARGIN).max(BANNER_MIN_MARGIN);
     let x = centered_x.clamp(BANNER_MIN_MARGIN, right_limit);
-    let y = sane(spec.pill_top) - sane(spec.gap) - height;
+    let y = coordinate(spec.pill_top) - sane(spec.gap) - height;
     let banner = BannerRect {
         x,
         y,
@@ -1077,8 +1095,14 @@ macro_rules! impl_flash_host {
 /// order is written once here.
 ///
 /// The clear happens after the send, so a send that fails cannot leave live
-/// buttons on a banner that is already on its way out.
-pub fn dismiss_flash<S: FlashHost>(state: &S, reject: bool, send: impl FnOnce(&str)) {
+/// buttons on a banner that is already on its way out, and the burst is
+/// cancelled with the banner because a dismissal and an expiry are the same
+/// thing to everything the banner was announcing.
+pub fn dismiss_flash<S: FlashHost + CelebrationHost>(
+    state: &S,
+    reject: bool,
+    send: impl FnOnce(&str),
+) {
     let token = if reject {
         state.flash_reject_action()
     } else {
@@ -1088,6 +1112,12 @@ pub fn dismiss_flash<S: FlashHost>(state: &S, reject: bool, send: impl FnOnce(&s
         send(&action);
     }
     state.clear_flash();
+    // A dismissed banner ends its burst exactly as an expired one does. This is
+    // the other way a banner goes away, and it was the hole in the first version
+    // of this fix: `clear_flash` does not reach the burst's state, so cancelling
+    // in the timer's expiry branch alone left a user-dismissed celebration
+    // holding its launch schedule and able to fire it under the next banner.
+    state.cancel_celebration();
 }
 
 /// Which label a painted banner button wants.
@@ -1143,7 +1173,7 @@ pub fn tick_banner_timer<S: FlashHost + CelebrationHost>(state: &S, dt: f64) {
 /// last time it painted.
 pub fn banner_center_y(pill_top: f64, gap: f64, min_height: f64, line_count: usize) -> f64 {
     let height = banner_height(line_count, min_height, BANNER_PADDING_V, BANNER_TEXT_LINE);
-    sane(pill_top) - sane(gap) - height / 2.0
+    coordinate(pill_top) - sane(gap) - height / 2.0
 }
 
 /// Where the celebration particles leave from, in the pill's drawing space.
@@ -1406,6 +1436,82 @@ mod tests {
         assert_eq!(layout.banner.center_x(), 240.0);
         assert!(layout.banner.x >= BANNER_MIN_MARGIN);
         assert!(layout.banner.right() <= 600.0 - BANNER_MIN_MARGIN);
+    }
+
+    /// A pill dragged off the canvas still puts its banner above itself.
+    ///
+    /// The Wayland path draws the pill in a full-window canvas and translates it
+    /// by the drag offset, so `pill_top` can be negative while the pill is still
+    /// on screen. Treating that as a length and flooring it at zero claims the
+    /// pill is at the top of the surface -- the opposite of where it is -- and
+    /// the banner is then laid out with no headroom, below the pill.
+    #[test]
+    fn a_pill_dragged_off_the_top_takes_its_banner_with_it() {
+        let dragged_up = FlashBannerSpec {
+            pill_top: -60.0,
+            available_width: 600.0,
+            center_x: 300.0,
+            ..spec()
+        };
+        let layout = layout_flash_banner(
+            &with_text_width(dragged_up, 200.0),
+            "dragged upward",
+            fixed(7.0),
+        );
+
+        // -60 is the pill's real position, so the banner hangs above it, not
+        // below a pill that was mistaken for being at zero.
+        assert!(
+            layout.banner.bottom() <= -60.0,
+            "the banner was placed below a pill that is above the canvas: {:?}",
+            layout.banner
+        );
+        assert!(
+            layout.banner.y < -60.0,
+            "the banner did not move with the dragged pill: {:?}",
+            layout.banner
+        );
+    }
+
+    /// A 200-unit pill box inside a 600-unit canvas: the dictation geometry.
+    ///
+    /// This is the configuration the whole centring fix exists for, so it is
+    /// asserted end to end rather than only through the centre's arithmetic:
+    /// the banner is centred on the pill that produced it, it wraps inside the
+    /// canvas rather than the pill box, and it stays inside the canvas.
+    #[test]
+    fn a_narrow_pill_box_inside_a_wide_canvas_centres_and_wraps_inside_the_canvas() {
+        // Exactly what the GTK painter computes: pill_x = (600 - 200) / 2,
+        // pill_w = 200, so the pill's centre is 300 and its box is 200..400.
+        let (canvas, pill_x, pill_w) = (600.0, 200.0, 200.0);
+        let dictation = FlashBannerSpec {
+            available_width: canvas,
+            center_x: pill_x + pill_w / 2.0,
+            preferred_text_width: 440.0,
+            ..spec()
+        };
+        let message = "a message long enough to wrap onto several lines inside the banner";
+        let layout = layout_flash_banner(&dictation, message, fixed(7.0));
+
+        assert_eq!(
+            layout.banner.center_x(),
+            300.0,
+            "the banner is not centred on the 200-wide pill inside the 600 canvas"
+        );
+        assert!(
+            layout.banner.w > pill_w,
+            "the banner was squeezed into the pill's box instead of using the canvas"
+        );
+        assert!(
+            layout.banner.x >= BANNER_MIN_MARGIN - 1e-9
+                && layout.banner.right() <= canvas - BANNER_MIN_MARGIN + 1e-9,
+            "the banner left the canvas: {:?}",
+            layout.banner
+        );
+        assert!(
+            layout.lines.len() > 1,
+            "the fixture has to wrap to prove anything"
+        );
     }
 
     /// A banner centred on the pill follows a dragged pill, and is held on the
@@ -2062,6 +2168,47 @@ mod tests {
         assert!(
             state.fireworks_rockets.borrow().is_empty(),
             "a rocket launched with no origin, so its start point was invented"
+        );
+    }
+
+    /// Dismissing a banner ends its burst, exactly as letting it expire does.
+    ///
+    /// The two ways a banner goes away are the timer running out and the user
+    /// clicking one of its buttons. The first version of this fix only cancelled
+    /// the burst on expiry, which left the dismissal path holding a launch
+    /// schedule that could fire under whatever banner came next -- including one
+    /// that is not a celebration at all.
+    #[test]
+    fn dismissing_a_banner_cancels_the_burst_it_announced() {
+        let state = StubState::default();
+        state.activate_burst();
+        state.flash_visible().set(true);
+        state.flash_timer().set(5.0);
+        *state.flash_action().borrow_mut() = Some("toast-accept".to_string());
+        state.tick_celebration(1.0);
+        assert!(state.fireworks_active().get(), "the burst was already over");
+
+        let mut sent: Option<String> = None;
+        dismiss_flash(&state, false, |action| sent = Some(action.to_string()));
+
+        assert_eq!(
+            sent.as_deref(),
+            Some("toast-accept"),
+            "the token was not sent"
+        );
+        assert!(!state.flash_visible().get(), "the banner was not cleared");
+        assert!(
+            !state.fireworks_active().get(),
+            "the burst outlived the banner the user dismissed"
+        );
+        assert_eq!(
+            state.fireworks_next_launch().get(),
+            0,
+            "the schedule survived"
+        );
+        assert!(
+            state.fireworks_rockets().borrow().is_empty(),
+            "rockets survived the dismissal"
         );
     }
 
