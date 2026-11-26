@@ -26,6 +26,7 @@
     "@tauri-apps/api": "~2.10.1",
     "framer-motion": "^12.38.0",
     "lucide": "^1.31.0",
+    "lucide-react": "^0.544.0",
     "morphicons": "^1.7.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

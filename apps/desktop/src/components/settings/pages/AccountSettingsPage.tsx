@@ -1,8 +1,4 @@
-import {
-  DeleteForeverOutlined,
-  DeleteSweepOutlined,
-  LogoutOutlined,
-} from "@mui/icons-material";
+import { Eraser, LockKeyhole, LogOut, Trash2 } from "lucide-react";
 import { FormattedMessage } from "react-intl";
 import { signOut } from "../../../actions/login.actions";
 import { useMyProfileImage } from "../../../hooks/user.hooks";
@@ -13,6 +9,7 @@ import { getMyUser } from "../../../utils/user.utils";
 import { UserAvatar } from "../../common/UserAvatar";
 import { SettingGroup, SettingRow } from "../SettingRow";
 import { useSettingsAvailability } from "../settings-availability";
+import { settingGlyphProps } from "../setting-row-chassis";
 
 /**
  * The address the account is signed in with.
@@ -64,6 +61,7 @@ export default function AccountSettingsPage() {
           <SettingRow
             settingKey="change_password"
             title={<FormattedMessage defaultMessage="Change password" />}
+            icon={<LockKeyhole {...settingGlyphProps} />}
             description={
               <FormattedMessage
                 defaultMessage="Sends a password reset link to {email}."
@@ -80,7 +78,7 @@ export default function AccountSettingsPage() {
             description={
               <FormattedMessage defaultMessage="Ends this session on this computer. Your data stays where it is." />
             }
-            icon={<LogoutOutlined />}
+            icon={<LogOut {...settingGlyphProps} />}
             onClick={() => {
               logOnRejection(signOut(), "settings page: signOut");
             }}
@@ -102,7 +100,8 @@ export default function AccountSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Removes stored history, audio snapshots, your photo, and settings from this computer. This cannot be undone." />
           }
-          icon={<DeleteSweepOutlined color="error" />}
+          icon={<Eraser {...settingGlyphProps} />}
+          iconTone="danger"
           action={{
             label: <FormattedMessage defaultMessage="Clear data" />,
             tone: "error",
@@ -116,7 +115,8 @@ export default function AccountSettingsPage() {
             description={
               <FormattedMessage defaultMessage="Deletes your profile and everything mausVoice stores for you on this device. This cannot be undone." />
             }
-            icon={<DeleteForeverOutlined color="error" />}
+            icon={<Trash2 {...settingGlyphProps} />}
+            iconTone="danger"
             action={{
               label: <FormattedMessage defaultMessage="Delete" />,
               tone: "error",

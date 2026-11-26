@@ -1,5 +1,5 @@
 import { isComposingKey } from "../common/ime-keyboard";
-import { SearchRounded } from "@mui/icons-material";
+import { Search } from "lucide-react";
 import {
   Box,
   InputAdornment,
@@ -350,7 +350,7 @@ export const SettingsLayout = () => {
                 input: {
                   startAdornment: (
                     <InputAdornment position="start">
-                      <SearchRounded fontSize="small" />
+                      <Search size={16} strokeWidth={1.9} />
                     </InputAdornment>
                   ),
                 },

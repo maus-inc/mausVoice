@@ -1,4 +1,13 @@
-import { DevicesOtherOutlined } from "@mui/icons-material";
+import {
+  Archive,
+  BookPlus,
+  ChartColumn,
+  CloudUpload,
+  EyeOff,
+  PenLine,
+  Tags,
+  MonitorSmartphone,
+} from "lucide-react";
 import type { ChangeEvent } from "react";
 import { useState } from "react";
 import { FormattedMessage } from "react-intl";
@@ -19,6 +28,7 @@ import { AudioTransmissionDisclosure } from "../AudioTransmissionDisclosure";
 import { ProviderSettingLinkStatus } from "../ProviderSettingLinkStatus";
 import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
 import { useSettingsAvailability } from "../settings-availability";
+import { settingGlyphProps } from "../setting-row-chassis";
 
 const openDialog = (key: "multiDeviceDialogOpen") => {
   produceAppState((draft) => {
@@ -98,6 +108,7 @@ export default function PrivacyDataSettingsPage() {
               title={
                 <FormattedMessage defaultMessage="Where your dictation audio goes" />
               }
+              icon={<CloudUpload {...settingGlyphProps} />}
               description={<AudioTransmissionDisclosure variant="setting" />}
             />
           )}
@@ -108,6 +119,7 @@ export default function PrivacyDataSettingsPage() {
               description={
                 <FormattedMessage defaultMessage="Sends your dictionary to ElevenLabs as keyterms for better name accuracy. Adds a 20% surcharge to every ElevenLabs transcription." />
               }
+              icon={<Tags {...settingGlyphProps} />}
               checked={elevenLabsKeytermsEnabled}
               onChange={handleToggleElevenLabsKeyterms}
             />
@@ -124,6 +136,7 @@ export default function PrivacyDataSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Stops mausVoice saving transcription history and audio snapshots." />
           }
+          icon={<EyeOff {...settingGlyphProps} />}
           checked={incognitoModeEnabled}
           onChange={toggle(
             setIncognitoModeEnabled,
@@ -139,6 +152,7 @@ export default function PrivacyDataSettingsPage() {
             description={
               <FormattedMessage defaultMessage="Count incognito dictation in streaks and word counts, without saving the text itself." />
             }
+            icon={<ChartColumn {...settingGlyphProps} />}
             checked={incognitoIncludeInStats}
             onChange={toggle(
               setIncognitoModeIncludeInStats,
@@ -154,6 +168,7 @@ export default function PrivacyDataSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Keeps the audio of a failed transcription so you can replay it from History. Incognito recordings are never kept." />
           }
+          icon={<Archive {...settingGlyphProps} />}
           checked={preserveAudioOnFailure}
           onChange={toggle(
             setPreserveAudioOnFailure,
@@ -171,6 +186,7 @@ export default function PrivacyDataSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Adds the names and words you correct to your dictionary automatically." />
           }
+          icon={<BookPlus {...settingGlyphProps} />}
           checked={autoLearnDictionaryEnabled}
           onChange={toggle(
             setAutoLearnDictionaryEnabled,
@@ -184,6 +200,7 @@ export default function PrivacyDataSettingsPage() {
             description={
               <FormattedMessage defaultMessage="Watches for the edits you make after dictating, and offers to add the corrected names to your dictionary." />
             }
+            icon={<PenLine {...settingGlyphProps} />}
             checked={autoLearnFromEditsEnabled}
             onChange={toggle(
               setAutoLearnFromEditsEnabled,
@@ -200,7 +217,7 @@ export default function PrivacyDataSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Pair and manage remote devices for dictation." />
           }
-          icon={<DevicesOtherOutlined />}
+          icon={<MonitorSmartphone {...settingGlyphProps} />}
           onClick={() => openDialog("multiDeviceDialogOpen")}
         />
       </SettingGroup>

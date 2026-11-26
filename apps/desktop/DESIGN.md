@@ -232,6 +232,32 @@ choice below names what it rules out.
   treated as a control, never substituted by a lucide glyph — see
   `docs/decisions/provider-logos-are-brand-colour-not-lucide-glyphs.md`.
 
+### Settings rows
+
+- Every row that a page anchors has a leading glyph: `SettingRow` and
+  `SettingToggleRow` both take `icon`, and the glyph names the kind of thing
+  the row controls (a microphone, a language, a spend ceiling). Rows that
+  simply hold a value or a switch follow the same rule, because a section
+  where half the rows lead with a mark reads as two half-built lists.
+- One size and one stroke, both spread from `settingGlyphProps` in
+  `setting-row-chassis.tsx` (22px, stroke 1.9). Never a per-row literal, and
+  never a different family: a Material magnifier beside a lucide microphone is
+  visible in the same eyeful.
+- The glyph sits in a fixed-width lane (`leadingGlyphSx`), so titles line up
+  whether a row leads with an icon, a provider logo, or the person's avatar.
+  The lane is the alignment; do not pad individual titles to fake it.
+- Glyphs are `aria-hidden` decoration. A row's accessible name is its title,
+  its description is the description, and neither ever includes the mark.
+- Colour is `text.secondary`, or `text.secondary` lifted to `error.main` on a
+  destructive row (`iconTone="danger"`). One glyph colour per scheme; no brand
+  hues, no badges, no gradients.
+- No tiles. A neutral glyph does not get a filled square behind it, and an
+  overdue update does not tint one. Emphasis belongs to the title and to the
+  control.
+- Icons that carry a key rather than a setting are outside this rule: the
+  hotkey chips in the shortcuts card and its dialog summarise keys, not
+  settings, so they stay iconless.
+
 ## Dates
 
 - Display: Intl.DateTimeFormat(undefined, {dateStyle, timeStyle}). No dayjs format strings.

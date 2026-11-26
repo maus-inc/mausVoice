@@ -83,6 +83,88 @@ export const contentControlColumnSx: SystemStyleObject<Theme> = {
   maxWidth: { xs: "60%", sm: "none" },
 };
 
+/**
+ * The size and stroke every settings glyph is drawn at.
+ *
+ * Spread it into the lucide icon rather than typing a size per row: a card holds
+ * icons from several groups, and one row at 20px beside one at 24px reads as two
+ * icon sets. Third-party provider marks are the exception, since a mark is
+ * fitted into its own square and carries no stroke.
+ */
+export const settingGlyphProps = { size: 22, strokeWidth: 1.9 } as const;
+
+/**
+ * The one lane a row's leading glyph sits in.
+ *
+ * A glyph names the kind of thing a row controls, so it is part of the row's
+ * shape rather than decoration on it. The lane is the shared glyph size wide,
+ * not the width of whatever was passed in, so a provider mark, a lucide glyph
+ * and an avatar cannot each start their row's title somewhere different.
+ * `minWidth` rather than `width` is deliberate, because the identity row leads
+ * with a larger avatar and clipping that to a glyph's box would cut it.
+ */
+const leadingGlyphSx: SystemStyleObject<Theme> = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+  minWidth: settingGlyphProps.size,
+  minHeight: settingGlyphProps.size,
+  color: "text.secondary",
+};
+
+/** A destructive row's glyph, in the palette's destructive colour. */
+const dangerGlyphSx: SystemStyleObject<Theme> = { color: "error.main" };
+
+/** The label block: the glyph lane, then the row's own text column. */
+const settingRowLabelSx: SystemStyleObject<Theme> = {
+  display: "flex",
+  alignItems: "center",
+  gap: 2,
+  flexGrow: 1,
+  minWidth: 0,
+};
+
+export type SettingIconTone = "secondary" | "danger";
+
+/**
+ * The label half of a row: the glyph lane, then the title and description.
+ *
+ * It is one element so that the wrap a wide control needs moves the whole label
+ * as a block. Left as siblings, the glyph would stay behind on the control's
+ * line while its own text moved below, which is the alignment the icon lane
+ * exists to prevent. The `component` follows the host row's content model:
+ * phrasing inside the label and button rows, a block inside a static row.
+ */
+export const SettingRowLabel = ({
+  icon,
+  iconTone = "secondary",
+  rootComponent = "span",
+  children,
+}: {
+  icon?: ReactNode;
+  iconTone?: SettingIconTone;
+  rootComponent?: "span" | "div";
+  children: ReactNode;
+}) => (
+  <Box
+    component={rootComponent}
+    className="setting-row-label"
+    sx={settingRowLabelSx}
+  >
+    {icon && (
+      <Box
+        component="span"
+        aria-hidden
+        sx={[leadingGlyphSx, ...(iconTone === "danger" ? [dangerGlyphSx] : [])]}
+      >
+        {icon}
+      </Box>
+    )}
+    {children}
+  </Box>
+);
+
 const labelColumnSx: SystemStyleObject<Theme> = {
   flexGrow: 1,
   minWidth: 0,
@@ -158,39 +240,6 @@ export const SettingRowText = ({
     )}
   </Box>
 );
-
-/**
- * The tile a summary row's leading glyph sits in.
- *
- * Shared rather than declared per row kind: a settings summary draws a label
- * with an icon beside it, and the models card draws two stacked lines beside
- * the same tile — the tile is one object either way, and duplicating it is how
- * two surfaces that are meant to look identical drift apart.
- */
-export const summaryIconTileSx: SystemStyleObject<Theme> = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  flexShrink: 0,
-  width: 40,
-  height: 40,
-  border: 1,
-  borderColor: "divider",
-  borderRadius: 1,
-  bgcolor: "level2",
-  color: "text.secondary",
-};
-
-/**
- * The tile of a row whose subject needs the person's attention: a provider with
- * no key, a model that is not downloaded. The row's own text carries the state;
- * the tint only agrees with it.
- */
-export const attentionTileSx: SystemStyleObject<Theme> = {
-  color: "warning.main",
-  borderColor: (theme: Theme) =>
-    `rgb(${theme.vars?.palette?.warning.mainChannel} / 0.4)`,
-};
 
 /**
  * A trailing glyph, tinted by the row rather than by the icon library.

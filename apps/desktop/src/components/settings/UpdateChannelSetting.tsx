@@ -6,7 +6,9 @@ import { useAppStore } from "../../store";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { SegmentedControl } from "../common/SegmentedControl";
+import { GitBranch } from "lucide-react";
 import { SettingRow } from "./SettingRow";
+import { settingGlyphProps } from "./setting-row-chassis";
 
 export const UpdateChannelSetting = () => {
   const intl = useIntl();
@@ -56,6 +58,7 @@ export const UpdateChannelSetting = () => {
       <SettingRow
         settingKey="update_channel"
         title={<FormattedMessage defaultMessage="Update channel" />}
+        icon={<GitBranch {...settingGlyphProps} />}
         description={
           <FormattedMessage defaultMessage="Stable ships tested releases. Beta offers prereleases early and may wait for a newer stable before switching back." />
         }

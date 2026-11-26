@@ -1,10 +1,18 @@
 import {
-  AppsOutlined,
-  LanguageOutlined,
-  MicOutlined,
-  VolumeUpOutlined,
-  WarningAmberOutlined,
-} from "@mui/icons-material";
+  ArrowLeftRight,
+  Brush,
+  EarOff,
+  Globe,
+  Hourglass,
+  Languages,
+  Mic,
+  Pilcrow,
+  Send,
+  SquarePen,
+  Timer,
+  TriangleAlert,
+  Volume2,
+} from "lucide-react";
 import { Link, Stack, Typography } from "@mui/material";
 import type { ChangeEvent } from "react";
 import { useCallback } from "react";
@@ -48,6 +56,7 @@ import {
 import { settingsPagePath, settingAnchorId } from "../settings-routes";
 import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
 import { SettingNumberField, SettingSelect } from "../SettingRowControls";
+import { settingGlyphProps } from "../setting-row-chassis";
 import { logOnRejection } from "../../../utils/promise.utils";
 import { useSettingsAvailability } from "../settings-availability";
 import { useSavedNumberField } from "../../../hooks/use-saved-number-field";
@@ -191,7 +200,7 @@ export default function DictationSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Which input captures your voice, and how it is tested." />
           }
-          icon={<MicOutlined />}
+          icon={<Mic {...settingGlyphProps} />}
           onClick={() => openDialog("microphoneDialogOpen")}
         />
         <SettingRow
@@ -200,7 +209,7 @@ export default function DictationSettingsPage() {
           description={
             <FormattedMessage defaultMessage="The chime that marks recording start and stop, and how far everything else dims while you speak." />
           }
-          icon={<VolumeUpOutlined />}
+          icon={<Volume2 {...settingGlyphProps} />}
           onClick={() => openDialog("audioDialogOpen")}
         />
       </SettingGroup>
@@ -216,7 +225,11 @@ export default function DictationSettingsPage() {
                 spacing={0.5}
                 sx={{ alignItems: "center", color: "warning.main" }}
               >
-                <WarningAmberOutlined sx={{ fontSize: 16 }} />
+                {/* The one warning mark inside a row, drawn from the same
+                    family as every other glyph on the page rather than from
+                    the Material set, so the description's caution and the
+                    row's icon share a stroke weight. */}
+                <TriangleAlert size={16} strokeWidth={1.9} />
                 <Typography variant="body2" component="span">
                   {languageWarning}{" "}
                   <Link
@@ -238,6 +251,7 @@ export default function DictationSettingsPage() {
               <FormattedMessage defaultMessage="The language mausVoice expects to hear. Auto follows your system language." />
             )
           }
+          icon={<Globe {...settingGlyphProps} />}
           control={
             <SettingSelect
               value={dictationLanguage}
@@ -258,7 +272,7 @@ export default function DictationSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Give each language its own hotkey, so you can switch without coming back here." />
           }
-          icon={<LanguageOutlined />}
+          icon={<Languages {...settingGlyphProps} />}
           onClick={() => openDialog("dictationLanguageDialogOpen")}
         />
       </SettingGroup>
@@ -272,6 +286,7 @@ export default function DictationSettingsPage() {
           description={
             <FormattedMessage defaultMessage='Turns phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. Requires an English dictation language, because Auto does not apply them.' />
           }
+          icon={<Pilcrow {...settingGlyphProps} />}
           checked={spokenCommandsEnabled}
           onChange={togglePageSetting(
             setSpokenCommandsEnabled,
@@ -287,6 +302,7 @@ export default function DictationSettingsPage() {
             <FormattedMessage defaultMessage="Discards the phrases transcription models invent when the microphone hears silence or noise." />
           }
           checked={hallucinationFilterEnabled}
+          icon={<EarOff {...settingGlyphProps} />}
           onChange={togglePageSetting(
             setHallucinationFilterEnabled,
             "settings page: setHallucinationFilterEnabled",
@@ -301,6 +317,7 @@ export default function DictationSettingsPage() {
             <FormattedMessage defaultMessage="Hold the dictation key and press Left or Right Arrow to cycle the active styles." />
           }
           checked={inDictationStyleSwitchingEnabled}
+          icon={<Brush {...settingGlyphProps} />}
           onChange={togglePageSetting(
             setInDictationStyleSwitchingEnabled,
             "settings page: setInDictationStyleSwitchingEnabled",
@@ -315,7 +332,7 @@ export default function DictationSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Choose paste or simulated typing, globally and per app." />
           }
-          icon={<AppsOutlined />}
+          icon={<ArrowLeftRight {...settingGlyphProps} />}
           onClick={() => openDialog("appKeybindingsDialogOpen")}
         />
         <SettingToggleRow
@@ -325,6 +342,7 @@ export default function DictationSettingsPage() {
             <FormattedMessage defaultMessage="Streams dictation text as you speak instead of pasting it all when you stop. Applies to Verbatim mode on supported providers." />
           }
           checked={realtimeOutputEnabled}
+          icon={<Send {...settingGlyphProps} />}
           onChange={togglePageSetting(
             setRealtimeOutputEnabled,
             "settings page: setRealtimeOutputEnabled",
@@ -337,6 +355,7 @@ export default function DictationSettingsPage() {
             <FormattedMessage defaultMessage="Opens an editable panel so you can review or change dictated text before it is inserted. Review pauses streaming, so turning this on turns Real-time output off." />
           }
           checked={reviewBeforeInsert}
+          icon={<SquarePen {...settingGlyphProps} />}
           onChange={togglePageSetting(
             setReviewBeforeInsert,
             "settings page: setReviewBeforeInsert",
@@ -350,6 +369,7 @@ export default function DictationSettingsPage() {
                 <FormattedMessage defaultMessage="Dictation limit" />
               </label>
             }
+            icon={<Timer {...settingGlyphProps} />}
             description={
               <FormattedMessage defaultMessage="Stops a recording that runs too long. Use 0 for no limit." />
             }
@@ -369,6 +389,7 @@ export default function DictationSettingsPage() {
         )}
         <SettingRow
           settingKey="hands_free_output_delay"
+          icon={<Hourglass {...settingGlyphProps} />}
           title={
             <label
               htmlFor={`${settingAnchorId("hands_free_output_delay")}-input`}

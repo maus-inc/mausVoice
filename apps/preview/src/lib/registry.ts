@@ -1560,6 +1560,62 @@ export const REGISTRY: RegistryEntry[] = [
 
   // ─── Chrome ─────────────────────────────────────────────────────
   {
+    id: "settings-row",
+    name: "SettingRow · SettingToggleRow · SettingGroup",
+    category: "layout",
+    status: "reused",
+    sources: [
+      `${D}components/settings/SettingRow.tsx`,
+      `${D}components/settings/setting-row-chassis.tsx`,
+    ],
+    usedIn: [
+      `${D}components/settings/pages/*SettingsPage.tsx`,
+      `${D}components/settings/SettingSummaryRow.tsx (overview cards)`,
+    ],
+    demo: "settings-row",
+    spec: [
+      {
+        key: "glyph",
+        label: "Leading glyph (docs)",
+        type: "number",
+        default: 22,
+        unit: "px",
+        target: {
+          kind: "source",
+          file: `${D}components/settings/setting-row-chassis.tsx`,
+        },
+        mapsTo: `${D}components/settings/setting-row-chassis.tsx → settingGlyphProps = { size: 22, strokeWidth: 1.9 }, spread into every row glyph; ProviderLogo takes the same size — patch-only`,
+        patch: `export const settingGlyphProps = { size: 22, strokeWidth: 1.9 } as const;`,
+      },
+      {
+        key: "lane",
+        label: "Glyph lane (docs)",
+        type: "number",
+        default: 22,
+        unit: "px",
+        target: {
+          kind: "source",
+          file: `${D}components/settings/setting-row-chassis.tsx`,
+        },
+        mapsTo: `${D}components/settings/setting-row-chassis.tsx → leadingGlyphSx minWidth/minHeight 22, flexShrink 0, color text.secondary, aria-hidden — patch-only`,
+        patch: `minWidth: settingGlyphProps.size, minHeight: settingGlyphProps.size,`,
+      },
+      {
+        key: "tone",
+        label: "Danger glyph tint (docs)",
+        type: "text",
+        default: "error.main",
+        target: {
+          kind: "source",
+          file: `${D}components/settings/setting-row-chassis.tsx`,
+        },
+        mapsTo: `${D}components/settings/setting-row-chassis.tsx → dangerGlyphSx color error.main, selected by iconTone="danger" — patch-only`,
+        patch: `const dangerGlyphSx: SystemStyleObject<Theme> = { color: "error.main" };`,
+      },
+    ],
+  },
+
+  {
     id: "titlebar",
     name: "TitleBar · ThemeModeToggle · WindowResizeHandles",
     category: "chrome",

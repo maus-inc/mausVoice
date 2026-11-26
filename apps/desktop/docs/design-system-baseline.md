@@ -23,6 +23,27 @@ two never drift apart.
   imitates a third-party UI (for example the Notes/Gmail mock-ups in
   `TutorialForm`). Comment why.
 
+## Icons
+
+- **One family: lucide at stroke 1.9.** MUI icons survive only inside the
+  sanctioned third-party mock-ups. A Material glyph next to a lucide glyph in
+  the same pane is the defect this rule exists to catch, and it is visible
+  without measuring anything.
+- **One size per context.** 22px for the glyphs that lead rows and rail items
+  (spread from the shared `settingGlyphProps`/rail constants, never a per-call
+  literal), 20px for chevrons, 16px or smaller only for a mark inside body
+  copy. Provider marks are brand artwork via `ProviderLogo`, at the same
+  22px box.
+- **Settings rows all lead with a glyph**, on `SettingRow` and
+  `SettingToggleRow` alike, in a fixed-width lane so titles align whether the
+  leading mark is a glyph, a provider logo or an avatar. Glyphs are
+  `aria-hidden`; the accessible name is the title. Colour is
+  `text.secondary`, lifted to `error.main` only for a destructive row.
+- **No icon tiles.** A neutral glyph never sits on a filled square, and no
+  glyph is tinted to carry emphasis that belongs to the title or the control.
+- Rows whose leading content is a key (the hotkey chips in the shortcuts
+  summary and dialog) are not settings and stay iconless.
+
 ## Interactive states
 
 Everything interactive ships all of: default, hover, **focus-visible**, active,
@@ -76,3 +97,5 @@ in agreement:
    themes, and every line that would print (`tight inset:`, `fat row:`, `empty pane:`,
    `mixed icons:`, `anchor drift:` and the rest) fixed or explained with the state it
    was seen in. Applies to the React UI, the native pill and any picture of either.
+7. Every row you added or edited in Settings leads with a lucide glyph from the
+   shared props, in the shared lane, with no tile behind it.

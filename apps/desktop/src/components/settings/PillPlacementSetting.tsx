@@ -6,7 +6,9 @@ import { useAppStore } from "../../store";
 import { logOnRejection } from "../../utils/promise.utils";
 import { getMyUserPreferences } from "../../utils/user.utils";
 import { SegmentedControl } from "../common/SegmentedControl";
+import { ArrowUpDown } from "lucide-react";
 import { SettingRow } from "./SettingRow";
+import { settingGlyphProps } from "./setting-row-chassis";
 
 /**
  * Whether the native pill implements the `pill_placement` IPC message.
@@ -45,6 +47,7 @@ export const PillPlacementSetting = () => {
       settingKey="pill_placement"
       title={<FormattedMessage defaultMessage="Pill placement" />}
       titleHeadingLevel={3}
+      icon={<ArrowUpDown {...settingGlyphProps} />}
       description={
         <FormattedMessage defaultMessage="Whether the dictation pill anchors to the top or the bottom of the screen." />
       }

@@ -1,4 +1,11 @@
-import { AudioLines, Bot, WandSparkles } from "lucide-react";
+import {
+  AudioLines,
+  Bot,
+  Brush,
+  RefreshCw,
+  WandSparkles,
+  Zap,
+} from "lucide-react";
 import { ProviderLogo } from "../../common/provider-logos/ProviderLogo";
 import { Chip } from "@mui/material";
 import type { StylingMode } from "@maus-inc/types";
@@ -19,6 +26,7 @@ import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
 import { setTipAction } from "../../onboarding/tip-actions";
 import { useSettingsFocus } from "../settings-highlight";
 import { useSettingsAvailability } from "../settings-availability";
+import { settingGlyphProps } from "../setting-row-chassis";
 import {
   PersonalApiKeyDialog,
   type PersonalApiKeyProvider,
@@ -117,7 +125,9 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Your own Deepgram key, for fast streaming transcription." />
           }
-          icon={<ProviderLogo provider="deepgram" size={22} />}
+          icon={
+            <ProviderLogo provider="deepgram" size={settingGlyphProps.size} />
+          }
           control={<ConfiguredChip configured={hasDeepgramKey} />}
           onClick={() => setKeyDialog("deepgram")}
         />
@@ -127,7 +137,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Where speech becomes text: on this computer, or through a provider." />
           }
-          icon={<AudioLines size={22} strokeWidth={1.9} />}
+          icon={<AudioLines {...settingGlyphProps} />}
           onClick={() => openDialog("aiTranscriptionDialogOpen")}
         />
       </SettingGroup>
@@ -141,7 +151,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Your own Groq key, for transcription and text generation." />
           }
-          icon={<ProviderLogo provider="groq" size={22} />}
+          icon={<ProviderLogo provider="groq" size={settingGlyphProps.size} />}
           control={<ConfiguredChip configured={hasGroqKey} />}
           onClick={() => setKeyDialog("groq")}
         />
@@ -151,7 +161,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Cleanup and rewriting applied to dictated text before it is inserted." />
           }
-          icon={<WandSparkles size={22} strokeWidth={1.9} />}
+          icon={<WandSparkles {...settingGlyphProps} />}
           onClick={() => openDialog("aiPostProcessingDialogOpen")}
         />
         {postProcessingMode !== "none" && (
@@ -163,6 +173,7 @@ export default function AiModelsSettingsPage() {
             description={
               <FormattedMessage defaultMessage="Style a word, a sentence, or about two sentences on your device instead of waiting for the post-processing provider. Longer dictations always use the provider." />
             }
+            icon={<Zap {...settingGlyphProps} />}
             checked={fastStyleShortDictationsEnabled}
             onChange={handleToggleFastStyleShortDictations}
           />
@@ -176,7 +187,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Ask questions, edit text, and run tools from the same place you dictate." />
           }
-          icon={<Bot size={22} strokeWidth={1.9} />}
+          icon={<Bot {...settingGlyphProps} />}
           control={
             <Chip
               size="small"
@@ -195,6 +206,7 @@ export default function AiModelsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Based on app picks the style from whatever you are writing into. Manual keeps one style until you say otherwise." />
           }
+          icon={<Brush {...settingGlyphProps} />}
           control={
             <SegmentedControl<StylingMode>
               value={stylingMode}
@@ -226,6 +238,7 @@ export default function AiModelsSettingsPage() {
             description={
               <FormattedMessage defaultMessage="Loads the manual style configured for the app you were in when dictation started." />
             }
+            icon={<RefreshCw {...settingGlyphProps} />}
             checked={!disableAutoStyleLoading}
             onChange={handleToggleAutoStyleLoading}
           />

@@ -18,7 +18,9 @@ import {
   controlColumnSx,
   interactiveSx,
   rowSx,
+  SettingRowLabel,
   SettingRowText,
+  type SettingIconTone,
   SettingRowValue,
   TrailingGlyph,
 } from "./setting-row-chassis";
@@ -157,8 +159,10 @@ export type SettingRowProps = {
   settingKey: string;
   title: ReactNode;
   description?: ReactNode;
-  /** Leading icon. Reserved for rows that open or leave, so it signals action. */
+  /** Leading glyph naming the kind of thing the row controls. */
   icon?: ReactNode;
+  /** `danger` tints the glyph for a destructive row. Defaults to `secondary`. */
+  iconTone?: SettingIconTone;
   /** Trailing control, right aligned in the shared control column. */
   control?: ReactNode;
   /** Reported value, for rows that only state something. */
@@ -187,6 +191,7 @@ export const SettingRow = ({
   title,
   description,
   icon,
+  iconTone,
   control,
   value,
   action,
@@ -212,29 +217,25 @@ export const SettingRow = ({
     onClick?.();
   };
 
+  // A static row is a block, so its text may be a `div`; the two rows that are
+  // themselves a control are phrasing only, and a `div` inside a button or a
+  // label is invalid markup.
   const body = (
     <>
-      {icon && (
-        <Box
-          aria-hidden
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            color: "text.secondary",
-            flexShrink: 0,
-          }}
-        >
-          {icon}
-        </Box>
-      )}
-      <SettingRowText
-        title={title}
-        description={description}
-        titleId={titleId}
-        descriptionId={descriptionId}
+      <SettingRowLabel
+        icon={icon}
+        iconTone={iconTone}
         rootComponent={interactive ? "span" : "div"}
-        titleHeadingLevel={titleHeadingLevel}
-      />
+      >
+        <SettingRowText
+          title={title}
+          description={description}
+          titleId={titleId}
+          descriptionId={descriptionId}
+          rootComponent={interactive ? "span" : "div"}
+          titleHeadingLevel={titleHeadingLevel}
+        />
+      </SettingRowLabel>
       <SettingRowControlColumn
         value={value}
         control={control}
@@ -262,7 +263,7 @@ export const SettingRow = ({
     <StaticSettingRow
       anchorId={anchorId}
       highlight={highlight}
-      wrapsWideControl={Boolean(control && !icon)}
+      wrapsWideControl={Boolean(control)}
     >
       {body}
     </StaticSettingRow>
@@ -308,12 +309,14 @@ const StaticSettingRow = ({
     sx={[
       rowSx,
       // Wide controls must not squeeze their explanation into a narrow column.
-      // Let them move below it when the card runs out of room.
+      // Let them move below it when the card runs out of room. The address is
+      // the label block rather than a child position, so a row that leads with
+      // a glyph moves its glyph down together with the text it names.
       ...(wrapsWideControl
         ? [
             {
               flexWrap: "wrap" as const,
-              "& > div:first-of-type": { flexBasis: "min(200px, 100%)" },
+              "& > .setting-row-label": { flexBasis: "min(200px, 100%)" },
               "& > :last-child": { maxWidth: "100%", ml: "auto" },
             },
           ]
@@ -329,6 +332,16 @@ export type SettingToggleRowProps = {
   settingKey: string;
   title: ReactNode;
   description?: ReactNode;
+  /**
+   * Leading glyph, in the same lane as `SettingRow`'s.
+   *
+   * A toggle is as much a setting as a row that opens a dialog, and the two sit
+   * in the same card. Without a slot here, every switch-led group lost its icon
+   * language at exactly the point the two row kinds alternated.
+   */
+  icon?: ReactNode;
+  /** `danger` tints the glyph for a destructive row. Defaults to `secondary`. */
+  iconTone?: SettingIconTone;
   checked: boolean;
   onChange: (event: ChangeEvent<HTMLInputElement>) => void | Promise<unknown>;
   disabled?: boolean;
@@ -347,6 +360,8 @@ export const SettingToggleRow = ({
   settingKey,
   title,
   description,
+  icon,
+  iconTone,
   checked,
   onChange,
   disabled,
@@ -369,12 +384,14 @@ export const SettingToggleRow = ({
         ...(highlight ? [highlightSx] : []),
       ]}
     >
-      <SettingRowText
-        title={title}
-        description={description}
-        titleId={titleId}
-        descriptionId={descriptionId}
-      />
+      <SettingRowLabel icon={icon} iconTone={iconTone}>
+        <SettingRowText
+          title={title}
+          description={description}
+          titleId={titleId}
+          descriptionId={descriptionId}
+        />
+      </SettingRowLabel>
       <Box sx={controlColumnSx}>
         <Switch
           checked={checked}
