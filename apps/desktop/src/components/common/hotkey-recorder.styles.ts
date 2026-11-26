@@ -15,7 +15,8 @@ export const hotkeyRecorderStyles = (
   disabled = false,
 ): SxProps<Theme> => ({
   width,
-  height: 40,
+  minHeight: 40,
+  py: 0.5,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
