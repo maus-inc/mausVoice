@@ -300,12 +300,21 @@ export const theme = createTheme({
         "*, *::before, *::after": {
           boxSizing: "border-box",
         },
+        // The document is a passive canvas. `AppViewport` is the one
+        // viewport-sized box and each route opens the panes that scroll, so the
+        // root must never become a scroll container: one stray pixel from a
+        // portal makes the whole window scroll, and a scrollable window grows a
+        // second scrollbar beside the pane's own.
         html: {
           height: "100%",
+          overflow: "hidden",
+          overscrollBehavior: "none",
         },
         body: {
           height: "100%",
           margin: 0,
+          overflow: "hidden",
+          overscrollBehavior: "none",
           backgroundColor: themeParam.vars.palette.level0,
           color: themeParam.vars.palette.text?.primary,
           fontFamily: uiFont,
