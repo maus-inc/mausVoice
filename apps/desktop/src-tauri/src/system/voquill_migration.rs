@@ -2409,7 +2409,8 @@ fn clear_resolved_database_promotion_issues(report: &mut VoquillMigrationReport)
                 | "recovery_audit_failed"
                 | "recovery_marker_io_error"
                 | "promote_sync_failed"
-                | "manifest_checkpoint_failed"
+                | "wal_checkpoint_failed"
+                | "database_checkpoint_failed"
                 | "manifest_save_failed"
         )
     });
