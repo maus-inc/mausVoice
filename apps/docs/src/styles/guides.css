@@ -434,7 +434,7 @@
   border-bottom: 1px solid rgba(242, 241, 238, 0.6);
 }
 
-/* Markers live in guide-markers.css so the capture can inject the same rules. */
+/* Markers live in guide-markers.css so capture-app.mjs can inject the same rules. */
 
 .mv-annotations {
   list-style: none;
