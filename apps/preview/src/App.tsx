@@ -49,7 +49,7 @@ const RailNav = () => {
         flexShrink: 0,
         borderRight: "1px solid",
         borderColor: "divider",
-        height: "100vh",
+        height: "100%",
         overflowY: "auto",
         p: 1.5,
         display: { xs: "none", md: "block" },
@@ -174,7 +174,7 @@ const Shell = () => {
   );
 
   return (
-    <Stack direction="row" sx={{ height: "100vh", overflow: "hidden" }}>
+    <Stack direction="row" sx={{ height: "100%", overflow: "hidden" }}>
       <RailNav />
       <Box
         sx={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}
