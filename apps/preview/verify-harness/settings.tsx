@@ -35,13 +35,20 @@ import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 import { THEME_PROVIDER_CONFIG, theme } from "@desktop/theme";
 import { SettingsLayout } from "@desktop/components/settings/SettingsLayout";
 import en from "@desktop/i18n/locales/en.json";
+import { installFakeTauri } from "./fake-tauri";
 
-const eventCallbacks = new Map<number, (payload: unknown) => void>();
-let nextEventId = 1;
-
-(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
-  unregisterListener: () => {},
+/**
+ * What the settings surface asks the native side for. It reads the platform
+ * while rendering, and it subscribes to the events that report a preference
+ * changed elsewhere; everything else is state the harness seeds below.
+ */
+const ANSWERS: Record<string, unknown> = {
+  platform: "macos",
+  os_type: "macos",
+  listen: 0,
+  emit: 0,
 };
+
 (window as any).__TAURI_OS_PLUGIN_INTERNALS__ = {
   platform: "macos",
   os_type: "macos",
@@ -51,33 +58,8 @@ let nextEventId = 1;
   arch: "aarch64",
   exe_extension: "",
 };
-(window as any).__TAURI_INTERNALS__ = {
-  metadata: {
-    currentWindow: { label: "main" },
-    currentWebview: { label: "main" },
-  },
-  transformCallback: (callback: (payload: unknown) => void) => {
-    const id = nextEventId++;
-    eventCallbacks.set(id, callback);
-    return id;
-  },
-  runCallback: (id: number, payload: unknown) =>
-    eventCallbacks.get(id)?.(payload),
-  unregisterCallback: (id: number) => {
-    eventCallbacks.delete(id);
-  },
-  invoke: (cmd: string) => {
-    if (cmd.endsWith("|platform") || cmd.endsWith("|os_type")) {
-      return Promise.resolve("macos");
-    }
-    // Listeners and emitters return a token; everything the settings surface
-    // reads is either seeded state or a preference the app already defaults.
-    if (cmd.endsWith("|listen") || cmd.endsWith("|emit")) {
-      return Promise.resolve(0);
-    }
-    return Promise.resolve(null);
-  },
-};
+
+installFakeTauri((cmd) => ANSWERS[cmd.split("|").pop() ?? ""] ?? null);
 
 const params = new URLSearchParams(window.location.search);
 const page = params.get("page") ?? "home";

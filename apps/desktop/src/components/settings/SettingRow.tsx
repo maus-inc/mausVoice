@@ -123,67 +123,102 @@ type SettingRowControlColumnProps = {
  * something that opens in place, and nothing when the row already spells out
  * its verb in the action pill.
  */
+/**
+ * The glyph that ends the column, when the row ends with one.
+ *
+ * Outward for a URL, a chevron for something that opens in place, and nothing
+ * when the row already spells out its verb in the action pill.
+ */
+const TrailingArrow = ({
+  externalUrl,
+  interactive,
+  action,
+}: {
+  externalUrl?: string;
+  interactive: boolean;
+  action?: SettingRowAction;
+}) => {
+  if (externalUrl) {
+    return (
+      <TrailingGlyph>
+        <ArrowUpRight size={18} strokeWidth={1.9} />
+      </TrailingGlyph>
+    );
+  }
+  if (!interactive || action) {
+    return null;
+  }
+  return (
+    <TrailingGlyph>
+      <ChevronRight size={20} strokeWidth={1.9} />
+    </TrailingGlyph>
+  );
+};
+
+/** The named action at the end of a row: a pill, not a control. */
+const ActionPill = ({ action }: { action: SettingRowAction }) => {
+  const theme = useTheme();
+  return (
+    <Box
+      component="span"
+      className="setting-row-action"
+      sx={actionPillSx(
+        action.tone ?? "primary",
+        `${cssPixels(theme.shape.borderRadius) - 2}px`,
+      )}
+    >
+      {action.label}
+    </Box>
+  );
+};
+
+/**
+ * How wide the column may be.
+ *
+ * A row that holds a control gives it the width it needs; a row that reports a
+ * value keeps the fixed column, so values still line up down a page; a row that
+ * only points somewhere keeps nothing but its glyph. The three cases are one
+ * decision, so it is made here rather than by each row.
+ */
+const columnFor = ({
+  control,
+  value,
+  action,
+}: {
+  control?: ReactNode;
+  value?: ReactNode;
+  action?: SettingRowAction;
+}): SystemStyleObject<Theme> => {
+  if (control) return contentControlColumnSx;
+  if (value || action) return controlColumnSx;
+  return trailingGlyphColumnSx;
+};
+
 const SettingRowControlColumn = ({
   value,
   control,
   action,
   externalUrl,
   interactive,
-}: SettingRowControlColumnProps) => {
-  const theme = useTheme();
-
-  let trailingIcon: ReactNode = null;
-  if (externalUrl) {
-    trailingIcon = (
-      <TrailingGlyph>
-        <ArrowUpRight size={18} strokeWidth={1.9} />
-      </TrailingGlyph>
-    );
-  } else if (interactive && !action) {
-    trailingIcon = (
-      <TrailingGlyph>
-        <ChevronRight size={20} strokeWidth={1.9} />
-      </TrailingGlyph>
-    );
-  }
-
-  // A row that holds a control gives it the width it needs; a row that reports
-  // a value keeps the fixed column, so values still line up down a page; a row
-  // that only points somewhere keeps nothing but its glyph. The three cases are
-  // one decision, so they are made here rather than by each row.
-  const columnSx = control
-    ? contentControlColumnSx
-    : value || action
-      ? controlColumnSx
-      : trailingGlyphColumnSx;
-
-  return (
-    <Box
-      sx={[
-        columnSx,
-        // A long reported value beside a named action must not consume the
-        // space the row's label and description need at compact widths.
-        ...(value && action ? [{ maxWidth: { xs: "45%", md: "60%" } }] : []),
-      ]}
-    >
-      <SettingRowValue value={value} />
-      {control}
-      {action && (
-        <Box
-          component="span"
-          className="setting-row-action"
-          sx={actionPillSx(
-            action.tone ?? "primary",
-            `${cssPixels(theme.shape.borderRadius) - 2}px`,
-          )}
-        >
-          {action.label}
-        </Box>
-      )}
-      {trailingIcon}
-    </Box>
-  );
-};
+}: SettingRowControlColumnProps) => (
+  <Box
+    sx={[
+      columnFor({ control, value, action }),
+      // A long reported value beside a named action must not consume the space
+      // the row's label and description need at compact widths.
+      ...(value && action ? [{ maxWidth: { xs: "45%", md: "60%" } }] : []),
+    ]}
+  >
+    <SettingRowValue value={value} />
+    {control}
+    {action && <ActionPill action={action} />}
+    <TrailingArrow
+      externalUrl={externalUrl}
+      interactive={interactive}
+      action={action}
+    />
+  </Box>
+);
 
 export type SettingRowProps = {
   /** Registry key: the row's anchor id and search identity. */

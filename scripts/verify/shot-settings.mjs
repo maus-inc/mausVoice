@@ -20,6 +20,7 @@
 import { writeFileSync } from "node:fs";
 import { createReportDirectory } from "./browser-config.mjs";
 import { launch, newPage, sleep, waitForTruthy } from "./cdp.mjs";
+import { watchPage } from "./page-watch.mjs";
 
 const OUT = createReportDirectory();
 
@@ -48,6 +49,29 @@ const PAGES = [
 
 const problems = [];
 const note = (label, detail) => problems.push(`${label}: ${detail}`);
+
+/** A measured value, or `null` when the page drew nothing to measure. */
+const orNull = (value) => (value === undefined ? null : value);
+
+/**
+ * One group as the committed report keeps it.
+ *
+ * A group's own box says where it starts and how tall it is, which is how the
+ * vertical rhythm between groups shows up in a diff. Its heading and its first
+ * label say whether the two share a column.
+ */
+const reportedGroup = ({ title, rows, card, columns }) => {
+  const head = title ?? {};
+  const frame = card ?? {};
+  return {
+    title: orNull(head.text),
+    rows,
+    top: orNull(frame.y),
+    height: orNull(frame.h),
+    labelX: orNull(columns[0]),
+    headingX: orNull(head.x),
+  };
+};
 
 const measure = `(() => {
   const round = (n) => Math.round(n * 10) / 10;
@@ -89,21 +113,10 @@ const { port, cleanup } = await launch({
 });
 const page = await newPage(port);
 
-const consoleErrors = [];
-page.on("Runtime.consoleAPICalled", (params) => {
-  if (params.type === "error") {
-    consoleErrors.push(
-      params.args.map((arg) => arg.value ?? arg.description ?? "").join(" "),
-    );
-  }
-});
+const { consoleErrors, failedRequests } = watchPage(page);
 await page.send("Network.enable");
 
-const report = { sizes: [], consoleErrors, failedRequests: [], problems };
-
-page.on("Network.loadingFailed", (params) =>
-  report.failedRequests.push(params.errorText),
-);
+const report = { sizes: [], consoleErrors, failedRequests, problems };
 
 for (const { width, height } of SIZES) {
   await page.setViewport(width, height);
@@ -185,14 +198,7 @@ for (const { width, height } of SIZES) {
       heading: metrics.heading,
       labelColumns: labelXs,
       headingColumns: groupXs,
-      groups: metrics.groups.map((group) => ({
-        title: group.title?.text ?? null,
-        rows: group.rows,
-        top: group.card?.y ?? null,
-        height: group.card?.h ?? null,
-        labelX: [...new Set(group.columns)][0] ?? null,
-        headingX: group.title?.x ?? null,
-      })),
+      groups: metrics.groups.map(reportedGroup),
       overflowX: metrics.overflowX,
     });
     console.log(
