@@ -26,25 +26,21 @@ Four decisions sit in the action row as localized captions, and the open icon si
 <Steps>
   <Step
     title="The panel opens after processing"
-    alt="The review panel open with the transcript, the decision row, and the entry below it"
   >
     The panel opens after dictionary handling, filtering, and post-processing, and before insertion. A review therefore shows you exactly the text that would have been inserted. If the entry looks wrong, the problem is upstream of the review, in the transcription or the processing settings, not in the review itself.
   </Step>
   <Step
     title="Edit in place"
-    alt="The entry holding edited text with a text cursor at the end"
   >
     The entry is the pill's own text field under the action row. Type into it to change the text, or press Edit to move the review into the composer window for a larger field. There is no separate save step. The text in the entry when you press a decision is the text that decision carries, and History adopts the same edit.
   </Step>
   <Step
     title="Choose a decision"
-    alt="Cancel, Copy, Edit, and Insert in the action row, with Insert last as the default"
   >
     Insert delivers to the focused field through the same paste or simulated-typing strategy as ordinary dictation. Copy puts the text on the clipboard, closes the review, and reports the copy in a toast. Cancel inserts nothing. The open icon in the header moves the text to the composer window, or to Chats when the review came from the assistant's Paste tool. Review changes when delivery happens, not how it happens.
   </Step>
   <Step
     title="Cancel beats a save that is still running"
-    alt="Cancel highlighted in the action row"
   >
     An Open from an agent's Paste has to save a pending record, which can take a moment. Cancel settles the review as cancelled and stops the hand-off, so the app does not switch to Chats. A save that already committed is marked cancelled rather than deleted, so the card can still appear in Chats, marked cancelled. A completed save cannot reopen the review, because the review has left the queue by then. Duplicate Open presses are ignored, so the save starts once.
   </Step>
@@ -66,7 +62,6 @@ The toast is the whole report. The pill draws no countdown, so expiry is visible
 
 <Figure
   id="history-list"
-  alt="History listing saved transcriptions with their timestamps, word counts and copy actions"
   title="Where a reviewed transcript ends up"
   caption="Captured from History. A transcript that was cancelled or expired still appears here as a normal row, because the review decides delivery, not whether the text is saved."
 />

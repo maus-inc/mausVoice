@@ -35,25 +35,21 @@ This guide covers the parts that are easy to miss: where the switch lives, what 
 <Steps>
   <Step
     title="Open Settings → AI and models → Assistant"
-    alt="The Assistant mode dialog with its provider segment, Assistant hotkey, Assistant mode, and Power mode rows"
   >
     The **Assistant mode** row opens a dialog whose title carries a Beta chip. Inside it, the provider configuration sits above three settings: **Assistant hotkey**, **Assistant mode**, and **Power mode**. Assistant mode is off by default, and nothing in the assistant runs until you turn it on.
   </Step>
   <Step
     title="Choose a generative credential"
-    alt="The assistant provider set to API with a credential selected"
   >
     Set the assistant provider to **API** and pick a credential whose provider supports generative text. **Off** leaves the assistant without an LLM backend, so a command has nowhere to go. The API segment also carries **Maximum iterations**, **Permission timeout (seconds)**, and the **Enabled tools** list. The assistant has its own provider selection. Changing the transcription provider or the post-processing provider does not move it.
   </Step>
   <Step
     title="Set the assistant hotkey"
-    alt="The pill recording an assistant command"
   >
     The assistant hotkey is separate from the dictation shortcut. Hold it, speak, and release, the same way as dictation. The voice is transcribed with the active transcription configuration, but the recognized text becomes a chat message rather than a History row.
   </Step>
   <Step
     title="Watch the tool steps"
-    alt="A completed tool step above a pending Paste request"
   >
     A command can take several model and tool steps. A finished step stays in the transcript as a dimmed line, and the step that needs you becomes a card. Allow covers that one call. Always Allow covers later calls of the same tool in the same conversation, and nothing else. A conversation is not finished after the first response.
   </Step>
@@ -84,19 +80,16 @@ Insert still works when the target still has focus. Open is the recovery path wh
 <Steps>
   <Step
     title="The Paste tool asks, the panel opens"
-    alt="The review panel opened by the Paste tool"
   >
     The Paste tool reports Copy, Open, expiry, and failure back to the assistant, so the conversation knows what you decided instead of assuming the paste happened.
   </Step>
   <Step
     title="Open saves instead of inserting"
-    alt="The saved pending card holding the reviewed text"
   >
     The text is saved as a pending card in Chats. This is the honest outcome when focus has moved, because a paste into a window that is no longer focused would land in the wrong place.
   </Step>
   <Step
     title="Copy from the card"
-    alt="The pending card with its text and a copy action"
   >
     Open Chats, copy the text from the card, and paste it into the application you want. The review is finished at that point. Nothing is retried in the background.
   </Step>

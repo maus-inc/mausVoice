@@ -1,11 +1,10 @@
 ---
 import FigureImage from "./FigureImage.astro";
 
-interface Props {
-  title: string;
-  image?: string;
-  alt?: string;
-}
+type Props = { title: string } & (
+  | { image: string; alt?: string }
+  | { image?: undefined; alt?: never }
+);
 
 const { title, image, alt } = Astro.props;
 ---

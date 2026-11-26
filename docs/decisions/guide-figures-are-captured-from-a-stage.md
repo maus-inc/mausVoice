@@ -53,32 +53,31 @@ not have, so the recreation stays and the guides say so.
 
 ## Consequences
 
-- A surface change is one command per source, `pnpm --filter docs figures` and
-  `pnpm --filter docs figures:preview`, plus a diff of the PNGs in the same PR.
-- The guides state which figures are captures and which are recreations, so a
-  reader is never told a drawing is a screenshot.
+- A surface change is one command, `pnpm --filter docs figures`, plus a diff of
+  the PNGs in the same PR. The command is one source because every figure now
+  comes from the app.
+- No figure is a drawing, so the guides never have to say which are which.
 - Badges attach to their target through `.mv-anchor` and `data-n`, so a marker
   cannot drift away from the control it describes.
 - The PNGs are committed, about 50 KB each, well under the repository's 5 MB
   file limit.
-- The stage file is HTML rather than Astro components. It is illustration
-  markup, not product code, and it must be kept in step with the shipped
-  surface by review. The docs pages never import it.
+- The capture needs a debug build, tauri-driver and WebKitWebDriver. Those are
+  operational tools, not product code, and the docs pages never import them.
 
-## Correction, 2026-11-26
+## Correction, 2026-11-26: the stage is gone and every figure comes from the app
 
-The first revision of this record described a single stage source, two theme
-files per figure (`<id>-light.png` and `<id>-dark.png`), and a `data-theme`
-swap in `FigureImage.astro`. All three were wrong once the Home figure moved to
-a real capture and the set went dark-only, and the guides index also claimed
-every figure was a screenshot of the shipped interface, which was never true for
-the Rust-drawn pill. The record and the guides now state the split.
+Two revisions landed on the same day, and this replaces both. The first one
+described a single stage source, two theme files per figure (`<id>-light.png`
+and `<id>-dark.png`) and a `data-theme` swap in `FigureImage.astro`, and it also
+left the guides index claiming every figure was a screenshot of the shipped
+interface, which was never true for a recreation.
 
-## Correction, 2026-11-26: the stage is deleted and the figures come from the app
-
-The split above was reversed the same day. The stage file, `capture-guides.mjs`, `capture-preview.mjs` and the Chromium driver are gone, and every figure now comes from the built desktop app through WebDriver.
-
-The reason is that a recreation is not evidence. A stage that redrew the pill from copied geometry could drift from the pixels the Rust layer actually paints, and nothing in the pipeline noticed. A figure taken from the running app cannot drift. If a selector stops matching, the capture fails.
+The second revision went further and deleted the split. A recreation is not
+evidence. A stage that redrew the pill from copied geometry could drift from the
+pixels the Rust layer actually paints, and nothing in the pipeline noticed. A
+figure taken from the running app cannot drift, and if a selector stops matching
+the capture fails instead of shipping a stale drawing. The stage file,
+`capture-guides.mjs`, `capture-preview.mjs` and the Chromium driver are gone.
 
 What replaced it:
 
