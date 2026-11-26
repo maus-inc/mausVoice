@@ -16,10 +16,7 @@ import {
   SettingRow,
   SettingToggleRow,
 } from "@desktop/components/settings/SettingRow";
-import {
-  settingGlyphProps,
-  type SettingIconTone,
-} from "@desktop/components/settings/setting-row-chassis";
+import { settingGlyphProps } from "@desktop/components/settings/setting-row-chassis";
 import { DemoSection, Matrix, State } from "../components/demo-ui";
 
 /**
@@ -97,7 +94,7 @@ export const SettingsRowDemo = () => {
                 title="Clear local data"
                 description="Removes stored history, audio snapshots, your photo and settings from this computer."
                 icon={<Eraser {...settingGlyphProps} />}
-                iconTone={"danger" satisfies SettingIconTone}
+                iconTone="danger"
                 action={{ label: "Clear data", tone: "error" }}
                 onClick={() => undefined}
               />
@@ -106,7 +103,7 @@ export const SettingsRowDemo = () => {
                 title="Delete account"
                 description="Deletes your profile and everything mausVoice stores for you on this device."
                 icon={<Trash2 {...settingGlyphProps} />}
-                iconTone={"danger" satisfies SettingIconTone}
+                iconTone="danger"
                 action={{ label: "Delete", tone: "error" }}
                 onClick={() => undefined}
               />
