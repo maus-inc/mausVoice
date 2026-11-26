@@ -211,22 +211,29 @@ impl FlashBannerSpec {
 
     /// Builds the spec for a toast painted in a pill window.
     ///
-    /// Two different widths matter here, and conflating them put the banner on
-    /// the wrong axis. The *banner* may use the whole `window_width`, so a long
-    /// error during dictation is not squeezed into the pill's compact box. But
-    /// the banner must be *centred* on the pill, and the pill's box is
-    /// `pill_draw_width`, which is the draw width the paint already has: it
-    /// starts at 200 in dictation and springs to 600 when the pill expands.
+    /// Three numbers matter, and conflating them put the banner on the wrong
+    /// axis.
     ///
-    /// The drawing space is shifted by the content offset before a paint runs,
-    /// and that offset is `(window_width - pill_draw_width) / 2`, so the pill's
-    /// centre is `pill_draw_width / 2` in painter space. Centring on
-    /// `window_width / 2` instead leaves the banner `(window_width -
-    /// pill_draw_width) / 2` to the right of the pill for the whole expand
-    /// animation, which is what the reviewers caught.
+    /// `window_width` is how much room the banner may use. It is the whole
+    /// painter surface, so a long error during dictation is not squeezed into
+    /// the pill's compact box.
+    ///
+    /// `pill_center_x` is where the banner must be *centred*. It is the pill's
+    /// own centre in painter space -- `pill_position`'s x plus half its width --
+    /// not half the window. The drawing context is already translated by
+    /// `content_offset` before the banner paints, and that offset centres a
+    /// narrow pill inside the wide window, so the window's midpoint is only the
+    /// pill's centre when the two are the same width. In dictation the pill is
+    /// 200 wide inside a 600-wide surface: centring on 300 left the banner 200
+    /// units to the right of the pill for the whole expand animation. The centre
+    /// also has to come from `pill_position` rather than a width, because a
+    /// dragged pill moves and its banner has to follow it.
+    ///
+    /// `pill_top` is where the banner hangs from, and the room above it bounds
+    /// the height.
     pub fn for_window(
         window_width: f64,
-        pill_draw_width: f64,
+        pill_center_x: f64,
         pill_top: f64,
         constants: FlashBannerConstants,
         preferred_text_width: f64,
@@ -235,7 +242,7 @@ impl FlashBannerSpec {
     ) -> Self {
         Self::new(
             window_width,
-            sane(pill_draw_width) / 2.0,
+            pill_center_x,
             pill_top,
             constants,
             preferred_text_width,
@@ -668,10 +675,16 @@ where
         BANNER_TEXT_LINE,
     );
 
-    // The banner is centred on the pill and the room is symmetric about that
-    // point, so any banner that passed the ceiling above is already inside the
-    // window and needs no second clamp.
-    let x = sane(spec.center_x) - banner_w / 2.0;
+    // The banner is centred on the pill. That is enough to keep it inside the
+    // surface while the pill sits in the middle -- the common case -- because
+    // the width above already left a margin on each side. It is not enough once
+    // the pill has been dragged: the banner follows the pill, and a pill near an
+    // edge would hang its banner off that edge. So the rectangle is also held
+    // inside the surface, and only moves when it would otherwise clip.
+    let centered_x = sane(spec.center_x) - banner_w / 2.0;
+    let right_limit =
+        (sane(spec.available_width) - banner_w - BANNER_MIN_MARGIN).max(BANNER_MIN_MARGIN);
+    let x = centered_x.clamp(BANNER_MIN_MARGIN, right_limit);
     let y = sane(spec.pill_top) - sane(spec.gap) - height;
     let banner = BannerRect {
         x,
@@ -840,7 +853,7 @@ impl FlashFrame {
         message: &str,
         measure: F,
         (preferred, action, reject): (f64, Option<f64>, Option<f64>),
-        (pill_top, window_width, pill_draw_width): (f64, f64, f64),
+        (pill_top, window_width, pill_center_x): (f64, f64, f64),
         fade_t: f64,
         (flash_lines, banner_center): (&Cell<usize>, &Cell<Option<(f64, f64)>>),
     ) -> (FlashBannerLayout, f64, f64, (f64, f64))
@@ -849,7 +862,7 @@ impl FlashFrame {
     {
         let spec = FlashBannerSpec::for_window(
             window_width,
-            pill_draw_width,
+            pill_center_x,
             pill_top,
             FlashBannerConstants::canonical(),
             preferred,
@@ -1364,6 +1377,54 @@ mod tests {
         assert_eq!(layout.banner.center_x(), 240.0);
         assert!(layout.banner.x >= BANNER_MIN_MARGIN);
         assert!(layout.banner.right() <= 600.0 - BANNER_MIN_MARGIN);
+    }
+
+    /// A banner centred on the pill follows a dragged pill, and is held on the
+    /// surface when the pill is near an edge.
+    ///
+    /// This is the case a width alone cannot express. The pill can be dragged on
+    /// Wayland and on macOS, so its centre is not necessarily the window's and
+    /// not necessarily the surface's midpoint either. Centring is the rule; the
+    /// clamp only overrides it when following the pill would push the banner off
+    /// the surface, which is the lesser of the two defects because the text is
+    /// still readable and still attached to the pill.
+    #[test]
+    fn a_banner_follows_a_dragged_pill_and_stays_on_the_surface() {
+        // A 200-wide banner centred at 400 still has 100 units of surface to its
+        // right, so nothing needs clamping and it stays on the pill.
+        let dragged = FlashBannerSpec {
+            available_width: 600.0,
+            center_x: 400.0,
+            ..spec()
+        };
+        let layout = layout_flash_banner(
+            &with_text_width(dragged, 200.0),
+            "dragged to the right",
+            fixed(7.0),
+        );
+        assert_eq!(
+            layout.banner.center_x(),
+            400.0,
+            "a banner that fits beside a dragged pill should still be centred on it"
+        );
+
+        // Near the edge there is no room to stay centred, so it is clamped in.
+        let near_edge = FlashBannerSpec {
+            available_width: 600.0,
+            center_x: 590.0,
+            ..spec()
+        };
+        let layout = layout_flash_banner(
+            &with_text_width(near_edge, 460.0),
+            "dragged hard against the right edge of the surface",
+            fixed(7.0),
+        );
+        assert!(
+            layout.banner.right() <= 600.0 - BANNER_MIN_MARGIN + 1e-9,
+            "the banner hung off the surface: {:?}",
+            layout.banner
+        );
+        assert!(layout.banner.x >= BANNER_MIN_MARGIN - 1e-9);
     }
 
     #[test]
@@ -2084,6 +2145,19 @@ mod tests {
             assert!(
                 !source.contains("FLASH_HEIGHT),"),
                 "{path} still paints the banner at the fixed one-line height"
+            );
+            // The banner is centred on the pill's own centre, in painter space,
+            // because the painter has already translated by the content offset.
+            // Passing half the window width here is the defect the reviewers
+            // found: the pill is 200 wide inside a 600-wide surface, so the
+            // banner sat 200 units to its right for the whole expand animation.
+            assert!(
+                source.contains("pill_x + pill_w / 2.0"),
+                "{path} does not derive the banner centre from the pill's own position"
+            );
+            assert!(
+                !source.contains("WINDOW_W_TYPING as f64"),
+                "{path} still centres the banner on a fixed typing width rather than the live pill"
             );
         }
     }

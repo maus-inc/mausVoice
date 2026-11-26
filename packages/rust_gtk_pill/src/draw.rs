@@ -879,13 +879,18 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
         action_button.as_ref().map(|(w, _)| *w),
         reject_button.as_ref().map(|(w, _)| *w),
     );
-    let (_, pill_y, _, _) = pill_position(state, ww, wh);
+    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    // The banner hangs from the pill's own centre and may use the whole surface
+    // it is painted on -- `ww` is the content canvas, which is not the same as
+    // the window allocation the offset was computed against. Centring on the
+    // window instead is what put the banner right of the pill during dictation.
+    let pill_center_x = pill_x + pill_w / 2.0;
     let (layout, scale, alpha, (center_x, center_y)) =
         rust_pill_shared::flash_banner::FlashFrame::resolve_for_window(
             &message,
             measure,
             (preferred_w, action_w, reject_w),
-            (pill_y, WINDOW_W_TYPING as f64, ww),
+            (pill_y, ww, pill_center_x),
             flash_t,
             (&state.banner_lines, &state.banner_center),
         );
