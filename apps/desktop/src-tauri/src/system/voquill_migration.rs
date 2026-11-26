@@ -1189,15 +1189,21 @@ fn ensure_parent_dirs_and_track_sync(
     let mut missing = Vec::new();
     let mut cursor = parent.to_path_buf();
     let stop_root = dst_root.parent().unwrap_or(dst_root);
-    while fs::symlink_metadata(&cursor).is_err() {
-        missing.push(cursor.clone());
-        if cursor == stop_root {
-            break;
+    loop {
+        match fs::symlink_metadata(&cursor) {
+            Ok(_) => break,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                missing.push(cursor.clone());
+                if cursor == stop_root {
+                    break;
+                }
+                let Some(next) = cursor.parent() else {
+                    break;
+                };
+                cursor = next.to_path_buf();
+            }
+            Err(err) => return Err(err),
         }
-        let Some(next) = cursor.parent() else {
-            break;
-        };
-        cursor = next.to_path_buf();
     }
 
     fs::create_dir_all(parent)?;
@@ -1372,9 +1378,10 @@ fn relative_asset_key(dst_root: &Path, dst: &Path) -> String {
         .join("/")
 }
 
-fn revert_asset_progress_entry(ctx: &mut AssetCopyContext<'_>, rel_key: &str) {
+fn revert_asset_progress_entry(ctx: &mut AssetCopyContext<'_>, rel_key: &str) -> io::Result<()> {
+    append_asset_progress_entry(ctx.config_dir, '-', ctx.category, rel_key)?;
     ctx.category.paths_mut(ctx.progress).remove(rel_key);
-    let _ = append_asset_progress_entry(ctx.config_dir, '-', ctx.category, rel_key);
+    Ok(())
 }
 
 fn copy_regular_asset_file(
@@ -1416,13 +1423,24 @@ fn copy_regular_asset_file(
         }
         Ok(false) => {
             if recorded_for_publish {
-                revert_asset_progress_entry(ctx, &rel_key);
+                if let Err(revert_err) = revert_asset_progress_entry(ctx, &rel_key) {
+                    log::warn!(
+                        "Failed to revert Voquill asset progress entry for {rel_key}: {revert_err}"
+                    );
+                    outcome.record_failure(format!(
+                        "could not revert asset progress log: {revert_err}"
+                    ));
+                }
             }
             outcome.skipped_existing = outcome.skipped_existing.saturating_add(1);
         }
         Err(err) => {
             if recorded_for_publish {
-                revert_asset_progress_entry(ctx, &rel_key);
+                if let Err(revert_err) = revert_asset_progress_entry(ctx, &rel_key) {
+                    log::warn!(
+                        "Failed to revert Voquill asset progress entry for {rel_key}: {revert_err}"
+                    );
+                }
             }
             outcome.record_failure(format!("could not copy file: {err}"));
         }
@@ -5640,7 +5658,7 @@ mod tests {
             seen_in_pass: &mut seen,
             dirs_to_sync: &mut dirs_to_sync,
         };
-        revert_asset_progress_entry(&mut ctx, "race.wav");
+        revert_asset_progress_entry(&mut ctx, "race.wav").unwrap();
         let reloaded = load_asset_progress(&dirs.current_config_dir);
         assert!(!reloaded.audio.contains("race.wav"));
     }
