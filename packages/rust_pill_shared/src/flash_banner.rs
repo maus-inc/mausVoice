@@ -931,6 +931,23 @@ pub fn button_label<'a>(
     }
 }
 
+/// Counts a visible banner down, clearing it when its time is up.
+///
+/// All three pills wrote this out: if the banner is up, subtract the step from
+/// its timer, and dismiss it once the timer reaches zero. The rule belongs with
+/// the rest of the banner's state, not beside each platform's frame loop.
+pub fn tick_banner_timer<S: FlashHost>(state: &S, dt: f64) {
+    if !state.flash_visible().get() {
+        return;
+    }
+    let remaining = state.flash_timer().get() - dt;
+    if remaining <= 0.0 {
+        state.clear_flash();
+    } else {
+        state.flash_timer().set(remaining);
+    }
+}
+
 /// The banner's centre without wrapping the message.
 ///
 /// The celebration particles launch from the middle of the banner, and they are
@@ -1682,6 +1699,47 @@ mod tests {
                 "{path} still paints the banner at the fixed one-line height"
             );
         }
+    }
+
+    /// A visible banner counts down, and clears itself when the time is up.
+    ///
+    /// Three call sites used to run this, so the boundary is what matters: one
+    /// step under the duration leaves the banner up for the remainder, a step
+    /// that reaches zero dismisses it and the fields go back to "no toast".
+    #[test]
+    fn a_banner_clears_itself_when_its_timer_reaches_zero() {
+        let state = StubState::default();
+        state.flash_visible.set(true);
+        state.flash_timer.set(1.0);
+        *state.flash_action.borrow_mut() = Some(String::from("retry"));
+
+        tick_banner_timer(&state, 0.25);
+        assert_eq!(state.flash_timer.get(), 0.75);
+        assert!(state.flash_visible.get(), "the banner went away early");
+
+        tick_banner_timer(&state, 0.75);
+        assert!(!state.flash_visible.get(), "the banner outlived its timer");
+        assert_eq!(state.flash_timer.get(), 0.0);
+        assert!(
+            state.flash_action.borrow().is_none(),
+            "a dismissed banner kept its action wired to the next toast"
+        );
+    }
+
+    /// And a banner that is not shown is left alone.
+    #[test]
+    fn a_hidden_banner_is_not_counted_down() {
+        let state = StubState::default();
+        state.flash_timer.set(1.0);
+
+        tick_banner_timer(&state, 5.0);
+
+        assert_eq!(
+            state.flash_timer.get(),
+            1.0,
+            "a hidden banner's timer moved, so it would expire before it ever showed"
+        );
+        assert!(!state.flash_visible.get());
     }
 
     /// `button_label` resolves each button and is callable with no host.

@@ -2426,14 +2426,7 @@ fn tick_audio_levels(state: &PillState, phase: Phase, dt: f64) {
 /// banner yields the strip above the pill to a revealed style tooltip, so the
 /// banner and the selector never sit on top of each other.
 fn tick_flash(state: &PillState, tooltip_revealed: bool, dt: f64) {
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - dt;
-        if remaining <= 0.0 {
-            clear_flash(state);
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
+    rust_pill_shared::flash_banner::tick_banner_timer(state, dt);
     let flash_target = rust_pill_shared::flash_banner_target(
         state.flash_visible.get(),
         state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),

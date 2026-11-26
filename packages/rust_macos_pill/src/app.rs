@@ -1784,14 +1784,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     tick_long_press(state, window, dt);
 
     // Flash message timer
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - dt;
-        if remaining <= 0.0 {
-            clear_flash(state);
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
+    rust_pill_shared::flash_banner::tick_banner_timer(state, dt);
     let flash_target = rust_pill_shared::flash_banner_target(
         state.flash_visible.get(),
         state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
