@@ -23,12 +23,12 @@ import { createId } from "../../utils/id.utils";
 import { isStyleSelectionAvailable } from "../../utils/post-processing.utils";
 import {
   getHotkeyCombosForAction,
-  getPrettyKeyName,
   getSwitchToStyleActionName,
   SWITCH_TO_STYLE_HOTKEY_PREFIX,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { HotKey } from "../common/HotKey";
+import { HotkeyBadge } from "../common/HotkeyBadge";
 import { BusyButtonLabel } from "../common/BusyButtonLabel";
 import { PostProcessingDisabledTooltip } from "../styling/PostProcessingDisabledTooltip";
 
@@ -317,7 +317,7 @@ export const StyleHotkeysDialog = () => {
                     sx={{ width: 200, height: 40, textTransform: "none" }}
                   >
                     {row.keys.length > 0 ? (
-                      row.keys.map(getPrettyKeyName).join(" + ")
+                      <HotkeyBadge keys={row.keys} />
                     ) : (
                       <FormattedMessage defaultMessage="Set hotkey" />
                     )}

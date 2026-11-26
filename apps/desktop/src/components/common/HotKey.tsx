@@ -45,7 +45,26 @@ const RecorderDisplay = ({
         id={describedBy}
         sx={{ display: "inline-flex", alignItems: "center" }}
       >
-        <HotkeyBadge keys={value} appearance="3d" />
+        <Box
+          component="span"
+          sx={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            overflow: "hidden",
+            clipPath: "inset(50%)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </Box>
+        <Box
+          component="span"
+          aria-hidden="true"
+          sx={{ display: "inline-flex" }}
+        >
+          <HotkeyBadge keys={value} appearance="3d" />
+        </Box>
       </Box>
     );
   }
