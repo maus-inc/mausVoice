@@ -1,9 +1,19 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-  SETTINGS_PAGES,
-  type SettingsPageId,
-} from "../../utils/settings-registry";
+
+/**
+ * The one row kind that is not a setting.
+ *
+ * The shortcuts card and its dialog summarise keys a person has already bound.
+ * Their leading content is the keycap cluster, so a glyph there would be a
+ * second mark for the same thing, and the design document says so. Naming the
+ * exception here rather than filtering it out silently keeps it reviewable: a
+ * new iconless surface has to be added to this list, which is a sentence
+ * someone has to justify.
+ */
+const IS_KEY_SUMMARY = "home/QuickShortcutsCard.tsx";
 
 /**
  * The audit the settings icon language depends on.
@@ -17,30 +27,34 @@ import {
 
 const REPO_ROOT = new URL("../../../../../", import.meta.url);
 
-const readSource = (relative: string) =>
-  readFileSync(new URL(relative, REPO_ROOT), "utf8");
-
-function pageFileOf(page: SettingsPageId): string {
-  const pascal = page
-    .split("-")
-    .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join("");
-  return `apps/desktop/src/components/settings/pages/${pascal}SettingsPage.tsx`;
-}
-
 /**
- * Every file that renders an anchored settings row.
+ * Every file that renders one of these rows, found rather than listed.
  *
- * The three standalone components own rows their page renders, so leaving them
- * out would make the audit silently incomplete, which is the failure mode this
- * suite exists to catch.
+ * A hand-written list is the failure this suite exists to catch: a new page
+ * joins and nobody remembers to add its path, so the audit reports a clean tree
+ * while the newest surface has no glyphs at all. The walk reads the settings
+ * folder and keeps whatever renders a `SettingRow`, a `SettingToggleRow` or an
+ * overview row, so a new file is audited the moment it exists.
  */
-const ROW_SOURCES = [
-  ...SETTINGS_PAGES.map((page) => pageFileOf(page.id)),
-  "apps/desktop/src/components/settings/PillPlacementSetting.tsx",
-  "apps/desktop/src/components/settings/UpdateSettingSection.tsx",
-  "apps/desktop/src/components/settings/UpdateChannelSetting.tsx",
-];
+const discoveredRowSources = (
+  dir: URL = new URL("apps/desktop/src/components/settings/", REPO_ROOT),
+): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const child = new URL(
+      `${entry.name}${entry.isDirectory() ? "/" : ""}`,
+      dir,
+    );
+    if (entry.isDirectory()) return discoveredRowSources(child);
+    if (!entry.name.endsWith(".tsx") || entry.name.includes(".test.")) {
+      return [];
+    }
+    const source = readFileSync(child, "utf8");
+    const rendersRow =
+      /<(SettingRow|SettingToggleRow|SettingSummaryRow)\b/.test(source);
+    return rendersRow ? [fileURLToPath(child)] : [];
+  });
+
+const REPO_ROOT_PATH = fileURLToPath(REPO_ROOT);
 
 /**
  * The opening tag of every row element in a source, including its props.
@@ -141,10 +155,12 @@ const glyphOf = (block: string): string | null =>
   /icon=\{\s*<([A-Za-z0-9]+)/.exec(block)?.[1] ?? null;
 
 describe("settings row icon coverage", () => {
-  const sources = ROW_SOURCES.map((path) => ({
-    path,
-    source: readSource(path),
-  }));
+  const sources = discoveredRowSources()
+    .map((absolute) => ({
+      path: relative(REPO_ROOT_PATH, absolute).replaceAll("\\", "/"),
+      source: readFileSync(absolute, "utf8"),
+    }))
+    .filter(({ path }) => !path.endsWith(IS_KEY_SUMMARY));
 
   it("gives every row on every page a leading glyph", () => {
     const missing: string[] = [];
@@ -216,5 +232,25 @@ describe("settings row icon coverage", () => {
       .filter(({ source }) => source.includes("@mui/icons-material"))
       .map(({ path }) => path);
     expect(material).toEqual([]);
+  });
+
+  it("finds every surface that renders a row, including a new one", () => {
+    // The discovery, not the rule, is what a future page can defeat: a file the
+    // walk never opens is a file no assertion can fail on. These are the paths
+    // the audit is known to cover, and a surface that renders rows without
+    // appearing here means the walk broke, not that the surface is fine.
+    expect(sources.map(({ path }) => path).sort()).toEqual([
+      "apps/desktop/src/components/settings/PillPlacementSetting.tsx",
+      "apps/desktop/src/components/settings/UpdateChannelSetting.tsx",
+      "apps/desktop/src/components/settings/UpdateSettingSection.tsx",
+      "apps/desktop/src/components/settings/home/YourModelsCard.tsx",
+      "apps/desktop/src/components/settings/pages/AccountSettingsPage.tsx",
+      "apps/desktop/src/components/settings/pages/AiModelsSettingsPage.tsx",
+      "apps/desktop/src/components/settings/pages/AppearanceSettingsPage.tsx",
+      "apps/desktop/src/components/settings/pages/DictationSettingsPage.tsx",
+      "apps/desktop/src/components/settings/pages/PrivacyDataSettingsPage.tsx",
+      "apps/desktop/src/components/settings/pages/ShortcutsSettingsPage.tsx",
+      "apps/desktop/src/components/settings/pages/SystemSettingsPage.tsx",
+    ]);
   });
 });
