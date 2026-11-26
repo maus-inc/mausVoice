@@ -493,5 +493,3 @@ mod tests {
 
 rust_pill_shared::impl_flash_host!(crate::state::PillState);
 rust_pill_shared::impl_celebration_host!(crate::state::PillState);
-rust_pill_shared::impl_blue_flash_host!(crate::state::PillState);
-rust_pill_shared::impl_transcript_host!(crate::state::PillState);

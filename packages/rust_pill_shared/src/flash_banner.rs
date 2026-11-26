@@ -910,129 +910,6 @@ pub fn dismiss_flash<S: FlashHost>(state: &S, reject: bool, send: impl FnOnce(&s
     state.clear_flash();
 }
 
-/// The blue border's flash, from the moment it starts to the moment it ends.
-///
-/// Three copies of this existed, one per pill, with the same two fields and the
-/// same 0.9 second duration. The bodies were identical apart from the step, so
-/// the step is the only argument a platform supplies.
-pub trait BlueFlashHost {
-    /// Whether the flash is running.
-    fn blue_active(&self) -> &Cell<bool>;
-    /// Seconds since it started.
-    fn blue_elapsed(&self) -> &Cell<f64>;
-
-    /// Advances the flash by `dt`, ending it at its duration.
-    fn tick_blue_flash(&self, dt: f64) {
-        if !self.blue_active().get() {
-            return;
-        }
-        let elapsed = self.blue_elapsed().get() + dt;
-        if elapsed >= FLASH_BLUE_DURATION {
-            self.blue_active().set(false);
-            self.blue_elapsed().set(0.0);
-        } else {
-            self.blue_elapsed().set(elapsed);
-        }
-    }
-}
-
-/// Writes [`BlueFlashHost`] for a state whose fields carry the shared names.
-#[macro_export]
-macro_rules! impl_blue_flash_host {
-    ($ty:ty) => {
-        impl $crate::flash_banner::BlueFlashHost for $ty {
-            fn blue_active(&self) -> &std::cell::Cell<bool> {
-                &self.flash_blue_active
-            }
-            fn blue_elapsed(&self) -> &std::cell::Cell<f64> {
-                &self.flash_blue_elapsed
-            }
-        }
-    };
-}
-
-/// Seconds the blue border stays lit.
-///
-/// Three files each declared `0.9`. A change to one of them would have made one
-/// platform flash for a different length of time than the other two.
-pub const FLASH_BLUE_DURATION: f64 = 0.9;
-
-/// The broadcast transcript's rise, hold and fade.
-///
-/// Three copies of this existed, identical down to the three timing constants;
-/// the step was the only platform part. The fade-out also clears the text,
-/// which each call site used to restate, so a copy that forgot it could leave a
-/// ghost of a message behind.
-pub trait TranscriptHost {
-    /// The text being shown.
-    fn transcript_text(&self) -> &RefCell<String>;
-    /// Seconds since the last update.
-    fn transcript_since_update(&self) -> &Cell<f64>;
-    /// The current opacity, in `0.0..=1.0`.
-    fn transcript_opacity(&self) -> &Cell<f64>;
-    /// Whether a message is held.
-    fn transcript_has_message(&self) -> &Cell<bool>;
-
-    /// Advances the transcript by `dt`.
-    fn tick_transcript(&self, dt: f64) {
-        if !self.transcript_has_message().get() && self.transcript_opacity().get() < 0.001 {
-            return;
-        }
-        let since = self.transcript_since_update().get() + dt;
-        self.transcript_since_update().set(since);
-
-        let target = if self.transcript_has_message().get() && since < TRANSCRIPT_FADE_DELAY {
-            1.0
-        } else {
-            0.0
-        };
-
-        let speed = if target > 0.5 {
-            TRANSCRIPT_RISE_SPEED
-        } else {
-            TRANSCRIPT_FADE_SPEED
-        };
-        let opacity = self.transcript_opacity().get();
-        let blend = 1.0 - (-speed * dt).exp();
-        let next = opacity + (target - opacity) * blend;
-        self.transcript_opacity().set(next);
-
-        if target == 0.0 && next < 0.002 {
-            self.transcript_opacity().set(0.0);
-            self.transcript_has_message().set(false);
-            self.transcript_text().borrow_mut().clear();
-        }
-    }
-}
-
-/// Writes [`TranscriptHost`] for a state whose fields carry the shared names.
-#[macro_export]
-macro_rules! impl_transcript_host {
-    ($ty:ty) => {
-        impl $crate::flash_banner::TranscriptHost for $ty {
-            fn transcript_text(&self) -> &std::cell::RefCell<String> {
-                &self.transcript_text
-            }
-            fn transcript_since_update(&self) -> &std::cell::Cell<f64> {
-                &self.transcript_time_since_update
-            }
-            fn transcript_opacity(&self) -> &std::cell::Cell<f64> {
-                &self.transcript_opacity
-            }
-            fn transcript_has_message(&self) -> &std::cell::Cell<bool> {
-                &self.transcript_has_message
-            }
-        }
-    };
-}
-
-/// Seconds before a transcript starts to fade.
-pub const TRANSCRIPT_FADE_DELAY: f64 = 3.0;
-/// How fast a transcript fades out.
-pub const TRANSCRIPT_FADE_SPEED: f64 = 6.0;
-/// How fast a transcript rises in.
-pub const TRANSCRIPT_RISE_SPEED: f64 = 12.0;
-
 /// The banner's centre without wrapping the message.
 ///
 /// The celebration particles launch from the middle of the banner, and they are
@@ -1099,12 +976,6 @@ mod tests {
         fireworks_elapsed: Cell<f64>,
         fireworks_next_launch: Cell<usize>,
         fireworks_rockets: RefCell<Vec<crate::fireworks::Rocket>>,
-        flash_blue_active: Cell<bool>,
-        flash_blue_elapsed: Cell<f64>,
-        transcript_text: RefCell<String>,
-        transcript_time_since_update: Cell<f64>,
-        transcript_opacity: Cell<f64>,
-        transcript_has_message: Cell<bool>,
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -1124,8 +995,6 @@ mod tests {
 
     impl_flash_host!(StubState);
     impl_celebration_host!(StubState);
-    impl_blue_flash_host!(StubState);
-    impl_transcript_host!(StubState);
 
     fn spec() -> FlashBannerSpec {
         FlashBannerSpec {
@@ -1737,62 +1606,6 @@ mod tests {
             state.indicator.banner_center.get(),
             None,
             "clearing a toast kept its centre, so the next burst launches from where it used to be"
-        );
-    }
-
-    /// The blue border ends exactly at its duration on every platform.
-    ///
-    /// Three copies used to decide this, so this pins the boundary rather than
-    /// the arithmetic: a step that reaches the duration clears the flash, and the
-    /// elapsed time resets so the next flash is full length.
-    #[test]
-    fn the_blue_border_clears_at_its_duration_and_not_before() {
-        let state = StubState::default();
-        state.flash_blue_active.set(true);
-
-        state.tick_blue_flash(FLASH_BLUE_DURATION - 0.01);
-        assert!(
-            state.flash_blue_active.get(),
-            "the flash cleared before its duration elapsed"
-        );
-
-        state.tick_blue_flash(0.01);
-        assert!(
-            !state.flash_blue_active.get(),
-            "the flash outlived its duration"
-        );
-        assert_eq!(
-            state.flash_blue_elapsed.get(),
-            0.0,
-            "the next flash would start part-spent"
-        );
-    }
-
-    /// A transcript that has finished fading clears its own text.
-    ///
-    /// The clearing condition used to be restated at every call site, which is
-    /// the kind of thing one platform forgets and then shows a ghost of a
-    /// message that has already gone.
-    #[test]
-    fn a_faded_transcript_clears_its_own_text() {
-        let state = StubState::default();
-        *state.transcript_text.borrow_mut() = String::from("hello");
-        state.transcript_opacity.set(1.0);
-        state.transcript_has_message.set(true);
-
-        // Past the hold, then long enough at the fade speed to reach zero.
-        for _ in 0..2000 {
-            state.tick_transcript(0.016);
-        }
-
-        assert!(
-            !state.transcript_has_message.get(),
-            "the transcript kept holding a message it had faded out"
-        );
-        assert_eq!(state.transcript_opacity.get(), 0.0);
-        assert!(
-            state.transcript_text.borrow().is_empty(),
-            "the faded text was left behind for the next message"
         );
     }
 

@@ -2325,10 +2325,10 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 /// driven by `flash_blue_elapsed`.
 fn draw_flash_blue(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let elapsed = state.flash_blue_elapsed.get();
-    if elapsed <= 0.0 || elapsed >= rust_pill_shared::flash_banner::FLASH_BLUE_DURATION {
+    if elapsed <= 0.0 || elapsed >= FLASH_BLUE_DURATION {
         return;
     }
-    let t = elapsed / rust_pill_shared::flash_banner::FLASH_BLUE_DURATION;
+    let t = elapsed / FLASH_BLUE_DURATION;
     let alpha = (t * PI).sin().max(0.0);
     if alpha < 0.01 {
         return;
