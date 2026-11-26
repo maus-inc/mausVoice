@@ -14,7 +14,7 @@ const openShortcuts = () =>
   });
 
 export const DictationInstruction = ({
-  use3dKeycaps = false,
+  use3dKeycaps = true,
 }: {
   use3dKeycaps?: boolean;
 }) => {
