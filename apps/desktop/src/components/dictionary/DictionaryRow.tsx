@@ -74,9 +74,10 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
         sx={{
           alignItems: "flex-start",
           py: 1,
-          // Hold the row actions near the top: a validation message or a
-          // wrapped replacement grows the fields downward, not the actions.
-          "& > .MuiIconButton-root, & > span": { mt: 0.5 },
+          // Hold the delete button and the global badge near the top: a
+          // validation message or a wrapped replacement grows the fields
+          // downward, not the actions beside them.
+          "& > .MuiIconButton-root, & > [data-dictionary-badge]": { mt: 0.5 },
         }}
       >
         <DictionaryTermFields

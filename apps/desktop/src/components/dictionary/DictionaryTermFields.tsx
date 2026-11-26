@@ -4,9 +4,11 @@ import { FormattedMessage, useIntl } from "react-intl";
 import type { DictionaryDraft } from "./use-dictionary-draft";
 
 /**
- * The small outlined TextField's control box: 8.5px of vertical padding either
- * side of the 1.4375em input line box. The replacement arrow rides this box so
- * a helper text or a wrapped replacement cannot move it off the input's line.
+ * The replacement field's control box: its `1.5` line box (22.5px at the body
+ * text size) inside the outlined input's 8.5px padding, 39.5px, rounded to the
+ * 4px rhythm. It also brackets the original field's shorter 1.4375em box
+ * (38.56px), so a glyph centred in it sits on both first lines, and a helper
+ * text or a wrapped replacement cannot move it off them.
  */
 export const FIELD_CONTROL_HEIGHT = 40;
 

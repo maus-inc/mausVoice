@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { ThemeProvider } from "@mui/material/styles";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { Term } from "@maus-inc/types";
@@ -15,6 +16,7 @@ vi.mock("react-intl", async (importOriginal) => {
     await import("../../../test/helpers/react-intl-mock");
   return reactIntlMockModule(importOriginal);
 });
+import { THEME_PROVIDER_CONFIG, theme } from "../../theme";
 import { DictionaryRow } from "./DictionaryRow";
 import { FIELD_CONTROL_HEIGHT } from "./DictionaryTermFields";
 
@@ -33,12 +35,22 @@ const seedTerm = (overrides: Partial<Term> = {}) => {
   });
 };
 
-/** Mounts the row, runs the assertions, and unmounts even when one throws. */
+/**
+ * Mounts the row under the application theme, runs the assertions, and
+ * unmounts even when one throws. The theme matters here: it is what resolves
+ * the body text size and line box the assertions compare against.
+ */
 const withRow = async (run: (host: HTMLElement) => void | Promise<void>) => {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
-  await act(async () => root.render(<DictionaryRow id="t" />));
+  await act(async () =>
+    root.render(
+      <ThemeProvider theme={theme} {...THEME_PROVIDER_CONFIG}>
+        <DictionaryRow id="t" />
+      </ThemeProvider>,
+    ),
+  );
   try {
     await run(host);
   } finally {
@@ -96,6 +108,10 @@ describe("DictionaryRow replacement arrow", () => {
 
       // The constant must also match the control box the page resolves, so
       // changing it alone fails here and not only in the browser measurement.
+      // Only the original field can be derived this way: the replacement's
+      // padding sits on its wrapper, which jsdom gives no layout. The browser
+      // measurement covers both lines, and it measures the replacement's box
+      // as the taller of the two.
       const control = getComputedStyle(
         host.querySelector<HTMLInputElement>('input[aria-label="Original"]')!,
       );
