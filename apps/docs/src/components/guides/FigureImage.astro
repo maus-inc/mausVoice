@@ -13,6 +13,9 @@ const file = fileURLToPath(
   new URL(`../../../public/guides/${id}.png`, import.meta.url),
 );
 const { width, height } = await sharp(file).metadata();
+if (!width || !height) {
+  throw new Error(`guides/${id}.png has no pixel size`);
+}
 ---
 
 <span class="mv-shot">
