@@ -2941,9 +2941,23 @@ export const DictationSideEffects = () => {
     // settings page mid-gesture would be a worse surprise than a key that does
     // nothing, and its row now says which switch it needs.
     onFire: () =>
-      withAssistantMode(assistantModeEnabled, () => {
-        void openPillConversation().catch(reportConversationOpenFailure);
-      }),
+      withAssistantMode(
+        assistantModeEnabled,
+        () => {
+          void openPillConversation().catch(reportConversationOpenFailure);
+        },
+        // Opening the chat window is also what ends an in-flight recording, so
+        // the off-path has to do it too. Otherwise the key navigates to a
+        // settings page while the pill keeps recording, which is a state the
+        // person cannot see and did not ask for.
+        () => {
+          void abortRecording().catch((error: unknown) => {
+            getLogger().error(
+              `Failed to abort the recording before opening assistant mode settings: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+        },
+      ),
   });
 
   const getRecordingControlTarget = useCallback(() => {

@@ -29,10 +29,11 @@ summary:
   root, so from the pill or any other window the action changed state and showed
   nothing at all.
 
-The common cause is that "this feature is off" was answered in five places: two
-of them by hiding the control, three by ignoring the switch. Hiding is
-right for a summary of what a person can do; it is wrong for the only listing of
-a key they have already bound, and it is wrong for a key that fires.
+The common cause is that "this feature is off" was answered in five places: the
+Help card above, the two shortcut surfaces that hid a control, the hotkey that
+fired anyway, and the toast that set a flag nothing mounted. Hiding is right for
+a summary of what a person can do; it is wrong for the only listing of a key they
+have already bound, and it is wrong for a key that fires.
 
 ## Decision
 
@@ -41,8 +42,12 @@ a key they have already bound, and it is wrong for a key that fires.
   hash into view, focuses the row and outlines it, so the link lands somewhere
   that looks like a destination rather than a page.
 - One guard, `withAssistantMode` in `actions/assistant-mode.actions.ts`, takes
-  the switch and runs the assistant action or opens the row. Entry points that
-  can fire while the feature is off call it instead of branching themselves.
+  the switch and either runs the assistant action or runs the caller's teardown
+  and opens the row. Entry points that can fire while the feature is off call it
+  instead of branching themselves. The teardown slot exists because opening the
+  chat window is also what ends an in-flight recording: routing to settings
+  without it left the pill recording behind a page the person was reading, which
+  review caught on the first version of this change.
 - Tip destinations are resolved in `utils/tips.ts`. A tip declares the switch it
   depends on and the row that turns it on; `tipAction` returns the destination
   and whether it is the setup row. The Help page asks it once instead of reading
@@ -100,3 +105,6 @@ stays usable from a test and from a non-React path.
 - Reverting the gate in `tips.ts`, reading `tip.href` again in `HelpPage`,
   dropping the Open chat guard or the shortcut description each turned
   assertions red; every mutation was restored and re-run green.
+- `actions/assistant-mode.actions.test.ts` also pins the order of the off-path:
+  teardown, surface, navigate. A teardown that ran after the navigation would
+  pass a test that only checked it was called.

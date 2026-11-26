@@ -30,15 +30,23 @@ export const openAssistantModeSettings = (): void => {
  * the person cannot finish from where they land, so the honest answer is the
  * setting. Callers that have their own reason to stay put pass their own
  * fallback instead.
+ *
+ * `onDisabled` runs before the navigation. A key that would have opened a chat
+ * window also stops whatever that window was going to interrupt — leaving a
+ * recording running while the person reads a settings page is a state they
+ * cannot see and did not ask for — and the action that ran on the enabled path
+ * owns that teardown, so the caller hands its equivalent here.
  */
 export const withAssistantMode = (
   isEnabled: boolean,
   onEnabled: () => void,
+  onDisabled?: () => void,
 ): void => {
   if (isEnabled) {
     onEnabled();
     return;
   }
+  onDisabled?.();
   openAssistantModeSettings();
 };
 

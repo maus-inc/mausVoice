@@ -78,6 +78,32 @@ describe("assistant mode entry points", () => {
   });
 
   /*
+   * The off-path replaced a call that ended any in-flight recording, so the
+   * teardown has to happen here too, and before the navigation: a settings page
+   * that arrives while the pill is still recording is a state the person cannot
+   * see.
+   */
+  it("tears down before navigating while the feature is off", () => {
+    const order: string[] = [];
+    surfaceMock.mockImplementation(() => order.push("surface"));
+    navigateAppMock.mockImplementation(() => {
+      order.push("navigate");
+      return Promise.resolve();
+    });
+
+    withAssistantMode(false, vi.fn(), () => order.push("teardown"));
+
+    expect(order).toEqual(["teardown", "surface", "navigate"]);
+  });
+
+  it("skips the teardown while the feature is on", () => {
+    const onDisabled = vi.fn();
+    withAssistantMode(true, vi.fn(), onDisabled);
+
+    expect(onDisabled).not.toHaveBeenCalled();
+  });
+
+  /*
    * The class level. Issue #355 was one surface spelling an assistant route
    * for itself, so the guard is that the row has one spelling and the dialog
    * flag has one writer. Both are text rather than rendered behaviour: the
@@ -129,8 +155,14 @@ describe("assistant mode entry points", () => {
     [
       "the Open chat key",
       "components/root/DictationSideEffects.tsx",
-      /withAssistantMode\(assistantModeEnabled,/,
+      /withAssistantMode\(\s*assistantModeEnabled,/s,
       /onFire: \(\) => \{\s*void openPillConversation/,
+    ],
+    [
+      "the Open chat key's teardown",
+      "components/root/DictationSideEffects.tsx",
+      /withAssistantMode\([\s\S]*?void abortRecording\(\)[\s\S]*?\n\s*\),\n\s*\}\);/,
+      /withAssistantMode\(assistantModeEnabled, \(\) => \{\s*void openPillConversation/,
     ],
     [
       "the disabled-assistant toast",

@@ -14,7 +14,7 @@ Assistant mode is an experimental command workflow, separate from ordinary dicta
 3. Configure the **Assistant hotkey**.
 4. Turn on the separate **Assistant mode** switch. This feature is disabled by default.
 
-While the switch is off, each assistant entry point leads here rather than to a page with nothing to show. The **Talk to the assistant** guide on the Help page and the **Open chat** shortcut both open this row. The Assistant hold key is listed with a note that the switch is needed, and stays idle until it is on, because a hold gesture should not move you to another page.
+While the switch is off, each assistant entry point leads here rather than to a page with nothing to show. The **Talk to the assistant** guide on the Help page and the **Open chat** shortcut both open this row. The Assistant hold key is listed with a note that the switch is needed, and stays idle until it is on, because a hold gesture should not move you to another page. Pressing **Open chat** stops a recording in progress either way, so it never leaves the pill recording behind a page you are reading.
 
 The assistant has its own provider selection. Changing the transcription provider or the ordinary post-processing provider does not change the assistant's LLM setting. Requests, conversation context, accessibility results, and tool results needed by the conversation can be sent to the selected provider; review that provider's retention terms before using sensitive material.
 
