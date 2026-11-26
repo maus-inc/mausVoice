@@ -953,6 +953,27 @@ fn stick_on_new_assistant_content(
     }
 }
 
+/// The banner a celebration shows, built from this pill's own fields.
+///
+/// The five fields and their clearing rule are shared; each pill only supplies
+/// where they live on its own state.
+fn celebration_banner<'a>(
+    message: &'a str,
+    state: &'a PillState,
+) -> rust_pill_shared::flash_banner::CelebrationBanner<'a> {
+    rust_pill_shared::flash_banner::CelebrationBanner {
+        message,
+        flash_message: &state.flash_message,
+        flash_is_error: &state.flash_is_error,
+        flash_visible: &state.flash_visible,
+        flash_timer: &state.flash_timer,
+        flash_action: &state.flash_action,
+        flash_action_label: &state.flash_action_label,
+        flash_reject_action: &state.flash_reject_action,
+        flash_reject_action_label: &state.flash_reject_action_label,
+    }
+}
+
 fn clear_flash(state: &PillState) {
     // A cleared banner has no lines. The celebration reads this, so leaving the
     // count from the message that just went away would launch the next one from
@@ -1007,19 +1028,11 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             clear_flash(state);
         }
         InMessage::Fireworks { message } => {
-            *state.flash_message.borrow_mut() = message;
-            state.flash_is_error.set(false);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-            *state.flash_reject_action.borrow_mut() = None;
-            *state.flash_reject_action_label.borrow_mut() = None;
-            state.flash_visible.set(true);
-            state
-                .flash_timer
-                .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
-            // The banner has not been measured yet; a celebration message is one
-            // line, which is what the first launch should assume.
-            state.flash_lines.set(1);
+            celebration_banner(&message, state).show(
+                rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION,
+                &state.flash_lines,
+            );
+
             rust_pill_shared::fireworks::Fireworks {
                 active: &state.fireworks_active,
                 elapsed: &state.fireworks_elapsed,
@@ -1029,18 +1042,10 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             .restart(reduced_motion());
         }
         InMessage::Flame { message } => {
-            *state.flash_message.borrow_mut() = message;
-            state.flash_is_error.set(false);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-            *state.flash_reject_action.borrow_mut() = None;
-            *state.flash_reject_action_label.borrow_mut() = None;
-            state.flash_visible.set(true);
-            // Same as the fireworks above: one line until the banner is measured.
-            state.flash_lines.set(1);
-            state
-                .flash_timer
-                .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
+            celebration_banner(&message, state).show(
+                rust_pill_shared::flame::FLAME_TOTAL_DURATION,
+                &state.flash_lines,
+            );
 
             state.flame_active.set(true);
             state.flame_elapsed.set(0.0);
@@ -1492,14 +1497,12 @@ fn tick_fireworks(state: &PillState, dt: f64) {
     }
     .tick(
         dt,
-        (
+        rust_pill_shared::flash_banner::celebration_origin(
             ww / 2.0,
-            rust_pill_shared::flash_banner::banner_center_y(
-                pill_y,
-                FLASH_GAP,
-                FLASH_HEIGHT,
-                state.flash_lines.get(),
-            ),
+            pill_y,
+            FLASH_GAP,
+            FLASH_HEIGHT,
+            state.flash_lines.get(),
         ),
     );
 }

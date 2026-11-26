@@ -23,10 +23,16 @@
 //! everywhere. It also means no platform needs a new wrapped-text draw API; each
 //! already knows how to paint one line.
 //!
-//! Everything in this module is pure. Measurement arrives as a callback, exactly
-//! as [`crate::text_fit::elide_to_width`] takes it, because the three crates
-//! measure through DirectWrite, CoreText and Pango and none of those types can
-//! live in a crate with no dependencies.
+//! Most of this module is pure. Measurement arrives as a callback, exactly as
+//! [`crate::text_fit::elide_to_width`] takes it, because the three crates measure
+//! through DirectWrite, CoreText and Pango and none of those types can live in a
+//! crate with no dependencies.
+//!
+//! The one impure piece is [`CelebrationBanner`], which writes the five banner
+//! fields a celebration resets. All three pills wrote that block out in full and
+//! they had to agree on all five, so it lives with the rest of the banner.
+
+use std::cell::{Cell, RefCell};
 
 /// Vertical padding above and below the banner text.
 ///
@@ -100,6 +106,8 @@ pub struct FlashBannerSpec {
     pub padding_h: f64,
     /// Narrowest the banner is allowed to become.
     pub min_width: f64,
+    /// Width the message would take on one unbroken line, before clamping.
+    pub preferred_text_width: f64,
     /// Measured width of the action button including its own padding, if the
     /// caller has an action.
     pub action_width: Option<f64>,
@@ -110,6 +118,57 @@ pub struct FlashBannerSpec {
     /// Height of the buttons, which is smaller than the banner so it can be
     /// centred inside it.
     pub action_height: f64,
+}
+
+/// A pill's own flash constants, as the three crates keep them.
+///
+/// Every pill crate has these ten numbers in its `constants.rs`, and they are
+/// identical on all three. Passing them as a struct rather than as ten
+/// arguments keeps the call site to one line and makes it impossible for a pill
+/// to drop or reorder one of them.
+#[derive(Debug, Clone, Copy)]
+pub struct FlashBannerConstants {
+    pub gap: f64,
+    pub min_height: f64,
+    pub padding_h: f64,
+    pub min_width: f64,
+    pub action_gap: f64,
+    pub action_height: f64,
+}
+
+impl FlashBannerSpec {
+    /// Builds the spec from a pill's own constants and the widths it measured.
+    ///
+    /// This is the constructor every draw site uses, so a platform only supplies
+    /// the values that genuinely differ: the room it has, where the pill is, and
+    /// how wide its text engine measured the message and the buttons.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        available_width: f64,
+        center_x: f64,
+        pill_top: f64,
+        constants: FlashBannerConstants,
+        preferred_text_width: f64,
+        action_width: Option<f64>,
+        reject_width: Option<f64>,
+    ) -> Self {
+        Self {
+            available_width,
+            center_x,
+            pill_top,
+            gap: constants.gap,
+            min_height: constants.min_height,
+            padding_h: constants.padding_h,
+            min_width: constants.min_width,
+            action_width,
+            reject_width,
+            action_gap: constants.action_gap,
+            action_height: constants.action_height,
+            // The preferred width sizes the banner before it is clamped, so this
+            // is the same number the draw sites used to pass on its own.
+            preferred_text_width,
+        }
+    }
 }
 
 /// A rectangle the caller paints into.
@@ -180,11 +239,49 @@ pub struct FlashBannerLayout {
     pub lines: Vec<String>,
 }
 
+/// Which banner button a rectangle belongs to.
+///
+/// The painter needs to know whether a rectangle is the accept or the reject
+/// button, because each paints a different hit action. Naming them here means
+/// the order the layout reports them in, and the action each one registers, are
+/// decided once rather than in each of the three draw sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BannerButton {
+    /// The accept button, on the banner's right edge.
+    Action,
+    /// The reject button, to the left of the accept button.
+    Reject,
+}
+
 impl FlashBannerLayout {
     /// The banner's centre, which is the point its scale animation is about and
     /// the point celebration particles launch from.
     pub fn center(&self) -> (f64, f64) {
         (self.banner.center_x(), self.banner.center_y())
+    }
+
+    /// Whether the message is left aligned rather than centred.
+    ///
+    /// A banner with a button left aligns the message against its padding,
+    /// because a centred line beside a button reads as a gap; a banner without
+    /// one centres it, which is the compact look a short toast has always had.
+    pub fn texts_left_aligned(&self) -> bool {
+        self.action.is_some() || self.reject.is_some()
+    }
+
+    /// The buttons to paint, reject first so it sits left of the accept button.
+    ///
+    /// Each entry is the rectangle and which button it is; a banner with neither
+    /// button yields an empty slice, and one with only a reject yields just that.
+    pub fn buttons(&self) -> Vec<(BannerRect, BannerButton)> {
+        let mut out = Vec::with_capacity(2);
+        if let Some(rect) = self.reject {
+            out.push((rect, BannerButton::Reject));
+        }
+        if let Some(rect) = self.action {
+            out.push((rect, BannerButton::Action));
+        }
+        out
     }
 }
 
@@ -318,9 +415,9 @@ where
 
 /// Builds the whole banner layout from the caller's measurements.
 ///
-/// `preferred_text_width` is the width the message would take on one unbroken
-/// line, used only to size the banner before it is clamped to the window. It is
-/// a parameter rather than a `measure` call because the macOS pill measures its
+/// The spec carries the width the message would take on one unbroken line,
+/// used only to size the banner before it is clamped to the window. It is part
+/// of the spec rather than a `measure` call because the macOS pill measures its
 /// flash text a point larger than it draws it, and that extra margin is part of
 /// the banner's current look.
 ///
@@ -329,7 +426,6 @@ where
 /// with the glyphs on screen.
 pub fn layout_flash_banner<F>(
     spec: &FlashBannerSpec,
-    preferred_text_width: f64,
     message: &str,
     measure: F,
 ) -> FlashBannerLayout
@@ -353,7 +449,7 @@ where
         button_widths.iter().sum::<f64>() + button_widths.len() as f64 * gap;
     let padding = sane(spec.padding_h);
     let preferred =
-        (sane(preferred_text_width) + padding * 2.0 + reserved_for_buttons).max(min_width);
+        (sane(spec.preferred_text_width) + padding * 2.0 + reserved_for_buttons).max(min_width);
     let banner_w = preferred.min(max_width);
 
     // The banner width settles first because the text budget depends only on
@@ -413,6 +509,60 @@ where
     }
 }
 
+/// Starts a celebration's banner.
+///
+/// A celebration (a streak flame, a fireworks burst) arrives through its own
+/// message rather than a toast, and it always presents the same way: the
+/// message replaces the banner's text, the banner is not an error, every
+/// button is cleared, and the banner shows for the celebration's own duration.
+///
+/// It lives here because all three pills wrote this block out in full, and the
+/// five fields it touches are the five that must agree for a celebration to
+/// look the same on each of them. The celebration's own timer, and the line
+/// count the particles launch from, are the caller's: this only owns the
+/// banner.
+pub struct CelebrationBanner<'a> {
+    /// The text the celebration shows.
+    pub message: &'a str,
+    /// The banner text the message replaces.
+    pub flash_message: &'a RefCell<String>,
+    /// Whether the banner is painted as an error, which a celebration is not.
+    pub flash_is_error: &'a Cell<bool>,
+    /// Whether the banner is shown at all.
+    pub flash_visible: &'a Cell<bool>,
+    /// Seconds the banner stays up.
+    pub flash_timer: &'a Cell<f64>,
+    /// The accept button's token, cleared so a stale action cannot survive.
+    pub flash_action: &'a RefCell<Option<String>>,
+    /// The accept button's label, cleared with its token.
+    pub flash_action_label: &'a RefCell<Option<String>>,
+    /// The reject button's token, cleared for the same reason.
+    pub flash_reject_action: &'a RefCell<Option<String>>,
+    /// The reject button's label, cleared with its token.
+    pub flash_reject_action_label: &'a RefCell<Option<String>>,
+}
+
+impl CelebrationBanner<'_> {
+    /// Shows the message for `duration` seconds and clears every button.
+    ///
+    /// The line count resets to one because a celebration message is always
+    /// short, and because the particles launch before the first paint has had
+    /// a chance to measure the banner: leaving the count from an error that
+    /// was on screen a moment ago would launch them from where that taller
+    /// banner used to be.
+    pub fn show(&self, duration: f64, flash_lines: &Cell<usize>) {
+        *self.flash_message.borrow_mut() = self.message.to_string();
+        self.flash_is_error.set(false);
+        *self.flash_action.borrow_mut() = None;
+        *self.flash_action_label.borrow_mut() = None;
+        *self.flash_reject_action.borrow_mut() = None;
+        *self.flash_reject_action_label.borrow_mut() = None;
+        self.flash_visible.set(true);
+        self.flash_timer.set(duration);
+        flash_lines.set(1);
+    }
+}
+
 /// The banner's centre without wrapping the message.
 ///
 /// The celebration particles launch from the middle of the banner, and they are
@@ -426,6 +576,24 @@ where
 pub fn banner_center_y(pill_top: f64, gap: f64, min_height: f64, line_count: usize) -> f64 {
     let height = banner_height(line_count, min_height, BANNER_PADDING_V, BANNER_TEXT_LINE);
     sane(pill_top) - sane(gap) - height / 2.0
+}
+
+/// Where the celebration particles leave from, in the pill's drawing space.
+///
+/// The x is the pill's centre, and the y is [`banner_center_y`]. Both are
+/// resolved here so a pill's tick is one call with its own four numbers, rather
+/// than a seventeen-line tuple that all three of them wrote out.
+pub fn celebration_origin(
+    pill_center_x: f64,
+    pill_top: f64,
+    gap: f64,
+    min_height: f64,
+    line_count: usize,
+) -> (f64, f64) {
+    (
+        pill_center_x,
+        banner_center_y(pill_top, gap, min_height, line_count),
+    )
 }
 
 #[cfg(test)]
@@ -448,6 +616,7 @@ mod tests {
             min_height: 32.0,
             padding_h: 16.0,
             min_width: BANNER_MIN_WIDTH,
+            preferred_text_width: 0.0,
             action_width: None,
             reject_width: None,
             action_gap: 8.0,
@@ -455,8 +624,13 @@ mod tests {
         }
     }
 
+    fn with_text_width(mut spec: FlashBannerSpec, text_width: f64) -> FlashBannerSpec {
+        spec.preferred_text_width = text_width;
+        spec
+    }
+
     fn layout(message: &str, text_width: f64, spec: &FlashBannerSpec) -> FlashBannerLayout {
-        layout_flash_banner(spec, text_width, message, fixed(7.0))
+        layout_flash_banner(&with_text_width(*spec, text_width), message, fixed(7.0))
     }
 
     #[test]
@@ -495,7 +669,7 @@ mod tests {
     fn a_long_message_wraps_to_several_lines_and_grows_the_banner() {
         let message = "the microphone could not be opened because another \
                        application is already holding the audio device";
-        let layout = layout_flash_banner(&spec(), 200.0, message, fixed(7.0));
+        let layout = layout_flash_banner(&with_text_width(spec(), 200.0), message, fixed(7.0));
         assert!(layout.lines.len() > 1, "the message had to wrap");
         assert!(
             layout.banner.h > 32.0,
@@ -546,7 +720,11 @@ mod tests {
             center_x: 100.0,
             ..spec()
         };
-        let layout = layout_flash_banner(&narrow, 4000.0, &"word ".repeat(80), fixed(7.0));
+        let layout = layout_flash_banner(
+            &with_text_width(narrow, 4000.0),
+            &"word ".repeat(80),
+            fixed(7.0),
+        );
         assert!(layout.banner.x >= BANNER_MIN_MARGIN, "left edge clipped");
         assert!(
             layout.banner.right() <= 200.0 - BANNER_MIN_MARGIN,
@@ -571,8 +749,8 @@ mod tests {
                        could be saved to disk";
         // The preferred width is what the message would take on one line, so a
         // narrower one is a message the banner was already going to wrap.
-        let wide = layout_flash_banner(&wide, 400.0, message, fixed(7.0));
-        let narrow = layout_flash_banner(&narrow, 200.0, message, fixed(7.0));
+        let wide = layout_flash_banner(&with_text_width(wide, 400.0), message, fixed(7.0));
+        let narrow = layout_flash_banner(&with_text_width(narrow, 200.0), message, fixed(7.0));
         assert!(narrow.banner.w < wide.banner.w);
         assert!(narrow.text.w < wide.text.w);
         assert!(
@@ -591,7 +769,7 @@ mod tests {
             center_x: 120.0,
             ..spec()
         };
-        let layout = layout_flash_banner(&narrow, 900.0, "a message", fixed(7.0));
+        let layout = layout_flash_banner(&with_text_width(narrow, 900.0), "a message", fixed(7.0));
         assert!(layout.text.w < layout.banner.w);
         assert_eq!(
             layout.text.w,
@@ -610,7 +788,11 @@ mod tests {
             center_x: 240.0,
             ..spec()
         };
-        let layout = layout_flash_banner(&offset, 200.0, "a short notice", fixed(7.0));
+        let layout = layout_flash_banner(
+            &with_text_width(offset, 200.0),
+            "a short notice",
+            fixed(7.0),
+        );
         assert_eq!(layout.banner.center_x(), 240.0);
         assert!(layout.banner.x >= BANNER_MIN_MARGIN);
         assert!(layout.banner.right() <= 600.0 - BANNER_MIN_MARGIN);
@@ -623,7 +805,11 @@ mod tests {
             center_x: 150.0,
             ..spec()
         };
-        let layout = layout_flash_banner(&tight, 900.0, "a very long message here", fixed(7.0));
+        let layout = layout_flash_banner(
+            &with_text_width(tight, 900.0),
+            "a very long message here",
+            fixed(7.0),
+        );
         assert!(
             layout.banner.x >= BANNER_MIN_MARGIN - 1e-9 && layout.banner.right() <= 300.0,
             "the banner left its room: {:?}",
@@ -639,7 +825,11 @@ mod tests {
             center_x: 1920.0,
             ..spec()
         };
-        let layout = layout_flash_banner(&display, 3000.0, &"word ".repeat(200), fixed(7.0));
+        let layout = layout_flash_banner(
+            &with_text_width(display, 3000.0),
+            &"word ".repeat(200),
+            fixed(7.0),
+        );
         assert_eq!(layout.banner.w, BANNER_MAX_WIDTH, "the cap must apply");
         assert_eq!(
             layout.banner.center_x(),
@@ -670,7 +860,7 @@ mod tests {
             center_x: 226.25,
             ..spec()
         };
-        let layout = layout_flash_banner(&odd, 400.0, "a message", fixed(7.0));
+        let layout = layout_flash_banner(&with_text_width(odd, 400.0), "a message", fixed(7.0));
         assert!((layout.banner.center_x() - 226.25).abs() < 1e-9);
         assert!(layout.banner.right() <= 452.5);
     }
@@ -682,7 +872,11 @@ mod tests {
             reject_width: Some(60.0),
             ..spec()
         };
-        let layout = layout_flash_banner(&with_buttons, 800.0, "delete it", fixed(7.0));
+        let layout = layout_flash_banner(
+            &with_text_width(with_buttons, 800.0),
+            "delete it",
+            fixed(7.0),
+        );
         let action = layout.action.expect("an action button was reserved");
         let reject = layout.reject.expect("a reject button was reserved");
         assert_eq!(
@@ -719,7 +913,8 @@ mod tests {
         };
         let message = "the file could not be transcribed because the format \
                        is not supported by the installed engine";
-        let layout = layout_flash_banner(&with_buttons, 800.0, message, fixed(7.0));
+        let layout =
+            layout_flash_banner(&with_text_width(with_buttons, 800.0), message, fixed(7.0));
         assert!(layout.lines.len() > 1);
         let action = layout.action.expect("the action is still reported");
         assert_eq!(
@@ -740,7 +935,11 @@ mod tests {
             action_width: Some(64.0),
             ..spec()
         };
-        let layout = layout_flash_banner(&with_action, 300.0, "delete the file", fixed(7.0));
+        let layout = layout_flash_banner(
+            &with_text_width(with_action, 300.0),
+            "delete the file",
+            fixed(7.0),
+        );
         assert_eq!(
             layout.banner.w,
             300.0 + 16.0 * 2.0 + 8.0 + 64.0,
@@ -760,8 +959,9 @@ mod tests {
         };
         let message = "the transcript could not be inserted into the focused \
                        application because it does not accept pasted text";
-        let plain = layout_flash_banner(&spec(), 800.0, message, fixed(7.0));
-        let buttoned = layout_flash_banner(&with_buttons, 800.0, message, fixed(7.0));
+        let plain = layout_flash_banner(&with_text_width(spec(), 800.0), message, fixed(7.0));
+        let buttoned =
+            layout_flash_banner(&with_text_width(with_buttons, 800.0), message, fixed(7.0));
         assert!(
             buttoned.text.w < plain.text.w,
             "the button must come out of the text budget"
@@ -778,7 +978,7 @@ mod tests {
             center_x: 150.0,
             ..spec()
         };
-        let layout = layout_flash_banner(&dominated, 100.0, "hello", fixed(7.0));
+        let layout = layout_flash_banner(&with_text_width(dominated, 100.0), "hello", fixed(7.0));
         assert_eq!(layout.text.w, 0.0, "a negative budget must clamp");
         let action = layout.action.expect("the action is still reported");
         assert!(!action.w.is_nan());
@@ -851,7 +1051,7 @@ mod tests {
             action_width: Some(f64::NAN),
             ..spec()
         };
-        let layout = layout_flash_banner(&broken, f64::NAN, "hello", fixed(7.0));
+        let layout = layout_flash_banner(&with_text_width(broken, f64::NAN), "hello", fixed(7.0));
         for value in [
             layout.banner.x,
             layout.banner.y,
@@ -867,6 +1067,27 @@ mod tests {
         }
         assert!(layout.banner.w > 0.0, "the banner survived as a shape");
         assert!(layout.banner.h > 0.0);
+    }
+
+    #[test]
+    fn a_celebration_launches_from_the_banner_centre_on_the_pill_axis() {
+        let layout = layout("Copied text", 118.0, &spec());
+        let (x, y) = celebration_origin(300.0, 300.0, 6.0, 32.0, layout.lines.len());
+        assert_eq!(x, 300.0, "the celebration shares the pill's centre line");
+        assert_eq!(y, layout.banner.center_y());
+
+        let tall = layout_flash_banner(
+            &with_text_width(spec(), 200.0),
+            "a message long enough that it has to be broken across several lines \
+             of the banner before it will fit inside the window at all",
+            fixed(7.0),
+        );
+        assert!(tall.lines.len() > 1);
+        assert!(
+            celebration_origin(300.0, 300.0, 6.0, 32.0, tall.lines.len()).1
+                < celebration_origin(300.0, 300.0, 6.0, 32.0, 1).1,
+            "a taller banner puts the launch point higher"
+        );
     }
 
     #[test]
@@ -958,7 +1179,7 @@ mod tests {
             let source = std::fs::read_to_string(format!("{manifest}/{path}"))
                 .unwrap_or_else(|err| panic!("read {path}: {err}"));
             assert!(
-                source.contains("flash_banner::banner_center_y("),
+                source.contains("flash_banner::celebration_origin("),
                 "{path} launches the celebration from its own idea of the banner height"
             );
             assert!(

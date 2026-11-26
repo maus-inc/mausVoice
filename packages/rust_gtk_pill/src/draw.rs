@@ -6,6 +6,7 @@ use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{rect_contains, ClickAction, ClickRegion, PillState, RocketPhase};
+use rust_pill_shared::flash_banner::BannerButton;
 use rust_pill_shared::{DRAG_INFLATE_SCALE, LONG_PRESS_OUTLINE_COLOR};
 
 // Cairo retains paint errors on the context; the draw callback reports them.
@@ -799,6 +800,43 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
 // ── Flash message ────────────────────────────────────────────────
 
+/// The flash banner's constants as the shared layout wants them.
+///
+/// Every pill keeps these ten numbers in its own `constants.rs`; this is the one
+/// place the crate hands them over, so a draw site names them once.
+fn flash_banner_constants() -> rust_pill_shared::flash_banner::FlashBannerConstants {
+    rust_pill_shared::flash_banner::FlashBannerConstants {
+        gap: FLASH_GAP,
+        min_height: FLASH_HEIGHT,
+        padding_h: FLASH_PADDING_H,
+        min_width: rust_pill_shared::flash_banner::BANNER_MIN_WIDTH,
+        action_gap: FLASH_ACTION_GAP,
+        action_height: FLASH_ACTION_HEIGHT,
+    }
+}
+
+/// Registers the hit target for a banner button painted inside the scale.
+///
+/// Pointer coordinates arrive in unscaled window space, so a region registered
+/// with the laid-out rectangle would cover a different part of the window than
+/// the pixels drawn there for the whole of the scale animation.
+fn push_scaled_click(
+    state: &PillState,
+    rect: rust_pill_shared::flash_banner::BannerRect,
+    center_x: f64,
+    center_y: f64,
+    scale: f64,
+    action: ClickAction,
+) {
+    let (x, y, w, h) = rust_pill_shared::scaled_click_rect(
+        rect.x, rect.y, rect.w, rect.h, center_x, center_y, scale,
+    );
+    state
+        .click_regions
+        .borrow_mut()
+        .push(ClickRegion { x, y, w, h, action });
+}
+
 /// Draws the flash banner above the pill.
 ///
 /// The geometry is entirely [`rust_pill_shared::flash_banner`]'s: it bounds the
@@ -839,6 +877,8 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
 
     // Buttons are measured at their own weight and size, and their padding is
     // part of their width, which is what the shared layout reserves.
+    let action_text: Option<&String> = (*action_label).as_ref();
+    let reject_text: Option<&String> = (*reject_label).as_ref();
     let button = |label: Option<&String>| -> Option<(f64, pango::Layout)> {
         let text = label?;
         let l = pangocairo::functions::create_layout(cr);
@@ -848,10 +888,12 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
         let (w, _) = l.pixel_size();
         Some((w as f64 + FLASH_ACTION_PADDING_H * 2.0, l))
     };
-    let action_text: Option<&String> = (*action_label).as_ref();
-    let reject_text: Option<&String> = (*reject_label).as_ref();
     let action_button = button(action_text);
     let reject_button = button(reject_text);
+    let (action_w, reject_w) = (
+        action_button.as_ref().map(|(w, _)| *w),
+        reject_button.as_ref().map(|(w, _)| *w),
+    );
 
     let (_, pill_y, _, _) = pill_position(state, ww, wh);
     // The drawing space is shifted by the content offset before this runs, so
@@ -860,20 +902,15 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     // whole window to read in, in every mode, even when the pill's own box is
     // narrower: a long error during dictation is not squeezed to 200px.
     let layout = rust_pill_shared::flash_banner::layout_flash_banner(
-        &rust_pill_shared::flash_banner::FlashBannerSpec {
-            available_width: WINDOW_W_TYPING as f64,
-            center_x: ww / 2.0,
-            pill_top: pill_y,
-            gap: FLASH_GAP,
-            min_height: FLASH_HEIGHT,
-            padding_h: FLASH_PADDING_H,
-            min_width: rust_pill_shared::flash_banner::BANNER_MIN_WIDTH,
-            action_width: action_button.as_ref().map(|(w, _)| *w),
-            reject_width: reject_button.as_ref().map(|(w, _)| *w),
-            action_gap: FLASH_ACTION_GAP,
-            action_height: FLASH_ACTION_HEIGHT,
-        },
-        preferred_w,
+        &rust_pill_shared::flash_banner::FlashBannerSpec::new(
+            WINDOW_W_TYPING as f64,
+            ww / 2.0,
+            pill_y,
+            flash_banner_constants(),
+            preferred_w,
+            action_w,
+            reject_w,
+        ),
         &message,
         measure,
     );
@@ -906,40 +943,31 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     // Message text, one painted line per entry the shared wrap produced. A
     // button keeps the block left aligned against its padding; without one the
     // line is centred, which is the compact look a short toast has always had.
+    let left_aligned = layout.texts_left_aligned();
+    let line_layout = pangocairo::functions::create_layout(cr);
+    line_layout.set_font_description(Some(&font));
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    let left_aligned = layout.action.is_some() || layout.reject.is_some();
     for (index, line) in layout.lines.iter().enumerate() {
         if line.is_empty() {
             continue;
         }
-        let l = pangocairo::functions::create_layout(cr);
-        l.set_font_description(Some(&font));
-        l.set_text(line);
-        let (line_w, line_h) = l.pixel_size();
+        line_layout.set_text(line);
+        let (line_w, line_h) = line_layout.pixel_size();
         let line_x = if left_aligned {
             layout.text.x
         } else {
             layout.text.line_x(line_w as f64)
         };
-        let line_y = layout.text.line_top(index, line_h as f64);
-        cr.move_to(line_x, line_y);
-        pangocairo::functions::show_layout(cr, &l);
+        cr.move_to(line_x, layout.text.line_top(index, line_h as f64));
+        pangocairo::functions::show_layout(cr, &line_layout);
     }
 
-    // The banner is painted inside the scale transform above, and a click
-    // arrives in unscaled window space, so the region has to be the painted
-    // rectangle rather than the laid-out one.
-    for (painted, action) in [
-        (
-            layout.reject.zip(reject_button.as_ref().map(|(_, l)| l)),
-            ClickAction::FlashReject,
-        ),
-        (
-            layout.action.zip(action_button.as_ref().map(|(_, l)| l)),
-            ClickAction::FlashAction,
-        ),
-    ] {
-        let Some((rect, label_layout)) = painted else {
+    for (rect, button) in layout.buttons() {
+        let (label, click) = match button {
+            BannerButton::Action => (action_button.as_ref(), ClickAction::FlashAction),
+            BannerButton::Reject => (reject_button.as_ref(), ClickAction::FlashReject),
+        };
+        let Some((_, label_layout)) = label else {
             continue;
         };
 
@@ -955,16 +983,10 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
         );
         pangocairo::functions::show_layout(cr, label_layout);
 
-        let (sx, sy, sw, sh) = rust_pill_shared::scaled_click_rect(
-            rect.x, rect.y, rect.w, rect.h, center_x, center_y, scale,
-        );
-        state.click_regions.borrow_mut().push(ClickRegion {
-            x: sx,
-            y: sy,
-            w: sw,
-            h: sh,
-            action,
-        });
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one.
+        push_scaled_click(state, rect, center_x, center_y, scale, click);
     }
 
     cr.restore().ok();

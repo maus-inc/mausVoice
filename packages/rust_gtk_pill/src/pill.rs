@@ -135,18 +135,33 @@ fn on_dismiss_toast(state_tick: &Rc<PillState>) {
     clear_flash(state_tick);
 }
 
+/// The banner a celebration shows, built from this pill's own fields.
+///
+/// The five fields and their clearing rule are shared; each pill only supplies
+/// where they live on its own state.
+fn celebration_banner<'a>(
+    message: &'a str,
+    state: &'a PillState,
+) -> rust_pill_shared::flash_banner::CelebrationBanner<'a> {
+    rust_pill_shared::flash_banner::CelebrationBanner {
+        message,
+        flash_message: &state.flash_message,
+        flash_is_error: &state.flash_is_error,
+        flash_visible: &state.flash_visible,
+        flash_timer: &state.flash_timer,
+        flash_action: &state.flash_action,
+        flash_action_label: &state.flash_action_label,
+        flash_reject_action: &state.flash_reject_action,
+        flash_reject_action_label: &state.flash_reject_action_label,
+    }
+}
+
 /// Applies `InMessage::Fireworks`.
 fn on_fireworks(message: String, state_tick: &Rc<PillState>) {
-    *state_tick.flash_message.borrow_mut() = message;
-    state_tick.flash_is_error.set(false);
-    *state_tick.flash_action.borrow_mut() = None;
-    *state_tick.flash_action_label.borrow_mut() = None;
-    *state_tick.flash_reject_action.borrow_mut() = None;
-    *state_tick.flash_reject_action_label.borrow_mut() = None;
-    state_tick.flash_visible.set(true);
-    state_tick
-        .flash_timer
-        .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
+    celebration_banner(&message, state_tick).show(
+        rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION,
+        &state_tick.flash_lines,
+    );
 
     rust_pill_shared::fireworks::Fireworks {
         active: &state_tick.fireworks_active,
@@ -155,26 +170,14 @@ fn on_fireworks(message: String, state_tick: &Rc<PillState>) {
         rockets: &state_tick.fireworks_rockets,
     }
     .restart(reduced_motion());
-    // The banner has not been measured yet, and the launch at t=0 happens on the
-    // frame after this. A celebration message is one line, which is what the
-    // first launch should assume rather than the count left by a long error.
-    state_tick.flash_lines.set(1);
 }
 
 /// Applies `InMessage::Flame`.
 fn on_flame(message: String, state_tick: &Rc<PillState>) {
-    *state_tick.flash_message.borrow_mut() = message;
-    state_tick.flash_is_error.set(false);
-    *state_tick.flash_action.borrow_mut() = None;
-    *state_tick.flash_action_label.borrow_mut() = None;
-    *state_tick.flash_reject_action.borrow_mut() = None;
-    *state_tick.flash_reject_action_label.borrow_mut() = None;
-    state_tick.flash_visible.set(true);
-    // Same as the fireworks above: one line until the banner is measured.
-    state_tick.flash_lines.set(1);
-    state_tick
-        .flash_timer
-        .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
+    celebration_banner(&message, state_tick).show(
+        rust_pill_shared::flame::FLAME_TOTAL_DURATION,
+        &state_tick.flash_lines,
+    );
 
     state_tick.flame_active.set(true);
     state_tick.flame_elapsed.set(0.0);
@@ -2537,14 +2540,12 @@ fn tick_fireworks(state: &PillState) {
     }
     .tick(
         dt,
-        (
+        rust_pill_shared::flash_banner::celebration_origin(
             ww / 2.0,
-            rust_pill_shared::flash_banner::banner_center_y(
-                pill_y,
-                FLASH_GAP,
-                FLASH_HEIGHT,
-                state.flash_lines.get(),
-            ),
+            pill_y,
+            FLASH_GAP,
+            FLASH_HEIGHT,
+            state.flash_lines.get(),
         ),
     );
 }

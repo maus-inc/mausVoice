@@ -902,20 +902,11 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
             clear_flash(&ctx.state);
         }
         InMessage::Fireworks { message } => {
-            *ctx.state.flash_message.borrow_mut() = message;
-            ctx.state.flash_is_error.set(false);
-            *ctx.state.flash_action.borrow_mut() = None;
-            *ctx.state.flash_action_label.borrow_mut() = None;
-            *ctx.state.flash_reject_action.borrow_mut() = None;
-            *ctx.state.flash_reject_action_label.borrow_mut() = None;
-            ctx.state.flash_visible.set(true);
-            ctx.state
-                .flash_timer
-                .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
+            celebration_banner(&message, &ctx.state).show(
+                rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION,
+                &ctx.state.flash_lines,
+            );
 
-            // The banner has not been measured yet; a celebration message is one
-            // line, which is what the first launch should assume.
-            ctx.state.flash_lines.set(1);
             rust_pill_shared::fireworks::Fireworks {
                 active: &ctx.state.fireworks_active,
                 elapsed: &ctx.state.fireworks_elapsed,
@@ -925,18 +916,10 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
             .restart(reduced_motion());
         }
         InMessage::Flame { message } => {
-            *ctx.state.flash_message.borrow_mut() = message;
-            ctx.state.flash_is_error.set(false);
-            *ctx.state.flash_action.borrow_mut() = None;
-            *ctx.state.flash_action_label.borrow_mut() = None;
-            *ctx.state.flash_reject_action.borrow_mut() = None;
-            *ctx.state.flash_reject_action_label.borrow_mut() = None;
-            ctx.state.flash_visible.set(true);
-            // Same as the fireworks above: one line until the banner is measured.
-            ctx.state.flash_lines.set(1);
-            ctx.state
-                .flash_timer
-                .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
+            celebration_banner(&message, &ctx.state).show(
+                rust_pill_shared::flame::FLAME_TOTAL_DURATION,
+                &ctx.state.flash_lines,
+            );
 
             ctx.state.flame_active.set(true);
             ctx.state.flame_elapsed.set(0.0);
@@ -1545,6 +1528,27 @@ fn update_hover(view: id, ctx: &AppContext) {
 
 // ── Animation tick ────────────────────────────────────────────────
 
+/// The banner a celebration shows, built from this pill's own fields.
+///
+/// The five fields and their clearing rule are shared; each pill only supplies
+/// where they live on its own state.
+fn celebration_banner<'a>(
+    message: &'a str,
+    state: &'a PillState,
+) -> rust_pill_shared::flash_banner::CelebrationBanner<'a> {
+    rust_pill_shared::flash_banner::CelebrationBanner {
+        message,
+        flash_message: &state.flash_message,
+        flash_is_error: &state.flash_is_error,
+        flash_visible: &state.flash_visible,
+        flash_timer: &state.flash_timer,
+        flash_action: &state.flash_action,
+        flash_action_label: &state.flash_action_label,
+        flash_reject_action: &state.flash_reject_action,
+        flash_reject_action_label: &state.flash_reject_action_label,
+    }
+}
+
 fn clear_flash(state: &PillState) {
     // A cleared banner has no lines. The celebration reads this, so leaving the
     // count from the message that just went away would launch the next one from
@@ -1923,14 +1927,12 @@ fn tick_fireworks(state: &PillState, dt: f64) {
     }
     .tick(
         dt,
-        (
+        rust_pill_shared::flash_banner::celebration_origin(
             ww / 2.0,
-            rust_pill_shared::flash_banner::banner_center_y(
-                pill_y,
-                FLASH_GAP,
-                FLASH_HEIGHT,
-                state.flash_lines.get(),
-            ),
+            pill_y,
+            FLASH_GAP,
+            FLASH_HEIGHT,
+            state.flash_lines.get(),
         ),
     );
 }

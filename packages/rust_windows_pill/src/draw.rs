@@ -2,6 +2,7 @@ use crate::constants::*;
 use crate::gfx::Gfx;
 use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
+use rust_pill_shared::flash_banner::BannerButton;
 use rust_pill_shared::{DRAG_INFLATE_SCALE, LONG_PRESS_OUTLINE_COLOR};
 
 /// Paints the whole pill window: begins the Direct2D frame, clears, then
@@ -586,6 +587,21 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
 
 // ── Flash message ────────────────────────────────────────────────
 
+/// The flash banner's constants as the shared layout wants them.
+///
+/// Every pill keeps these ten numbers in its own `constants.rs`; this is the one
+/// place the crate hands them over, so a draw site names them once.
+fn flash_banner_constants() -> rust_pill_shared::flash_banner::FlashBannerConstants {
+    rust_pill_shared::flash_banner::FlashBannerConstants {
+        gap: FLASH_GAP,
+        min_height: FLASH_HEIGHT,
+        padding_h: FLASH_PADDING_H,
+        min_width: rust_pill_shared::flash_banner::BANNER_MIN_WIDTH,
+        action_gap: FLASH_ACTION_GAP,
+        action_height: FLASH_ACTION_HEIGHT,
+    }
+}
+
 /// Draws the flash banner above the pill.
 ///
 /// The geometry is entirely [`rust_pill_shared::flash_banner`]'s: it bounds the
@@ -613,13 +629,13 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let (preferred_w, _) = gfx_ref.measure_text(&message, 12.0, true);
     let measure = |text: &str| gfx_ref.measure_text(text, 12.0, true).0;
 
+    let action_text: Option<&String> = (*action_label).as_ref();
+    let reject_text: Option<&String> = (*reject_label).as_ref();
     let button_width = |label: Option<&String>| -> Option<f64> {
         let text = label?;
         let (w, _) = gfx_ref.measure_text(text, 11.0, true);
         Some(w + FLASH_ACTION_PADDING_H * 2.0)
     };
-    let action_text: Option<&String> = (*action_label).as_ref();
-    let reject_text: Option<&String> = (*reject_label).as_ref();
     let action_w = button_width(action_text);
     let reject_w = button_width(reject_text);
 
@@ -630,24 +646,18 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     // whole window to read in, in every mode, even when the pill's own box is
     // narrower: a long error during dictation is not squeezed to 200px.
     let layout = rust_pill_shared::flash_banner::layout_flash_banner(
-        &rust_pill_shared::flash_banner::FlashBannerSpec {
-            available_width: WINDOW_W_TYPING as f64,
-            center_x: ww / 2.0,
-            pill_top: pill_y,
-            gap: FLASH_GAP,
-            min_height: FLASH_HEIGHT,
-            padding_h: FLASH_PADDING_H,
-            min_width: rust_pill_shared::flash_banner::BANNER_MIN_WIDTH,
-            action_width: action_w,
-            reject_width: reject_w,
-            action_gap: FLASH_ACTION_GAP,
-            action_height: FLASH_ACTION_HEIGHT,
-        },
-        preferred_w,
+        &rust_pill_shared::flash_banner::FlashBannerSpec::new(
+            WINDOW_W_TYPING as f64,
+            ww / 2.0,
+            pill_y,
+            flash_banner_constants(),
+            preferred_w,
+            action_w,
+            reject_w,
+        ),
         &message,
         measure,
     );
-
     // The celebration launches from the banner's centre and ticks before this
     // runs, so the line count it needs is published here for the next frame.
     state.flash_lines.set(layout.lines.len());
@@ -679,7 +689,7 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     // Message text, one painted line per entry the shared wrap produced. A
     // button keeps the block left aligned against its padding; without one the
     // line is centred, which is the compact look a short toast has always had.
-    let left_aligned = layout.action.is_some() || layout.reject.is_some();
+    let left_aligned = layout.texts_left_aligned();
     for (index, line) in layout.lines.iter().enumerate() {
         if line.is_empty() {
             continue;
@@ -701,11 +711,12 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         );
     }
 
-    for (painted, label, action) in [
-        (layout.reject, reject_text, ClickAction::FlashReject),
-        (layout.action, action_text, ClickAction::FlashAction),
-    ] {
-        let (Some(rect), Some(label)) = (painted, label) else {
+    for (rect, button) in layout.buttons() {
+        let label = match button {
+            BannerButton::Action => action_text,
+            BannerButton::Reject => reject_text,
+        };
+        let Some(label) = label else {
             continue;
         };
 
@@ -735,6 +746,10 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         // shared crate so this cannot drift from the GTK and macOS pills on the
         // one number the painted pixels and the registered hit target have to
         // agree on.
+        let action = match button {
+            BannerButton::Action => ClickAction::FlashAction,
+            BannerButton::Reject => ClickAction::FlashReject,
+        };
         let (sx, sy, sw, sh) = rust_pill_shared::scaled_click_rect(
             rect.x, rect.y, rect.w, rect.h, center_x, center_y, scale,
         );
