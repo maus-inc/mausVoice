@@ -27,6 +27,14 @@ export type ShortcutCopy = {
   action: string;
   title: ReactNode;
   description: ReactNode;
+  /**
+   * The key is listed even while Assistant mode is off, and its description
+   * says what pressing it does then: it opens the setting that turns the
+   * feature on. A row that vanished would leave someone who bound the key
+   * wondering where it went, and a row that promised a chat window would be
+   * describing a page that has nothing to show.
+   */
+  setupHint?: ReactNode;
 };
 
 const dictate: ShortcutCopy = {
@@ -43,6 +51,9 @@ const assistantDictate: ShortcutCopy = {
   description: (
     <FormattedMessage defaultMessage="Dictate commands for the AI to follow instead of just cleaning up text." />
   ),
+  setupHint: (
+    <FormattedMessage defaultMessage="Turn on Assistant mode to use this key." />
+  ),
 };
 
 const cancel: ShortcutCopy = {
@@ -58,6 +69,9 @@ const openChat: ShortcutCopy = {
   title: <FormattedMessage defaultMessage="Open chat" />,
   description: (
     <FormattedMessage defaultMessage="Open the current assistant conversation in the main window." />
+  ),
+  setupHint: (
+    <FormattedMessage defaultMessage="Turn on Assistant mode to open a conversation." />
   ),
 };
 
@@ -94,6 +108,20 @@ export const SHORTCUT_COPY = {
   nextStyle,
   previousStyle,
 } as const;
+
+/**
+ * What a key's row explains, for the assistant feature's current state.
+ *
+ * One rule for every surface that lists a key, so a row cannot promise "opens
+ * the conversation" beside a key that opens the setting which enables one.
+ */
+export const shortcutDescription = (
+  copy: ShortcutCopy,
+  features: { assistantModeEnabled: boolean },
+): ReactNode =>
+  copy.setupHint && !features.assistantModeEnabled
+    ? copy.setupHint
+    : copy.description;
 
 /**
  * The keys the shortcuts dialog lists, in its order.

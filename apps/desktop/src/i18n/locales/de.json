@@ -1105,6 +1105,8 @@
   "tune": "Anpassen",
   "turn_a_rambling_dictation_into_a_concise_intent_preserving_p": "Verwandeln Sie ein abschweifendes Diktat in einen knappen, absichtstreuen Prompt.",
   "turn_on_ai_post_processing_for_the_best_results_in_this_lang": "Aktiviere die KI-Nachbearbeitung für die besten Ergebnisse in dieser Sprache.",
+  "turn_on_assistant_mode_to_open_a_conversation": "Aktivieren Sie den Assistentenmodus, um eine Unterhaltung zu öffnen.",
+  "turn_on_assistant_mode_to_use_this_key": "Aktivieren Sie den Assistentenmodus, um diese Taste zu verwenden.",
   "turn_on_review_before_insert_to_edit_dictated_text_in_the_pi": "Aktivieren Sie „Vor dem Einfügen prüfen“, um diktierten Text in der Pille zu bearbeiten, verwenden Sie den Sprachbearbeitungsmodus für Umwandlungen und legen Sie fest, welche Werkzeuge im Agentenmodus ausgeführt werden dürfen.",
   "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "Wandelt Sätze wie \"new line\", \"comma\" und \"scratch that\" in Formatierung um, auch in Verbatim. Erfordert eine englische Diktatsprache, da Automatisch sie nicht anwendet.",
   "type_a_message": "Nachricht eingeben…",

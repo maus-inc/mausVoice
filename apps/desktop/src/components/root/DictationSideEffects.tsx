@@ -17,6 +17,7 @@ import {
   sendChatMessage,
 } from "../../actions/chat.actions";
 import { refreshMember } from "../../actions/member.actions";
+import { withAssistantMode } from "../../actions/assistant-mode.actions";
 import {
   getFastStyleTruncationMessage,
   getPostProcessFeedback,
@@ -2931,9 +2932,15 @@ export const DictationSideEffects = () => {
     // leaving it in place. Wrapping here rather than in the shared hotkey helper
     // keeps the fix local to a caller that has a logger, and keeps every other
     // `onFire` caller untouched.
-    onFire: () => {
-      void openPillConversation().catch(reportConversationOpenFailure);
-    },
+    //
+    // With assistant mode off there is no conversation to open, so the key
+    // opens the switch instead of a chat window the person cannot use. Same
+    // class as the Help page's action (issue #355): an assistant entry point
+    // that fired while the feature was off.
+    onFire: () =>
+      withAssistantMode(assistantModeEnabled, () => {
+        void openPillConversation().catch(reportConversationOpenFailure);
+      }),
   });
 
   const getRecordingControlTarget = useCallback(() => {

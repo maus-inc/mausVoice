@@ -1105,6 +1105,8 @@
   "tune": "调整",
   "turn_a_rambling_dictation_into_a_concise_intent_preserving_p": "把冗长的听写内容变成简洁且保留意图的提示词。",
   "turn_on_ai_post_processing_for_the_best_results_in_this_lang": "开启 AI 后处理，以获得该语言的最佳效果。",
+  "turn_on_assistant_mode_to_open_a_conversation": "开启助理模式即可开始对话。",
+  "turn_on_assistant_mode_to_use_this_key": "开启助理模式即可使用此按键。",
   "turn_on_review_before_insert_to_edit_dictated_text_in_the_pi": "开启“插入前审阅”可在胶囊窗口中编辑听写文本，使用语音编辑模式进行转换，并配置允许在代理模式下运行的工具。",
   "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "将“new line”“comma”和“scratch that”等短语转换为格式，原文模式下也有效。需要英语听写语言，因为自动模式不会应用这些短语。",
   "type_a_message": "输入消息…",

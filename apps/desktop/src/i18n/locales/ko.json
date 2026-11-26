@@ -1105,6 +1105,8 @@
   "tune": "조정",
   "turn_a_rambling_dictation_into_a_concise_intent_preserving_p": "이완된 받아쓰기를 의도를 유지하는 간결한 프롬프트로 바꾸세요.",
   "turn_on_ai_post_processing_for_the_best_results_in_this_lang": "이 언어에서 최상의 결과를 얻으려면 AI 후처리를 켜세요.",
+  "turn_on_assistant_mode_to_open_a_conversation": "어시스턴트 모드를 켜면 대화를 열 수 있습니다.",
+  "turn_on_assistant_mode_to_use_this_key": "어시스턴트 모드를 켜면 이 키를 사용할 수 있습니다.",
   "turn_on_review_before_insert_to_edit_dictated_text_in_the_pi": "삽입 전 검토를 켜서 알약 창에서 받아쓴 텍스트를 수정하고, 음성 편집 모드로 변환하며, 실행할 수 있는 에이전트 모드 도구를 구성하세요.",
   "turns_phrases_like_new_line_comma_and_scratch_that_into_form": "\"new line\", \"comma\", \"scratch that\" 같은 문구를 서식으로 변환하며 그대로 모드에서도 작동합니다. 자동은 적용하지 않으므로 영어 받아쓰기 언어가 필요합니다.",
   "type_a_message": "메시지를 입력하세요…",
