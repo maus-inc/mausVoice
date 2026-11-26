@@ -33,24 +33,40 @@ const seedTerm = (overrides: Partial<Term> = {}) => {
   });
 };
 
-const mountRow = async () => {
+/** Mounts the row, runs the assertions, and unmounts even when one throws. */
+const withRow = async (run: (host: HTMLElement) => void | Promise<void>) => {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   await act(async () => root.render(<DictionaryRow id="t" />));
-  return {
-    host,
-    unmount: () => {
-      act(() => root.unmount());
-      host.remove();
-    },
-  };
+  try {
+    await run(host);
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
 };
 
 const arrowAnchor = (host: HTMLElement): HTMLElement => {
   const anchor = host.querySelector<HTMLElement>("[data-dictionary-arrow]");
   if (!anchor) throw new Error("the replacement arrow has no anchored box");
   return anchor;
+};
+
+const replaceValue = (
+  control: HTMLInputElement | HTMLTextAreaElement,
+  value: string,
+) => {
+  const prototype =
+    control instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+  const setValue = Object.getOwnPropertyDescriptor(prototype, "value")!.set!;
+  act(() => control.focus());
+  act(() => {
+    setValue.call(control, value);
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 };
 
 beforeEach(() => {
@@ -61,9 +77,8 @@ beforeEach(() => {
 describe("DictionaryRow replacement arrow", () => {
   it("anchors the arrow on the fields' control line inside the row", async () => {
     seedTerm();
-    const row = await mountRow();
-    try {
-      const anchor = arrowAnchor(row.host);
+    await withRow((host) => {
+      const anchor = arrowAnchor(host);
       expect(anchor.parentElement?.dataset.dictionaryRow).toBe("t");
 
       const anchorStyles = getComputedStyle(anchor);
@@ -78,9 +93,20 @@ describe("DictionaryRow replacement arrow", () => {
       // A top margin is what drifted before: Stack resets the margin of every
       // direct child, so the offset never survived and the arrow rode the top.
       expect(parseFloat(getComputedStyle(glyph!).marginTop)).toBe(0);
-    } finally {
-      row.unmount();
-    }
+
+      // The constant must also match the control box the page resolves, so
+      // changing it alone fails here and not only in the browser measurement.
+      const control = getComputedStyle(
+        host.querySelector<HTMLInputElement>('input[aria-label="Original"]')!,
+      );
+      const controlBox =
+        parseFloat(control.lineHeight) +
+        parseFloat(control.paddingTop) +
+        parseFloat(control.paddingBottom);
+      expect(
+        Math.abs(parseFloat(anchorStyles.height) - controlBox),
+      ).toBeLessThan(2);
+    });
   });
 
   it.each([
@@ -90,22 +116,11 @@ describe("DictionaryRow replacement arrow", () => {
     "keeps the anchored box when the $field field shows validation text",
     async ({ selector }) => {
       seedTerm();
-      const row = await mountRow();
-      try {
-        const control = row.host.querySelector<
+      await withRow(async (host) => {
+        const control = host.querySelector<
           HTMLInputElement | HTMLTextAreaElement
         >(selector)!;
-        const setValue = Object.getOwnPropertyDescriptor(
-          control instanceof HTMLTextAreaElement
-            ? HTMLTextAreaElement.prototype
-            : HTMLInputElement.prototype,
-          "value",
-        )!.set!;
-        act(() => control.focus());
-        act(() => {
-          setValue.call(control, "   ");
-          control.dispatchEvent(new Event("input", { bubbles: true }));
-        });
+        replaceValue(control, "   ");
         await act(async () => control.blur());
 
         expect(control.getAttribute("aria-invalid")).toBe("true");
@@ -114,25 +129,20 @@ describe("DictionaryRow replacement arrow", () => {
             ?.textContent,
         ).toBe("Required. Changes not saved.");
 
-        const anchorStyles = getComputedStyle(arrowAnchor(row.host));
+        const anchorStyles = getComputedStyle(arrowAnchor(host));
         expect(anchorStyles.alignSelf).toBe("flex-start");
         expect(anchorStyles.height).toBe(`${FIELD_CONTROL_HEIGHT}px`);
-      } finally {
-        row.unmount();
-      }
+      });
     },
   );
 
   it("renders no replacement arrow for a glossary term", async () => {
     seedTerm({ isReplacement: false, destinationValue: "" });
-    const row = await mountRow();
-    try {
+    await withRow((host) => {
       expect(
-        row.host.querySelector('input[aria-label="Glossary term"]'),
+        host.querySelector('input[aria-label="Glossary term"]'),
       ).not.toBeNull();
-      expect(row.host.querySelector("[data-dictionary-arrow]")).toBeNull();
-    } finally {
-      row.unmount();
-    }
+      expect(host.querySelector("[data-dictionary-arrow]")).toBeNull();
+    });
   });
 });

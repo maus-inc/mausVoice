@@ -6,8 +6,8 @@
     "states": [
       {
         "state": "clean",
-        "full": "/home/user/mausVoice/.qa/pr360/before-light-1200x800-clean.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/before-light-1200x800-clean-row.jpg",
+        "full": ".qa/pr360/before-light-1200x800-clean.jpg",
+        "crop": ".qa/pr360/before-light-1200x800-clean-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "light",
         "background": "rgb(245, 242, 237)",
@@ -85,8 +85,8 @@
       },
       {
         "state": "empty-source",
-        "full": "/home/user/mausVoice/.qa/pr360/before-light-1200x800-empty-source.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/before-light-1200x800-empty-source-row.jpg",
+        "full": ".qa/pr360/before-light-1200x800-empty-source.jpg",
+        "crop": ".qa/pr360/before-light-1200x800-empty-source-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "light",
         "background": "rgb(245, 242, 237)",
@@ -164,8 +164,8 @@
       },
       {
         "state": "empty-both",
-        "full": "/home/user/mausVoice/.qa/pr360/before-light-1200x800-empty-both.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/before-light-1200x800-empty-both-row.jpg",
+        "full": ".qa/pr360/before-light-1200x800-empty-both.jpg",
+        "crop": ".qa/pr360/before-light-1200x800-empty-both-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "light",
         "background": "rgb(245, 242, 237)",
@@ -246,8 +246,8 @@
       },
       {
         "state": "wrapped-destination",
-        "full": "/home/user/mausVoice/.qa/pr360/before-light-1200x800-wrapped-destination.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/before-light-1200x800-wrapped-destination-row.jpg",
+        "full": ".qa/pr360/before-light-1200x800-wrapped-destination.jpg",
+        "crop": ".qa/pr360/before-light-1200x800-wrapped-destination-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "light",
         "background": "rgb(245, 242, 237)",
@@ -325,414 +325,8 @@
       },
       {
         "state": "narrow",
-        "full": "/home/user/mausVoice/.qa/pr360/before-light-1200x800-narrow.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/before-light-1200x800-narrow-row.jpg",
-        "href": "http://127.0.0.1:5195/dashboard/dictionary",
-        "mode": "light",
-        "background": "rgb(245, 242, 237)",
-        "anchor": {
-          "top": 141.44,
-          "left": 171,
-          "width": 16,
-          "height": 16,
-          "bottom": 157.44,
-          "right": 187
-        },
-        "arrowColour": "rgb(26, 23, 18)",
-        "svg": {
-          "top": 141.44,
-          "left": 171,
-          "width": 16,
-          "height": 16,
-          "bottom": 157.44,
-          "right": 187
-        },
-        "svgCentre": 149.44,
-        "anchorCentre": 149.44,
-        "source": {
-          "fontSize": "15px",
-          "lineHeight": 21.56,
-          "paddingTop": 8.5,
-          "borderTop": 0,
-          "top": 141.44,
-          "height": 38.56,
-          "textCentre": 160.72
-        },
-        "destination": {
-          "fontSize": "15px",
-          "lineHeight": 22.5,
-          "paddingTop": 0,
-          "borderTop": 0,
-          "top": 149.94,
-          "height": 23,
-          "textCentre": 161.19
-        },
-        "helperTexts": [],
-        "row": {
-          "top": 133.44,
-          "left": 24,
-          "width": 352,
-          "height": 56,
-          "bottom": 189.44,
-          "right": 376
-        },
-        "fieldGaps": {
-          "fields": [
-            {
-              "left": 24,
-              "width": 131,
-              "height": 38.56
-            },
-            {
-              "left": 203,
-              "width": 131,
-              "height": 40
-            }
-          ],
-          "left": 16,
-          "right": 16
-        },
-        "overflow": {
-          "scrollWidth": 352,
-          "clientWidth": 352
-        },
-        "counts": {
-          "replacementRows": 0,
-          "sourceFields": 1,
-          "glossaryFields": 2
-        }
-      }
-    ],
-    "errors": []
-  },
-  {
-    "label": "after",
-    "theme": "light",
-    "viewport": "1200x800",
-    "states": [
-      {
-        "state": "clean",
-        "full": "/home/user/mausVoice/.qa/pr360/after-light-1200x800-clean.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-light-1200x800-clean-row.jpg",
-        "href": "http://127.0.0.1:5195/dashboard/dictionary",
-        "mode": "light",
-        "background": "rgb(245, 242, 237)",
-        "anchor": {
-          "top": 292.28,
-          "left": 687,
-          "width": 16,
-          "height": 40,
-          "bottom": 332.28,
-          "right": 703
-        },
-        "arrowColour": "rgb(26, 23, 18)",
-        "svg": {
-          "top": 304.28,
-          "left": 687,
-          "width": 16,
-          "height": 16,
-          "bottom": 320.28,
-          "right": 703
-        },
-        "svgCentre": 312.28,
-        "anchorCentre": 312.28,
-        "source": {
-          "fontSize": "15px",
-          "lineHeight": 21.56,
-          "paddingTop": 8.5,
-          "borderTop": 0,
-          "top": 292.28,
-          "height": 38.56,
-          "textCentre": 311.56
-        },
-        "destination": {
-          "fontSize": "15px",
-          "lineHeight": 22.5,
-          "paddingTop": 0,
-          "borderTop": 0,
-          "top": 300.78,
-          "height": 23,
-          "textCentre": 312.03
-        },
-        "helperTexts": [],
-        "row": {
-          "top": 284.28,
-          "left": 440,
-          "width": 552,
-          "height": 56,
-          "bottom": 340.28,
-          "right": 992
-        },
-        "fieldGaps": {
-          "fields": [
-            {
-              "left": 440,
-              "width": 231,
-              "height": 38.56
-            },
-            {
-              "left": 719,
-              "width": 231,
-              "height": 40
-            }
-          ],
-          "left": 16,
-          "right": 16
-        },
-        "overflow": {
-          "scrollWidth": 552,
-          "clientWidth": 552
-        },
-        "counts": {
-          "replacementRows": 1,
-          "sourceFields": 1,
-          "glossaryFields": 2
-        }
-      },
-      {
-        "state": "empty-source",
-        "full": "/home/user/mausVoice/.qa/pr360/after-light-1200x800-empty-source.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-light-1200x800-empty-source-row.jpg",
-        "href": "http://127.0.0.1:5195/dashboard/dictionary",
-        "mode": "light",
-        "background": "rgb(245, 242, 237)",
-        "anchor": {
-          "top": 292.28,
-          "left": 687,
-          "width": 16,
-          "height": 40,
-          "bottom": 332.28,
-          "right": 703
-        },
-        "arrowColour": "rgb(26, 23, 18)",
-        "svg": {
-          "top": 304.28,
-          "left": 687,
-          "width": 16,
-          "height": 16,
-          "bottom": 320.28,
-          "right": 703
-        },
-        "svgCentre": 312.28,
-        "anchorCentre": 312.28,
-        "source": {
-          "fontSize": "15px",
-          "lineHeight": 21.56,
-          "paddingTop": 8.5,
-          "borderTop": 0,
-          "top": 292.28,
-          "height": 38.56,
-          "textCentre": 311.56
-        },
-        "destination": {
-          "fontSize": "15px",
-          "lineHeight": 22.5,
-          "paddingTop": 0,
-          "borderTop": 0,
-          "top": 300.78,
-          "height": 23,
-          "textCentre": 312.03
-        },
-        "helperTexts": ["Required. Changes not saved."],
-        "row": {
-          "top": 284.28,
-          "left": 440,
-          "width": 552,
-          "height": 78.47,
-          "bottom": 362.75,
-          "right": 992
-        },
-        "fieldGaps": {
-          "fields": [
-            {
-              "left": 440,
-              "width": 231,
-              "height": 62.47
-            },
-            {
-              "left": 719,
-              "width": 231,
-              "height": 40
-            }
-          ],
-          "left": 16,
-          "right": 16
-        },
-        "overflow": {
-          "scrollWidth": 552,
-          "clientWidth": 552
-        },
-        "counts": {
-          "replacementRows": 1,
-          "sourceFields": 1,
-          "glossaryFields": 2
-        }
-      },
-      {
-        "state": "empty-both",
-        "full": "/home/user/mausVoice/.qa/pr360/after-light-1200x800-empty-both.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-light-1200x800-empty-both-row.jpg",
-        "href": "http://127.0.0.1:5195/dashboard/dictionary",
-        "mode": "light",
-        "background": "rgb(245, 242, 237)",
-        "anchor": {
-          "top": 292.28,
-          "left": 687,
-          "width": 16,
-          "height": 40,
-          "bottom": 332.28,
-          "right": 703
-        },
-        "arrowColour": "rgb(26, 23, 18)",
-        "svg": {
-          "top": 304.28,
-          "left": 687,
-          "width": 16,
-          "height": 16,
-          "bottom": 320.28,
-          "right": 703
-        },
-        "svgCentre": 312.28,
-        "anchorCentre": 312.28,
-        "source": {
-          "fontSize": "15px",
-          "lineHeight": 21.56,
-          "paddingTop": 8.5,
-          "borderTop": 0,
-          "top": 292.28,
-          "height": 38.56,
-          "textCentre": 311.56
-        },
-        "destination": {
-          "fontSize": "15px",
-          "lineHeight": 22.5,
-          "paddingTop": 0,
-          "borderTop": 0,
-          "top": 300.78,
-          "height": 23,
-          "textCentre": 312.03
-        },
-        "helperTexts": [
-          "Required. Changes not saved.",
-          "Required. Changes not saved."
-        ],
-        "row": {
-          "top": 284.28,
-          "left": 440,
-          "width": 552,
-          "height": 79.91,
-          "bottom": 364.19,
-          "right": 992
-        },
-        "fieldGaps": {
-          "fields": [
-            {
-              "left": 440,
-              "width": 231,
-              "height": 62.47
-            },
-            {
-              "left": 719,
-              "width": 231,
-              "height": 63.91
-            }
-          ],
-          "left": 16,
-          "right": 16
-        },
-        "overflow": {
-          "scrollWidth": 552,
-          "clientWidth": 552
-        },
-        "counts": {
-          "replacementRows": 1,
-          "sourceFields": 1,
-          "glossaryFields": 2
-        }
-      },
-      {
-        "state": "wrapped-destination",
-        "full": "/home/user/mausVoice/.qa/pr360/after-light-1200x800-wrapped-destination.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-light-1200x800-wrapped-destination-row.jpg",
-        "href": "http://127.0.0.1:5195/dashboard/dictionary",
-        "mode": "light",
-        "background": "rgb(245, 242, 237)",
-        "anchor": {
-          "top": 292.28,
-          "left": 687,
-          "width": 16,
-          "height": 40,
-          "bottom": 332.28,
-          "right": 703
-        },
-        "arrowColour": "rgb(26, 23, 18)",
-        "svg": {
-          "top": 304.28,
-          "left": 687,
-          "width": 16,
-          "height": 16,
-          "bottom": 320.28,
-          "right": 703
-        },
-        "svgCentre": 312.28,
-        "anchorCentre": 312.28,
-        "source": {
-          "fontSize": "15px",
-          "lineHeight": 21.56,
-          "paddingTop": 8.5,
-          "borderTop": 0,
-          "top": 292.28,
-          "height": 38.56,
-          "textCentre": 311.56
-        },
-        "destination": {
-          "fontSize": "15px",
-          "lineHeight": 22.5,
-          "paddingTop": 0,
-          "borderTop": 0,
-          "top": 300.78,
-          "height": 113,
-          "textCentre": 312.03
-        },
-        "helperTexts": ["Required. Changes not saved."],
-        "row": {
-          "top": 284.28,
-          "left": 440,
-          "width": 552,
-          "height": 146,
-          "bottom": 430.28,
-          "right": 992
-        },
-        "fieldGaps": {
-          "fields": [
-            {
-              "left": 440,
-              "width": 231,
-              "height": 62.47
-            },
-            {
-              "left": 719,
-              "width": 231,
-              "height": 130
-            }
-          ],
-          "left": 16,
-          "right": 16
-        },
-        "overflow": {
-          "scrollWidth": 552,
-          "clientWidth": 552
-        },
-        "counts": {
-          "replacementRows": 1,
-          "sourceFields": 1,
-          "glossaryFields": 2
-        }
-      },
-      {
-        "state": "narrow",
-        "full": "/home/user/mausVoice/.qa/pr360/after-light-1200x800-narrow.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-light-1200x800-narrow-row.jpg",
+        "full": ".qa/pr360/before-light-1200x800-narrow.jpg",
+        "crop": ".qa/pr360/before-light-1200x800-narrow-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "light",
         "background": "rgb(245, 242, 237)",
@@ -740,21 +334,21 @@
           "top": 328.44,
           "left": 171,
           "width": 16,
-          "height": 40,
-          "bottom": 368.44,
+          "height": 16,
+          "bottom": 344.44,
           "right": 187
         },
         "arrowColour": "rgb(26, 23, 18)",
         "svg": {
-          "top": 340.44,
+          "top": 328.44,
           "left": 171,
           "width": 16,
           "height": 16,
-          "bottom": 356.44,
+          "bottom": 344.44,
           "right": 187
         },
-        "svgCentre": 348.44,
-        "anchorCentre": 348.44,
+        "svgCentre": 336.44,
+        "anchorCentre": 336.44,
         "source": {
           "fontSize": "15px",
           "lineHeight": 21.56,
@@ -803,6 +397,412 @@
           "clientWidth": 352
         },
         "counts": {
+          "replacementRows": 0,
+          "sourceFields": 1,
+          "glossaryFields": 2
+        }
+      }
+    ],
+    "errors": []
+  },
+  {
+    "label": "after",
+    "theme": "light",
+    "viewport": "1200x800",
+    "states": [
+      {
+        "state": "clean",
+        "full": ".qa/pr360/after-light-1200x800-clean.jpg",
+        "crop": ".qa/pr360/after-light-1200x800-clean-row.jpg",
+        "href": "http://127.0.0.1:5195/dashboard/dictionary",
+        "mode": "light",
+        "background": "rgb(245, 242, 237)",
+        "anchor": {
+          "top": 292.28,
+          "left": 687,
+          "width": 16,
+          "height": 40,
+          "bottom": 332.28,
+          "right": 703
+        },
+        "arrowColour": "rgb(26, 23, 18)",
+        "svg": {
+          "top": 304.28,
+          "left": 687,
+          "width": 16,
+          "height": 16,
+          "bottom": 320.28,
+          "right": 703
+        },
+        "svgCentre": 312.28,
+        "anchorCentre": 312.28,
+        "source": {
+          "fontSize": "15px",
+          "lineHeight": 21.56,
+          "paddingTop": 8.5,
+          "borderTop": 0,
+          "top": 292.28,
+          "height": 38.56,
+          "textCentre": 311.56
+        },
+        "destination": {
+          "fontSize": "15px",
+          "lineHeight": 22.5,
+          "paddingTop": 0,
+          "borderTop": 0,
+          "top": 300.78,
+          "height": 23,
+          "textCentre": 312.03
+        },
+        "helperTexts": [],
+        "row": {
+          "top": 284.28,
+          "left": 440,
+          "width": 552,
+          "height": 56,
+          "bottom": 340.28,
+          "right": 992
+        },
+        "fieldGaps": {
+          "fields": [
+            {
+              "left": 440,
+              "width": 231,
+              "height": 38.56
+            },
+            {
+              "left": 719,
+              "width": 231,
+              "height": 40
+            }
+          ],
+          "left": 16,
+          "right": 16
+        },
+        "overflow": {
+          "scrollWidth": 552,
+          "clientWidth": 552
+        },
+        "counts": {
+          "replacementRows": 1,
+          "sourceFields": 1,
+          "glossaryFields": 2
+        }
+      },
+      {
+        "state": "empty-source",
+        "full": ".qa/pr360/after-light-1200x800-empty-source.jpg",
+        "crop": ".qa/pr360/after-light-1200x800-empty-source-row.jpg",
+        "href": "http://127.0.0.1:5195/dashboard/dictionary",
+        "mode": "light",
+        "background": "rgb(245, 242, 237)",
+        "anchor": {
+          "top": 292.28,
+          "left": 687,
+          "width": 16,
+          "height": 40,
+          "bottom": 332.28,
+          "right": 703
+        },
+        "arrowColour": "rgb(26, 23, 18)",
+        "svg": {
+          "top": 304.28,
+          "left": 687,
+          "width": 16,
+          "height": 16,
+          "bottom": 320.28,
+          "right": 703
+        },
+        "svgCentre": 312.28,
+        "anchorCentre": 312.28,
+        "source": {
+          "fontSize": "15px",
+          "lineHeight": 21.56,
+          "paddingTop": 8.5,
+          "borderTop": 0,
+          "top": 292.28,
+          "height": 38.56,
+          "textCentre": 311.56
+        },
+        "destination": {
+          "fontSize": "15px",
+          "lineHeight": 22.5,
+          "paddingTop": 0,
+          "borderTop": 0,
+          "top": 300.78,
+          "height": 23,
+          "textCentre": 312.03
+        },
+        "helperTexts": ["Required. Changes not saved."],
+        "row": {
+          "top": 284.28,
+          "left": 440,
+          "width": 552,
+          "height": 78.47,
+          "bottom": 362.75,
+          "right": 992
+        },
+        "fieldGaps": {
+          "fields": [
+            {
+              "left": 440,
+              "width": 231,
+              "height": 62.47
+            },
+            {
+              "left": 719,
+              "width": 231,
+              "height": 40
+            }
+          ],
+          "left": 16,
+          "right": 16
+        },
+        "overflow": {
+          "scrollWidth": 552,
+          "clientWidth": 552
+        },
+        "counts": {
+          "replacementRows": 1,
+          "sourceFields": 1,
+          "glossaryFields": 2
+        }
+      },
+      {
+        "state": "empty-both",
+        "full": ".qa/pr360/after-light-1200x800-empty-both.jpg",
+        "crop": ".qa/pr360/after-light-1200x800-empty-both-row.jpg",
+        "href": "http://127.0.0.1:5195/dashboard/dictionary",
+        "mode": "light",
+        "background": "rgb(245, 242, 237)",
+        "anchor": {
+          "top": 292.28,
+          "left": 687,
+          "width": 16,
+          "height": 40,
+          "bottom": 332.28,
+          "right": 703
+        },
+        "arrowColour": "rgb(26, 23, 18)",
+        "svg": {
+          "top": 304.28,
+          "left": 687,
+          "width": 16,
+          "height": 16,
+          "bottom": 320.28,
+          "right": 703
+        },
+        "svgCentre": 312.28,
+        "anchorCentre": 312.28,
+        "source": {
+          "fontSize": "15px",
+          "lineHeight": 21.56,
+          "paddingTop": 8.5,
+          "borderTop": 0,
+          "top": 292.28,
+          "height": 38.56,
+          "textCentre": 311.56
+        },
+        "destination": {
+          "fontSize": "15px",
+          "lineHeight": 22.5,
+          "paddingTop": 0,
+          "borderTop": 0,
+          "top": 300.78,
+          "height": 23,
+          "textCentre": 312.03
+        },
+        "helperTexts": [
+          "Required. Changes not saved.",
+          "Required. Changes not saved."
+        ],
+        "row": {
+          "top": 284.28,
+          "left": 440,
+          "width": 552,
+          "height": 79.91,
+          "bottom": 364.19,
+          "right": 992
+        },
+        "fieldGaps": {
+          "fields": [
+            {
+              "left": 440,
+              "width": 231,
+              "height": 62.47
+            },
+            {
+              "left": 719,
+              "width": 231,
+              "height": 63.91
+            }
+          ],
+          "left": 16,
+          "right": 16
+        },
+        "overflow": {
+          "scrollWidth": 552,
+          "clientWidth": 552
+        },
+        "counts": {
+          "replacementRows": 1,
+          "sourceFields": 1,
+          "glossaryFields": 2
+        }
+      },
+      {
+        "state": "wrapped-destination",
+        "full": ".qa/pr360/after-light-1200x800-wrapped-destination.jpg",
+        "crop": ".qa/pr360/after-light-1200x800-wrapped-destination-row.jpg",
+        "href": "http://127.0.0.1:5195/dashboard/dictionary",
+        "mode": "light",
+        "background": "rgb(245, 242, 237)",
+        "anchor": {
+          "top": 292.28,
+          "left": 687,
+          "width": 16,
+          "height": 40,
+          "bottom": 332.28,
+          "right": 703
+        },
+        "arrowColour": "rgb(26, 23, 18)",
+        "svg": {
+          "top": 304.28,
+          "left": 687,
+          "width": 16,
+          "height": 16,
+          "bottom": 320.28,
+          "right": 703
+        },
+        "svgCentre": 312.28,
+        "anchorCentre": 312.28,
+        "source": {
+          "fontSize": "15px",
+          "lineHeight": 21.56,
+          "paddingTop": 8.5,
+          "borderTop": 0,
+          "top": 292.28,
+          "height": 38.56,
+          "textCentre": 311.56
+        },
+        "destination": {
+          "fontSize": "15px",
+          "lineHeight": 22.5,
+          "paddingTop": 0,
+          "borderTop": 0,
+          "top": 300.78,
+          "height": 113,
+          "textCentre": 312.03
+        },
+        "helperTexts": ["Required. Changes not saved."],
+        "row": {
+          "top": 284.28,
+          "left": 440,
+          "width": 552,
+          "height": 146,
+          "bottom": 430.28,
+          "right": 992
+        },
+        "fieldGaps": {
+          "fields": [
+            {
+              "left": 440,
+              "width": 231,
+              "height": 62.47
+            },
+            {
+              "left": 719,
+              "width": 231,
+              "height": 130
+            }
+          ],
+          "left": 16,
+          "right": 16
+        },
+        "overflow": {
+          "scrollWidth": 552,
+          "clientWidth": 552
+        },
+        "counts": {
+          "replacementRows": 1,
+          "sourceFields": 1,
+          "glossaryFields": 2
+        }
+      },
+      {
+        "state": "narrow",
+        "full": ".qa/pr360/after-light-1200x800-narrow.jpg",
+        "crop": ".qa/pr360/after-light-1200x800-narrow-row.jpg",
+        "href": "http://127.0.0.1:5195/dashboard/dictionary",
+        "mode": "light",
+        "background": "rgb(245, 242, 237)",
+        "anchor": {
+          "top": 129.44,
+          "left": 171,
+          "width": 16,
+          "height": 40,
+          "bottom": 169.44,
+          "right": 187
+        },
+        "arrowColour": "rgb(26, 23, 18)",
+        "svg": {
+          "top": 141.44,
+          "left": 171,
+          "width": 16,
+          "height": 16,
+          "bottom": 157.44,
+          "right": 187
+        },
+        "svgCentre": 149.44,
+        "anchorCentre": 149.44,
+        "source": {
+          "fontSize": "15px",
+          "lineHeight": 21.56,
+          "paddingTop": 8.5,
+          "borderTop": 0,
+          "top": 129.44,
+          "height": 38.56,
+          "textCentre": 148.72
+        },
+        "destination": {
+          "fontSize": "15px",
+          "lineHeight": 22.5,
+          "paddingTop": 0,
+          "borderTop": 0,
+          "top": 137.94,
+          "height": 23,
+          "textCentre": 149.19
+        },
+        "helperTexts": [],
+        "row": {
+          "top": 121.44,
+          "left": 24,
+          "width": 352,
+          "height": 56,
+          "bottom": 177.44,
+          "right": 376
+        },
+        "fieldGaps": {
+          "fields": [
+            {
+              "left": 24,
+              "width": 131,
+              "height": 38.56
+            },
+            {
+              "left": 203,
+              "width": 131,
+              "height": 40
+            }
+          ],
+          "left": 16,
+          "right": 16
+        },
+        "overflow": {
+          "scrollWidth": 352,
+          "clientWidth": 352
+        },
+        "counts": {
           "replacementRows": 1,
           "sourceFields": 1,
           "glossaryFields": 2
@@ -818,8 +818,8 @@
     "states": [
       {
         "state": "clean",
-        "full": "/home/user/mausVoice/.qa/pr360/after-dark-1200x800-clean.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-dark-1200x800-clean-row.jpg",
+        "full": ".qa/pr360/after-dark-1200x800-clean.jpg",
+        "crop": ".qa/pr360/after-dark-1200x800-clean-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "dark",
         "background": "rgb(12, 12, 13)",
@@ -897,8 +897,8 @@
       },
       {
         "state": "empty-source",
-        "full": "/home/user/mausVoice/.qa/pr360/after-dark-1200x800-empty-source.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-dark-1200x800-empty-source-row.jpg",
+        "full": ".qa/pr360/after-dark-1200x800-empty-source.jpg",
+        "crop": ".qa/pr360/after-dark-1200x800-empty-source-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "dark",
         "background": "rgb(12, 12, 13)",
@@ -976,8 +976,8 @@
       },
       {
         "state": "empty-both",
-        "full": "/home/user/mausVoice/.qa/pr360/after-dark-1200x800-empty-both.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-dark-1200x800-empty-both-row.jpg",
+        "full": ".qa/pr360/after-dark-1200x800-empty-both.jpg",
+        "crop": ".qa/pr360/after-dark-1200x800-empty-both-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "dark",
         "background": "rgb(12, 12, 13)",
@@ -1058,8 +1058,8 @@
       },
       {
         "state": "wrapped-destination",
-        "full": "/home/user/mausVoice/.qa/pr360/after-dark-1200x800-wrapped-destination.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-dark-1200x800-wrapped-destination-row.jpg",
+        "full": ".qa/pr360/after-dark-1200x800-wrapped-destination.jpg",
+        "crop": ".qa/pr360/after-dark-1200x800-wrapped-destination-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "dark",
         "background": "rgb(12, 12, 13)",
@@ -1137,8 +1137,8 @@
       },
       {
         "state": "narrow",
-        "full": "/home/user/mausVoice/.qa/pr360/after-dark-1200x800-narrow.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-dark-1200x800-narrow-row.jpg",
+        "full": ".qa/pr360/after-dark-1200x800-narrow.jpg",
+        "crop": ".qa/pr360/after-dark-1200x800-narrow-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "dark",
         "background": "rgb(12, 12, 13)",
@@ -1224,8 +1224,8 @@
     "states": [
       {
         "state": "clean",
-        "full": "/home/user/mausVoice/.qa/pr360/after-light-400x600-clean.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-light-400x600-clean-row.jpg",
+        "full": ".qa/pr360/after-light-400x600-clean.jpg",
+        "crop": ".qa/pr360/after-light-400x600-clean-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "light",
         "background": "rgb(245, 242, 237)",
@@ -1303,8 +1303,8 @@
       },
       {
         "state": "empty-source",
-        "full": "/home/user/mausVoice/.qa/pr360/after-light-400x600-empty-source.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-light-400x600-empty-source-row.jpg",
+        "full": ".qa/pr360/after-light-400x600-empty-source.jpg",
+        "crop": ".qa/pr360/after-light-400x600-empty-source-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "light",
         "background": "rgb(245, 242, 237)",
@@ -1382,8 +1382,8 @@
       },
       {
         "state": "empty-both",
-        "full": "/home/user/mausVoice/.qa/pr360/after-light-400x600-empty-both.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-light-400x600-empty-both-row.jpg",
+        "full": ".qa/pr360/after-light-400x600-empty-both.jpg",
+        "crop": ".qa/pr360/after-light-400x600-empty-both-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "light",
         "background": "rgb(245, 242, 237)",
@@ -1464,8 +1464,8 @@
       },
       {
         "state": "wrapped-destination",
-        "full": "/home/user/mausVoice/.qa/pr360/after-light-400x600-wrapped-destination.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-light-400x600-wrapped-destination-row.jpg",
+        "full": ".qa/pr360/after-light-400x600-wrapped-destination.jpg",
+        "crop": ".qa/pr360/after-light-400x600-wrapped-destination-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "light",
         "background": "rgb(245, 242, 237)",
@@ -1543,8 +1543,8 @@
       },
       {
         "state": "narrow",
-        "full": "/home/user/mausVoice/.qa/pr360/after-light-400x600-narrow.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-light-400x600-narrow-row.jpg",
+        "full": ".qa/pr360/after-light-400x600-narrow.jpg",
+        "crop": ".qa/pr360/after-light-400x600-narrow-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "light",
         "background": "rgb(245, 242, 237)",
@@ -1630,8 +1630,8 @@
     "states": [
       {
         "state": "clean",
-        "full": "/home/user/mausVoice/.qa/pr360/after-dark-400x600-clean.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-dark-400x600-clean-row.jpg",
+        "full": ".qa/pr360/after-dark-400x600-clean.jpg",
+        "crop": ".qa/pr360/after-dark-400x600-clean-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "dark",
         "background": "rgb(12, 12, 13)",
@@ -1709,8 +1709,8 @@
       },
       {
         "state": "empty-source",
-        "full": "/home/user/mausVoice/.qa/pr360/after-dark-400x600-empty-source.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-dark-400x600-empty-source-row.jpg",
+        "full": ".qa/pr360/after-dark-400x600-empty-source.jpg",
+        "crop": ".qa/pr360/after-dark-400x600-empty-source-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "dark",
         "background": "rgb(12, 12, 13)",
@@ -1788,8 +1788,8 @@
       },
       {
         "state": "empty-both",
-        "full": "/home/user/mausVoice/.qa/pr360/after-dark-400x600-empty-both.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-dark-400x600-empty-both-row.jpg",
+        "full": ".qa/pr360/after-dark-400x600-empty-both.jpg",
+        "crop": ".qa/pr360/after-dark-400x600-empty-both-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "dark",
         "background": "rgb(12, 12, 13)",
@@ -1870,8 +1870,8 @@
       },
       {
         "state": "wrapped-destination",
-        "full": "/home/user/mausVoice/.qa/pr360/after-dark-400x600-wrapped-destination.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-dark-400x600-wrapped-destination-row.jpg",
+        "full": ".qa/pr360/after-dark-400x600-wrapped-destination.jpg",
+        "crop": ".qa/pr360/after-dark-400x600-wrapped-destination-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "dark",
         "background": "rgb(12, 12, 13)",
@@ -1949,55 +1949,55 @@
       },
       {
         "state": "narrow",
-        "full": "/home/user/mausVoice/.qa/pr360/after-dark-400x600-narrow.jpg",
-        "crop": "/home/user/mausVoice/.qa/pr360/after-dark-400x600-narrow-row.jpg",
+        "full": ".qa/pr360/after-dark-400x600-narrow.jpg",
+        "crop": ".qa/pr360/after-dark-400x600-narrow-row.jpg",
         "href": "http://127.0.0.1:5195/dashboard/dictionary",
         "mode": "dark",
         "background": "rgb(12, 12, 13)",
         "anchor": {
-          "top": 328.44,
+          "top": 129.44,
           "left": 171,
           "width": 16,
           "height": 40,
-          "bottom": 368.44,
+          "bottom": 169.44,
           "right": 187
         },
         "arrowColour": "rgb(242, 241, 238)",
         "svg": {
-          "top": 340.44,
+          "top": 141.44,
           "left": 171,
           "width": 16,
           "height": 16,
-          "bottom": 356.44,
+          "bottom": 157.44,
           "right": 187
         },
-        "svgCentre": 348.44,
-        "anchorCentre": 348.44,
+        "svgCentre": 149.44,
+        "anchorCentre": 149.44,
         "source": {
           "fontSize": "15px",
           "lineHeight": 21.56,
           "paddingTop": 8.5,
           "borderTop": 0,
-          "top": 328.44,
+          "top": 129.44,
           "height": 38.56,
-          "textCentre": 347.72
+          "textCentre": 148.72
         },
         "destination": {
           "fontSize": "15px",
           "lineHeight": 22.5,
           "paddingTop": 0,
           "borderTop": 0,
-          "top": 336.94,
+          "top": 137.94,
           "height": 23,
-          "textCentre": 348.19
+          "textCentre": 149.19
         },
         "helperTexts": [],
         "row": {
-          "top": 320.44,
+          "top": 121.44,
           "left": 24,
           "width": 352,
           "height": 56,
-          "bottom": 376.44,
+          "bottom": 177.44,
           "right": 376
         },
         "fieldGaps": {

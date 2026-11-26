@@ -76,7 +76,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           py: 1,
           // Hold the row actions near the top: a validation message or a
           // wrapped replacement grows the fields downward, not the actions.
-          "& > .MuiIconButton-root, & > span": { mt: "4px" },
+          "& > .MuiIconButton-root, & > span": { mt: 0.5 },
         }}
       >
         <DictionaryTermFields
