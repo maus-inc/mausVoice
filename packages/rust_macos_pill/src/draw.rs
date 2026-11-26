@@ -591,19 +591,14 @@ fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
 // ── Flash message ────────────────────────────────────────────────
 
-/// The flash banner's constants as the shared layout wants them.
+/// The banner's geometry, which every pill shares.
 ///
-/// Every pill keeps these ten numbers in its own `constants.rs`; this is the one
-/// place the crate hands them over, so a draw site names them once.
-fn flash_banner_constants() -> rust_pill_shared::flash_banner::FlashBannerConstants {
-    rust_pill_shared::flash_banner::FlashBannerConstants {
-        gap: FLASH_GAP,
-        min_height: FLASH_HEIGHT,
-        padding_h: FLASH_PADDING_H,
-        min_width: rust_pill_shared::flash_banner::BANNER_MIN_WIDTH,
-        action_gap: FLASH_ACTION_GAP,
-        action_height: FLASH_ACTION_HEIGHT,
-    }
+/// The numbers live in [`rust_pill_shared::flash_banner::FlashBannerConstants`]
+/// rather than a per-crate list, so the paint path and the celebration tick
+/// cannot be handed different ones. The tint and radius stay local because
+/// they are paints, not geometry.
+pub(crate) fn flash_banner_constants() -> rust_pill_shared::flash_banner::FlashBannerConstants {
+    rust_pill_shared::flash_banner::FlashBannerConstants::canonical()
 }
 
 /// Draws the flash banner above the pill.

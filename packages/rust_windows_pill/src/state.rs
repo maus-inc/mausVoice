@@ -516,3 +516,7 @@ impl std::ops::Deref for PillState {
         &self.indicator
     }
 }
+
+// The toast fields above are the shared ones; the trait impl is generated so
+// the three crates cannot drift apart on which field means what.
+rust_pill_shared::impl_flash_host!(crate::state::PillState);

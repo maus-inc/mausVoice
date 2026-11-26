@@ -28,9 +28,8 @@
 //! through DirectWrite, CoreText and Pango and none of those types can live in a
 //! crate with no dependencies.
 //!
-//! The one impure piece is [`CelebrationBanner`], which writes the five banner
-//! fields a celebration resets. All three pills wrote that block out in full and
-//! they had to agree on all five, so it lives with the rest of the banner.
+//! The one impure piece is [`FlashHost`], which writes the banner's own fields
+//! and their clearing rule; everything else is a pure function of its inputs.
 
 use std::cell::{Cell, RefCell};
 
@@ -134,6 +133,26 @@ pub struct FlashBannerConstants {
     pub min_width: f64,
     pub action_gap: f64,
     pub action_height: f64,
+}
+
+impl FlashBannerConstants {
+    /// The banner geometry the three pills share.
+    ///
+    /// Every number here is the same in all three `constants.rs` files: a
+    /// toast has always been 32px tall and sat 6px above the pill on macOS,
+    /// Windows and GTK alike. They are declared once so the celebration origin
+    /// and the paint path cannot be handed different numbers, which is what a
+    /// per-crate copy of this list allowed.
+    pub fn canonical() -> Self {
+        Self {
+            gap: 6.0,
+            min_height: 32.0,
+            padding_h: 16.0,
+            min_width: BANNER_MIN_WIDTH,
+            action_gap: 8.0,
+            action_height: 22.0,
+        }
+    }
 }
 
 impl FlashBannerSpec {
@@ -509,58 +528,150 @@ where
     }
 }
 
-/// Starts a celebration's banner.
+/// The banner fields a pill's state carries, reachable by one method.
 ///
-/// A celebration (a streak flame, a fireworks burst) arrives through its own
-/// message rather than a toast, and it always presents the same way: the
-/// message replaces the banner's text, the banner is not an error, every
-/// button is cleared, and the banner shows for the celebration's own duration.
-///
-/// It lives here because all three pills wrote this block out in full, and the
-/// five fields it touches are the five that must agree for a celebration to
-/// look the same on each of them. The celebration's own timer, and the line
-/// count the particles launch from, are the caller's: this only owns the
-/// banner.
-pub struct CelebrationBanner<'a> {
-    /// The text the celebration shows.
-    pub message: &'a str,
-    /// The banner text the message replaces.
-    pub flash_message: &'a RefCell<String>,
-    /// Whether the banner is painted as an error, which a celebration is not.
-    pub flash_is_error: &'a Cell<bool>,
+/// A pill's `PillState` is platform-specific, but its toast is not: the same
+/// eleven fields with the same types and the same clearing rule. Rather than
+/// declaring them three times and hoping the copies stay in step, each state
+/// implements this once through [`impl_flash_host!`], and everything below is
+/// written against the trait.
+pub trait FlashHost {
+    /// The banner text.
+    fn flash_message(&self) -> &RefCell<String>;
+    /// Whether the banner is painted as an error.
+    fn flash_is_error(&self) -> &Cell<bool>;
     /// Whether the banner is shown at all.
-    pub flash_visible: &'a Cell<bool>,
+    fn flash_visible(&self) -> &Cell<bool>;
+    /// The banner's fade spring position, in `0.0..=1.0`.
+    fn flash_t(&self) -> &Cell<f64>;
+    /// The fade spring's velocity.
+    fn flash_velocity(&self) -> &Cell<f64>;
     /// Seconds the banner stays up.
-    pub flash_timer: &'a Cell<f64>,
-    /// The accept button's token, cleared so a stale action cannot survive.
-    pub flash_action: &'a RefCell<Option<String>>,
-    /// The accept button's label, cleared with its token.
-    pub flash_action_label: &'a RefCell<Option<String>>,
-    /// The reject button's token, cleared for the same reason.
-    pub flash_reject_action: &'a RefCell<Option<String>>,
-    /// The reject button's label, cleared with its token.
-    pub flash_reject_action_label: &'a RefCell<Option<String>>,
-}
+    fn flash_timer(&self) -> &Cell<f64>;
+    /// The accept button's token.
+    fn flash_action(&self) -> &RefCell<Option<String>>;
+    /// The accept button's label.
+    fn flash_action_label(&self) -> &RefCell<Option<String>>;
+    /// The reject button's token.
+    fn flash_reject_action(&self) -> &RefCell<Option<String>>;
+    /// The reject button's label.
+    fn flash_reject_action_label(&self) -> &RefCell<Option<String>>;
+    /// Lines the banner painted last frame.
+    ///
+    /// The tick that launches the celebration's particles runs before the
+    /// paint that wraps the text, so the painter caches the count here for the
+    /// next tick.
+    fn flash_lines(&self) -> &Cell<usize>;
 
-impl CelebrationBanner<'_> {
-    /// Shows the message for `duration` seconds and clears every button.
+    /// Clears every field back to "no toast showing".
+    ///
+    /// The three pills dismiss a toast from several places: the display
+    /// timeout, an explicit `DismissToast`, and clicking either button.
+    /// Centralising the reset keeps the six mutable fields from drifting
+    /// apart, since forgetting one leaves a stale action wired to whichever
+    /// toast appears next.
+    fn clear_flash(&self) {
+        self.flash_visible().set(false);
+        self.flash_timer().set(0.0);
+        *self.flash_action().borrow_mut() = None;
+        *self.flash_action_label().borrow_mut() = None;
+        *self.flash_reject_action().borrow_mut() = None;
+        *self.flash_reject_action_label().borrow_mut() = None;
+        // A cleared banner has no lines. The celebration reads this, so
+        // leaving the count from the message that just went away would launch
+        // the next one from a height that banner no longer has.
+        self.flash_lines().set(1);
+    }
+
+    /// Shows a celebration's message for `duration` seconds.
+    ///
+    /// A celebration (a streak flame, a fireworks burst) arrives through its
+    /// own message rather than a toast, and it always presents the same way:
+    /// the text replaces the banner's text, the banner is not an error, every
+    /// button is cleared, and it shows for the celebration's own duration.
     ///
     /// The line count resets to one because a celebration message is always
     /// short, and because the particles launch before the first paint has had
     /// a chance to measure the banner: leaving the count from an error that
     /// was on screen a moment ago would launch them from where that taller
     /// banner used to be.
-    pub fn show(&self, duration: f64, flash_lines: &Cell<usize>) {
-        *self.flash_message.borrow_mut() = self.message.to_string();
-        self.flash_is_error.set(false);
-        *self.flash_action.borrow_mut() = None;
-        *self.flash_action_label.borrow_mut() = None;
-        *self.flash_reject_action.borrow_mut() = None;
-        *self.flash_reject_action_label.borrow_mut() = None;
-        self.flash_visible.set(true);
-        self.flash_timer.set(duration);
-        flash_lines.set(1);
+    fn celebrate(&self, message: &str, duration: f64) {
+        *self.flash_message().borrow_mut() = message.to_string();
+        self.flash_is_error().set(false);
+        *self.flash_action().borrow_mut() = None;
+        *self.flash_action_label().borrow_mut() = None;
+        *self.flash_reject_action().borrow_mut() = None;
+        *self.flash_reject_action_label().borrow_mut() = None;
+        self.flash_visible().set(true);
+        self.flash_timer().set(duration);
+        self.flash_lines().set(1);
     }
+
+    /// Where a celebration launches its particles from.
+    ///
+    /// The banner grows upward with its line count, so its centre moves with
+    /// the wrap. Every pill asks this rather than recomputing the height, which
+    /// is the arithmetic that drifted before the count was shared.
+    fn celebration_origin(
+        &self,
+        center_x: f64,
+        pill_top: f64,
+        constants: FlashBannerConstants,
+    ) -> (f64, f64) {
+        celebration_origin(
+            center_x,
+            pill_top,
+            constants.gap,
+            constants.min_height,
+            self.flash_lines().get(),
+        )
+    }
+}
+
+/// Writes [`FlashHost`] for a state whose toast fields carry the shared names.
+///
+/// The names are the same in all three crates, so the impl is generated
+/// instead of copied. A pill that renames a field fails to compile here
+/// rather than quietly diverging.
+#[macro_export]
+macro_rules! impl_flash_host {
+    ($ty:ty) => {
+        impl $crate::flash_banner::FlashHost for $ty {
+            fn flash_message(&self) -> &std::cell::RefCell<String> {
+                &self.flash_message
+            }
+            fn flash_is_error(&self) -> &std::cell::Cell<bool> {
+                &self.flash_is_error
+            }
+            fn flash_visible(&self) -> &std::cell::Cell<bool> {
+                &self.flash_visible
+            }
+            fn flash_t(&self) -> &std::cell::Cell<f64> {
+                &self.flash_t
+            }
+            fn flash_velocity(&self) -> &std::cell::Cell<f64> {
+                &self.flash_velocity
+            }
+            fn flash_timer(&self) -> &std::cell::Cell<f64> {
+                &self.flash_timer
+            }
+            fn flash_action(&self) -> &std::cell::RefCell<Option<String>> {
+                &self.flash_action
+            }
+            fn flash_action_label(&self) -> &std::cell::RefCell<Option<String>> {
+                &self.flash_action_label
+            }
+            fn flash_reject_action(&self) -> &std::cell::RefCell<Option<String>> {
+                &self.flash_reject_action
+            }
+            fn flash_reject_action_label(&self) -> &std::cell::RefCell<Option<String>> {
+                &self.flash_reject_action_label
+            }
+            fn flash_lines(&self) -> &std::cell::Cell<usize> {
+                &self.flash_lines
+            }
+        }
+    };
 }
 
 /// The banner's centre without wrapping the message.
@@ -1166,8 +1277,8 @@ mod tests {
     /// leaves from the middle of the flash banner, so when the banner's height
     /// started following its line count, a hardcoded `FLASH_HEIGHT / 2.0` there
     /// would have kept launching from where a one-line banner used to be. This
-    /// pins that all three go through [`banner_center_y`], which resolves the
-    /// same height the paint path does.
+    /// pins that all three ask [`FlashHost::celebration_origin`], which resolves
+    /// the same height the paint path does.
     #[test]
     fn all_three_celebration_ticks_launch_from_the_shared_banner_centre() {
         let manifest = env!("CARGO_MANIFEST_DIR");
@@ -1179,7 +1290,7 @@ mod tests {
             let source = std::fs::read_to_string(format!("{manifest}/{path}"))
                 .unwrap_or_else(|err| panic!("read {path}: {err}"));
             assert!(
-                source.contains("flash_banner::celebration_origin("),
+                source.contains(".celebration_origin("),
                 "{path} launches the celebration from its own idea of the banner height"
             );
             assert!(

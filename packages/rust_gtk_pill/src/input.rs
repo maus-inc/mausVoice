@@ -367,14 +367,7 @@ fn dismiss_flash(state: &PillState, reject: bool) {
     if let Some(action) = action {
         ipc::send(&OutMessage::ToastAction { action });
     }
-    rust_pill_shared::clear_flash_state(
-        &state.flash_visible,
-        &state.flash_timer,
-        &state.flash_action,
-        &state.flash_action_label,
-        &state.flash_reject_action,
-        &state.flash_reject_action_label,
-    );
+    rust_pill_shared::flash_banner::FlashHost::clear_flash(state);
 }
 
 pub(crate) fn handle_scroll(state: &PillState, event: &gdk::EventScroll) {

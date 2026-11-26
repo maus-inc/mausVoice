@@ -1574,29 +1574,6 @@ pub fn toast_dismiss_matches(
         && expected_safety_owner.is_none_or(|expected| current_safety_owner == Some(expected))
 }
 
-/// Reset every piece of flash-banner state back to "no toast showing".
-///
-/// The three pills dismiss a toast from several places: the display timeout,
-/// an explicit DismissToast, and clicking either the accept or the reject
-/// button. Centralising the reset keeps the six fields from drifting apart
-/// per platform, since forgetting one leaves a stale action wired to
-/// whichever toast appears next.
-pub fn clear_flash_state(
-    flash_visible: &Cell<bool>,
-    flash_timer: &Cell<f64>,
-    flash_action: &RefCell<Option<String>>,
-    flash_action_label: &RefCell<Option<String>>,
-    flash_reject_action: &RefCell<Option<String>>,
-    flash_reject_action_label: &RefCell<Option<String>>,
-) {
-    flash_visible.set(false);
-    flash_timer.set(0.0);
-    *flash_action.borrow_mut() = None;
-    *flash_action_label.borrow_mut() = None;
-    *flash_reject_action.borrow_mut() = None;
-    *flash_reject_action_label.borrow_mut() = None;
-}
-
 /// Spring target (0.0 or 1.0) for the flash banner (the native pill toast,
 /// e.g. the retranscribing banner).
 ///
@@ -1635,14 +1612,12 @@ pub fn tick_flash(flash: &FlashTick<'_>, delta_seconds: f64) {
     if flash.visible.get() {
         let remaining = flash.timer.get() - delta_seconds;
         if remaining <= 0.0 {
-            clear_flash_state(
-                flash.visible,
-                flash.timer,
-                flash.action,
-                flash.action_label,
-                flash.reject_action,
-                flash.reject_action_label,
-            );
+            flash.visible.set(false);
+            flash.timer.set(0.0);
+            *flash.action.borrow_mut() = None;
+            *flash.action_label.borrow_mut() = None;
+            *flash.reject_action.borrow_mut() = None;
+            *flash.reject_action_label.borrow_mut() = None;
         } else {
             flash.timer.set(remaining);
         }
@@ -3603,32 +3578,6 @@ mod tests {
         );
         // A second style becomes active and the pointer re-enters mid-take.
         assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
-    }
-
-    #[test]
-    fn clear_flash_state_resets_every_flash_field() {
-        let visible = Cell::new(true);
-        let timer = Cell::new(4.5);
-        let action = RefCell::new(Some("undo".to_string()));
-        let action_label = RefCell::new(Some("Undo".to_string()));
-        let reject = RefCell::new(Some("dismiss".to_string()));
-        let reject_label = RefCell::new(Some("Dismiss".to_string()));
-
-        clear_flash_state(
-            &visible,
-            &timer,
-            &action,
-            &action_label,
-            &reject,
-            &reject_label,
-        );
-
-        assert!(!visible.get());
-        assert_eq!(timer.get(), 0.0);
-        assert!(action.borrow().is_none());
-        assert!(action_label.borrow().is_none());
-        assert!(reject.borrow().is_none());
-        assert!(reject_label.borrow().is_none());
     }
 
     #[test]

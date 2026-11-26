@@ -22,6 +22,7 @@ use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibi
 use crate::nsstring::with_ns_string;
 use rust_pill_shared::clock::monotonic_now as drag_now;
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
+use rust_pill_shared::flash_banner::FlashHost;
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
 use rust_pill_shared::restore::ParkedWindow;
 
@@ -902,9 +903,9 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
             clear_flash(&ctx.state);
         }
         InMessage::Fireworks { message } => {
-            celebration_banner(&message, &ctx.state).show(
+            ctx.state.celebrate(
+                &message,
                 rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION,
-                &ctx.state.flash_lines,
             );
 
             rust_pill_shared::fireworks::Fireworks {
@@ -916,10 +917,8 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
             .restart(reduced_motion());
         }
         InMessage::Flame { message } => {
-            celebration_banner(&message, &ctx.state).show(
-                rust_pill_shared::flame::FLAME_TOTAL_DURATION,
-                &ctx.state.flash_lines,
-            );
+            ctx.state
+                .celebrate(&message, rust_pill_shared::flame::FLAME_TOTAL_DURATION);
 
             ctx.state.flame_active.set(true);
             ctx.state.flame_elapsed.set(0.0);
@@ -1528,40 +1527,8 @@ fn update_hover(view: id, ctx: &AppContext) {
 
 // ── Animation tick ────────────────────────────────────────────────
 
-/// The banner a celebration shows, built from this pill's own fields.
-///
-/// The five fields and their clearing rule are shared; each pill only supplies
-/// where they live on its own state.
-fn celebration_banner<'a>(
-    message: &'a str,
-    state: &'a PillState,
-) -> rust_pill_shared::flash_banner::CelebrationBanner<'a> {
-    rust_pill_shared::flash_banner::CelebrationBanner {
-        message,
-        flash_message: &state.flash_message,
-        flash_is_error: &state.flash_is_error,
-        flash_visible: &state.flash_visible,
-        flash_timer: &state.flash_timer,
-        flash_action: &state.flash_action,
-        flash_action_label: &state.flash_action_label,
-        flash_reject_action: &state.flash_reject_action,
-        flash_reject_action_label: &state.flash_reject_action_label,
-    }
-}
-
 fn clear_flash(state: &PillState) {
-    // A cleared banner has no lines. The celebration reads this, so leaving the
-    // count from the message that just went away would launch the next one from
-    // a height that banner no longer has.
-    state.flash_lines.set(1);
-    rust_pill_shared::clear_flash_state(
-        &state.flash_visible,
-        &state.flash_timer,
-        &state.flash_action,
-        &state.flash_action_label,
-        &state.flash_reject_action,
-        &state.flash_reject_action_label,
-    );
+    rust_pill_shared::flash_banner::FlashHost::clear_flash(state);
 }
 
 fn ns_rect_to_monitor_rect(frame: NSRect) -> rust_pill_shared::edge::MonitorRect {
@@ -1927,13 +1894,7 @@ fn tick_fireworks(state: &PillState, dt: f64) {
     }
     .tick(
         dt,
-        rust_pill_shared::flash_banner::celebration_origin(
-            ww / 2.0,
-            pill_y,
-            FLASH_GAP,
-            FLASH_HEIGHT,
-            state.flash_lines.get(),
-        ),
+        state.celebration_origin(ww / 2.0, pill_y, crate::draw::flash_banner_constants()),
     );
 }
 

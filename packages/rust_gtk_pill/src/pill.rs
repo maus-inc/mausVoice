@@ -8,6 +8,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
 pub(crate) use rust_pill_shared::clock::monotonic_now as drag_clock_now;
+use rust_pill_shared::flash_banner::FlashHost;
 use rust_pill_shared::restore::ParkedWindow;
 
 use crate::constants::*;
@@ -135,32 +136,11 @@ fn on_dismiss_toast(state_tick: &Rc<PillState>) {
     clear_flash(state_tick);
 }
 
-/// The banner a celebration shows, built from this pill's own fields.
-///
-/// The five fields and their clearing rule are shared; each pill only supplies
-/// where they live on its own state.
-fn celebration_banner<'a>(
-    message: &'a str,
-    state: &'a PillState,
-) -> rust_pill_shared::flash_banner::CelebrationBanner<'a> {
-    rust_pill_shared::flash_banner::CelebrationBanner {
-        message,
-        flash_message: &state.flash_message,
-        flash_is_error: &state.flash_is_error,
-        flash_visible: &state.flash_visible,
-        flash_timer: &state.flash_timer,
-        flash_action: &state.flash_action,
-        flash_action_label: &state.flash_action_label,
-        flash_reject_action: &state.flash_reject_action,
-        flash_reject_action_label: &state.flash_reject_action_label,
-    }
-}
-
 /// Applies `InMessage::Fireworks`.
 fn on_fireworks(message: String, state_tick: &Rc<PillState>) {
-    celebration_banner(&message, state_tick).show(
+    state_tick.celebrate(
+        &message,
         rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION,
-        &state_tick.flash_lines,
     );
 
     rust_pill_shared::fireworks::Fireworks {
@@ -174,10 +154,7 @@ fn on_fireworks(message: String, state_tick: &Rc<PillState>) {
 
 /// Applies `InMessage::Flame`.
 fn on_flame(message: String, state_tick: &Rc<PillState>) {
-    celebration_banner(&message, state_tick).show(
-        rust_pill_shared::flame::FLAME_TOTAL_DURATION,
-        &state_tick.flash_lines,
-    );
+    state_tick.celebrate(&message, rust_pill_shared::flame::FLAME_TOTAL_DURATION);
 
     state_tick.flame_active.set(true);
     state_tick.flame_elapsed.set(0.0);
@@ -2220,18 +2197,7 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
 }
 
 fn clear_flash(state: &PillState) {
-    // A cleared banner has no lines. The celebration reads this, so leaving the
-    // count from the message that just went away would launch the next one from
-    // a height that banner no longer has.
-    state.flash_lines.set(1);
-    rust_pill_shared::clear_flash_state(
-        &state.flash_visible,
-        &state.flash_timer,
-        &state.flash_action,
-        &state.flash_action_label,
-        &state.flash_reject_action,
-        &state.flash_reject_action_label,
-    );
+    rust_pill_shared::flash_banner::FlashHost::clear_flash(state);
 }
 
 fn tick(state: &PillState, dt: f64) {
@@ -2540,13 +2506,7 @@ fn tick_fireworks(state: &PillState) {
     }
     .tick(
         dt,
-        rust_pill_shared::flash_banner::celebration_origin(
-            ww / 2.0,
-            pill_y,
-            FLASH_GAP,
-            FLASH_HEIGHT,
-            state.flash_lines.get(),
-        ),
+        state.celebration_origin(ww / 2.0, pill_y, crate::draw::flash_banner_constants()),
     );
 }
 
