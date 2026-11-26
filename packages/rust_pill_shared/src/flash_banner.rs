@@ -599,6 +599,15 @@ where
     }
 }
 
+/// A pill's banner line count at rest.
+///
+/// The three states declare this field and the three initialisers build it, and
+/// both were spelling out `Cell::new(1)`. One constructor means the type and the
+/// starting value are decided here.
+pub fn resting_lines() -> Cell<usize> {
+    Cell::new(BANNER_LINES_AT_REST)
+}
+
 /// The line count a banner starts with, before it has painted once.
 ///
 /// A pill's initial state, and its celebration reset, both need this number.
@@ -630,8 +639,17 @@ pub trait CelebrationHost {
         }
     }
 
-    /// Advances the burst one frame from this pill's own banner centre.
-    fn tick_fireworks(&self, dt: f64, origin: (f64, f64)) {
+    /// Advances the burst one frame, launching from this pill's banner centre.
+    ///
+    /// A pill's tick knows only its own width and where the pill sits; both the
+    /// banner centre and the burst's four fields are resolved here, so every
+    /// platform's tick is this one call.
+    fn tick_celebration(&self, dt: f64, pill_center_x: f64, pill_top: f64)
+    where
+        Self: FlashHost,
+    {
+        let origin =
+            self.celebration_origin(pill_center_x, pill_top, FlashBannerConstants::canonical());
         self.fireworks().tick(dt, origin);
     }
 }
@@ -1466,8 +1484,8 @@ mod tests {
     /// leaves from the middle of the flash banner, so when the banner's height
     /// started following its line count, a hardcoded `FLASH_HEIGHT / 2.0` there
     /// would have kept launching from where a one-line banner used to be. This
-    /// pins that all three ask [`FlashHost::celebration_origin`], which resolves
-    /// the same height the paint path does.
+    /// pins that all three ask [`CelebrationHost::tick_celebration`], which
+    /// resolves the same centre the paint path does, at the moment it ticks.
     #[test]
     fn all_three_celebration_ticks_launch_from_the_shared_banner_centre() {
         let manifest = env!("CARGO_MANIFEST_DIR");
@@ -1479,7 +1497,7 @@ mod tests {
             let source = std::fs::read_to_string(format!("{manifest}/{path}"))
                 .unwrap_or_else(|err| panic!("read {path}: {err}"));
             assert!(
-                source.contains(".celebration_origin("),
+                source.contains(".tick_celebration("),
                 "{path} launches the celebration from its own idea of the banner height"
             );
             assert!(
