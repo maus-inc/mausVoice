@@ -26,7 +26,7 @@ export const DictionaryRowActions = ({
           <FormattedMessage defaultMessage="This term is managed by your organization." />
         }
       >
-        <span data-dictionary-badge="">
+        <span>
           <IconButton size="small" disabled>
             <Globe size={16} strokeWidth={1.9} />
           </IconButton>

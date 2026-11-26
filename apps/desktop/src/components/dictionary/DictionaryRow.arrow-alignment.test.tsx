@@ -65,6 +65,11 @@ const arrowAnchor = (host: HTMLElement): HTMLElement => {
   return anchor;
 };
 
+/** Every element holding something on the control line, in row order. */
+const lineAnchors = (host: HTMLElement): HTMLElement[] => [
+  ...host.querySelectorAll<HTMLElement>("[data-dictionary-anchor]"),
+];
+
 const replaceValue = (
   control: HTMLInputElement | HTMLTextAreaElement,
   value: string,
@@ -122,6 +127,40 @@ describe("DictionaryRow replacement arrow", () => {
       expect(
         Math.abs(parseFloat(anchorStyles.height) - controlBox),
       ).toBeLessThan(2);
+    });
+  });
+
+  it("keeps the row actions on the same line box as the arrow", async () => {
+    seedTerm();
+    await withRow((host) => {
+      const anchors = lineAnchors(host);
+      expect(anchors).toHaveLength(2);
+      expect(anchors[0]).toBe(arrowAnchor(host));
+
+      const actions = host.querySelector("[data-dictionary-delete]");
+      expect(actions).not.toBeNull();
+      expect(anchors[1].contains(actions)).toBe(true);
+
+      for (const anchor of anchors) {
+        const styles = getComputedStyle(anchor);
+        expect(styles.height).toBe(`${FIELD_CONTROL_HEIGHT}px`);
+        expect(styles.alignItems).toBe("center");
+      }
+    });
+  });
+
+  it("keeps a global row's badge on the same line box", async () => {
+    seedTerm({ isGlobal: true });
+    await withRow((host) => {
+      const anchors = lineAnchors(host);
+      // The arrow keeps its own box; the badge takes the actions' one.
+      const actionsAnchor = anchors[anchors.length - 1];
+      const badge = actionsAnchor.querySelector(".MuiIconButton-root");
+      expect(badge?.hasAttribute("disabled")).toBe(true);
+      expect(getComputedStyle(actionsAnchor).alignItems).toBe("center");
+      expect(getComputedStyle(actionsAnchor).height).toBe(
+        `${FIELD_CONTROL_HEIGHT}px`,
+      );
     });
   });
 

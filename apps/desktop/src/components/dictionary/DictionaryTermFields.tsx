@@ -1,5 +1,5 @@
 import { ArrowRight } from "lucide-react";
-import { Box, TextField } from "@mui/material";
+import { Box, TextField, type BoxProps } from "@mui/material";
 import { FormattedMessage, useIntl } from "react-intl";
 import type { DictionaryDraft } from "./use-dictionary-draft";
 
@@ -11,6 +11,29 @@ import type { DictionaryDraft } from "./use-dictionary-draft";
  * text or a wrapped replacement cannot move it off them.
  */
 export const FIELD_CONTROL_HEIGHT = 40;
+
+/**
+ * Holds something on that first line: the arrow between the two fields, the
+ * row's own actions. It is a flex box of the control's height, so its child
+ * centres on the line instead of riding the field's top edge, and it keeps to
+ * the top of the row while a helper text or a wrapped replacement grows the
+ * fields below it.
+ */
+export const FieldLineAnchor = ({ children, ...rest }: BoxProps) => (
+  <Box
+    data-dictionary-anchor=""
+    sx={{
+      alignSelf: "flex-start",
+      display: "flex",
+      alignItems: "center",
+      flexShrink: 0,
+      height: FIELD_CONTROL_HEIGHT,
+    }}
+    {...rest}
+  >
+    {children}
+  </Box>
+);
 
 export const DictionaryTermFields = ({
   draft,
@@ -56,18 +79,9 @@ export const DictionaryTermFields = ({
         <>
           {/* A margin cannot hold this line: Stack resets the margin of every
               direct child, and the field it belongs to grows downward. */}
-          <Box
-            data-dictionary-arrow=""
-            sx={{
-              alignSelf: "flex-start",
-              display: "flex",
-              alignItems: "center",
-              flexShrink: 0,
-              height: FIELD_CONTROL_HEIGHT,
-            }}
-          >
-            <ArrowRight size={16} strokeWidth={1.9} aria-hidden />
-          </Box>
+          <FieldLineAnchor data-dictionary-arrow="" aria-hidden>
+            <ArrowRight size={16} strokeWidth={1.9} />
+          </FieldLineAnchor>
           <TextField
             variant="outlined"
             size="small"
