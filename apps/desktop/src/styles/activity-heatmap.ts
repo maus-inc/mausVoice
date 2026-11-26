@@ -14,10 +14,12 @@ const cellHoverOutlineInset = 2;
 
 /**
  * Room one edge needs to show a hovered cell whole. Half the growth covers the
- * scaled box, and the ring sits outside that.
+ * scaled box, and the ring sits on that same transformed element, so it scales
+ * with the cell and its own inset has to be scaled too.
  */
 const cellHoverReach = Math.ceil(
-  (cellSize * (cellHoverScale - 1)) / 2 + cellHoverOutlineInset,
+  (cellSize * (cellHoverScale - 1)) / 2 +
+    cellHoverOutlineInset * cellHoverScale,
 );
 
 /** Pixel geometry for the compact, horizontally scrolling year view. */

@@ -74,7 +74,7 @@ describe("ActivityHeatmap", () => {
       desktopLabelColumnWidth: 13,
       dayGridWidth: 738,
       cellHoverScale: 1.35,
-      cellHoverReach: 4,
+      cellHoverReach: 5,
       desktopRightInset: 9,
       desktopTopPadding: 30,
       viewportWidth: 274,
@@ -94,14 +94,15 @@ describe("ActivityHeatmap", () => {
     expect(weekdayRail).not.toBeNull();
 
     // A cell grows past each side of its box by half the hover growth and
-    // draws its ring outside that, so this is the clearance the whole
-    // treatment needs. It is derived from the geometry the component renders
-    // so a retuned cell size or scale cannot leave the padding behind.
+    // draws its ring on that same transformed element, so the ring's own
+    // inset grows with the cell. This is the clearance the whole treatment
+    // needs, derived from the geometry the component renders so a retuned
+    // cell size or scale cannot leave the padding behind.
     const needed = Math.ceil(
       (activityHeatmapGeometry.cellSize *
         (activityHeatmapGeometry.cellHoverScale - 1)) /
         2 +
-        2,
+        2 * activityHeatmapGeometry.cellHoverScale,
     );
     const viewportStyle = window.getComputedStyle(viewport!);
     for (const side of [
