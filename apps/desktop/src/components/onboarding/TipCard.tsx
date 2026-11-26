@@ -32,9 +32,20 @@ import type { OnboardingTipId } from "../../utils/tips";
 import tipToastPattern from "../../assets/tip-toast-pattern.png";
 import { getTipAction } from "./tip-actions";
 
+/**
+ * One tip's copy. `setupAction` is the label its action carries while the
+ * feature it introduces is off, when the action opens the row that turns the
+ * feature on rather than the feature itself; a tip whose action never changes
+ * leaves it out.
+ */
 export const TIP_COPY: Record<
   OnboardingTipId,
-  { title: ReactNode; body: ReactNode; action: ReactNode }
+  {
+    title: ReactNode;
+    body: ReactNode;
+    action: ReactNode;
+    setupAction?: ReactNode;
+  }
 > = {
   "generative-provider": {
     title: (
@@ -58,6 +69,10 @@ export const TIP_COPY: Record<
       <FormattedMessage defaultMessage="Beyond dictation, the assistant answers questions, edits text, and runs tools in this chat. Anything you dictate can become a question." />
     ),
     action: <FormattedMessage defaultMessage="Open chat" />,
+    // The action opens the Assistant mode row while the feature is off, so the
+    // label says where the click goes. It reuses the wording the other settings
+    // tips already carry, so the detour needs no new copy to translate.
+    setupAction: <FormattedMessage defaultMessage="Open settings" />,
   },
   "review-before-insert": {
     title: <FormattedMessage defaultMessage="Review before it inserts" />,

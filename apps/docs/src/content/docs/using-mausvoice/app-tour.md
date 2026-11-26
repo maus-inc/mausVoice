@@ -1,6 +1,6 @@
 ---
 title: "App tour"
-description: "Find Home, History, Dictionary, Styles, Chats, and Settings in the current desktop interface."
+description: "Find Home, History, Dictionary, Styles, Help, Chats, and Settings in the current desktop interface."
 sidebar:
   order: 1
 ---
@@ -14,6 +14,7 @@ The activity chart groups dictations by the device's local calendar date. The da
 - **History** lists saved transcriptions and opens their details.
 - **Dictionary** manages glossary hints and replacement rules.
 - **Styles** manages the writing instructions applied during post-processing.
+- **Help** lists short guides for the features first run skips. Each guide carries one action, and the assistant guide opens the setting that turns the feature on while it is off.
 - **Chats** appears only when Assistant mode is enabled.
 - **Settings** sits at the bottom of the rail and contains device, shortcut, processing, diagnostic, and advanced controls.
 

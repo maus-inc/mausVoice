@@ -27,6 +27,14 @@ export type ShortcutCopy = {
   action: string;
   title: ReactNode;
   description: ReactNode;
+  /**
+   * The key is listed even while Assistant mode is off, and its description
+   * says what pressing it does then: it opens the setting that turns the
+   * feature on. A row that vanished would leave someone who bound the key
+   * wondering where it went, and a row that promised a chat window would be
+   * describing a page that has nothing to show.
+   */
+  setupHint?: ReactNode;
 };
 
 const dictate: ShortcutCopy = {
@@ -43,6 +51,12 @@ const assistantDictate: ShortcutCopy = {
   description: (
     <FormattedMessage defaultMessage="Dictate commands for the AI to follow instead of just cleaning up text." />
   ),
+  // The hold key is disabled while the feature is off rather than routed to the
+  // setting, so its hint says what it needs without promising a click it cannot
+  // perform. The Open chat key below does route, and says so.
+  setupHint: (
+    <FormattedMessage defaultMessage="Needs Assistant mode turned on." />
+  ),
 };
 
 const cancel: ShortcutCopy = {
@@ -58,6 +72,12 @@ const openChat: ShortcutCopy = {
   title: <FormattedMessage defaultMessage="Open chat" />,
   description: (
     <FormattedMessage defaultMessage="Open the current assistant conversation in the main window." />
+  ),
+  // The key routes here rather than being inert, so the hint names the press
+  // and not the state it would unlock: "turn on the feature to open a
+  // conversation" reads as a condition, while this says what will happen.
+  setupHint: (
+    <FormattedMessage defaultMessage="Opens the Assistant mode setting while the feature is off." />
   ),
 };
 
@@ -94,6 +114,20 @@ export const SHORTCUT_COPY = {
   nextStyle,
   previousStyle,
 } as const;
+
+/**
+ * What a key's row explains, for the assistant feature's current state.
+ *
+ * One rule for every surface that lists a key, so a row cannot promise "opens
+ * the conversation" beside a key that opens the setting which enables one.
+ */
+export const shortcutDescription = (
+  copy: ShortcutCopy,
+  features: { assistantModeEnabled: boolean },
+): ReactNode =>
+  copy.setupHint && !features.assistantModeEnabled
+    ? copy.setupHint
+    : copy.description;
 
 /**
  * The keys the shortcuts dialog lists, in its order.

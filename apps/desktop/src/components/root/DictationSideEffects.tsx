@@ -17,6 +17,7 @@ import {
   sendChatMessage,
 } from "../../actions/chat.actions";
 import { refreshMember } from "../../actions/member.actions";
+import { withAssistantMode } from "../../actions/assistant-mode.actions";
 import {
   getFastStyleTruncationMessage,
   getPostProcessFeedback,
@@ -2931,9 +2932,32 @@ export const DictationSideEffects = () => {
     // leaving it in place. Wrapping here rather than in the shared hotkey helper
     // keeps the fix local to a caller that has a logger, and keeps every other
     // `onFire` caller untouched.
-    onFire: () => {
-      void openPillConversation().catch(reportConversationOpenFailure);
-    },
+    //
+    // With assistant mode off there is no conversation to open, so the key
+    // opens the switch instead of a chat window the person cannot use. Same
+    // class as the Help page's action (issue #355): an assistant entry point
+    // that fired while the feature was off. Only this key is routed: the
+    // assistant hold key above stays disabled, because a hold that opens a
+    // settings page mid-gesture would be a worse surprise than a key that does
+    // nothing, and its row now says which switch it needs.
+    onFire: () =>
+      withAssistantMode(
+        assistantModeEnabled,
+        () => {
+          void openPillConversation().catch(reportConversationOpenFailure);
+        },
+        // Opening the chat window is also what ends an in-flight recording, so
+        // the off-path has to do it too. Otherwise the key navigates to a
+        // settings page while the pill keeps recording, which is a state the
+        // person cannot see and did not ask for.
+        () => {
+          void abortRecording().catch((error: unknown) => {
+            getLogger().error(
+              `Failed to abort the recording before opening assistant mode settings: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+        },
+      ),
   });
 
   const getRecordingControlTarget = useCallback(() => {
