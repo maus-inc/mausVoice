@@ -104,15 +104,23 @@ export const cardContentInsetSx: SystemStyleObject<Theme> = {
  * carry icons, and a different one when they do not.
  *
  * `leadingWidth` is what the group's rows put before their label: the slot
- * above, or the tile a summary row leads with. A heading is set once for the
- * whole card, so the card has to say which of the two it holds; a group that
- * guesses 24 over a card of 40s sits 16px left of every row it names.
+ * above, the tile a summary row leads with, or nothing at all. A heading is set
+ * once for the whole card, so the card has to say which of the three it holds; a
+ * group that guesses 24 over a card of 40s sits 16px left of every row it names.
+ *
+ * Only the left edge takes that offset. The right edge is the card's content
+ * edge, so the group's way out ends where the rows' controls end rather than a
+ * slot further in.
  */
 export const groupHeadingInsetSx = (
-  leadingWidth: number = settingsRowLeadingSlotWidth,
+  leadingWidth?: number,
 ): SystemStyleObject<Theme> => ({
-  px: (theme) =>
-    `calc(${cardContentInset(theme)} + ${leadingWidth}px + ${theme.spacing(2)})`,
+  pl:
+    leadingWidth === undefined
+      ? cardContentInset
+      : (theme) =>
+          `calc(${cardContentInset(theme)} + ${leadingWidth}px + ${theme.spacing(2)})`,
+  pr: cardContentInset,
 });
 
 export const interactiveSx: SystemStyleObject<Theme> = {

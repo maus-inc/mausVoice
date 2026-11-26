@@ -394,7 +394,7 @@ describe("SettingRow", () => {
     expect(headingInset).toContain(slotWidth);
   });
 
-  it("sets a tile-led group's heading on the width its rows lead with", () => {
+  it("sets a group's heading on the width its rows lead with", () => {
     render(
       <ThemeProvider theme={theme}>
         <SettingGroup title="Glyph-led">
@@ -403,26 +403,42 @@ describe("SettingRow", () => {
         <SettingGroup title="Tile-led" leadsWith="tile">
           <SettingRow settingKey="tile" title="Tile" />
         </SettingGroup>
+        <SettingGroup title="Bare" leadsWith="none">
+          <SettingRow settingKey="bare" title="Bare" />
+        </SettingGroup>
       </ThemeProvider>,
     );
 
-    const insets = ["Glyph-led", "Tile-led"].map((title) => {
+    const lines = ["Glyph-led", "Tile-led", "Bare"].map((title) => {
       const heading = requireElement(
         Array.from(container.querySelectorAll("h2")).find(
           (candidate) => candidate.textContent === title,
         ),
         `the ${title} heading`,
       );
-      return getComputedStyle(requireElement(heading.parentElement, "the line"))
-        .paddingLeft;
+      return requireElement(heading.parentElement, "the heading's line");
     });
+    const insets = lines.map((line) => getComputedStyle(line).paddingLeft);
+    const rights = lines.map((line) => getComputedStyle(line).paddingRight);
+    const rowInset = getComputedStyle(
+      requireElement(container.querySelector("#setting-bare"), "the bare row"),
+    ).paddingLeft;
 
     // A summary row leads with a 40px tile where an ordinary row leads with a
-    // 24px glyph. A heading set once for the card has to be told which it is
-    // over, or it lines up with the wrong column by exactly that difference.
+    // 24px glyph, and a row with no glyph leads with nothing. A heading set once
+    // for the card has to be told which of the three it is over, or it lines up
+    // with the wrong column by the width of a slot.
     expect(insets[0]).toContain("24px");
     expect(insets[1]).toContain("40px");
+    // The bare heading starts on the card's content edge, the row's own inset
+    // plus the border between that inset and the card.
+    expect(insets[2]).toContain(rowInset);
+    expect(insets[2]).not.toContain("24px");
     expect(insets[1]).not.toBe(insets[0]);
+    // The offset belongs to the leading edge only. A heading inset on both sides
+    // pushed the group's way out away from the edge its rows end on.
+    expect(rights[1]).toContain(rowInset);
+    expect(rights[1]).not.toContain("40px");
   });
 
   it("draws nothing for a group with no rows to show", () => {

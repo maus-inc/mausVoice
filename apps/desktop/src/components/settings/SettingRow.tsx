@@ -480,6 +480,21 @@ export const SettingToggleRow = ({
   );
 };
 
+/**
+ * The width each row shape puts before its label.
+ *
+ * `none` is absent rather than zero: a heading inset by zero still carries the
+ * gap that follows a slot, and a row with no slot has no gap to follow.
+ */
+const LEADING_WIDTH: Record<
+  NonNullable<SettingGroupProps["leadsWith"]>,
+  number | undefined
+> = {
+  glyph: settingsRowLeadingSlotWidth,
+  tile: summaryIconTileSize,
+  none: undefined,
+};
+
 export type SettingGroupProps = {
   title: ReactNode;
   description?: ReactNode;
@@ -497,12 +512,13 @@ export type SettingGroupProps = {
    * What the group's rows put before their label, when it is not the ordinary
    * icon slot.
    *
-   * A summary row leads with a 40px tile rather than a 24px glyph, and the
-   * heading is set outside the card, so it has to be told which of the two it
-   * is lining up with. Only the width matters to the heading; the rows keep
+   * A summary row leads with a 40px tile when it has a glyph, and with nothing
+   * at all when it does not. The heading is set outside the card, so it has to
+   * be told which of the three the rows do, or it lines up with the wrong
+   * column by the width of a slot. Only the heading reads this; the rows keep
    * their own geometry.
    */
-  leadsWith?: "glyph" | "tile";
+  leadsWith?: "glyph" | "tile" | "none";
   children: ReactNode;
 };
 
@@ -574,9 +590,7 @@ export const SettingGroup = ({
     return null;
   }
 
-  const headingInsetSx = groupHeadingInsetSx(
-    leadsWith === "tile" ? summaryIconTileSize : settingsRowLeadingSlotWidth,
-  );
+  const headingInsetSx = groupHeadingInsetSx(LEADING_WIDTH[leadsWith]);
 
   return (
     <Box component="section" sx={{ mb: 4 }}>

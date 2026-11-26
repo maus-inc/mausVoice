@@ -232,5 +232,11 @@ console.log("wrote", `${OUT}/settings-layout.json`);
 console.log("CONSOLE_ERRORS:", JSON.stringify(consoleErrors.slice(0, 10)));
 console.log("PROBLEMS:", JSON.stringify(problems, null, 2));
 
+// A probe that only prints its findings cannot fail a run. The other probes in
+// this directory set the exit code for the same reason.
+if (problems.length > 0 || consoleErrors.length > 0) {
+  process.exitCode = 1;
+}
+
 page.close();
 cleanup();

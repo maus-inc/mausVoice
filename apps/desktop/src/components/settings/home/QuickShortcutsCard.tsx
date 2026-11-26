@@ -66,7 +66,7 @@ export const QuickShortcutsCard = () => {
           <FormattedMessage defaultMessage="All shortcuts" />
         </SettingGroupLink>
       }
-      leadsWith="tile"
+      leadsWith="none"
     >
       {status !== "success" ? (
         <Stack
