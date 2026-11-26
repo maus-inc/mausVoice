@@ -4217,6 +4217,10 @@ where
     }
 }
 
+fn hard_link_paths(src: &Path, dst: &Path) -> io::Result<()> {
+    fs::hard_link(src, dst)
+}
+
 fn install_file_no_replace_via_copy_fallback(
     staged_db: &Path,
     current_db: &Path,
@@ -4226,7 +4230,7 @@ fn install_file_no_replace_via_copy_fallback(
         staged_db,
         current_db,
         primary_err,
-        fs::hard_link,
+        hard_link_paths,
     )
 }
 
@@ -7332,13 +7336,10 @@ mod tests {
         let saved = load_manifest(&dirs.current_config_dir).unwrap();
         assert_eq!(saved.dismissed_at.as_deref(), Some(first_ts.as_str()));
 
-        let ok_report = dismiss_migration_notice_with_sync(
-            dirs.clone(),
-            pool.clone(),
-            sync_dir_best_effort,
-        )
-        .await
-        .unwrap();
+        let ok_report =
+            dismiss_migration_notice_with_sync(dirs.clone(), pool.clone(), sync_dir_best_effort)
+                .await
+                .unwrap();
         assert_eq!(ok_report.dismissed_at.as_deref(), Some(first_ts.as_str()));
         pool.close().await;
     }
