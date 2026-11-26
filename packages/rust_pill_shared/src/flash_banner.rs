@@ -473,10 +473,12 @@ where
     }
 
     // Empty paragraphs (a blank line, a trailing newline) collapse rather than
-    // rendering as a gap, but a message that is entirely blank still keeps its
-    // one line so the banner does not vanish.
-    if lines.iter().any(|line| !line.is_empty()) {
-        lines.retain(|line| !line.is_empty());
+    // rendering as a gap. A message that is entirely blank keeps exactly one
+    // line, so the banner does not vanish and does not grow to one line per
+    // newline character: `"\n\n\n"` used to come back as four empty lines.
+    lines.retain(|line| !line.is_empty());
+    if lines.is_empty() {
+        lines.push(String::new());
     }
     lines
 }
@@ -1775,6 +1777,64 @@ mod tests {
             last.ends_with('\u{2026}'),
             "the overflow was dropped instead of being elided, so words went missing: {last:?}"
         );
+    }
+
+    /// A message that is nothing but newlines makes one empty line.
+    ///
+    /// Found by probing the wrap rather than by a failing user report: `"\n\n\n"`
+    /// split into four paragraphs and came back as four empty lines, so the
+    /// banner was four times its one-line height for a message with no text in
+    /// it. The comment above the collapse promised one line; now the code does.
+    #[test]
+    fn a_message_of_only_newlines_is_one_blank_line() {
+        for message in ["", "   ", "\n", "\n\n\n", " \n \n "] {
+            let lines = wrap_to_width(message, 200.0, fixed(7.0));
+            assert_eq!(
+                lines.len(),
+                1,
+                "{message:?} came back as {} lines, so a blank banner would be tall",
+                lines.len()
+            );
+            assert!(
+                lines[0].trim().is_empty(),
+                "{message:?} produced visible text from whitespace"
+            );
+        }
+    }
+
+    /// No case can exceed the budget it was wrapped to.
+    ///
+    /// The wrap is what keeps text inside the window, so the property worth
+    /// asserting is per-line width rather than a particular line break. The
+    /// inputs here are the ones that are easy to get wrong: scripts without
+    /// spaces, characters wider than the fixture's unit, tabs, and a single
+    /// unbroken run far longer than the budget.
+    #[test]
+    fn no_wrapped_line_exceeds_its_budget() {
+        let budget = 100.0;
+        let unit = 7.0;
+        let cases = [
+            "日本語のとても長いメッセージです",
+            "tabs\there\tand\tthere",
+            "emoji 👍🏽 and a family 👨‍👩‍👧‍👦",
+        ];
+        for case in cases {
+            for line in wrap_to_width(case, budget, fixed(unit)) {
+                assert!(
+                    fixed(unit)(&line) <= budget,
+                    "{line:?} is {} wide against a {budget} budget",
+                    fixed(unit)(&line)
+                );
+            }
+        }
+        let long = "a".repeat(500);
+        for line in wrap_to_width(&long, budget, fixed(unit)) {
+            assert!(
+                fixed(unit)(&line) <= budget,
+                "an unbroken run produced a {}-wide line",
+                fixed(unit)(&line)
+            );
+        }
     }
 
     /// The exact shape of the report: a 1960-character error, a 600px window.
