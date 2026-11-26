@@ -2506,7 +2506,11 @@ fn tick_fireworks(state: &PillState) {
     }
     .tick(
         dt,
-        state.celebration_origin(ww / 2.0, pill_y, crate::draw::flash_banner_constants()),
+        state.celebration_origin(
+            ww / 2.0,
+            pill_y,
+            rust_pill_shared::flash_banner::FlashBannerConstants::canonical(),
+        ),
     );
 }
 

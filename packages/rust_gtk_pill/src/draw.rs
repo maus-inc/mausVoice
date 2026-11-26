@@ -800,16 +800,6 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
 // ── Flash message ────────────────────────────────────────────────
 
-/// The banner's geometry, which every pill shares.
-///
-/// The numbers live in [`rust_pill_shared::flash_banner::FlashBannerConstants`]
-/// rather than a per-crate list, so the paint path and the celebration tick
-/// cannot be handed different ones. The tint and radius stay local because
-/// they are paints, not geometry.
-pub(crate) fn flash_banner_constants() -> rust_pill_shared::flash_banner::FlashBannerConstants {
-    rust_pill_shared::flash_banner::FlashBannerConstants::canonical()
-}
-
 /// Registers the hit target for a banner button painted inside the scale.
 ///
 /// Pointer coordinates arrive in unscaled window space, so a region registered
@@ -891,19 +881,17 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     );
 
     let (_, pill_y, _, _) = pill_position(state, ww, wh);
-    // Layout, fade and the line count the celebration launches from: shared, so
-    // the three pills cannot disagree about any of them.
-    let frame = rust_pill_shared::flash_banner::FlashFrame::resolve(
-        &rust_pill_shared::flash_banner::FlashBannerSpec::for_window(
-            WINDOW_W_TYPING as f64,
-            pill_y,
-            flash_banner_constants(),
-            preferred_w,
-            action_w,
-            reject_w,
-        ),
+    let frame = rust_pill_shared::flash_banner::FlashFrame::for_pill(
+        WINDOW_W_TYPING as f64,
+        pill_y,
+        rust_pill_shared::flash_banner::FlashBannerConstants::canonical(),
         &message,
         measure,
+        rust_pill_shared::flash_banner::FlashBannerWidths {
+            preferred: preferred_w,
+            action: action_w,
+            reject: reject_w,
+        },
         flash_t,
         &state.flash_lines,
     );
