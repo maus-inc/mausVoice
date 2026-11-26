@@ -7,8 +7,8 @@
     "dev": "astro dev --port 3490",
     "build": "astro build",
     "preview": "astro preview",
-    "lint": "echo 'no lint configured'",
-    "check-types": "astro check"
+    "lint": "node scripts/check-docs-prose.mjs",
+    "check-types": "astro check && node scripts/check-docs-prose.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.3",

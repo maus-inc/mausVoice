@@ -29,12 +29,12 @@ export const loadApiKeys = async (options?: {
   const force = options?.force === true;
   const status = getAppState().settings.apiKeysStatus;
 
-  if (!force && (status === "loading" || status === "success")) {
-    return;
-  }
-
   if (!force && loadApiKeysPromise) {
     return loadApiKeysPromise;
+  }
+
+  if (!force && (status === "loading" || status === "success")) {
+    return;
   }
 
   loadApiKeysGeneration += 1;

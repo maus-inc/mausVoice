@@ -1,6 +1,6 @@
 import { AudioLines, Bot, WandSparkles } from "lucide-react";
 import { ProviderLogo } from "../../common/provider-logos/ProviderLogo";
-import { Alert, Chip } from "@mui/material";
+import { Alert, Chip, Stack } from "@mui/material";
 import type { ApiKey, StylingMode } from "@maus-inc/types";
 import type { ChangeEvent } from "react";
 import { useEffect, useState } from "react";
@@ -123,24 +123,26 @@ const AiModelsAttentionBanner = ({
   attentionKeyCount: number;
   removedCloudModesCount: number;
 }) => {
-  if (attentionKeyCount > 0) {
-    return (
-      <Alert severity="warning" sx={{ mb: 3, boxShadow: "none" }}>
-        <FormattedMessage
-          defaultMessage="{count, plural, one {# saved API provider below needs attention before it can be used.} other {# saved API providers below need attention before they can be used.}}"
-          values={{ count: attentionKeyCount }}
-        />
-      </Alert>
-    );
+  if (attentionKeyCount <= 0 && removedCloudModesCount <= 0) {
+    return null;
   }
-  if (removedCloudModesCount > 0) {
-    return (
-      <Alert severity="info" sx={{ mb: 3, boxShadow: "none" }}>
-        <FormattedMessage defaultMessage="Previous Voquill Cloud mode selections were reset to local or off during migration. Choose a local model or personal API provider below." />
-      </Alert>
-    );
-  }
-  return null;
+  return (
+    <Stack spacing={1.5} sx={{ mb: 3 }}>
+      {attentionKeyCount > 0 && (
+        <Alert severity="warning" sx={{ boxShadow: "none" }}>
+          <FormattedMessage
+            defaultMessage="{count, plural, one {# saved API provider below needs attention before it can be used.} other {# saved API providers below need attention before they can be used.}}"
+            values={{ count: attentionKeyCount }}
+          />
+        </Alert>
+      )}
+      {removedCloudModesCount > 0 && (
+        <Alert severity="info" sx={{ boxShadow: "none" }}>
+          <FormattedMessage defaultMessage="Previous Voquill Cloud mode selections were reset to local or off during migration. Choose a local model or personal API provider below." />
+        </Alert>
+      )}
+    </Stack>
+  );
 };
 
 export default function AiModelsSettingsPage() {

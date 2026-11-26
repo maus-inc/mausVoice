@@ -496,7 +496,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
       "assistant-tool",
       "Paste review expired. Nothing was inserted. Run Paste again to retry.",
     ],
-    ["dictation", "Review expired — the transcript is kept in your history."],
+    ["dictation", "Review expired. The transcript is kept in your history."],
   ] as const)(
     "reports an unanswered %s composer review as expired",
     async (source, message) => {

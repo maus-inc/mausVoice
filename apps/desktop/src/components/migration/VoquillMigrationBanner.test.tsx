@@ -182,7 +182,7 @@ describe("VoquillMigrationBanner", () => {
     render();
 
     expect(container.textContent).toContain(
-      "Imported from Voquill — action needed",
+      "Imported from Voquill. Action needed.",
     );
     expect(container.textContent).toContain("15 transcriptions");
     expect(container.textContent).toContain(
@@ -269,5 +269,56 @@ describe("VoquillMigrationBanner", () => {
       retryBtn!.click();
     });
     expect(retryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses missing-files copy when partial status has migrated DB and an incomplete asset phase", () => {
+    setAppState((s) => ({
+      ...s,
+      voquillMigration: {
+        ...s.voquillMigration,
+        status: "success",
+        report: makeReport({
+          status: "partial",
+          canRetry: true,
+          databasePhase: "migrated",
+          modelsPhase: "partial",
+        }),
+      },
+    }));
+
+    render();
+
+    expect(container.textContent).toContain(
+      "Imported from Voquill. Some files were skipped.",
+    );
+    const retryBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Retry missing files"),
+    );
+    expect(retryBtn).toBeDefined();
+  });
+
+  it("uses import-recovery copy when partial status still has an incomplete database phase", () => {
+    setAppState((s) => ({
+      ...s,
+      voquillMigration: {
+        ...s.voquillMigration,
+        status: "success",
+        report: makeReport({
+          status: "partial",
+          canRetry: true,
+          databasePhase: "failed",
+          modelsPhase: "migrated",
+        }),
+      },
+    }));
+
+    render();
+
+    expect(container.textContent).toContain("Voquill import incomplete");
+    expect(container.textContent).not.toContain("Some files were skipped");
+    const retryBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Retry import"),
+    );
+    expect(retryBtn).toBeDefined();
   });
 });

@@ -50,7 +50,7 @@ const inferKeyValueStatus = (
  * Resolves the truthful usability status of a stored API key.
  *
  * When the backend has inspected the record (`credentialStatus` present), its
- * verdict is authoritative — including flagging legacy Voquill 16-byte XOR
+ * verdict is authoritative, including flagging legacy Voquill 16-byte XOR
  * credentials as `"needs_reentry"` even on providers whose API key is optional.
  *
  * When `credentialStatus` is absent (for example in lightweight UI test

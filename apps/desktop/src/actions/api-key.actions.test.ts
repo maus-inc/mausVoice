@@ -116,4 +116,32 @@ describe("loadApiKeys", () => {
     expect(getAppState().settings.apiKeys).toEqual(migratedKeys);
     expect(getAppState().settings.apiKeysStatus).toBe("success");
   });
+
+  it("shares an in-flight forced reload with concurrent non-forced callers", async () => {
+    let resolveForced!: (keys: ApiKey[]) => void;
+    const forcedLoad = new Promise<ApiKey[]>((resolve) => {
+      resolveForced = resolve;
+    });
+    const refreshedKeys = [makeKey("key-fresh", "Refreshed Key")];
+    listApiKeysMock.mockImplementationOnce(() => forcedLoad);
+
+    const forcedPromise = loadApiKeys({ force: true });
+    expect(getAppState().settings.apiKeysStatus).toBe("loading");
+
+    let nonForcedSettled = false;
+    const nonForcedPromise = loadApiKeys().then(() => {
+      nonForcedSettled = true;
+    });
+
+    await Promise.resolve();
+    expect(nonForcedSettled).toBe(false);
+    expect(listApiKeysMock).toHaveBeenCalledTimes(1);
+
+    resolveForced(refreshedKeys);
+    await Promise.all([forcedPromise, nonForcedPromise]);
+
+    expect(nonForcedSettled).toBe(true);
+    expect(getAppState().settings.apiKeys).toEqual(refreshedKeys);
+    expect(getAppState().settings.apiKeysStatus).toBe("success");
+  });
 });

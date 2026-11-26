@@ -3766,10 +3766,10 @@ mod tests {
         }
 
         if keep_in_wal {
-            // Leave pool open briefly? No — drop without checkpointing by
-            // using SQLITE_CHECKPOINT bypass via PRAGMA wal_autocheckpoint=0;
-            // to guarantee a live -wal exists on disk even after close, keep
-            // another reader open while closing or copy while open.
+            // Drop without checkpointing by using SQLITE_CHECKPOINT bypass via
+            // PRAGMA wal_autocheckpoint=0; to guarantee a live -wal exists on
+            // disk even after close, keep another reader open while closing or
+            // copy while open.
             sqlx::query(
                 "INSERT INTO transcriptions (id, transcript, timestamp)
                  VALUES ('tx-wal-only', 'Committed inside WAL sidecar only', 1700000500)",
@@ -3782,9 +3782,8 @@ mod tests {
         if !keep_in_wal {
             pool.close().await;
         } else {
-            // Intentionally forget closing pool? No — better: leak nothing,
-            // just keep a second connection? Even cleaner: tests needing a
-            // real WAL on disk pass `pool` back via a dedicated helper.
+            // Avoid leaking the pool; tests needing a real WAL on disk pass
+            // `pool` back via a dedicated helper.
             pool.close().await;
         }
     }

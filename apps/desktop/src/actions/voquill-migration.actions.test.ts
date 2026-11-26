@@ -241,7 +241,7 @@ describe("voquill-migration.actions", () => {
     const dismissResult = await dismissVoquillMigration();
     expect(dismissResult?.dismissedAt).toBe("2026-11-24T03:00:00Z");
 
-    // Stale refresh finally resolves with dismissedAt: null — must be discarded.
+    // Stale refresh finally resolves with dismissedAt: null and must be discarded.
     resolveStaleRefresh(makeReport({ dismissedAt: null }));
     await refreshPromise;
 

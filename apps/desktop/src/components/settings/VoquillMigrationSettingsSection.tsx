@@ -10,6 +10,7 @@ import {
   formatVoquillIssueSummary,
   formatVoquillMigrationCountsSummary,
   formatVoquillPhaseLabel,
+  hasIncompleteAssetMigration,
   useVoquillMigrationRetry,
 } from "../migration/voquill-migration-copy";
 
@@ -64,7 +65,10 @@ const MigrationSummaryLine = ({
       <FormattedMessage defaultMessage="An older Voquill profile was found on this computer, but your existing mausVoice profile was kept untouched." />
     );
   }
-  if (report.status === "failed") {
+  if (
+    report.status === "failed" ||
+    (report.status === "partial" && report.databasePhase !== "migrated")
+  ) {
     return (
       <FormattedMessage defaultMessage="mausVoice found a Voquill profile but could not finish importing it. Your original Voquill files were not modified." />
     );
@@ -240,7 +244,7 @@ export const VoquillMigrationSettingsSection = () => {
               {report.canRetry && (
                 <VoquillMigrationRetryButton
                   variant="outlined"
-                  isPartial={report.status === "partial"}
+                  retryMissingFiles={hasIncompleteAssetMigration(report)}
                   retrying={retrying}
                   onRetry={() => void handleRetry()}
                 />

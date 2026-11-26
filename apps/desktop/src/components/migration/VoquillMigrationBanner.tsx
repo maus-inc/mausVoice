@@ -20,6 +20,7 @@ import {
   VoquillMigrationReviewKeysButton,
   formatVoquillIssueSummary,
   formatVoquillMigrationCountsSummary,
+  hasIncompleteAssetMigration,
   useVoquillMigrationRetry,
 } from "./voquill-migration-copy";
 
@@ -48,9 +49,12 @@ const BannerTitle = ({
     );
   }
   if (report.status === "partial") {
-    return (
-      <FormattedMessage defaultMessage="Imported from Voquill — some files were skipped" />
-    );
+    if (hasIncompleteAssetMigration(report)) {
+      return (
+        <FormattedMessage defaultMessage="Imported from Voquill. Some files were skipped." />
+      );
+    }
+    return <FormattedMessage defaultMessage="Voquill import incomplete" />;
   }
   if (report.status === "skipped_existing_profile") {
     return (
@@ -59,7 +63,7 @@ const BannerTitle = ({
   }
   if (needsFollowUp) {
     return (
-      <FormattedMessage defaultMessage="Imported from Voquill — action needed" />
+      <FormattedMessage defaultMessage="Imported from Voquill. Action needed." />
     );
   }
   return <FormattedMessage defaultMessage="Imported from Voquill" />;
@@ -192,7 +196,7 @@ const BannerActions = ({
     {report.canRetry && (
       <VoquillMigrationRetryButton
         variant={needsFollowUp ? "outlined" : "contained"}
-        isPartial={report.status === "partial"}
+        retryMissingFiles={hasIncompleteAssetMigration(report)}
         retrying={retrying}
         disabled={dismissing}
         onRetry={onRetry}

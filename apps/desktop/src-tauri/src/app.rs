@@ -584,33 +584,33 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // Run staged Voquill migration before opening `mausvoice.db`, unless we are
     // recovering an interrupted local-data clear (which must finish wiping
-    // before any new data is admitted).
+    // before any new data is admitted). Fail closed if migration directories
+    // cannot be resolved so we never initialize a fresh DB that would mask a
+    // legacy profile or bypass unrestored pre-retry backup checks.
     if !clear_recovery_pending {
-        match crate::system::voquill_migration::MigrationDirs::from_app(app.handle()) {
-            Ok(migration_dirs) => {
-                let report = tauri::async_runtime::block_on(
-                    crate::system::voquill_migration::run_startup_migration(&migration_dirs),
-                );
-                if report.legacy_detected {
-                    log::info!(
-                        "Voquill startup migration completed with status={:?}, db={:?}, attention_keys={}",
-                        report.status,
-                        report.database_phase,
-                        report.counts.providers_needing_attention
-                    );
-                }
-                crate::system::voquill_migration::ensure_no_unrestored_pre_retry_backup(
-                    &migration_dirs,
-                )
-                .map_err(|err| -> Box<dyn std::error::Error> {
-                    log::error!("{err}");
-                    err.into()
-                })?;
-            }
-            Err(err) => {
-                log::error!("Failed to resolve Voquill migration directories: {err}");
-            }
+        let migration_dirs = crate::system::voquill_migration::MigrationDirs::from_app(
+            app.handle(),
+        )
+        .map_err(|err| -> Box<dyn std::error::Error> {
+            log::error!("Failed to resolve Voquill migration directories: {err}");
+            err.into()
+        })?;
+        let report = tauri::async_runtime::block_on(
+            crate::system::voquill_migration::run_startup_migration(&migration_dirs),
+        );
+        if report.legacy_detected {
+            log::info!(
+                "Voquill startup migration completed with status={:?}, db={:?}, attention_keys={}",
+                report.status,
+                report.database_phase,
+                report.counts.providers_needing_attention
+            );
         }
+        crate::system::voquill_migration::ensure_no_unrestored_pre_retry_backup(&migration_dirs)
+            .map_err(|err| -> Box<dyn std::error::Error> {
+                log::error!("{err}");
+                err.into()
+            })?;
     }
 
     let db_path = {

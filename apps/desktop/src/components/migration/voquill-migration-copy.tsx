@@ -58,15 +58,26 @@ export const VoquillMigrationReviewKeysButton = ({
   );
 };
 
+const isIncompleteAssetPhase = (phase: VoquillMigrationPhaseStatus): boolean =>
+  phase === "pending" || phase === "partial" || phase === "failed";
+
+export const hasIncompleteAssetMigration = (
+  report: VoquillMigrationReport,
+): boolean =>
+  report.databasePhase === "migrated" &&
+  (isIncompleteAssetPhase(report.modelsPhase) ||
+    isIncompleteAssetPhase(report.audioPhase) ||
+    isIncompleteAssetPhase(report.storagePhase));
+
 export const VoquillMigrationRetryButton = ({
   variant,
-  isPartial,
+  retryMissingFiles,
   retrying,
   disabled,
   onRetry,
 }: {
   variant: "contained" | "outlined";
-  isPartial: boolean;
+  retryMissingFiles: boolean;
   retrying: boolean;
   disabled?: boolean;
   onRetry: () => void;
@@ -84,7 +95,7 @@ export const VoquillMigrationRetryButton = ({
       )
     }
   >
-    {isPartial ? (
+    {retryMissingFiles ? (
       <FormattedMessage defaultMessage="Retry missing files" />
     ) : (
       <FormattedMessage defaultMessage="Retry import" />
