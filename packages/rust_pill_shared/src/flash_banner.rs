@@ -819,6 +819,26 @@ pub trait FlashHost {
         self.flash_lines().set(1);
     }
 
+    /// Which label a painted banner button wants.
+    ///
+    /// A banner can carry either button, both, or neither, and the caller holds
+    /// the two labels separately. Resolving which one a painted rectangle wants
+    /// is the same rule on every platform, so it lives here rather than being
+    /// restated at each paint site.
+    ///
+    /// No `&self`: the rule reads nothing from the pill, and a paint site that
+    /// only needs this should not have to name the host it is painting.
+    fn button_label<'a>(
+        button: BannerButton,
+        action: Option<&'a String>,
+        reject: Option<&'a String>,
+    ) -> Option<&'a String> {
+        match button {
+            BannerButton::Action => action,
+            BannerButton::Reject => reject,
+        }
+    }
+
     /// Where a celebration launches its particles from.
     ///
     /// The banner grows upward with its line count, so its centre moves with
@@ -1660,6 +1680,34 @@ mod tests {
                 !source.contains("FLASH_HEIGHT),"),
                 "{path} still paints the banner at the fixed one-line height"
             );
+        }
+    }
+
+    /// A paint site must call only things this module still provides.
+    ///
+    /// A method that moves off `FlashHost` breaks every caller, and the break is
+    /// invisible on a Linux host: the macOS and Windows pills do not compile
+    /// here at all, so only CI's per-OS jobs see it. That happened once while
+    /// this branch was open -- `button_label` lost its receiver and two paint
+    /// sites kept calling it as a method. This pins the call shape that CI
+    /// proved, so the next such move fails here first, on the host that can run.
+    #[test]
+    fn every_paint_site_calls_a_banner_helper_this_module_still_has() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        for crate_dir in ["rust_gtk_pill", "rust_macos_pill", "rust_windows_pill"] {
+            let path = format!("../{crate_dir}/src/draw.rs");
+            let source = std::fs::read_to_string(format!("{manifest}/{path}"))
+                .unwrap_or_else(|err| panic!("read {path}: {err}"));
+            assert!(
+                !source.contains("state.button_label("),
+                "{path} calls button_label as a method, but it takes no receiver"
+            );
+            if source.contains("button_label(") {
+                assert!(
+                    source.contains("FlashHost::button_label("),
+                    "{path} resolves a banner button's label some other way"
+                );
+            }
         }
     }
 }
