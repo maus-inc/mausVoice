@@ -48,28 +48,26 @@ const languageOptions = (
   label: getRenderSafeLanguageLabel(code),
 }));
 
-/**
- * A select option that shows a check beside the currently chosen value.
- *
- * Extracted so the style and language pickers read as one element per option
- * instead of a MenuItem wrapping the label and a conditional Check five JSX
- * levels deep inside Dialog>DialogContent>Stack>FormControl>Select. The `key`
- * stays at each `.map` call site; only the row shape moved.
- */
-const CheckableMenuItem = ({
-  value,
-  label,
-  selected,
-}: {
-  value: string;
-  label: React.ReactNode;
-  selected: boolean;
-}) => (
-  <MenuItem value={value} sx={chromeSelectMenuItemSx}>
+const renderCheckableMenuItem = (
+  value: string,
+  label: React.ReactNode,
+  selected: boolean,
+) => (
+  <MenuItem key={value} value={value} sx={chromeSelectMenuItemSx}>
     {label}
     {selected ? <Check size={16} strokeWidth={2} /> : null}
   </MenuItem>
 );
+
+const resolveToneId = (
+  tones: Tone[],
+  selectedToneId: string | null,
+  defaultToneId: string | null,
+): string | null =>
+  tones.find((tone) => tone.id === selectedToneId)?.id ??
+  tones.find((tone) => tone.id === defaultToneId)?.id ??
+  tones[0]?.id ??
+  null;
 
 const useRetranscribeSelection = (open: boolean) => {
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
@@ -84,18 +82,53 @@ const useRetranscribeSelection = (open: boolean) => {
     useState<DictationLanguageCode>(
       toSelectableDictationLanguage(defaultLanguage),
     );
+  const [selectionSession, setSelectionSession] = useState<{
+    defaultToneId: string | null;
+  } | null>(null);
 
   useEffect(() => {
-    if (!open) return;
-    setSelectedToneId(tones[0]?.id ?? null);
-    setSelectedLanguage(toSelectableDictationLanguage(defaultLanguage));
-  }, [open, defaultLanguage, tones]);
+    if (!open) {
+      if (selectionSession !== null) setSelectionSession(null);
+      return;
+    }
+
+    if (selectionSession === null) {
+      const defaultToneId = tones[0]?.id ?? null;
+      setSelectionSession({ defaultToneId });
+      setSelectedToneId(defaultToneId);
+      setSelectedLanguage(toSelectableDictationLanguage(defaultLanguage));
+      return;
+    }
+
+    const resolvedToneId = resolveToneId(
+      tones,
+      selectedToneId,
+      selectionSession.defaultToneId,
+    );
+    if (resolvedToneId !== selectedToneId) {
+      setSelectedToneId(resolvedToneId);
+    }
+  }, [open, defaultLanguage, tones, selectedToneId, selectionSession]);
+
+  const resolvedLanguage =
+    open && selectionSession === null
+      ? toSelectableDictationLanguage(defaultLanguage)
+      : selectedLanguage;
+
+  const resolvedToneId =
+    open && selectionSession === null
+      ? (tones[0]?.id ?? null)
+      : resolveToneId(
+          tones,
+          selectedToneId,
+          selectionSession?.defaultToneId ?? null,
+        );
 
   return {
     tones,
-    selectedToneId,
+    resolvedToneId,
     setSelectedToneId,
-    selectedLanguage,
+    selectedLanguage: resolvedLanguage,
     setSelectedLanguage,
   };
 };
@@ -119,7 +152,7 @@ export const RetranscribeDialog = () => {
   const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
   const {
     tones,
-    selectedToneId,
+    resolvedToneId,
     setSelectedToneId,
     selectedLanguage,
     setSelectedLanguage,
@@ -135,12 +168,12 @@ export const RetranscribeDialog = () => {
     closeRetranscribeDialog();
     void retranscribeTranscriptionWithRecovery({
       transcriptionId,
-      toneId: styleSelectionAvailable ? selectedToneId : null,
+      toneId: styleSelectionAvailable ? resolvedToneId : null,
       languageCode: selectedLanguage,
     });
   }, [
     transcriptionId,
-    selectedToneId,
+    resolvedToneId,
     selectedLanguage,
     isRetranscribing,
     styleSelectionAvailable,
@@ -167,7 +200,7 @@ export const RetranscribeDialog = () => {
               <Select
                 labelId={styleLabelId}
                 label={intl.formatMessage({ defaultMessage: "Style" })}
-                value={selectedToneId ?? ""}
+                value={resolvedToneId ?? ""}
                 onChange={(e) => {
                   const value = e.target.value;
                   setSelectedToneId(value || null);
@@ -182,14 +215,13 @@ export const RetranscribeDialog = () => {
                   )
                 }
               >
-                {tones.map((tone) => (
-                  <CheckableMenuItem
-                    key={tone.id}
-                    value={tone.id}
-                    label={tone.name}
-                    selected={tone.id === selectedToneId}
-                  />
-                ))}
+                {tones.map((tone) =>
+                  renderCheckableMenuItem(
+                    tone.id,
+                    tone.name,
+                    tone.id === resolvedToneId,
+                  ),
+                )}
               </Select>
             </FormControl>
           )}
@@ -214,14 +246,9 @@ export const RetranscribeDialog = () => {
                 )
               }
             >
-              {languageOptions.map(({ code, label }) => (
-                <CheckableMenuItem
-                  key={code}
-                  value={code}
-                  label={label}
-                  selected={code === selectedLanguage}
-                />
-              ))}
+              {languageOptions.map(({ code, label }) =>
+                renderCheckableMenuItem(code, label, code === selectedLanguage),
+              )}
             </Select>
           </FormControl>
         </Stack>
