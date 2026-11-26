@@ -17,12 +17,23 @@ import { loadDictionary } from "./dictionary.actions";
 import { loadHotkeys } from "./hotkey.actions";
 import { loadTones } from "./tone.actions";
 import { refreshCurrentUser } from "./user.actions";
+import {
+  isLatestVoquillMigrationRequestSeq,
+  nextVoquillMigrationRequestSeq,
+} from "./voquill-migration-refresh";
 
 let loadPromise: Promise<VoquillMigrationReport | null> | null = null;
 let retryPromise: Promise<VoquillMigrationReport> | null = null;
 
 const isClearStillSame = (generation: number): boolean =>
   !isLocalDataClearRequested() && getLocalDataClearGeneration() === generation;
+
+const canApplyReportUpdate = (
+  clearGeneration: number,
+  requestSeq: number,
+): boolean =>
+  isClearStillSame(clearGeneration) &&
+  isLatestVoquillMigrationRequestSeq(requestSeq);
 
 export const loadVoquillMigrationStatus = async (
   force = false,
@@ -36,14 +47,15 @@ export const loadVoquillMigrationStatus = async (
   }
 
   const clearGeneration = getLocalDataClearGeneration();
+  const requestSeq = nextVoquillMigrationRequestSeq();
   produceAppState((draft) => {
     draft.voquillMigration.status = "loading";
     draft.voquillMigration.error = null;
   });
 
-  loadPromise = fetchVoquillMigrationStatus()
+  const active = fetchVoquillMigrationStatus()
     .then((report) => {
-      if (isClearStillSame(clearGeneration)) {
+      if (canApplyReportUpdate(clearGeneration, requestSeq)) {
         produceAppState((draft) => {
           draft.voquillMigration.report = report;
           draft.voquillMigration.status = "success";
@@ -54,7 +66,7 @@ export const loadVoquillMigrationStatus = async (
     })
     .catch((error) => {
       getLogger().warning(`Failed to load Voquill migration status: ${error}`);
-      if (isClearStillSame(clearGeneration)) {
+      if (canApplyReportUpdate(clearGeneration, requestSeq)) {
         produceAppState((draft) => {
           draft.voquillMigration.status = "error";
           draft.voquillMigration.error =
@@ -64,10 +76,33 @@ export const loadVoquillMigrationStatus = async (
       return null;
     })
     .finally(() => {
-      loadPromise = null;
+      if (loadPromise === active) {
+        loadPromise = null;
+      }
     });
 
-  return loadPromise;
+  loadPromise = active;
+  return active;
+};
+
+const applyVoquillMigrationSuccess = (
+  requestSeq: number,
+  report: VoquillMigrationReport,
+  clearFlag: "dismissing" | "retrying",
+  resetApiKeys = false,
+): void => {
+  produceAppState((draft) => {
+    if (isLatestVoquillMigrationRequestSeq(requestSeq)) {
+      draft.voquillMigration.report = report;
+      draft.voquillMigration.status = "success";
+      draft.voquillMigration.error = null;
+    }
+    draft.voquillMigration[clearFlag] = false;
+    if (resetApiKeys) {
+      // Force API keys reload so the newly swapped migrated DB is hydrated.
+      draft.settings.apiKeysStatus = "idle";
+    }
+  });
 };
 
 export const dismissVoquillMigration =
@@ -77,19 +112,18 @@ export const dismissVoquillMigration =
     }
 
     const clearGeneration = getLocalDataClearGeneration();
+    const requestSeq = nextVoquillMigrationRequestSeq();
     produceAppState((draft) => {
       draft.voquillMigration.dismissing = true;
       draft.voquillMigration.error = null;
     });
 
     try {
-      const report = await dismissVoquillMigrationNotice();
+      const report = await withLocalDataWrite((lease) =>
+        dismissVoquillMigrationNotice(lease),
+      );
       if (isClearStillSame(clearGeneration)) {
-        produceAppState((draft) => {
-          draft.voquillMigration.report = report;
-          draft.voquillMigration.status = "success";
-          draft.voquillMigration.dismissing = false;
-        });
+        applyVoquillMigrationSuccess(requestSeq, report, "dismissing");
       }
       return report;
     } catch (error) {
@@ -99,8 +133,10 @@ export const dismissVoquillMigration =
       if (isClearStillSame(clearGeneration)) {
         produceAppState((draft) => {
           draft.voquillMigration.dismissing = false;
-          draft.voquillMigration.error =
-            error instanceof Error ? error.message : String(error);
+          if (isLatestVoquillMigrationRequestSeq(requestSeq)) {
+            draft.voquillMigration.error =
+              error instanceof Error ? error.message : String(error);
+          }
         });
       }
       return null;
@@ -111,6 +147,7 @@ const executeVoquillMigrationRetry = async (
   previousDatabasePhase: VoquillMigrationReport["databasePhase"] | undefined,
 ): Promise<VoquillMigrationReport> => {
   const clearGeneration = getLocalDataClearGeneration();
+  const requestSeq = nextVoquillMigrationRequestSeq();
   produceAppState((draft) => {
     draft.voquillMigration.retrying = true;
     draft.voquillMigration.error = null;
@@ -125,16 +162,7 @@ const executeVoquillMigrationRetry = async (
       report.databasePhase === "migrated";
 
     if (isClearStillSame(clearGeneration)) {
-      produceAppState((draft) => {
-        draft.voquillMigration.report = report;
-        draft.voquillMigration.status = "success";
-        draft.voquillMigration.retrying = false;
-        draft.voquillMigration.error = null;
-        if (dbPromoted) {
-          // Force API keys reload so the newly swapped migrated DB is hydrated.
-          draft.settings.apiKeysStatus = "idle";
-        }
-      });
+      applyVoquillMigrationSuccess(requestSeq, report, "retrying", dbPromoted);
     }
 
     if (dbPromoted && isClearStillSame(clearGeneration)) {
@@ -154,8 +182,10 @@ const executeVoquillMigrationRetry = async (
     if (isClearStillSame(clearGeneration)) {
       produceAppState((draft) => {
         draft.voquillMigration.retrying = false;
-        draft.voquillMigration.error =
-          error instanceof Error ? error.message : String(error);
+        if (isLatestVoquillMigrationRequestSeq(requestSeq)) {
+          draft.voquillMigration.error =
+            error instanceof Error ? error.message : String(error);
+        }
       });
     }
     throw error;

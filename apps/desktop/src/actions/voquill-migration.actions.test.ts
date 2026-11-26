@@ -61,6 +61,7 @@ import {
   loadVoquillMigrationStatus,
   runVoquillMigrationRetry,
 } from "./voquill-migration.actions";
+import { refreshVoquillMigrationStatusIfActive } from "./voquill-migration-refresh";
 
 const makeReport = (
   overrides: Partial<VoquillMigrationReport> = {},
@@ -211,5 +212,41 @@ describe("voquill-migration.actions", () => {
     expect(a).toEqual(completed);
     expect(b).toEqual(completed);
     expect(getAppState().voquillMigration.retrying).toBe(false);
+  });
+
+  it("discards a stale silent refresh response that resolves after dismissal", async () => {
+    const initial = makeReport({ dismissedAt: null });
+    setAppState((s) => ({
+      ...s,
+      voquillMigration: {
+        ...s.voquillMigration,
+        status: "success",
+        report: initial,
+      },
+    }));
+
+    let resolveStaleRefresh!: (report: VoquillMigrationReport) => void;
+    fetchStatusMock.mockImplementationOnce(
+      () =>
+        new Promise<VoquillMigrationReport>((resolve) => {
+          resolveStaleRefresh = resolve;
+        }),
+    );
+
+    const dismissed = makeReport({ dismissedAt: "2026-11-24T03:00:00Z" });
+    dismissNoticeMock.mockResolvedValueOnce(dismissed);
+
+    // Start refresh first, then dismiss before the refresh returns.
+    const refreshPromise = refreshVoquillMigrationStatusIfActive();
+    const dismissResult = await dismissVoquillMigration();
+    expect(dismissResult?.dismissedAt).toBe("2026-11-24T03:00:00Z");
+
+    // Stale refresh finally resolves with dismissedAt: null — must be discarded.
+    resolveStaleRefresh(makeReport({ dismissedAt: null }));
+    await refreshPromise;
+
+    expect(getAppState().voquillMigration.report?.dismissedAt).toBe(
+      "2026-11-24T03:00:00Z",
+    );
   });
 });

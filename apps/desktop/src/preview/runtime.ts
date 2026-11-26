@@ -581,11 +581,22 @@ class PreviewRuntime {
       }
     }
     if (typeof request.key === "string") {
-      // Do not keep an entered secret in the preview's mock transport.
-      apiKey.keyFull = null;
-      apiKey.keySuffix = "…preview";
-      apiKey.credentialStatus = "usable";
-      apiKey.credentialIssue = null;
+      const keylessProvider =
+        apiKey.provider === "ollama" ||
+        apiKey.provider === "speaches" ||
+        apiKey.provider === "openai-compatible";
+      if (request.key.length > 0) {
+        // Do not keep an entered secret in the preview's mock transport.
+        apiKey.keyFull = null;
+        apiKey.keySuffix = "…preview";
+        apiKey.credentialStatus = "usable";
+        apiKey.credentialIssue = null;
+      } else if (keylessProvider) {
+        apiKey.keyFull = "";
+        apiKey.keySuffix = null;
+        apiKey.credentialStatus = "usable";
+        apiKey.credentialIssue = null;
+      }
     }
     // `transcription_path` is the one column the desktop statement gates on a
     // separate boolean rather than on null, so it keeps its own handling.

@@ -35,6 +35,7 @@ import {
 import { findPersonalApiKey } from "../../utils/personal-use.utils";
 import { secureFetch } from "../../utils/secure-fetch.utils";
 import { ProviderLogo } from "../common/provider-logos/ProviderLogo";
+import { ApiKeyAttentionMessage } from "./ApiKeyAttentionMessage";
 
 export type PersonalApiKeyProvider = "groq" | "deepgram";
 
@@ -96,13 +97,7 @@ const PersonalKeyAttentionAlert = ({
   issue: ReturnType<typeof getApiKeyCredentialIssue>;
 }) => (
   <Alert severity="warning" sx={{ boxShadow: "none" }}>
-    {issue === "legacy_encryption" ? (
-      <FormattedMessage defaultMessage="This key was imported from Voquill's older encryption format and could not be unlocked. Enter your key again to re-encrypt it with mausVoice." />
-    ) : issue === "decryption_failed" ? (
-      <FormattedMessage defaultMessage="The saved key could not be decrypted on this computer. Enter your key again to replace it." />
-    ) : (
-      <FormattedMessage defaultMessage="The saved key configuration is incomplete or invalid. Enter a valid key to continue." />
-    )}
+    <ApiKeyAttentionMessage issue={issue} />
   </Alert>
 );
 
@@ -152,6 +147,7 @@ const usePersonalApiKeyForm = ({
 
   useEffect(() => {
     sessionIdRef.current += 1;
+    testInFlight.current = false;
     if (open) {
       setValue("");
       setErrorMessage(null);
@@ -161,13 +157,17 @@ const usePersonalApiKeyForm = ({
     }
     return () => {
       sessionIdRef.current += 1;
+      testInFlight.current = false;
     };
   }, [open, provider]);
 
   const busy = saving || testing;
 
+  // Allow dismissing the dialog even while a key test is pending so a slow or
+  // stalled network test cannot trap the user; `sessionIdRef` discards stale
+  // test responses after close or reopen.
   const close = () => {
-    if (!busy && !saveInFlight.current && !testInFlight.current) {
+    if (!saving && !saveInFlight.current) {
       onClose();
     }
   };
@@ -191,8 +191,8 @@ const usePersonalApiKeyForm = ({
         setTestOutcome("error");
       }
     } finally {
-      testInFlight.current = false;
       if (sessionIdRef.current === sessionId) {
+        testInFlight.current = false;
         setTesting(false);
       }
     }
@@ -376,7 +376,7 @@ export const PersonalApiKeyDialog = ({
             <FormattedMessage defaultMessage="Test key" />
           )}
         </Button>
-        <Button onClick={close} disabled={saving || testing}>
+        <Button onClick={close} disabled={saving}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
         <Button

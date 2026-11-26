@@ -171,6 +171,22 @@ describe("resolvePersonalTranscriptionTarget", () => {
 
     expect(target).toBeNull();
   });
+
+  it("switches away from an unusable adopted personal Groq key when Deepgram is saved", () => {
+    const importedGroqId = "voquill-imported-groq-1";
+    const target = resolvePersonalTranscriptionTarget({
+      deepgramKeyId: PERSONAL_DEEPGRAM_API_KEY_ID,
+      groqKeyId: null,
+      ownedPersonalKeyIds: [PERSONAL_DEEPGRAM_API_KEY_ID, importedGroqId],
+      currentMode: "api",
+      currentApiKeyId: importedGroqId,
+    });
+
+    expect(target).toEqual({
+      mode: "api",
+      apiKeyId: PERSONAL_DEEPGRAM_API_KEY_ID,
+    });
+  });
 });
 
 describe("buildPersonalGroqKeyUpdate", () => {

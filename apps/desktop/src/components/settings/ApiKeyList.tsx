@@ -51,6 +51,7 @@ import {
   getApiKeyCredentialIssue,
   isApiKeyUsable,
 } from "../../utils/api-key.utils";
+import { ApiKeyAttentionMessage } from "./ApiKeyAttentionMessage";
 import { getProviderFormConfig } from "./api-key-provider-config";
 import { OllamaModelPicker } from "./OllamaModelPicker";
 import { OpenAICompatibleModelPicker } from "./OpenAICompatibleModelPicker";
@@ -277,6 +278,7 @@ type EditApiKeyCardProps = {
   onSave: (payload: {
     name: string;
     key: string;
+    clearKey?: boolean;
     baseUrl?: string | null;
     azureRegion?: string | null;
     includeV1Path?: boolean | null;
@@ -289,26 +291,82 @@ type EditApiKeyCardProps = {
   context: ApiKeyListContext;
 };
 
-const EditApiKeyAttentionAlert = ({ apiKey }: { apiKey: SettingsApiKey }) => {
+const EditApiKeyAttentionAlert = ({
+  apiKey,
+  onResetKeyless,
+  disabled,
+}: {
+  apiKey: SettingsApiKey;
+  onResetKeyless?: () => void;
+  disabled: boolean;
+}) => {
   if (!apiKeyNeedsAttention(apiKey)) {
     return null;
   }
-  const issue = getApiKeyCredentialIssue(apiKey);
   return (
-    <Alert severity="warning" sx={{ py: 0.5, boxShadow: "none" }}>
-      {issue === "legacy_encryption" ? (
-        <FormattedMessage defaultMessage="This key was imported from Voquill's older encryption format and could not be unlocked. Enter your key again to re-encrypt it with mausVoice." />
-      ) : issue === "decryption_failed" ? (
-        <FormattedMessage defaultMessage="The saved key could not be decrypted on this computer. Enter your key again to replace it." />
-      ) : issue === "missing_endpoint" ? (
-        <FormattedMessage defaultMessage="Enter a valid endpoint URL to use this provider." />
-      ) : issue === "missing_region" ? (
-        <FormattedMessage defaultMessage="Enter an Azure region to use this provider." />
-      ) : (
-        <FormattedMessage defaultMessage="The saved key configuration is incomplete or invalid. Enter a valid key to continue." />
-      )}
+    <Alert
+      severity="warning"
+      sx={{
+        py: 0.5,
+        boxShadow: "none",
+        alignItems: "center",
+        "& .MuiAlert-action": {
+          pt: 0,
+          alignItems: "center",
+          pl: 1.5,
+        },
+      }}
+      action={
+        onResetKeyless ? (
+          <Button
+            size="small"
+            color="inherit"
+            onClick={onResetKeyless}
+            disabled={disabled}
+            sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
+          >
+            <FormattedMessage defaultMessage="Use without key" />
+          </Button>
+        ) : undefined
+      }
+    >
+      <ApiKeyAttentionMessage issue={getApiKeyCredentialIssue(apiKey)} />
     </Alert>
   );
+};
+
+const buildEditApiKeySavePayload = ({
+  name,
+  fieldValues,
+  clearKey,
+  includeV1Path,
+  config,
+  apiKey,
+}: {
+  name: string;
+  fieldValues: Record<string, string>;
+  clearKey: boolean;
+  includeV1Path: boolean;
+  config: ReturnType<typeof getProviderFormConfig>;
+  apiKey: SettingsApiKey;
+}) => {
+  const hasField = (key: string) => config.fields.some((f) => f.key === key);
+  return {
+    name,
+    key: clearKey ? "" : fieldValues.apiKey || "",
+    clearKey,
+    baseUrl: fieldValues.baseUrl || config.defaultBaseUrl || apiKey.baseUrl,
+    azureRegion: fieldValues.azureRegion || apiKey.azureRegion,
+    includeV1Path: config.showIncludeV1Path
+      ? includeV1Path
+      : apiKey.includeV1Path,
+    transcriptionModel: hasField("transcriptionModel")
+      ? fieldValues.transcriptionModel || null
+      : undefined,
+    transcriptionPath: hasField("transcriptionPath")
+      ? fieldValues.transcriptionPath || null
+      : undefined,
+  };
 };
 
 const EditApiKeyCard = ({
@@ -339,6 +397,9 @@ const EditApiKeyCard = ({
     () => getProviderFormConfig(apiKey.provider, context),
     [apiKey.provider, context],
   );
+  const canResetToKeyless =
+    apiKeyNeedsReentry(apiKey) &&
+    !config.fields.some((f) => f.key === "apiKey" && f.required);
 
   const canSave =
     !!name &&
@@ -353,53 +414,29 @@ const EditApiKeyCard = ({
     setFieldValues((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  const handleSave = useCallback(async () => {
-    if (!canSave || saving) return;
-    setSaving(true);
-    try {
-      const baseUrl =
-        fieldValues.baseUrl || config.defaultBaseUrl || apiKey.baseUrl;
-      const azureRegion = fieldValues.azureRegion || apiKey.azureRegion;
-      const includeV1PathValue = config.showIncludeV1Path
-        ? includeV1Path
-        : apiKey.includeV1Path;
-      const hasTranscriptionModelField = config.fields.some(
-        (f) => f.key === "transcriptionModel",
-      );
-      const transcriptionModel = hasTranscriptionModelField
-        ? fieldValues.transcriptionModel || null
-        : undefined;
-      const hasTranscriptionPathField = config.fields.some(
-        (f) => f.key === "transcriptionPath",
-      );
-      const transcriptionPath = hasTranscriptionPathField
-        ? fieldValues.transcriptionPath || null
-        : undefined;
-
-      await onSave({
-        name,
-        key: fieldValues.apiKey || "",
-        baseUrl,
-        azureRegion,
-        includeV1Path: includeV1PathValue,
-        transcriptionModel,
-        transcriptionPath,
-      });
-    } catch (error) {
-      console.error("Failed to save API key", error);
-    } finally {
-      setSaving(false);
-    }
-  }, [
-    canSave,
-    saving,
-    name,
-    fieldValues,
-    includeV1Path,
-    config,
-    apiKey,
-    onSave,
-  ]);
+  const handleSave = useCallback(
+    async (clearKey = false) => {
+      if (!canSave || saving) return;
+      setSaving(true);
+      try {
+        await onSave(
+          buildEditApiKeySavePayload({
+            name,
+            fieldValues,
+            clearKey,
+            includeV1Path,
+            config,
+            apiKey,
+          }),
+        );
+      } catch (error) {
+        console.error("Failed to save API key", error);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [canSave, saving, name, fieldValues, includeV1Path, config, apiKey, onSave],
+  );
 
   const handleTest = useCallback(() => {
     const overrides: Partial<SettingsApiKey> = { name };
@@ -446,7 +483,13 @@ const EditApiKeyCard = ({
           />
         </Typography>
       </Stack>
-      <EditApiKeyAttentionAlert apiKey={apiKey} />
+      <EditApiKeyAttentionAlert
+        apiKey={apiKey}
+        onResetKeyless={
+          canResetToKeyless ? () => void handleSave(true) : undefined
+        }
+        disabled={saving || testing}
+      />
       <TextField
         label={<FormattedMessage defaultMessage="Key name" />}
         value={name}
@@ -757,35 +800,6 @@ const ApiKeyCardAction = ({
   </Tooltip>
 );
 
-const ApiKeyCardAttentionMessage = ({
-  issue,
-}: {
-  issue: ReturnType<typeof getApiKeyCredentialIssue>;
-}) => {
-  switch (issue) {
-    case "legacy_encryption":
-      return (
-        <FormattedMessage defaultMessage="Imported from Voquill's older encryption format. Re-enter this key to unlock it." />
-      );
-    case "decryption_failed":
-      return (
-        <FormattedMessage defaultMessage="Could not decrypt the saved key on this computer. Re-enter it to continue." />
-      );
-    case "missing_endpoint":
-      return (
-        <FormattedMessage defaultMessage="Enter a valid endpoint URL to use this provider." />
-      );
-    case "missing_region":
-      return (
-        <FormattedMessage defaultMessage="Enter an Azure region to use this provider." />
-      );
-    default:
-      return (
-        <FormattedMessage defaultMessage="This saved key is incomplete or invalid." />
-      );
-  }
-};
-
 const ApiKeyCardAttentionBadge = ({
   needsAttention,
   needsReentry,
@@ -846,7 +860,7 @@ const ApiKeyCardAttentionAlert = ({
       </Button>
     }
   >
-    <ApiKeyCardAttentionMessage issue={getApiKeyCredentialIssue(apiKey)} />
+    <ApiKeyAttentionMessage issue={getApiKeyCredentialIssue(apiKey)} />
   </Alert>
 );
 
@@ -1244,6 +1258,7 @@ export const ApiKeyList = ({
       payload: {
         name: string;
         key: string;
+        clearKey?: boolean;
         baseUrl?: string | null;
         azureRegion?: string | null;
         includeV1Path?: boolean | null;
@@ -1254,7 +1269,7 @@ export const ApiKeyList = ({
       await updateApiKey({
         id: apiKeyId,
         name: payload.name,
-        key: payload.key || undefined,
+        key: payload.clearKey ? "" : payload.key || undefined,
         baseUrl: payload.baseUrl,
         azureRegion: payload.azureRegion,
         includeV1Path: payload.includeV1Path,

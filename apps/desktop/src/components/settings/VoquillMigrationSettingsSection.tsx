@@ -143,7 +143,7 @@ export const VoquillMigrationSettingsSection = () => {
   const retrying = useAppStore((state) => state.voquillMigration.retrying);
   const handleRetry = useVoquillMigrationRetry();
 
-  if (!report || !report.legacyDetected || report.status === "not_needed") {
+  if (!report?.legacyDetected || report.status === "not_needed") {
     return null;
   }
 
@@ -190,7 +190,7 @@ export const VoquillMigrationSettingsSection = () => {
           {needsKeyAttention && (
             <Alert severity="warning" sx={{ py: 0.5, boxShadow: "none" }}>
               <FormattedMessage
-                defaultMessage="{count, plural, one {# saved API key could not be unlocked from Voquill's older encryption format and needs to be re-entered.} other {# saved API keys could not be unlocked from Voquill's older encryption format and need to be re-entered.}}"
+                defaultMessage="{count, plural, one {# saved API provider needs attention before it can be used. Review it in AI Models settings.} other {# saved API providers need attention before they can be used. Review them in AI Models settings.}}"
                 values={{ count: report.counts.providersNeedingAttention }}
               />
             </Alert>

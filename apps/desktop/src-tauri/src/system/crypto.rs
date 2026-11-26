@@ -240,7 +240,7 @@ pub fn inspect_api_key_credential(
         return validate_provider_structure(provider, String::new(), base_url, azure_region);
     }
 
-    if plaintext.chars().any(|ch| ch.is_control()) || plaintext.trim() != plaintext {
+    if plaintext.chars().any(char::is_control) || plaintext.trim() != plaintext {
         return CredentialInspection {
             key_full: None,
             status: ApiKeyCredentialStatus::InvalidFormat,
@@ -257,7 +257,12 @@ fn validate_provider_structure(
     base_url: Option<&str>,
     azure_region: Option<&str>,
 ) -> CredentialInspection {
-    if provider == "openai-compatible" && !is_valid_http_endpoint(base_url) {
+    let trimmed_base_url = base_url.map(str::trim).filter(|url| !url.is_empty());
+
+    if provider == "openai-compatible"
+        && trimmed_base_url.is_some()
+        && !is_valid_http_endpoint(trimmed_base_url)
+    {
         return CredentialInspection {
             key_full: None,
             status: ApiKeyCredentialStatus::InvalidFormat,
@@ -265,17 +270,26 @@ fn validate_provider_structure(
         };
     }
 
-    if provider == "azure"
-        && azure_region
+    if provider == "azure" {
+        if let Some(url) = trimmed_base_url {
+            if !is_valid_http_endpoint(Some(url)) {
+                return CredentialInspection {
+                    key_full: None,
+                    status: ApiKeyCredentialStatus::InvalidFormat,
+                    issue: Some(ApiKeyCredentialIssue::MissingEndpoint),
+                };
+            }
+        } else if azure_region
             .map(str::trim)
             .filter(|region| !region.is_empty())
             .is_none()
-    {
-        return CredentialInspection {
-            key_full: None,
-            status: ApiKeyCredentialStatus::InvalidFormat,
-            issue: Some(ApiKeyCredentialIssue::MissingRegion),
-        };
+        {
+            return CredentialInspection {
+                key_full: None,
+                status: ApiKeyCredentialStatus::InvalidFormat,
+                issue: Some(ApiKeyCredentialIssue::MissingRegion),
+            };
+        }
     }
 
     CredentialInspection {
@@ -461,7 +475,7 @@ mod tests {
         assert_eq!(ollama.status, ApiKeyCredentialStatus::Usable);
         assert_eq!(ollama.issue, None);
 
-        let openai_compat_missing_url = inspect_api_key_credential(
+        let openai_compat_default_url = inspect_api_key_credential(
             "openai-compatible",
             &empty.salt_b64,
             &empty.ciphertext_b64,
@@ -469,11 +483,37 @@ mod tests {
             None,
         );
         assert_eq!(
-            openai_compat_missing_url.status,
+            openai_compat_default_url.status,
+            ApiKeyCredentialStatus::Usable
+        );
+        assert_eq!(openai_compat_default_url.issue, None);
+
+        let openai_compat_blank_url = inspect_api_key_credential(
+            "openai-compatible",
+            &empty.salt_b64,
+            &empty.ciphertext_b64,
+            Some("   "),
+            None,
+        );
+        assert_eq!(
+            openai_compat_blank_url.status,
+            ApiKeyCredentialStatus::Usable
+        );
+        assert_eq!(openai_compat_blank_url.issue, None);
+
+        let openai_compat_invalid_url = inspect_api_key_credential(
+            "openai-compatible",
+            &empty.salt_b64,
+            &empty.ciphertext_b64,
+            Some("not-a-valid-endpoint"),
+            None,
+        );
+        assert_eq!(
+            openai_compat_invalid_url.status,
             ApiKeyCredentialStatus::InvalidFormat
         );
         assert_eq!(
-            openai_compat_missing_url.issue,
+            openai_compat_invalid_url.issue,
             Some(ApiKeyCredentialIssue::MissingEndpoint)
         );
 
@@ -519,17 +559,47 @@ mod tests {
             Some(ApiKeyCredentialIssue::MissingRegion)
         );
 
-        let valid_azure = inspect_api_key_credential(
+        let valid_azure_speech = inspect_api_key_credential(
             "azure",
             &good_azure.salt_b64,
             &good_azure.ciphertext_b64,
             None,
             Some("eastus"),
         );
-        assert_eq!(valid_azure.status, ApiKeyCredentialStatus::Usable);
+        assert_eq!(valid_azure_speech.status, ApiKeyCredentialStatus::Usable);
         assert_eq!(
-            valid_azure.key_full.as_deref(),
+            valid_azure_speech.key_full.as_deref(),
             Some("azure_valid_key_1234")
+        );
+
+        // Azure OpenAI keys provide an HTTPS resource endpoint without a Speech region.
+        let valid_azure_openai = inspect_api_key_credential(
+            "azure",
+            &good_azure.salt_b64,
+            &good_azure.ciphertext_b64,
+            Some("https://my-resource.openai.azure.com"),
+            None,
+        );
+        assert_eq!(valid_azure_openai.status, ApiKeyCredentialStatus::Usable);
+        assert_eq!(
+            valid_azure_openai.key_full.as_deref(),
+            Some("azure_valid_key_1234")
+        );
+
+        let invalid_azure_openai = inspect_api_key_credential(
+            "azure",
+            &good_azure.salt_b64,
+            &good_azure.ciphertext_b64,
+            Some("ftp://invalid-endpoint"),
+            None,
+        );
+        assert_eq!(
+            invalid_azure_openai.status,
+            ApiKeyCredentialStatus::InvalidFormat
+        );
+        assert_eq!(
+            invalid_azure_openai.issue,
+            Some(ApiKeyCredentialIssue::MissingEndpoint)
         );
     }
 

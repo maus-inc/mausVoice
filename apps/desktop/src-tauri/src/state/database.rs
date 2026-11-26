@@ -13,7 +13,7 @@ impl OptionKeyDatabase {
     pub fn pool(&self) -> SqlitePool {
         self.0
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 
@@ -25,7 +25,7 @@ impl OptionKeyDatabase {
         let mut guard = self
             .0
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::mem::replace(&mut *guard, new_pool)
     }
 }

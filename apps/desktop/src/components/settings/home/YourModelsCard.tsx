@@ -161,11 +161,7 @@ export const YourModelsCard = () => {
     context: ApiKeyListContext,
     dispatches: boolean,
   ): ModelSummary => {
-    if (
-      key &&
-      key.credentialStatus === "needs_reentry" &&
-      apiKeyNeedsReentry(key)
-    ) {
+    if (key?.credentialStatus === "needs_reentry" && apiKeyNeedsReentry(key)) {
       return {
         model: reenterKey,
         location: null,

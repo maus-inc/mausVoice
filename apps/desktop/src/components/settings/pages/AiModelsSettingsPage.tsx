@@ -78,17 +78,40 @@ const ApiKeyStatusChip = ({ apiKey }: { apiKey: ApiKey | null }) => {
   );
 };
 
-const selectedKeyNeedsAttention = (
+type SelectedKeyAttentionState = "reentry" | "attention" | null;
+
+const getSelectedKeyAttentionState = (
   apiKeyById: Record<string, ApiKey | undefined>,
   mode: string | null | undefined,
   selectedApiKeyId: string | null | undefined,
-): boolean => {
+): SelectedKeyAttentionState => {
   if (mode !== "api" || !selectedApiKeyId) {
-    return false;
+    return null;
   }
   const key = apiKeyById[selectedApiKeyId];
-  return key != null && !isApiKeyUsable(key);
+  if (!key || isApiKeyUsable(key)) {
+    return null;
+  }
+  return apiKeyNeedsReentry(key) ? "reentry" : "attention";
 };
+
+const SelectedKeyAttentionChip = ({
+  state,
+}: {
+  state: Exclude<SelectedKeyAttentionState, null>;
+}) => (
+  <Chip
+    size="small"
+    color="warning"
+    label={
+      state === "reentry" ? (
+        <FormattedMessage defaultMessage="Re-enter key" />
+      ) : (
+        <FormattedMessage defaultMessage="Needs attention" />
+      )
+    }
+  />
+);
 
 const AiModelsAttentionBanner = ({
   attentionKeyCount,
@@ -101,7 +124,7 @@ const AiModelsAttentionBanner = ({
     return (
       <Alert severity="warning" sx={{ mb: 3, boxShadow: "none" }}>
         <FormattedMessage
-          defaultMessage="{count, plural, one {# saved API key cannot be unlocked and needs to be re-entered before it can be used.} other {# saved API keys cannot be unlocked and need to be re-entered before they can be used.}}"
+          defaultMessage="{count, plural, one {# saved API provider below needs attention before it can be used.} other {# saved API providers below need attention before they can be used.}}"
           values={{ count: attentionKeyCount }}
         />
       </Alert>
@@ -143,9 +166,9 @@ export default function AiModelsSettingsPage() {
     deepgramKey,
     groqKey,
     attentionKeyCount,
-    transcriptionNeedsAttention,
-    postProcessingNeedsAttention,
-    agentNeedsAttention,
+    transcriptionAttentionState,
+    postProcessingAttentionState,
+    agentAttentionState,
     removedCloudModesCount,
     stylingMode,
     disableAutoStyleLoading,
@@ -157,17 +180,17 @@ export default function AiModelsSettingsPage() {
         findPersonalApiKey(state.settings.apiKeys, "deepgram"),
         findPersonalApiKey(state.settings.apiKeys, "groq"),
         countApiKeysNeedingAttention(state.settings.apiKeys),
-        selectedKeyNeedsAttention(
+        getSelectedKeyAttentionState(
           state.apiKeyById,
           state.settings.aiTranscription.mode,
           state.settings.aiTranscription.selectedApiKeyId,
         ),
-        selectedKeyNeedsAttention(
+        getSelectedKeyAttentionState(
           state.apiKeyById,
           state.settings.aiPostProcessing.mode,
           state.settings.aiPostProcessing.selectedApiKeyId,
         ),
-        selectedKeyNeedsAttention(
+        getSelectedKeyAttentionState(
           state.apiKeyById,
           state.settings.agentMode.mode,
           state.settings.agentMode.selectedApiKeyId,
@@ -226,12 +249,8 @@ export default function AiModelsSettingsPage() {
           }
           icon={<AudioLines size={22} strokeWidth={1.9} />}
           control={
-            transcriptionNeedsAttention ? (
-              <Chip
-                size="small"
-                color="warning"
-                label={<FormattedMessage defaultMessage="Re-enter key" />}
-              />
+            transcriptionAttentionState ? (
+              <SelectedKeyAttentionChip state={transcriptionAttentionState} />
             ) : undefined
           }
           onClick={() => openDialog("aiTranscriptionDialogOpen")}
@@ -259,12 +278,8 @@ export default function AiModelsSettingsPage() {
           }
           icon={<WandSparkles size={22} strokeWidth={1.9} />}
           control={
-            postProcessingNeedsAttention ? (
-              <Chip
-                size="small"
-                color="warning"
-                label={<FormattedMessage defaultMessage="Re-enter key" />}
-              />
+            postProcessingAttentionState ? (
+              <SelectedKeyAttentionChip state={postProcessingAttentionState} />
             ) : undefined
           }
           onClick={() => openDialog("aiPostProcessingDialogOpen")}
@@ -293,12 +308,8 @@ export default function AiModelsSettingsPage() {
           }
           icon={<Bot size={22} strokeWidth={1.9} />}
           control={
-            agentNeedsAttention ? (
-              <Chip
-                size="small"
-                color="warning"
-                label={<FormattedMessage defaultMessage="Re-enter key" />}
-              />
+            agentAttentionState ? (
+              <SelectedKeyAttentionChip state={agentAttentionState} />
             ) : (
               <Chip
                 size="small"

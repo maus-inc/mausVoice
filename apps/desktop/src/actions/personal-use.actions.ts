@@ -144,15 +144,20 @@ const applyPersonalGenerationDefaults = async (
 
 // Transcription prefers the personal Deepgram key (live streaming) over Groq
 // (batch). The resolver decides whether a change is allowed; null means leave
-// the user's selection untouched.
+// the user's selection untouched. Ownership IDs include unusable personal keys
+// (e.g. an imported Personal Groq key needing re-entry) so saving a usable
+// personal key still upgrades transcription away from the unusable one while
+// keeping unrelated user selections protected.
 const applyPersonalTranscriptionDefault = async (
   deepgramKeyId: string | null,
   groqKeyId: string | null,
+  ownedPersonalKeyIds: readonly (string | null | undefined)[] = [],
 ): Promise<void> => {
   const prefs = getAppState().userPrefs;
   const target = resolvePersonalTranscriptionTarget({
     deepgramKeyId,
     groqKeyId,
+    ownedPersonalKeyIds,
     currentMode: prefs?.transcriptionMode ?? null,
     currentApiKeyId: prefs?.transcriptionApiKeyId ?? null,
   });
@@ -176,7 +181,10 @@ export const savePersonalGroqApiKey = async (key: string): Promise<ApiKey> => {
   const usableDeepgramId = isApiKeyUsable(deepgramApiKey)
     ? (deepgramApiKey?.id ?? null)
     : null;
-  await applyPersonalTranscriptionDefault(usableDeepgramId, groqApiKey.id);
+  await applyPersonalTranscriptionDefault(usableDeepgramId, groqApiKey.id, [
+    deepgramApiKey?.id,
+    groqApiKey.id,
+  ]);
   return groqApiKey;
 };
 
@@ -188,7 +196,10 @@ export const savePersonalDeepgramApiKey = async (
   const usableGroqId = isApiKeyUsable(groqApiKey)
     ? (groqApiKey?.id ?? null)
     : null;
-  await applyPersonalTranscriptionDefault(deepgramApiKey.id, usableGroqId);
+  await applyPersonalTranscriptionDefault(deepgramApiKey.id, usableGroqId, [
+    deepgramApiKey.id,
+    groqApiKey?.id,
+  ]);
   return deepgramApiKey;
 };
 
@@ -217,6 +228,7 @@ export const configurePersonalDefaults = async (): Promise<void> => {
   await applyPersonalTranscriptionDefault(
     deepgramApiKey?.id ?? null,
     groqApiKey?.id ?? null,
+    [rawDeepgramApiKey?.id, rawGroqApiKey?.id],
   );
 
   if (groqApiKey) {

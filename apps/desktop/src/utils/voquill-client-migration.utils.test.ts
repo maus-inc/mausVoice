@@ -19,6 +19,7 @@ describe("voquill-client-migration.utils", () => {
         state: {
           local: {
             onboardingFlowVersion: 2,
+            onboardingResumePage: "micPerms",
             dismissedTipIds: ["tip-a", "tip-b"],
             disableAutoStyleLoading: true,
             assistantModeEnabled: true,
@@ -35,11 +36,31 @@ describe("voquill-client-migration.utils", () => {
       state: { local: Record<string, unknown> };
     };
     expect(parsed.state.local.onboardingFlowVersion).toBe(2);
+    expect(parsed.state.local.onboardingResumePage).toBe("micPerms");
     expect(parsed.state.local.dismissedTipIds).toEqual(["tip-a", "tip-b"]);
     expect(parsed.state.local.disableAutoStyleLoading).toBe(true);
     expect(parsed.state.local.assistantModeEnabled).toBe(true);
     expect(parsed.state.local.ephemeralSessionActive).toBe(false);
     expect(parsed.state.local).not.toHaveProperty("unknownEvilField");
+  });
+
+  it("drops invalid onboardingResumePage values so defaults apply", () => {
+    const sanitized = sanitizeLegacyPersistedLocalState(
+      JSON.stringify({
+        state: {
+          local: {
+            onboardingResumePage: "removedLegacyStep",
+          },
+        },
+        version: 0,
+      }),
+    );
+
+    expect(sanitized).not.toBeNull();
+    const parsed = JSON.parse(sanitized!) as {
+      state: { local: Record<string, unknown> };
+    };
+    expect(parsed.state.local).not.toHaveProperty("onboardingResumePage");
   });
 
   it("returns null for malformed JSON without throwing", () => {

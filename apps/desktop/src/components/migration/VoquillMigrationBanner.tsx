@@ -1,6 +1,7 @@
 import type { VoquillMigrationReport } from "@maus-inc/desktop-native-apis";
 import { AlertTriangle, CheckCircle2, Info, X } from "lucide-react";
 import {
+  Alert,
   Box,
   Button,
   IconButton,
@@ -8,6 +9,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { dismissVoquillMigration } from "../../actions/voquill-migration.actions";
@@ -113,7 +115,7 @@ const BannerBody = ({
           sx={{ color: "text.primary", fontWeight: 500 }}
         >
           <FormattedMessage
-            defaultMessage="{count, plural, one {# saved API key could not be unlocked from Voquill's older encryption format and needs to be re-entered.} other {# saved API keys could not be unlocked from Voquill's older encryption format and need to be re-entered.}}"
+            defaultMessage="{count, plural, one {# saved API provider needs attention before it can be used. Review it in AI Models settings.} other {# saved API providers need attention before they can be used. Review them in AI Models settings.}}"
             values={{ count: report.counts.providersNeedingAttention }}
           />
         </Typography>
@@ -136,11 +138,71 @@ const isBannerVisible = (
   report: VoquillMigrationReport | null,
 ): report is VoquillMigrationReport =>
   Boolean(
-    report &&
-    report.legacyDetected &&
+    report?.legacyDetected &&
     report.status !== "not_needed" &&
     report.dismissedAt === null,
   );
+
+const resolveBannerBorderColor = (
+  theme: {
+    vars?: {
+      palette?: {
+        error: { mainChannel: string };
+        warning: { mainChannel: string };
+      };
+    };
+  },
+  tone: BannerTone,
+): string => {
+  if (tone === "error") {
+    return `rgb(${theme.vars?.palette?.error.mainChannel} / 0.45)`;
+  }
+  if (tone === "warning") {
+    return `rgb(${theme.vars?.palette?.warning.mainChannel} / 0.45)`;
+  }
+  return "divider";
+};
+
+const BannerActions = ({
+  report,
+  needsFollowUp,
+  retrying,
+  dismissing,
+  onRetry,
+  onViewDetails,
+}: {
+  report: VoquillMigrationReport;
+  needsFollowUp: boolean;
+  retrying: boolean;
+  dismissing: boolean;
+  onRetry: () => void;
+  onViewDetails: () => void;
+}) => (
+  <Stack
+    direction="row"
+    spacing={1}
+    useFlexGap
+    sx={{
+      flexWrap: "wrap",
+      alignItems: "center",
+      pl: { xs: 0, sm: 3.75 },
+    }}
+  >
+    {needsFollowUp && <VoquillMigrationReviewKeysButton variant="contained" />}
+    {report.canRetry && (
+      <VoquillMigrationRetryButton
+        variant={needsFollowUp ? "outlined" : "contained"}
+        isPartial={report.status === "partial"}
+        retrying={retrying}
+        disabled={dismissing}
+        onRetry={onRetry}
+      />
+    )}
+    <Button size="small" variant="text" onClick={onViewDetails}>
+      <FormattedMessage defaultMessage="View details" />
+    </Button>
+  </Stack>
+);
 
 /**
  * One-time, dismissible Voquill-to-mausVoice migration summary card on Home.
@@ -155,11 +217,20 @@ export const VoquillMigrationBanner = () => {
   const report = useAppStore((state) => state.voquillMigration.report);
   const retrying = useAppStore((state) => state.voquillMigration.retrying);
   const dismissing = useAppStore((state) => state.voquillMigration.dismissing);
+  const [dismissFailed, setDismissFailed] = useState(false);
   const handleRetry = useVoquillMigrationRetry();
 
   if (!isBannerVisible(report)) {
     return null;
   }
+
+  const handleDismiss = async () => {
+    setDismissFailed(false);
+    const updated = await dismissVoquillMigration();
+    if (!updated) {
+      setDismissFailed(true);
+    }
+  };
 
   const needsFollowUp =
     report.counts.providersNeedingAttention > 0 ||
@@ -180,14 +251,9 @@ export const VoquillMigrationBanner = () => {
       data-testid="voquill-migration-banner"
       sx={(theme) => ({
         p: 2,
-        borderRadius: 2,
+        borderRadius: 1,
         bgcolor: "level1",
-        borderColor:
-          tone === "error"
-            ? `rgb(${theme.vars?.palette?.error.mainChannel} / 0.45)`
-            : tone === "warning"
-              ? `rgb(${theme.vars?.palette?.warning.mainChannel} / 0.45)`
-              : "divider",
+        borderColor: resolveBannerBorderColor(theme, tone),
       })}
     >
       <Stack spacing={1.25}>
@@ -208,7 +274,7 @@ export const VoquillMigrationBanner = () => {
               sx={{
                 color: `${tone}.main`,
                 display: "inline-flex",
-                mt: "2px",
+                mt: 0.25,
                 flexShrink: 0,
               }}
             >
@@ -233,7 +299,7 @@ export const VoquillMigrationBanner = () => {
 
           <IconButton
             size="small"
-            onClick={() => void dismissVoquillMigration()}
+            onClick={() => void handleDismiss()}
             disabled={dismissing || retrying}
             aria-label={intl.formatMessage({
               defaultMessage: "Dismiss Voquill migration notice",
@@ -244,40 +310,28 @@ export const VoquillMigrationBanner = () => {
           </IconButton>
         </Stack>
 
-        <Stack
-          direction="row"
-          spacing={1}
-          useFlexGap
-          sx={{
-            flexWrap: "wrap",
-            alignItems: "center",
-            pl: { xs: 0, sm: 3.75 },
-          }}
-        >
-          {needsFollowUp && (
-            <VoquillMigrationReviewKeysButton variant="contained" />
-          )}
-          {report.canRetry && (
-            <VoquillMigrationRetryButton
-              variant={needsFollowUp ? "outlined" : "contained"}
-              isPartial={report.status === "partial"}
-              retrying={retrying}
-              disabled={dismissing}
-              onRetry={() => void handleRetry()}
-            />
-          )}
-          <Button
-            size="small"
-            variant="text"
-            onClick={() =>
-              navigate(
-                `${settingsPagePath("privacy-data")}#${settingAnchorId("voquill_migration")}`,
-              )
-            }
+        {dismissFailed && (
+          <Alert
+            severity="error"
+            role="alert"
+            sx={{ py: 0.5, boxShadow: "none" }}
           >
-            <FormattedMessage defaultMessage="View details" />
-          </Button>
-        </Stack>
+            <FormattedMessage defaultMessage="Could not dismiss this notice right now. Try again." />
+          </Alert>
+        )}
+
+        <BannerActions
+          report={report}
+          needsFollowUp={needsFollowUp}
+          retrying={retrying}
+          dismissing={dismissing}
+          onRetry={() => void handleRetry()}
+          onViewDetails={() =>
+            navigate(
+              `${settingsPagePath("privacy-data")}#${settingAnchorId("voquill_migration")}`,
+            )
+          }
+        />
       </Stack>
     </Paper>
   );

@@ -14,14 +14,16 @@ export const fetchVoquillMigrationStatus =
     return result.data;
   };
 
-export const dismissVoquillMigrationNotice =
-  async (): Promise<VoquillMigrationReport> => {
+export const dismissVoquillMigrationNotice = (
+  lease?: LocalDataWriteLease,
+): Promise<VoquillMigrationReport> =>
+  withLocalDataWrite(async () => {
     const result = await commands.voquillMigrationDismiss();
     if (result.status === "error") {
       throw new Error(result.error);
     }
     return result.data;
-  };
+  }, lease);
 
 export const retryVoquillMigration = (
   lease?: LocalDataWriteLease,

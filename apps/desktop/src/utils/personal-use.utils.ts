@@ -93,6 +93,7 @@ export const isPersonalUseEnabled = (): boolean => isPersonalUseProEnabled();
 type PersonalTranscriptionTargetArgs = {
   deepgramKeyId: string | null;
   groqKeyId: string | null;
+  ownedPersonalKeyIds?: readonly (string | null | undefined)[];
   currentMode: TranscriptionMode | null;
   currentApiKeyId: string | null;
 };
@@ -106,6 +107,7 @@ type PersonalTranscriptionTargetArgs = {
 export const resolvePersonalTranscriptionTarget = ({
   deepgramKeyId,
   groqKeyId,
+  ownedPersonalKeyIds,
   currentMode,
   currentApiKeyId,
 }: PersonalTranscriptionTargetArgs): {
@@ -122,7 +124,8 @@ export const resolvePersonalTranscriptionTarget = ({
     PERSONAL_DEEPGRAM_API_KEY_ID,
     groqKeyId,
     deepgramKeyId,
-  ].filter((id): id is string => id !== null);
+    ...(ownedPersonalKeyIds ?? []),
+  ].filter((id): id is string => typeof id === "string" && id.length > 0);
 
   const isOwnedOrUnset =
     currentMode === null ||

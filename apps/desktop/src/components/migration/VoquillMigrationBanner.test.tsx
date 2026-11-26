@@ -156,7 +156,7 @@ describe("VoquillMigrationBanner", () => {
     ).toBeNull();
   });
 
-  it("shows action-needed state, links directly to AI Models and Privacy & Data, and dismisses", () => {
+  it("shows action-needed state, links directly to AI Models and Privacy & Data, and surfaces dismiss failure", async () => {
     setAppState((s) => ({
       ...s,
       voquillMigration: {
@@ -186,7 +186,7 @@ describe("VoquillMigrationBanner", () => {
     );
     expect(container.textContent).toContain("15 transcriptions");
     expect(container.textContent).toContain(
-      "2 saved API keys could not be unlocked",
+      "2 saved API providers need attention before they can be used.",
     );
     expect(container.textContent).toContain(
       "Your original Voquill files were left untouched.",
@@ -215,8 +215,14 @@ describe("VoquillMigrationBanner", () => {
       'button[aria-label="Dismiss Voquill migration notice"]',
     ) as HTMLButtonElement | null;
     expect(dismissBtn).not.toBeNull();
-    act(() => dismissBtn!.click());
+    await act(async () => {
+      dismissBtn!.click();
+      await Promise.resolve();
+    });
     expect(dismissMock).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain(
+      "Could not dismiss this notice right now. Try again.",
+    );
   });
 
   it("shows Retry import only when canRetry is true and triggers retry", async () => {

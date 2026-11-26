@@ -391,7 +391,7 @@ describe("ApiKeyList", () => {
 
     expect(document.body.textContent).toContain("Re-enter key");
     expect(document.body.textContent).toContain(
-      "Imported from Voquill's older encryption format. Re-enter this key to unlock it.",
+      "This key was imported from Voquill's older encryption format and could not be unlocked. Enter your key again to re-encrypt it with mausVoice.",
     );
     // Unusable migrated key must not auto-fetch remote model lists.
     expect(mocks.getTranscriptionModels).not.toHaveBeenCalled();
@@ -400,5 +400,45 @@ describe("ApiKeyList", () => {
       (button) => button.textContent === "Test",
     ) as HTMLButtonElement | undefined;
     expect(testButton?.disabled).toBe(true);
+  });
+
+  it("lets optional-key providers in needs_reentry clear the unreadable secret via Use without key", async () => {
+    const legacyOllama: SettingsApiKey = {
+      id: "key-legacy-ollama",
+      name: "Local Ollama",
+      provider: "ollama",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      keyFull: null,
+      baseUrl: "http://127.0.0.1:11434",
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+    };
+    seedApiKeys([legacyOllama]);
+    await renderList("post-processing", "key-legacy-ollama");
+
+    const editButton = document
+      .querySelector("svg.lucide-pencil")
+      ?.closest("button") as HTMLButtonElement | null;
+    expect(editButton).not.toBeNull();
+    await act(async () => {
+      editButton?.click();
+      await Promise.resolve();
+    });
+
+    const keylessButton = [
+      ...document.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.trim() === "Use without key");
+    expect(keylessButton).toBeDefined();
+
+    await act(async () => {
+      keylessButton?.click();
+      await Promise.resolve();
+    });
+    expect(mocks.updateApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "key-legacy-ollama",
+        key: "",
+      }),
+    );
   });
 });

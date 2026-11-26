@@ -6,6 +6,23 @@ import {
 } from "../utils/local-data-write-gate";
 import { getLogger } from "../utils/log.utils";
 
+let latestReportRequestSeq = 0;
+
+/**
+ * Claims the next monotonic sequence number for any operation that writes
+ * `voquillMigration.report` (load, silent refresh, dismiss, or retry).
+ *
+ * Shared from this leaf module so every writer discards out-of-order responses
+ * started before a newer request without introducing a circular dependency.
+ */
+export const nextVoquillMigrationRequestSeq = (): number => {
+  latestReportRequestSeq += 1;
+  return latestReportRequestSeq;
+};
+
+export const isLatestVoquillMigrationRequestSeq = (seq: number): boolean =>
+  seq === latestReportRequestSeq;
+
 /**
  * Refreshes the migration report silently when a legacy Voquill profile was
  * detected, so re-entering or deleting an unreadable API key immediately clears
@@ -23,11 +40,13 @@ export const refreshVoquillMigrationStatusIfActive =
       return;
     }
     const clearGeneration = getLocalDataClearGeneration();
+    const requestSeq = nextVoquillMigrationRequestSeq();
     try {
       const report = await fetchVoquillMigrationStatus();
       if (
         isLocalDataClearRequested() ||
-        getLocalDataClearGeneration() !== clearGeneration
+        getLocalDataClearGeneration() !== clearGeneration ||
+        !isLatestVoquillMigrationRequestSeq(requestSeq)
       ) {
         return;
       }

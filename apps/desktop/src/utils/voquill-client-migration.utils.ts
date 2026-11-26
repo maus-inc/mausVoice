@@ -1,4 +1,9 @@
 import { INITIAL_LOCAL_STATE, type LocalState } from "../state/local.state";
+import type { OnboardingPageKey } from "../state/onboarding.state";
+import {
+  ASSISTANT_MODE_ENABLED_KEY,
+  POWER_MODE_ENABLED_KEY,
+} from "./assistant-mode.utils";
 import {
   LEGACY_LOCAL_STATE_STORAGE_KEY,
   LEGACY_THEME_MODE_STORAGE_KEY,
@@ -9,6 +14,27 @@ import {
 export const LEGACY_ASSISTANT_MODE_ENABLED_KEY =
   "voquill:assistant-mode-enabled";
 export const LEGACY_POWER_MODE_ENABLED_KEY = "voquill:power-mode-enabled";
+export const LEGACY_MODE_FLAGS_MIGRATED_KEY =
+  "mausvoice:voquill-mode-flags-migrated";
+
+export type LegacyModeFlagField = "assistantModeEnabled" | "powerModeEnabled";
+
+const LEGACY_MODE_FLAG_SPECS: ReadonlyArray<{
+  field: LegacyModeFlagField;
+  currentKey: string;
+  legacyKey: string;
+}> = [
+  {
+    field: "assistantModeEnabled",
+    currentKey: ASSISTANT_MODE_ENABLED_KEY,
+    legacyKey: LEGACY_ASSISTANT_MODE_ENABLED_KEY,
+  },
+  {
+    field: "powerModeEnabled",
+    currentKey: POWER_MODE_ENABLED_KEY,
+    legacyKey: LEGACY_POWER_MODE_ENABLED_KEY,
+  },
+];
 
 const LEGACY_CHECKLIST_STORAGE_MAPPINGS: ReadonlyArray<{
   legacyKey: string;
@@ -29,6 +55,27 @@ const LEGACY_CHECKLIST_STORAGE_MAPPINGS: ReadonlyArray<{
 ];
 
 const VALID_THEME_MODES = new Set(["light", "dark", "system"]);
+const VALID_ONBOARDING_RESUME_PAGES = new Set<OnboardingPageKey>([
+  "signIn",
+  "personalCredentials",
+  "chooseTranscription",
+  "chooseLlm",
+  "userDetails",
+  "referralSource",
+  "micPerms",
+  "a11yPerms",
+  "keybindings",
+  "micCheck",
+  "unlockedPro",
+  "tutorial",
+]);
+
+const isOnboardingResumePageOrNull = (
+  value: unknown,
+): value is OnboardingPageKey | null =>
+  value === null ||
+  (typeof value === "string" &&
+    VALID_ONBOARDING_RESUME_PAGES.has(value as OnboardingPageKey));
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -99,6 +146,7 @@ const LOCAL_STATE_FIELD_SPECS: readonly LocalFieldSpec[] = [
     validate: isStringArray,
     clone: (v) => [...(v as string[])],
   },
+  { key: "onboardingResumePage", validate: isOnboardingResumePageOrNull },
   { key: "onboardingNameDraft", validate: (v) => typeof v === "string" },
   { key: "onboardingNameDraftUserId", validate: isStringOrNull },
   { key: "onboardingSessionUserId", validate: isStringOrNull },
@@ -245,6 +293,105 @@ const transformThemeMode = (raw: string): string | null =>
   VALID_THEME_MODES.has(raw) ? raw : null;
 
 /**
+ * Returns true when `mausvoice-local-state` already persists an explicit
+ * boolean value (`true` or `false`) for `field`, distinguishing an explicit
+ * `false` from an absent/unmigrated default.
+ */
+export const hasPersistedLocalBooleanField = (
+  storage: Pick<Storage, "getItem">,
+  field: LegacyModeFlagField,
+  stateKey: string = LOCAL_STATE_STORAGE_KEY,
+): boolean => {
+  try {
+    const raw = storage.getItem(stateKey);
+    if (raw === null) return false;
+    const parsed = parseJsonObject(raw);
+    if (!parsed) return false;
+    const local = extractCandidateLocal(parsed);
+    return local !== null && typeof local[field] === "boolean";
+  } catch {
+    return false;
+  }
+};
+
+const collectAbsentLegacyModeUpdates = (
+  storage: StorageAccess,
+  existingLocal: Record<string, unknown> | null,
+): Partial<Record<LegacyModeFlagField, true>> => {
+  const updates: Partial<Record<LegacyModeFlagField, true>> = {};
+  for (const spec of LEGACY_MODE_FLAG_SPECS) {
+    const hasCurrentFlag = storage.getItem(spec.currentKey) !== null;
+    const hasPersistedBool =
+      existingLocal !== null && typeof existingLocal[spec.field] === "boolean";
+    if (hasCurrentFlag || hasPersistedBool) {
+      continue;
+    }
+    if (readValidatedLegacyBooleanFlag(storage, spec.legacyKey) === true) {
+      updates[spec.field] = true;
+    }
+  }
+  return updates;
+};
+
+const mergePersistedLocalState = (
+  parsedState: Record<string, unknown> | null,
+  existingLocal: Record<string, unknown> | null,
+  updates: Partial<Record<LegacyModeFlagField, true>>,
+): Record<string, unknown> => {
+  const baseState =
+    parsedState && isPlainObject(parsedState.state)
+      ? { ...parsedState.state }
+      : {};
+  const version =
+    parsedState &&
+    typeof parsedState.version === "number" &&
+    Number.isInteger(parsedState.version)
+      ? parsedState.version
+      : 0;
+  return {
+    ...parsedState,
+    state: {
+      ...baseState,
+      local: { ...existingLocal, ...updates },
+    },
+    version,
+  };
+};
+
+const hydrateAbsentLegacyModeFlags = (
+  storage: StorageAccess,
+  write: (fn: () => void) => void,
+  currentStateKey: string,
+): void => {
+  if (
+    currentStateKey !== LOCAL_STATE_STORAGE_KEY ||
+    storage.getItem(LEGACY_MODE_FLAGS_MIGRATED_KEY) !== null
+  ) {
+    return;
+  }
+
+  const rawState = storage.getItem(currentStateKey);
+  const parsedState = rawState !== null ? parseJsonObject(rawState) : null;
+  const existingLocal = parsedState ? extractCandidateLocal(parsedState) : null;
+  const updates = collectAbsentLegacyModeUpdates(storage, existingLocal);
+
+  if (Object.keys(updates).length > 0) {
+    const nextEnvelope = mergePersistedLocalState(
+      parsedState,
+      existingLocal,
+      updates,
+    );
+    write(() => {
+      storage.setItem(currentStateKey, JSON.stringify(nextEnvelope));
+    });
+  }
+
+  write(() => {
+    storage.setItem(LEGACY_MODE_FLAGS_MIGRATED_KEY, "1");
+  });
+};
+
+/**
  * Non-destructively and idempotently migrates legacy Voquill client-side
  * `localStorage` keys into their mausVoice equivalents.
  *
@@ -273,6 +420,15 @@ export const migrateLegacyVoquillClientStorage = (
     transform: sanitizeLegacyPersistedLocalState,
     result,
   });
+
+  // Hydrate absent legacy standalone mode flags (`voquill:*-mode-enabled`) at
+  // most once before Zustand hydrates, without ever overriding an explicit
+  // `false` already stored in `mausvoice-local-state`.
+  try {
+    hydrateAbsentLegacyModeFlags(storage, write, currentStateKey);
+  } catch {
+    // Non-fatal: MigratorSideEffects still guards itself on mount.
+  }
 
   for (const { legacyKey, currentKey } of LEGACY_CHECKLIST_STORAGE_MAPPINGS) {
     migrateSingleStorageKey({

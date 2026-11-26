@@ -299,9 +299,23 @@ export const getSelectedTranscriptionProvider = (
     : null;
 };
 
+export const API_KEY_WARNING_CODES = {
+  transcriptionNeedsReentry: "api_key_transcription_needs_reentry",
+  transcriptionIncomplete: "api_key_transcription_incomplete",
+  postProcessingNeedsReentry: "api_key_post_processing_needs_reentry",
+  postProcessingIncomplete: "api_key_post_processing_incomplete",
+  agentNeedsReentry: "api_key_agent_needs_reentry",
+  agentIncomplete: "api_key_agent_incomplete",
+} as const;
+
+export type ApiKeyWarningCode =
+  (typeof API_KEY_WARNING_CODES)[keyof typeof API_KEY_WARNING_CODES];
+
+type GenerativeWarningContext = "post-processing" | "agent mode";
+
 const getExplicitUnusableApiKeyWarning = (
   selectedApiKey: AppState["apiKeyById"][string],
-): string | null => {
+): ApiKeyWarningCode | null => {
   if (
     selectedApiKey.credentialStatus === undefined ||
     isApiKeyUsable(selectedApiKey)
@@ -309,20 +323,26 @@ const getExplicitUnusableApiKeyWarning = (
     return null;
   }
   return apiKeyNeedsReentry(selectedApiKey)
-    ? "Selected API key must be re-entered in AI Models settings before it can be used."
-    : "Selected API key configuration is incomplete.";
+    ? API_KEY_WARNING_CODES.transcriptionNeedsReentry
+    : API_KEY_WARNING_CODES.transcriptionIncomplete;
 };
 
 const getGenerativeUnusableKeyWarning = (
   selectedApiKey: AppState["apiKeyById"][string] | undefined,
-  context: string,
-): string | null => {
+  context: GenerativeWarningContext,
+): ApiKeyWarningCode | null => {
   if (!selectedApiKey || isApiKeyUsable(selectedApiKey)) {
     return null;
   }
-  return apiKeyNeedsReentry(selectedApiKey)
-    ? `Selected API key for ${context} must be re-entered in AI Models settings before it can be used.`
-    : `Selected API key configuration for ${context} is incomplete.`;
+  const needsReentry = apiKeyNeedsReentry(selectedApiKey);
+  if (context === "agent mode") {
+    return needsReentry
+      ? API_KEY_WARNING_CODES.agentNeedsReentry
+      : API_KEY_WARNING_CODES.agentIncomplete;
+  }
+  return needsReentry
+    ? API_KEY_WARNING_CODES.postProcessingNeedsReentry
+    : API_KEY_WARNING_CODES.postProcessingIncomplete;
 };
 
 const canDispatchApiTranscriptionKey = (
@@ -425,7 +445,7 @@ const getGenPrefsInternal = ({
 }: {
   state: AppState;
   config: GenerativeConfigInput;
-  context: string;
+  context: GenerativeWarningContext;
 }): GenerativePrefs => {
   const mode = resolveMode(config.mode, "none");
   const apiKey = getRec(state.apiKeyById, config.selectedApiKeyId)?.keyFull;

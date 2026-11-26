@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  defineMessages,
   FormattedMessage,
   type IntlShape,
   type MessageDescriptor,
@@ -13,6 +14,61 @@ import {
   getUnusableResponseType,
   isUnusableResponseWarning,
 } from "../../actions/transcriptions.actions";
+import {
+  API_KEY_WARNING_CODES,
+  type ApiKeyWarningCode,
+} from "../../utils/user.utils";
+
+const API_KEY_WARNING_MESSAGES = defineMessages({
+  transcriptionNeedsReentry: {
+    defaultMessage:
+      "Transcription API key must be re-entered in AI Models settings before it can be used.",
+  },
+  transcriptionIncomplete: {
+    defaultMessage:
+      "Transcription API key configuration is incomplete. Review it in AI Models settings.",
+  },
+  postProcessingNeedsReentry: {
+    defaultMessage:
+      "Post-processing API key must be re-entered in AI Models settings before it can be used.",
+  },
+  postProcessingIncomplete: {
+    defaultMessage:
+      "Post-processing API key configuration is incomplete. Review it in AI Models settings.",
+  },
+  agentNeedsReentry: {
+    defaultMessage:
+      "Assistant API key must be re-entered in AI Models settings before it can be used.",
+  },
+  agentIncomplete: {
+    defaultMessage:
+      "Assistant API key configuration is incomplete. Review it in AI Models settings.",
+  },
+});
+
+const API_KEY_WARNING_BY_CODE: Record<ApiKeyWarningCode, MessageDescriptor> = {
+  [API_KEY_WARNING_CODES.transcriptionNeedsReentry]:
+    API_KEY_WARNING_MESSAGES.transcriptionNeedsReentry,
+  [API_KEY_WARNING_CODES.transcriptionIncomplete]:
+    API_KEY_WARNING_MESSAGES.transcriptionIncomplete,
+  [API_KEY_WARNING_CODES.postProcessingNeedsReentry]:
+    API_KEY_WARNING_MESSAGES.postProcessingNeedsReentry,
+  [API_KEY_WARNING_CODES.postProcessingIncomplete]:
+    API_KEY_WARNING_MESSAGES.postProcessingIncomplete,
+  [API_KEY_WARNING_CODES.agentNeedsReentry]:
+    API_KEY_WARNING_MESSAGES.agentNeedsReentry,
+  [API_KEY_WARNING_CODES.agentIncomplete]:
+    API_KEY_WARNING_MESSAGES.agentIncomplete,
+};
+
+const resolveApiKeyWarning = (
+  warning: string,
+  intl: IntlShape,
+): string | null => {
+  const descriptor =
+    API_KEY_WARNING_BY_CODE[warning as ApiKeyWarningCode] ?? null;
+  return descriptor ? intl.formatMessage(descriptor) : null;
+};
 
 type WarningRow = {
   transcript: string;
@@ -116,6 +172,10 @@ export const buildTranscriptionWarnings = (
     .map((warning) => warning.trim())
     .filter((warning) => warning.length > 0)
     .map((warning) => {
+      const apiKeyWarning = resolveApiKeyWarning(warning, intl);
+      if (apiKeyWarning) {
+        return apiKeyWarning;
+      }
       if (isPostProcessErrorCategory(warning)) {
         return resolveCategoryWarning(
           warning,

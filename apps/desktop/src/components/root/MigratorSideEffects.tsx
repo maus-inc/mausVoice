@@ -6,6 +6,7 @@ import {
 } from "../../utils/assistant-mode.utils";
 import {
   beginLocalDataWrite,
+  type LocalDataWriteLease,
   withLocalDataWriteSync,
 } from "../../utils/local-data-write-gate";
 import {
@@ -14,15 +15,53 @@ import {
 } from "../../utils/local-storage.utils";
 import {
   LEGACY_ASSISTANT_MODE_ENABLED_KEY,
+  LEGACY_MODE_FLAGS_MIGRATED_KEY,
   LEGACY_POWER_MODE_ENABLED_KEY,
+  hasPersistedLocalBooleanField,
   readValidatedLegacyBooleanFlag,
+  type LegacyModeFlagField,
 } from "../../utils/voquill-client-migration.utils";
 
 type MigratedPreference = {
+  field: LegacyModeFlagField;
   key: string;
   legacyKey: string;
   getCurrent: () => boolean;
   update: (value: boolean) => void;
+};
+
+const migrateSinglePreference = (
+  storage: Storage,
+  lease: LocalDataWriteLease,
+  migration: MigratedPreference,
+  allowLegacyHydration: boolean,
+): void => {
+  if (storage.getItem(migration.key) !== null) {
+    migration.update(getLocalStorageBool(migration.key));
+    withLocalDataWriteSync(() => {
+      storage.removeItem(migration.key);
+    }, lease);
+    return;
+  }
+
+  // Non-destructively hydrate absent legacy Voquill boolean flags at most once
+  // so an explicit `false` preference (persisted before or after migration) is
+  // never overwritten on launch.
+  if (
+    !allowLegacyHydration ||
+    migration.getCurrent() ||
+    hasPersistedLocalBooleanField(storage, migration.field)
+  ) {
+    return;
+  }
+
+  const legacyValue = readValidatedLegacyBooleanFlag(
+    storage,
+    migration.legacyKey,
+  );
+  if (legacyValue === true) {
+    migration.update(true);
+  }
 };
 
 export const MigratorSideEffects = () => {
@@ -38,6 +77,7 @@ export const MigratorSideEffects = () => {
 
     const migrations: MigratedPreference[] = [
       {
+        field: "assistantModeEnabled",
         key: ASSISTANT_MODE_ENABLED_KEY,
         legacyKey: LEGACY_ASSISTANT_MODE_ENABLED_KEY,
         getCurrent: () => getAppState().local.assistantModeEnabled,
@@ -48,6 +88,7 @@ export const MigratorSideEffects = () => {
         },
       },
       {
+        field: "powerModeEnabled",
         key: POWER_MODE_ENABLED_KEY,
         legacyKey: LEGACY_POWER_MODE_ENABLED_KEY,
         getCurrent: () => getAppState().local.powerModeEnabled,
@@ -60,34 +101,29 @@ export const MigratorSideEffects = () => {
     ];
 
     try {
+      const allowLegacyHydration =
+        storage.getItem(LEGACY_MODE_FLAGS_MIGRATED_KEY) === null;
+
       for (const migration of migrations) {
         try {
-          if (storage.getItem(migration.key) !== null) {
-            migration.update(getLocalStorageBool(migration.key));
-            withLocalDataWriteSync(() => {
-              storage.removeItem(migration.key);
-            }, releaseWrite.lease);
-            continue;
-          }
-
-          // Non-destructively hydrate legacy Voquill boolean flags only when
-          // the current flag is still at its default false and no mausVoice
-          // key superseded it.
-          if (!migration.getCurrent()) {
-            const legacyValue = readValidatedLegacyBooleanFlag(
-              storage,
-              migration.legacyKey,
-            );
-            if (legacyValue === true) {
-              migration.update(true);
-            }
-          }
+          migrateSinglePreference(
+            storage,
+            releaseWrite.lease,
+            migration,
+            allowLegacyHydration,
+          );
         } catch (error) {
           console.error(
             `Unable to migrate localStorage key "${migration.key}":`,
             error,
           );
         }
+      }
+
+      if (allowLegacyHydration) {
+        withLocalDataWriteSync(() => {
+          storage.setItem(LEGACY_MODE_FLAGS_MIGRATED_KEY, "1");
+        }, releaseWrite.lease);
       }
     } finally {
       releaseWrite();

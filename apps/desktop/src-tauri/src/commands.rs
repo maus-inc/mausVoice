@@ -3316,19 +3316,43 @@ pub async fn api_key_update(
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<ApiKeyView, String> {
     let _write_guard = acquire_local_data_write_guard().await?;
-    let (salt, key_hash, key_ciphertext, key_suffix) =
-        match request.key.as_deref().filter(|k| !k.is_empty()) {
-            Some(raw_key) => {
-                let protected = protect_api_key(raw_key);
+    let (salt, key_hash, key_ciphertext, key_suffix) = match request.key.as_deref() {
+        Some(raw_key) if !raw_key.is_empty() => {
+            let protected = protect_api_key(raw_key);
+            (
+                Some(protected.salt_b64),
+                Some(protected.hash_b64),
+                Some(protected.ciphertext_b64),
+                protected.key_suffix,
+            )
+        }
+        Some("") => {
+            // Allow an explicit keyless reset for local/self-hosted providers
+            // that operate without an API key (e.g. an imported Ollama row
+            // carrying legacy Voquill ciphertext), while ignoring accidental
+            // empty strings for providers that require a key.
+            let existing = crate::db::api_key_queries::fetch_api_keys(database.pool())
+                .await
+                .map_err(|err| err.to_string())?
+                .into_iter()
+                .find(|k| k.id == request.id);
+            if existing
+                .as_ref()
+                .is_some_and(|k| crate::system::crypto::provider_allows_empty_key(&k.provider))
+            {
+                let protected = protect_api_key("");
                 (
                     Some(protected.salt_b64),
                     Some(protected.hash_b64),
                     Some(protected.ciphertext_b64),
-                    protected.key_suffix,
+                    None,
                 )
+            } else {
+                (None, None, None, None)
             }
-            None => (None, None, None, None),
-        };
+        }
+        _ => (None, None, None, None),
+    };
 
     crate::db::api_key_queries::update_api_key(
         database.pool(),
@@ -3358,24 +3382,49 @@ pub async fn api_key_update(
 #[specta::specta]
 pub async fn voquill_migration_status(
     app: AppHandle,
-    database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
     let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
         .map_err(|err| err.to_string())?;
-    let pool = database.pool();
-    Ok(crate::system::voquill_migration::refresh_migration_report(dirs, pool).await)
+    let db = app
+        .state::<crate::state::OptionKeyDatabase>()
+        .inner()
+        .clone();
+    let runtime_handle = tokio::runtime::Handle::current();
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime_handle.block_on(async move {
+            let pool = crate::system::voquill_migration::ensure_usable_pool(&dirs, &db)
+                .await
+                .unwrap_or_else(|_| db.pool());
+            crate::system::voquill_migration::refresh_migration_report(dirs, pool).await
+        })
+    })
+    .await
+    .map_err(|err| format!("Migration status task failed: {err}"))
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn voquill_migration_dismiss(
     app: AppHandle,
-    database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
+    let _write_guard = acquire_local_data_write_guard().await?;
     let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
         .map_err(|err| err.to_string())?;
-    let pool = database.pool();
-    crate::system::voquill_migration::dismiss_migration_notice(dirs, pool).await
+    let db = app
+        .state::<crate::state::OptionKeyDatabase>()
+        .inner()
+        .clone();
+    let runtime_handle = tokio::runtime::Handle::current();
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime_handle.block_on(async move {
+            let pool = crate::system::voquill_migration::ensure_usable_pool(&dirs, &db)
+                .await
+                .unwrap_or_else(|_| db.pool());
+            crate::system::voquill_migration::dismiss_migration_notice(dirs, pool).await
+        })
+    })
+    .await
+    .map_err(|err| format!("Migration dismiss task failed: {err}"))?
 }
 
 #[tauri::command]
@@ -3628,8 +3677,8 @@ pub async fn clear_local_data(
         format!("Database cleared, but legacy database cleanup failed: {error}")
     })?;
 
-    crate::system::voquill_migration::clear_migration_artifacts(&config_dir).map_err(|error| {
-        log::error!("Failed to delete Voquill migration metadata during clear: {error}");
+    crate::system::voquill_migration::record_migration_cleared(&config_dir).map_err(|error| {
+        log::error!("Failed to record Voquill migration reset state during clear: {error}");
         format!("Database cleared, but migration state cleanup failed: {error}")
     })?;
 

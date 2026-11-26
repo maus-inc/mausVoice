@@ -49,8 +49,10 @@ export const RootSideEffects = () => {
       loadTools(),
     ];
     if (isMainWindow) {
-      loaders.push(migratePreferredMicrophoneToPreferences());
-      loaders.push(loadVoquillMigrationStatus());
+      loaders.push(
+        migratePreferredMicrophoneToPreferences(),
+        loadVoquillMigrationStatus(),
+      );
     }
     await Promise.allSettled(loaders);
     getLogger().info("Initial data load complete");

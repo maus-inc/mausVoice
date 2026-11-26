@@ -307,4 +307,41 @@ describe("PersonalApiKeyDialog", () => {
       de.could_not_verify_this_key_check_the_key_and_try_again,
     );
   });
+
+  it("allows closing via Cancel while a key test is still pending", async () => {
+    let resolveTest!: (ok: boolean) => void;
+    mocks.testGroq.mockReset().mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveTest = resolve;
+        }),
+    );
+
+    render("groq");
+    type("gsk_slow_key_1234");
+
+    const testButton = Array.from(
+      dialog()?.querySelectorAll("button") ?? [],
+    ).find((button) => button.textContent?.includes(de.test_key)) as
+      HTMLButtonElement | undefined;
+    act(() => {
+      testButton?.click();
+    });
+
+    const cancelButton = Array.from(
+      dialog()?.querySelectorAll("button") ?? [],
+    ).find((button) => button.textContent?.trim() === de.cancel) as
+      HTMLButtonElement | undefined;
+    expect(cancelButton?.disabled).toBe(false);
+
+    act(() => {
+      cancelButton?.click();
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    resolveTest(true);
+    await act(async () => {
+      await Promise.resolve();
+    });
+  });
 });
