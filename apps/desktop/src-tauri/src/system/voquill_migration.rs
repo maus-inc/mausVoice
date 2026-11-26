@@ -978,6 +978,7 @@ struct AssetCopyContext<'a> {
     config_dir: &'a Path,
     category: AssetCategory,
     progress: &'a mut AssetMigrationProgress,
+    seen_in_pass: &'a mut HashSet<String>,
 }
 
 fn ensure_destination_ancestors_no_symlink(dst_root: &Path, dst: &Path) -> io::Result<()> {
@@ -1095,6 +1096,9 @@ fn copy_regular_asset_file(
     outcome: &mut AssetCopyOutcome,
 ) {
     let rel_key = relative_asset_key(ctx.dst_root, dst_path);
+    if !ctx.seen_in_pass.insert(rel_key.clone()) {
+        return;
+    }
     let was_already_recorded = ctx.category.contains(ctx.progress, &rel_key);
     let mut recorded_for_publish = false;
     let copy_result =
@@ -1234,12 +1238,14 @@ fn run_asset_category(
             return outcome;
         }
     };
+    let mut seen_in_pass = HashSet::new();
     let mut ctx = AssetCopyContext {
         dst_root,
         temp_dir: &temp_dir,
         config_dir: &dirs.current_config_dir,
         category,
         progress,
+        seen_in_pass: &mut seen_in_pass,
     };
     for src_dir in sources {
         copy_directory_tree_non_destructive(
@@ -1491,13 +1497,22 @@ fn rebuild_action_items(report: &mut VoquillMigrationReport, attention_providers
     report.action_items = actions;
 }
 
+const PRE_RETRY_RESTORE_ORDER: [&str; 4] = ["-wal", "-shm", "-journal", ""];
+
+fn has_any_pre_retry_backup(current_db: &Path) -> bool {
+    PRE_RETRY_RESTORE_ORDER.iter().any(|suffix| {
+        let bak =
+            current_db.with_file_name(format!("{DB_FILENAME}{suffix}{PRE_RETRY_BACKUP_SUFFIX}"));
+        fs::symlink_metadata(&bak).is_ok()
+    })
+}
+
 fn reconcile_orphaned_pre_retry_backup(
     dirs: &MigrationDirs,
     manifest: Option<&VoquillMigrationReport>,
 ) -> Result<(), String> {
     let current_db = dirs.current_db_path();
-    let main_backup = current_db.with_file_name(format!("{DB_FILENAME}{PRE_RETRY_BACKUP_SUFFIX}"));
-    if fs::symlink_metadata(&main_backup).is_err() {
+    if !has_any_pre_retry_backup(&current_db) {
         return Ok(());
     }
 
@@ -1509,9 +1524,23 @@ fn reconcile_orphaned_pre_retry_backup(
         return Ok(());
     }
 
+    let main_backup = current_db.with_file_name(format!("{DB_FILENAME}{PRE_RETRY_BACKUP_SUFFIX}"));
+    let has_main_backup = fs::symlink_metadata(&main_backup).is_ok();
     if fs::symlink_metadata(&current_db).is_ok() {
-        // Never overwrite an existing `mausvoice.db` when a pre-retry backup is
-        // still on disk: either `current_db` is our already-promoted DB waiting
+        if !has_main_backup {
+            // Main DB was restored or present while sidecar `.pre-retry.bak`
+            // files still remain un-restored: restore those sidecars before
+            // allowing SQLite to open the DB without them.
+            restore_rollback_backup(&current_db, &["-wal", "-shm", "-journal"]).map_err(|err| {
+                format!(
+                    "Could not restore pre-retry database sidecar backup for {}: {err}",
+                    current_db.display()
+                )
+            })?;
+            return Ok(());
+        }
+        // Never overwrite an existing `mausvoice.db` when a full pre-retry backup
+        // is still on disk: either `current_db` is our already-promoted DB waiting
         // for startup marker recovery (which will remove the backup after
         // verification + manifest checkpoint), or it is an unrelated profile DB
         // that must not be deleted.
@@ -1527,13 +1556,34 @@ fn reconcile_orphaned_pre_retry_backup(
         "Found orphaned pre-retry database backup at {}; restoring previous mausVoice database",
         main_backup.display()
     );
-    restore_rollback_backup(&current_db, &["", "-wal", "-shm", "-journal"]).map_err(|err| {
+    // Restore sidecars BEFORE the main database file so a sidecar restore
+    // failure keeps the main backup detectable on every subsequent attempt.
+    restore_rollback_backup(&current_db, &PRE_RETRY_RESTORE_ORDER).map_err(|err| {
         format!(
             "Could not restore pre-retry database backup {}: {err}",
             main_backup.display()
         )
     })?;
     let _ = fs::remove_file(dirs.promotion_marker_path());
+    Ok(())
+}
+
+/// Guards startup `open_app_database`: fails closed when an orphaned pre-retry
+/// backup still remains on disk and `mausvoice.db` is missing or missing an
+/// un-restored sidecar backup, so startup can never create a fresh DB over an
+/// un-restored backup or open an incomplete DB without its WAL/journal.
+pub fn ensure_no_unrestored_pre_retry_backup(dirs: &MigrationDirs) -> Result<(), String> {
+    let current_db = dirs.current_db_path();
+    if !has_any_pre_retry_backup(&current_db) {
+        return Ok(());
+    }
+    let main_backup = current_db.with_file_name(format!("{DB_FILENAME}{PRE_RETRY_BACKUP_SUFFIX}"));
+    if fs::symlink_metadata(&current_db).is_err() || fs::symlink_metadata(&main_backup).is_err() {
+        return Err(format!(
+            "Pre-retry database backup for {} could not be fully restored; refusing to open an incomplete or fresh database.",
+            current_db.display()
+        ));
+    }
     Ok(())
 }
 
@@ -1807,7 +1857,6 @@ async fn recover_pending_database_migration(
         return existing;
     }
 
-    let _ = tokio::fs::remove_file(&marker_path).await;
     let cleanup_backup_db = current_db.clone();
     let _ = tokio::task::spawn_blocking(move || remove_rollback_backup(&cleanup_backup_db)).await;
 
@@ -1816,6 +1865,7 @@ async fn recover_pending_database_migration(
     finalize_status_and_actions(&mut existing, audit.attention_providers);
     match save_manifest(&dirs.current_config_dir, &existing) {
         Ok(()) => {
+            let _ = tokio::fs::remove_file(&marker_path).await;
             remove_asset_progress_if_settled(&dirs.current_config_dir, &existing);
         }
         Err(err) => {
@@ -2068,6 +2118,25 @@ pub async fn refresh_migration_report(
         report.database_phase,
         VoquillMigrationPhaseStatus::Failed | VoquillMigrationPhaseStatus::Pending
     ) {
+        let has_recovery_marker = path_exists_no_follow(&dirs.promotion_marker_path()).await;
+        if has_recovery_marker {
+            report.status = VoquillMigrationStatus::Partial;
+            report.can_retry = true;
+            if !report.issues.iter().any(|issue| {
+                matches!(
+                    issue.code.as_str(),
+                    "manifest_save_failed" | "recovery_open_failed" | "recovery_audit_failed"
+                )
+            }) {
+                report.issues.push(VoquillMigrationIssue {
+                    category: "database".to_string(),
+                    code: "manifest_save_failed".to_string(),
+                    detail: "Voquill database promotion completed, but migration state could not be saved yet. Retry to finish recording migration state and remaining assets.".to_string(),
+                });
+            }
+            rebuild_action_items(&mut report, Vec::new());
+            return report;
+        }
         let legacy_db_present = match dirs.legacy_db_path() {
             Some(path) => path_exists_no_follow(&path).await,
             None => false,
@@ -2317,8 +2386,6 @@ async fn retry_database_promotion(
         }
     };
 
-    let _ = database.replace_pool(new_pool);
-
     report.database_phase = VoquillMigrationPhaseStatus::Migrated;
     report.models_phase = VoquillMigrationPhaseStatus::Pending;
     report.audio_phase = VoquillMigrationPhaseStatus::Pending;
@@ -2330,18 +2397,70 @@ async fn retry_database_promotion(
     report.removed_modes_reset = staged.removed_modes_reset;
     report.issues.clear();
 
-    let manifest_saved = save_manifest(&dirs.current_config_dir, report).is_ok();
-    let backup_cleanup_path = current_db_path.clone();
-    let _ = tokio::task::spawn_blocking(move || remove_rollback_backup(&backup_cleanup_path)).await;
-    if manifest_saved {
-        let _ = tokio::fs::remove_file(&marker_path).await;
-    } else {
+    // Persist the checkpoint BEFORE exposing `new_pool` to app writers and
+    // BEFORE removing `.pre-retry.bak` or `.voquill-db-promoting`. If saving
+    // fails, close `new_pool` so no writes can mutate `current_db` and drift
+    // its marker digest; startup recovery can then safely verify and finish.
+    if let Err(err) = save_manifest(&dirs.current_config_dir, report) {
+        new_pool.close().await;
         log::warn!(
-            "Failed to checkpoint retry migration manifest; keeping recovery marker for startup recovery"
+            "Failed to checkpoint retry migration manifest; preserving backup and recovery marker: {err}"
         );
+        return Err(format!("Could not checkpoint retry migration state: {err}"));
     }
 
+    let _ = database.replace_pool(new_pool);
+    let backup_cleanup_path = current_db_path.clone();
+    let _ = tokio::task::spawn_blocking(move || remove_rollback_backup(&backup_cleanup_path)).await;
+    let _ = tokio::fs::remove_file(&marker_path).await;
+
     Ok(Some(staged.audit.attention_providers))
+}
+
+async fn recover_promoted_db_during_retry(
+    dirs: &MigrationDirs,
+    database: &OptionKeyDatabase,
+    report: &mut VoquillMigrationReport,
+) -> Result<Option<Vec<String>>, String> {
+    let current_db = dirs.current_db_path();
+    let marker_path = dirs.promotion_marker_path();
+    let check_db = current_db.clone();
+    let check_marker = marker_path.clone();
+    let marker_matches = tokio::task::spawn_blocking(move || {
+        verify_promoted_db_matches_marker(&check_db, &check_marker)
+    })
+    .await
+    .unwrap_or(false);
+    if !marker_matches {
+        let _ = tokio::fs::remove_file(&marker_path).await;
+        *report = mark_existing_profile_conflict(&dirs.current_config_dir, report.clone());
+        return Ok(None);
+    }
+
+    let live_pool = ensure_usable_pool(dirs, database).await?;
+    let audit = audit_migrated_database(live_pool)
+        .await
+        .map_err(|err| format!("Could not audit promoted database during retry recovery: {err}"))?;
+    report.counts = audit.counts;
+    report.database_phase = VoquillMigrationPhaseStatus::Migrated;
+    reset_skipped_asset_phases_to_pending(report);
+    report.status = VoquillMigrationStatus::Partial;
+    report.can_retry = true;
+    report.completed_at = None;
+    report.issues.retain(|issue| {
+        !matches!(
+            issue.code.as_str(),
+            "interrupted_previous_attempt"
+                | "recovery_open_failed"
+                | "recovery_audit_failed"
+                | "manifest_save_failed"
+        )
+    });
+    save_manifest(&dirs.current_config_dir, report)
+        .map_err(|err| format!("Could not save recovered migration state: {err}"))?;
+    let cleanup_db = current_db.clone();
+    let _ = tokio::task::spawn_blocking(move || remove_rollback_backup(&cleanup_db)).await;
+    Ok(Some(audit.attention_providers))
 }
 
 /// Retries an incomplete (`Partial`) or `Failed` Voquill migration safely:
@@ -2376,7 +2495,14 @@ pub async fn retry_migration(
         report.database_phase,
         VoquillMigrationPhaseStatus::Failed | VoquillMigrationPhaseStatus::Pending
     ) {
-        match retry_database_promotion(&dirs, &database, &mut report).await? {
+        let step_result = if path_exists_no_follow(&dirs.promotion_marker_path()).await
+            && path_exists_no_follow(&dirs.current_db_path()).await
+        {
+            recover_promoted_db_during_retry(&dirs, &database, &mut report).await?
+        } else {
+            retry_database_promotion(&dirs, &database, &mut report).await?
+        };
+        match step_result {
             Some(providers) => attention_providers = providers,
             None => {
                 let live_pool = ensure_usable_pool(&dirs, &database).await?;
@@ -2562,7 +2688,13 @@ fn prepare_staging_and_verify_legacy_files(
 
 enum SnapshotFallback {
     Skipped(&'static str),
+    Busy(String),
     Error(String),
+}
+
+fn is_sqlite_busy_or_locked(err: &sqlx::Error) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("locked") || msg.contains("busy")
 }
 
 fn legacy_db_uses_wal_header(legacy_db: &Path) -> bool {
@@ -2608,12 +2740,19 @@ async fn try_readonly_sqlite_snapshot(
     let options = SqliteConnectOptions::new()
         .filename(legacy_db)
         .read_only(true)
-        .create_if_missing(false);
+        .create_if_missing(false)
+        .busy_timeout(std::time::Duration::from_millis(0));
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
         .await
-        .map_err(|err| SnapshotFallback::Error(format!("read-only open failed: {err}")))?;
+        .map_err(|err| {
+            if is_sqlite_busy_or_locked(&err) {
+                SnapshotFallback::Busy(format!("read-only open busy: {err}"))
+            } else {
+                SnapshotFallback::Error(format!("read-only open failed: {err}"))
+            }
+        })?;
 
     let vacuum_result = sqlx::query("VACUUM INTO ?1")
         .bind(staged_str)
@@ -2621,9 +2760,13 @@ async fn try_readonly_sqlite_snapshot(
         .await;
     pool.close().await;
 
-    vacuum_result
-        .map(|_| ())
-        .map_err(|err| SnapshotFallback::Error(format!("VACUUM INTO failed: {err}")))
+    vacuum_result.map(|_| ()).map_err(|err| {
+        if is_sqlite_busy_or_locked(&err) {
+            SnapshotFallback::Busy(format!("VACUUM INTO busy: {err}"))
+        } else {
+            SnapshotFallback::Error(format!("VACUUM INTO failed: {err}"))
+        }
+    })
 }
 
 fn copy_legacy_files_once(
@@ -2876,6 +3019,19 @@ async fn stage_validate_in_staging_inner(
     let staged_db = staging_dir.join(STAGED_DB_FILENAME);
     let staged_db = match try_readonly_sqlite_snapshot(&legacy_db, &staged_db).await {
         Ok(()) => staged_db,
+        Err(SnapshotFallback::Busy(reason)) => {
+            // Never bypass SQLite locking with a raw file copy when a live
+            // writer holds an active transaction (e.g. `journal_mode=MEMORY`
+            // spilling uncommitted pages to the main file without a sidecar).
+            log::warn!("Voquill DB is locked by an active writer ({reason}); refusing raw copy");
+            return Err(VoquillMigrationIssue {
+                category: "database".to_string(),
+                code: "legacy_source_busy".to_string(),
+                detail:
+                    "The Voquill database is currently in use. Close Voquill and retry migration."
+                        .to_string(),
+            });
+        }
         Err(fallback) => {
             match fallback {
                 SnapshotFallback::Skipped(reason) => {
@@ -2886,6 +3042,7 @@ async fn stage_validate_in_staging_inner(
                 SnapshotFallback::Error(err) => {
                     log::warn!("Voquill DB read-only snapshot failed ({err}); falling back to quiescent copy");
                 }
+                SnapshotFallback::Busy(_) => unreachable!(),
             }
             let fallback_legacy = legacy_db.clone();
             let fallback_staging = staging_dir.to_path_buf();
@@ -4667,5 +4824,310 @@ mod tests {
                 "symlink ancestor inside destination root must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn duplicate_relative_model_paths_across_legacy_dirs_counted_once() {
+        let ws = unique_workspace("duplicate-legacy-model-dirs");
+        let dirs = make_dirs(&ws);
+        fs::create_dir_all(&dirs.current_config_dir).unwrap();
+        let legacy_data = dirs.legacy_data_dir.as_ref().unwrap();
+        let dir_a = legacy_data.join(MODELS_DIR_NAME);
+        let dir_b = legacy_data.join(LEGACY_MODELS_DIR_NAME);
+        fs::create_dir_all(&dir_a).unwrap();
+        fs::create_dir_all(&dir_b).unwrap();
+        fs::write(dir_a.join("ggml-base.bin"), b"MODEL-A").unwrap();
+        fs::write(dir_b.join("ggml-base.bin"), b"MODEL-B").unwrap();
+
+        let mut report = VoquillMigrationReport {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            status: VoquillMigrationStatus::Partial,
+            legacy_detected: true,
+            legacy_source_preserved: true,
+            detected_at: Some(now_iso()),
+            completed_at: None,
+            dismissed_at: None,
+            attempt_count: 1,
+            database_phase: VoquillMigrationPhaseStatus::Migrated,
+            models_phase: VoquillMigrationPhaseStatus::Pending,
+            audio_phase: VoquillMigrationPhaseStatus::NotFound,
+            storage_phase: VoquillMigrationPhaseStatus::NotFound,
+            counts: VoquillMigrationCounts::default(),
+            removed_modes_reset: Vec::new(),
+            issues: Vec::new(),
+            action_items: Vec::new(),
+            can_retry: true,
+        };
+
+        migrate_asset_phases(&dirs, &mut report);
+        assert_eq!(report.models_phase, VoquillMigrationPhaseStatus::Migrated);
+        assert_eq!(
+            report.counts.local_models_migrated, 1,
+            "duplicate relative path across legacy model directories must be counted once"
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_journal_active_transaction_fails_as_busy_without_copying_uncommitted_rows() {
+        let ws = unique_workspace("memory-journal-active-tx");
+        let dirs = make_dirs(&ws);
+        let legacy_db = dirs.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db, 96, false).await;
+
+        let writer_opts = SqliteConnectOptions::new()
+            .filename(&legacy_db)
+            .create_if_missing(false);
+        let writer_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(writer_opts)
+            .await
+            .unwrap();
+        let mut conn = writer_pool.acquire().await.unwrap();
+        sqlx::query("PRAGMA journal_mode = MEMORY;")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA cache_size = 1;")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("BEGIN EXCLUSIVE;")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let payload = "uncommitted-payload-".repeat(64);
+        for idx in 0..32 {
+            sqlx::query(
+                "INSERT INTO transcriptions (id, transcript, timestamp) VALUES (?1, ?2, ?3)",
+            )
+            .bind(format!("uncommitted-{idx}"))
+            .bind(&payload)
+            .bind(1_700_005_000_i64 + idx)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+
+        let report = run_startup_migration(&dirs).await;
+        assert_eq!(report.status, VoquillMigrationStatus::Failed);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "legacy_source_busy"),
+            "active transaction must fail as legacy_source_busy, got: {:?}",
+            report.issues
+        );
+        assert!(!dirs.current_db_path().exists());
+
+        sqlx::query("ROLLBACK;").execute(&mut *conn).await.unwrap();
+        drop(conn);
+        writer_pool.close().await;
+
+        let empty_pool = open_app_database(&dirs.current_db_path()).await.unwrap();
+        let db_state = OptionKeyDatabase::new(empty_pool);
+        let retried = retry_migration(dirs.clone(), db_state.clone())
+            .await
+            .unwrap();
+        assert_eq!(retried.status, VoquillMigrationStatus::Completed);
+        let uncommitted_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM transcriptions WHERE id LIKE 'uncommitted-%'")
+                .fetch_one(&db_state.pool())
+                .await
+                .unwrap();
+        assert_eq!(uncommitted_count, 0);
+    }
+
+    #[tokio::test]
+    async fn sidecar_restore_failure_remains_detectable_across_retries_and_blocks_startup_open() {
+        let ws = unique_workspace("sidecar-restore-failure-repeat");
+        let dirs = make_dirs(&ws);
+        fs::create_dir_all(&dirs.current_config_dir).unwrap();
+        let current_db = dirs.current_db_path();
+
+        let main_bak = current_db.with_file_name(format!("{DB_FILENAME}{PRE_RETRY_BACKUP_SUFFIX}"));
+        let wal_bak =
+            current_db.with_file_name(format!("{DB_FILENAME}-wal{PRE_RETRY_BACKUP_SUFFIX}"));
+        let wal_dst = current_db.with_file_name(format!("{DB_FILENAME}-wal"));
+        fs::write(&main_bak, b"valid-main-db-bytes").unwrap();
+        fs::write(&wal_bak, b"valid-wal-bytes").unwrap();
+        fs::create_dir_all(&wal_dst).unwrap();
+        fs::write(wal_dst.join("blocker"), b"x").unwrap();
+
+        // First reconciliation attempt fails on WAL before restoring main DB.
+        assert!(reconcile_orphaned_pre_retry_backup(&dirs, None).is_err());
+        assert!(
+            main_bak.exists(),
+            "main backup must stay until sidecars restore"
+        );
+        assert!(
+            wal_bak.exists(),
+            "wal backup must stay after failed restore"
+        );
+
+        // Second reconciliation attempt must STILL detect the failure and startup guard must block open.
+        assert!(reconcile_orphaned_pre_retry_backup(&dirs, None).is_err());
+        assert!(ensure_no_unrestored_pre_retry_backup(&dirs).is_err());
+
+        // Clearing the obstacle allows full restoration of BOTH sidecar and main DB.
+        fs::remove_dir_all(&wal_dst).unwrap();
+        reconcile_orphaned_pre_retry_backup(&dirs, None).unwrap();
+        ensure_no_unrestored_pre_retry_backup(&dirs).unwrap();
+        assert_eq!(fs::read(&current_db).unwrap(), b"valid-main-db-bytes");
+        assert_eq!(fs::read(&wal_dst).unwrap(), b"valid-wal-bytes");
+    }
+
+    #[tokio::test]
+    async fn retry_manifest_checkpoint_failure_retains_marker_and_recovers_on_restart() {
+        let ws = unique_workspace("retry-manifest-checkpoint-failure");
+        let dirs = make_dirs(&ws);
+        let legacy_db = dirs.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db, 96, false).await;
+        let legacy_audio = dirs.legacy_data_dir.as_ref().unwrap().join(AUDIO_DIR_NAME);
+        fs::create_dir_all(&legacy_audio).unwrap();
+        fs::write(legacy_audio.join("after-retry.wav"), b"RIFFafter").unwrap();
+
+        fs::create_dir_all(&dirs.current_config_dir).unwrap();
+        let initial_pool = open_app_database(&dirs.current_db_path()).await.unwrap();
+        let db_state = OptionKeyDatabase::new(initial_pool);
+
+        // Block manifest writes with a directory so `save_manifest` fails right
+        // after retry promotes and strictly opens the new DB.
+        let manifest_path = dirs.current_config_dir.join(MANIFEST_FILENAME);
+        fs::create_dir_all(&manifest_path).unwrap();
+
+        let mut failed_report = VoquillMigrationReport {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            status: VoquillMigrationStatus::Failed,
+            legacy_detected: true,
+            legacy_source_preserved: true,
+            detected_at: Some(now_iso()),
+            completed_at: None,
+            dismissed_at: None,
+            attempt_count: 1,
+            database_phase: VoquillMigrationPhaseStatus::Failed,
+            models_phase: VoquillMigrationPhaseStatus::Skipped,
+            audio_phase: VoquillMigrationPhaseStatus::Skipped,
+            storage_phase: VoquillMigrationPhaseStatus::Skipped,
+            counts: VoquillMigrationCounts::default(),
+            removed_modes_reset: Vec::new(),
+            issues: vec![VoquillMigrationIssue {
+                category: "database".to_string(),
+                code: "legacy_source_busy".to_string(),
+                detail: "Previous failure".to_string(),
+            }],
+            action_items: Vec::new(),
+            can_retry: true,
+        };
+
+        let err = retry_database_promotion(&dirs, &db_state, &mut failed_report)
+            .await
+            .expect_err("checkpoint manifest write failure must fail retry_database_promotion");
+        assert!(err.contains("Could not checkpoint retry migration state"));
+        assert!(
+            dirs.promotion_marker_path().exists(),
+            "promotion marker must remain on disk"
+        );
+        assert!(
+            dirs.current_db_path()
+                .with_file_name(format!("{DB_FILENAME}{PRE_RETRY_BACKUP_SUFFIX}"))
+                .exists(),
+            "pre-retry backup must remain on disk until checkpoint succeeds"
+        );
+        assert!(
+            db_state.pool().is_closed(),
+            "failed checkpoint must not expose new pool to live writers"
+        );
+
+        // Restore writable manifest file (still recording Failed from before crash)
+        // and verify startup recovery completes cleanly on restart.
+        fs::remove_dir_all(&manifest_path).unwrap();
+        let persisted_failed = VoquillMigrationReport {
+            database_phase: VoquillMigrationPhaseStatus::Failed,
+            status: VoquillMigrationStatus::Failed,
+            models_phase: VoquillMigrationPhaseStatus::Skipped,
+            audio_phase: VoquillMigrationPhaseStatus::Skipped,
+            storage_phase: VoquillMigrationPhaseStatus::Skipped,
+            ..failed_report
+        };
+        save_manifest(&dirs.current_config_dir, &persisted_failed).unwrap();
+
+        let recovered = run_startup_migration(&dirs).await;
+        assert_eq!(recovered.status, VoquillMigrationStatus::Completed);
+        assert_eq!(
+            recovered.database_phase,
+            VoquillMigrationPhaseStatus::Migrated
+        );
+        assert_eq!(recovered.audio_phase, VoquillMigrationPhaseStatus::Migrated);
+        assert!(!dirs.promotion_marker_path().exists());
+        assert!(!dirs
+            .current_db_path()
+            .with_file_name(format!("{DB_FILENAME}{PRE_RETRY_BACKUP_SUFFIX}"))
+            .exists());
+    }
+
+    #[tokio::test]
+    async fn refresh_migration_report_surfaces_checkpoint_failure_and_keeps_retryable_on_populated_db(
+    ) {
+        let ws = unique_workspace("status-after-checkpoint-failure");
+        let dirs = make_dirs(&ws);
+        let legacy_db = dirs.legacy_db_path().unwrap();
+        seed_voquill_db(&legacy_db, 96, false).await;
+        let legacy_audio = dirs.legacy_data_dir.as_ref().unwrap().join(AUDIO_DIR_NAME);
+        fs::create_dir_all(&legacy_audio).unwrap();
+        fs::write(legacy_audio.join("pending.wav"), b"RIFFpending").unwrap();
+
+        let _ = stage_validate_and_promote_database(&dirs).await.unwrap();
+        let (full_sha, payload_sha) = hash_staged_database(&dirs.current_db_path()).unwrap();
+        write_promotion_marker(
+            &dirs.promotion_marker_path(),
+            "retry",
+            full_sha,
+            payload_sha,
+        )
+        .unwrap();
+
+        let pending_manifest = VoquillMigrationReport {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            status: VoquillMigrationStatus::Partial,
+            legacy_detected: true,
+            legacy_source_preserved: true,
+            detected_at: Some(now_iso()),
+            completed_at: None,
+            dismissed_at: None,
+            attempt_count: 1,
+            database_phase: VoquillMigrationPhaseStatus::Pending,
+            models_phase: VoquillMigrationPhaseStatus::Pending,
+            audio_phase: VoquillMigrationPhaseStatus::Pending,
+            storage_phase: VoquillMigrationPhaseStatus::Pending,
+            counts: VoquillMigrationCounts::default(),
+            removed_modes_reset: Vec::new(),
+            issues: Vec::new(),
+            action_items: Vec::new(),
+            can_retry: false,
+        };
+        save_manifest(&dirs.current_config_dir, &pending_manifest).unwrap();
+
+        let pool = open_app_database(&dirs.current_db_path()).await.unwrap();
+        assert!(
+            !is_database_empty_of_user_data(pool.clone()).await.unwrap(),
+            "promoted DB contains migrated user data"
+        );
+        let status = refresh_migration_report(dirs.clone(), pool.clone()).await;
+        assert!(status.can_retry);
+        assert!(status
+            .issues
+            .iter()
+            .any(|issue| issue.code == "manifest_save_failed"));
+
+        let db_state = OptionKeyDatabase::new(pool);
+        let retried = retry_migration(dirs.clone(), db_state).await.unwrap();
+        assert_eq!(retried.status, VoquillMigrationStatus::Completed);
+        assert_eq!(
+            retried.database_phase,
+            VoquillMigrationPhaseStatus::Migrated
+        );
+        assert_eq!(retried.audio_phase, VoquillMigrationPhaseStatus::Migrated);
+        assert!(!dirs.promotion_marker_path().exists());
     }
 }

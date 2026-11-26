@@ -96,6 +96,15 @@ const isStringRecord = (value: unknown): value is Record<string, string> =>
 const isNonNegativeInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0;
 
+const isFiniteNumberArray = (value: unknown): value is number[] =>
+  Array.isArray(value) &&
+  value.every((entry) => typeof entry === "number" && Number.isFinite(entry));
+
+const isTimingStagesRecord = (
+  value: unknown,
+): value is Record<string, number[]> =>
+  isPlainObject(value) && Object.values(value).every(isFiniteNumberArray);
+
 const isTimingAggregateRecord = (
   value: unknown,
 ): value is LocalState["providerTiming"] => {
@@ -103,11 +112,24 @@ const isTimingAggregateRecord = (
   return Object.values(value).every(
     (entry) =>
       isPlainObject(entry) &&
-      typeof entry.count === "number" &&
-      Number.isFinite(entry.count) &&
-      typeof entry.medianMs === "number" &&
-      Number.isFinite(entry.medianMs),
+      isNonNegativeInteger(entry.samples) &&
+      isTimingStagesRecord(entry.stages),
   );
+};
+
+const cloneTimingAggregateRecord = (
+  value: unknown,
+): LocalState["providerTiming"] => {
+  const record = value as LocalState["providerTiming"];
+  const cloned: LocalState["providerTiming"] = {};
+  for (const [provider, aggregate] of Object.entries(record)) {
+    const stages: Record<string, number[]> = {};
+    for (const [stage, values] of Object.entries(aggregate.stages)) {
+      stages[stage] = [...values];
+    }
+    cloned[provider] = { samples: aggregate.samples, stages };
+  }
+  return cloned;
 };
 
 type LocalFieldSpec = {
@@ -150,7 +172,11 @@ const LOCAL_STATE_FIELD_SPECS: readonly LocalFieldSpec[] = [
   { key: "onboardingNameDraft", validate: (v) => typeof v === "string" },
   { key: "onboardingNameDraftUserId", validate: isStringOrNull },
   { key: "onboardingSessionUserId", validate: isStringOrNull },
-  { key: "providerTiming", validate: isTimingAggregateRecord },
+  {
+    key: "providerTiming",
+    validate: isTimingAggregateRecord,
+    clone: cloneTimingAggregateRecord,
+  },
   {
     key: "profileImageByUserId",
     validate: isStringRecord,

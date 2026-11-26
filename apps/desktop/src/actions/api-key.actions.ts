@@ -103,8 +103,10 @@ export const createApiKey = async (
 
 export const deleteApiKey = async (id: string): Promise<void> =>
   withLocalDataWrite(async (lease) => {
+    let deletedFromRepo = false;
     try {
       await getApiKeyRepo().deleteApiKey(id, lease);
+      deletedFromRepo = true;
 
       produceAppState((draft) => {
         delete draft.apiKeyById[id];
@@ -134,14 +136,16 @@ export const deleteApiKey = async (id: string): Promise<void> =>
         undefined,
         { existingLease: lease },
       );
-
-      void refreshVoquillMigrationStatusIfActive();
     } catch (error) {
       console.error("Failed to delete API key", error);
       showErrorSnackbar(
         error instanceof Error ? error.message : "Failed to delete API key.",
       );
       throw error;
+    } finally {
+      if (deletedFromRepo) {
+        void refreshVoquillMigrationStatusIfActive();
+      }
     }
   });
 

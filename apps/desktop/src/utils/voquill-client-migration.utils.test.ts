@@ -160,4 +160,62 @@ describe("voquill-client-migration.utils", () => {
       assistantModeEnabled: true,
     });
   });
+
+  it("migrates valid TimingAggregate providerTiming entries and rejects malformed shapes", () => {
+    window.localStorage.setItem(
+      "voquill-local-state",
+      JSON.stringify({
+        state: {
+          local: {
+            providerTiming: {
+              openai: { samples: 2, stages: { transcribe: [110, 130] } },
+            },
+          },
+        },
+        version: 0,
+      }),
+    );
+
+    const result = migrateLegacyVoquillClientStorage(window.localStorage);
+    expect(result.migratedKeys).toContain("mausvoice-local-state");
+    const migrated = JSON.parse(
+      window.localStorage.getItem("mausvoice-local-state")!,
+    ) as {
+      state: {
+        local: {
+          providerTiming: Record<
+            string,
+            { samples: number; stages: Record<string, number[]> }
+          >;
+        };
+      };
+    };
+    expect(migrated.state.local.providerTiming).toEqual({
+      openai: { samples: 2, stages: { transcribe: [110, 130] } },
+    });
+
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "voquill-local-state",
+      JSON.stringify({
+        state: {
+          local: {
+            providerTiming: {
+              openai: { count: 2, medianMs: 120 },
+            },
+          },
+        },
+        version: 0,
+      }),
+    );
+
+    const invalidResult = migrateLegacyVoquillClientStorage(
+      window.localStorage,
+    );
+    expect(invalidResult.migratedKeys).toContain("mausvoice-local-state");
+    const sanitized = JSON.parse(
+      window.localStorage.getItem("mausvoice-local-state")!,
+    ) as { state: { local: Record<string, unknown> } };
+    expect(sanitized.state.local.providerTiming).toBeUndefined();
+  });
 });

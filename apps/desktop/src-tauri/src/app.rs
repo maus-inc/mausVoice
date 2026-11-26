@@ -599,6 +599,13 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                         report.counts.providers_needing_attention
                     );
                 }
+                crate::system::voquill_migration::ensure_no_unrestored_pre_retry_backup(
+                    &migration_dirs,
+                )
+                .map_err(|err| -> Box<dyn std::error::Error> {
+                    log::error!("{err}");
+                    err.into()
+                })?;
             }
             Err(err) => {
                 log::error!("Failed to resolve Voquill migration directories: {err}");

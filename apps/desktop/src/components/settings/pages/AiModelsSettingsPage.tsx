@@ -89,7 +89,10 @@ const getSelectedKeyAttentionState = (
     return null;
   }
   const key = apiKeyById[selectedApiKeyId];
-  if (!key || isApiKeyUsable(key)) {
+  if (!key) {
+    return "attention";
+  }
+  if (isApiKeyUsable(key)) {
     return null;
   }
   return apiKeyNeedsReentry(key) ? "reentry" : "attention";
