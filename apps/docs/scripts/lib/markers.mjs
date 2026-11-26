@@ -26,6 +26,24 @@ const PLACEMENTS = new Set([
   "below",
 ]);
 
+const PICKS = new Set(["first", "middle", "last"]);
+
+const reject = (message) => {
+  throw new Error(message);
+};
+
+const assertChoice = (marker, key, allowed, expected) => {
+  if (marker[key] && !allowed.has(marker[key])) {
+    reject(`marker ${marker.n} ${key} "${marker[key]}" is not ${expected}`);
+  }
+};
+
+const assertMarker = (marker) => {
+  if (!marker.selector) reject(`marker ${marker.n} has no selector`);
+  assertChoice(marker, "placement", PLACEMENTS, [...PLACEMENTS].join(", "));
+  assertChoice(marker, "pick", PICKS, "first, middle or last");
+};
+
 /**
  * Paint `markers` inside `root`, a CSS selector for the captured region.
  * `pick` chooses among several matches, `"first"`, `"middle"` or `"last"`, and
@@ -34,30 +52,14 @@ const PLACEMENTS = new Set([
  * selector must match exactly one element, so a rename fails the capture
  * instead of putting the badge on the wrong surface.
  */
-export const drawMarkers = async (client, root, markers = []) => {
-  for (const marker of markers) {
-    if (!marker.selector) {
-      throw new Error(`marker ${marker.n} has no selector`);
-    }
-    if (marker.placement && !PLACEMENTS.has(marker.placement)) {
-      throw new Error(
-        `marker ${marker.n} placement "${marker.placement}" is not one of ${[...PLACEMENTS].join(", ")}`,
-      );
-    }
-    if (marker.pick && !["first", "middle", "last"].includes(marker.pick)) {
-      throw new Error(`marker ${marker.n} pick "${marker.pick}" is not first, middle or last`);
-    }
-  }
-  if (markers.length === 0) return 0;
-
-  const expression = `(() => {
-  const css = ${JSON.stringify(markerCss)};
-  const markers = ${JSON.stringify(markers)};
+/** Create the badge style and the overlay layer the markers paint into. */
+const mountScript = (root) => `(() => {
   const root = document.querySelector(${JSON.stringify(root)});
   if (!root) throw new Error("capture root " + ${JSON.stringify(root)} + " is not on the page");
+  if (document.getElementById("guide-marker-layer")) return true;
   const style = document.createElement("style");
   style.id = "guide-marker-style";
-  style.textContent = css;
+  style.textContent = ${JSON.stringify(markerCss)};
   document.head.appendChild(style);
   const layer = document.createElement("div");
   layer.id = "guide-marker-layer";
@@ -72,6 +74,13 @@ export const drawMarkers = async (client, root, markers = []) => {
     "--mv-marker-ring: " + getComputedStyle(root).backgroundColor,
   ].join("; ");
   document.documentElement.appendChild(layer);
+  return true;
+})()`;
+
+const PAINT_BODY = String.raw`
+  const root = document.querySelector(__ROOT__);
+  const layer = document.getElementById("guide-marker-layer");
+  if (!root || !layer) throw new Error("marker layer is not mounted");
   const rootBox = root.getBoundingClientRect();
   const onScreen = (node) => {
     const box = node.getBoundingClientRect();
@@ -113,9 +122,19 @@ export const drawMarkers = async (client, root, markers = []) => {
     layer.appendChild(span);
   }
   return markers.length;
+`;
+
+const paintScript = (root, markers) =>
+  `(() => {
+  const markers = ${JSON.stringify(markers)};
+${PAINT_BODY.replace("__ROOT__", JSON.stringify(root))}
 })()`;
 
-  return client.evaluate(expression);
+export const drawMarkers = async (client, root, markers = []) => {
+  markers.forEach(assertMarker);
+  if (markers.length === 0) return 0;
+  await client.evaluate(mountScript(root));
+  return client.evaluate(paintScript(root, markers));
 };
 
 export const clearMarkers = async (client) => {

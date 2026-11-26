@@ -16,6 +16,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const defaultDb = join(
   homedir(),
@@ -24,15 +25,18 @@ const defaultDb = join(
   "mausvoice.db",
 );
 
-const argIndex = process.argv.indexOf("--db");
-const dbPath = argIndex >= 0 ? process.argv[argIndex + 1] : defaultDb;
-
 const day = 24 * 60 * 60 * 1000;
-const now = Date.now();
-const at = (daysAgo, hour) => {
-  const date = new Date(now - daysAgo * day);
+const at = (origin, daysAgo, hour) => {
+  const date = new Date(origin - daysAgo * day);
   date.setHours(hour, 12, 0, 0);
   return date.getTime();
+};
+
+const localDate = (ms) => {
+  const date = new Date(ms);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const dayOfMonth = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${dayOfMonth}`;
 };
 
 const transcriptions = [
@@ -117,127 +121,169 @@ const conversation = {
   ],
 };
 
-const db = new DatabaseSync(dbPath);
-const existing = db.prepare("SELECT COUNT(*) AS n FROM transcriptions").get();
-if (existing.n > 0) {
-  console.error(
-    `${dbPath} already holds ${existing.n} transcriptions. Refusing to add sample data to a database that has history.`,
+const insertSampleTranscriptions = (db, origin) => {
+  const insert = db.prepare(
+    `INSERT INTO transcriptions (id, transcript, timestamp, raw_transcript, transcription_mode, post_process_mode, model_size, transcription_duration_ms)
+     VALUES (?, ?, ?, ?, 'local', 'none', 'small', ?)`,
   );
-  process.exit(1);
-}
-
-const insertTranscription = db.prepare(
-  `INSERT INTO transcriptions (id, transcript, timestamp, raw_transcript, transcription_mode, post_process_mode, model_size, transcription_duration_ms)
-   VALUES (?, ?, ?, ?, 'local', 'none', 'small', ?)`,
-);
-const insertActivity = db.prepare(
-  `INSERT INTO daily_word_activity (local_date, word_count) VALUES (?, ?)
-   ON CONFLICT(local_date) DO UPDATE SET word_count = excluded.word_count`,
-);
-
-const localDate = (ms) => {
-  const date = new Date(ms);
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
+  for (const entry of transcriptions) {
+    const timestamp = at(origin, entry.daysAgo, entry.hour);
+    insert.run(
+      `guide-${timestamp}`,
+      entry.text,
+      timestamp,
+      entry.text,
+      900 + entry.words * 12,
+    );
+  }
 };
 
-db.exec("BEGIN");
-for (const entry of transcriptions) {
-  const timestamp = at(entry.daysAgo, entry.hour);
-  insertTranscription.run(
-    `guide-${timestamp}`,
-    entry.text,
-    timestamp,
-    entry.text,
-    900 + entry.words * 12,
+/** Two quiet days keep the streak honest, and a slow wave gives the grid its variation. */
+const SILENT_DAYS = new Set([23, 41]);
+
+const wordsForDay = (origin, daysAgo) => {
+  const date = new Date(origin - daysAgo * day);
+  const weekend = date.getDay() === 0 || date.getDay() === 6;
+  const wave = Math.round(40 * Math.sin((69 - daysAgo) / 6));
+  return Math.max(18, (weekend ? 40 : 90) + wave + ((daysAgo * 37) % 90));
+};
+
+/** Ten weeks of activity, so the heatmap shows the variation a real history has. */
+const insertDailyActivity = (db, origin) => {
+  const insert = db.prepare(
+    `INSERT INTO daily_word_activity (local_date, word_count) VALUES (?, ?)
+     ON CONFLICT(local_date) DO UPDATE SET word_count = excluded.word_count`,
+  );
+  const daily = new Map();
+  for (let daysAgo = 69; daysAgo >= 0; daysAgo -= 1) {
+    if (SILENT_DAYS.has(daysAgo)) continue;
+    const date = localDate(origin - daysAgo * day);
+    daily.set(date, wordsForDay(origin, daysAgo));
+    insert.run(date, daily.get(date));
+  }
+  return daily;
+};
+
+const profileTotals = (daily, origin) => {
+  const total = [...daily.values()].reduce((sum, words) => sum + words, 0);
+  const month = localDate(origin).slice(0, 7);
+  const monthTotal = [...daily]
+    .filter(([date]) => date.startsWith(month))
+    .reduce((sum, [, words]) => sum + words, 0);
+  let streak = 0;
+  while (daily.has(localDate(origin - streak * day))) streak += 1;
+  return { total, month, monthTotal, streak };
+};
+
+const insertProfile = (db, totals, origin) => {
+  db.prepare(
+    `INSERT INTO user_profiles (id, name, bio, onboarded) VALUES ('local-user-id', 'Alex', '', 1)
+     ON CONFLICT(id) DO NOTHING`,
+  ).run();
+  db.prepare(
+    `INSERT INTO user_preferences (user_id) VALUES ('local-user-id')
+     ON CONFLICT(user_id) DO NOTHING`,
+  ).run();
+  db.prepare(
+    `UPDATE user_profiles
+        SET words_total = ?, words_this_month = ?, words_this_month_month = ?,
+            streak = ?, streak_recorded_at = ?, name = 'Alex', onboarded = 1,
+            has_finished_tutorial = 1, onboarded_at = ?
+      WHERE id = (SELECT id FROM user_profiles LIMIT 1)`,
+  ).run(
+    totals.total + 12_400,
+    totals.monthTotal,
+    totals.month,
+    totals.streak,
+    localDate(origin),
+    new Date(origin).toISOString(),
+  );
+};
+
+const insertTerms = (db, origin) => {
+  const insert = db.prepare(
+    `INSERT INTO terms (id, created_at, created_by_user_id, source_value, destination_value, is_deleted, is_replacement)
+     VALUES (?, ?, 'local', ?, ?, 0, 1)`,
+  );
+  terms.forEach(([source, destination], index) =>
+    insert.run(`guide-term-${index}`, origin - index * 1000, source, destination),
+  );
+};
+
+const insertConversation = (db, origin) => {
+  const insertMessage = db.prepare(
+    "INSERT INTO chat_messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+  );
+  db.prepare(
+    "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+  ).run("guide-conversation", conversation.title, at(origin, 1, 10), at(origin, 0, 10));
+  conversation.messages.forEach(([role, content], index) =>
+    insertMessage.run(
+      `guide-message-${index}`,
+      "guide-conversation",
+      role,
+      content,
+      at(origin, 1, 10) + index * 60_000,
+    ),
+  );
+};
+
+const insertTargets = (db) => {
+  const insert = db.prepare(
+    "INSERT INTO app_targets (id, name, created_at) VALUES (?, ?, ?)",
+  );
+  for (const [index, name] of ["Slack", "Notes", "Mail"].entries()) {
+    insert.run(`guide-target-${index}`, name, new Date().toISOString());
+  }
+};
+
+/**
+ * Fill `dbPath` with the sample history the figures show. Returns
+ * `{ seeded: false, transcriptions }` when the database already holds real
+ * history, so the caller decides whether that is a skip or a failure.
+ */
+export const seedGuideData = (dbPath = defaultDb) => {
+  const db = new DatabaseSync(dbPath);
+  const existing = db.prepare("SELECT COUNT(*) AS n FROM transcriptions").get();
+  if (existing.n > 0) {
+    db.close();
+    return { seeded: false, dbPath, transcriptions: existing.n };
+  }
+  const origin = Date.now();
+  db.exec("BEGIN");
+  insertSampleTranscriptions(db, origin);
+  const daily = insertDailyActivity(db, origin);
+  insertProfile(db, profileTotals(daily, origin), origin);
+  insertTerms(db, origin);
+  insertConversation(db, origin);
+  insertTargets(db);
+  db.exec("COMMIT");
+  db.close();
+  return {
+    seeded: true,
+    dbPath,
+    transcriptions: transcriptions.length,
+    terms: terms.length,
+    messages: conversation.messages.length,
+    targets: 3,
+  };
+};
+
+const isCli =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isCli) {
+  const argIndex = process.argv.indexOf("--db");
+  const dbPath = argIndex >= 0 ? process.argv[argIndex + 1] : defaultDb;
+  const result = seedGuideData(dbPath);
+  if (!result.seeded) {
+    console.error(
+      `${dbPath} already holds ${result.transcriptions} transcriptions. Refusing to add sample data to a database that has history.`,
+    );
+    process.exit(1);
+  }
+  console.log(
+    `seeded ${result.transcriptions} transcriptions, ${result.terms} terms, ${result.messages} chat messages and ${result.targets} app targets into ${dbPath}`,
   );
 }
-
-// Ten weeks of activity so the heatmap has the variation a real history shows:
-// quiet weekends, a busy stretch, and two days with nothing at all.
-const daily = new Map();
-for (let daysAgo = 69; daysAgo >= 0; daysAgo -= 1) {
-  const date = new Date(now - daysAgo * day);
-  const weekend = date.getDay() === 0 || date.getDay() === 6;
-  if (daysAgo === 23 || daysAgo === 41) continue;
-  const wave = Math.round(40 * Math.sin((69 - daysAgo) / 6));
-  const words = Math.max(18, (weekend ? 40 : 90) + wave + ((daysAgo * 37) % 90));
-  daily.set(localDate(now - daysAgo * day), words);
-  insertActivity.run(localDate(now - daysAgo * day), words);
-}
-
-const total = [...daily.values()].reduce((sum, words) => sum + words, 0);
-const month = localDate(now).slice(0, 7);
-const monthTotal = [...daily]
-  .filter(([date]) => date.startsWith(month))
-  .reduce((sum, [, words]) => sum + words, 0);
-let streak = 0;
-while (daily.has(localDate(now - streak * day))) streak += 1;
-
-db.prepare(
-  `INSERT INTO user_profiles (id, name, bio, onboarded) VALUES ('local-user-id', 'Alex', '', 1)
-   ON CONFLICT(id) DO NOTHING`,
-).run();
-db.prepare(
-  `INSERT INTO user_preferences (user_id) VALUES ('local-user-id')
-   ON CONFLICT(user_id) DO NOTHING`,
-).run();
-db.prepare(
-  `UPDATE user_profiles
-      SET words_total = ?, words_this_month = ?, words_this_month_month = ?,
-          streak = ?, streak_recorded_at = ?, name = 'Alex', onboarded = 1,
-          has_finished_tutorial = 1, onboarded_at = ?
-    WHERE id = (SELECT id FROM user_profiles LIMIT 1)`,
-).run(
-  total + 12_400,
-  monthTotal,
-  month,
-  streak,
-  localDate(now),
-  new Date(now).toISOString(),
-);
-
-const insertTerm = db.prepare(
-  `INSERT INTO terms (id, created_at, created_by_user_id, source_value, destination_value, is_deleted, is_replacement)
-   VALUES (?, ?, 'local', ?, ?, 0, 1)`,
-);
-terms.forEach(([source, destination], index) =>
-  insertTerm.run(`guide-term-${index}`, now - index * 1000, source, destination),
-);
-
-const profile = db.prepare("SELECT id FROM user_profiles LIMIT 1").get();
-const insertConversation = db.prepare(
-  "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-);
-const insertMessage = db.prepare(
-  "INSERT INTO chat_messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
-);
-const conversationId = "guide-conversation";
-insertConversation.run(
-  conversationId,
-  conversation.title,
-  at(1, 10),
-  at(0, 10),
-);
-conversation.messages.forEach(([role, content], index) =>
-  insertMessage.run(
-    `guide-message-${index}`,
-    conversationId,
-    role,
-    content,
-    at(1, 10) + index * 60_000,
-  ),
-);
-
-const insertTarget = db.prepare(
-  "INSERT INTO app_targets (id, name, created_at) VALUES (?, ?, ?)",
-);
-for (const [index, name] of ["Slack", "Notes", "Mail"].entries()) {
-  insertTarget.run(`guide-target-${index}`, name, new Date().toISOString());
-}
-db.exec("COMMIT");
-
-console.log(
-  `seeded ${transcriptions.length} transcriptions, ${terms.length} terms, ${conversation.messages.length} chat messages and 3 app targets into ${dbPath} (profile ${profile?.id ?? "none"})`,
-);

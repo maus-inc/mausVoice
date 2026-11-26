@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 import { APP_FIGURES } from "./figures.mjs";
 import { clearMarkers, drawMarkers } from "./lib/markers.mjs";
 import { captureRegion, openSession, poll, sleep as sleepFor } from "./lib/webdriver.mjs";
+import { seedGuideData } from "./seed-guide-data.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outputDir = resolve(here, "..", "public", "guides");
@@ -43,6 +44,7 @@ const run = promisify(execFile);
 
 const readOptions = (argv) => ({
   only: argv.includes("--only") ? argv[argv.indexOf("--only") + 1] : null,
+  seed: !argv.includes("--no-seed"),
 });
 
 const waitForDriver = () =>
@@ -91,7 +93,34 @@ const dismissTips = async (session) => {
   }
 };
 
-const captureFigure = async (session, id, recipe, loaded) => {
+const scrollTargetScript = (recipe) => {
+  const lookup = recipe.scrollText
+    ? `[...document.querySelectorAll("h1, h2, h3, h4, h5, h6, [role='heading']")].find((node) => node.textContent.trim().startsWith(${JSON.stringify(recipe.scrollText)}))`
+    : `document.querySelector(${JSON.stringify(recipe.scroll)})`;
+  return `(() => {
+  const target = ${lookup};
+  if (!target) throw new Error("scroll target missing");
+  target.scrollIntoView({ block: "start" });
+  return true;
+})()`;
+};
+
+const scrollFigureIntoView = async (session, recipe) => {
+  if (!recipe.scroll && !recipe.scrollText) return;
+  await session.execute(scrollTargetScript(recipe));
+  await sleepFor(500);
+};
+
+const waitForPageText = async (session, id, recipe) => {
+  if (!recipe.waitText) return;
+  await poll(
+    () => session.execute(`return document.body.innerText.includes(${JSON.stringify(recipe.waitText)})`),
+    `${id}: page never showed ${recipe.waitText}`,
+  );
+};
+
+/** Open the route, bring the documented part of the page into view and wait until it has settled. */
+const readyFigure = async (session, id, recipe, loaded) => {
   if (recipe.route !== loaded.route) {
     await session.navigate(`${appUrl}${recipe.route}`);
     loaded.route = recipe.route;
@@ -101,44 +130,44 @@ const captureFigure = async (session, id, recipe, loaded) => {
     () => session.box(recipe.root ?? "main"),
     `${id}: ${recipe.root ?? "main"} never rendered`,
   );
-  if (recipe.scroll || recipe.scrollText) {
-    const lookup = recipe.scrollText
-      ? `[...document.querySelectorAll("h1, h2, h3, h4, h5, h6, [role='heading']")].find((node) => node.textContent.trim().startsWith(${JSON.stringify(recipe.scrollText)}))`
-      : `document.querySelector(${JSON.stringify(recipe.scroll)})`;
-    await session.execute(`(() => {
-      const target = ${lookup};
-      if (!target) throw new Error("scroll target missing");
-      target.scrollIntoView({ block: "start" });
-      return true;
-    })()`);
-    await sleepFor(500);
-  }
-  if (recipe.waitText) {
-    await poll(
-      () => session.execute(`return document.body.innerText.includes(${JSON.stringify(recipe.waitText)})`),
-      `${id}: page never showed ${recipe.waitText}`,
-    );
-  }
+  await scrollFigureIntoView(session, recipe);
+  await waitForPageText(session, id, recipe);
   await dismissTips(session);
   await waitForMarkers(session, id, recipe);
+};
+
+const writeFigure = async (session, id, recipe) => {
   const box = recipe.rect ?? (await session.box(recipe.root));
+  const png = await captureRegion(session, box, {
+    padding: recipe.padding ?? 0,
+    scale: recipe.scale ?? 2,
+  });
+  const file = join(outputDir, `${id}.png`);
+  await writeFile(file, png);
+  return file;
+};
+
+const captureFigure = async (session, id, recipe, loaded) => {
+  await readyFigure(session, id, recipe, loaded);
   if (recipe.markers) await drawMarkers(session, recipe.root, recipe.markers);
   try {
-    const png = await captureRegion(session, box, {
-      padding: recipe.padding ?? 0,
-      scale: recipe.scale ?? 2,
-    });
-    const file = join(outputDir, `${id}.png`);
-    await writeFile(file, png);
-    return file;
+    return await writeFigure(session, id, recipe);
   } finally {
     await clearMarkers(session);
   }
 };
 
-const { only } = readOptions(process.argv.slice(2));
+const { only, seed } = readOptions(process.argv.slice(2));
 await mkdir(outputDir, { recursive: true });
 await waitForDriver();
+if (seed) {
+  const result = seedGuideData();
+  console.log(
+    result.seeded
+      ? `seeded ${result.transcriptions} transcriptions into ${result.dbPath}`
+      : `${result.dbPath} already holds ${result.transcriptions} transcriptions, capturing on it as it is`,
+  );
+}
 const session = await openSession(driverUrl, appBinary);
 const loaded = { route: null };
 const files = [];
