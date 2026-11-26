@@ -1,7 +1,7 @@
 /**
- * Docs capture demos. These exist so `apps/docs/scripts/capture-preview.mjs`
- * can screenshot the REAL component the guides describe, rather than a
- * hand-built mock. Each capture root carries `data-capture="<figure id>"`.
+ * Home analytics for the preview app. The guides capture this grid from the
+ * running desktop app, so this demo exists to inspect the same component in
+ * both themes without a build.
  */
 import { Box } from "@mui/material";
 import type { DailyWordActivity } from "@maus-inc/desktop-native-apis";
@@ -39,10 +39,9 @@ const ACTIVITY = buildActivity();
 export const HomeHeatmapDemo = () => (
   <DemoSection
     title="Home analytics (real component)"
-    hint="HomeAnalyticsGrid from apps/desktop/src/components/home, rendered with a 53 week fixture. This is the surface the home guides capture."
+    hint="HomeAnalyticsGrid from apps/desktop/src/components/home, rendered with a 53 week fixture. The home guides capture the same component from the running app."
   >
     <Box
-      data-capture="home-heatmap"
       sx={{
         width: 720,
         p: 3,

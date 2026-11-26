@@ -1194,7 +1194,7 @@ export const REGISTRY: RegistryEntry[] = [
   // ─── Data display ───────────────────────────────────────────────
   {
     id: "home-heatmap",
-    name: "Activity heatmap (docs capture)",
+    name: "Activity heatmap",
     category: "data",
     status: "reused",
     sources: [
