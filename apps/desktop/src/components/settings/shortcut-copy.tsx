@@ -51,8 +51,11 @@ const assistantDictate: ShortcutCopy = {
   description: (
     <FormattedMessage defaultMessage="Dictate commands for the AI to follow instead of just cleaning up text." />
   ),
+  // The hold key is disabled while the feature is off rather than routed to the
+  // setting, so its hint says what it needs without promising a click it cannot
+  // perform. The Open chat key below does route, and says so.
   setupHint: (
-    <FormattedMessage defaultMessage="Turn on Assistant mode to use this key." />
+    <FormattedMessage defaultMessage="Needs Assistant mode turned on." />
   ),
 };
 

@@ -14,7 +14,7 @@ The activity chart groups dictations by the device's local calendar date. The da
 - **History** lists saved transcriptions and opens their details.
 - **Dictionary** manages glossary hints and replacement rules.
 - **Styles** manages the writing instructions applied during post-processing.
-- **Help** lists short guides for the features first run skips. Each guide carries one action, and a guide for an assistant feature that is off opens the setting that turns it on.
+- **Help** lists short guides for the features first run skips. Each guide carries one action, and the assistant guide opens the setting that turns the feature on while it is off.
 - **Chats** appears only when Assistant mode is enabled.
 - **Settings** sits at the bottom of the rail and contains device, shortcut, processing, diagnostic, and advanced controls.
 

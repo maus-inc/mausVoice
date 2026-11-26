@@ -85,7 +85,10 @@ describe("ShortcutsDialog assistant rows", () => {
     await render();
 
     expect(dialogText()).toContain("Assistant mode");
-    expect(dialogText()).toContain("Turn on Assistant mode to use this key.");
+    // The hold key is disabled rather than routed, so its hint names the
+    // switch without promising a click it cannot perform. The Open chat key
+    // routes to the setting, and its hint says so.
+    expect(dialogText()).toContain("Needs Assistant mode turned on.");
     expect(dialogText()).toContain(
       "Turn on Assistant mode to open a conversation.",
     );
@@ -101,6 +104,7 @@ describe("ShortcutsDialog assistant rows", () => {
     expect(dialogText()).toContain(
       "Open the current assistant conversation in the main window.",
     );
+    expect(dialogText()).not.toContain("Needs Assistant mode turned on.");
     expect(dialogText()).not.toContain("Turn on Assistant mode");
   });
 

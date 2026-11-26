@@ -2936,7 +2936,10 @@ export const DictationSideEffects = () => {
     // With assistant mode off there is no conversation to open, so the key
     // opens the switch instead of a chat window the person cannot use. Same
     // class as the Help page's action (issue #355): an assistant entry point
-    // that fired while the feature was off.
+    // that fired while the feature was off. Only this key is routed: the
+    // assistant hold key above stays disabled, because a hold that opens a
+    // settings page mid-gesture would be a worse surprise than a key that does
+    // nothing, and its row now says which switch it needs.
     onFire: () =>
       withAssistantMode(assistantModeEnabled, () => {
         void openPillConversation().catch(reportConversationOpenFailure);

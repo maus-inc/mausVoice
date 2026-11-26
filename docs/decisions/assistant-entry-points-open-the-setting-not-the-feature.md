@@ -12,11 +12,16 @@ nothing on it can do what the card just promised. The person follows a guide and
 lands in a feature they cannot use.
 
 The single card was one instance. A sweep of every assistant entry point found
-four more of the same shape, each deciding for itself whether the feature existed:
+four more of the same shape, each deciding for itself whether the feature
+existed — plus one summary row that decides in the way that is right for a
+summary:
 
 - `ShortcutsDialog` hid the Assistant dictation key while the switch was off, so
   someone who had already bound that key had nowhere to see or clear it.
-- `QuickShortcutsCard` hid the **Open chat** key for the same reason.
+- `QuickShortcutsCard` in the settings overview hid the **Open chat** key for
+  the same reason, and still does: a summary row is a link to the shortcut
+  editor, not an entry point, so the switch governs whether the row belongs in
+  the summary at all.
 - The `OPEN_CHAT_HOTKEY` handler opened the chat window unconditionally, so the
   key fired into an empty feature.
 - The voice assistant's "agent mode disabled" toast offered **Fix**, which set
@@ -24,8 +29,10 @@ four more of the same shape, each deciding for itself whether the feature existe
   root, so from the pill or any other window the action changed state and showed
   nothing at all.
 
-The common cause is that "this feature is off" was answered in five places,
-three of them by hiding the control and two by ignoring the switch.
+The common cause is that "this feature is off" was answered in five places: two
+of them by hiding the control, three by ignoring the switch. Hiding is
+right for a summary of what a person can do; it is wrong for the only listing of
+a key they have already bound, and it is wrong for a key that fires.
 
 ## Decision
 
@@ -44,14 +51,19 @@ three of them by hiding the control and two by ignoring the switch.
   The Help card's label becomes **Open settings** while the feature is off, and
   the shortcut rows stay visible and explain that the switch is needed. Hiding a
   key leaves the person who bound it with no way back to it.
+- The copy follows what the key really does. **Open chat** opens the row, so its
+  hint says so; the Assistant hold key stays disabled while the switch is off,
+  so its hint says only that the switch is needed rather than promising a
+  recovery the gesture cannot perform. Routing a hold gesture to a settings page
+  mid-press would be a worse surprise than a key that does nothing.
 - Arriving from another page moves focus too. `useSettingsAnchor` focused the
   row only when a request came from inside settings, which left a link followed
   from Help with focus on `<body>` and a keyboard user at the top of a page they
   did not choose. It now also takes focus when nothing holds it, and still
   leaves a person's own focus alone.
 - Controls that reveal state instead of navigating stay put. The quick-access
-  card, the menu rail entry and the **Open chat** key in Settings still update
-  in place as the switch flips.
+  summary card, the menu rail entry and the **Open chat** key in Settings still
+  update in place as the switch flips.
 
 Rejected: gating on `isSettingAvailable`. That map answers what the current
 platform, provider or preferences make renderable, and Assistant mode is
