@@ -750,10 +750,10 @@ fn register_scaled_click(
 
 fn draw_flash_blue(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let elapsed = state.flash_blue_elapsed.get();
-    if elapsed <= 0.0 || elapsed >= FLASH_BLUE_DURATION {
+    if elapsed <= 0.0 || elapsed >= rust_pill_shared::flash_banner::FLASH_BLUE_DURATION {
         return;
     }
-    let t = elapsed / FLASH_BLUE_DURATION;
+    let t = elapsed / rust_pill_shared::flash_banner::FLASH_BLUE_DURATION;
     let alpha = (t * std::f64::consts::PI).sin().max(0.0);
     if alpha < 0.01 {
         return;

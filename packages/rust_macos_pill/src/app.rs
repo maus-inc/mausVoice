@@ -1768,7 +1768,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
         .shimmer_phase
         .set((state.shimmer_phase.get() + SHIMMER_SPEED * frame_scale) % 1.0);
 
-    // Fireworks
+    // Fireworks, from the centre the banner last painted
     state.tick_celebration(dt);
 
     // Flame
@@ -1897,46 +1897,21 @@ fn tick_flame(state: &PillState, dt: f64) {
 }
 
 fn tick_flash_blue(state: &PillState, dt: f64) {
-    if !state.flash_blue_active.get() {
-        return;
+    rust_pill_shared::flash_banner::FlashBlue {
+        active: &state.flash_blue_active,
+        elapsed: &state.flash_blue_elapsed,
     }
-    let elapsed = state.flash_blue_elapsed.get() + dt;
-    if elapsed >= FLASH_BLUE_DURATION {
-        state.flash_blue_active.set(false);
-        state.flash_blue_elapsed.set(0.0);
-    } else {
-        state.flash_blue_elapsed.set(elapsed);
-    }
+    .tick(dt);
 }
 
 fn tick_transcript(state: &PillState, dt: f64) {
-    if !state.transcript_has_message.get() && state.transcript_opacity.get() < 0.001 {
-        return;
+    rust_pill_shared::flash_banner::Transcript {
+        text: &state.transcript_text,
+        since_update: &state.transcript_time_since_update,
+        opacity: &state.transcript_opacity,
+        has_message: &state.transcript_has_message,
     }
-    let since = state.transcript_time_since_update.get() + dt;
-    state.transcript_time_since_update.set(since);
-
-    let target = if state.transcript_has_message.get() && since < TRANSCRIPT_FADE_DELAY {
-        1.0
-    } else {
-        0.0
-    };
-
-    let speed = if target > 0.5 {
-        TRANSCRIPT_RISE_SPEED
-    } else {
-        TRANSCRIPT_FADE_SPEED
-    };
-    let opacity = state.transcript_opacity.get();
-    let blend = 1.0 - (-speed * dt).exp();
-    let next = opacity + (target - opacity) * blend;
-    state.transcript_opacity.set(next);
-
-    if target == 0.0 && next < 0.002 {
-        state.transcript_opacity.set(0.0);
-        state.transcript_has_message.set(false);
-        state.transcript_text.borrow_mut().clear();
-    }
+    .tick(dt);
 }
 
 fn tick_long_press(state: &PillState, window: id, dt: f64) {

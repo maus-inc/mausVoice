@@ -910,6 +910,98 @@ pub fn dismiss_flash<S: FlashHost>(state: &S, reject: bool, send: impl FnOnce(&s
     state.clear_flash();
 }
 
+/// The blue border's flash, from the moment it starts to the moment it ends.
+///
+/// Three copies of this existed, one per pill, with the same 0.9 second
+/// duration and the same two fields. The only thing a platform supplied was the
+/// step, so that is the only argument.
+pub struct FlashBlue<'a> {
+    /// Whether the flash is running.
+    pub active: &'a Cell<bool>,
+    /// Seconds since it started.
+    pub elapsed: &'a Cell<f64>,
+}
+
+/// Seconds the blue border stays lit.
+///
+/// Shared for the same reason the arithmetic is: three files each declared
+/// `0.9`, and a change to one would have made one platform flash differently.
+pub const FLASH_BLUE_DURATION: f64 = 0.9;
+
+impl FlashBlue<'_> {
+    /// Advances the flash by `dt`, clearing it at the end of its life.
+    pub fn tick(&self, dt: f64) {
+        if !self.active.get() {
+            return;
+        }
+        let elapsed = self.elapsed.get() + dt;
+        if elapsed >= FLASH_BLUE_DURATION {
+            self.active.set(false);
+            self.elapsed.set(0.0);
+        } else {
+            self.elapsed.set(elapsed);
+        }
+    }
+}
+
+/// The broadcast transcript's rise and fade.
+///
+/// Three copies of this existed, one per pill, identical down to the three
+/// timing constants. The step is the only platform part.
+pub struct Transcript<'a> {
+    /// The text being shown.
+    pub text: &'a RefCell<String>,
+    /// Seconds since the last update.
+    pub since_update: &'a Cell<f64>,
+    /// The current opacity, in `0.0..=1.0`.
+    pub opacity: &'a Cell<f64>,
+    /// Whether a message is held.
+    pub has_message: &'a Cell<bool>,
+}
+
+/// Seconds before a transcript starts to fade.
+pub const TRANSCRIPT_FADE_DELAY: f64 = 3.0;
+/// How fast a transcript fades out.
+pub const TRANSCRIPT_FADE_SPEED: f64 = 6.0;
+/// How fast a transcript rises in.
+pub const TRANSCRIPT_RISE_SPEED: f64 = 12.0;
+
+impl Transcript<'_> {
+    /// Advances the transcript by `dt`.
+    ///
+    /// A transcript that has faded out clears itself here, so no caller has to
+    /// remember the second condition that made the text go away.
+    pub fn tick(&self, dt: f64) {
+        if !self.has_message.get() && self.opacity.get() < 0.001 {
+            return;
+        }
+        let since = self.since_update.get() + dt;
+        self.since_update.set(since);
+
+        let target = if self.has_message.get() && since < TRANSCRIPT_FADE_DELAY {
+            1.0
+        } else {
+            0.0
+        };
+
+        let speed = if target > 0.5 {
+            TRANSCRIPT_RISE_SPEED
+        } else {
+            TRANSCRIPT_FADE_SPEED
+        };
+        let opacity = self.opacity.get();
+        let blend = 1.0 - (-speed * dt).exp();
+        let next = opacity + (target - opacity) * blend;
+        self.opacity.set(next);
+
+        if target == 0.0 && next < 0.002 {
+            self.opacity.set(0.0);
+            self.has_message.set(false);
+            self.text.borrow_mut().clear();
+        }
+    }
+}
+
 /// The banner's centre without wrapping the message.
 ///
 /// The celebration particles launch from the middle of the banner, and they are
@@ -1606,6 +1698,64 @@ mod tests {
             state.indicator.banner_center.get(),
             None,
             "clearing a toast kept its centre, so the next burst launches from where it used to be"
+        );
+    }
+
+    /// The blue border ends exactly at its duration on every platform.
+    ///
+    /// Three copies used to decide this, so this pins the boundary rather than
+    /// the arithmetic: a step that lands on the duration clears the flash, and
+    /// the elapsed time goes back to zero so the next flash is full length.
+    #[test]
+    fn the_blue_border_clears_at_its_duration_and_not_before() {
+        let active = Cell::new(true);
+        let elapsed = Cell::new(0.0);
+        let flash = FlashBlue {
+            active: &active,
+            elapsed: &elapsed,
+        };
+
+        flash.tick(FLASH_BLUE_DURATION - 0.01);
+        assert!(
+            active.get(),
+            "the flash cleared before its duration elapsed"
+        );
+
+        flash.tick(0.01);
+        assert!(!active.get(), "the flash outlived its duration");
+        assert_eq!(elapsed.get(), 0.0, "the next flash would start part-spent");
+    }
+
+    /// A transcript that has finished fading clears its own text.
+    ///
+    /// The second condition used to be restated at every call site, which is the
+    /// kind of thing one platform forgets and then shows a ghost of a message.
+    #[test]
+    fn a_faded_transcript_clears_its_own_text() {
+        let text = RefCell::new(String::from("hello"));
+        let since_update = Cell::new(0.0);
+        let opacity = Cell::new(1.0);
+        let has_message = Cell::new(true);
+        let transcript = Transcript {
+            text: &text,
+            since_update: &since_update,
+            opacity: &opacity,
+            has_message: &has_message,
+        };
+
+        // Past the hold, then long enough at the fade speed to reach zero.
+        for _ in 0..2000 {
+            transcript.tick(0.016);
+        }
+
+        assert!(
+            !has_message.get(),
+            "the transcript kept holding a faded message"
+        );
+        assert_eq!(opacity.get(), 0.0);
+        assert!(
+            text.borrow().is_empty(),
+            "the faded text was left for the next message"
         );
     }
 
