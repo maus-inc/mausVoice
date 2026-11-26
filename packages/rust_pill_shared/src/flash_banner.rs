@@ -599,6 +599,13 @@ where
     }
 }
 
+/// The line count a banner starts with, before it has painted once.
+///
+/// A pill's initial state, and its celebration reset, both need this number.
+/// Naming it here means the three state structs do not each spell out the
+/// literal, and a change to "a short toast is one line" reaches all of them.
+pub const BANNER_LINES_AT_REST: usize = 1;
+
 /// The four fields a pill's fireworks state lives in.
 ///
 /// Separate from [`FlashHost`] because a pill animates its fireworks whether or
@@ -668,33 +675,45 @@ pub struct FlashFrame {
 }
 
 impl FlashFrame {
-    /// Lay the banner out and derive its fade.
+    /// Lays the banner out and resolves everything a painter needs.
     ///
-    /// The line count the celebration needs is published to `flash_lines`
-    /// before returning, because the tick that launches the particles runs
-    /// before the paint that will measure this banner again.
-    pub fn resolve<F>(
-        spec: FlashBannerSpec,
+    /// The draw sites all did this the same way: ask the pill where it is, build
+    /// a spec centred on the window, resolve the frame, then take it apart into
+    /// the layout, the two multipliers and the centre. Returning that tuple
+    /// directly means a paint site has one call and one `let`, rather than a
+    /// block its two siblings would have to repeat word for word.
+    ///
+    /// The bottom of the return is `FlashBannerWidths` order, not a struct, so
+    /// the call stays inside the width the line fits on.
+    #[allow(clippy::type_complexity)]
+    pub fn resolve_for_window<F>(
         message: &str,
         measure: F,
+        (preferred, action, reject): (f64, Option<f64>, Option<f64>),
+        (pill_top, window_width): (f64, f64),
         fade_t: f64,
         flash_lines: &Cell<usize>,
-    ) -> Self
+    ) -> (FlashBannerLayout, f64, f64, (f64, f64))
     where
         F: Fn(&str) -> f64,
     {
+        let spec = FlashBannerSpec::for_window(
+            window_width,
+            pill_top,
+            FlashBannerConstants::canonical(),
+            preferred,
+            action,
+            reject,
+        );
         let layout = layout_flash_banner(&spec, message, measure);
         flash_lines.set(layout.lines.len());
-        Self {
+        let center = layout.center();
+        (
             layout,
-            scale: BANNER_MIN_SCALE + (1.0 - BANNER_MIN_SCALE) * fade_t,
-            alpha: fade_t,
-        }
-    }
-
-    /// The point the banner is scaled about.
-    pub fn center(&self) -> (f64, f64) {
-        self.layout.center()
+            BANNER_MIN_SCALE + (1.0 - BANNER_MIN_SCALE) * fade_t,
+            fade_t,
+            center,
+        )
     }
 }
 
@@ -775,56 +794,6 @@ pub trait FlashHost {
         self.flash_visible().set(true);
         self.flash_timer().set(duration);
         self.flash_lines().set(1);
-    }
-
-    /// Lays this pill's banner out and resolves the frame its painter needs.
-    ///
-    /// The draw sites all did this identically, so it is a default method on
-    /// the trait: a site supplies what it measured and where its pill sits, and
-    /// the trait owns the rest. That also keeps the call itself short, which
-    /// matters because three copies of a long call are exactly what a
-    /// duplication gate sees.
-    #[allow(clippy::type_complexity)]
-    fn flash_frame<F>(
-        &self,
-        message: &str,
-        measure: F,
-        widths: (f64, Option<f64>, Option<f64>),
-        (pill_top, window_width): (f64, f64),
-        fade_t: f64,
-    ) -> FlashFrame
-    where
-        F: Fn(&str) -> f64,
-    {
-        let (preferred, action, reject) = widths;
-        let constants = FlashBannerConstants::canonical();
-        let spec = FlashBannerSpec::for_window(
-            window_width,
-            pill_top,
-            constants,
-            preferred,
-            action,
-            reject,
-        );
-        FlashFrame::resolve(spec, message, measure, fade_t, self.flash_lines())
-    }
-
-    /// The label of `button`, if the banner is showing that button at all.
-    ///
-    /// A banner can carry either button, both, or neither, and the caller holds
-    /// the two labels separately. Resolving which one a painted rectangle wants
-    /// is the same rule on every platform, so it lives here rather than being
-    /// repeated at each paint site.
-    fn button_label<'a>(
-        &self,
-        button: BannerButton,
-        action: Option<&'a String>,
-        reject: Option<&'a String>,
-    ) -> Option<&'a String> {
-        match button {
-            BannerButton::Action => action,
-            BannerButton::Reject => reject,
-        }
     }
 
     /// Where a celebration launches its particles from.
@@ -1537,7 +1506,7 @@ mod tests {
             let source = std::fs::read_to_string(format!("{manifest}/{path}"))
                 .unwrap_or_else(|err| panic!("read {path}: {err}"));
             assert!(
-                source.contains(".flash_frame("),
+                source.contains("flash_banner::FlashFrame::resolve_for_window("),
                 "{path} does not lay the flash banner out through the shared module"
             );
             assert!(

@@ -4,7 +4,6 @@ use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
 use rust_pill_shared::flash_banner::BannerButton;
-use rust_pill_shared::flash_banner::FlashHost as _;
 use rust_pill_shared::{DRAG_INFLATE_SCALE, LONG_PRESS_OUTLINE_COLOR};
 
 /// Paints the whole pill window: clears, scales for the UI scale factor, then
@@ -634,17 +633,21 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         ctx.set_font_size(11.0);
         Some(ctx.text_extents(text).width + FLASH_ACTION_PADDING_H * 2.0)
     };
-    let action_w = button_width(action_text);
-    let reject_w = button_width(reject_text);
-
+    let widths = (
+        preferred_w,
+        button_width(action_text),
+        button_width(reject_text),
+    );
     let (_, pill_y, _, _) = pill_position(state, ww, wh);
-    let widths = (preferred_w, action_w, reject_w);
-    let window = (pill_y, WINDOW_W_TYPING as f64);
-    let frame = state.flash_frame(&message, measure, widths, window, flash_t);
-    let (center_x, center_y) = frame.center();
-    let layout = frame.layout;
-    let scale = frame.scale;
-    let alpha = frame.alpha;
+    let (layout, scale, alpha, (center_x, center_y)) =
+        rust_pill_shared::flash_banner::FlashFrame::resolve_for_window(
+            &message,
+            measure,
+            widths,
+            (pill_y, WINDOW_W_TYPING as f64),
+            flash_t,
+            &state.flash_lines,
+        );
 
     ctx.save();
     ctx.translate(center_x, center_y);

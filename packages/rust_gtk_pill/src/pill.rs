@@ -1020,7 +1020,7 @@ fn initial_state(backend: Backend, restored_position: Option<ParkedWindow>) -> R
         cancel_t: Cell::new(0.0),
         cancel_velocity: Cell::new(0.0),
         flash_message: RefCell::default(),
-        flash_lines: Cell::new(1),
+        flash_lines: Cell::new(rust_pill_shared::flash_banner::BANNER_LINES_AT_REST),
         flash_visible: Cell::new(false),
         flash_t: Cell::new(0.0),
         flash_velocity: Cell::new(0.0),
@@ -2499,8 +2499,10 @@ fn tick_fireworks(state: &PillState) {
     let ww = state.draw_width.get();
     let wh = state.draw_height.get();
     let (_, pill_y, ..) = draw::pill_position(state, ww, wh);
-    let origin = state.celebration_origin(ww / 2.0, pill_y, Default::default());
-    state.tick_fireworks(dt, origin);
+    state.tick_fireworks(
+        dt,
+        state.celebration_origin(ww / 2.0, pill_y, Default::default()),
+    );
 }
 
 /// The flame, swaying on its own schedule.

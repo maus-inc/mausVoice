@@ -7,7 +7,6 @@ use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 use crate::constants::*;
 use crate::state::{rect_contains, ClickAction, ClickRegion, PillState, RocketPhase};
 use rust_pill_shared::flash_banner::BannerButton;
-use rust_pill_shared::flash_banner::FlashHost as _;
 use rust_pill_shared::{DRAG_INFLATE_SCALE, LONG_PRESS_OUTLINE_COLOR};
 
 // Cairo retains paint errors on the context; the draw callback reports them.
@@ -880,15 +879,16 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
         action_button.as_ref().map(|(w, _)| *w),
         reject_button.as_ref().map(|(w, _)| *w),
     );
-
     let (_, pill_y, _, _) = pill_position(state, ww, wh);
-    let widths = (preferred_w, action_w, reject_w);
-    let window = (pill_y, WINDOW_W_TYPING as f64);
-    let frame = state.flash_frame(&message, measure, widths, window, flash_t);
-    let (center_x, center_y) = frame.center();
-    let layout = frame.layout;
-    let scale = frame.scale;
-    let alpha = frame.alpha;
+    let (layout, scale, alpha, (center_x, center_y)) =
+        rust_pill_shared::flash_banner::FlashFrame::resolve_for_window(
+            &message,
+            measure,
+            (preferred_w, action_w, reject_w),
+            (pill_y, WINDOW_W_TYPING as f64),
+            flash_t,
+            &state.flash_lines,
+        );
 
     cr.save().ok();
     cr.translate(center_x, center_y);
