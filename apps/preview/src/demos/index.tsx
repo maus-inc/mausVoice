@@ -36,6 +36,7 @@ import {
   TextFieldDemo,
 } from "./forms";
 import { ButtonDemo, FabDemo, IconButtonDemo } from "./buttons";
+import { HomeHeatmapDemo } from "./guides";
 import { Keycap3dDemo } from "./keycap";
 import { LayoutDemo, TitlebarDemo } from "./layout";
 import { SettingsRowDemo } from "./settings";
@@ -50,6 +51,7 @@ import {
 } from "./pill";
 
 export const DEMOS: Record<string, ComponentType> = {
+  "home-heatmap": HomeHeatmapDemo,
   color: ColorDemo,
   typography: TypographyDemo,
   elevation: ElevationDemo,

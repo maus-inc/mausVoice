@@ -1,0 +1,85 @@
+---
+title: "Review before insert"
+description: "The pill's editable review panel, every decision it offers, and what happens to a transcript nobody answers."
+sidebar:
+  order: 2
+---
+
+import Figure from "../../../components/guides/Figure.astro";
+import Steps from "../../../components/guides/Steps.astro";
+import Step from "../../../components/guides/Step.astro";
+import Callout from "../../../components/guides/Callout.astro";
+
+**Review before insert** lives in **Settings → Dictation**. When it is on, a finished transcript stops before delivery and opens in the pill's own panel, with the text loaded into the entry so you can fix it in place. Nothing opens in a separate window.
+
+The panel is the pill's assistant surface, so it is the same place you were already looking while you spoke. That is deliberate. A review that opened elsewhere would move your eyes away from the text and, on some platforms, change which window has focus before you decide. The pill is the default surface. The Edit decision hands the text to the composer window. The open icon does the same for a dictation review, and on a review started by the assistant's Paste tool it hands the text to Chats instead.
+
+## The panel
+
+The panel is drawn by the native pill rather than by the web renderer, so a browser capture cannot show it. The decisions and their behaviour are listed here instead, and the figures in this guide show the app surfaces they touch.
+
+
+Four decisions sit in the action row as localized captions, and the open icon sits in the header. The row is drawn above the entry and outside the scrolling text, so a long transcript scrolls behind the buttons. The desktop app owns the text and the labels. The pill holds only the review id, the labels it was sent, and the text it is showing.
+
+## Decide
+
+<Steps>
+  <Step
+    title="The panel opens after processing"
+  >
+    The panel opens after dictionary handling, filtering, and post-processing, and before insertion. A review therefore shows you exactly the text that would have been inserted. If the entry looks wrong, the problem is upstream of the review, in the transcription or the processing settings, not in the review itself.
+  </Step>
+  <Step
+    title="Edit in place"
+  >
+    The entry is the pill's own text field under the action row. Type into it to change the text, or press Edit to move the review into the composer window for a larger field. There is no separate save step. The text in the entry when you press a decision is the text that decision carries, and History adopts the same edit.
+  </Step>
+  <Step
+    title="Choose a decision"
+  >
+    Insert delivers to the focused field through the same paste or simulated-typing strategy as ordinary dictation. Copy puts the text on the clipboard, closes the review, and reports the copy in a toast. Cancel inserts nothing. The open icon in the header moves the text to the composer window, or to Chats when the review came from the assistant's Paste tool. Review changes when delivery happens, not how it happens.
+  </Step>
+  <Step
+    title="Cancel beats a save that is still running"
+  >
+    An Open from an agent's Paste has to save a pending record, which can take a moment. Cancel settles the review as cancelled and stops the hand-off, so the app does not switch to Chats. A save that already committed is marked cancelled rather than deleted, so the card can still appear in Chats, marked cancelled. A completed save cannot reopen the review, because the review has left the queue by then. Duplicate Open presses are ignored, so the save starts once.
+  </Step>
+</Steps>
+
+## One review at a time
+
+The pill shows one transcript at a time. A second transcript that finishes while a review is open waits in a queue and is presented in arrival order. The queue never drops one silently, so a fast second dictation does not erase the first.
+
+The panel never shows two reviews. A second transcript replaces the first in the same surface once the first is decided, and the queue is drained in arrival order.
+
+Each session carries its own origin, draft, queue slot, and lifecycle. A review started by the assistant's Paste tool and a review started by dictation can be in the queue at the same time, and they behave the same way while queued.
+
+## When nobody answers
+
+An open review expires after five minutes. The insertion is skipped, the transcript stays in History, and the toast says the review expired, that the transcript is kept in your history, and offers an **Open history** action. An unanswered review is not a cancel and not a failure. The app records it as expired, so you can still recover the text.
+
+The toast is the whole report. The pill draws no countdown, so expiry is visible only when it happens.
+
+<Figure
+  id="history-list"
+  title="Where a reviewed transcript ends up"
+  caption="Captured from History. A transcript that was cancelled or expired still appears here as a normal row, because the review decides delivery, not whether the text is saved."
+/>
+
+<Callout title="Why a review expires at all">
+  The panel holds an insertion. If it stayed open indefinitely, a transcript you forgot about could arrive in whatever field had focus much later. Five minutes is long enough to edit a paragraph and short enough that a forgotten review cannot surprise you.
+</Callout>
+
+## Open has its own clock
+
+An Open hand-off that has to save a durable record gets 30 seconds. If the save exceeds that, the review reports the failure instead of waiting forever. Cancel still wins during that window. A failed save is reported once, not retried in the background, so a target that has gone away cannot be written to twice.
+
+## Builds without the native pill
+
+On a build where the native pill is unavailable, the review opens in the desktop composer window instead. The composer offers the same edit-in-place field with **Insert** and **Cancel**, and no Copy or open icon. It runs its own five-minute window and its own 15-second readiness timeout, so the pill's timers do not run there, and it can block a decision while it is not ready.
+
+## What the review does not change
+
+- It does not change the transcription provider or the processing pipeline. The text is already final when the panel opens.
+- It does not change History. The row is written as usual, and Cancel or expiry leaves it in place.
+- It does not change the insertion strategy. Insert uses whatever paste or simulated typing is configured, including per-app overrides.

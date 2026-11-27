@@ -5,6 +5,8 @@ sidebar:
   order: 7
 ---
 
+import Figure from "../../../components/guides/Figure.astro";
+
 A writing style is an instruction for the optional post-processing stage. It can clean punctuation, remove fillers, or reshape a transcript, but it does not train speech recognition or recover audio the transcription model missed.
 
 Open **Writing Styles** from the main navigation. Which layout appears depends on **Settings → AI and processing → Styling mode**:
@@ -13,6 +15,14 @@ Open **Writing Styles** from the main navigation. Which layout appears depends o
 - **Manual** shows a selected set of styles. Click a row or use the style-cycle shortcuts while dictating.
 
 Post-processing must also be configured. If **Settings → AI and processing → AI post processing** is **Off**, style controls are disabled and no generative rewrite runs. The built-in **Verbatim** style also skips the generative stage for that dictation, while leaving post-processing available for other styles.
+
+<Figure
+  id="styles-list"
+  alt="The Writing Styles page in based-on-app mode, listing Mail, Notes and Slack with a style each"
+  title="One style per application"
+  caption="Captured from the running app in based-on-app mode. Each registered application carries its own style picker, and the default style applies where an application has no row."
+/>
+
 
 ## What reaches the provider
 

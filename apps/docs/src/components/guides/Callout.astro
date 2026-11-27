@@ -1,0 +1,12 @@
+---
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<aside class="mv-callout">
+  <span class="mv-callout__title">{title}</span>
+  <slot />
+</aside>

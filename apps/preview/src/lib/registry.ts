@@ -1193,6 +1193,46 @@ export const REGISTRY: RegistryEntry[] = [
 
   // ─── Data display ───────────────────────────────────────────────
   {
+    id: "home-heatmap",
+    name: "Activity heatmap",
+    category: "data",
+    status: "reused",
+    sources: [
+      `${D}components/home/ActivityHeatmap.tsx`,
+      `${D}styles/activity-heatmap.ts`,
+    ],
+    usedIn: [`${D}components/home/`],
+    demo: "home-heatmap",
+    spec: [
+      {
+        key: "cell",
+        label: "Cell size",
+        type: "number",
+        default: 10,
+        unit: "px",
+        target: {
+          kind: "source",
+          file: `${D}styles/activity-heatmap.ts`,
+          line: "cellSize",
+        },
+        mapsTo: `${D}styles/activity-heatmap.ts → cellSize 10, read by the grid template and the weekday rail`,
+      },
+      {
+        key: "gap",
+        label: "Cell gap",
+        type: "number",
+        default: 3,
+        unit: "px",
+        target: {
+          kind: "source",
+          file: `${D}styles/activity-heatmap.ts`,
+          line: "cellGap",
+        },
+        mapsTo: `${D}styles/activity-heatmap.ts → cellGap 3, applied as row and column gap`,
+      },
+    ],
+  },
+  {
     id: "card-paper",
     name: "Card · Paper",
     category: "data",
