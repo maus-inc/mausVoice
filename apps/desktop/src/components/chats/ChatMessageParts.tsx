@@ -111,7 +111,7 @@ const ReasonSuffix = ({ reason }: { reason?: string }) =>
   reason ? (
     <>
       {" "}
-      <FormattedMessage defaultMessage="— {reason}" values={{ reason }} />
+      <FormattedMessage defaultMessage="- {reason}" values={{ reason }} />
     </>
   ) : null;
 

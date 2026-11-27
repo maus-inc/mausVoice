@@ -18,6 +18,8 @@ import { getMyUser } from "../utils/user.utils";
 import {
   type LocalDataWriteLease,
   beginLocalDataWrite,
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
 import { showErrorSnackbar, showSnackbar } from "./app.actions";
@@ -26,7 +28,20 @@ import { activateAndSelectTone, setSelectedToneId } from "./user.actions";
 import { updateUserPreferences } from "./user-actions-core";
 
 export const loadTones = async (): Promise<void> => {
+  const clearGeneration = getLocalDataClearGeneration();
+  const isClearStillSame = () =>
+    !isLocalDataClearRequested() &&
+    clearGeneration === getLocalDataClearGeneration();
+
+  if (!isClearStillSame()) {
+    return;
+  }
+
   const tones = await getToneRepo().listTones();
+  if (!isClearStillSame()) {
+    return;
+  }
+
   produceAppState((draft) => {
     registerTones(draft, tones);
   });

@@ -154,6 +154,9 @@ fn main() {
         user_preferences_set,
         user_preferences_set_expansion_flags,
         user_set_one,
+        voquill_migration_dismiss,
+        voquill_migration_retry,
+        voquill_migration_status,
         write_accessibility_fields,
         warm_microphone,
     ]);

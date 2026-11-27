@@ -7,9 +7,11 @@ import type {
 import { describe, expect, it } from "vitest";
 import { AppState, INITIAL_APP_STATE } from "../state/app.state";
 import {
+  API_KEY_WARNING_CODES,
   getActiveDictationLanguage,
   getConfiguredDictationLanguageCodes,
   getDictationSpeed,
+  getGenerativePrefs,
   getMyDictationLanguage,
   getMyProfileImage,
   getTranscriptionPrefs,
@@ -324,5 +326,79 @@ describe("setUserPreferences realtime/review exclusivity", () => {
     } as unknown as UserPreferences);
     expect(draft.userPrefs?.reviewBeforeInsert).toBe(true);
     expect(draft.settings.reviewBeforeInsert).toBe(true);
+  });
+});
+
+describe("getTranscriptionPrefs credential truthfulness", () => {
+  it("falls back to local mode when credentialStatus needs re-entry even if keyFull is populated", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.apiKeyById["legacy-groq"] = {
+      id: "legacy-groq",
+      name: "Groq",
+      provider: "groq",
+      keyFull: "gsk_stale",
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    state.settings.aiTranscription = {
+      ...state.settings.aiTranscription,
+      mode: "api",
+      selectedApiKeyId: "legacy-groq",
+    };
+
+    const prefs = getTranscriptionPrefs(state);
+    expect(prefs.mode).toBe("local");
+    expect(prefs.warnings).toContain(
+      API_KEY_WARNING_CODES.transcriptionNeedsReentry,
+    );
+  });
+
+  it("falls back to local mode when the selected API key needs re-entry with null keyFull", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.apiKeyById["legacy-groq"] = {
+      id: "legacy-groq",
+      name: "Groq",
+      provider: "groq",
+      keyFull: null,
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    state.settings.aiTranscription = {
+      ...state.settings.aiTranscription,
+      mode: "api",
+      selectedApiKeyId: "legacy-groq",
+    };
+
+    const prefs = getTranscriptionPrefs(state);
+    expect(prefs.mode).toBe("local");
+    expect(prefs.warnings).toContain(
+      API_KEY_WARNING_CODES.transcriptionNeedsReentry,
+    );
+  });
+
+  it("emits localized-ready warning codes for unusable generative keys", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.apiKeyById["bad-endpoint"] = {
+      id: "bad-endpoint",
+      name: "Custom",
+      provider: "openai-compatible",
+      keyFull: "",
+      credentialStatus: "invalid_format",
+      credentialIssue: "missing_endpoint",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    state.settings.aiPostProcessing = {
+      ...state.settings.aiPostProcessing,
+      mode: "api",
+      selectedApiKeyId: "bad-endpoint",
+    };
+
+    const prefs = getGenerativePrefs(state);
+    expect(prefs.mode).toBe("none");
+    expect(prefs.warnings).toContain(
+      API_KEY_WARNING_CODES.postProcessingIncomplete,
+    );
   });
 });

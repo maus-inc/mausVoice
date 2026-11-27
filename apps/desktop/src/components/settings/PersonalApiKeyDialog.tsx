@@ -10,6 +10,10 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import {
+  deepgramTestIntegration,
+  groqTestIntegration,
+} from "@maus-inc/voice-ai";
 import { useEffect, useRef, useState } from "react";
 import {
   defineMessage,
@@ -24,8 +28,14 @@ import {
   savePersonalGroqApiKey,
 } from "../../actions/personal-use.actions";
 import { useAppStore } from "../../store";
+import {
+  apiKeyNeedsAttention,
+  getApiKeyCredentialIssue,
+} from "../../utils/api-key.utils";
 import { findPersonalApiKey } from "../../utils/personal-use.utils";
+import { secureFetch } from "../../utils/secure-fetch.utils";
 import { ProviderLogo } from "../common/provider-logos/ProviderLogo";
+import { ApiKeyAttentionMessage } from "./ApiKeyAttentionMessage";
 
 export type PersonalApiKeyProvider = "groq" | "deepgram";
 
@@ -40,6 +50,7 @@ type ProviderCopy = {
    *  there is an `intl` to ask. */
   savedMessage: MessageDescriptor;
   save: (key: string) => Promise<unknown>;
+  testKey: (key: string) => Promise<boolean>;
 };
 
 const PROVIDER_COPY: Record<PersonalApiKeyProvider, ProviderCopy> = {
@@ -54,6 +65,7 @@ const PROVIDER_COPY: Record<PersonalApiKeyProvider, ProviderCopy> = {
       defaultMessage: "Deepgram API key saved",
     }),
     save: savePersonalDeepgramApiKey,
+    testKey: (apiKey) => deepgramTestIntegration({ apiKey }),
   },
   groq: {
     title: <FormattedMessage defaultMessage="Groq API key" />,
@@ -67,6 +79,8 @@ const PROVIDER_COPY: Record<PersonalApiKeyProvider, ProviderCopy> = {
       defaultMessage: "Groq API key saved",
     }),
     save: savePersonalGroqApiKey,
+    testKey: (apiKey) =>
+      groqTestIntegration({ apiKey, customFetch: secureFetch }),
   },
 };
 
@@ -77,7 +91,39 @@ const PROVIDER_COPY: Record<PersonalApiKeyProvider, ProviderCopy> = {
  * controls, and the page used to carry a copy of each. The provider decides the
  * copy, the console link and the action; everything else is shared.
  */
-export const PersonalApiKeyDialog = ({
+const PersonalKeyAttentionAlert = ({
+  issue,
+}: {
+  issue: ReturnType<typeof getApiKeyCredentialIssue>;
+}) => (
+  <Alert severity="warning" sx={{ boxShadow: "none" }}>
+    <ApiKeyAttentionMessage issue={issue} />
+  </Alert>
+);
+
+const PersonalKeyTestAlert = ({
+  outcome,
+}: {
+  outcome: "success" | "error" | null;
+}) => {
+  if (outcome === "success") {
+    return (
+      <Alert severity="success" role="status">
+        <FormattedMessage defaultMessage="Key verified." />
+      </Alert>
+    );
+  }
+  if (outcome === "error") {
+    return (
+      <Alert severity="error" role="status">
+        <FormattedMessage defaultMessage="Could not verify this key. Check the key and try again." />
+      </Alert>
+    );
+  }
+  return null;
+};
+
+const usePersonalApiKeyForm = ({
   provider,
   open,
   onClose,
@@ -88,53 +134,145 @@ export const PersonalApiKeyDialog = ({
 }) => {
   const intl = useIntl();
   const copy = PROVIDER_COPY[provider];
-  const currentKey = useAppStore((state) =>
-    findPersonalApiKey(state.settings.apiKeys, provider),
-  );
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
-  const saveInFlight = useRef(false);
-  const keyRef = useRef<HTMLInputElement | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testOutcome, setTestOutcome] = useState<"success" | "error" | null>(
+    null,
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const saveInFlight = useRef(false);
+  const testInFlight = useRef(false);
+  const sessionIdRef = useRef(0);
 
   useEffect(() => {
+    sessionIdRef.current += 1;
+    testInFlight.current = false;
     if (open) {
       setValue("");
       setErrorMessage(null);
       setSaving(false);
+      setTesting(false);
+      setTestOutcome(null);
     }
+    return () => {
+      sessionIdRef.current += 1;
+      testInFlight.current = false;
+    };
   }, [open, provider]);
 
+  const busy = saving || testing;
+
+  // Allow dismissing the dialog even while a key test is pending so a slow or
+  // stalled network test cannot trap the user; `sessionIdRef` discards stale
+  // test responses after close or reopen.
   const close = () => {
     if (!saving && !saveInFlight.current) {
       onClose();
     }
   };
 
+  const handleTest = async () => {
+    const trimmed = value.trim();
+    if (!trimmed || busy || testInFlight.current) return;
+
+    const sessionId = sessionIdRef.current;
+    testInFlight.current = true;
+    setTesting(true);
+    setTestOutcome(null);
+    setErrorMessage(null);
+    try {
+      const ok = await copy.testKey(trimmed);
+      if (sessionIdRef.current === sessionId) {
+        setTestOutcome(ok ? "success" : "error");
+      }
+    } catch {
+      if (sessionIdRef.current === sessionId) {
+        setTestOutcome("error");
+      }
+    } finally {
+      if (sessionIdRef.current === sessionId) {
+        testInFlight.current = false;
+        setTesting(false);
+      }
+    }
+  };
+
   const save = async () => {
     const trimmed = value.trim();
-    if (!trimmed || saving || saveInFlight.current) {
-      return;
-    }
+    if (!trimmed || busy || saveInFlight.current) return;
 
+    const sessionId = sessionIdRef.current;
     saveInFlight.current = true;
     setSaving(true);
     setErrorMessage(null);
+    setTestOutcome(null);
     try {
       await copy.save(trimmed);
       showSnackbar(intl.formatMessage(copy.savedMessage), {
         mode: "success",
       });
-      onClose();
+      if (sessionIdRef.current === sessionId) {
+        onClose();
+      }
     } catch {
-      setErrorMessage(
-        intl.formatMessage({ defaultMessage: "Could not save the API key." }),
-      );
+      if (sessionIdRef.current === sessionId) {
+        setErrorMessage(
+          intl.formatMessage({ defaultMessage: "Could not save the API key." }),
+        );
+      }
     } finally {
       saveInFlight.current = false;
-      setSaving(false);
+      if (sessionIdRef.current === sessionId) {
+        setSaving(false);
+      }
     }
   };
+
+  return {
+    copy,
+    value,
+    setValue,
+    saving,
+    testing,
+    testOutcome,
+    setTestOutcome,
+    errorMessage,
+    close,
+    handleTest,
+    save,
+  };
+};
+
+export const PersonalApiKeyDialog = ({
+  provider,
+  open,
+  onClose,
+}: {
+  provider: PersonalApiKeyProvider;
+  open: boolean;
+  onClose: () => void;
+}) => {
+  const currentKey = useAppStore((state) =>
+    findPersonalApiKey(state.settings.apiKeys, provider),
+  );
+  const keyRef = useRef<HTMLInputElement | null>(null);
+  const {
+    copy,
+    value,
+    setValue,
+    saving,
+    testing,
+    testOutcome,
+    setTestOutcome,
+    errorMessage,
+    close,
+    handleTest,
+    save,
+  } = usePersonalApiKeyForm({ provider, open, onClose });
+
+  const currentKeyIssue = getApiKeyCredentialIssue(currentKey);
+  const currentKeyNeedsAttention = apiKeyNeedsAttention(currentKey);
 
   return (
     <Dialog
@@ -180,6 +318,9 @@ export const PersonalApiKeyDialog = ({
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             {copy.description}
           </Typography>
+          {currentKeyNeedsAttention && (
+            <PersonalKeyAttentionAlert issue={currentKeyIssue} />
+          )}
           {currentKey?.keySuffix && (
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
               <FormattedMessage
@@ -189,6 +330,7 @@ export const PersonalApiKeyDialog = ({
             </Typography>
           )}
           {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
+          <PersonalKeyTestAlert outcome={testOutcome} />
           <TextField
             inputRef={keyRef}
             fullWidth
@@ -197,8 +339,11 @@ export const PersonalApiKeyDialog = ({
             label={<FormattedMessage defaultMessage="API key" />}
             placeholder={copy.placeholder}
             value={value}
-            disabled={saving}
-            onChange={(event) => setValue(event.target.value)}
+            disabled={saving || testing}
+            onChange={(event) => {
+              setValue(event.target.value);
+              if (testOutcome !== null) setTestOutcome(null);
+            }}
             autoComplete="off"
             slotProps={{
               inputLabel: { shrink: true },
@@ -219,13 +364,25 @@ export const PersonalApiKeyDialog = ({
         </Stack>
       </DialogContent>
       <DialogActions>
+        <Button
+          onClick={() => void handleTest()}
+          disabled={!value.trim() || saving || testing}
+          aria-busy={testing || undefined}
+          sx={{ mr: "auto" }}
+        >
+          {testing ? (
+            <FormattedMessage defaultMessage="Testing..." />
+          ) : (
+            <FormattedMessage defaultMessage="Test key" />
+          )}
+        </Button>
         <Button onClick={close} disabled={saving}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
         <Button
           variant="contained"
           onClick={() => void save()}
-          disabled={!value.trim() || saving}
+          disabled={!value.trim() || saving || testing}
           aria-busy={saving || undefined}
         >
           {saving ? (

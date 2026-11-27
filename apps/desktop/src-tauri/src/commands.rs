@@ -327,7 +327,7 @@ use crate::platform::{ChunkCallback, LevelCallback};
 
 #[path = "../../../../packages/rust_transcription/src/audio.rs"]
 mod shared_audio;
-use crate::system::crypto::{protect_api_key, reveal_api_key};
+use crate::system::crypto::protect_api_key;
 use crate::system::StorageRepo;
 use rodio::Source;
 use sqlx::Row;
@@ -3217,6 +3217,30 @@ fn current_timestamp_millis() -> Result<i64, String> {
         .map_err(|_| "System timestamp out of representable range".to_string())
 }
 
+fn api_key_to_view(api_key: ApiKey) -> ApiKeyView {
+    let inspection = crate::system::crypto::inspect_api_key_credential(
+        &api_key.provider,
+        &api_key.salt,
+        &api_key.key_ciphertext,
+        api_key.base_url.as_deref(),
+        api_key.azure_region.as_deref(),
+    );
+    if inspection.status != crate::domain::ApiKeyCredentialStatus::Usable {
+        log::warn!(
+            "API key {} (provider={}) is not usable (status={:?}, issue={:?})",
+            api_key.id,
+            crate::system::voquill_migration::safe_provider_display_name(&api_key.provider),
+            inspection.status,
+            inspection.issue
+        );
+    }
+    ApiKeyView::from(api_key).with_credential_state(
+        inspection.key_full,
+        inspection.status,
+        inspection.issue,
+    )
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn api_key_create(
@@ -3258,7 +3282,7 @@ pub async fn api_key_create(
 
     crate::db::api_key_queries::insert_api_key(database.pool(), &stored)
         .await
-        .map(|saved| ApiKeyView::from(saved).with_full_key(Some(key)))
+        .map(api_key_to_view)
         .map_err(|err| err.to_string())
 }
 
@@ -3269,20 +3293,7 @@ pub async fn api_key_list(
 ) -> Result<Vec<ApiKeyView>, String> {
     crate::db::api_key_queries::fetch_api_keys(database.pool())
         .await
-        .map(|api_keys| {
-            api_keys
-                .into_iter()
-                .map(|api_key| {
-                    let full_key = reveal_api_key(&api_key.salt, &api_key.key_ciphertext)
-                        .map_err(|err| {
-                            log::error!("Failed to reveal API key {}: {}", api_key.id, err);
-                            err
-                        })
-                        .ok();
-                    ApiKeyView::from(api_key).with_full_key(full_key)
-                })
-                .collect()
-        })
+        .map(|api_keys| api_keys.into_iter().map(api_key_to_view).collect())
         .map_err(|err| err.to_string())
 }
 
@@ -3305,20 +3316,43 @@ pub async fn api_key_update(
     database: State<'_, crate::state::OptionKeyDatabase>,
 ) -> Result<ApiKeyView, String> {
     let _write_guard = acquire_local_data_write_guard().await?;
-    let (salt, key_hash, key_ciphertext, key_suffix, full_key) =
-        match request.key.as_deref().filter(|k| !k.is_empty()) {
-            Some(raw_key) => {
-                let protected = protect_api_key(raw_key);
+    let (salt, key_hash, key_ciphertext, key_suffix) = match request.key.as_deref() {
+        Some(raw_key) if !raw_key.is_empty() => {
+            let protected = protect_api_key(raw_key);
+            (
+                Some(protected.salt_b64),
+                Some(protected.hash_b64),
+                Some(protected.ciphertext_b64),
+                protected.key_suffix,
+            )
+        }
+        Some("") => {
+            // Allow an explicit keyless reset for local/self-hosted providers
+            // that operate without an API key (e.g. an imported Ollama row
+            // carrying legacy Voquill ciphertext), while ignoring accidental
+            // empty strings for providers that require a key.
+            let existing = crate::db::api_key_queries::fetch_api_keys(database.pool())
+                .await
+                .map_err(|err| err.to_string())?
+                .into_iter()
+                .find(|k| k.id == request.id);
+            if existing
+                .as_ref()
+                .is_some_and(|k| crate::system::crypto::provider_allows_empty_key(&k.provider))
+            {
+                let protected = protect_api_key("");
                 (
                     Some(protected.salt_b64),
                     Some(protected.hash_b64),
                     Some(protected.ciphertext_b64),
-                    protected.key_suffix,
-                    Some(raw_key.to_string()),
+                    None,
                 )
+            } else {
+                (None, None, None, None)
             }
-            None => (None, None, None, None, None),
-        };
+        }
+        _ => (None, None, None, None),
+    };
 
     crate::db::api_key_queries::update_api_key(
         database.pool(),
@@ -3331,7 +3365,7 @@ pub async fn api_key_update(
     .await
     .map_err(|err| err.to_string())?;
 
-    // Re-fetch the updated key to return fresh data
+    // Re-fetch the updated key to return fresh, verified credential status.
     let all_keys = crate::db::api_key_queries::fetch_api_keys(database.pool())
         .await
         .map_err(|err| err.to_string())?;
@@ -3341,18 +3375,80 @@ pub async fn api_key_update(
         .find(|k| k.id == request.id)
         .ok_or_else(|| "API key not found after update".to_string())?;
 
-    let revealed = if full_key.is_some() {
-        full_key
-    } else {
-        reveal_api_key(&updated.salt, &updated.key_ciphertext)
-            .map_err(|err| {
-                log::error!("Failed to reveal API key {}: {}", updated.id, err);
-                err
-            })
-            .ok()
-    };
+    Ok(api_key_to_view(updated))
+}
 
-    Ok(ApiKeyView::from(updated).with_full_key(revealed))
+async fn run_voquill_migration_pool_command<F, Fut>(
+    app: AppHandle,
+    task_label: &'static str,
+    op: F,
+) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String>
+where
+    F: FnOnce(crate::system::voquill_migration::MigrationDirs, sqlx::SqlitePool) -> Fut
+        + Send
+        + 'static,
+    Fut: std::future::Future<
+            Output = Result<crate::system::voquill_migration::VoquillMigrationReport, String>,
+        > + Send,
+{
+    let _write_guard = acquire_local_data_write_guard().await?;
+    let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
+        .map_err(|err| err.to_string())?;
+    let db = app
+        .state::<crate::state::OptionKeyDatabase>()
+        .inner()
+        .clone();
+    let runtime_handle = tokio::runtime::Handle::current();
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime_handle.block_on(async move {
+            let pool = crate::system::voquill_migration::ensure_usable_pool(&dirs, &db).await?;
+            op(dirs, pool).await
+        })
+    })
+    .await
+    .map_err(|err| format!("{task_label} task failed: {err}"))?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn voquill_migration_status(
+    app: AppHandle,
+) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
+    run_voquill_migration_pool_command(app, "Migration status", |dirs, pool| async move {
+        Ok(crate::system::voquill_migration::refresh_migration_report(dirs, pool).await)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn voquill_migration_dismiss(
+    app: AppHandle,
+) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
+    run_voquill_migration_pool_command(app, "Migration dismiss", |dirs, pool| {
+        crate::system::voquill_migration::dismiss_migration_notice(dirs, pool)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn voquill_migration_retry(
+    app: AppHandle,
+) -> Result<crate::system::voquill_migration::VoquillMigrationReport, String> {
+    let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
+        .map_err(|err| err.to_string())?;
+    let db = app
+        .state::<crate::state::OptionKeyDatabase>()
+        .inner()
+        .clone();
+    let _write_guard = acquire_local_data_write_guard().await?;
+    let runtime_handle = tokio::runtime::Handle::current();
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime_handle.block_on(crate::system::voquill_migration::retry_migration(dirs, db))
+    })
+    .await
+    .map_err(|err| format!("Migration retry task failed: {err}"))?
 }
 
 #[tauri::command]
@@ -3472,7 +3568,6 @@ pub async fn clear_local_data(
     // their reservation lock through the wipe so pre-clear inserts cannot run
     // between cancellation and cleanup. This lock comes before the native
     // local-data gate because transcription inserts acquire them in that order.
-    let pool = database.pool();
     // Refuse new recording claims before anything else observes the wipe, and
     // keep refusing them until the reset finishes. Combined with the native
     // clear gate below, no recorder can be admitted mid-wipe.
@@ -3486,6 +3581,35 @@ pub async fn clear_local_data(
     let native_clear_guard = crate::db::local_data_write_gate::begin_local_data_clear()
         .await
         .map_err(|err| err.to_string())?;
+    // Read the database pool only after acquiring the write gate so an active
+    // Voquill migration retry cannot swap out and close the captured pool
+    // before the clear query executes. If a prior failed migration retry left
+    // the managed pool closed, reconcile any orphaned pre-retry backup and
+    // reopen the database under this same lock before tearing down capture
+    // subsystems or persisting the durable clear recovery marker.
+    let pool = {
+        let current_pool = database.pool();
+        if current_pool.is_closed() {
+            let dirs = crate::system::voquill_migration::MigrationDirs::from_app(&app)
+                .map_err(|err| err.to_string())?;
+            let db = database.inner().clone();
+            let runtime_handle = tokio::runtime::Handle::current();
+            tauri::async_runtime::spawn_blocking(move || {
+                runtime_handle.block_on(async move {
+                    crate::system::voquill_migration::ensure_usable_pool(&dirs, &db).await
+                })
+            })
+            .await
+            .map_err(|err| format!("Database pool recovery task failed: {err}"))?
+            .map_err(|err| {
+                format!(
+                    "Could not reopen the local database before clearing local data; restart the app or retry clearing: {err}"
+                )
+            })?
+        } else {
+            current_pool
+        }
+    };
     // Discard in-memory composer drafts and close floating review windows so no
     // secondary WebView retains pre-clear transcripts or an active recognizer.
     floating_window_state.clear_all_composer_text();
@@ -3579,10 +3703,23 @@ pub async fn clear_local_data(
         );
         format!("Database cleared, but database backup cleanup failed: {error}")
     })?;
+    crate::system::voquill_migration::sweep_orphaned_asset_copy_temp_dirs(&app_data_dir).map_err(
+        |error| {
+            log::error!(
+                "Failed to sweep orphaned Voquill asset temp directories during clear: {error}"
+            );
+            format!("Database cleared, but audio cleanup failed: {error}")
+        },
+    )?;
 
     crate::system::paths::delete_legacy_database(&app).map_err(|error| {
         log::error!("Failed to delete the legacy Voquill database during clear: {error}");
         format!("Database cleared, but legacy database cleanup failed: {error}")
+    })?;
+
+    crate::system::voquill_migration::record_migration_cleared(&config_dir).map_err(|error| {
+        log::error!("Failed to record Voquill migration reset state during clear: {error}");
+        format!("Database cleared, but migration state cleanup failed: {error}")
     })?;
 
     if let Err(err) = sqlx::query("VACUUM").execute(&pool).await {

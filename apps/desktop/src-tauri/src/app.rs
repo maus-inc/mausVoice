@@ -582,6 +582,50 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     )
     .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
 
+    // Run staged Voquill migration before opening `mausvoice.db`, unless we are
+    // recovering an interrupted local-data clear (which must finish wiping
+    // before any new data is admitted). Fail closed if migration directories
+    // cannot be resolved so we never initialize a fresh DB that would mask a
+    // legacy profile or bypass unrestored pre-retry backup checks.
+    if !clear_recovery_pending {
+        let migration_dirs = crate::system::voquill_migration::MigrationDirs::from_app(
+            app.handle(),
+        )
+        .map_err(|err| -> Box<dyn std::error::Error> {
+            log::error!("Failed to resolve Voquill migration directories: {err}");
+            err.into()
+        })?;
+        let report = tauri::async_runtime::block_on(
+            crate::system::voquill_migration::run_startup_migration(&migration_dirs),
+        );
+        if report.legacy_detected {
+            log::info!(
+                "Voquill startup migration completed with status={:?}, db={:?}, attention_keys={}",
+                report.status,
+                report.database_phase,
+                report.counts.providers_needing_attention
+            );
+        }
+        crate::system::voquill_migration::ensure_no_unrestored_pre_retry_backup(&migration_dirs)
+            .map_err(|err| -> Box<dyn std::error::Error> {
+                log::error!("{err}");
+                err.into()
+            })?;
+        crate::system::voquill_migration::ensure_no_pending_promotion_recovery(&migration_dirs)
+            .map_err(|err| -> Box<dyn std::error::Error> {
+                log::error!("{err}");
+                err.into()
+            })?;
+        crate::system::voquill_migration::ensure_no_uncheckpointed_initial_migration(
+            &migration_dirs,
+            &report,
+        )
+        .map_err(|err| -> Box<dyn std::error::Error> {
+            log::error!("{err}");
+            err.into()
+        })?;
+    }
+
     let db_path = {
         let handle = app.handle();
         crate::system::paths::database_path(handle)
@@ -981,6 +1025,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::api_key_list,
             crate::commands::api_key_delete,
             crate::commands::api_key_update,
+            crate::commands::voquill_migration_status,
+            crate::commands::voquill_migration_dismiss,
+            crate::commands::voquill_migration_retry,
             crate::commands::tone_upsert,
             crate::commands::tone_list,
             crate::commands::tone_get,

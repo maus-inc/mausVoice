@@ -157,6 +157,8 @@ describe("LocalApiKeyRepo - openRouterConfig wire key casing", () => {
       name: "OpenRouter",
       provider: "openrouter",
       createdAt: 1000,
+      credentialStatus: "usable",
+      credentialIssue: null,
       openRouterConfig: JSON.stringify(storedConfig),
     };
 
@@ -165,6 +167,29 @@ describe("LocalApiKeyRepo - openRouterConfig wire key casing", () => {
     const [key] = await repo.listApiKeys();
 
     expect(key.openRouterConfig).toEqual(storedConfig);
+    expect(key.credentialStatus).toBe("usable");
+    expect(key.credentialIssue).toBeNull();
+  });
+
+  it("preserves legacy credential attention metadata from the native wire shape", async () => {
+    const wire: ApiKeyViewWire = {
+      id: "key-voquill-groq",
+      name: "Personal Groq",
+      provider: "groq",
+      createdAt: 1000,
+      keySuffix: "9999",
+      keyFull: null,
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+    };
+
+    invokeMock.mockResolvedValueOnce([wire]);
+
+    const [key] = await repo.listApiKeys();
+
+    expect(key.keyFull).toBeNull();
+    expect(key.credentialStatus).toBe("needs_reentry");
+    expect(key.credentialIssue).toBe("legacy_encryption");
   });
 
   it("round-trips the serialized update through the native wire shape", async () => {
@@ -173,6 +198,8 @@ describe("LocalApiKeyRepo - openRouterConfig wire key casing", () => {
       name: "OpenRouter",
       provider: "openrouter",
       createdAt: 1000,
+      credentialStatus: "usable",
+      credentialIssue: null,
       openRouterConfig: null,
     };
     invokeMock.mockImplementationOnce((command, { request }) => {

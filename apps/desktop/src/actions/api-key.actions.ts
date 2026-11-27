@@ -7,35 +7,53 @@ import type {
 } from "../repos/api-key.repo";
 import { getAppState, produceAppState } from "../store";
 import { registerApiKeys } from "../utils/app.utils";
-import { withLocalDataWrite } from "../utils/local-data-write-gate";
+import {
+  getLocalDataClearGeneration,
+  withLocalDataWrite,
+} from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
 import { updateUserPreferences } from "./user.actions";
+import { refreshVoquillMigrationStatusIfActive } from "./voquill-migration-refresh";
 
 let loadApiKeysPromise: Promise<void> | null = null;
+let loadApiKeysGeneration = 0;
 
 const sortApiKeys = (apiKeys: ApiKey[]): ApiKey[] =>
   [...apiKeys].sort(
     (a, b) => dayjs(b.createdAt).valueOf() - dayjs(a.createdAt).valueOf(),
   );
 
-export const loadApiKeys = async (): Promise<void> => {
+export const loadApiKeys = async (options?: {
+  force?: boolean;
+}): Promise<void> => {
+  const force = options?.force === true;
   const status = getAppState().settings.apiKeysStatus;
 
-  if (status === "loading" || status === "success") {
+  if (!force && loadApiKeysPromise) {
+    return loadApiKeysPromise;
+  }
+
+  if (!force && (status === "loading" || status === "success")) {
     return;
   }
 
-  if (loadApiKeysPromise) {
-    return loadApiKeysPromise;
-  }
+  loadApiKeysGeneration += 1;
+  const generation = loadApiKeysGeneration;
+  const clearGeneration = getLocalDataClearGeneration();
+  const isCurrentLoad = () =>
+    generation === loadApiKeysGeneration &&
+    clearGeneration === getLocalDataClearGeneration();
 
   produceAppState((draft) => {
     draft.settings.apiKeysStatus = "loading";
   });
 
-  loadApiKeysPromise = getApiKeyRepo()
+  const activePromise = getApiKeyRepo()
     .listApiKeys()
     .then((apiKeys) => {
+      if (!isCurrentLoad()) {
+        return;
+      }
       produceAppState((draft) => {
         registerApiKeys(draft, apiKeys);
         draft.settings.apiKeys = sortApiKeys(apiKeys);
@@ -43,6 +61,9 @@ export const loadApiKeys = async (): Promise<void> => {
       });
     })
     .catch((error) => {
+      if (!isCurrentLoad()) {
+        return;
+      }
       console.error("Failed to load API keys", error);
       produceAppState((draft) => {
         draft.settings.apiKeysStatus = "error";
@@ -50,10 +71,20 @@ export const loadApiKeys = async (): Promise<void> => {
       showErrorSnackbar("Failed to load API keys. Please try again.");
     })
     .finally(() => {
-      loadApiKeysPromise = null;
+      if (loadApiKeysPromise === activePromise) {
+        loadApiKeysPromise = null;
+        if (getAppState().settings.apiKeysStatus === "loading") {
+          produceAppState((draft) => {
+            if (draft.settings.apiKeysStatus === "loading") {
+              draft.settings.apiKeysStatus = "idle";
+            }
+          });
+        }
+      }
     });
 
-  return loadApiKeysPromise;
+  loadApiKeysPromise = activePromise;
+  return activePromise;
 };
 
 export const createApiKey = async (
@@ -73,6 +104,7 @@ export const createApiKey = async (
         draft.settings.apiKeysStatus = "success";
       }, lease);
 
+      void refreshVoquillMigrationStatusIfActive();
       return created;
     } catch (error) {
       console.error("Failed to create API key", error);
@@ -85,8 +117,10 @@ export const createApiKey = async (
 
 export const deleteApiKey = async (id: string): Promise<void> =>
   withLocalDataWrite(async (lease) => {
+    let deletedFromRepo = false;
     try {
       await getApiKeyRepo().deleteApiKey(id, lease);
+      deletedFromRepo = true;
 
       produceAppState((draft) => {
         delete draft.apiKeyById[id];
@@ -122,6 +156,10 @@ export const deleteApiKey = async (id: string): Promise<void> =>
         error instanceof Error ? error.message : "Failed to delete API key.",
       );
       throw error;
+    } finally {
+      if (deletedFromRepo) {
+        void refreshVoquillMigrationStatusIfActive();
+      }
     }
   });
 
@@ -142,6 +180,7 @@ export const updateApiKey = async (
         }
       }, lease);
 
+      void refreshVoquillMigrationStatusIfActive();
       return updated;
     } catch (error) {
       console.error("Failed to update API key", error);

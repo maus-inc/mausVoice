@@ -6,7 +6,7 @@ export const showDictationReviewExpiredToast = (): void => {
     showToast({
       message: getIntl().formatMessage({
         defaultMessage:
-          "Review expired — the transcript is kept in your history.",
+          "Review expired. The transcript is kept in your history.",
       }),
       toastType: "info",
       duration: 8000,

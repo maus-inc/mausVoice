@@ -1,3 +1,4 @@
+import type { VoquillMigrationReport } from "@maus-inc/desktop-native-apis";
 import { countWords } from "@maus-inc/utilities";
 import type { DailyWordActivity } from "../types/home.types";
 import { dateFromLocalDateKey, toLocalDateKey } from "../utils/date.utils";
@@ -182,6 +183,7 @@ type PreviewDatabase = {
   dailyActivityEvents: Map<string, PreviewUsageEvent>;
   conversations: Map<string, WireRecord>;
   chatMessages: Map<string, WireRecord>;
+  voquillMigrationReport: VoquillMigrationReport | null;
   receiverEnabled: boolean;
 };
 
@@ -365,6 +367,13 @@ const toLocalTone = (tone: PreviewData["customTones"][number]): WireRecord => ({
   exampleInputOutput: tone.exampleInputOutput ?? null,
 });
 
+const toLocalApiKeyCredentialFields = (
+  apiKey: PreviewData["apiKeys"][number],
+): WireRecord => ({
+  credentialStatus: apiKey.credentialStatus ?? "usable",
+  credentialIssue: apiKey.credentialIssue ?? null,
+});
+
 const toLocalApiKey = (apiKey: PreviewData["apiKeys"][number]): WireRecord => ({
   id: apiKey.id,
   name: apiKey.name,
@@ -372,6 +381,7 @@ const toLocalApiKey = (apiKey: PreviewData["apiKeys"][number]): WireRecord => ({
   createdAt: new Date(apiKey.createdAt).valueOf(),
   keySuffix: apiKey.keySuffix ?? null,
   keyFull: apiKey.keyFull ?? null,
+  ...toLocalApiKeyCredentialFields(apiKey),
   transcriptionModel: apiKey.transcriptionModel ?? null,
   postProcessingModel: apiKey.postProcessingModel ?? null,
   openRouterConfig: apiKey.openRouterConfig
@@ -504,6 +514,9 @@ const toDatabase = (data: PreviewData): PreviewDatabase => ({
       toLocalChatMessage(message),
     ]),
   ),
+  voquillMigrationReport: data.voquillMigrationReport
+    ? clone(data.voquillMigrationReport)
+    : null,
   receiverEnabled: false,
 });
 
@@ -547,6 +560,126 @@ class PreviewRuntime {
     return this.scenario;
   }
 
+  private hasControlCharacter(value: string): boolean {
+    for (const ch of value) {
+      const code = ch.codePointAt(0);
+      if (
+        code !== undefined &&
+        (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isKeylessProvider(provider: unknown): boolean {
+    return (
+      provider === "ollama" ||
+      provider === "speaches" ||
+      provider === "openai-compatible"
+    );
+  }
+
+  private isValidHttpEndpoint(value: unknown): boolean {
+    if (typeof value !== "string") return false;
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    try {
+      const parsed = new URL(trimmed);
+      return (
+        (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+        parsed.hostname.length > 0 &&
+        parsed.username.length === 0 &&
+        parsed.password.length === 0
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private resolveAzureStructureIssue(
+    baseUrl: string,
+    azureRegion: string,
+  ): "missing_endpoint" | "missing_region" | null {
+    if (baseUrl.length > 0) {
+      return this.isValidHttpEndpoint(baseUrl) ? null : "missing_endpoint";
+    }
+    return azureRegion.length > 0 ? null : "missing_region";
+  }
+
+  private resolveProviderStructureIssue(
+    apiKey: WireRecord,
+  ): "missing_endpoint" | "missing_region" | null {
+    const baseUrl =
+      typeof apiKey.baseUrl === "string" ? apiKey.baseUrl.trim() : "";
+    if (apiKey.provider === "openai-compatible") {
+      return this.isValidHttpEndpoint(baseUrl) ? null : "missing_endpoint";
+    }
+    if (apiKey.provider === "azure") {
+      const azureRegion =
+        typeof apiKey.azureRegion === "string" ? apiKey.azureRegion.trim() : "";
+      return this.resolveAzureStructureIssue(baseUrl, azureRegion);
+    }
+    return null;
+  }
+
+  private applyProviderStructureStatus(apiKey: WireRecord): void {
+    const issue = this.resolveProviderStructureIssue(apiKey);
+    apiKey.credentialStatus = issue ? "invalid_format" : "usable";
+    apiKey.credentialIssue = issue;
+  }
+
+  private applyPreviewApiKeySecret(
+    apiKey: WireRecord,
+    rawKey: string,
+    treatEmptyAsOmitted: boolean,
+  ): void {
+    const trimmedKey = rawKey.trim();
+    if (trimmedKey.length > 0) {
+      // Do not keep an entered secret in the preview's mock transport.
+      apiKey.keyFull = null;
+      apiKey.keySuffix = "…preview";
+      if (this.hasControlCharacter(rawKey) || trimmedKey !== rawKey) {
+        apiKey.credentialStatus = "invalid_format";
+        apiKey.credentialIssue = "invalid_key_format";
+        return;
+      }
+      this.applyProviderStructureStatus(apiKey);
+      return;
+    }
+    if (this.isKeylessProvider(apiKey.provider)) {
+      apiKey.keyFull = "";
+      apiKey.keySuffix = null;
+      this.applyProviderStructureStatus(apiKey);
+      return;
+    }
+    if (!treatEmptyAsOmitted || rawKey.length > 0) {
+      apiKey.keyFull = null;
+      apiKey.keySuffix = null;
+      apiKey.credentialStatus = "needs_reentry";
+      apiKey.credentialIssue = "missing_key";
+    }
+  }
+
+  private syncUpdatedApiKeyCredentials(
+    apiKey: WireRecord,
+    request: WireRecord,
+  ): void {
+    if (typeof request.key === "string") {
+      this.applyPreviewApiKeySecret(apiKey, request.key, true);
+      if (request.key !== "" || this.isKeylessProvider(apiKey.provider)) {
+        return;
+      }
+    }
+    if (
+      apiKey.credentialStatus !== "needs_reentry" &&
+      apiKey.credentialIssue !== "invalid_key_format"
+    ) {
+      this.applyProviderStructureStatus(apiKey);
+    }
+  }
+
   /**
    * Applies the same omit-versus-clear semantics the desktop statement uses, so
    * the preview cannot diverge from the real transport on a column the caller
@@ -567,11 +700,7 @@ class PreviewRuntime {
         apiKey[field] = value;
       }
     }
-    if (typeof request.key === "string") {
-      // Do not keep an entered secret in the preview's mock transport.
-      apiKey.keyFull = null;
-      apiKey.keySuffix = "…preview";
-    }
+    this.syncUpdatedApiKeyCredentials(apiKey, request);
     // `transcription_path` is the one column the desktop statement gates on a
     // separate boolean rather than on null, so it keeps its own handling.
     // `update_api_key` computes the stored value before the statement runs: an
@@ -662,6 +791,8 @@ class PreviewRuntime {
         return this.dispatchAppTarget(command, args);
       case "daily":
         return this.listDailyActivity(args);
+      case "voquill":
+        return this.dispatchVoquillMigration(command);
       case "clear":
       case "complete":
         // The desktop command wipes the SQLite database and the managed audio
@@ -749,18 +880,23 @@ class PreviewRuntime {
       case "api_key_list":
         return getList(this.database.apiKeys);
       case "api_key_create": {
-        const metadata = clone(asRecord(args.apiKey));
+        const rawInput = asRecord(args.apiKey);
+        const rawKey = typeof rawInput.key === "string" ? rawInput.key : "";
+        const metadata = clone(rawInput);
         delete metadata.key;
         const apiKey: WireRecord = {
           ...metadata,
           createdAt: Date.now(),
           // The preview must not retain secrets pasted into a UI experiment.
-          keySuffix: "…preview",
+          keySuffix: null,
           keyFull: null,
+          credentialStatus: "usable",
+          credentialIssue: null,
           transcriptionModel: null,
           postProcessingModel: null,
           openRouterConfig: null,
         };
+        this.applyPreviewApiKeySecret(apiKey, rawKey, false);
         this.database.apiKeys.set(String(apiKey.id), apiKey);
         return clone(apiKey);
       }
@@ -771,6 +907,101 @@ class PreviewRuntime {
         return undefined;
       default:
         return this.invokeHistory(command, args);
+    }
+  }
+
+  private buildVoquillMigrationReport(): VoquillMigrationReport {
+    const base = this.database.voquillMigrationReport;
+    if (!base) {
+      return {
+        schemaVersion: 1,
+        status: "not_needed",
+        legacyDetected: false,
+        legacySourcePreserved: false,
+        detectedAt: null,
+        completedAt: null,
+        dismissedAt: null,
+        attemptCount: 0,
+        databasePhase: "not_found",
+        modelsPhase: "not_found",
+        audioPhase: "not_found",
+        storagePhase: "not_found",
+        counts: {
+          hasProfile: false,
+          hasPreferences: false,
+          transcriptions: 0,
+          dictionaryTerms: 0,
+          hotkeys: 0,
+          tones: 0,
+          appTargets: 0,
+          providerEntries: 0,
+          providersNeedingAttention: 0,
+          localModelsMigrated: 0,
+          audioFilesMigrated: 0,
+          storageFilesMigrated: 0,
+        },
+        removedModesReset: [],
+        issues: [],
+        actionItems: [],
+        canRetry: false,
+      };
+    }
+
+    const report = clone(base);
+    const reentryProviders = new Set<string>();
+    let providersNeedingAttention = 0;
+    for (const apiKey of this.database.apiKeys.values()) {
+      const status = apiKey.credentialStatus ?? "usable";
+      if (status !== "usable") {
+        providersNeedingAttention += 1;
+        if (typeof apiKey.provider === "string") {
+          reentryProviders.add(apiKey.provider);
+        }
+      }
+    }
+
+    report.counts.providerEntries = this.database.apiKeys.size;
+    report.counts.providersNeedingAttention = providersNeedingAttention;
+    const actionItems: VoquillMigrationReport["actionItems"] = [];
+    if (providersNeedingAttention > 0) {
+      actionItems.push({
+        kind: "reenter_api_keys",
+        targetSection: "ai_models",
+        count: providersNeedingAttention,
+        providers: [...reentryProviders],
+      });
+    }
+    if (report.removedModesReset.length > 0) {
+      actionItems.push({
+        kind: "review_removed_cloud_mode",
+        targetSection: "ai_models",
+        count: report.removedModesReset.length,
+        providers: [],
+      });
+    }
+    report.actionItems = actionItems;
+    return report;
+  }
+
+  private dispatchVoquillMigration(command: string): VoquillMigrationReport {
+    switch (command) {
+      case "voquill_migration_status":
+        return this.buildVoquillMigrationReport();
+      case "voquill_migration_dismiss": {
+        if (this.database.voquillMigrationReport) {
+          this.database.voquillMigrationReport.dismissedAt =
+            new Date().toISOString();
+        }
+        return this.buildVoquillMigrationReport();
+      }
+      case "voquill_migration_retry": {
+        if (this.database.voquillMigrationReport) {
+          this.database.voquillMigrationReport.attemptCount += 1;
+        }
+        return this.buildVoquillMigrationReport();
+      }
+      default:
+        throw new Error(`Unsupported preview command: ${command}`);
     }
   }
 

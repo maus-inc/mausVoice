@@ -89,7 +89,7 @@ pub async fn update_api_key(
             salt = CASE WHEN ?3 IS NOT NULL THEN ?3 ELSE salt END,
             key_hash = CASE WHEN ?4 IS NOT NULL THEN ?4 ELSE key_hash END,
             key_ciphertext = CASE WHEN ?5 IS NOT NULL THEN ?5 ELSE key_ciphertext END,
-            key_suffix = CASE WHEN ?6 IS NOT NULL THEN ?6 ELSE key_suffix END,
+            key_suffix = CASE WHEN ?3 IS NOT NULL THEN ?6 ELSE key_suffix END,
             transcription_model = CASE WHEN ?7 IS NOT NULL THEN ?7 ELSE transcription_model END,
             post_processing_model = CASE WHEN ?8 IS NOT NULL THEN ?8 ELSE post_processing_model END,
             openrouter_config = CASE WHEN ?9 IS NOT NULL THEN ?9 ELSE openrouter_config END,

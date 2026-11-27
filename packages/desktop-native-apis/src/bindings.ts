@@ -1274,6 +1274,30 @@ async userSetOne(user: User) : Promise<Result<User, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async voquillMigrationDismiss() : Promise<Result<VoquillMigrationReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voquill_migration_dismiss") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voquillMigrationRetry() : Promise<Result<VoquillMigrationReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voquill_migration_retry") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voquillMigrationStatus() : Promise<Result<VoquillMigrationReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voquill_migration_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async writeAccessibilityFields(entries: AccessibilityWriteEntry[]) : Promise<Result<AccessibilityWriteResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("write_accessibility_fields", { entries }) };
@@ -1340,8 +1364,10 @@ export type AccessibilityFocusTarget = { appPid: number; elementIndexPath: numbe
 export type AccessibilityWriteEntry = { appPid: number; elementIndexPath: number[]; fingerprintChain: ElementFingerprint[] | null; value: string; backend?: string | null; jabWriteMethod?: JabWriteMethod; jabStringPath?: JabElementId[] | null }
 export type AccessibilityWriteResult = { succeeded: number; failed: number; errors: string[] }
 export type ApiKeyCreateRequest = { id: string; name: string; provider: string; key: string; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null; transcriptionPath?: string | null }
+export type ApiKeyCredentialIssue = "legacy_encryption" | "decryption_failed" | "missing_key" | "invalid_key_format" | "missing_endpoint" | "missing_region"
+export type ApiKeyCredentialStatus = "usable" | "needs_reentry" | "invalid_format"
 export type ApiKeyUpdateRequest = { id: string; name?: string | null; key?: string | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null; transcriptionPath?: string | null; clearTranscriptionPath?: boolean | null }
-export type ApiKeyView = { id: string; name: string; provider: string; createdAt: number; keySuffix?: string | null; keyFull?: string | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null; transcriptionPath?: string | null }
+export type ApiKeyView = { id: string; name: string; provider: string; createdAt: number; keySuffix?: string | null; keyFull?: string | null; credentialStatus: ApiKeyCredentialStatus; credentialIssue?: ApiKeyCredentialIssue | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null; transcriptionPath?: string | null }
 /**
  * Stable, relaunch-surviving identifier for a host application. PIDs change
  * every launch; these fields do not. Populated by `get_focused_field_info`
@@ -1691,6 +1717,12 @@ microphoneLingerMs?: number }
 export type UserPreferencesCompareSetExpansionFlagsArgs = { expected: string; flags: string }
 export type UserPreferencesGetArgs = { userId: string }
 export type UserPreferencesSetExpansionFlagsArgs = { flags: string }
+export type VoquillMigrationActionItem = { kind: string; targetSection: string; count: number; providers: string[] }
+export type VoquillMigrationCounts = { hasProfile: boolean; hasPreferences: boolean; transcriptions: number; dictionaryTerms: number; hotkeys: number; tones: number; appTargets: number; providerEntries: number; providersNeedingAttention: number; localModelsMigrated: number; audioFilesMigrated: number; storageFilesMigrated: number }
+export type VoquillMigrationIssue = { category: string; code: string; detail: string }
+export type VoquillMigrationPhaseStatus = "not_found" | "pending" | "migrated" | "partial" | "failed" | "skipped"
+export type VoquillMigrationReport = { schemaVersion: number; status: VoquillMigrationStatus; legacyDetected: boolean; legacySourcePreserved: boolean; detectedAt: string | null; completedAt: string | null; dismissedAt: string | null; attemptCount: number; databasePhase: VoquillMigrationPhaseStatus; modelsPhase: VoquillMigrationPhaseStatus; audioPhase: VoquillMigrationPhaseStatus; storagePhase: VoquillMigrationPhaseStatus; counts: VoquillMigrationCounts; removedModesReset: string[]; issues: VoquillMigrationIssue[]; actionItems: VoquillMigrationActionItem[]; canRetry: boolean }
+export type VoquillMigrationStatus = "not_needed" | "completed" | "partial" | "failed" | "skipped_existing_profile"
 
 /** tauri-specta globals **/
 

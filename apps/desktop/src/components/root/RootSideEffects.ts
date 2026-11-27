@@ -14,6 +14,7 @@ import {
   migratePreferredMicrophoneToPreferences,
   refreshCurrentUser,
 } from "../../actions/user.actions";
+import { loadVoquillMigrationStatus } from "../../actions/voquill-migration.actions";
 import { useAsyncEffect } from "../../hooks/async.hooks";
 import { useIntervalAsync } from "../../hooks/helper.hooks";
 import { useTauriListen } from "../../hooks/tauri.hooks";
@@ -48,7 +49,10 @@ export const RootSideEffects = () => {
       loadTools(),
     ];
     if (isMainWindow) {
-      loaders.push(migratePreferredMicrophoneToPreferences());
+      loaders.push(
+        migratePreferredMicrophoneToPreferences(),
+        loadVoquillMigrationStatus(),
+      );
     }
     await Promise.allSettled(loaders);
     getLogger().info("Initial data load complete");

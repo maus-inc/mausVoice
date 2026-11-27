@@ -11,6 +11,7 @@ const workspaceScenarios: PreviewScenarioId[] = [
   "populated",
   "empty",
   "permission-denied",
+  "voquill-migration",
 ];
 
 describe("browser preview scenarios", () => {
@@ -85,6 +86,30 @@ describe("browser preview scenarios", () => {
 
     expect(snapshot.state.permissions.microphone?.state).toBe("denied");
     expect(snapshot.state.permissions.accessibility?.state).toBe("denied");
+  });
+
+  it("exposes an explicit Voquill migration workspace with keys needing re-entry", () => {
+    const snapshot = createPreviewScenario("voquill-migration");
+
+    expect(snapshot.state.voquillMigration.status).toBe("success");
+    expect(snapshot.state.voquillMigration.report?.status).toBe("completed");
+    expect(snapshot.state.voquillMigration.report?.legacyDetected).toBe(true);
+    expect(snapshot.state.voquillMigration.report?.actionItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "reenter_api_keys",
+          count: 2,
+        }),
+      ]),
+    );
+    expect(
+      snapshot.data.apiKeys.filter(
+        (key) => key.credentialStatus === "needs_reentry",
+      ),
+    ).toHaveLength(2);
+    expect(snapshot.data.apiKeys.every((key) => key.keyFull === null)).toBe(
+      true,
+    );
   });
 
   it("keeps the empty workspace free of history and content", () => {
