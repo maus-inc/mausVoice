@@ -363,3 +363,6 @@ impl std::ops::Deref for PillState {
         &self.indicator
     }
 }
+
+rust_pill_shared::impl_flash_host!(crate::state::PillState);
+rust_pill_shared::impl_celebration_host!(crate::state::PillState);

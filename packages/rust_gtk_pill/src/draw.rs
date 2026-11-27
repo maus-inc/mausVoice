@@ -6,6 +6,7 @@ use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{rect_contains, ClickAction, ClickRegion, PillState, RocketPhase};
+use rust_pill_shared::flash_banner::BannerButton;
 use rust_pill_shared::{DRAG_INFLATE_SCALE, LONG_PRESS_OUTLINE_COLOR};
 
 // Cairo retains paint errors on the context; the draw callback reports them.
@@ -799,6 +800,34 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
 // ── Flash message ────────────────────────────────────────────────
 
+/// Registers the hit target for a banner button painted inside the scale.
+///
+/// Pointer coordinates arrive in unscaled window space, so a region registered
+/// with the laid-out rectangle would cover a different part of the window than
+/// the pixels drawn there for the whole of the scale animation.
+fn push_scaled_click(
+    state: &PillState,
+    rect: rust_pill_shared::flash_banner::BannerRect,
+    center_x: f64,
+    center_y: f64,
+    scale: f64,
+    action: ClickAction,
+) {
+    let (x, y, w, h) = rust_pill_shared::scaled_click_rect(
+        rect.x, rect.y, rect.w, rect.h, center_x, center_y, scale,
+    );
+    state
+        .click_regions
+        .borrow_mut()
+        .push(ClickRegion { x, y, w, h, action });
+}
+
+/// Draws the flash banner above the pill.
+///
+/// The geometry is entirely [`rust_pill_shared::flash_banner`]'s: it bounds the
+/// banner by the window, wraps the message to the room the buttons leave and
+/// grows the height with the line count. This function measures and paints, and
+/// nothing else, so the three pills cannot disagree about where the banner goes.
 fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let flash_t = state.flash_t.get();
     if flash_t < 0.01 {
@@ -813,58 +842,59 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
     let reject_label = state.flash_reject_action_label.borrow();
-    let has_action = action_label.is_some();
-    let has_reject = reject_label.is_some();
 
-    let layout = pangocairo::functions::create_layout(cr);
-    let font_desc = pango::FontDescription::from_string("Satoshi Bold 12");
-    layout.set_font_description(Some(&font_desc));
-    layout.set_text(&message);
-    let (text_w, text_h) = layout.pixel_size();
-    let text_w = text_w as f64;
-    let text_h = text_h as f64;
-
-    let (action_w, action_layout) = if let Some(ref label) = *action_label {
-        let al = pangocairo::functions::create_layout(cr);
-        let af = pango::FontDescription::from_string("Satoshi Bold 11");
-        al.set_font_description(Some(&af));
-        al.set_text(label);
-        let (aw, _) = al.pixel_size();
-        (aw as f64 + FLASH_ACTION_PADDING_H * 2.0, Some(al))
-    } else {
-        (0.0, None)
+    // One Pango font description for both the message and its wrap measurement,
+    // so the lines that are laid out are the lines that were counted.
+    let font = pango::FontDescription::from_string("Satoshi Bold 12");
+    let measure = |text: &str| {
+        let l = pangocairo::functions::create_layout(cr);
+        l.set_font_description(Some(&font));
+        l.set_text(text);
+        l.pixel_size().0 as f64
     };
 
-    let (reject_w, reject_layout) = if let Some(ref label) = *reject_label {
-        let rl = pangocairo::functions::create_layout(cr);
-        let rf = pango::FontDescription::from_string("Satoshi Bold 11");
-        rl.set_font_description(Some(&rf));
-        rl.set_text(label);
-        let (rw, _) = rl.pixel_size();
-        (rw as f64 + FLASH_ACTION_PADDING_H * 2.0, Some(rl))
-    } else {
-        (0.0, None)
+    let preferred_w = {
+        let l = pangocairo::functions::create_layout(cr);
+        l.set_font_description(Some(&font));
+        l.set_text(&message);
+        l.pixel_size().0 as f64
     };
 
-    let mut action_section = 0.0;
-    if has_action {
-        action_section += FLASH_ACTION_GAP + action_w;
-    }
-    if has_reject {
-        action_section += FLASH_ACTION_GAP + reject_w;
-    }
-
-    let flash_w = (text_w + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
-
-    let scale = FLASH_MIN_SCALE + (1.0 - FLASH_MIN_SCALE) * flash_t;
-    let alpha = flash_t;
-
-    let (_, pill_y, _, _) = pill_position(state, ww, wh);
-    let full_x = (ww - flash_w) / 2.0;
-    let full_y = pill_y - FLASH_GAP - FLASH_HEIGHT;
-
-    let center_x = full_x + flash_w / 2.0;
-    let center_y = full_y + FLASH_HEIGHT / 2.0;
+    // Buttons are measured at their own weight and size, and their padding is
+    // part of their width, which is what the shared layout reserves.
+    let action_text: Option<&String> = (*action_label).as_ref();
+    let reject_text: Option<&String> = (*reject_label).as_ref();
+    let button = |label: Option<&String>| -> Option<(f64, pango::Layout)> {
+        let text = label?;
+        let l = pangocairo::functions::create_layout(cr);
+        let f = pango::FontDescription::from_string("Satoshi Bold 11");
+        l.set_font_description(Some(&f));
+        l.set_text(text);
+        let (w, _) = l.pixel_size();
+        Some((w as f64 + FLASH_ACTION_PADDING_H * 2.0, l))
+    };
+    let action_button = button(action_text);
+    let reject_button = button(reject_text);
+    let (action_w, reject_w) = (
+        action_button.as_ref().map(|(w, _)| *w),
+        reject_button.as_ref().map(|(w, _)| *w),
+    );
+    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    // The banner may use the whole window, and it is laid out in the painter's
+    // own space, which `draw_all` has already shifted by `content_offset`. So the
+    // surface is the canvas seen from that offset rather than the pill's own box,
+    // which used to cap a dictation toast at 196 units in a 600-unit window.
+    let surface =
+        rust_pill_shared::flash_banner::BannerSurface::of_painter(ww, state.content_offset().0);
+    let (layout, scale, alpha, (center_x, center_y)) =
+        rust_pill_shared::flash_banner::FlashFrame::resolve_for_window(
+            &message,
+            measure,
+            (preferred_w, action_w, reject_w),
+            (pill_y, surface, wh, pill_x + pill_w / 2.0),
+            flash_t,
+            (&state.banner_lines, &state.banner_center),
+        );
 
     cr.save().ok();
     cr.translate(center_x, center_y);
@@ -877,112 +907,53 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     } else {
         (0.0, 0.0, 0.0)
     };
-    rounded_rect(cr, full_x, full_y, flash_w, FLASH_HEIGHT, FLASH_RADIUS);
+    let banner = layout.banner;
+    rounded_rect(cr, banner.x, banner.y, banner.w, banner.h, FLASH_RADIUS);
     cr.set_source_rgba(bg_r, bg_g, bg_b, 0.92 * alpha);
     let _ = cr.fill();
 
-    // Message text
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    let text_left = if has_action || has_reject {
-        full_x + FLASH_PADDING_H
-    } else {
-        full_x + (flash_w - text_w) / 2.0
-    };
-    let ty = full_y + (FLASH_HEIGHT - text_h) / 2.0;
-    cr.move_to(text_left, ty);
-    pangocairo::functions::show_layout(cr, &layout);
-
-    // Reject button (drawn to the left of the accept button)
-    if let Some(rl) = reject_layout {
-        let accept_offset = if has_action {
-            action_w + FLASH_ACTION_GAP
-        } else {
-            0.0
-        };
-        let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
-        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
-
-        rounded_rect(
-            cr,
-            btn_x,
-            btn_y,
-            reject_w,
-            FLASH_ACTION_HEIGHT,
-            FLASH_ACTION_RADIUS,
+    let line_layout = pangocairo::functions::create_layout(cr);
+    line_layout.set_font_description(Some(&font));
+    for (index, line, x) in layout.text_runs(|l| {
+        line_layout.set_text(l);
+        line_layout.pixel_size().0 as f64
+    }) {
+        line_layout.set_text(line);
+        cr.move_to(
+            x,
+            layout
+                .text
+                .line_top(index, line_layout.pixel_size().1 as f64),
         );
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
-        let _ = cr.fill();
-
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
-        let (lw, lh) = rl.pixel_size();
-        let lx = btn_x + (reject_w - lw as f64) / 2.0;
-        let ly = btn_y + (FLASH_ACTION_HEIGHT - lh as f64) / 2.0;
-        cr.move_to(lx, ly);
-        pangocairo::functions::show_layout(cr, &rl);
-
-        // The banner is painted inside the scale transform above, and a click
-        // arrives in unscaled window space, so the region has to be the painted
-        // rectangle rather than the laid-out one.
-        let (region_x, region_y, region_w, region_h) = rust_pill_shared::scaled_click_rect(
-            btn_x,
-            btn_y,
-            reject_w,
-            FLASH_ACTION_HEIGHT,
-            center_x,
-            center_y,
-            scale,
-        );
-        state.click_regions.borrow_mut().push(ClickRegion {
-            x: region_x,
-            y: region_y,
-            w: region_w,
-            h: region_h,
-            action: ClickAction::FlashReject,
-        });
+        pangocairo::functions::show_layout(cr, &line_layout);
     }
 
-    // Action button
-    if let Some(al) = action_layout {
-        let btn_x = full_x + flash_w - FLASH_PADDING_H - action_w;
-        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
+    for (rect, button) in layout.buttons() {
+        let (label, click) = match button {
+            BannerButton::Action => (action_button.as_ref(), ClickAction::FlashAction),
+            BannerButton::Reject => (reject_button.as_ref(), ClickAction::FlashReject),
+        };
+        let Some((_, label_layout)) = label else {
+            continue;
+        };
 
-        rounded_rect(
-            cr,
-            btn_x,
-            btn_y,
-            action_w,
-            FLASH_ACTION_HEIGHT,
-            FLASH_ACTION_RADIUS,
-        );
+        rounded_rect(cr, rect.x, rect.y, rect.w, rect.h, FLASH_ACTION_RADIUS);
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
         let _ = cr.fill();
 
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
-        let (lw, lh) = al.pixel_size();
-        let lx = btn_x + (action_w - lw as f64) / 2.0;
-        let ly = btn_y + (FLASH_ACTION_HEIGHT - lh as f64) / 2.0;
-        cr.move_to(lx, ly);
-        pangocairo::functions::show_layout(cr, &al);
+        let (lw, lh) = label_layout.pixel_size();
+        cr.move_to(
+            rect.x + (rect.w - lw as f64) / 2.0,
+            rect.y + (rect.h - lh as f64) / 2.0,
+        );
+        pangocairo::functions::show_layout(cr, label_layout);
 
         // The banner is painted inside the scale transform above, and a click
         // arrives in unscaled window space, so the region has to be the painted
         // rectangle rather than the laid-out one.
-        let (region_x, region_y, region_w, region_h) = rust_pill_shared::scaled_click_rect(
-            btn_x,
-            btn_y,
-            action_w,
-            FLASH_ACTION_HEIGHT,
-            center_x,
-            center_y,
-            scale,
-        );
-        state.click_regions.borrow_mut().push(ClickRegion {
-            x: region_x,
-            y: region_y,
-            w: region_w,
-            h: region_h,
-            action: ClickAction::FlashAction,
-        });
+        push_scaled_click(state, rect, center_x, center_y, scale, click);
     }
 
     cr.restore().ok();
