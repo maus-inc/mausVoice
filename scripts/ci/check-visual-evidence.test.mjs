@@ -349,3 +349,15 @@ test("a reference-style image inside a fold is folded", () => {
     ["V2", "V3"],
   );
 });
+
+test("a line that starts with backticks but carries code does not close a fence", () => {
+  // GFM: a closing fence holds only whitespace after it. Without that rule a code line
+  // beginning with backticks ends the block and the rest reads as body text.
+  const body = [
+    "````md",
+    "```not-a-closing-fence",
+    `![Settings, dark](${IMG_URL})`,
+    "````",
+  ].join("\n");
+  assert.deepEqual(images(withoutFences(body)), []);
+});

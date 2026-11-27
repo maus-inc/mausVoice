@@ -108,15 +108,17 @@ for (const scheme of ["dark", "light"]) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     // Tip cards render only on their own route, so a route added to this list that
-    // matches a tip's href captures the tip over the rows under review. Dismiss
-    // every one and prove none is left before the shutter.
+    // matches a tip's href captures the tip over the rows under review. The selector
+    // is the card's own data attribute, not its button's label: the label is
+    // translated, so a label selector stops matching the moment the app is in Spanish
+    // or any other locale and the loop silently dismisses nothing.
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      const dismiss = await page.$('button[aria-label="Dismiss tip"]');
+      const dismiss = await page.$('[data-tip-card="true"] button[aria-label]');
       if (!dismiss) break;
       await dismiss.click();
       await new Promise((resolve) => setTimeout(resolve, 350));
     }
-    const covered = await page.$('button[aria-label="Dismiss tip"]');
+    const covered = await page.$('[data-tip-card="true"] button[aria-label]');
     if (covered) throw new Error(`a tip still covers ${name} in ${scheme}`);
 
     await page.screenshot({ path: `/tmp/shots/${name}.${scheme}.png` });

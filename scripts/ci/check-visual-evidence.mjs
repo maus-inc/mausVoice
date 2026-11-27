@@ -95,16 +95,24 @@ export const withoutFences = (body) => {
   const kept = [];
   let open = null;
   for (const line of (body ?? "").split("\n")) {
-    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    // An opening fence may carry an info string (`~~~js`); a closing fence may hold
+    // only whitespace after it (GFM). One pattern for both would either miss the info
+    // string or let a code line starting with backticks close the block early.
+    const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (open === null) {
-      if (fence) {
-        open = fence[1];
+      if (opening) {
+        open = opening[1];
         continue;
       }
       kept.push(line);
       continue;
     }
-    if (fence && fence[1][0] === open[0] && fence[1].length >= open.length) {
+    const closing = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line);
+    if (
+      closing &&
+      closing[1][0] === open[0] &&
+      closing[1].length >= open.length
+    ) {
       open = null;
     }
   }
