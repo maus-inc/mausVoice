@@ -880,12 +880,18 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
         reject_button.as_ref().map(|(w, _)| *w),
     );
     let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    // The banner may use the whole window, and it is laid out in the painter's
+    // own space, which `draw_all` has already shifted by `content_offset`. So the
+    // surface is the canvas seen from that offset rather than the pill's own box,
+    // which used to cap a dictation toast at 196 units in a 600-unit window.
+    let surface =
+        rust_pill_shared::flash_banner::BannerSurface::of_painter(ww, state.content_offset().0);
     let (layout, scale, alpha, (center_x, center_y)) =
         rust_pill_shared::flash_banner::FlashFrame::resolve_for_window(
             &message,
             measure,
             (preferred_w, action_w, reject_w),
-            (pill_y, ww, wh, pill_x + pill_w / 2.0),
+            (pill_y, surface, wh, pill_x + pill_w / 2.0),
             flash_t,
             (&state.banner_lines, &state.banner_center),
         );

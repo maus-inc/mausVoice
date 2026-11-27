@@ -97,8 +97,7 @@ pub const BANNER_MIN_WIDTH: f64 = 80.0;
 /// lengths are in drawing units of the caller's content space.
 #[derive(Debug, Clone, Copy)]
 pub struct FlashBannerSpec {
-    /// How much horizontal room the banner has around the point it is centred
-    /// on.
+    /// Width of the surface the banner is painted on, in painter coordinates.
     ///
     /// This is the window, not the pill's own box. The pill draws its content
     /// into a box that can be narrower than the window (dictation is 200 wide in
@@ -106,7 +105,26 @@ pub struct FlashBannerSpec {
     /// space around the pill's centre extends past the box on both sides. A
     /// long error during dictation has the whole window to read in, and the
     /// window is also what clips, so it is the honest ceiling.
+    ///
+    /// It is a width and not a right edge: the left edge is
+    /// [`Self::available_left`], because a painter's origin is not the surface's
+    /// origin. Passing the content box here instead of the surface was a real
+    /// defect -- dictation's 200-unit box capped the banner at 196 units inside
+    /// a 600-unit window -- and passing the surface's width while assuming it
+    /// started at zero would have clamped the rectangle 200 units off its right
+    /// edge instead. Both numbers have to describe the same rectangle.
     pub available_width: f64,
+    /// Left edge of that surface, in painter coordinates.
+    ///
+    /// The painters translate the context by `content_offset` before drawing, so
+    /// a pill's content box is centred in the window rather than flush with it
+    /// and the surface runs from `-offset` to `content_width + offset`. In
+    /// dictation that is `-200..400`: the banner may hang past the pill's box on
+    /// either side, but it is the window that clips it.
+    ///
+    /// Zero is the honest value for a caller whose surface and canvas share an
+    /// origin, which is every test that does not model a translated painter.
+    pub available_left: f64,
     /// How much vertical room the banner's surface has.
     ///
     /// This is how tall the painter's canvas is, and it is what bounds the
@@ -193,7 +211,7 @@ impl FlashBannerSpec {
     /// how wide its text engine measured the message and the buttons.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        available_width: f64,
+        surface: BannerSurface,
         available_height: f64,
         center_x: f64,
         pill_top: f64,
@@ -203,7 +221,8 @@ impl FlashBannerSpec {
         reject_width: Option<f64>,
     ) -> Self {
         Self {
-            available_width,
+            available_width: surface.width,
+            available_left: surface.left,
             available_height,
             center_x,
             pill_top,
@@ -243,8 +262,10 @@ impl FlashBannerSpec {
     ///
     /// `pill_top` is where the banner hangs from, and the room above it bounds
     /// the height.
+    #[allow(clippy::too_many_arguments)]
     pub fn for_window(
-        (window_width, window_height): (f64, f64),
+        surface: BannerSurface,
+        window_height: f64,
         pill_center_x: f64,
         pill_top: f64,
         constants: FlashBannerConstants,
@@ -253,7 +274,7 @@ impl FlashBannerSpec {
         reject_width: Option<f64>,
     ) -> Self {
         Self::new(
-            window_width,
+            surface,
             window_height,
             pill_center_x,
             pill_top,
@@ -408,6 +429,68 @@ impl FlashBannerLayout {
     }
 }
 
+/// The rectangle the banner is painted into, in painter coordinates.
+///
+/// Two numbers, not one, because a painter's origin is not always the surface's
+/// origin. The pills translate the drawing context by `content_offset` before
+/// anything is painted, so the window that clips the banner starts at a negative
+/// x whenever the content box is narrower than the window. In dictation the
+/// window spans `-200..400` in painter space; a layout told only `width = 600`
+/// clamps against `0..600` and puts the banner 200 units right of where it
+/// belongs, and a layout told only `width = 200` -- which is what the three draw
+/// sites passed before this type existed -- caps the banner at 196 units inside
+/// a window that has room for far more.
+///
+/// Local values keep the two independent in a test that does not model a
+/// translated painter, where `left = 0` is the honest answer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BannerSurface {
+    /// Left edge of the paintable surface, in painter coordinates.
+    pub left: f64,
+    /// How wide that surface is.
+    pub width: f64,
+}
+
+impl BannerSurface {
+    /// A surface whose painter origin is the surface's own origin.
+    pub fn new(width: f64) -> Self {
+        Self { left: 0.0, width }
+    }
+
+    /// A surface offset from the painter's origin by `left`.
+    pub fn offset(left: f64, width: f64) -> Self {
+        Self { left, width }
+    }
+
+    /// The surface, derived from the transform the painter actually applied.
+    ///
+    /// Every pill translates its context by `(canvas_width - content_width) / 2`
+    /// before painting anything, so the window that clips the banner runs from
+    /// `-offset` to `canvas_width - offset` in the space the banner is laid out
+    /// in. Taking the offset and the content width rather than the canvas width
+    /// keeps this tied to the one number the painter itself used: a constant
+    /// here and an offset there could disagree, and then the clamp would guard an
+    /// edge the window does not have.
+    ///
+    /// The content box is what `pill_position` measures within; the canvas is
+    /// what clips. Passing the box alone as the surface is the defect this
+    /// exists to prevent: a 200-unit box in a 600-unit window capped the banner
+    /// at 196 units and wrapped a message that had room for 480.
+    pub fn of_painter(content_width: f64, content_offset_x: f64) -> Self {
+        let offset = coordinate(content_offset_x);
+        let content = sane(content_width);
+        Self {
+            left: -offset,
+            width: content + offset * 2.0,
+        }
+    }
+
+    /// Right edge of the surface, in painter coordinates.
+    pub fn right(self) -> f64 {
+        coordinate(self.left) + sane(self.width)
+    }
+}
+
 /// Collapse a measurement into a width that cannot poison the geometry.
 ///
 /// A missing glyph or a surface that has not been sized can answer `NaN` or a
@@ -445,8 +528,8 @@ fn coordinate(value: f64) -> f64 {
 /// Floored at the caller's minimum: a window narrower than that is not a case
 /// the pill can reach, and clamping to zero would produce an unreadable sliver
 /// rather than the smallest honest banner.
-pub fn banner_max_width(available_width: f64, min_width: f64) -> f64 {
-    let usable = sane(available_width) - BANNER_MIN_MARGIN * 2.0;
+pub fn banner_max_width(surface: BannerSurface, min_width: f64) -> f64 {
+    let usable = sane(surface.width) - BANNER_MIN_MARGIN * 2.0;
     usable.min(BANNER_MAX_WIDTH).max(sane(min_width))
 }
 
@@ -702,7 +785,8 @@ where
     F: Fn(&str) -> f64,
 {
     let min_width = sane(spec.min_width);
-    let max_width = banner_max_width(spec.available_width, min_width);
+    let surface = BannerSurface::offset(spec.available_left, spec.available_width);
+    let max_width = banner_max_width(surface, min_width);
 
     let requested_buttons: Vec<f64> = [spec.action_width, spec.reject_width]
         .into_iter()
@@ -802,10 +886,18 @@ where
     // the pill has been dragged: the banner follows the pill, and a pill near an
     // edge would hang its banner off that edge. So the rectangle is also held
     // inside the surface, and only moves when it would otherwise clip.
-    let centered_x = sane(spec.center_x) - banner_w / 2.0;
-    let right_limit =
-        (sane(spec.available_width) - banner_w - BANNER_MIN_MARGIN).max(BANNER_MIN_MARGIN);
-    let x = centered_x.clamp(BANNER_MIN_MARGIN, right_limit);
+    //
+    // Both limits come from the surface rectangle rather than from zero and a
+    // width. The painter is translated by `content_offset`, so on the dictation
+    // surface the window spans `-200..400` and a banner held to `0..600` would be
+    // clamped to the pill's own box -- which is the defect this fixes -- while
+    // one held to `2..598` in a 600-wide window would sit 200 units right of the
+    // pill it belongs to.
+    let surface = BannerSurface::offset(spec.available_left, spec.available_width);
+    let left_limit = coordinate(surface.left) + BANNER_MIN_MARGIN;
+    let right_limit = (surface.right() - banner_w - BANNER_MIN_MARGIN).max(left_limit);
+    let centered_x = coordinate(spec.center_x) - banner_w / 2.0;
+    let x = centered_x.clamp(left_limit, right_limit);
     let y = coordinate(spec.pill_top) - sane(spec.gap) - height;
     let banner = BannerRect {
         x,
@@ -974,7 +1066,7 @@ impl FlashFrame {
         message: &str,
         measure: F,
         (preferred, action, reject): (f64, Option<f64>, Option<f64>),
-        (pill_top, window_width, window_height, pill_center_x): (f64, f64, f64, f64),
+        (pill_top, surface, window_height, pill_center_x): (f64, BannerSurface, f64, f64),
         fade_t: f64,
         (flash_lines, banner_center): (&Cell<usize>, &Cell<Option<(f64, f64)>>),
     ) -> (FlashBannerLayout, f64, f64, (f64, f64))
@@ -982,7 +1074,8 @@ impl FlashFrame {
         F: Fn(&str) -> f64,
     {
         let spec = FlashBannerSpec::for_window(
-            (window_width, window_height),
+            surface,
+            window_height,
             pill_center_x,
             pill_top,
             FlashBannerConstants::canonical(),
@@ -1324,6 +1417,7 @@ mod tests {
     fn spec() -> FlashBannerSpec {
         FlashBannerSpec {
             available_width: 600.0,
+            available_left: 0.0,
             // The typing surface. The fixture uses the window the reviewers
             // measured against, so the room arithmetic is the real one.
             available_height: 362.0,
@@ -1634,6 +1728,75 @@ mod tests {
         );
     }
 
+    /// The dictation toast uses the window, not the pill's 200-unit box.
+    ///
+    /// This is the wiring, at the geometry the pills actually paint with, and it
+    /// is the defect CodeAnt found on the Windows draw site: all three painters
+    /// handed the layout `ww` -- the content box `draw_width` springs towards, 200
+    /// units in dictation -- as the surface. The banner was therefore capped at
+    /// `200 - 2 * 2`, so a long error wrapped into a narrow column inside a
+    /// 600-unit window that had room for the 480-unit cap.
+    ///
+    /// The painter has also translated by `content_offset` before the banner
+    /// runs, so the window spans `-200..400` in the space the rectangle is
+    /// measured in, not `0..600`. The surface therefore carries its own left
+    /// edge; correcting only the width would have clamped the banner into the
+    /// leftmost 200 units and pushed it off the pill instead.
+    ///
+    /// Both halves are asserted: the banner is wider than the box that used to
+    /// cap it, and it stays inside the window once the translation is undone.
+    #[test]
+    fn a_dictation_toast_uses_the_window_the_painter_is_translated_inside() {
+        // What the three painters compute for a collapsed dictation pill: the
+        // canvas is 600 wide, the content box 200, so `content_offset` is 200 and
+        // the surface runs -200..400.
+        let (canvas, content, pill_w) = (600.0, 200.0, 200.0);
+        let offset = (canvas - content) / 2.0;
+        assert_eq!(offset, 200.0, "the fixture has to match the real painters");
+        let pill_x = (content - pill_w) / 2.0;
+
+        let dictation = FlashBannerSpec {
+            // The surface, not the content box: `of_painter` widens the content
+            // width by both offsets, which is what makes it the window.
+            available_width: canvas,
+            available_left: -offset,
+            available_height: 86.0,
+            center_x: pill_x + pill_w / 2.0,
+            pill_top: 74.0,
+            preferred_text_width: 900.0,
+            ..spec()
+        };
+        let message = "the audio device was disconnected before the recording could be saved";
+        let layout = layout_flash_banner(&dictation, message, fixed(7.0));
+
+        let box_cap = content - BANNER_MIN_MARGIN * 2.0;
+        assert!(
+            layout.banner.w > box_cap + 1.0,
+            "the banner was still capped at the content box: {:.1} against a {:.1} window",
+            layout.banner.w,
+            canvas
+        );
+        assert_eq!(
+            layout.banner.w, BANNER_MAX_WIDTH,
+            "a long message in a 600-unit window did not reach the readable cap"
+        );
+
+        // Undo the painter's translation to see the pixels the window clips.
+        let windowed_x = layout.banner.x + offset;
+        assert!(
+            windowed_x >= BANNER_MIN_MARGIN - 1e-9
+                && windowed_x + layout.banner.w <= canvas - BANNER_MIN_MARGIN + 1e-9,
+            "the banner left the window once translated: {}..{} in a {canvas}-wide window",
+            windowed_x,
+            windowed_x + layout.banner.w
+        );
+        assert_eq!(
+            layout.banner.center_x(),
+            pill_x + pill_w / 2.0,
+            "the banner has to stay on the pill it belongs to"
+        );
+    }
+
     /// A banner centred on the pill follows a dragged pill, and is held on the
     /// surface when the pill is near an edge.
     ///
@@ -1728,8 +1891,8 @@ mod tests {
 
     #[test]
     fn a_narrow_window_still_wins_over_the_cap() {
-        let cap = banner_max_width(3840.0, BANNER_MIN_WIDTH);
-        let narrow = banner_max_width(300.0, BANNER_MIN_WIDTH);
+        let cap = banner_max_width(BannerSurface::new(3840.0), BANNER_MIN_WIDTH);
+        let narrow = banner_max_width(BannerSurface::new(300.0), BANNER_MIN_WIDTH);
         assert_eq!(cap, BANNER_MAX_WIDTH);
         assert_eq!(narrow, 300.0 - BANNER_MIN_MARGIN * 2.0);
         assert!(narrow < cap);
@@ -2455,8 +2618,13 @@ mod tests {
             // copies of a comment and a binding were 24 of the 44 duplicated
             // lines Sonar attributed to this PR.
             assert!(
-                source.contains("(pill_y, ww, wh, pill_x + pill_w / 2.0),"),
+                source.contains("(pill_y, surface, wh, pill_x + pill_w / 2.0),"),
                 "{path} does not pass the pill's own centre to the shared layout"
+            );
+            assert!(
+                source.contains("BannerSurface::of_painter("),
+                "{path} passes a bare width as the surface, so the banner is \
+                 capped at the pill's content box instead of the window that clips it"
             );
             assert!(
                 !source.contains("WINDOW_W_TYPING as f64"),
