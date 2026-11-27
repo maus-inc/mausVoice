@@ -6,6 +6,23 @@ not (`.gitignore` covers `reports/ui-verify/*.png`). Both are what the scripts i
 inspected in a real headless browser, so they are evidence for a review round
 rather than source.
 
+The exception is `settings-compare/`, which holds the before/after pairs a
+review of the settings layout is asked for. Each file is one page, captured from
+the same harness against the base branch and against the branch under review,
+side by side with a label over each half. They are committed because a reviewer
+has to be able to see the change without running a browser, and because a
+picture of the base branch cannot be regenerated once the base moves.
+
+```bash
+# two captures, one per tree, then one montage per page
+OUT_DIR=/tmp/shots/before node scripts/verify/shot-settings.mjs   # with the base files checked out
+OUT_DIR=/tmp/shots/after  node scripts/verify/shot-settings.mjs   # with the branch files checked out
+montage -background '#0f1012' -fill '#f4f4f5' -font DejaVu-Sans -pointsize 20 \
+  -label "Before: base branch" /tmp/shots/before/settings-1100-dictation.png \
+  -label "After: this branch"  /tmp/shots/after/settings-1100-dictation.png \
+  -tile 2x1 -geometry '+16+16' reports/ui-verify/settings-compare/1100-dictation.png
+```
+
 The JSON is committed deliberately: it is small, it is text, and a reviewer can
 read a diff of it. Regenerating it is expected whenever the UI changes, and the
 diff is the point: it shows what the change did to the measured numbers.
