@@ -106,6 +106,19 @@ for (const scheme of ["dark", "light"]) {
       waitUntil: "networkidle0",
     });
     await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Tip cards render only on their own route, so a route added to this list that
+    // matches a tip's href captures the tip over the rows under review. Dismiss
+    // every one and prove none is left before the shutter.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const dismiss = await page.$('button[aria-label="Dismiss tip"]');
+      if (!dismiss) break;
+      await dismiss.click();
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    const covered = await page.$('button[aria-label="Dismiss tip"]');
+    if (covered) throw new Error(`a tip still covers ${name} in ${scheme}`);
+
     await page.screenshot({ path: `/tmp/shots/${name}.${scheme}.png` });
     await page.close();
   }
@@ -119,8 +132,10 @@ Three rules for the capture itself:
 - **Reduce motion first.** Confetti, a slide-in and a spinner all produce a different
   frame each run, and a pair that differs for that reason proves nothing.
 - **Dismiss what covers the surface.** Tip cards and one-time announcements sit over
-  exactly the rows a reviewer needs to see. Dismiss them, wait, and confirm none remain
-  before the shutter, with an assertion rather than by assumption.
+  exactly the rows a reviewer needs to see, and they render per route, so a route that
+  looks clean today can carry one after a copy change. Dismiss every tip, wait, and
+  assert none remains before the shutter, as the loop above does. A capture that throws
+  that error is a real finding, not a flake: the surface under review was covered.
 - **One viewport per claim.** Capture at the size the claim is about. A 1157×727 window
   says nothing about a 900px one, so capture both when the layout reflows.
 

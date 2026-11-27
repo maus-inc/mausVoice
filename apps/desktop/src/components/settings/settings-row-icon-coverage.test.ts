@@ -436,16 +436,20 @@ describe("settings row icon coverage", () => {
       for (const match of source.matchAll(/<([A-Za-z0-9]+)\b([^>]*)>/gu)) {
         const [, name, props] = match;
         if (!imported.has(name)) continue;
-        // A spread of the shared props carries the stroke; a literal 1.9 is the
-        // same value spelled out; anything else inherits lucide's own default.
-        if (
+        // A later prop wins in JSX, so `<ChevronDown {...settingGlyphProps}
+        // strokeWidth={2} />` draws at 2 however right the spread looks. Any
+        // `strokeWidth` that is not literally 1.9 is therefore a defect on its own,
+        // before the spread is considered at all.
+        const strokes = [
+          ...props.matchAll(/strokeWidth=\{\s*([^}]+?)\s*\}/gu),
+        ].map((match) => match[1].trim());
+        const overridden = strokes.some((value) => value !== "1.9");
+        const spread =
           props.includes("settingGlyphProps") ||
           props.includes("settingSearchGlyphProps") ||
-          props.includes("settingDisabledGlyphProps") ||
-          /strokeWidth=\{\s*1\.9\s*\}/u.test(props)
-        ) {
-          continue;
-        }
+          props.includes("settingDisabledGlyphProps");
+        if (spread && !overridden) continue;
+        if (strokes.length > 0 && !overridden && !spread) continue;
         const line = source.slice(0, match.index).split("\n").length;
         offenders.push(`${path}:${line} <${name}> without the shared stroke`);
       }

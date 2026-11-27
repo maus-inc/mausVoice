@@ -8,6 +8,7 @@ import { test } from "node:test";
 
 import {
   checkVisualEvidence,
+  withoutFences,
   images,
   isUiPath,
   splitAuthored,
@@ -265,4 +266,86 @@ test("a deleted UI file counts as a change to the surface", async () => {
     "utf8",
   );
   assert.match(source, /--diff-filter=ACMRD/);
+});
+
+test("an image inside a fenced code block is an example, not evidence", () => {
+  const parts = ["```md", `![Settings, dark](${IMG_URL})`, "```"];
+  const { failures } = checkVisualEvidence({
+    body: body(parts),
+    changedPaths: ["apps/desktop/src/components/settings/SettingRow.tsx"],
+  });
+  assert.equal(failures[0]?.rule, "V4");
+
+  // The same image outside the fence is accepted.
+  const { failures: ok } = checkVisualEvidence({
+    body: body([md(), "", "```md", "example", "```"]),
+    changedPaths: ["apps/desktop/src/components/settings/SettingRow.tsx"],
+  });
+  assert.deepEqual(ok, []);
+});
+
+test("a fence closes only on a fence of the same character", () => {
+  const body = [
+    "~~~",
+    "![a](https://x/a.png)",
+    "~~~",
+    "```",
+    "![b](https://x/b.png)",
+  ].join("\n");
+  assert.equal(images(withoutFences(body)).length, 0);
+  const half = [
+    "~~~",
+    "![a](https://x/a.png)",
+    "```",
+    "![b](https://x/b.png)",
+  ].join("\n");
+  assert.deepEqual(images(withoutFences(half)), []);
+});
+
+test("an image inside a nested fold is still folded", () => {
+  const parts = [
+    "<details>",
+    "<summary>Outer</summary>",
+    "<details>",
+    "<summary>Inner</summary>",
+    "</details>",
+    md(),
+    "</details>",
+  ];
+  const { failures } = checkVisualEvidence({
+    body: body(parts),
+    changedPaths: ["apps/desktop/src/components/settings/SettingRow.tsx"],
+  });
+  assert.deepEqual(
+    failures.map((failure) => failure.rule),
+    ["V2", "V3"],
+  );
+});
+
+test("a reference-style image counts as evidence", () => {
+  const parts = ["![Settings, dark][frame]", "", `[frame]: ${IMG_URL}`];
+  const { failures } = checkVisualEvidence({
+    body: body(parts),
+    changedPaths: ["apps/desktop/src/components/settings/SettingRow.tsx"],
+  });
+  assert.deepEqual(failures, []);
+});
+
+test("a reference-style image inside a fold is folded", () => {
+  const parts = [
+    "<details>",
+    "<summary>Frames</summary>",
+    "![Settings, dark][frame]",
+    "</details>",
+    "",
+    `[frame]: ${IMG_URL}`,
+  ];
+  const { failures } = checkVisualEvidence({
+    body: body(parts),
+    changedPaths: ["apps/desktop/src/components/settings/SettingRow.tsx"],
+  });
+  assert.deepEqual(
+    failures.map((failure) => failure.rule),
+    ["V2", "V3"],
+  );
 });

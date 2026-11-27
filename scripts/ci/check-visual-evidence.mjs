@@ -82,14 +82,82 @@ export const splitAuthored = (body) => {
   return { authored: lines.slice(0, index).join("\n"), found: true };
 };
 
-/** Blank out `<details>` blocks so their contents cannot satisfy a rule. */
-export const withoutFolds = (body) =>
-  body.replace(/<details\b[^>]*>[\s\S]*?<\/details>/gi, "<details></details>");
+/**
+ * Drop fenced code blocks.
+ *
+ * GitHub renders their contents as literal text, so a `![frame](...)` inside a fence is
+ * an example rather than evidence. The scan is line based because an opening fence only
+ * closes on a fence of the same character and at least the same length; a regex over the
+ * whole body gets that wrong on a mixed block and leaves a screenshot counted that a
+ * reviewer cannot see.
+ */
+export const withoutFences = (body) => {
+  const kept = [];
+  let open = null;
+  for (const line of (body ?? "").split("\n")) {
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (open === null) {
+      if (fence) {
+        open = fence[1];
+        continue;
+      }
+      kept.push(line);
+      continue;
+    }
+    if (fence && fence[1][0] === open[0] && fence[1].length >= open.length) {
+      open = null;
+    }
+  }
+  return kept.join("\n");
+};
 
-/** Every image source in the given text, in order. */
+/**
+ * Blank out `<details>` blocks so their contents cannot satisfy a rule.
+ *
+ * Depth is tracked rather than matched by regex: an outer fold containing an empty inner
+ * fold closes both at the inner `</details>`, and a one-pass regex then leaves the rest of
+ * the outer fold looking unfolded, which counts a hidden screenshot as visible.
+ */
+export const withoutFolds = (body) => {
+  const out = [];
+  let depth = 0;
+  for (const part of (body ?? "").split(/(<\/?details\b[^>]*>)/i)) {
+    if (/^<details\b/i.test(part)) {
+      depth += 1;
+      if (depth === 1) out.push("<details>");
+    } else if (/^<\/details\b/i.test(part)) {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) out.push("</details>");
+    } else if (depth === 0) {
+      out.push(part);
+    }
+  }
+  return out.join("");
+};
+
+/** Reference definitions such as `[frame]: https://…`, which GFM resolves at render. */
+const referenceDefinitions = (text) => {
+  const defs = new Map();
+  for (const match of (text ?? "").matchAll(
+    /^ {0,3}\[([^\]]+)\]:[ \t]*<?([^\s>]+)>?/gm,
+  )) {
+    defs.set(match[1].trim().toLowerCase(), match[2]);
+  }
+  return defs;
+};
+
+/** Every image source in the given text, in order: inline, reference and HTML. */
 export const images = (text) => {
+  const body = text ?? "";
+  const defs = referenceDefinitions(body);
   const found = [];
-  for (const match of text.matchAll(IMAGE)) {
+
+  for (const match of body.matchAll(/!\[([^\]]*)\]\[([^\]]*)\]/g)) {
+    const label = (match[2] || match[1]).trim().toLowerCase();
+    const source = defs.get(label);
+    if (source) found.push(source);
+  }
+  for (const match of body.matchAll(IMAGE)) {
     found.push((match[1] ?? match[2] ?? "").trim());
   }
   return found;
@@ -150,9 +218,11 @@ export function checkVisualEvidence({ body, changedPaths = [] }) {
     );
   }
 
+  // Fences first: an example inside one is not a rendered image.
+  const visible = withoutFences(authored);
   const surfaced = changedPaths.filter(isUiPath);
-  const all = images(authored);
-  const open = images(withoutFolds(authored));
+  const all = images(visible);
+  const open = images(withoutFolds(visible));
   const failures = localPathFailures(all);
 
   if (surfaced.length > 0 && all.length === 0) {
