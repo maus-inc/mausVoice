@@ -13,6 +13,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  window.history.replaceState({}, "", "/dashboard");
   vi.useFakeTimers();
   request.mockClear();
   container = document.createElement("div");
@@ -24,6 +25,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.useRealTimers();
+  window.history.replaceState({}, "", "/");
 });
 
 it("defers warming until after mount and schedules once under StrictMode", async () => {
@@ -66,3 +68,19 @@ it("cancels scheduled warming when the shell unmounts", async () => {
   expect(request).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it.each(["/composer", "/composer/"])(
+  "does not warm dashboard decoration at %s",
+  async (path) => {
+    window.history.replaceState({}, "", path);
+    const Shell = () => {
+      usePrewarmDashboardKeycap();
+      return <span>Composer</span>;
+    };
+    act(() => root.render(<Shell />));
+    expect(container.textContent).toBe("Composer");
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.runAllTimersAsync();
+    expect(request).not.toHaveBeenCalled();
+  },
+);

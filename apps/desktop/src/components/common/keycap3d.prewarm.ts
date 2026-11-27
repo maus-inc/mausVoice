@@ -16,6 +16,8 @@ export const prewarmDashboardKeycap = (): void => {
 
 export const usePrewarmDashboardKeycap = (): void => {
   useEffect(() => {
+    // Composer is a separate window with no dashboard keycaps.
+    if (/^\/composer(?:\/|$)/.test(window.location.pathname)) return;
     const timer = setTimeout(prewarmDashboardKeycap, 0);
     return () => clearTimeout(timer);
   }, []);
