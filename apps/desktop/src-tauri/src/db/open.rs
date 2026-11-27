@@ -559,9 +559,15 @@ async fn read_applied_migrations(pool: &SqlitePool) -> Result<AppliedMigrations,
         checksums: std::collections::HashMap::new(),
     };
     for row in applied {
-        let version: i64 = row.get("version");
-        let description: String = row.get("description");
-        let checksum: Vec<u8> = row.get("checksum");
+        let version: i64 = row
+            .try_get("version")
+            .map_err(|err| classify_sqlx("decode applied migration version", err))?;
+        let description: String = row
+            .try_get("description")
+            .map_err(|err| classify_sqlx("decode applied migration description", err))?;
+        let checksum: Vec<u8> = row
+            .try_get("checksum")
+            .map_err(|err| classify_sqlx("decode applied migration checksum", err))?;
         migrations.descriptions.insert(version, description);
         migrations.checksums.insert(version, checksum);
     }
@@ -718,6 +724,7 @@ fn classify_strict_open_error(err: OpenError) -> StrictOpenError {
             if lowered.contains("migration")
                 && (lowered.contains("not in the current migration set")
                     || lowered.contains("has been modified")
+                    || lowered.contains("previously failed")
                     || lowered.contains("left incomplete"))
             {
                 StrictOpenError::SchemaIncompatible(message)
@@ -2484,5 +2491,46 @@ mod tests {
         let legacy = rows.iter().find(|row| row.id == "legacy").unwrap();
         assert_eq!(flagged.post_process_fallback, Some(true));
         assert_eq!(legacy.post_process_fallback, None);
+    }
+
+    #[tokio::test]
+    async fn strict_open_classifies_failed_migration_ledger_row_as_schema_incompatible() {
+        let temp = TempDb::new();
+        let pool = try_open(&temp.path).await.expect("migrate to head");
+        sqlx::query("UPDATE _sqlx_migrations SET success = false WHERE version = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let err = open_app_database_strict(&temp.path).await.unwrap_err();
+        assert!(
+            matches!(err, StrictOpenError::SchemaIncompatible(_)),
+            "expected SchemaIncompatible for previously failed migration, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_applied_migrations_returns_error_instead_of_panicking_on_blob_description() {
+        let temp = TempDb::new();
+        let pool = try_open(&temp.path).await.expect("migrate to head");
+        sqlx::query("UPDATE _sqlx_migrations SET description = x'fffe' WHERE version = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let err = open_app_database_strict(&temp.path).await.unwrap_err();
+        assert!(
+            matches!(err, StrictOpenError::Other(_)),
+            "expected non-panicking decode error, got {err:?}"
+        );
+        let ro_err = open_app_database_readonly_verified(&temp.path)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(ro_err, StrictOpenError::Other(_)),
+            "expected non-panicking decode error from readonly verifier, got {ro_err:?}"
+        );
     }
 }

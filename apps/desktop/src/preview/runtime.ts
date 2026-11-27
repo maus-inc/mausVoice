@@ -614,9 +614,7 @@ class PreviewRuntime {
     const baseUrl =
       typeof apiKey.baseUrl === "string" ? apiKey.baseUrl.trim() : "";
     if (apiKey.provider === "openai-compatible") {
-      return baseUrl.length > 0 && !this.isValidHttpEndpoint(baseUrl)
-        ? "missing_endpoint"
-        : null;
+      return this.isValidHttpEndpoint(baseUrl) ? null : "missing_endpoint";
     }
     if (apiKey.provider === "azure") {
       const azureRegion =

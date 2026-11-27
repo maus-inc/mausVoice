@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Hotkey } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
-import { beginLocalDataClear } from "../utils/local-data-write-gate";
+import {
+  beginLocalDataClear,
+  LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY,
+} from "../utils/local-data-write-gate";
 
 const mocks = vi.hoisted(() => ({
   listHotkeys: vi.fn<() => Promise<Hotkey[]>>(),
@@ -63,6 +66,7 @@ describe("loadHotkeys", () => {
     expect(getAppState().settings.hotkeysStatus).toBe("loading");
 
     const releaseClear = await beginLocalDataClear();
+    localStorage.removeItem(LOCAL_DATA_CLEAR_PENDING_STORAGE_KEY);
     releaseClear();
 
     resolveList([sampleHotkey]);
@@ -70,6 +74,30 @@ describe("loadHotkeys", () => {
 
     expect(getAppState().settings.hotkeyIds).toEqual([]);
     expect(getAppState().hotkeyById["hk-1"]).toBeUndefined();
+    expect(getAppState().settings.hotkeysStatus).toBe("idle");
+    expect(getAppState().settings.hotkeysRequestId).toBeNull();
+    expect(mocks.syncHotkeyCombosToNative).not.toHaveBeenCalled();
+  });
+
+  it("invalidates in-flight hotkey loads when Zustand state is reset", async () => {
+    let resolveStale!: (hotkeys: Hotkey[]) => void;
+    mocks.listHotkeys.mockImplementationOnce(
+      () =>
+        new Promise<Hotkey[]>((resolve) => {
+          resolveStale = resolve;
+        }),
+    );
+
+    const staleLoad = loadHotkeys();
+    expect(getAppState().settings.hotkeysRequestId).not.toBeNull();
+
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+    expect(getAppState().settings.hotkeysRequestId).toBeNull();
+
+    resolveStale([sampleHotkey]);
+    await staleLoad;
+
+    expect(getAppState().settings.hotkeyIds).toEqual([]);
     expect(getAppState().settings.hotkeysStatus).toBe("idle");
     expect(mocks.syncHotkeyCombosToNative).not.toHaveBeenCalled();
   });

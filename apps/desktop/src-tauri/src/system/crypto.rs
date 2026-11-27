@@ -262,10 +262,7 @@ fn validate_provider_structure(
 ) -> CredentialInspection {
     let trimmed_base_url = base_url.map(str::trim).filter(|url| !url.is_empty());
 
-    if provider == "openai-compatible"
-        && trimmed_base_url.is_some()
-        && !is_valid_http_endpoint(trimmed_base_url)
-    {
+    if provider == "openai-compatible" && !is_valid_http_endpoint(trimmed_base_url) {
         return CredentialInspection {
             key_full: None,
             status: ApiKeyCredentialStatus::InvalidFormat,
@@ -478,7 +475,7 @@ mod tests {
         assert_eq!(ollama.status, ApiKeyCredentialStatus::Usable);
         assert_eq!(ollama.issue, None);
 
-        let openai_compat_default_url = inspect_api_key_credential(
+        let openai_compat_missing_url = inspect_api_key_credential(
             "openai-compatible",
             &empty.salt_b64,
             &empty.ciphertext_b64,
@@ -486,10 +483,13 @@ mod tests {
             None,
         );
         assert_eq!(
-            openai_compat_default_url.status,
-            ApiKeyCredentialStatus::Usable
+            openai_compat_missing_url.status,
+            ApiKeyCredentialStatus::InvalidFormat
         );
-        assert_eq!(openai_compat_default_url.issue, None);
+        assert_eq!(
+            openai_compat_missing_url.issue,
+            Some(ApiKeyCredentialIssue::MissingEndpoint)
+        );
 
         let openai_compat_blank_url = inspect_api_key_credential(
             "openai-compatible",
@@ -500,9 +500,12 @@ mod tests {
         );
         assert_eq!(
             openai_compat_blank_url.status,
-            ApiKeyCredentialStatus::Usable
+            ApiKeyCredentialStatus::InvalidFormat
         );
-        assert_eq!(openai_compat_blank_url.issue, None);
+        assert_eq!(
+            openai_compat_blank_url.issue,
+            Some(ApiKeyCredentialIssue::MissingEndpoint)
+        );
 
         let openai_compat_invalid_url = inspect_api_key_credential(
             "openai-compatible",

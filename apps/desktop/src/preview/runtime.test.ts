@@ -1121,6 +1121,21 @@ describe("browser preview transport", () => {
     expect(fixedAzureRegion.credentialStatus).toBe("usable");
     expect(fixedAzureRegion.credentialIssue).toBeNull();
 
+    const blankCompatEndpoint = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_create", {
+      apiKey: {
+        id: "preview-compat-blank",
+        name: "Blank compat",
+        provider: "openai-compatible",
+        key: "",
+        baseUrl: "   ",
+      },
+    });
+    expect(blankCompatEndpoint.credentialStatus).toBe("invalid_format");
+    expect(blankCompatEndpoint.credentialIssue).toBe("missing_endpoint");
+
     const endpointWithUserinfo = await invokePreviewCommand<{
       credentialStatus: string;
       credentialIssue: string | null;

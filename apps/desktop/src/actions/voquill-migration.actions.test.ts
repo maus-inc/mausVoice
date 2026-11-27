@@ -398,4 +398,27 @@ describe("voquill-migration.actions", () => {
     await inFlightRetry;
     expect(getAppState().voquillMigration.retrying).toBe(false);
   });
+
+  it("records dismissFailed in Zustand on dismissal error and clears it on reset or success", async () => {
+    dismissNoticeMock.mockRejectedValueOnce(new Error("disk busy"));
+    const failed = await dismissVoquillMigration();
+    expect(failed).toBeNull();
+    expect(getAppState().voquillMigration.dismissFailed).toBe(true);
+
+    // Store reset clears dismissFailed cleanly.
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+    expect(getAppState().voquillMigration.dismissFailed).toBe(false);
+
+    // Failure again, then successful dismissal clears dismissFailed.
+    dismissNoticeMock.mockRejectedValueOnce(new Error("disk busy"));
+    await dismissVoquillMigration();
+    expect(getAppState().voquillMigration.dismissFailed).toBe(true);
+
+    dismissNoticeMock.mockResolvedValueOnce(
+      makeReport({ dismissedAt: "2026-11-24T11:00:00Z" }),
+    );
+    const ok = await dismissVoquillMigration();
+    expect(ok?.dismissedAt).toBe("2026-11-24T11:00:00Z");
+    expect(getAppState().voquillMigration.dismissFailed).toBe(false);
+  });
 });

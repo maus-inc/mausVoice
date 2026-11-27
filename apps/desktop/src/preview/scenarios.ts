@@ -706,6 +706,7 @@ const voquillMigrationSnapshot = (): PreviewScenarioSnapshot => {
     report: clone(report),
     status: "success",
     dismissing: false,
+    dismissFailed: false,
     retrying: false,
     error: null,
   };

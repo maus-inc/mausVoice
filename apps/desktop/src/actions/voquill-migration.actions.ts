@@ -68,6 +68,7 @@ export const loadVoquillMigrationStatus = async (
         produceAppState((draft) => {
           draft.voquillMigration.report = report;
           draft.voquillMigration.status = "success";
+          draft.voquillMigration.dismissFailed = false;
           draft.voquillMigration.error = null;
         });
       }
@@ -116,6 +117,7 @@ const applyVoquillMigrationSuccess = (
       loadedClearGeneration = clearGeneration;
       draft.voquillMigration.report = report;
       draft.voquillMigration.status = "success";
+      draft.voquillMigration.dismissFailed = false;
       draft.voquillMigration.error = null;
     }
     draft.voquillMigration[clearFlag] = false;
@@ -136,6 +138,7 @@ export const dismissVoquillMigration =
     const requestSeq = nextVoquillMigrationRequestSeq();
     produceAppState((draft) => {
       draft.voquillMigration.dismissing = true;
+      draft.voquillMigration.dismissFailed = false;
       draft.voquillMigration.error = null;
     });
 
@@ -160,6 +163,7 @@ export const dismissVoquillMigration =
         produceAppState((draft) => {
           draft.voquillMigration.dismissing = false;
           if (isLatestVoquillMigrationRequestSeq(requestSeq)) {
+            draft.voquillMigration.dismissFailed = true;
             draft.voquillMigration.error =
               error instanceof Error ? error.message : String(error);
           }
@@ -182,6 +186,7 @@ const executeVoquillMigrationRetry = async (
   const requestSeq = nextVoquillMigrationRequestSeq();
   produceAppState((draft) => {
     draft.voquillMigration.retrying = true;
+    draft.voquillMigration.dismissFailed = false;
     draft.voquillMigration.error = null;
   });
 

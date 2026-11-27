@@ -101,6 +101,7 @@ export type SettingsState = {
   apiKeysStatus: ActionStatus;
   hotkeyIds: string[];
   hotkeysStatus: ActionStatus;
+  hotkeysRequestId: string | null;
   autoLaunchEnabled: boolean;
   autoLaunchStatus: ActionStatus;
   openRouterModels: OpenRouterModel[];
@@ -198,6 +199,7 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
   apiKeysStatus: "idle",
   hotkeyIds: [],
   hotkeysStatus: "idle",
+  hotkeysRequestId: null,
   autoLaunchEnabled: false,
   autoLaunchStatus: "idle",
   openRouterModels: [],

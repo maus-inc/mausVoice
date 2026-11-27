@@ -6,6 +6,7 @@ export type VoquillMigrationState = {
   status: ActionStatus;
   retrying: boolean;
   dismissing: boolean;
+  dismissFailed: boolean;
   error: string | null;
 };
 
@@ -14,5 +15,6 @@ export const INITIAL_VOQUILL_MIGRATION_STATE: VoquillMigrationState = {
   status: "idle",
   retrying: false,
   dismissing: false,
+  dismissFailed: false,
   error: null,
 };

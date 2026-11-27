@@ -8,8 +8,6 @@ import {
 } from "../utils/local-data-write-gate";
 import { showErrorSnackbar } from "./app.actions";
 
-let loadHotkeysGeneration = 0;
-
 export const loadHotkeys = async (): Promise<void> => {
   const clearGeneration = getLocalDataClearGeneration();
   const isClearStillSame = () =>
@@ -20,13 +18,14 @@ export const loadHotkeys = async (): Promise<void> => {
     return;
   }
 
-  loadHotkeysGeneration += 1;
-  const generation = loadHotkeysGeneration;
-  const isCurrentLoad = () =>
-    generation === loadHotkeysGeneration && isClearStillSame();
+  const requestId = crypto.randomUUID();
+  const isCurrentRequest = () =>
+    getAppState().settings.hotkeysRequestId === requestId;
+  const isCurrentLoad = () => isCurrentRequest() && isClearStillSame();
 
   produceAppState((draft) => {
     draft.settings.hotkeysStatus = "loading";
+    draft.settings.hotkeysRequestId = requestId;
   });
 
   try {
@@ -53,13 +52,13 @@ export const loadHotkeys = async (): Promise<void> => {
     });
     showErrorSnackbar("Failed to load hotkeys. Please try again.");
   } finally {
-    if (
-      generation === loadHotkeysGeneration &&
-      getAppState().settings.hotkeysStatus === "loading"
-    ) {
+    if (isCurrentRequest()) {
       produceAppState((draft) => {
-        if (draft.settings.hotkeysStatus === "loading") {
-          draft.settings.hotkeysStatus = "idle";
+        if (draft.settings.hotkeysRequestId === requestId) {
+          draft.settings.hotkeysRequestId = null;
+          if (draft.settings.hotkeysStatus === "loading") {
+            draft.settings.hotkeysStatus = "idle";
+          }
         }
       });
     }

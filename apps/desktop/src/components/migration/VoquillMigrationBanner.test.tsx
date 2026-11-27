@@ -116,7 +116,16 @@ describe("VoquillMigrationBanner", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    dismissMock.mockReset().mockResolvedValue(null);
+    dismissMock.mockReset().mockImplementation(async () => {
+      setAppState((s) => ({
+        ...s,
+        voquillMigration: {
+          ...s.voquillMigration,
+          dismissFailed: true,
+        },
+      }));
+      return null;
+    });
     retryMock.mockReset();
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
@@ -354,8 +363,17 @@ describe("VoquillMigrationBanner", () => {
     );
   });
 
-  it("still shows the dismissal failure alert after React StrictMode effect replay", async () => {
-    dismissMock.mockResolvedValue(null);
+  it("shows the dismissal failure alert from Zustand state and clears it on store reset", async () => {
+    dismissMock.mockImplementationOnce(async () => {
+      setAppState((s) => ({
+        ...s,
+        voquillMigration: {
+          ...s.voquillMigration,
+          dismissFailed: true,
+        },
+      }));
+      return null;
+    });
     setAppState((s) => ({
       ...s,
       voquillMigration: {
@@ -377,6 +395,21 @@ describe("VoquillMigrationBanner", () => {
     });
     expect(dismissMock).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain(
+      "Could not dismiss this notice right now. Try again.",
+    );
+
+    // Resetting the app store while mounted clears the dismissal failure state.
+    act(() => {
+      setAppState({
+        ...structuredClone(INITIAL_APP_STATE),
+        voquillMigration: {
+          ...INITIAL_APP_STATE.voquillMigration,
+          status: "success",
+          report: makeReport(),
+        },
+      });
+    });
+    expect(container.textContent).not.toContain(
       "Could not dismiss this notice right now. Try again.",
     );
   });
