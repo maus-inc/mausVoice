@@ -1,4 +1,4 @@
-import HelpOutlineRoundedIcon from "@mui/icons-material/HelpOutlineRounded";
+import { CircleHelp } from "lucide-react";
 import {
   Box,
   IconButton,
@@ -71,7 +71,7 @@ export const ProviderFormFields = ({
               aria-label="About the /v1 path setting"
               sx={{ p: 0.25, color: "text.secondary" }}
             >
-              <HelpOutlineRoundedIcon sx={{ fontSize: 17 }} />
+              <CircleHelp size={17} strokeWidth={1.9} />
             </IconButton>
           </Tooltip>
           <Switch

@@ -1,8 +1,4 @@
-import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
-import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import PauseRoundedIcon from "@mui/icons-material/PauseRounded";
-import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
-import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
+import { Check, Pause, Play, TriangleAlert, X } from "lucide-react";
 import {
   Box,
   Button,
@@ -57,11 +53,7 @@ import {
   type LocalWhisperModel,
   normalizeLocalWhisperModel,
 } from "../../utils/local-transcription.utils";
-import {
-  activeRowCheckSx,
-  activeRowSx,
-  selectedOutlineSx,
-} from "../../styles/selection";
+import { activeRowSx, selectedOutlineSx } from "../../styles/selection";
 import { cssEase, duration, easeOutCubic } from "../../styles/motion";
 import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
@@ -319,9 +311,9 @@ const BusyDownloadButtons = ({
         color={paused ? "primary" : "warning"}
         startIcon={
           paused ? (
-            <PlayArrowRoundedIcon sx={{ fontSize: 14 }} />
+            <Play size={14} strokeWidth={1.9} />
           ) : (
-            <PauseRoundedIcon sx={{ fontSize: 14 }} />
+            <Pause size={14} strokeWidth={1.9} />
           )
         }
         sx={{
@@ -350,7 +342,7 @@ const BusyDownloadButtons = ({
         size="small"
         variant="text"
         color="inherit"
-        startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
+        startIcon={<X size={14} strokeWidth={1.9} />}
         sx={{
           ...buttonSx,
           minWidth: 0,
@@ -666,24 +658,30 @@ export const AITranscriptionConfiguration = ({
               {label}
             </Typography>
             {showFitWarning && (
-              <WarningAmberRoundedIcon
-                fontSize="small"
-                titleAccess={intl.formatMessage({
+              <TriangleAlert
+                size={20}
+                strokeWidth={1.9}
+                aria-label={intl.formatMessage({
                   defaultMessage: "This model may not run well on this device",
                 })}
-                sx={{
+                style={{
+                  flexShrink: 0,
                   color:
                     fit?.level === "discouraged"
-                      ? "error.main"
-                      : "warning.main",
+                      ? "var(--app-palette-error-main)"
+                      : "var(--app-palette-warning-main)",
                 }}
               />
             )}
             {active && (
-              <CheckRoundedIcon
-                fontSize="small"
-                sx={activeRowCheckSx}
-                titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
+              <Check
+                size={20}
+                strokeWidth={1.9}
+                style={{
+                  color: "var(--app-palette-text-primary)",
+                  flexShrink: 0,
+                }}
+                aria-label={intl.formatMessage({ defaultMessage: "Selected" })}
               />
             )}
           </Stack>

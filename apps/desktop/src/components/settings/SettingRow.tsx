@@ -20,8 +20,10 @@ import {
   rowSx,
   settingsCardContentInset,
   settingsCardSx,
+  settingGlyphProps,
   settingsRowLeadingSlotWidth,
   SettingRowText,
+  type SettingIconTone,
   SettingRowValue,
   trailingGlyphColumnSx,
   TrailingGlyph,
@@ -43,11 +45,25 @@ import { useSettingHighlight } from "./settings-highlight";
 const leadingSlotSx: SystemStyleObject<Theme> = {
   display: "flex",
   alignItems: "center",
-  justifyContent: "center",
   flexShrink: 0,
-  width: settingsRowLeadingSlotWidth,
+  // A floor, not a fixed width. The floor is whichever is larger: the shared
+  // 22px glyph size, or the width a row already reserves for its leading slot.
+  // Both terms are tokens, so the comment states the rule rather than a number a
+  // token change would quietly falsify. A row with a glyph measures the floor and
+  // the titles share one edge; the one mark wider than the floor, the identity
+  // row's avatar, takes a slot of its own instead of being centred through both
+  // of its neighbours. Centred in a fixed slot a 48px picture reached 13px into
+  // the 16px gutter, leaving 3px of air against its own title and 3px from the
+  // card edge, which reads as a crammed row.
+  minWidth: Math.max(settingGlyphProps.size, settingsRowLeadingSlotWidth),
   color: "text.secondary",
+  // A flex item shrinks by default, so without this the wider avatar would be
+  // squeezed to the floor and the face cropped.
+  "& > *": { flexShrink: 0 },
 };
+
+/** A destructive row's glyph, in the palette's destructive colour. */
+const dangerSlotSx: SystemStyleObject<Theme> = { color: "error.main" };
 
 const highlightSx: SxProps<Theme> = {
   outline: "2px solid",
@@ -89,6 +105,11 @@ const actionPillSx = (
   lineHeight: 1,
   whiteSpace: "nowrap",
   flexShrink: 0,
+  // A mark beside the verb keeps the pill on the same idiom as the app's buttons,
+  // which pair an 18px glyph with their label. The gap is the only spacing the
+  // pill needs; the glyph is centred by the flex line it sits on.
+  gap: 0.75,
+  "& > svg": { flexShrink: 0 },
   ...(tone === "error"
     ? {
         color: "error.main",
@@ -102,7 +123,12 @@ const actionPillSx = (
       }),
 });
 
-type SettingRowAction = { label: ReactNode; tone?: "primary" | "error" };
+type SettingRowAction = {
+  label: ReactNode;
+  tone?: "primary" | "error";
+  /** Leading mark beside the verb, for a verb a glyph makes faster to read. */
+  icon?: ReactNode;
+};
 
 type SettingRowControlColumnProps = {
   value?: ReactNode;
@@ -163,9 +189,15 @@ const ActionPill = ({ action }: { action: SettingRowAction }) => {
       className="setting-row-action"
       sx={actionPillSx(
         action.tone ?? "primary",
-        `${cssPixels(theme.shape.borderRadius) - 2}px`,
+        // 2px inside the pill's own radius, so the pill nests in the row's
+        // corners. Clamped: a theme may set a radius below 2, and a negative
+        // radius is invalid CSS that the browser drops.
+        `${Math.max(0, cssPixels(theme.shape.borderRadius) - 2)}px`,
       )}
     >
+      {/* The mark repeats the verb beside it, so it is decoration: the pill's
+          text is its whole accessible name. */}
+      {action.icon && <span aria-hidden>{action.icon}</span>}
       {action.label}
     </Box>
   );
@@ -224,8 +256,10 @@ export type SettingRowProps = {
   settingKey: string;
   title: ReactNode;
   description?: ReactNode;
-  /** Leading icon. Reserved for rows that open or leave, so it signals action. */
+  /** Leading glyph naming the kind of thing the row controls. */
   icon?: ReactNode;
+  /** `danger` tints the glyph for a destructive row. Defaults to `secondary`. */
+  iconTone?: SettingIconTone;
   /** Trailing control, right aligned in the shared control column. */
   control?: ReactNode;
   /** Reported value, for rows that only state something. */
@@ -234,7 +268,7 @@ export type SettingRowProps = {
    * Names the row's action instead of showing a chevron. Use it wherever the
    * verb is obvious enough to spell out.
    */
-  action?: { label: ReactNode; tone?: "primary" | "error" };
+  action?: SettingRowAction;
   /** Makes the whole row one button that opens a dialog or starts a task. */
   onClick?: () => void;
   /** Makes the row one button that opens this URL in the browser. */
@@ -254,6 +288,7 @@ export const SettingRow = ({
   title,
   description,
   icon,
+  iconTone,
   control,
   value,
   action,
@@ -279,9 +314,16 @@ export const SettingRow = ({
     onClick?.();
   };
 
+  // A static row is a block, so its text may be a `div`; the two rows that are
+  // themselves a control are phrasing only, and a `div` inside a button or a
+  // label is invalid markup.
   const body = (
     <>
-      <Box component="span" aria-hidden sx={leadingSlotSx}>
+      <Box
+        component="span"
+        aria-hidden
+        sx={[leadingSlotSx, ...(iconTone === "danger" ? [dangerSlotSx] : [])]}
+      >
         {icon}
       </Box>
       <SettingRowText
@@ -319,7 +361,7 @@ export const SettingRow = ({
     <StaticSettingRow
       anchorId={anchorId}
       highlight={highlight}
-      wrapsWideControl={Boolean(control && !icon)}
+      wrapsWideControl={Boolean(control)}
     >
       {body}
     </StaticSettingRow>
@@ -365,7 +407,9 @@ const StaticSettingRow = ({
     sx={[
       rowSx,
       // Wide controls must not squeeze their explanation into a narrow column.
-      // Let them move below it when the card runs out of room.
+      // Let them move below it when the card runs out of room. The address is
+      // the label block rather than a child position, so a row that leads with
+      // a glyph moves its glyph down together with the text it names.
       ...(wrapsWideControl
         ? [
             {
@@ -389,6 +433,16 @@ export type SettingToggleRowProps = {
   settingKey: string;
   title: ReactNode;
   description?: ReactNode;
+  /**
+   * Leading glyph, in the same lane as `SettingRow`'s.
+   *
+   * A toggle is as much a setting as a row that opens a dialog, and the two sit
+   * in the same card. Without a slot here, every switch-led group lost its icon
+   * language at exactly the point the two row kinds alternated.
+   */
+  icon?: ReactNode;
+  /** `danger` tints the glyph for a destructive row. Defaults to `secondary`. */
+  iconTone?: SettingIconTone;
   checked: boolean;
   onChange: (event: ChangeEvent<HTMLInputElement>) => void | Promise<unknown>;
   disabled?: boolean;
@@ -407,6 +461,8 @@ export const SettingToggleRow = ({
   settingKey,
   title,
   description,
+  icon,
+  iconTone,
   checked,
   onChange,
   disabled,
@@ -429,7 +485,13 @@ export const SettingToggleRow = ({
         ...(highlight ? [highlightSx] : []),
       ]}
     >
-      <Box component="span" aria-hidden sx={leadingSlotSx} />
+      <Box
+        component="span"
+        aria-hidden
+        sx={[leadingSlotSx, ...(iconTone === "danger" ? [dangerSlotSx] : [])]}
+      >
+        {icon}
+      </Box>
       <SettingRowText
         title={title}
         description={description}

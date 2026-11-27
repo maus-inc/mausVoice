@@ -1,5 +1,5 @@
 import { isComposingKey } from "../common/ime-keyboard";
-import { SearchRounded } from "@mui/icons-material";
+import { Search } from "lucide-react";
 import {
   Box,
   InputAdornment,
@@ -39,6 +39,7 @@ import {
 } from "./settings-highlight";
 import { useSettingsAnchor } from "./use-settings-anchor";
 import { SettingsSearchResults } from "./SettingsSearchResults";
+import { settingSearchGlyphProps } from "./setting-row-chassis";
 
 const settingsWideLayoutQuery = "@container settings-layout (min-width: 680px)";
 
@@ -374,7 +375,7 @@ export const SettingsLayout = () => {
                   input: {
                     startAdornment: (
                       <InputAdornment position="start">
-                        <SearchRounded fontSize="small" />
+                        <Search {...settingSearchGlyphProps} />
                       </InputAdornment>
                     ),
                   },

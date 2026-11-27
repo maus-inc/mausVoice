@@ -1,4 +1,4 @@
-import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
+import { TriangleAlert } from "lucide-react";
 import {
   Button,
   Chip,
@@ -111,7 +111,11 @@ export const AIAgentModeDialog = () => {
         fullWidth
       >
         <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <WarningAmberRoundedIcon color="warning" />
+          <TriangleAlert
+            size={20}
+            strokeWidth={1.9}
+            style={{ color: "var(--app-palette-warning-main)" }}
+          />
           <FormattedMessage defaultMessage="Enable power mode?" />
         </DialogTitle>
         <DialogContent>
