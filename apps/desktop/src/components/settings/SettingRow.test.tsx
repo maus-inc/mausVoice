@@ -262,6 +262,28 @@ describe("SettingRow", () => {
     expect(row?.querySelector(".setting-row-action")?.tagName).toBe("SPAN");
   });
 
+  it("hides an action pill's mark from assistive technology", () => {
+    // The mark repeats the verb beside it, so the pill's text is the whole name. Left
+    // announced, a lucide glyph contributes nothing and the name is read twice over.
+    render(
+      createElement(SettingRow, {
+        settingKey: "name",
+        title: "Name",
+        action: {
+          label: "Edit",
+          icon: createElement("svg", { "data-testid": "pill-mark" }),
+        },
+        onClick: () => undefined,
+      }),
+    );
+
+    const pill = container.querySelector(".setting-row-action");
+    const mark = container.querySelector('[data-testid="pill-mark"]');
+    expect(mark).not.toBeNull();
+    expect(mark?.closest('[aria-hidden="true"]')).not.toBeNull();
+    expect(pill?.textContent).toBe("Edit");
+  });
+
   it("prints a destructive group's heading as a label, not a section heading", () => {
     render(
       <SettingGroup title="Danger zone" danger>

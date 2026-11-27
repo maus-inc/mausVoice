@@ -156,7 +156,7 @@ const SettingRowControlColumn = ({
             `${cssPixels(theme.shape.borderRadius) - 2}px`,
           )}
         >
-          {action.icon}
+          {action.icon && <span aria-hidden>{action.icon}</span>}
           {action.label}
         </Box>
       )}
