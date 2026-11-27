@@ -253,6 +253,16 @@ test("the template's MausAgent footer also ends the authored body", () => {
   assert.equal(failures[0]?.rule, "V4");
 });
 
+test("the footer marker ends the body without requiring the space after it", () => {
+  // The marker is a word boundary, not a literal space: a body whose footer is
+  // written without a space after "by" still ends there, and an image below it is
+  // still the template's rather than the author's.
+  const text = `## Summary\n\nNothing to see.\n\nMausAgent | Filed by@someone\n\n![x](y.png)\n`;
+  const { authored, found } = splitAuthored(text);
+  assert.equal(found, true);
+  assert.deepEqual(images(authored), []);
+});
+
 test("a deleted UI file counts as a change to the surface", async () => {
   // Deleting a stylesheet changes what a person sees, so the path has to reach the
   // classifier instead of being filtered out of the diff before it is judged.

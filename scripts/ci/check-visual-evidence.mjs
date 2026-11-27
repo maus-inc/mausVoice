@@ -68,7 +68,7 @@ const NOT_A_SURFACE = [
  * as a `MausAgent | Filed by` line while an earlier body used an HTML comment. Both are
  * recognized, so bot text appended below either one never supplies the author's evidence.
  */
-const FOOTER = /^(?:<!--\s*footer\s*-->|MausAgent \| Filed by )/;
+const FOOTER = /^(?:<!--\s*footer\s*-->|MausAgent \| Filed by\b)/;
 
 export const isUiPath = (path) =>
   UI_MARKERS.some((marker) => marker.test(path)) &&

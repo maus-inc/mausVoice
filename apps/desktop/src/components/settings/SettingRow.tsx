@@ -46,12 +46,15 @@ const leadingSlotSx: SystemStyleObject<Theme> = {
   display: "flex",
   alignItems: "center",
   flexShrink: 0,
-  // A floor at the shared glyph size, not a fixed width. Every glyph draws 22px,
-  // so the slot measures 22px and the titles share one edge; the one mark wider
-  // than that, the identity row's avatar, takes a slot of its own instead of
-  // being centred through both of its neighbours. Centred in a fixed slot a 48px
-  // picture reached 13px into the 16px gutter, leaving 3px of air against its own
-  // title and 3px from the card edge, which reads as a crammed row.
+  // A floor, not a fixed width. The floor is whichever is larger: the shared
+  // 22px glyph size, or the width a row already reserves for its leading slot.
+  // Both terms are tokens, so the comment states the rule rather than a number a
+  // token change would quietly falsify. A row with a glyph measures the floor and
+  // the titles share one edge; the one mark wider than the floor, the identity
+  // row's avatar, takes a slot of its own instead of being centred through both
+  // of its neighbours. Centred in a fixed slot a 48px picture reached 13px into
+  // the 16px gutter, leaving 3px of air against its own title and 3px from the
+  // card edge, which reads as a crammed row.
   minWidth: Math.max(settingGlyphProps.size, settingsRowLeadingSlotWidth),
   color: "text.secondary",
   // A flex item shrinks by default, so without this the wider avatar would be
@@ -186,7 +189,10 @@ const ActionPill = ({ action }: { action: SettingRowAction }) => {
       className="setting-row-action"
       sx={actionPillSx(
         action.tone ?? "primary",
-        `${cssPixels(theme.shape.borderRadius) - 2}px`,
+        // 2px inside the pill's own radius, so the pill nests in the row's
+        // corners. Clamped: a theme may set a radius below 2, and a negative
+        // radius is invalid CSS that the browser drops.
+        `${Math.max(0, cssPixels(theme.shape.borderRadius) - 2)}px`,
       )}
     >
       {/* The mark repeats the verb beside it, so it is decoration: the pill's
