@@ -8,18 +8,18 @@
       "page": "home",
       "heading": {
         "text": "Overview",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1256,
-        "w": 736,
+        "w": 760,
         "h": 42
       },
       "labelColumns": [
-        977
+        965
       ],
       "headingColumns": [
-        520,
-        904
+        496,
+        892
       ],
       "groups": [
         {
@@ -28,20 +28,20 @@
           "top": 177.2,
           "height": 46.3,
           "labelX": null,
-          "cardX": 520,
-          "headingX": 520,
+          "cardX": 496,
+          "headingX": 496,
           "action": "All shortcuts",
-          "actionRight": 855,
-          "rowContentRight": 855
+          "actionRight": 843,
+          "rowContentRight": 843
         },
         {
           "title": "Your models",
           "rows": 3,
           "top": 177.2,
           "height": 214.7,
-          "labelX": 977,
-          "cardX": 904,
-          "headingX": 904,
+          "labelX": 965,
+          "cardX": 892,
+          "headingX": 892,
           "action": "Manage models",
           "actionRight": 1239,
           "rowContentRight": 1239
@@ -55,27 +55,27 @@
       "page": "dictation",
       "heading": {
         "text": "Dictation",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1256,
-        "w": 736,
+        "w": 760,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
           "title": "Microphone and feedback",
           "rows": 2,
           "top": 177.2,
-          "height": 153.3,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "height": 133,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -83,11 +83,11 @@
         {
           "title": "Language",
           "rows": 2,
-          "top": 406.5,
+          "top": 386.2,
           "height": 133,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -95,11 +95,11 @@
         {
           "title": "While you dictate",
           "rows": 3,
-          "top": 615.5,
-          "height": 239,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "top": 595.2,
+          "height": 218.8,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -107,11 +107,11 @@
         {
           "title": "Output",
           "rows": 5,
-          "top": 930.5,
+          "top": 890,
           "height": 390.3,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -125,17 +125,17 @@
       "page": "ai-models",
       "heading": {
         "text": "AI and models",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1256,
-        "w": 736,
+        "w": 760,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
@@ -143,9 +143,9 @@
           "rows": 2,
           "top": 177.2,
           "height": 133,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -155,9 +155,9 @@
           "rows": 3,
           "top": 386.2,
           "height": 218.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -167,9 +167,9 @@
           "rows": 1,
           "top": 681,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -179,9 +179,9 @@
           "rows": 1,
           "top": 824.5,
           "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -195,17 +195,17 @@
       "page": "shortcuts",
       "heading": {
         "text": "Shortcuts",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1256,
-        "w": 736,
+        "w": 760,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
@@ -213,9 +213,9 @@
           "rows": 1,
           "top": 177.2,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -225,9 +225,9 @@
           "rows": 1,
           "top": 320.7,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -241,27 +241,27 @@
       "page": "appearance",
       "heading": {
         "text": "Appearance",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1256,
-        "w": 736,
+        "w": 760,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
           "title": "Pill",
           "rows": 2,
           "top": 177.2,
-          "height": 193.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "height": 173.5,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -269,11 +269,11 @@
         {
           "title": "Menu bar",
           "rows": 1,
-          "top": 447,
-          "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "top": 426.7,
+          "height": 67.5,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -281,11 +281,11 @@
         {
           "title": "Celebrations",
           "rows": 1,
-          "top": 610.7,
+          "top": 570.2,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -299,17 +299,17 @@
       "page": "privacy-data",
       "heading": {
         "text": "Privacy and data",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1256,
-        "w": 736,
+        "w": 760,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
@@ -317,9 +317,9 @@
           "rows": 2,
           "top": 177.2,
           "height": 153.3,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -329,9 +329,9 @@
           "rows": 2,
           "top": 406.5,
           "height": 153.3,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -341,9 +341,9 @@
           "rows": 1,
           "top": 635.7,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -357,17 +357,17 @@
       "page": "system",
       "heading": {
         "text": "System",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1256,
-        "w": 736,
+        "w": 760,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
@@ -375,9 +375,9 @@
           "rows": 1,
           "top": 177.2,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -387,9 +387,9 @@
           "rows": 1,
           "top": 367.2,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -399,9 +399,9 @@
           "rows": 3,
           "top": 510.7,
           "height": 218.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -411,9 +411,9 @@
           "rows": 1,
           "top": 805.5,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -423,9 +423,9 @@
           "rows": 1,
           "top": 949,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -439,17 +439,17 @@
       "page": "account",
       "heading": {
         "text": "Account",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1256,
-        "w": 736,
+        "w": 760,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
@@ -457,9 +457,9 @@
           "rows": 1,
           "top": 177.2,
           "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -469,9 +469,9 @@
           "rows": 1,
           "top": 328.9,
           "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1239
@@ -485,17 +485,17 @@
       "page": "home",
       "heading": {
         "text": "Overview",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1076,
-        "w": 556,
+        "w": 580,
         "h": 42
       },
       "labelColumns": [
-        593
+        569
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
@@ -504,8 +504,8 @@
           "top": 177.2,
           "height": 46.3,
           "labelX": null,
-          "cardX": 520,
-          "headingX": 520,
+          "cardX": 496,
+          "headingX": 496,
           "action": "All shortcuts",
           "actionRight": 1059,
           "rowContentRight": 1059
@@ -515,9 +515,9 @@
           "rows": 3,
           "top": 331.5,
           "height": 191.5,
-          "labelX": 593,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 569,
+          "cardX": 496,
+          "headingX": 496,
           "action": "Manage models",
           "actionRight": 1059,
           "rowContentRight": 1059
@@ -531,17 +531,17 @@
       "page": "dictation",
       "heading": {
         "text": "Dictation",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1076,
-        "w": 556,
+        "w": 580,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
@@ -549,9 +549,9 @@
           "rows": 2,
           "top": 177.2,
           "height": 153.3,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -561,9 +561,9 @@
           "rows": 2,
           "top": 406.5,
           "height": 173.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -573,9 +573,9 @@
           "rows": 3,
           "top": 656,
           "height": 279.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -584,10 +584,10 @@
           "title": "Output",
           "rows": 5,
           "top": 1011.5,
-          "height": 471.3,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "height": 430.8,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -601,27 +601,27 @@
       "page": "ai-models",
       "heading": {
         "text": "AI and models",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1076,
-        "w": 556,
+        "w": 580,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
           "title": "Transcription",
           "rows": 2,
           "top": 177.2,
-          "height": 173.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "height": 133,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -629,11 +629,11 @@
         {
           "title": "Post processing",
           "rows": 3,
-          "top": 426.7,
-          "height": 259.3,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "top": 386.2,
+          "height": 239,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -641,11 +641,11 @@
         {
           "title": "Assistant",
           "rows": 1,
-          "top": 762,
+          "top": 701.2,
           "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -653,11 +653,11 @@
         {
           "title": "Styles",
           "rows": 1,
-          "top": 925.7,
-          "height": 128.3,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "top": 865,
+          "height": 108,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -671,17 +671,17 @@
       "page": "shortcuts",
       "heading": {
         "text": "Shortcuts",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1076,
-        "w": 556,
+        "w": 580,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
@@ -689,9 +689,9 @@
           "rows": 1,
           "top": 177.2,
           "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -700,10 +700,10 @@
           "title": "Styles",
           "rows": 1,
           "top": 341,
-          "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "height": 67.5,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -717,17 +717,17 @@
       "page": "appearance",
       "heading": {
         "text": "Appearance",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1076,
-        "w": 556,
+        "w": 580,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
@@ -735,9 +735,9 @@
           "rows": 2,
           "top": 177.2,
           "height": 300.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -747,9 +747,9 @@
           "rows": 1,
           "top": 553.7,
           "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -759,9 +759,9 @@
           "rows": 1,
           "top": 717.5,
           "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -775,27 +775,27 @@
       "page": "privacy-data",
       "heading": {
         "text": "Privacy and data",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1076,
-        "w": 556,
+        "w": 580,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
           "title": "History and storage",
           "rows": 2,
           "top": 177.2,
-          "height": 173.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "height": 153.3,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -803,11 +803,11 @@
         {
           "title": "Dictionary learning",
           "rows": 2,
-          "top": 426.7,
+          "top": 406.5,
           "height": 173.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -815,11 +815,11 @@
         {
           "title": "Devices",
           "rows": 1,
-          "top": 676.2,
+          "top": 656,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -833,17 +833,17 @@
       "page": "system",
       "heading": {
         "text": "System",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1076,
-        "w": 556,
+        "w": 580,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
@@ -851,9 +851,9 @@
           "rows": 1,
           "top": 177.2,
           "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -862,10 +862,10 @@
           "title": "Input permissions",
           "rows": 1,
           "top": 387.5,
-          "height": 87.8,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "height": 67.5,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -873,11 +873,11 @@
         {
           "title": "Updates",
           "rows": 3,
-          "top": 551.2,
-          "height": 259.3,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "top": 531,
+          "height": 239,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -885,11 +885,11 @@
         {
           "title": "Support",
           "rows": 1,
-          "top": 886.5,
+          "top": 846,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -897,11 +897,11 @@
         {
           "title": "Legal",
           "rows": 1,
-          "top": 1030,
+          "top": 989.5,
           "height": 67.5,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -915,27 +915,27 @@
       "page": "account",
       "heading": {
         "text": "Account",
-        "x": 520,
+        "x": 496,
         "y": 20,
         "right": 1076,
-        "w": 556,
+        "w": 580,
         "h": 42
       },
       "labelColumns": [
-        577
+        553
       ],
       "headingColumns": [
-        520
+        496
       ],
       "groups": [
         {
           "title": "Profile",
           "rows": 1,
           "top": 177.2,
-          "height": 108,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "height": 87.8,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -943,11 +943,11 @@
         {
           "title": "Danger zone",
           "rows": 1,
-          "top": 349.1,
-          "height": 128.3,
-          "labelX": 577,
-          "cardX": 520,
-          "headingX": 520,
+          "top": 328.9,
+          "height": 108,
+          "labelX": 553,
+          "cardX": 496,
+          "headingX": 496,
           "action": null,
           "actionRight": null,
           "rowContentRight": 1059
@@ -962,7 +962,7 @@
       "heading": {
         "text": "Overview",
         "x": 256,
-        "y": 126.6,
+        "y": 160.6,
         "right": 776,
         "w": 520,
         "h": 42
@@ -977,7 +977,7 @@
         {
           "title": "Shortcuts",
           "rows": 1,
-          "top": 283.8,
+          "top": 317.8,
           "height": 46.3,
           "labelX": null,
           "cardX": 256,
@@ -989,7 +989,7 @@
         {
           "title": "Your models",
           "rows": 3,
-          "top": 438,
+          "top": 472,
           "height": 191.5,
           "labelX": 329,
           "cardX": 256,
@@ -1008,7 +1008,7 @@
       "heading": {
         "text": "Dictation",
         "x": 256,
-        "y": 126.6,
+        "y": 160.6,
         "right": 776,
         "w": 520,
         "h": 42
@@ -1023,7 +1023,7 @@
         {
           "title": "Microphone and feedback",
           "rows": 2,
-          "top": 283.8,
+          "top": 317.8,
           "height": 153.3,
           "labelX": 313,
           "cardX": 256,
@@ -1035,7 +1035,7 @@
         {
           "title": "Language",
           "rows": 2,
-          "top": 513,
+          "top": 547,
           "height": 173.5,
           "labelX": 313,
           "cardX": 256,
@@ -1047,8 +1047,8 @@
         {
           "title": "While you dictate",
           "rows": 3,
-          "top": 762.5,
-          "height": 299.8,
+          "top": 796.5,
+          "height": 279.5,
           "labelX": 313,
           "cardX": 256,
           "headingX": 256,
@@ -1059,7 +1059,7 @@
         {
           "title": "Output",
           "rows": 5,
-          "top": 1138.3,
+          "top": 1152,
           "height": 471.3,
           "labelX": 313,
           "cardX": 256,
@@ -1078,7 +1078,7 @@
       "heading": {
         "text": "AI and models",
         "x": 256,
-        "y": 126.6,
+        "y": 160.6,
         "right": 776,
         "w": 520,
         "h": 42
@@ -1093,7 +1093,7 @@
         {
           "title": "Transcription",
           "rows": 2,
-          "top": 283.8,
+          "top": 317.8,
           "height": 173.5,
           "labelX": 313,
           "cardX": 256,
@@ -1105,7 +1105,7 @@
         {
           "title": "Post processing",
           "rows": 3,
-          "top": 533.3,
+          "top": 567.3,
           "height": 279.5,
           "labelX": 313,
           "cardX": 256,
@@ -1117,7 +1117,7 @@
         {
           "title": "Assistant",
           "rows": 1,
-          "top": 888.8,
+          "top": 922.8,
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
@@ -1129,7 +1129,7 @@
         {
           "title": "Styles",
           "rows": 1,
-          "top": 1052.5,
+          "top": 1086.5,
           "height": 151.3,
           "labelX": 313,
           "cardX": 256,
@@ -1148,7 +1148,7 @@
       "heading": {
         "text": "Shortcuts",
         "x": 256,
-        "y": 126.6,
+        "y": 160.6,
         "right": 776,
         "w": 520,
         "h": 42
@@ -1163,7 +1163,7 @@
         {
           "title": "Dictation",
           "rows": 1,
-          "top": 283.8,
+          "top": 317.8,
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
@@ -1175,7 +1175,7 @@
         {
           "title": "Styles",
           "rows": 1,
-          "top": 447.5,
+          "top": 481.5,
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
@@ -1194,7 +1194,7 @@
       "heading": {
         "text": "Appearance",
         "x": 256,
-        "y": 126.6,
+        "y": 160.6,
         "right": 776,
         "w": 520,
         "h": 42
@@ -1209,7 +1209,7 @@
         {
           "title": "Pill",
           "rows": 2,
-          "top": 283.8,
+          "top": 317.8,
           "height": 300.5,
           "labelX": 313,
           "cardX": 256,
@@ -1221,7 +1221,7 @@
         {
           "title": "Menu bar",
           "rows": 1,
-          "top": 660.3,
+          "top": 694.3,
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
@@ -1233,7 +1233,7 @@
         {
           "title": "Celebrations",
           "rows": 1,
-          "top": 824,
+          "top": 858,
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
@@ -1252,7 +1252,7 @@
       "heading": {
         "text": "Privacy and data",
         "x": 256,
-        "y": 126.6,
+        "y": 160.6,
         "right": 776,
         "w": 520,
         "h": 42
@@ -1267,8 +1267,8 @@
         {
           "title": "History and storage",
           "rows": 2,
-          "top": 283.8,
-          "height": 193.8,
+          "top": 317.8,
+          "height": 173.5,
           "labelX": 313,
           "cardX": 256,
           "headingX": 256,
@@ -1279,7 +1279,7 @@
         {
           "title": "Dictionary learning",
           "rows": 2,
-          "top": 553.5,
+          "top": 567.3,
           "height": 173.5,
           "labelX": 313,
           "cardX": 256,
@@ -1291,7 +1291,7 @@
         {
           "title": "Devices",
           "rows": 1,
-          "top": 803,
+          "top": 816.8,
           "height": 67.5,
           "labelX": 313,
           "cardX": 256,
@@ -1310,7 +1310,7 @@
       "heading": {
         "text": "System",
         "x": 256,
-        "y": 126.6,
+        "y": 160.6,
         "right": 776,
         "w": 520,
         "h": 42
@@ -1325,7 +1325,7 @@
         {
           "title": "Startup",
           "rows": 1,
-          "top": 283.8,
+          "top": 317.8,
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
@@ -1337,7 +1337,7 @@
         {
           "title": "Input permissions",
           "rows": 1,
-          "top": 494,
+          "top": 528,
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
@@ -1349,8 +1349,8 @@
         {
           "title": "Updates",
           "rows": 3,
-          "top": 657.8,
-          "height": 279.5,
+          "top": 691.8,
+          "height": 259.3,
           "labelX": 313,
           "cardX": 256,
           "headingX": 256,
@@ -1361,8 +1361,8 @@
         {
           "title": "Support",
           "rows": 1,
-          "top": 1013.3,
-          "height": 87.8,
+          "top": 1027,
+          "height": 67.5,
           "labelX": 313,
           "cardX": 256,
           "headingX": 256,
@@ -1373,7 +1373,7 @@
         {
           "title": "Legal",
           "rows": 1,
-          "top": 1177,
+          "top": 1170.5,
           "height": 67.5,
           "labelX": 313,
           "cardX": 256,
@@ -1392,7 +1392,7 @@
       "heading": {
         "text": "Account",
         "x": 256,
-        "y": 126.6,
+        "y": 160.6,
         "right": 776,
         "w": 520,
         "h": 42
@@ -1407,7 +1407,7 @@
         {
           "title": "Profile",
           "rows": 1,
-          "top": 283.8,
+          "top": 317.8,
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
@@ -1419,7 +1419,7 @@
         {
           "title": "Danger zone",
           "rows": 1,
-          "top": 435.5,
+          "top": 469.5,
           "height": 108,
           "labelX": 313,
           "cardX": 256,

@@ -1,0 +1,2138 @@
+{
+  "browser": "Chrome/156.0.8078.79",
+  "base": "136b6306ed3f416a17eedbdff7c0747d14194140",
+  "widths": [
+    800,
+    900,
+    934,
+    935,
+    936,
+    940,
+    950,
+    1000
+  ],
+  "pages": [
+    "shortcuts",
+    "ai-models"
+  ],
+  "themes": [
+    "light",
+    "dark"
+  ],
+  "rows": [
+    {
+      "key": "shortcuts-light-800",
+      "viewport": {
+        "width": 800,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 520,
+        "height": 42,
+        "right": 776,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 544,
+        "height": 605.3,
+        "right": 788,
+        "bottom": 613.3
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 544,
+        "height": 605.3,
+        "right": 788,
+        "bottom": 613.3
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 520,
+        "height": 124.6,
+        "right": 776,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 520,
+        "height": 70,
+        "right": 776,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 520,
+        "height": 440.7,
+        "right": 776,
+        "bottom": 601.3
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 800,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-light-900",
+      "viewport": {
+        "width": 900,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 620,
+        "height": 42,
+        "right": 876,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 644,
+        "height": 585,
+        "right": 888,
+        "bottom": 593
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 644,
+        "height": 585,
+        "right": 888,
+        "bottom": 593
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 620,
+        "height": 124.6,
+        "right": 876,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 620,
+        "height": 70,
+        "right": 876,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 620,
+        "height": 420.5,
+        "right": 876,
+        "bottom": 581
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 900,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-light-934",
+      "viewport": {
+        "width": 934,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 654,
+        "height": 42,
+        "right": 910,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 678,
+        "height": 564.8,
+        "right": 922,
+        "bottom": 572.8
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 678,
+        "height": 564.8,
+        "right": 922,
+        "bottom": 572.8
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 654,
+        "height": 124.6,
+        "right": 910,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 654,
+        "height": 70,
+        "right": 910,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 654,
+        "height": 400.2,
+        "right": 910,
+        "bottom": 560.8
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 934,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-light-935",
+      "viewport": {
+        "width": 935,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 655,
+        "height": 42,
+        "right": 911,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 679,
+        "height": 564.8,
+        "right": 923,
+        "bottom": 572.8
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 679,
+        "height": 564.8,
+        "right": 923,
+        "bottom": 572.8
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 655,
+        "height": 124.6,
+        "right": 911,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 655,
+        "height": 70,
+        "right": 911,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 655,
+        "height": 400.2,
+        "right": 911,
+        "bottom": 560.8
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 935,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-light-936",
+      "viewport": {
+        "width": 936,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 416,
+        "height": 42,
+        "right": 912,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 680,
+        "height": 464.7,
+        "right": 924,
+        "bottom": 472.7
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 680,
+        "height": 464.7,
+        "right": 924,
+        "bottom": 472.7
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 416,
+        "height": 440.7,
+        "right": 912,
+        "bottom": 460.7
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 936,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-light-940",
+      "viewport": {
+        "width": 940,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 420,
+        "height": 42,
+        "right": 916,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 684,
+        "height": 464.7,
+        "right": 928,
+        "bottom": 472.7
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 684,
+        "height": 464.7,
+        "right": 928,
+        "bottom": 472.7
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 420,
+        "height": 440.7,
+        "right": 916,
+        "bottom": 460.7
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 940,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-light-950",
+      "viewport": {
+        "width": 950,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 430,
+        "height": 42,
+        "right": 926,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 694,
+        "height": 464.7,
+        "right": 938,
+        "bottom": 472.7
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 694,
+        "height": 464.7,
+        "right": 938,
+        "bottom": 472.7
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 430,
+        "height": 440.7,
+        "right": 926,
+        "bottom": 460.7
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 950,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-light-1000",
+      "viewport": {
+        "width": 1000,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 480,
+        "height": 42,
+        "right": 976,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 744,
+        "height": 464.7,
+        "right": 988,
+        "bottom": 472.7
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 744,
+        "height": 464.7,
+        "right": 988,
+        "bottom": 472.7
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 480,
+        "height": 440.7,
+        "right": 976,
+        "bottom": 460.7
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 1000,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "ai-models-light-800",
+      "viewport": {
+        "width": 800,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 520,
+        "height": 42,
+        "right": 776,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 544,
+        "height": 1273.8,
+        "right": 788,
+        "bottom": 1281.8
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 544,
+        "height": 1273.8,
+        "right": 788,
+        "bottom": 1281.8
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 520,
+        "height": 124.6,
+        "right": 776,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 520,
+        "height": 70,
+        "right": 776,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 520,
+        "height": 1109.2,
+        "right": 776,
+        "bottom": 1269.8
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 800,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-light-900",
+      "viewport": {
+        "width": 900,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 620,
+        "height": 42,
+        "right": 876,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 644,
+        "height": 1129.3,
+        "right": 888,
+        "bottom": 1137.3
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 644,
+        "height": 1129.3,
+        "right": 888,
+        "bottom": 1137.3
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 620,
+        "height": 124.6,
+        "right": 876,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 620,
+        "height": 70,
+        "right": 876,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 620,
+        "height": 964.7,
+        "right": 876,
+        "bottom": 1125.3
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 900,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-light-934",
+      "viewport": {
+        "width": 934,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 654,
+        "height": 42,
+        "right": 910,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 678,
+        "height": 1109,
+        "right": 922,
+        "bottom": 1117
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 678,
+        "height": 1109,
+        "right": 922,
+        "bottom": 1117
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 654,
+        "height": 124.6,
+        "right": 910,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 654,
+        "height": 70,
+        "right": 910,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 654,
+        "height": 944.5,
+        "right": 910,
+        "bottom": 1105
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 934,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-light-935",
+      "viewport": {
+        "width": 935,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 655,
+        "height": 42,
+        "right": 911,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 679,
+        "height": 1109,
+        "right": 923,
+        "bottom": 1117
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 679,
+        "height": 1109,
+        "right": 923,
+        "bottom": 1117
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 655,
+        "height": 124.6,
+        "right": 911,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 655,
+        "height": 70,
+        "right": 911,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 655,
+        "height": 944.5,
+        "right": 911,
+        "bottom": 1105
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 935,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-light-936",
+      "viewport": {
+        "width": 936,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 416,
+        "height": 42,
+        "right": 912,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 680,
+        "height": 1217.2,
+        "right": 924,
+        "bottom": 1225.2
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 680,
+        "height": 1217.2,
+        "right": 924,
+        "bottom": 1225.2
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 416,
+        "height": 1193.2,
+        "right": 912,
+        "bottom": 1213.2
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 936,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-light-940",
+      "viewport": {
+        "width": 940,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 420,
+        "height": 42,
+        "right": 916,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 684,
+        "height": 1217.2,
+        "right": 928,
+        "bottom": 1225.2
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 684,
+        "height": 1217.2,
+        "right": 928,
+        "bottom": 1225.2
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 420,
+        "height": 1193.2,
+        "right": 916,
+        "bottom": 1213.2
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 940,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-light-950",
+      "viewport": {
+        "width": 950,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 430,
+        "height": 42,
+        "right": 926,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 694,
+        "height": 1217.2,
+        "right": 938,
+        "bottom": 1225.2
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 694,
+        "height": 1217.2,
+        "right": 938,
+        "bottom": 1225.2
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 430,
+        "height": 1193.2,
+        "right": 926,
+        "bottom": 1213.2
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 950,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-light-1000",
+      "viewport": {
+        "width": 1000,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 480,
+        "height": 42,
+        "right": 976,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 744,
+        "height": 1133.2,
+        "right": 988,
+        "bottom": 1141.2
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 744,
+        "height": 1133.2,
+        "right": 988,
+        "bottom": 1141.2
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 480,
+        "height": 1109.2,
+        "right": 976,
+        "bottom": 1129.2
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 1000,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(26, 23, 18, 0.62)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "shortcuts-dark-800",
+      "viewport": {
+        "width": 800,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 520,
+        "height": 42,
+        "right": 776,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 544,
+        "height": 605.3,
+        "right": 788,
+        "bottom": 613.3
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 544,
+        "height": 605.3,
+        "right": 788,
+        "bottom": 613.3
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 520,
+        "height": 124.6,
+        "right": 776,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 520,
+        "height": 70,
+        "right": 776,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 520,
+        "height": 440.7,
+        "right": 776,
+        "bottom": 601.3
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 800,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-dark-900",
+      "viewport": {
+        "width": 900,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 620,
+        "height": 42,
+        "right": 876,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 644,
+        "height": 585,
+        "right": 888,
+        "bottom": 593
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 644,
+        "height": 585,
+        "right": 888,
+        "bottom": 593
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 620,
+        "height": 124.6,
+        "right": 876,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 620,
+        "height": 70,
+        "right": 876,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 620,
+        "height": 420.5,
+        "right": 876,
+        "bottom": 581
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 900,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-dark-934",
+      "viewport": {
+        "width": 934,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 654,
+        "height": 42,
+        "right": 910,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 678,
+        "height": 564.8,
+        "right": 922,
+        "bottom": 572.8
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 678,
+        "height": 564.8,
+        "right": 922,
+        "bottom": 572.8
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 654,
+        "height": 124.6,
+        "right": 910,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 654,
+        "height": 70,
+        "right": 910,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 654,
+        "height": 400.2,
+        "right": 910,
+        "bottom": 560.8
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 934,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-dark-935",
+      "viewport": {
+        "width": 935,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 655,
+        "height": 42,
+        "right": 911,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 679,
+        "height": 564.8,
+        "right": 923,
+        "bottom": 572.8
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 679,
+        "height": 564.8,
+        "right": 923,
+        "bottom": 572.8
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 655,
+        "height": 124.6,
+        "right": 911,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 655,
+        "height": 70,
+        "right": 911,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 655,
+        "height": 400.2,
+        "right": 911,
+        "bottom": 560.8
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 935,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-dark-936",
+      "viewport": {
+        "width": 936,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 416,
+        "height": 42,
+        "right": 912,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 680,
+        "height": 464.7,
+        "right": 924,
+        "bottom": 472.7
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 680,
+        "height": 464.7,
+        "right": 924,
+        "bottom": 472.7
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 416,
+        "height": 440.7,
+        "right": 912,
+        "bottom": 460.7
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 936,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-dark-940",
+      "viewport": {
+        "width": 940,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 420,
+        "height": 42,
+        "right": 916,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 684,
+        "height": 464.7,
+        "right": 928,
+        "bottom": 472.7
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 684,
+        "height": 464.7,
+        "right": 928,
+        "bottom": 472.7
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 420,
+        "height": 440.7,
+        "right": 916,
+        "bottom": 460.7
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 940,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-dark-950",
+      "viewport": {
+        "width": 950,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 430,
+        "height": 42,
+        "right": 926,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 694,
+        "height": 464.7,
+        "right": 938,
+        "bottom": 472.7
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 694,
+        "height": 464.7,
+        "right": 938,
+        "bottom": 472.7
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 430,
+        "height": 440.7,
+        "right": 926,
+        "bottom": 460.7
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 950,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "shortcuts-dark-1000",
+      "viewport": {
+        "width": 1000,
+        "height": 591
+      },
+      "heading": "Shortcuts",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 480,
+        "height": 42,
+        "right": 976,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 744,
+        "height": 464.7,
+        "right": 988,
+        "bottom": 472.7
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 744,
+        "height": 464.7,
+        "right": 988,
+        "bottom": 472.7
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 480,
+        "height": 440.7,
+        "right": 976,
+        "bottom": 460.7
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 1000,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 378
+    },
+    {
+      "key": "ai-models-dark-800",
+      "viewport": {
+        "width": 800,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 520,
+        "height": 42,
+        "right": 776,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 544,
+        "height": 1273.8,
+        "right": 788,
+        "bottom": 1281.8
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 544,
+        "height": 1273.8,
+        "right": 788,
+        "bottom": 1281.8
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 520,
+        "height": 124.6,
+        "right": 776,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 520,
+        "height": 70,
+        "right": 776,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 520,
+        "height": 1109.2,
+        "right": 776,
+        "bottom": 1269.8
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 800,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-dark-900",
+      "viewport": {
+        "width": 900,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 620,
+        "height": 42,
+        "right": 876,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 644,
+        "height": 1129.3,
+        "right": 888,
+        "bottom": 1137.3
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 644,
+        "height": 1129.3,
+        "right": 888,
+        "bottom": 1137.3
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 620,
+        "height": 124.6,
+        "right": 876,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 620,
+        "height": 70,
+        "right": 876,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 620,
+        "height": 964.7,
+        "right": 876,
+        "bottom": 1125.3
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 900,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-dark-934",
+      "viewport": {
+        "width": 934,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 654,
+        "height": 42,
+        "right": 910,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 678,
+        "height": 1109,
+        "right": 922,
+        "bottom": 1117
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 678,
+        "height": 1109,
+        "right": 922,
+        "bottom": 1117
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 654,
+        "height": 124.6,
+        "right": 910,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 654,
+        "height": 70,
+        "right": 910,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 654,
+        "height": 944.5,
+        "right": 910,
+        "bottom": 1105
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 934,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-dark-935",
+      "viewport": {
+        "width": 935,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 256,
+        "y": 160.6,
+        "width": 655,
+        "height": 42,
+        "right": 911,
+        "bottom": 202.5
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 679,
+        "height": 1109,
+        "right": 923,
+        "bottom": 1117
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 679,
+        "height": 1109,
+        "right": 923,
+        "bottom": 1117
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 655,
+        "height": 124.6,
+        "right": 911,
+        "bottom": 144.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 655,
+        "height": 70,
+        "right": 911,
+        "bottom": 144.6
+      },
+      "content": {
+        "x": 256,
+        "y": 160.6,
+        "width": 655,
+        "height": 944.5,
+        "right": 911,
+        "bottom": 1105
+      },
+      "splitDirection": "column",
+      "navWrap": "wrap",
+      "pageScrollWidth": 935,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-dark-936",
+      "viewport": {
+        "width": 936,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 416,
+        "height": 42,
+        "right": 912,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 680,
+        "height": 1217.2,
+        "right": 924,
+        "bottom": 1225.2
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 680,
+        "height": 1217.2,
+        "right": 924,
+        "bottom": 1225.2
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 416,
+        "height": 1193.2,
+        "right": 912,
+        "bottom": 1213.2
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 936,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-dark-940",
+      "viewport": {
+        "width": 940,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 420,
+        "height": 42,
+        "right": 916,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 684,
+        "height": 1217.2,
+        "right": 928,
+        "bottom": 1225.2
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 684,
+        "height": 1217.2,
+        "right": 928,
+        "bottom": 1225.2
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 420,
+        "height": 1193.2,
+        "right": 916,
+        "bottom": 1213.2
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 940,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-dark-950",
+      "viewport": {
+        "width": 950,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 430,
+        "height": 42,
+        "right": 926,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 694,
+        "height": 1217.2,
+        "right": 938,
+        "bottom": 1225.2
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 694,
+        "height": 1217.2,
+        "right": 938,
+        "bottom": 1225.2
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 430,
+        "height": 1193.2,
+        "right": 926,
+        "bottom": 1213.2
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 950,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    },
+    {
+      "key": "ai-models-dark-1000",
+      "viewport": {
+        "width": 1000,
+        "height": 591
+      },
+      "heading": "AI and models",
+      "headingRect": {
+        "x": 496,
+        "y": 20,
+        "width": 480,
+        "height": 42,
+        "right": 976,
+        "bottom": 62
+      },
+      "settingsFrame": {
+        "x": 244,
+        "y": 8,
+        "width": 744,
+        "height": 1133.2,
+        "right": 988,
+        "bottom": 1141.2
+      },
+      "split": {
+        "x": 244,
+        "y": 8,
+        "width": 744,
+        "height": 1133.2,
+        "right": 988,
+        "bottom": 1141.2
+      },
+      "rail": {
+        "x": 256,
+        "y": 20,
+        "width": 208,
+        "height": 324.6,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "navigation": {
+        "x": 256,
+        "y": 74.6,
+        "width": 208,
+        "height": 270,
+        "right": 464,
+        "bottom": 344.6
+      },
+      "content": {
+        "x": 496,
+        "y": 20,
+        "width": 480,
+        "height": 1109.2,
+        "right": 976,
+        "bottom": 1129.2
+      },
+      "splitDirection": "row",
+      "navWrap": "nowrap",
+      "pageScrollWidth": 1000,
+      "scrollDelta": 0,
+      "satoshiLoaded": true,
+      "spacing": "8px",
+      "placeholderColor": "rgba(242, 241, 238, 0.64)",
+      "placeholderOpacity": "1",
+      "searchValue": "",
+      "pageTextLength": 1003
+    }
+  ],
+  "consoleErrors": [],
+  "failedRequests": []
+}
