@@ -251,6 +251,7 @@ if (rootEl) {
         <ThemeProvider
           theme={theme}
           {...THEME_PROVIDER_CONFIG}
+          storageManager={null}
           defaultMode={colorScheme}
         >
           <CssBaseline />

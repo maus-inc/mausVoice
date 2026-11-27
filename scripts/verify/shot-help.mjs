@@ -8,6 +8,7 @@ import { watchPage } from "./page-watch.mjs";
 const OUT = createReportDirectory();
 const THEME = process.env.THEME || "light";
 const PREFIX = process.env.SHOT_PREFIX || "help";
+const EXPECTED_TREE = process.env.EXPECTED_TREE || "head";
 const HARNESS_BASE =
   process.env.HARNESS_URL || "http://127.0.0.1:5193/verify-harness/help.html";
 
@@ -46,6 +47,7 @@ const relativeLuminance = ({ r, g, b }) => {
   return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
 };
 
+/** Returns the unrounded WCAG contrast ratio for threshold checks. */
 const contrastRatio = (fgCss, bgCss, canvasCss) => {
   const colors = [canvasCss, bgCss, fgCss].map(parseRgba);
   if (colors.some((color) => color === null)) return 0;
@@ -54,11 +56,12 @@ const contrastRatio = (fgCss, bgCss, canvasCss) => {
   const text = composite(fgRaw, surface);
   const l1 = relativeLuminance(text);
   const l2 = relativeLuminance(surface);
-  return (
-    Math.round(((Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)) * 100) /
-    100
-  );
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 };
+
+const roundRatio = (value) => Math.round(value * 100) / 100;
+
+const isUnexpectedFailure = (errorText) => errorText !== "net::ERR_ABORTED";
 
 const MEASURE_EXPR = `(() => {
   const round = (n) => Math.round(n * 10) / 10;
@@ -72,7 +75,7 @@ const MEASURE_EXPR = `(() => {
   const canvas = main?.parentElement?.parentElement;
   const subtitle = h1?.parentElement?.querySelector(".MuiTypography-subtitle1");
   const cards = Array.from(document.querySelectorAll('[data-tip-frame="true"]')).map((card) => {
-    const title = card.querySelector('[data-tip-title="true"]');
+    const title = card.querySelector('[data-tip-title="true"]') ?? card.querySelector("h2, .MuiTypography-titleSmall");
     const body = card.querySelector(".MuiTypography-body2");
     const icon = card.querySelector("svg");
     const buttons = Array.from(card.querySelectorAll("button")).map((btn) => ({
@@ -81,6 +84,7 @@ const MEASURE_EXPR = `(() => {
     }));
     const cs = getComputedStyle(card);
     return {
+      hasHeadMarkers: Boolean(card.querySelector('[data-tip-title="true"]')),
       titleText: title?.textContent?.trim() ?? "",
       card: rectOf(card),
       title: rectOf(title),
@@ -96,6 +100,7 @@ const MEASURE_EXPR = `(() => {
     };
   });
   return {
+    appliedScheme: document.documentElement.getAttribute("data-mui-color-scheme"),
     canvasBg: getComputedStyle(canvas ?? document.body).backgroundColor,
     main: rectOf(main),
     h1: h1 ? { text: h1.textContent?.trim(), fontSize: getComputedStyle(h1).fontSize, fontWeight: getComputedStyle(h1).fontWeight, ...rectOf(h1) } : null,
@@ -112,27 +117,48 @@ const checkCondition = (ok, label, detail, note) => {
   if (!ok) note(label, detail);
 };
 
-const checkFontAndTokens = async (page, label, note) => {
+const checkFontTokensAndTheme = async (page, label, note) => {
   const state = await page.evaluate(`(() => {
     const faces = Array.from(document.fonts).map((f) => ({
       family: f.family.replace(/["']/g, ""),
       status: f.status,
     }));
+    const root = getComputedStyle(document.documentElement);
+    const body = getComputedStyle(document.body);
     return {
-      satoshi: faces.some((f) => f.family === "Satoshi" && f.status === "loaded"),
-      spacing: getComputedStyle(document.documentElement).getPropertyValue("--app-spacing").trim(),
+      satoshiCheck: document.fonts.check("16px Satoshi"),
+      satoshiLoaded: faces.some((f) => f.family === "Satoshi" && f.status === "loaded"),
+      uiFont: body.fontFamily,
+      spacing: root.getPropertyValue("--app-spacing").trim() || body.getPropertyValue("--app-spacing").trim(),
+      scheme: document.documentElement.getAttribute("data-mui-color-scheme"),
     };
   })()`);
-  checkCondition(
-    state.satoshi,
-    `${label} font`,
-    "Satoshi webfont not loaded",
-    note,
-  );
+  const fontOk =
+    state.satoshiCheck &&
+    state.satoshiLoaded &&
+    state.uiFont.includes("Satoshi");
+  checkCondition(fontOk, `${label} font`, JSON.stringify(state), note);
   checkCondition(
     Boolean(state.spacing),
     `${label} spacing`,
     "--app-spacing not defined",
+    note,
+  );
+  checkCondition(
+    state.scheme === THEME,
+    `${label} theme`,
+    `expected=${THEME} actual=${state.scheme}`,
+    note,
+  );
+};
+
+const checkServedTree = (metrics, label, note) => {
+  const markedCount = metrics.cards.filter((c) => c.hasHeadMarkers).length;
+  const expectedCount = EXPECTED_TREE === "base" ? 0 : metrics.cards.length;
+  checkCondition(
+    markedCount === expectedCount,
+    `${label} served tree`,
+    `expected=${EXPECTED_TREE} marked=${markedCount}/${metrics.cards.length} (restart preview server between trees)`,
     note,
   );
 };
@@ -190,13 +216,13 @@ const iconTitleDelta = (card) => {
 const checkSingleCard = (card, canvasBg, label, note) => {
   const titleRatio = contrastRatio(card.titleColor, card.bg, canvasBg);
   const bodyRatio = contrastRatio(card.bodyColor, card.bg, canvasBg);
-  card.titleContrast = titleRatio;
-  card.bodyContrast = bodyRatio;
+  card.titleContrast = roundRatio(titleRatio);
+  card.bodyContrast = roundRatio(bodyRatio);
   const minRatio = Math.min(titleRatio, bodyRatio);
   checkCondition(
     minRatio >= 4.5,
     `${label} "${card.titleText}" contrast`,
-    `title=${titleRatio} body=${bodyRatio}`,
+    `title=${card.titleContrast} body=${card.bodyContrast}`,
     note,
   );
   checkCondition(
@@ -224,7 +250,7 @@ const checkCardVisuals = (metrics, label, note) => {
   checkCondition(
     subRatio >= 4.5,
     `${label} subtitle contrast`,
-    `ratio=${subRatio}`,
+    `ratio=${roundRatio(subRatio)}`,
     note,
   );
 
@@ -240,7 +266,10 @@ const checkCardVisuals = (metrics, label, note) => {
     `dashed=${dashedCount}`,
     note,
   );
-  return { subRatio, minContrast: Math.min(...cardMins) };
+  return {
+    subRatio: roundRatio(subRatio),
+    minContrast: roundRatio(Math.min(...cardMins)),
+  };
 };
 
 const captureSibling = async (page, size, helpH1Y, report, note) => {
@@ -258,12 +287,14 @@ const captureSibling = async (page, size, helpH1Y, report, note) => {
     `${OUT}/${PREFIX}-sibling-dict-${THEME}-${width}x${height}.png`,
     await page.screenshot(),
   );
-  checkCondition(
-    dictMetrics.h1?.y === helpH1Y,
-    `${width}x${height} sibling h1.y`,
-    `help=${helpH1Y} dict=${dictMetrics.h1?.y}`,
-    note,
-  );
+  if (EXPECTED_TREE === "head") {
+    checkCondition(
+      dictMetrics.h1?.y === helpH1Y,
+      `${width}x${height} sibling h1.y`,
+      `help=${helpH1Y} dict=${dictMetrics.h1?.y}`,
+      note,
+    );
+  }
   report.captures.push({
     view: "dictionary",
     width,
@@ -287,10 +318,26 @@ const captureLiveTip = async (page, note) => {
   }
   await sleep(400);
   await page.evaluate("document.fonts.ready.then(() => true)");
+  await checkFontTokensAndTheme(page, "live-tip", note);
   writeFileSync(
     `${OUT}/${PREFIX}-live-tip-${THEME}.png`,
     await page.screenshot(),
   );
+};
+
+const evaluateHelpMetrics = (metrics, label, note) => {
+  if (EXPECTED_TREE !== "head") {
+    return {
+      cardW: metrics.cards[0]?.card?.w,
+      railX: null,
+      subRatio: null,
+      minContrast: null,
+    };
+  }
+  checkOverflowAndHeading(metrics, label, note);
+  const { cardW, railX } = checkCardRails(metrics, label, note);
+  const { subRatio, minContrast } = checkCardVisuals(metrics, label, note);
+  return { cardW, railX, subRatio, minContrast };
 };
 
 const captureHelpViewport = async (page, size, report, note) => {
@@ -310,27 +357,26 @@ const captureHelpViewport = async (page, size, report, note) => {
   }
   await sleep(400);
   await page.evaluate("document.fonts.ready.then(() => true)");
-  await checkFontAndTokens(page, label, note);
+  await checkFontTokensAndTheme(page, label, note);
 
   const metrics = await page.evaluate(MEASURE_EXPR);
+  checkServedTree(metrics, label, note);
   writeFileSync(
     `${OUT}/${PREFIX}-${THEME}-${label}.png`,
     await page.screenshot(),
   );
-  checkOverflowAndHeading(metrics, label, note);
-  const { cardW, railX } = checkCardRails(metrics, label, note);
-  const { subRatio, minContrast } = checkCardVisuals(metrics, label, note);
 
+  const summary = evaluateHelpMetrics(metrics, label, note);
   report.captures.push({
     view: "help",
     width,
     height,
-    subtitleContrast: subRatio,
+    subtitleContrast: summary.subRatio,
     metrics,
   });
   const h1 = metrics.h1 ?? {};
   console.log(
-    `help ${THEME} ${label} h1=(${h1.x},${h1.y}) cardW=${cardW} railX=${railX} minContrast=${minContrast} overflow=${metrics.overflowX}/${metrics.mainOverflowX}`,
+    `help[${EXPECTED_TREE}] ${THEME} ${label} h1=(${h1.x},${h1.y}) cardW=${summary.cardW} railX=${summary.railX} minContrast=${summary.minContrast} overflow=${metrics.overflowX}/${metrics.mainOverflowX}`,
   );
 
   if (compareSibling) {
@@ -351,10 +397,12 @@ const runSweep = async () => {
     const report = {
       theme: THEME,
       prefix: PREFIX,
+      expectedTree: EXPECTED_TREE,
       captures: [],
       problems,
       consoleErrors,
       failedRequests,
+      unexpectedFailedRequests: [],
     };
 
     for (const size of SIZES) {
@@ -362,13 +410,21 @@ const runSweep = async () => {
     }
     await captureLiveTip(page, note);
 
-    const reportPath = `${OUT}/${PREFIX}-${THEME}-report.json`;
+    const unexpectedFailed = failedRequests.filter(isUnexpectedFailure);
+    report.unexpectedFailedRequests = unexpectedFailed;
+
+    const suffix = THEME === "dark" ? "-dark" : "";
+    const reportPath = `${OUT}/${PREFIX}-layout${suffix}.json`;
     writeFileSync(reportPath, JSON.stringify(report, null, 2));
     console.log("REPORT:", reportPath);
     console.log("CONSOLE_ERRORS:", JSON.stringify(consoleErrors));
     console.log("FAILED_REQUESTS:", JSON.stringify(failedRequests));
+    console.log(
+      "UNEXPECTED_FAILED_REQUESTS:",
+      JSON.stringify(unexpectedFailed),
+    );
     console.log("PROBLEMS:", JSON.stringify(problems, null, 2));
-    return problems.length + consoleErrors.length;
+    return problems.length + consoleErrors.length + unexpectedFailed.length;
   } finally {
     page?.close();
     browser.cleanup();
