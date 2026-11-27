@@ -223,6 +223,30 @@ describe("Windows drag-to-restore", () => {
     });
   });
 
+  it("subscribes to the resize before asking for the restore", async () => {
+    // `onResized` only listens from the moment it is called and never replays a
+    // resize that has already happened, so a restore that lands quickly is
+    // missed if the listener is registered afterwards. The order below is the
+    // whole guarantee, so the test records when each one happened.
+    const order: string[] = [];
+    windowMocks.onResized.mockImplementation(
+      (handler: () => void): Promise<() => void> => {
+        order.push("subscribe");
+        handler();
+        return Promise.resolve(() => undefined);
+      },
+    );
+    windowMocks.unmaximize.mockImplementation(() => {
+      order.push("unmaximize");
+      return Promise.resolve(undefined);
+    });
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 400, y: 20 });
+    await move(1, 400, 60);
+
+    expect(order).toEqual(["subscribe", "unmaximize"]);
+  });
+
   it("keeps one unit on a scaled display", async () => {
     // Every Tauri read here is physical: `innerSize`, `cursorPosition` and the
     // monitor work area. The browser press is CSS pixels, so it has to be

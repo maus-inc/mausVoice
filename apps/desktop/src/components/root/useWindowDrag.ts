@@ -100,33 +100,53 @@ const readGrab = async (
  *
  * `unmaximize()` resolving is not proof that the window is restored. On Windows
  * `tao` posts `set_maximized(false)` to the event-loop thread, so the command
- * returns while the resize is still queued, and reading the size straight after
- * it can still return the maximized geometry. The resize event is the
- * observable that says the window now has its restored size; the timeout is
- * there only so a platform that never emits one cannot strand the gesture.
+ * returns while the resize is still queued, and a size read straight after it
+ * can still return the maximized geometry. The resize event is the observable
+ * that says the window now has its restored size.
+ *
+ * The subscription is made before the restore is requested, because
+ * `onResized` only listens from now on and does not replay a resize that has
+ * already happened. Waiting for the event before asking for the restore is what
+ * makes a fast restore impossible to miss.
  */
-const waitForRestore = (win: TauriWindow): Promise<void> =>
-  new Promise((resolve) => {
-    let settled = false;
-    let unsubscribe: (() => void) | null = null;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeoutId);
-      unsubscribe?.();
-      resolve();
-    };
-    const timeoutId = window.setTimeout(finish, RESTORE_SETTLE_TIMEOUT_MS);
-    win
-      .onResized(finish)
-      .then((stop) => {
-        // The resize can arrive before the listener is registered; drop the
-        // subscription rather than leaving a listener behind on that path.
-        if (settled) stop();
-        else unsubscribe = stop;
-      })
-      .catch(finish);
+const armRestoreWait = (win: TauriWindow) => {
+  let settled = false;
+  let unsubscribe: (() => void) | null = null;
+  let resolveSettled: () => void = () => undefined;
+  const settledPromise = new Promise<void>((resolve) => {
+    resolveSettled = resolve;
   });
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    window.clearTimeout(timeoutId);
+    unsubscribe?.();
+    resolveSettled();
+  };
+  // The timeout is the fallback for a platform that never emits the event; it
+  // is not the ordering guarantee, which is the event itself.
+  const timeoutId = window.setTimeout(finish, RESTORE_SETTLE_TIMEOUT_MS);
+  const subscribed = win
+    .onResized(finish)
+    .then((stop) => {
+      // A resize can land before the listener is registered. The wait is
+      // already over in that case, so drop the subscription rather than
+      // leaving a listener behind.
+      if (settled) stop();
+      else unsubscribe = stop;
+    })
+    .catch(finish);
+
+  return {
+    /** Resolves when the window has resized, or when the fallback expires. */
+    wait: async () => {
+      await subscribed;
+      await settledPromise;
+    },
+    /** Releases the listener when the restore itself failed. */
+    stop: finish,
+  };
+};
 
 const readRestoreTarget = async (
   win: TauriWindow,
@@ -176,18 +196,22 @@ const startWindowDrag = (win: TauriWindow) =>
  * gesture follows the pointer without this side re-measuring it.
  */
 const restoreAndDrag = async (win: TauriWindow, press: DragPoint) => {
+  const restore = armRestoreWait(win);
   try {
     const grab = await readGrab(win, press);
     if (grab === null) {
+      restore.stop();
       startWindowDrag(win);
       return;
     }
     await win.unmaximize();
-    await waitForRestore(win);
+    await restore.wait();
     const target = await readRestoreTarget(win, grab);
     if (target !== null) await win.setPosition(target);
     await startWindowDrag(win);
   } catch (error) {
+    // A failed restore must not leave its listener armed for the next one.
+    restore.stop();
     showErrorSnackbar(error);
   }
 };
