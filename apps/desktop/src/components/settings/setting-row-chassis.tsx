@@ -1,6 +1,7 @@
 import { Box, Typography, type Theme } from "@mui/material";
 import type { SystemStyleObject } from "@mui/system";
 import type { ReactNode } from "react";
+import { premiumSurface } from "../../styles/shadows";
 
 /**
  * The chassis every row on the settings surface is built from.
@@ -18,13 +19,33 @@ import type { ReactNode } from "react";
  * copying numbers.
  */
 
+/** The border a settings card draws, in pixels. */
+const settingsCardBorderWidth = 1;
+
+/** The horizontal inset a row takes inside its card, in theme spacing units. */
+const settingsRowInset = 2;
+
+/** The distance from the card's outside edge to the row's content edge. */
+export const settingsCardContentInset = (theme: Theme): string =>
+  `calc(${theme.spacing(settingsRowInset)} + ${settingsCardBorderWidth}px)`;
+
+/**
+ * The width of a row's leading slot, in pixels.
+ *
+ * Fixed rather than sized to the glyph inside it. An icon is what says a row
+ * opens or leaves, and only some rows have one. A row that sized its own slot
+ * would start its label on a different column from the row above it, which is
+ * exactly what the label column exists to prevent.
+ */
+export const settingsRowLeadingSlotWidth = 24;
+
 export const rowSx: SystemStyleObject<Theme> = {
   display: "flex",
   alignItems: "center",
   gap: 2,
   width: "100%",
   minHeight: 56,
-  px: 2,
+  px: settingsRowInset,
   py: 1.25,
   m: 0,
   border: 0,
@@ -34,6 +55,29 @@ export const rowSx: SystemStyleObject<Theme> = {
   textAlign: "left",
   textDecoration: "none",
 };
+
+/**
+ * The card a group of settings sits in, and the card a search result panel
+ * draws.
+ *
+ * One declaration for both: a search result is a settings row under a heading,
+ * and it used to be drawn by hand with a radius from the large-dialog step,
+ * which made the same surface change its shape depending on how you reached
+ * it. Sharing the card is what keeps the two from drifting apart again.
+ */
+export const settingsCardSx = (theme: Theme): SystemStyleObject<Theme> => ({
+  border: `${settingsCardBorderWidth}px solid`,
+  borderColor: "divider",
+  borderRadius: 1,
+  bgcolor: "level1",
+  boxShadow: premiumSurface.light.rest,
+  ...theme.applyStyles("dark", { boxShadow: premiumSurface.dark.rest }),
+  overflow: "hidden",
+  "& > * + *": {
+    borderTop: `${settingsCardBorderWidth}px solid`,
+    borderColor: "divider",
+  },
+});
 
 export const interactiveSx: SystemStyleObject<Theme> = {
   cursor: "pointer",
@@ -55,6 +99,11 @@ export const controlColumnSx: SystemStyleObject<Theme> = {
   alignItems: "center",
   justifyContent: "flex-end",
   gap: 1,
+  // Kept clear of the label column on top of the row's own gap. A control has
+  // an outline of its own, and a segmented track that starts a word away from
+  // the description beside it reads as one crowded block rather than as a
+  // label and the thing it sets.
+  pl: 1,
   flexShrink: 0,
   width: { xs: "auto", md: 240 },
   maxWidth: "60%",
@@ -209,6 +258,24 @@ export const SettingRowLabel = ({
   </Box>
 );
 
+/**
+ * The control column for a row whose only trailing thing is the glyph that says
+ * the row goes somewhere.
+ *
+ * The fixed column above is a *value* column: it is what keeps reported values
+ * on one line down a page. A chevron is not a value, and holding the whole
+ * column for one was taking the width away from the label. In the default
+ * window a two-sentence description wrapped every six words while a third of
+ * the row stayed empty beside it. Sizing the column to the glyph gives that
+ * width back, and the glyph still lands on the card's content edge, because
+ * the label column takes whatever is left.
+ */
+export const trailingGlyphColumnSx: SystemStyleObject<Theme> = {
+  ...controlColumnSx,
+  width: "auto",
+  maxWidth: "none",
+};
+
 const labelColumnSx: SystemStyleObject<Theme> = {
   flexGrow: 1,
   minWidth: 0,
@@ -254,7 +321,11 @@ export const SettingRowText = ({
    */
   titleHeadingLevel?: 2 | 3 | 4 | 5 | 6;
 }) => (
-  <Box component={rootComponent} sx={{ ...labelColumnSx, display: "block" }}>
+  <Box
+    component={rootComponent}
+    className="setting-row-label"
+    sx={{ ...labelColumnSx, display: "block" }}
+  >
     {subtitle && (
       <Typography
         variant="caption"
@@ -277,7 +348,15 @@ export const SettingRowText = ({
         id={descriptionId}
         component="span"
         variant="body2"
-        sx={{ display: "block", color: "text.secondary", mt: 0.25 }}
+        sx={{
+          display: "block",
+          color: "text.secondary",
+          mt: 0.25,
+          // The same measure the page and group descriptions take, so a long
+          // explanation wraps at a readable line instead of running the width
+          // of a wide card.
+          maxWidth: "72ch",
+        }}
       >
         {description}
       </Typography>

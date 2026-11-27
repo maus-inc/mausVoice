@@ -107,13 +107,14 @@ describe("settings row icons", () => {
     // computes nothing.
     for (const glyph of [rowGlyph, toggleGlyph]) {
       const rule = ruleOf(glyph);
-      // A 22px floor, not a fixed width: every glyph is 22px, so a glyph row
-      // still measures 22px and the titles share one edge, while the one mark
-      // that is wider, the identity avatar, widens its own lane instead of
-      // being centred through its neighbours.
-      expect(rule).toContain("min-width:22px");
-      expect(rule).toContain("height:22px");
-      expect(rule).not.toMatch(/[;{]width:22px/);
+      // A floor, not a fixed width: every glyph is 22px, so a glyph row still
+      // measures the slot and the titles share one edge, while the one mark that
+      // is wider, the identity avatar, widens its own slot instead of being
+      // centred through its neighbours. The floor is the larger of the glyph size
+      // and the slot the row already reserves for an icon, so a row without one
+      // still starts its words on the same column.
+      expect(rule).toContain("min-width:24px");
+      expect(rule).not.toMatch(/[;{]width:\d+px/);
       expect(rule).toContain("flex-shrink:0");
       // The colour is the app's own `text.secondary`, not MUI's stock
       // `rgba(0, 0, 0, 0.6)`: the two happen to resolve close in light mode and
@@ -235,7 +236,7 @@ describe("settings row icons", () => {
 
     const glyph = glyphOf("name");
     const lane = ruleOf(glyph);
-    expect(lane).toContain("min-width:22px");
+    expect(lane).toContain("min-width:24px");
     // No centring: a centred child is what pushed the picture outside the lane.
     expect(lane).not.toContain("justify-content:center");
 

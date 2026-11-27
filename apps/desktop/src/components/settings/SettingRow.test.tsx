@@ -18,7 +18,10 @@ import { theme } from "../../theme";
 import { premiumSurface } from "../../styles/shadows";
 import { SettingGroup, SettingRow, SettingToggleRow } from "./SettingRow";
 import { SettingsHighlightContext } from "./settings-highlight";
-import { SettingRowText } from "./setting-row-chassis";
+import {
+  settingsCardContentInset,
+  SettingRowText,
+} from "./setting-row-chassis";
 import { SegmentedControl } from "../common/SegmentedControl";
 
 ensureUiHarness();
@@ -87,7 +90,10 @@ describe("SettingRow", () => {
       "the control row",
     );
     expect(getComputedStyle(row).flexWrap).toBe("wrap");
-    const label = requireElement(row.firstElementChild, "the row text");
+    const label = requireElement(
+      row.querySelector(".setting-row-label"),
+      "the row text",
+    );
     const control = requireElement(row.lastElementChild, "the control column");
     expect(getComputedStyle(label).flexBasis).toBe("min(200px, 100%)");
     expect(getComputedStyle(control).flexBasis).not.toBe("min(200px, 100%)");
@@ -332,6 +338,119 @@ describe("SettingRow", () => {
 
     click(container.querySelector("#setting-spoken_commands input") as Element);
     expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens every row with the same leading column, icon or not", () => {
+    render(
+      <SettingGroup title="Mixed">
+        <SettingRow
+          settingKey="with_icon"
+          title="Leaves"
+          icon={<span>*</span>}
+        />
+        <SettingRow settingKey="without_icon" title="Stays" />
+        <SettingToggleRow
+          settingKey="toggles"
+          title="Toggles"
+          checked={false}
+          onChange={() => undefined}
+        />
+      </SettingGroup>,
+    );
+
+    const widths = ["with_icon", "without_icon", "toggles"].map((key) => {
+      const row = requireElement(
+        container.querySelector(`#setting-${key}`),
+        `the ${key} row`,
+      );
+      const slot = requireElement(
+        row.firstElementChild,
+        `the ${key} row's leading slot`,
+      );
+      expect(slot.getAttribute("aria-hidden")).toBe("true");
+      // The label follows the slot in every row. A row that sized its own
+      // slot, or dropped it when it had no icon, started its words on a
+      // different column from the row beside it.
+      expect(row.children[1]?.classList.contains("setting-row-label")).toBe(
+        true,
+      );
+      // The slot's width is a floor, so jsdom cannot resolve a used width for it.
+      // What the browser resolves is the emitted rule, and one shared rule is the
+      // claim: every row's slot is the same size, so the words share a column.
+      const generated = Array.from(slot.classList).find((name) =>
+        name.startsWith("css-"),
+      );
+      const css = Array.from(document.querySelectorAll("style"))
+        .map((style) => style.textContent ?? "")
+        .join("");
+      const rule = css.slice(css.indexOf(`.${generated}{`));
+      return rule.slice(0, rule.indexOf("}"));
+    });
+
+    expect(new Set(widths).size).toBe(1);
+    expect(widths[0]).toContain("min-width");
+  });
+
+  it("keeps a group heading on the card edge and its action on the row content edge", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <SettingGroup
+          title="Audio"
+          description="How the microphone behaves."
+          action={<a href="/audio">All audio</a>}
+        >
+          <SettingRow settingKey="audio" title="Audio" />
+        </SettingGroup>
+      </ThemeProvider>,
+    );
+
+    const heading = requireElement(
+      container.querySelector("h2"),
+      "the group heading",
+    );
+    const headingLine = requireElement(
+      heading.parentElement,
+      "the heading's line",
+    );
+    const description = requireElement(
+      container.querySelector("h2 + p") ?? headingLine.nextElementSibling,
+      "the group description",
+    );
+
+    // The heading and description remain on the card's outer edge; only its
+    // action uses the same inset as the row content. jsdom exposes the applied
+    // margin even though it cannot lay out the link's visual edge.
+    const action = requireElement(
+      headingLine.querySelector("a"),
+      "the group action",
+    );
+    const actionInset = requireElement(
+      action.parentElement,
+      "the action's inset wrapper",
+    );
+    expect(Number.parseFloat(getComputedStyle(headingLine).paddingLeft)).toBe(
+      0,
+    );
+    expect(getComputedStyle(actionInset).marginRight).toBe(
+      settingsCardContentInset(theme).replace(
+        /var\((--app-spacing), [^)]+\)/,
+        "var($1)",
+      ),
+    );
+    expect(Number.parseFloat(getComputedStyle(description).paddingLeft)).toBe(
+      0,
+    );
+  });
+
+  it("draws nothing for a group with no rows to show", () => {
+    render(
+      <ThemeProvider theme={theme}>
+        <SettingGroup title="Security">{false}</SettingGroup>
+        <SettingGroup title="Danger zone">{[]}</SettingGroup>
+      </ThemeProvider>,
+    );
+
+    expect(container.textContent).toBe("");
   });
 
   it("renders a group heading that a search result can name", () => {

@@ -64,6 +64,17 @@ package and a capture script all live outside the working tree, as
 `docs/visual-verification/pr-293-home-metric-grid.md` records. The repository has no
 browser dependency and must not gain one for a screenshot.
 
+Prefer the scripts that already implement this. `scripts/verify/` holds a pinned capture
+harness — `install-chromium.mjs` fetches the browser outside the tree, `shot-settings.mjs`
+walks the eight settings pages at three widths and writes geometry to
+`settings-layout.json`, and `click-settings.mjs` walks the rail, search and keyboard flow
+in both themes. `engineering/ui-verification/README.md` is their reference page: URL
+variables, the before/after `montage` convention under `reports/ui-verify/`, and the
+fonts-and-tokens checks that decide whether a capture is valid at all. Use them when the
+surface they cover is the surface you changed, and treat their geometry JSON as the
+measurement in section 3. The `/tmp` route below still applies to a surface they do not
+cover, such as a dashboard route reached only through the mocked desktop app.
+
 The documented pattern, from that record: a `/tmp` directory outside the repository,
 `puppeteer-core` plus one Chromium payload, and a script that walks the routes.
 
