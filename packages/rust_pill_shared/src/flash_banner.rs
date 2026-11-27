@@ -565,7 +565,7 @@ where
                 lines.push(std::mem::take(&mut current));
             }
             // A word starting a line still has to fit it. One wider than the
-            // whole banner is broken on character boundaries, repeatedly, so
+            // whole banner is broken on grapheme boundaries, repeatedly, so
             // neither a URL nor a long path can ever overrun the edge.
             let mut rest = word.to_string();
             while can_break && measure(&rest) > budget {
@@ -577,6 +577,16 @@ where
                 }
                 lines.push(head);
                 rest = tail;
+                // The same stop as the word loop, for the same reason. A single
+                // unbroken token -- a base64 blob, a minified script, a path with
+                // no separators -- can be arbitrarily long, and every fragment
+                // costs a binary search of font measurements. Once the ceiling
+                // plus its overflow line exists there is nothing left to learn
+                // from the remainder, so it is kept whole and discarded upstream
+                // rather than split into hundreds of lines nobody will see.
+                if lines.len() >= stop_after {
+                    break 'paragraphs;
+                }
             }
             current = rest;
         }
@@ -2727,6 +2737,46 @@ mod tests {
         assert!(
             measured < words / 4,
             "the wrap measured {measured} times for {words} words, so it did not stop at the ceiling"
+        );
+    }
+
+    /// One unbroken token is not split in full either.
+    ///
+    /// A separate case from the word loop: a base64 blob, a minified script or a
+    /// path with no separators is a *single* word, so the guard that stops after
+    /// the ceiling between words never fires. The inner loop that breaks the word
+    /// into fragments has to stop on the same count, or the token is split into
+    /// hundreds of lines and all but a couple thrown away -- on every repaint.
+    #[test]
+    fn one_huge_unbroken_token_stops_being_split_at_the_ceiling() {
+        use std::cell::Cell;
+
+        let calls = Cell::new(0usize);
+        let counting = |text: &str| {
+            calls.set(calls.get() + 1);
+            fixed(7.0)(text)
+        };
+
+        // A single token of 20000 characters, with no word break anywhere.
+        let token = "x".repeat(20_000);
+        let mut tiny = spec();
+        tiny.available_height = 96.0;
+        tiny.pill_top = 76.0;
+        tiny.available_width = 120.0;
+        tiny.preferred_text_width = 1.0;
+        let layout = layout_flash_banner(&tiny, &token, counting);
+
+        assert!(
+            layout.lines.len() <= 2,
+            "the token produced {} lines, past the two-line ceiling",
+            layout.lines.len()
+        );
+        // Each fragment costs a binary search of measurements; 20000 characters
+        // at roughly one character per line would be tens of thousands of calls.
+        assert!(
+            calls.get() < 200,
+            "splitting one token made {} measurement calls, so it did not stop",
+            calls.get()
         );
     }
 
