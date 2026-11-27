@@ -37,9 +37,10 @@ import {
   SettingsFocusContext,
   SettingsHighlightContext,
 } from "./settings-highlight";
-import { revealCurrentSettingsPage } from "./settings-rail-scroll";
 import { useSettingsAnchor } from "./use-settings-anchor";
 import { SettingsSearchResults } from "./SettingsSearchResults";
+
+const settingsWideLayoutQuery = "@container settings-layout (min-width: 680px)";
 
 /**
  * Rail entry for one page. Links, not buttons: each page is a route, the
@@ -119,30 +120,18 @@ const isSearchShortcut = (event: KeyboardEvent): boolean => {
  * The settings surface: a rail of pages, a search field, and the current page.
  *
  * The rail and the search field sit in their own column that stays put while
- * the page scrolls, so navigation never scrolls out of reach. Below the `md`
- * breakpoint the rail becomes a horizontal strip above the content, because
- * the app window can be narrowed to 800px and hiding navigation there left the
- * surface with none.
+ * the page scrolls, so navigation never scrolls out of reach. The page uses a
+ * side rail only when its own content area leaves enough room for readable
+ * settings rows. The dashboard navigation reduces that area, so the application
+ * window width is not a useful breakpoint. In compact mode, page links wrap to
+ * another row instead of hiding in a horizontal scroll strip.
  */
-const useSettingsPageChrome = (
+const useRememberLastSettingsPage = (
   activePage: ReturnType<typeof useSettingsActivePage>,
 ) => {
-  const rail = useRef<HTMLElement | null>(null);
-
   useEffect(() => {
     if (activePage) rememberLastSettingsPage(activePage.id);
   }, [activePage]);
-
-  // The compact rail scrolls horizontally. Keep the selected page visible on
-  // navigation and when a desktop window is narrowed into the compact layout.
-  useEffect(() => {
-    const reveal = () => revealCurrentSettingsPage(rail.current);
-    reveal();
-    window.addEventListener("resize", reveal);
-    return () => window.removeEventListener("resize", reveal);
-  }, [activePage]);
-
-  return rail;
 };
 
 const useSearchShortcut = (
@@ -270,7 +259,7 @@ export const SettingsLayout = () => {
   const clearQuery = useCallback(() => setQuery(""), []);
   const { highlight, focusSetting, requestFocus, cancelPendingFocus } =
     useSettingsAnchor(location.hash, activePage?.id, availability, clearQuery);
-  const rail = useSettingsPageChrome(activePage);
+  useRememberLastSettingsPage(activePage);
   useSearchShortcut(searchInput);
 
   // A query belongs to the page it was typed on. Without this, picking a page
@@ -303,103 +292,139 @@ export const SettingsLayout = () => {
   return (
     <SettingsFocusContext.Provider value={focusSetting}>
       <SettingsHighlightContext.Provider value={highlight}>
-        <Stack
-          direction={{ xs: "column", md: "row" }}
-          spacing={{ xs: 2, md: 4 }}
+        <Box
+          className="settings-layout-frame"
           sx={{
-            alignItems: "flex-start",
-            // The window's own content pane already insets this surface a
-            // little. A settings page spends the whole width it is given, so
-            // without its own inset the cards run almost to the window frame
-            // and the page reads as a document someone printed to the edge.
-            // The inset belongs here rather than to the shell, because the
-            // shell is shared with every other route.
-            p: { xs: 0, sm: 1.5 },
+            width: "100%",
+            minWidth: 0,
+            containerName: "settings-layout",
+            containerType: "inline-size",
           }}
         >
           <Stack
+            className="settings-layout-split"
+            direction="column"
             spacing={2}
+            useFlexGap
             sx={{
-              width: { xs: "100%", md: 232 },
-              flexShrink: 0,
-              position: "sticky",
-              top: 0,
-              // Selected segmented buttons can have their own stacking order;
-              // the sticky rail must remain above the scrolled page controls.
-              zIndex: 10,
-              bgcolor: "background.default",
-              alignSelf: "flex-start",
+              alignItems: "flex-start",
+              // The window's own content pane already insets this surface a
+              // little. A settings page spends the whole width it is given, so
+              // without its own inset the cards run almost to the window frame
+              // and the page reads as a document someone printed to the edge.
+              // The inset belongs here rather than to the shell, because the
+              // shell is shared with every other route.
+              p: { xs: 0, sm: 1.5 },
+              [settingsWideLayoutQuery]: {
+                flexDirection: "row",
+                gap: 4,
+              },
             }}
           >
-            <TextField
-              inputRef={searchInput}
-              fullWidth
-              size="small"
-              value={query}
-              onChange={(event) => {
-                cancelPendingFocus();
-                setQuery(event.target.value);
-              }}
-              onKeyDown={(event) =>
-                handleSearchKeyDown(event, { hits, setQuery, openHit })
-              }
-              placeholder={intl.formatMessage({
-                defaultMessage: "Search settings",
-              })}
-              slotProps={{
-                htmlInput: {
-                  "aria-label": intl.formatMessage({
-                    defaultMessage: "Search settings",
-                  }),
-                },
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchRounded fontSize="small" />
-                    </InputAdornment>
-                  ),
-                },
-              }}
-            />
             <Stack
-              component="nav"
-              ref={rail}
-              aria-label={intl.formatMessage({
-                defaultMessage: "Settings sections",
-              })}
-              direction={{ xs: "row", md: "column" }}
-              spacing={0.25}
+              className="settings-layout-rail"
+              spacing={2}
               sx={{
-                overflowX: { xs: "auto", md: "visible" },
-                pb: { xs: 0.5, md: 0 },
+                width: "100%",
+                flexShrink: 0,
+                position: "sticky",
+                top: 0,
+                // Selected segmented buttons can have their own stacking order;
+                // the sticky rail must remain above the scrolled page controls.
+                zIndex: 10,
+                bgcolor: "background.default",
+                alignSelf: "flex-start",
+                [settingsWideLayoutQuery]: {
+                  // At 680px of page space, 208px plus the 32px gap leaves a
+                  // 416px reading column after the 24px outer inset.
+                  width: 208,
+                },
               }}
             >
-              {SETTINGS_PAGES.map((page) => (
-                <SettingsRailLink
-                  key={page.id}
-                  pageId={page.id}
-                  selected={page.id === activePage?.id}
-                />
-              ))}
-            </Stack>
-          </Stack>
-          <Box component="span" role="status" sx={visuallyHidden}>
-            {searching && (
-              <FormattedMessage
-                defaultMessage="{count, plural, =0 {No settings found.} one {# setting found.} other {# settings found.}}"
-                values={{ count: hits.length }}
+              <TextField
+                inputRef={searchInput}
+                className="settings-layout-search"
+                sx={{
+                  width: "100%",
+                  maxWidth: 360,
+                  "& input::placeholder": {
+                    color: "text.secondary",
+                    opacity: 1,
+                  },
+                }}
+                fullWidth
+                size="small"
+                value={query}
+                onChange={(event) => {
+                  cancelPendingFocus();
+                  setQuery(event.target.value);
+                }}
+                onKeyDown={(event) =>
+                  handleSearchKeyDown(event, { hits, setQuery, openHit })
+                }
+                placeholder={intl.formatMessage({
+                  defaultMessage: "Search settings",
+                })}
+                slotProps={{
+                  htmlInput: {
+                    "aria-label": intl.formatMessage({
+                      defaultMessage: "Search settings",
+                    }),
+                  },
+                  input: {
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <SearchRounded fontSize="small" />
+                      </InputAdornment>
+                    ),
+                  },
+                }}
               />
-            )}
-          </Box>
-          <Box sx={{ flexGrow: 1, minWidth: 0, width: "100%" }}>
-            <SettingsContent
-              searching={searching}
-              hits={hits}
-              openHit={openHit}
-              activePage={activePage}
-            />
-          </Box>
-        </Stack>
+              <Stack
+                component="nav"
+                aria-label={intl.formatMessage({
+                  defaultMessage: "Settings sections",
+                })}
+                direction="row"
+                spacing={0.25}
+                useFlexGap
+                sx={{
+                  flexWrap: "wrap",
+                  pb: 0.5,
+                  [settingsWideLayoutQuery]: {
+                    flexDirection: "column",
+                    flexWrap: "nowrap",
+                    pb: 0,
+                  },
+                }}
+              >
+                {SETTINGS_PAGES.map((page) => (
+                  <SettingsRailLink
+                    key={page.id}
+                    pageId={page.id}
+                    selected={page.id === activePage?.id}
+                  />
+                ))}
+              </Stack>
+            </Stack>
+            <Box component="span" role="status" sx={visuallyHidden}>
+              {searching && (
+                <FormattedMessage
+                  defaultMessage="{count, plural, =0 {No settings found.} one {# setting found.} other {# settings found.}}"
+                  values={{ count: hits.length }}
+                />
+              )}
+            </Box>
+            <Box sx={{ flexGrow: 1, minWidth: 0, width: "100%" }}>
+              <SettingsContent
+                searching={searching}
+                hits={hits}
+                openHit={openHit}
+                activePage={activePage}
+              />
+            </Box>
+          </Stack>
+        </Box>
       </SettingsHighlightContext.Provider>
     </SettingsFocusContext.Provider>
   );

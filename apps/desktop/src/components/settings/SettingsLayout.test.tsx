@@ -131,6 +131,45 @@ describe("SettingsLayout", () => {
     expect(container.textContent).toContain("Privacy and data");
   });
 
+  it("switches to a side rail only when the Settings area has room for its content", async () => {
+    await render("/dashboard/settings/shortcuts");
+
+    const split = requireElement(
+      container.querySelector(".settings-layout-split"),
+      "the settings layout",
+    );
+    const splitClass = Array.from(split.classList).find((name) =>
+      name.startsWith("css-"),
+    );
+    const generatedStyles = Array.from(
+      document.querySelectorAll("style[data-emotion]"),
+      (style) => style.textContent ?? "",
+    )
+      .join("\n")
+      .replace(/\s+/g, "");
+
+    expect(splitClass).toBeDefined();
+    expect(generatedStyles).toContain(
+      "@containersettings-layout(min-width:680px)",
+    );
+    expect(generatedStyles).toContain(
+      `.${splitClass}{-webkit-flex-direction:row;`,
+    );
+    expect(generatedStyles).toContain("flex-direction:row;gap:32px;");
+    expect(generatedStyles).toContain("flex-wrap:wrap;");
+    expect(generatedStyles).not.toContain("overflow-x:auto;");
+    expect(generatedStyles).toMatch(
+      /input::placeholder\{color:[^}]+;opacity:1;\}/,
+    );
+    expect(generatedStyles).not.toContain("@media(min-width:900px)");
+    expect(
+      container.querySelector(".settings-layout-frame")?.className,
+    ).toContain("css-");
+    expect(
+      generatedStyles.match(/container-name:settings-layout/),
+    ).not.toBeNull();
+  });
+
   it("reopens the page the settings routes remembered", async () => {
     window.localStorage.setItem(LAST_SETTINGS_PAGE_STORAGE_KEY, "shortcuts");
 
