@@ -11,6 +11,7 @@ import {
   globalKeyStreamIsLive,
   listenerDeliversKeys,
   listenerIsProvenHealthy,
+  readListenerHealthSeed,
   DICTATE_HOTKEY,
   OPEN_CHAT_HOTKEY,
   syncHotkeyCombosToNative,
@@ -432,5 +433,45 @@ describe("globalKeyStreamIsLive", () => {
     for (const health of ["connected", "fallback_starting"] as const) {
       expect(globalKeyStreamIsLive("listener", health)).toBe(true);
     }
+  });
+});
+
+describe("readListenerHealthSeed", () => {
+  it("keeps the snapshot when no health event landed during the read", async () => {
+    const health = await readListenerHealthSeed(
+      () => Promise.resolve("starting"),
+      () => false,
+    );
+
+    expect(health).toBe("starting");
+  });
+
+  it("drops the snapshot when a health event landed while it was pending", async () => {
+    // The event is newer than the snapshot, and Rust does not repeat an
+    // unchanged state, so writing the older value back would strand the store on
+    // a state the listener has already left.
+    let release: (health: KeyboardListenerHealth) => void = () => {};
+    let eventApplied = false;
+    const pending = readListenerHealthSeed(
+      () =>
+        new Promise<KeyboardListenerHealth>((resolve) => {
+          release = resolve;
+        }),
+      () => eventApplied,
+    );
+
+    eventApplied = true;
+    release("starting");
+
+    await expect(pending).resolves.toBeNull();
+  });
+
+  it("propagates a failed read instead of seeding a guess", async () => {
+    await expect(
+      readListenerHealthSeed(
+        () => Promise.reject(new Error("listener not running")),
+        () => false,
+      ),
+    ).rejects.toThrow("listener not running");
   });
 });

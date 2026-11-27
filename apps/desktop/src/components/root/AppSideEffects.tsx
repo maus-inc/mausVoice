@@ -86,6 +86,7 @@ import {
   ADD_TO_DICTIONARY_HOTKEY,
   getStyleSwitchActionNamesForKey,
   listenerIsProvenHealthy,
+  readListenerHealthSeed,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
@@ -206,6 +207,9 @@ export const AppSideEffects = () => {
   // Tracks whether we've already notified about the current listener-failure episode, so the
   // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
   const listenerFailureNotifiedRef = useRef(false);
+  // Set when a `keyboard_listener_health` event lands, so the startup seed can tell
+  // whether its snapshot is still the newest value by the time it arrives.
+  const healthEventAppliedRef = useRef(false);
   const versionData = useAsyncData(getVersion, []);
   const userId = useAppStore((state) => state.auth?.uid ?? "");
   const initialized = useAppStore((state) => state.initialized);
@@ -271,14 +275,20 @@ export const AppSideEffects = () => {
 
     // Seed health from the current value: transition events emitted before the
     // `keyboard_listener_health` subscription was registered would otherwise be missed,
-    // leaving the store stuck at its initial "stopped".
+    // leaving the store stuck at its initial "stopped". An event that lands while the
+    // read is in flight is newer than the snapshot, and the native side does not repeat
+    // an unchanged state, so the snapshot must not overwrite it.
+    healthEventAppliedRef.current = false;
     try {
-      const health = await invoke<KeyboardListenerHealth>(
-        "get_key_listener_health",
+      const health = await readListenerHealthSeed(
+        () => invoke<KeyboardListenerHealth>("get_key_listener_health"),
+        () => healthEventAppliedRef.current,
       );
-      produceAppState((draft) => {
-        draft.keyboardListenerHealth = health;
-      });
+      if (health !== null) {
+        produceAppState((draft) => {
+          draft.keyboardListenerHealth = health;
+        });
+      }
     } catch (error) {
       getLogger().warning(`Failed to read keyboard listener health: ${error}`);
     }
@@ -499,6 +509,7 @@ export const AppSideEffects = () => {
   useTauriListen<KeyboardListenerHealthPayload>(
     "keyboard_listener_health",
     (payload) => {
+      healthEventAppliedRef.current = true;
       if (getAppState().keyboardListenerHealth === payload.state) {
         return;
       }

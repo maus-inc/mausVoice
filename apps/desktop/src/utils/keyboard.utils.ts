@@ -366,6 +366,25 @@ export const globalKeyStreamIsLive = (
   health: KeyboardListenerHealth,
 ): boolean => strategy === "listener" && listenerDeliversKeys(health);
 
+/**
+ * Reads the listener's health for the startup seed, unless a health event landed
+ * while the read was pending.
+ *
+ * The seed exists because events emitted before the subscription registered are
+ * lost, and the store would sit at its initial `stopped`. A seed that lands after
+ * such an event would replace the newer value with an older snapshot, and the
+ * native side does not repeat an unchanged state, so the stale value would stay
+ * until the next transition, leaving a live listener reading as not live. Returns
+ * `null` in that case and lets the event stand.
+ */
+export const readListenerHealthSeed = async (
+  readHealth: () => Promise<KeyboardListenerHealth>,
+  hasNewerEvent: () => boolean,
+): Promise<KeyboardListenerHealth | null> => {
+  const health = await readHealth();
+  return hasNewerEvent() ? null : health;
+};
+
 export const getKeycapLegend = (key: string): KeycapLegend => {
   const side = MODIFIER_SIDE_RE.exec(key)?.[1];
   if (side === undefined || !isModifierLikeKey(key))
