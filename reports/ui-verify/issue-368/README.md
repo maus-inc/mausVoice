@@ -1,6 +1,7 @@
 # Issue 368 — Chromium visual verification
 
-**Verified tree:** `136b6306ed3f416a17eedbdff7c0747d14194140` (PR #387)
+**Verified code tree:** `975eaba53dd8373f868f23781c8e8c495ddf474e` (PR #387, after incorporating current target commit `15ef92dc78d997ecccd744c52133ed347119df42`)
+**Evidence commit:** added screenshots and reports only; no app code changed after the verified tree.
 **Browser:** pinned vendor Chromium `156.0.8078.79` from vendor payload commit `3025c92b50c9d8977941b689a779068997896d38`.
 **Surface:** repository Settings verification harness, mounting the real desktop `SettingsLayout` and Settings pages; only the Tauri bridge is faked.
 
