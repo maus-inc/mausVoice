@@ -33,7 +33,7 @@ The assistant can iterate through several model and tool steps. Watch the activi
 
 The built-in tool set can read the focused field and surrounding screen context, paste into the focused field, and close the pill conversation. Every permissioned request presents **Deny**, **Allow**, and **Always allow** choices. Inspect the stated reason and parameters before approving it.
 
-**Always allow** is broader than a one-time approval: it is remembered in the app's webview local storage by tool, not by an individual command. Clear local data removes these saved approvals from app-owned browser storage. For sensitive tools, prefer **Allow** so each use remains visible.
+**Always allow** is broader than a one-time approval: it is remembered in the app's webview local storage by tool and by conversation, not by an individual command, so a new conversation asks again. A grant saved by a build older than per-conversation scoping is still read as a global allow until you revoke it or clear local data. Clear local data removes these saved approvals from app-owned browser storage. For sensitive tools, prefer **Allow** so each use remains visible.
 
 ## Power mode
 
