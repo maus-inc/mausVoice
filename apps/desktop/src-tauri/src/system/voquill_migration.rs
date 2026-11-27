@@ -6834,6 +6834,8 @@ mod tests {
             progress: &mut progress,
             seen_in_pass: &mut seen,
             dirs_to_sync: &mut dirs_to_sync,
+            journal_dir_synced: false,
+            sync_journal_dir: &sync_dir_best_effort,
         };
         revert_asset_progress_entry(&mut ctx, "race.wav").unwrap();
         let reloaded = load_asset_progress(&dirs.current_config_dir);
@@ -8296,7 +8298,7 @@ mod tests {
             &mut progress1,
             &fail_sync,
         );
-        assert!(!outcome1.errors.is_empty());
+        assert!(outcome1.failed > 0);
         assert!(!dst_dir.join("clip.wav").exists());
 
         // Attempt 2: replayed record marks clip.wav as recorded, yet config_dir sync
@@ -8312,7 +8314,7 @@ mod tests {
             &mut progress2,
             &fail_sync,
         );
-        assert!(!outcome2.errors.is_empty());
+        assert!(outcome2.failed > 0);
         assert!(!dst_dir.join("clip.wav").exists());
 
         // Attempt 3: once config_dir sync succeeds, publication proceeds cleanly.
@@ -8326,7 +8328,7 @@ mod tests {
             &mut progress3,
             &sync_dir_best_effort,
         );
-        assert!(outcome3.errors.is_empty());
+        assert_eq!(outcome3.failed, 0);
         assert_eq!(outcome3.copied, 1);
         assert_eq!(fs::read(dst_dir.join("clip.wav")).unwrap(), b"RIFFclip");
     }
