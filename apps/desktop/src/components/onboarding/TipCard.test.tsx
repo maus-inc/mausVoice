@@ -84,7 +84,7 @@ vi.mock("framer-motion", async () => {
   };
 });
 
-import { TipCard, TipCardFrame } from "./TipCard";
+import { TipCard, TipCardFrame, tipActionButtonSx } from "./TipCard";
 
 ensureUiHarness();
 setMatchMedia(false);
@@ -485,5 +485,31 @@ describe("TipCardFrame", () => {
     });
     expect(onActionClick).toHaveBeenCalledTimes(1);
     expect(onActivate).not.toHaveBeenCalled();
+  });
+
+  it("top-aligns its leading glyph and renders description copy in secondary text", async () => {
+    await renderFrame({
+      icon: createElement("span", null, "*"),
+      title: "Title",
+      body: "Description copy",
+    });
+
+    const card = frameCard();
+    expect(getComputedStyle(card).alignItems).toBe("flex-start");
+    const body = card.querySelector(".MuiTypography-body2");
+    expect(body).not.toBeNull();
+    expect(getComputedStyle(body as HTMLElement).color).toBe(
+      "var(--app-palette-text-secondary)",
+    );
+  });
+
+  it("derives tipActionButtonSx typography from labelMedium and allows narrow wrapping", () => {
+    const resolved = tipActionButtonSx(theme);
+    expect(resolved).toMatchObject({
+      fontSize: theme.typography.labelMedium.fontSize,
+      lineHeight: theme.typography.labelMedium.lineHeight,
+      maxWidth: "100%",
+    });
+    expect(resolved).not.toHaveProperty("whiteSpace");
   });
 });
