@@ -7443,7 +7443,10 @@ mod tests {
         let dirs_a = make_dirs(&ws_a);
         let legacy_db_a = dirs_a.legacy_db_path().unwrap();
         seed_voquill_db(&legacy_db_a, 96, false).await;
-        fs::create_dir_all(dirs_a.current_config_dir.join(MANIFEST_FILENAME)).unwrap();
+        let blocking_tmp_a = dirs_a
+            .current_config_dir
+            .join(format!("{MANIFEST_FILENAME}.tmp"));
+        fs::create_dir_all(&blocking_tmp_a).unwrap();
 
         let res_a = run_startup_migration(&dirs_a).await;
         assert_eq!(res_a.database_phase, VoquillMigrationPhaseStatus::Failed);
@@ -8034,8 +8037,10 @@ mod tests {
         .unwrap();
 
         // Block manifest creation so `save_manifest` fails; marker must remain on disk.
-        let manifest_path = dirs.current_config_dir.join(MANIFEST_FILENAME);
-        fs::create_dir_all(&manifest_path).unwrap();
+        let blocking_tmp = dirs
+            .current_config_dir
+            .join(format!("{MANIFEST_FILENAME}.tmp"));
+        fs::create_dir_all(&blocking_tmp).unwrap();
         let failed_save = run_startup_migration(&dirs).await;
         assert_eq!(failed_save.status, VoquillMigrationStatus::Partial);
         assert!(failed_save
@@ -8048,8 +8053,8 @@ mod tests {
         );
         assert!(ensure_no_pending_promotion_recovery(&dirs).is_err());
 
-        // Unblock manifest path -> startup saves rolled-back manifest and retires marker.
-        fs::remove_dir(&manifest_path).unwrap();
+        // Unblock manifest save -> startup saves rolled-back manifest and retires marker.
+        fs::remove_dir(&blocking_tmp).unwrap();
         let recovered = run_startup_migration(&dirs).await;
         assert_eq!(recovered.status, VoquillMigrationStatus::Failed);
         assert_eq!(
@@ -8607,7 +8612,10 @@ mod tests {
             .join(AUDIO_DIR_NAME);
         fs::create_dir_all(&legacy_audio_a).unwrap();
         fs::write(legacy_audio_a.join("clip-a.wav"), b"RIFFa").unwrap();
-        fs::create_dir_all(dirs_a.current_config_dir.join(MANIFEST_FILENAME)).unwrap();
+        let blocking_tmp_a = dirs_a
+            .current_config_dir
+            .join(format!("{MANIFEST_FILENAME}.tmp"));
+        fs::create_dir_all(&blocking_tmp_a).unwrap();
 
         let report_a = run_startup_migration(&dirs_a).await;
         assert!(report_a.legacy_detected);
@@ -9145,9 +9153,17 @@ mod tests {
                     "original partial manifest bytes must be preserved untouched"
                 );
                 let restored = run_startup_migration(&dirs_b).await;
-                assert_eq!(restored.status, VoquillMigrationStatus::Completed);
-                assert_eq!(restored.audio_phase, VoquillMigrationPhaseStatus::Migrated);
-                assert_eq!(restored.counts.audio_files_migrated, 1);
+                assert_eq!(restored.status, VoquillMigrationStatus::Partial);
+                assert!(restored.can_retry);
+                assert!(!restored
+                    .issues
+                    .iter()
+                    .any(|issue| issue.code == "manifest_read_failed"));
+
+                let retried = retry_migration(&dirs_b).await;
+                assert_eq!(retried.status, VoquillMigrationStatus::Completed);
+                assert_eq!(retried.audio_phase, VoquillMigrationPhaseStatus::Migrated);
+                assert_eq!(retried.counts.audio_files_migrated, 1);
                 assert_eq!(
                     fs::read(
                         dirs_b
