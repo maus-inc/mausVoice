@@ -1120,5 +1120,32 @@ describe("browser preview transport", () => {
     });
     expect(fixedAzureRegion.credentialStatus).toBe("usable");
     expect(fixedAzureRegion.credentialIssue).toBeNull();
+
+    const endpointWithUserinfo = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_create", {
+      apiKey: {
+        id: "preview-compat-userinfo",
+        name: "Local compat",
+        provider: "openai-compatible",
+        key: "",
+        baseUrl: "http://user:pass@localhost:8000/v1",
+      },
+    });
+    expect(endpointWithUserinfo.credentialStatus).toBe("invalid_format");
+    expect(endpointWithUserinfo.credentialIssue).toBe("missing_endpoint");
+
+    const fixedEndpoint = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_update", {
+      request: {
+        id: "preview-compat-userinfo",
+        baseUrl: "http://localhost:8000/v1",
+      },
+    });
+    expect(fixedEndpoint.credentialStatus).toBe("usable");
+    expect(fixedEndpoint.credentialIssue).toBeNull();
   });
 });

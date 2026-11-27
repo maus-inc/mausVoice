@@ -589,7 +589,9 @@ class PreviewRuntime {
       const parsed = new URL(trimmed);
       return (
         (parsed.protocol === "http:" || parsed.protocol === "https:") &&
-        parsed.hostname.length > 0
+        parsed.hostname.length > 0 &&
+        parsed.username.length === 0 &&
+        parsed.password.length === 0
       );
     } catch {
       return false;

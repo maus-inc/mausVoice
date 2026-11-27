@@ -186,7 +186,10 @@ fn is_valid_http_endpoint(raw: Option<&str>) -> bool {
     let Ok(parsed) = Url::parse(value) else {
         return false;
     };
-    matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some()
+    matches!(parsed.scheme(), "http" | "https")
+        && parsed.host_str().is_some()
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
 }
 
 /// Inspects a stored provider record and determines whether its credential is
@@ -624,6 +627,48 @@ mod tests {
         assert_eq!(
             inspection.issue,
             Some(ApiKeyCredentialIssue::LegacyEncryption)
+        );
+    }
+
+    #[test]
+    fn rejects_endpoint_urls_with_embedded_credentials() {
+        let empty = protect_api_key("");
+        for endpoint in [
+            "http://user:pass@localhost:8000/v1",
+            "http://user@localhost:8000/v1",
+            "https://:secret@api.example.com/v1",
+        ] {
+            let inspection = inspect_api_key_credential(
+                "openai-compatible",
+                &empty.salt_b64,
+                &empty.ciphertext_b64,
+                Some(endpoint),
+                None,
+            );
+            assert_eq!(inspection.key_full, None);
+            assert_eq!(inspection.status, ApiKeyCredentialStatus::InvalidFormat);
+            assert_eq!(
+                inspection.issue,
+                Some(ApiKeyCredentialIssue::MissingEndpoint)
+            );
+        }
+
+        let good_azure = protect_api_key("azure_valid_key_1234");
+        let azure_with_userinfo = inspect_api_key_credential(
+            "azure",
+            &good_azure.salt_b64,
+            &good_azure.ciphertext_b64,
+            Some("https://user:pass@my-resource.openai.azure.com"),
+            None,
+        );
+        assert_eq!(azure_with_userinfo.key_full, None);
+        assert_eq!(
+            azure_with_userinfo.status,
+            ApiKeyCredentialStatus::InvalidFormat
+        );
+        assert_eq!(
+            azure_with_userinfo.issue,
+            Some(ApiKeyCredentialIssue::MissingEndpoint)
         );
     }
 }
