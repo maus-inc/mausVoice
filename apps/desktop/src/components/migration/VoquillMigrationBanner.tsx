@@ -9,7 +9,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { dismissVoquillMigration } from "../../actions/voquill-migration.actions";
@@ -227,6 +227,13 @@ export const VoquillMigrationBanner = () => {
   const retrying = useAppStore((state) => state.voquillMigration.retrying);
   const dismissing = useAppStore((state) => state.voquillMigration.dismissing);
   const [dismissFailed, setDismissFailed] = useState(false);
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
   const handleRetry = useVoquillMigrationRetry();
 
   if (!isBannerVisible(report)) {
@@ -236,7 +243,7 @@ export const VoquillMigrationBanner = () => {
   const handleDismiss = async () => {
     setDismissFailed(false);
     const updated = await dismissVoquillMigration();
-    if (!updated) {
+    if (!updated && mountedRef.current) {
       setDismissFailed(true);
     }
   };

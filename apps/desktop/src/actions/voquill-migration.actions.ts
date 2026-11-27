@@ -24,6 +24,7 @@ import {
 
 let loadPromise: Promise<VoquillMigrationReport | null> | null = null;
 let retryPromise: Promise<VoquillMigrationReport> | null = null;
+let loadedClearGeneration: number | null = null;
 
 const isClearStillSame = (generation: number): boolean =>
   !isLocalDataClearRequested() && getLocalDataClearGeneration() === generation;
@@ -39,14 +40,21 @@ export const loadVoquillMigrationStatus = async (
   force = false,
 ): Promise<VoquillMigrationReport | null> => {
   const current = getAppState().voquillMigration;
+  const currentGeneration = getLocalDataClearGeneration();
   if (!force && current.status === "loading" && loadPromise) {
     return loadPromise;
   }
-  if (!force && current.status === "success" && current.report !== null) {
+  if (
+    !force &&
+    current.status === "success" &&
+    current.report !== null &&
+    !isLocalDataClearRequested() &&
+    loadedClearGeneration === currentGeneration
+  ) {
     return current.report;
   }
 
-  const clearGeneration = getLocalDataClearGeneration();
+  const clearGeneration = currentGeneration;
   const requestSeq = nextVoquillMigrationRequestSeq();
   produceAppState((draft) => {
     draft.voquillMigration.status = "loading";
@@ -56,6 +64,7 @@ export const loadVoquillMigrationStatus = async (
   const active = fetchVoquillMigrationStatus()
     .then((report) => {
       if (canApplyReportUpdate(clearGeneration, requestSeq)) {
+        loadedClearGeneration = clearGeneration;
         produceAppState((draft) => {
           draft.voquillMigration.report = report;
           draft.voquillMigration.status = "success";
@@ -78,6 +87,16 @@ export const loadVoquillMigrationStatus = async (
     .finally(() => {
       if (loadPromise === active) {
         loadPromise = null;
+        if (
+          !isClearStillSame(clearGeneration) &&
+          getAppState().voquillMigration.status === "loading"
+        ) {
+          produceAppState((draft) => {
+            if (draft.voquillMigration.status === "loading") {
+              draft.voquillMigration.status = "idle";
+            }
+          });
+        }
       }
     });
 
@@ -86,6 +105,7 @@ export const loadVoquillMigrationStatus = async (
 };
 
 const applyVoquillMigrationSuccess = (
+  clearGeneration: number,
   requestSeq: number,
   report: VoquillMigrationReport,
   clearFlag: "dismissing" | "retrying",
@@ -93,6 +113,7 @@ const applyVoquillMigrationSuccess = (
 ): void => {
   produceAppState((draft) => {
     if (isLatestVoquillMigrationRequestSeq(requestSeq)) {
+      loadedClearGeneration = clearGeneration;
       draft.voquillMigration.report = report;
       draft.voquillMigration.status = "success";
       draft.voquillMigration.error = null;
@@ -123,7 +144,12 @@ export const dismissVoquillMigration =
         dismissVoquillMigrationNotice(lease),
       );
       if (isClearStillSame(clearGeneration)) {
-        applyVoquillMigrationSuccess(requestSeq, report, "dismissing");
+        applyVoquillMigrationSuccess(
+          clearGeneration,
+          requestSeq,
+          report,
+          "dismissing",
+        );
       }
       return report;
     } catch (error) {
@@ -140,6 +166,12 @@ export const dismissVoquillMigration =
         });
       }
       return null;
+    } finally {
+      if (getAppState().voquillMigration.dismissing) {
+        produceAppState((draft) => {
+          draft.voquillMigration.dismissing = false;
+        });
+      }
     }
   };
 
@@ -162,7 +194,13 @@ const executeVoquillMigrationRetry = async (
       report.databasePhase === "migrated";
 
     if (isClearStillSame(clearGeneration)) {
-      applyVoquillMigrationSuccess(requestSeq, report, "retrying", dbPromoted);
+      applyVoquillMigrationSuccess(
+        clearGeneration,
+        requestSeq,
+        report,
+        "retrying",
+        dbPromoted,
+      );
     }
 
     if (dbPromoted && isClearStillSame(clearGeneration)) {
@@ -189,6 +227,12 @@ const executeVoquillMigrationRetry = async (
       });
     }
     throw error;
+  } finally {
+    if (getAppState().voquillMigration.retrying) {
+      produceAppState((draft) => {
+        draft.voquillMigration.retrying = false;
+      });
+    }
   }
 };
 

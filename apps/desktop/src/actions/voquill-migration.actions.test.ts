@@ -11,6 +11,8 @@ const {
   loadDictionaryMock,
   loadTonesMock,
   loadAppTargetsMock,
+  clearGenerationRef,
+  clearRequestedRef,
 } = vi.hoisted(() => ({
   fetchStatusMock: vi.fn(),
   dismissNoticeMock: vi.fn(),
@@ -21,7 +23,22 @@ const {
   loadDictionaryMock: vi.fn(),
   loadTonesMock: vi.fn(),
   loadAppTargetsMock: vi.fn(),
+  clearGenerationRef: { current: 0 },
+  clearRequestedRef: { current: false },
 }));
+
+vi.mock("../utils/local-data-write-gate", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../utils/local-data-write-gate")>();
+  return {
+    ...actual,
+    getLocalDataClearGeneration: () => clearGenerationRef.current,
+    isLocalDataClearRequested: () => clearRequestedRef.current,
+    withLocalDataWrite: async <T>(
+      run: (lease: unknown) => Promise<T> | T,
+    ): Promise<T> => run({}),
+  };
+});
 
 vi.mock("../repos/voquill-migration.repo", () => ({
   fetchVoquillMigrationStatus: (...args: unknown[]) => fetchStatusMock(...args),
@@ -109,6 +126,8 @@ const makeReport = (
 describe("voquill-migration.actions", () => {
   beforeEach(() => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
+    clearGenerationRef.current = 0;
+    clearRequestedRef.current = false;
     fetchStatusMock.mockReset();
     dismissNoticeMock.mockReset();
     retryMigrationMock.mockReset();
@@ -309,5 +328,74 @@ describe("voquill-migration.actions", () => {
     await runVoquillMigrationRetry();
 
     expect(loadApiKeysMock).toHaveBeenCalledWith({ force: true });
+  });
+
+  it("resets loading, dismissing, retrying flags and invalidates cache across clear generation changes", async () => {
+    // 1. Load succeeds in generation 0 and caches report.
+    const gen0Report = makeReport({ dismissedAt: null });
+    fetchStatusMock.mockResolvedValueOnce(gen0Report);
+    expect(await loadVoquillMigrationStatus()).toEqual(gen0Report);
+    expect(fetchStatusMock).toHaveBeenCalledTimes(1);
+
+    // Same generation uses cache.
+    expect(await loadVoquillMigrationStatus()).toEqual(gen0Report);
+    expect(fetchStatusMock).toHaveBeenCalledTimes(1);
+
+    // Clear generation advances -> cache is invalidated and re-fetches.
+    clearGenerationRef.current = 1;
+    const gen1Report = makeReport({
+      status: "not_needed",
+      legacyDetected: false,
+    });
+    fetchStatusMock.mockResolvedValueOnce(gen1Report);
+    expect(await loadVoquillMigrationStatus()).toEqual(gen1Report);
+    expect(fetchStatusMock).toHaveBeenCalledTimes(2);
+
+    // 2. Clear occurs mid-load -> status does not stay stuck in "loading".
+    let resolveLoad!: (report: VoquillMigrationReport) => void;
+    fetchStatusMock.mockImplementationOnce(
+      () =>
+        new Promise<VoquillMigrationReport>((resolve) => {
+          resolveLoad = resolve;
+        }),
+    );
+    const inFlightLoad = loadVoquillMigrationStatus(true);
+    expect(getAppState().voquillMigration.status).toBe("loading");
+    clearGenerationRef.current = 2;
+    resolveLoad(gen0Report);
+    await inFlightLoad;
+    expect(getAppState().voquillMigration.status).toBe("idle");
+
+    // 3. Clear occurs mid-dismiss -> dismissing does not stay stuck true.
+    let resolveDismiss!: (report: VoquillMigrationReport) => void;
+    dismissNoticeMock.mockImplementationOnce(
+      () =>
+        new Promise<VoquillMigrationReport>((resolve) => {
+          resolveDismiss = resolve;
+        }),
+    );
+    const inFlightDismiss = dismissVoquillMigration();
+    expect(getAppState().voquillMigration.dismissing).toBe(true);
+    clearGenerationRef.current = 3;
+    resolveDismiss(makeReport({ dismissedAt: "2026-11-24T10:00:00Z" }));
+    await inFlightDismiss;
+    expect(getAppState().voquillMigration.dismissing).toBe(false);
+
+    // 4. Clear occurs mid-retry -> retrying does not stay stuck true.
+    let resolveRetry!: (report: VoquillMigrationReport) => void;
+    retryMigrationMock.mockImplementationOnce(
+      () =>
+        new Promise<VoquillMigrationReport>((resolve) => {
+          resolveRetry = resolve;
+        }),
+    );
+    const inFlightRetry = runVoquillMigrationRetry();
+    expect(getAppState().voquillMigration.retrying).toBe(true);
+    clearGenerationRef.current = 4;
+    resolveRetry(
+      makeReport({ status: "completed", databasePhase: "migrated" }),
+    );
+    await inFlightRetry;
+    expect(getAppState().voquillMigration.retrying).toBe(false);
   });
 });

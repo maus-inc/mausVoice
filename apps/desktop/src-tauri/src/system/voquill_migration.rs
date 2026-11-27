@@ -774,7 +774,13 @@ fn copy_file_strict_no_symlink(src: &Path, dst: &Path) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|err| format!("unable to prepare staging directory: {err}"))?;
     }
-    fs::copy(src, dst).map_err(|err| format!("failed to copy file: {err}"))?;
+    let mut src_file = File::open(src).map_err(|err| format!("failed to copy file: {err}"))?;
+    let mut dst_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dst)
+        .map_err(|err| format!("failed to copy file: {err}"))?;
+    io::copy(&mut src_file, &mut dst_file).map_err(|err| format!("failed to copy file: {err}"))?;
     Ok(())
 }
 
