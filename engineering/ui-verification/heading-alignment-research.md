@@ -17,7 +17,7 @@ Should a settings group heading align with the card edge or with the row label c
 
 **Design Read:** Settings for desktop MausVoice operators, in the established restrained Operate style. ENERGY 1 / RHYTHM 1 / MOTION 1. This change preserves the existing calm hierarchy and card rhythm.
 
-Keep each group heading and its description above the card at the card's left edge. Keep row labels in their existing leading-slot grid. The heading's semantic job is to name the whole group; aligning it to one row's label column makes it read as paragraph text and weakens that hierarchy. Keep the existing vertical placement above the card. Do not change the row's leading slot or the card's internal padding.
+Keep each group heading and its description above the card at the card's left edge. Keep row labels in their existing leading-slot grid. The heading's semantic job is to name the whole group; aligning it to one row's label column makes it read as paragraph text and weakens that hierarchy. Keep the existing vertical placement above the card. Do not change the row's leading slot or the card's internal padding. A group action is a control rather than part of the heading: keep the title on the outer edge, but align the action's right edge with the row content edge.
 
 ## Applied change
 

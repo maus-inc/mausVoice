@@ -25,6 +25,10 @@ const settingsCardBorderWidth = 1;
 /** The horizontal inset a row takes inside its card, in theme spacing units. */
 const settingsRowInset = 2;
 
+/** The distance from the card's outside edge to the row's content edge. */
+export const settingsCardContentInset = (theme: Theme): string =>
+  `calc(${theme.spacing(settingsRowInset)} + ${settingsCardBorderWidth}px)`;
+
 /**
  * The width of a row's leading slot, in pixels.
  *

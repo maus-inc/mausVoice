@@ -18,7 +18,10 @@ import { theme } from "../../theme";
 import { premiumSurface } from "../../styles/shadows";
 import { SettingGroup, SettingRow, SettingToggleRow } from "./SettingRow";
 import { SettingsHighlightContext } from "./settings-highlight";
-import { SettingRowText } from "./setting-row-chassis";
+import {
+  settingsCardContentInset,
+  SettingRowText,
+} from "./setting-row-chassis";
 import { SegmentedControl } from "../common/SegmentedControl";
 
 ensureUiHarness();
@@ -356,7 +359,7 @@ describe("SettingRow", () => {
     expect(widths[0]).toBeGreaterThan(0);
   });
 
-  it("sets a group heading on the card's edge, not the row text's", () => {
+  it("keeps a group heading on the card edge and its action on the row content edge", () => {
     render(
       <ThemeProvider theme={theme}>
         <SettingGroup
@@ -382,13 +385,25 @@ describe("SettingRow", () => {
       "the group description",
     );
 
-    // Keep the heading and description at the card edge, apart from row labels.
-    // jsdom serializes unset padding as "0".
+    // The heading and description remain on the card's outer edge; only its
+    // action uses the same inset as the row content. jsdom exposes the applied
+    // margin even though it cannot lay out the link's visual edge.
+    const action = requireElement(
+      headingLine.querySelector("a"),
+      "the group action",
+    );
+    const actionInset = requireElement(
+      action.parentElement,
+      "the action's inset wrapper",
+    );
     expect(Number.parseFloat(getComputedStyle(headingLine).paddingLeft)).toBe(
       0,
     );
-    expect(Number.parseFloat(getComputedStyle(headingLine).paddingRight)).toBe(
-      0,
+    expect(getComputedStyle(actionInset).marginRight).toBe(
+      settingsCardContentInset(theme).replace(
+        /var\((--app-spacing), [^)]+\)/,
+        "var($1)",
+      ),
     );
     expect(Number.parseFloat(getComputedStyle(description).paddingLeft)).toBe(
       0,

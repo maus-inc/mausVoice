@@ -10,6 +10,7 @@
         "text": "Overview",
         "x": 520,
         "y": 20,
+        "right": 1256,
         "w": 736,
         "h": 42
       },
@@ -28,7 +29,10 @@
           "height": 46.3,
           "labelX": null,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": "All shortcuts",
+          "actionRight": 855,
+          "rowContentRight": 855
         },
         {
           "title": "Your models",
@@ -37,7 +41,10 @@
           "height": 214.7,
           "labelX": 977,
           "cardX": 904,
-          "headingX": 904
+          "headingX": 904,
+          "action": "Manage models",
+          "actionRight": 1239,
+          "rowContentRight": 1239
         }
       ],
       "overflowX": 0
@@ -50,6 +57,7 @@
         "text": "Dictation",
         "x": 520,
         "y": 20,
+        "right": 1256,
         "w": 736,
         "h": 42
       },
@@ -67,7 +75,10 @@
           "height": 153.3,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Language",
@@ -76,7 +87,10 @@
           "height": 133,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "While you dictate",
@@ -85,7 +99,10 @@
           "height": 239,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Output",
@@ -94,7 +111,10 @@
           "height": 390.3,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         }
       ],
       "overflowX": 0
@@ -107,6 +127,7 @@
         "text": "AI and models",
         "x": 520,
         "y": 20,
+        "right": 1256,
         "w": 736,
         "h": 42
       },
@@ -124,7 +145,10 @@
           "height": 133,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Post processing",
@@ -133,7 +157,10 @@
           "height": 218.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Assistant",
@@ -142,7 +169,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Styles",
@@ -151,7 +181,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         }
       ],
       "overflowX": 0
@@ -164,6 +197,7 @@
         "text": "Shortcuts",
         "x": 520,
         "y": 20,
+        "right": 1256,
         "w": 736,
         "h": 42
       },
@@ -181,7 +215,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Styles",
@@ -190,7 +227,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         }
       ],
       "overflowX": 0
@@ -203,6 +243,7 @@
         "text": "Appearance",
         "x": 520,
         "y": 20,
+        "right": 1256,
         "w": 736,
         "h": 42
       },
@@ -220,7 +261,10 @@
           "height": 193.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Menu bar",
@@ -229,7 +273,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Celebrations",
@@ -238,7 +285,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         }
       ],
       "overflowX": 0
@@ -251,6 +301,7 @@
         "text": "Privacy and data",
         "x": 520,
         "y": 20,
+        "right": 1256,
         "w": 736,
         "h": 42
       },
@@ -268,7 +319,10 @@
           "height": 153.3,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Dictionary learning",
@@ -277,7 +331,10 @@
           "height": 153.3,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Devices",
@@ -286,7 +343,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         }
       ],
       "overflowX": 0
@@ -299,6 +359,7 @@
         "text": "System",
         "x": 520,
         "y": 20,
+        "right": 1256,
         "w": 736,
         "h": 42
       },
@@ -316,7 +377,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Input permissions",
@@ -325,7 +389,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Updates",
@@ -334,7 +401,10 @@
           "height": 218.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Support",
@@ -343,7 +413,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Legal",
@@ -352,7 +425,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         }
       ],
       "overflowX": 0
@@ -365,6 +441,7 @@
         "text": "Account",
         "x": 520,
         "y": 20,
+        "right": 1256,
         "w": 736,
         "h": 42
       },
@@ -382,7 +459,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         },
         {
           "title": "Danger zone",
@@ -391,7 +471,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1239
         }
       ],
       "overflowX": 0
@@ -404,6 +487,7 @@
         "text": "Overview",
         "x": 520,
         "y": 20,
+        "right": 1076,
         "w": 556,
         "h": 42
       },
@@ -421,7 +505,10 @@
           "height": 46.3,
           "labelX": null,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": "All shortcuts",
+          "actionRight": 1059,
+          "rowContentRight": 1059
         },
         {
           "title": "Your models",
@@ -430,7 +517,10 @@
           "height": 191.5,
           "labelX": 593,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": "Manage models",
+          "actionRight": 1059,
+          "rowContentRight": 1059
         }
       ],
       "overflowX": 0
@@ -443,6 +533,7 @@
         "text": "Dictation",
         "x": 520,
         "y": 20,
+        "right": 1076,
         "w": 556,
         "h": 42
       },
@@ -460,7 +551,10 @@
           "height": 153.3,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Language",
@@ -469,7 +563,10 @@
           "height": 173.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "While you dictate",
@@ -478,7 +575,10 @@
           "height": 279.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Output",
@@ -487,7 +587,10 @@
           "height": 471.3,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         }
       ],
       "overflowX": 0
@@ -500,6 +603,7 @@
         "text": "AI and models",
         "x": 520,
         "y": 20,
+        "right": 1076,
         "w": 556,
         "h": 42
       },
@@ -517,7 +621,10 @@
           "height": 173.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Post processing",
@@ -526,7 +633,10 @@
           "height": 259.3,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Assistant",
@@ -535,7 +645,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Styles",
@@ -544,7 +657,10 @@
           "height": 128.3,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         }
       ],
       "overflowX": 0
@@ -557,6 +673,7 @@
         "text": "Shortcuts",
         "x": 520,
         "y": 20,
+        "right": 1076,
         "w": 556,
         "h": 42
       },
@@ -574,7 +691,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Styles",
@@ -583,7 +703,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         }
       ],
       "overflowX": 0
@@ -596,6 +719,7 @@
         "text": "Appearance",
         "x": 520,
         "y": 20,
+        "right": 1076,
         "w": 556,
         "h": 42
       },
@@ -613,7 +737,10 @@
           "height": 300.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Menu bar",
@@ -622,7 +749,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Celebrations",
@@ -631,7 +761,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         }
       ],
       "overflowX": 0
@@ -644,6 +777,7 @@
         "text": "Privacy and data",
         "x": 520,
         "y": 20,
+        "right": 1076,
         "w": 556,
         "h": 42
       },
@@ -661,7 +795,10 @@
           "height": 173.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Dictionary learning",
@@ -670,7 +807,10 @@
           "height": 173.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Devices",
@@ -679,7 +819,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         }
       ],
       "overflowX": 0
@@ -692,6 +835,7 @@
         "text": "System",
         "x": 520,
         "y": 20,
+        "right": 1076,
         "w": 556,
         "h": 42
       },
@@ -709,7 +853,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Input permissions",
@@ -718,7 +865,10 @@
           "height": 87.8,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Updates",
@@ -727,7 +877,10 @@
           "height": 259.3,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Support",
@@ -736,7 +889,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Legal",
@@ -745,7 +901,10 @@
           "height": 67.5,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         }
       ],
       "overflowX": 0
@@ -758,6 +917,7 @@
         "text": "Account",
         "x": 520,
         "y": 20,
+        "right": 1076,
         "w": 556,
         "h": 42
       },
@@ -775,7 +935,10 @@
           "height": 108,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         },
         {
           "title": "Danger zone",
@@ -784,7 +947,10 @@
           "height": 128.3,
           "labelX": 577,
           "cardX": 520,
-          "headingX": 520
+          "headingX": 520,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 1059
         }
       ],
       "overflowX": 0
@@ -797,6 +963,7 @@
         "text": "Overview",
         "x": 256,
         "y": 126.6,
+        "right": 776,
         "w": 520,
         "h": 42
       },
@@ -814,7 +981,10 @@
           "height": 46.3,
           "labelX": null,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": "All shortcuts",
+          "actionRight": 759,
+          "rowContentRight": 759
         },
         {
           "title": "Your models",
@@ -823,7 +993,10 @@
           "height": 191.5,
           "labelX": 329,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": "Manage models",
+          "actionRight": 759,
+          "rowContentRight": 759
         }
       ],
       "overflowX": 0
@@ -836,6 +1009,7 @@
         "text": "Dictation",
         "x": 256,
         "y": 126.6,
+        "right": 776,
         "w": 520,
         "h": 42
       },
@@ -853,7 +1027,10 @@
           "height": 153.3,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Language",
@@ -862,7 +1039,10 @@
           "height": 173.5,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "While you dictate",
@@ -871,7 +1051,10 @@
           "height": 299.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Output",
@@ -880,7 +1063,10 @@
           "height": 471.3,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         }
       ],
       "overflowX": 0
@@ -893,6 +1079,7 @@
         "text": "AI and models",
         "x": 256,
         "y": 126.6,
+        "right": 776,
         "w": 520,
         "h": 42
       },
@@ -910,7 +1097,10 @@
           "height": 173.5,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Post processing",
@@ -919,7 +1109,10 @@
           "height": 279.5,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Assistant",
@@ -928,7 +1121,10 @@
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Styles",
@@ -937,7 +1133,10 @@
           "height": 151.3,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         }
       ],
       "overflowX": 0
@@ -950,6 +1149,7 @@
         "text": "Shortcuts",
         "x": 256,
         "y": 126.6,
+        "right": 776,
         "w": 520,
         "h": 42
       },
@@ -967,7 +1167,10 @@
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Styles",
@@ -976,7 +1179,10 @@
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         }
       ],
       "overflowX": 0
@@ -989,6 +1195,7 @@
         "text": "Appearance",
         "x": 256,
         "y": 126.6,
+        "right": 776,
         "w": 520,
         "h": 42
       },
@@ -1006,7 +1213,10 @@
           "height": 300.5,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Menu bar",
@@ -1015,7 +1225,10 @@
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Celebrations",
@@ -1024,7 +1237,10 @@
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         }
       ],
       "overflowX": 0
@@ -1037,6 +1253,7 @@
         "text": "Privacy and data",
         "x": 256,
         "y": 126.6,
+        "right": 776,
         "w": 520,
         "h": 42
       },
@@ -1054,7 +1271,10 @@
           "height": 193.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Dictionary learning",
@@ -1063,7 +1283,10 @@
           "height": 173.5,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Devices",
@@ -1072,7 +1295,10 @@
           "height": 67.5,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         }
       ],
       "overflowX": 0
@@ -1085,6 +1311,7 @@
         "text": "System",
         "x": 256,
         "y": 126.6,
+        "right": 776,
         "w": 520,
         "h": 42
       },
@@ -1102,7 +1329,10 @@
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Input permissions",
@@ -1111,7 +1341,10 @@
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Updates",
@@ -1120,7 +1353,10 @@
           "height": 279.5,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Support",
@@ -1129,7 +1365,10 @@
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Legal",
@@ -1138,7 +1377,10 @@
           "height": 67.5,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         }
       ],
       "overflowX": 0
@@ -1151,6 +1393,7 @@
         "text": "Account",
         "x": 256,
         "y": 126.6,
+        "right": 776,
         "w": 520,
         "h": 42
       },
@@ -1168,7 +1411,10 @@
           "height": 87.8,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         },
         {
           "title": "Danger zone",
@@ -1177,7 +1423,10 @@
           "height": 108,
           "labelX": 313,
           "cardX": 256,
-          "headingX": 256
+          "headingX": 256,
+          "action": null,
+          "actionRight": null,
+          "rowContentRight": 759
         }
       ],
       "overflowX": 0

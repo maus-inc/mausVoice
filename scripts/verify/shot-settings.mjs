@@ -38,10 +38,18 @@ const note = (label, detail) => problems.push(`${label}: ${detail}`);
 /** A measured value, or `null` when the page drew nothing to measure. */
 const orNull = (value) => (value === undefined ? null : value);
 
-/** Reports group dimensions and heading alignment against the card edge. */
-const reportedGroup = ({ title, rows, card, columns }) => {
+/** Reports group geometry, including heading/card and action/content edges. */
+const reportedGroup = ({
+  title,
+  rows,
+  card,
+  columns,
+  action,
+  rowContentRight,
+}) => {
   const head = title ?? {};
   const frame = card ?? {};
+  const link = action ?? {};
   return {
     title: orNull(head.text),
     rows,
@@ -50,6 +58,9 @@ const reportedGroup = ({ title, rows, card, columns }) => {
     labelX: orNull(columns[0]),
     cardX: orNull(frame.x),
     headingX: orNull(head.x),
+    action: orNull(link.text),
+    actionRight: orNull(link.right),
+    rowContentRight: orNull(rowContentRight),
   };
 };
 
@@ -57,7 +68,7 @@ const measure = `(() => {
   const round = (n) => Math.round(n * 10) / 10;
   const box = (element) => {
     const rect = element.getBoundingClientRect();
-    return { x: round(rect.x), y: round(rect.y), w: round(rect.width), h: round(rect.height) };
+    return { x: round(rect.x), y: round(rect.y), right: round(rect.right), w: round(rect.width), h: round(rect.height) };
   };
   const heading = document.querySelector("h1");
   const columnOf = (element) => {
@@ -69,6 +80,9 @@ const measure = `(() => {
     groups: Array.from(document.querySelectorAll("section")).map((section) => {
       const title = section.querySelector("h2");
       const card = section.lastElementChild;
+      const line = title?.parentElement;
+      const action = line?.querySelector("a[href]");
+      const firstRow = card?.firstElementChild;
       // Every row of a card, by the label class rather than by position: the
       // row that starts a card is not the one that names the column.
       const columns = card
@@ -76,8 +90,13 @@ const measure = `(() => {
             .map(columnOf)
             .filter((x) => x !== null)
         : [];
+      const rowContentRight = firstRow
+        ? round(box(firstRow).right - parseFloat(getComputedStyle(firstRow).paddingRight))
+        : null;
       return {
         title: title ? { text: title.textContent, ...box(title) } : null,
+        action: action ? { text: action.textContent.trim(), ...box(action) } : null,
+        rowContentRight,
         card: card ? box(card) : null,
         rows: card ? card.children.length : 0,
         columns,
@@ -193,6 +212,16 @@ for (const { width, height } of SIZES) {
     for (const group of metrics.groups) {
       if (group.rows === 0) {
         note(`${width}px ${id} empty group`, group.title?.text ?? "untitled");
+      }
+      if (
+        group.action &&
+        (group.rowContentRight === null ||
+          group.action.right !== group.rowContentRight)
+      ) {
+        note(
+          `${width}px ${id} "${group.title?.text ?? "untitled"}" action edge`,
+          `action at ${group.action.right}, row content at ${group.rowContentRight}`,
+        );
       }
     }
     if (metrics.overflowX > 0) {

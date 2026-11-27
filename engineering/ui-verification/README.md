@@ -47,8 +47,10 @@ node scripts/verify/sweep-preview.mjs
 | `shot-mic-dialog.mjs` | `HARNESS_URL`                 | `http://127.0.0.1:5193/verify-harness/mic-dialog.html` |
 | `shot-settings.mjs`   | `HARNESS_URL`                 | `http://127.0.0.1:5193/verify-harness/settings.html`   |
 
-`shot-settings.mjs` checks eight settings pages at 1280x900, 1100x700, and the 800x600 minimum. It records page and row geometry in `settings-layout.json` and exits nonzero when its layout checks or browser console checks fail. Group headings sit above their cards at the card's left edge. Row labels keep their own leading slot. This distinction is deliberate: heading hierarchy belongs to the group, not to the label column of one row.
+`shot-settings.mjs` checks eight settings pages at 1280x900, 1100x700, and the 800x600 minimum. It records page, row, heading, and action geometry in `settings-layout.json` and exits nonzero when its layout checks or browser console checks fail. Group headings sit above their cards at the card's left edge. Row labels keep their own leading slot, and a group action aligns with the row content edge. The distinction is deliberate: the heading names the whole group; the action is a control in that group.
 
 The settings capture defaults to light mode. Set `THEME=dark` to check the other scheme, and set `OUT_DIR` to write temporary captures outside the repository. Inspect every image at full size before adding it to a pull request. Check that the bundled Satoshi font rendered, spacing looks normal, the correct page and theme appear, and no content clips or overflows.
 
 `click-settings.mjs` exercises the eight-page rail, active-page state, settings search (matching and empty results), slash/Escape keyboard behavior, and the Overview actions in both themes. It also checks that rendered switches expose their state and accessible labels, and tabs expose selection. This harness intentionally stubs Tauri and does not mount the full app shell, so global dialogs and preference persistence are verified by the desktop component tests rather than by this click-through.
+
+The Overview action-edge correction is compared before/after in both themes at all three supported widths under `reports/ui-verify/settings-compare/action-alignment-*`. The geometry JSON records each action's right edge and the first row's content edge; those values must match.

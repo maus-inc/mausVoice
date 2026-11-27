@@ -18,6 +18,7 @@ import {
   controlColumnSx,
   interactiveSx,
   rowSx,
+  settingsCardContentInset,
   settingsCardSx,
   settingsRowLeadingSlotWidth,
   SettingRowText,
@@ -512,21 +513,18 @@ const groupHeadingSx = (
   mb: hasDescription ? 0.75 : 1.5,
 });
 
-/**
- * The heading's line: the title on the left, the group's way out on the right.
- *
- * The two share one inset so the link's right edge lands on the card's content
- * edge, the same edge the row chevrons end on.
- */
+/** The heading's line: the title names the card; its action belongs to its content. */
 const groupHeadingRowSx: SystemStyleObject<Theme> = {
   display: "flex",
   alignItems: "baseline",
-  // The link sits on the heading's line, pushed to the card's far edge. With no
-  // link there is one child and the two ends coincide, so this needs no branch
-  // on whether the group has a way out.
   justifyContent: "space-between",
   gap: 2,
 };
+
+/** The action is a control, so its edge follows the rows' content edge. */
+const groupActionSx: SxProps<Theme> = (theme) => ({
+  marginRight: settingsCardContentInset(theme),
+});
 
 /**
  * The card treatment for a dangerous group: the error colour at a low alpha,
@@ -574,7 +572,7 @@ export const SettingGroup = ({
         >
           {title}
         </Typography>
-        {action}
+        {action && <Box sx={groupActionSx}>{action}</Box>}
       </Box>
       {description && (
         <Typography
