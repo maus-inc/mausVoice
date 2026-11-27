@@ -532,7 +532,15 @@ Three bots touch this repository. Follow these rules.
 
 - CodeRabbit. Do not tag by default. Request `@coderabbitai review` only when the PR is substantially critical. A substantially critical PR includes any of the following: a breaking change, a security fix, a major architecture or protocol change, a new platform support claim, or a change to repo policy or workflow that materially affects future work. The profile that defines what it checks is `.coderabbit.yaml`, and it auto reviews non-draft PRs whose base is `main`. Wait for that automatic review to finish before you report the PR ready.
 - Rate limits and pauses. A bot can pause, or fail a check with a rate-limit message. When that happens, name in your report which bot paused, which check failed, the message text and the time. Then keep polling the other checks and threads without waiting for the bot to resume. Retry the review request when the pause window ends, and record the retry in your report to the human rather than in the pull request description.
-- Kilocode bot. Tag `@kilocode-bot` only to ask a question or to delegate work your sandbox cannot do. Use it for research on blocked hosts, for fetching a file you cannot reach, and for work that needs a network or a tool your sandbox lacks. Write the request so it names the exact files, the exact question and the exact output you need back. Treat its answer as evidence to verify, not as a verdict, and record that answer in the PR as the evidence.
+- Kilocode bot. **A comment cannot start a review, so never post one to try.** Kilo reviews are started by the human, from the Kilo dashboard (`app.kilo.ai`), which is the only place the trigger exists. Two things were tried here and neither works, both recorded on earlier pull requests:
+  - `@kilocode-bot`: on #337 this got the reply "To use Kilo from GitHub you first need to link your GitHub account to Kilo", not a review. The Kilo review on that pull request landed later, after the human started it.
+  - `@kilocode-ai`: not an account on this repository. Nothing answers it.
+
+  What this means for your report: when a Kilo run has not happened for a head you need reviewed, say so and ask the human to start it. Do not claim you triggered it, and do not treat a `skipping` or `failure` check as a review — a failed run with the body `Review failed.` and no findings carries no verdict either way.
+
+  The check to poll is `Kilo Code Review` in `gh pr checks`. A completed run reports `success` or `failure`, and runs take a few minutes to about twenty. When the human says they have started it, poll until the check settles rather than posting anything.
+
+  The one thing a comment is good for here is asking Kilo a question or delegating a fetch your sandbox cannot do, once the account is linked. Write the request so it names the exact files, the exact question and the exact output you need back. Treat the answer as evidence to verify, not as a verdict, and record it in the pull request as evidence.
 - SonarCloud, DeepSource and CodeFactor. They post quality findings rather than reviews. Treat every new issue, hotspot and duplication note as work to do, even when the check itself is not blocking. See the SonarCloud section below for the gate numbers.
 
 PR bot rules (MANDATORY)
