@@ -54,7 +54,7 @@ Everywhere a provider is named (the provider menu on a key form, the key cards, 
 
 ## Shortcuts
 
-- **Hotkey shortcuts** configures the hold-to-dictate, cancel, open chat, add-to-dictionary, Assistant, and manual-style actions. Conditional actions appear only when their feature is active.
+- **Hotkey shortcuts** configures the hold-to-dictate, cancel, open chat, add-to-dictionary, Assistant, and manual-style actions. Two of them belong to Assistant mode: while the switch is off they stay listed and say that the switch is needed. **Open chat** then opens the setting that turns the feature on, while the Assistant hold key stays idle until the switch is on, because a hold gesture is not the place to move someone to another page.
 - **Style hotkeys** binds direct keys to individual writing styles.
 
 ## Appearance

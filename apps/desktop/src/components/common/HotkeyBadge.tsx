@@ -16,7 +16,7 @@ type HotkeyBadgeProps = {
 export const HotkeyBadge = ({
   keys,
   onClick,
-  appearance = "classic",
+  appearance = "3d",
   sx,
 }: HotkeyBadgeProps) => {
   const comboLabel = keys.map(getPrettyKeyName).join(" + ");

@@ -10,7 +10,7 @@ import {
   type ContextMenuItem,
 } from "../common/ContextMenu";
 import { DictionaryRowActions } from "./DictionaryRowActions";
-import { DictionaryTermFields } from "./DictionaryTermFields";
+import { DictionaryTermFields, FieldLineAnchor } from "./DictionaryTermFields";
 import { useDictionaryDraft } from "./use-dictionary-draft";
 import { useDictionaryTermWrites } from "./use-dictionary-term-writes";
 
@@ -71,13 +71,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           }
           ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
         }}
-        sx={{
-          alignItems: "flex-start",
-          py: 1,
-          // Keep both fields aligned when one displays a validation message.
-          "& > svg": { mt: "12px" },
-          "& > .MuiIconButton-root, & > span": { mt: "4px" },
-        }}
+        sx={{ alignItems: "flex-start", py: 1 }}
       >
         <DictionaryTermFields
           draft={draft}
@@ -85,11 +79,13 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           isGlobal={isGlobal}
           onCommit={handleCommit}
         />
-        <DictionaryRowActions
-          isGlobal={isGlobal}
-          termSourceValue={term.sourceValue}
-          onDelete={handleDelete}
-        />
+        <FieldLineAnchor>
+          <DictionaryRowActions
+            isGlobal={isGlobal}
+            termSourceValue={term.sourceValue}
+            onDelete={handleDelete}
+          />
+        </FieldLineAnchor>
       </Stack>
     </>
   );

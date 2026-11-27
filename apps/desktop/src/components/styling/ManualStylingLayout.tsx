@@ -50,14 +50,14 @@ function StylingSubtitle() {
     <HotkeyBadge
       keys={backwardCombos[0]}
       onClick={openShortcuts}
-      sx={{ mx: 0.25 }}
+      sx={{ mx: 0.25, verticalAlign: "middle", transform: "scale(0.8)" }}
     />
   ) : null;
   const forwardHotkey = forwardCombos[0] ? (
     <HotkeyBadge
       keys={forwardCombos[0]}
       onClick={openShortcuts}
-      sx={{ mx: 0.25 }}
+      sx={{ mx: 0.25, verticalAlign: "middle", transform: "scale(0.8)" }}
     />
   ) : null;
 

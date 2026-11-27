@@ -1,0 +1,30 @@
+---
+import { fileURLToPath } from "node:url";
+import sharp from "sharp";
+
+interface Props {
+  id: string;
+  alt: string;
+}
+
+const { id, alt } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const file = fileURLToPath(
+  new URL(`../../../public/guides/${id}.png`, import.meta.url),
+);
+const { width, height } = await sharp(file).metadata();
+if (!width || !height) {
+  throw new Error(`guides/${id}.png has no pixel size`);
+}
+---
+
+<span class="mv-shot">
+  <img
+    src={`${base}/guides/${id}.png`}
+    alt={alt}
+    width={width}
+    height={height}
+    loading="lazy"
+    decoding="async"
+  />
+</span>

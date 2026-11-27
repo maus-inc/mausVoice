@@ -14,12 +14,16 @@ import { produceAppState, useAppStore } from "../../store";
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import { HotkeySetting } from "./HotkeySetting";
-import { DIALOG_SHORTCUTS, SHORTCUT_COPY } from "./shortcut-copy";
+import {
+  DIALOG_SHORTCUTS,
+  SHORTCUT_COPY,
+  shortcutDescription,
+} from "./shortcut-copy";
 
 export const ShortcutsDialog = () => {
   const titleId = useId();
   const descriptionId = useId();
-  const isAssistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
+  const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
   const { open, hotkeysStatus, isManualStyling } = useAppStore((state) => ({
     open: state.settings.shortcutsDialogOpen,
     hotkeysStatus: state.settings.hotkeysStatus,
@@ -48,22 +52,17 @@ export const ShortcutsDialog = () => {
       );
     }
 
-    // The one key here that is conditional on a mode rather than always
-    // present: with assistant mode off there is no agent session to dictate
-    // into, so the row would offer a key that does nothing.
-    const rows = DIALOG_SHORTCUTS.filter(
-      (row) =>
-        isAssistantModeEnabled ||
-        row.action !== SHORTCUT_COPY.assistantDictate.action,
-    );
-
+    // Every key stays listed. An assistant key pressed while the feature is
+    // off opens the setting that turns it on, so hiding the row would hide the
+    // one place that says so, and someone who already bound the key would have
+    // no way back to it.
     return (
       <Stack spacing={3}>
-        {rows.map((row) => (
+        {DIALOG_SHORTCUTS.map((row) => (
           <HotkeySetting
             key={row.action}
             title={row.title}
-            description={row.description}
+            description={shortcutDescription(row, { assistantModeEnabled })}
             actionName={row.action}
           />
         ))}

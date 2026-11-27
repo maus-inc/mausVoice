@@ -21,6 +21,16 @@ export const settingsPagePath = (page: SettingsPageId): string =>
   `${SETTINGS_BASE_PATH}/${page}`;
 
 /**
+ * The Assistant mode row, as an address.
+ *
+ * One string, because more than one surface now leads there: the onboarding
+ * tip, an assistant-only shortcut fired while the feature is off, and the
+ * toast the voice assistant shows when it is disabled. A hand-built duplicate
+ * is how the Help page's action ended up pointing at a feature that was off.
+ */
+export const ASSISTANT_MODE_SETTINGS_PATH = `${settingsPagePath("ai-models")}#${settingAnchorId("assistant_mode")}`;
+
+/**
  * Old `?section=` deep links, from when the whole surface was one page. Each
  * old section maps to the page that inherited most of its rows, so a stored
  * link still lands somewhere useful instead of dropping to the default page.
