@@ -1,0 +1,482 @@
+[
+  {
+    "theme": "light",
+    "route": "#/",
+    "problems": [],
+    "textLength": 6030
+  },
+  {
+    "theme": "light",
+    "route": "#/c/color",
+    "problems": [],
+    "textLength": 6338
+  },
+  {
+    "theme": "light",
+    "route": "#/c/typography",
+    "problems": [],
+    "textLength": 4211
+  },
+  {
+    "theme": "light",
+    "route": "#/c/elevation",
+    "problems": [],
+    "textLength": 4585
+  },
+  {
+    "theme": "light",
+    "route": "#/c/motion",
+    "problems": [],
+    "textLength": 5707
+  },
+  {
+    "theme": "light",
+    "route": "#/c/animate",
+    "problems": [],
+    "textLength": 3768
+  },
+  {
+    "theme": "light",
+    "route": "#/c/button",
+    "problems": [],
+    "textLength": 4062
+  },
+  {
+    "theme": "light",
+    "route": "#/c/icon-button",
+    "problems": [],
+    "textLength": 2892
+  },
+  {
+    "theme": "light",
+    "route": "#/c/fab",
+    "problems": [],
+    "textLength": 3799
+  },
+  {
+    "theme": "light",
+    "route": "#/c/switch",
+    "problems": [],
+    "textLength": 2842
+  },
+  {
+    "theme": "light",
+    "route": "#/c/slider",
+    "problems": [],
+    "textLength": 3868
+  },
+  {
+    "theme": "light",
+    "route": "#/c/segmented",
+    "problems": [],
+    "textLength": 3900
+  },
+  {
+    "theme": "light",
+    "route": "#/c/text-field",
+    "problems": [],
+    "textLength": 3460
+  },
+  {
+    "theme": "light",
+    "route": "#/c/hotkey-badge",
+    "problems": [],
+    "textLength": 4966
+  },
+  {
+    "theme": "light",
+    "route": "#/c/hotkey-recorder",
+    "problems": [],
+    "textLength": 4114
+  },
+  {
+    "theme": "light",
+    "route": "#/c/dialog",
+    "problems": [],
+    "textLength": 3232
+  },
+  {
+    "theme": "light",
+    "route": "#/c/confirm-dialog",
+    "problems": [],
+    "textLength": 3453
+  },
+  {
+    "theme": "light",
+    "route": "#/c/popover-menu",
+    "problems": [],
+    "textLength": 4390
+  },
+  {
+    "theme": "light",
+    "route": "#/c/context-menu",
+    "problems": [],
+    "textLength": 4297
+  },
+  {
+    "theme": "light",
+    "route": "#/c/tooltip",
+    "problems": [],
+    "textLength": 4563
+  },
+  {
+    "theme": "light",
+    "route": "#/c/snackbar",
+    "problems": [],
+    "textLength": 4299
+  },
+  {
+    "theme": "light",
+    "route": "#/c/feedback",
+    "problems": [],
+    "textLength": 3556
+  },
+  {
+    "theme": "light",
+    "route": "#/c/card-paper",
+    "problems": [],
+    "textLength": 3273
+  },
+  {
+    "theme": "light",
+    "route": "#/c/list-tile",
+    "problems": [],
+    "textLength": 4416
+  },
+  {
+    "theme": "light",
+    "route": "#/c/table",
+    "problems": [],
+    "textLength": 2971
+  },
+  {
+    "theme": "light",
+    "route": "#/c/accordion",
+    "problems": [],
+    "textLength": 2784
+  },
+  {
+    "theme": "light",
+    "route": "#/c/stepper",
+    "problems": [],
+    "textLength": 3065
+  },
+  {
+    "theme": "light",
+    "route": "#/c/typography-helpers",
+    "problems": [],
+    "textLength": 4308
+  },
+  {
+    "theme": "light",
+    "route": "#/c/waveform",
+    "problems": [],
+    "textLength": 3317
+  },
+  {
+    "theme": "light",
+    "route": "#/c/logo",
+    "problems": [],
+    "textLength": 2719
+  },
+  {
+    "theme": "light",
+    "route": "#/c/dashboard-menu",
+    "problems": [],
+    "textLength": 4277
+  },
+  {
+    "theme": "light",
+    "route": "#/c/morph-icon",
+    "problems": [],
+    "textLength": 2936
+  },
+  {
+    "theme": "light",
+    "route": "#/c/layout",
+    "problems": [],
+    "textLength": 6456
+  },
+  {
+    "theme": "light",
+    "route": "#/c/titlebar",
+    "problems": [],
+    "textLength": 4758
+  },
+  {
+    "theme": "light",
+    "route": "#/c/native-pill",
+    "problems": [],
+    "textLength": 5904
+  },
+  {
+    "theme": "light",
+    "route": "#/c/assistant-panel",
+    "problems": [],
+    "textLength": 4556
+  },
+  {
+    "theme": "light",
+    "route": "#/c/audio-player-pill",
+    "problems": [],
+    "textLength": 4251
+  },
+  {
+    "theme": "light",
+    "route": "#/c/tool-permission",
+    "problems": [],
+    "textLength": 4341
+  },
+  {
+    "theme": "light",
+    "route": "#/c/tone-select",
+    "problems": [],
+    "textLength": 4122
+  },
+  {
+    "theme": "light",
+    "route": "#/c/mic-check",
+    "problems": [],
+    "textLength": 4279
+  },
+  {
+    "theme": "dark",
+    "route": "#/",
+    "problems": [],
+    "textLength": 6030
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/color",
+    "problems": [],
+    "textLength": 6337
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/typography",
+    "problems": [],
+    "textLength": 4211
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/elevation",
+    "problems": [],
+    "textLength": 4585
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/motion",
+    "problems": [],
+    "textLength": 5707
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/animate",
+    "problems": [],
+    "textLength": 3768
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/button",
+    "problems": [],
+    "textLength": 4062
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/icon-button",
+    "problems": [],
+    "textLength": 2892
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/fab",
+    "problems": [],
+    "textLength": 3799
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/switch",
+    "problems": [],
+    "textLength": 2842
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/slider",
+    "problems": [],
+    "textLength": 3868
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/segmented",
+    "problems": [],
+    "textLength": 3900
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/text-field",
+    "problems": [],
+    "textLength": 3460
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/hotkey-badge",
+    "problems": [],
+    "textLength": 4966
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/hotkey-recorder",
+    "problems": [],
+    "textLength": 4114
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/dialog",
+    "problems": [],
+    "textLength": 3232
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/confirm-dialog",
+    "problems": [],
+    "textLength": 3453
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/popover-menu",
+    "problems": [],
+    "textLength": 4390
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/context-menu",
+    "problems": [],
+    "textLength": 4297
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/tooltip",
+    "problems": [],
+    "textLength": 4563
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/snackbar",
+    "problems": [],
+    "textLength": 4299
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/feedback",
+    "problems": [],
+    "textLength": 3556
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/card-paper",
+    "problems": [],
+    "textLength": 3273
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/list-tile",
+    "problems": [],
+    "textLength": 4416
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/table",
+    "problems": [],
+    "textLength": 2971
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/accordion",
+    "problems": [],
+    "textLength": 2784
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/stepper",
+    "problems": [],
+    "textLength": 3065
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/typography-helpers",
+    "problems": [],
+    "textLength": 4308
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/waveform",
+    "problems": [],
+    "textLength": 3317
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/logo",
+    "problems": [],
+    "textLength": 2719
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/dashboard-menu",
+    "problems": [],
+    "textLength": 4277
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/morph-icon",
+    "problems": [],
+    "textLength": 2936
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/layout",
+    "problems": [],
+    "textLength": 6456
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/titlebar",
+    "problems": [],
+    "textLength": 4758
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/native-pill",
+    "problems": [],
+    "textLength": 5904
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/assistant-panel",
+    "problems": [],
+    "textLength": 4556
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/audio-player-pill",
+    "problems": [],
+    "textLength": 4251
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/tool-permission",
+    "problems": [],
+    "textLength": 4341
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/tone-select",
+    "problems": [],
+    "textLength": 4122
+  },
+  {
+    "theme": "dark",
+    "route": "#/c/mic-check",
+    "problems": [],
+    "textLength": 4279
+  }
+]
