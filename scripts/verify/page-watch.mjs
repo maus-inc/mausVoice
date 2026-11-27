@@ -8,12 +8,38 @@
  *
  * Usage:
  *
- *   const { consoleErrors, failedRequests } = watchPage(page);
+ *   const { consoleErrors, failedRequests, unexpectedFailedRequests } =
+ *     watchPage(page);
  *   await page.send("Network.enable");
  *
  * `Network.enable` stays with the caller, because a probe that enables it has
  * to do so before the navigation it wants to watch.
  */
+const isSupersededNavigationCancel = (params, request, currentLoaderId) =>
+  Boolean(
+    params.canceled &&
+    request?.loaderId &&
+    currentLoaderId &&
+    request.loaderId !== currentLoaderId,
+  );
+
+const toRequestRecord = (params) => ({
+  loaderId: params.loaderId ?? null,
+  url: params.request?.url ?? null,
+  type: params.type ?? null,
+});
+
+const toFailureRecord = (params, request) => ({
+  url: request?.url ?? null,
+  type: params.type ?? request?.type ?? null,
+  errorText: params.errorText,
+  canceled: Boolean(params.canceled),
+});
+
+const isMainDocument = (params, mainFrameId) =>
+  params.type === "Document" &&
+  (!mainFrameId || params.frameId === mainFrameId);
+
 export const watchPage = (page) => {
   const consoleErrors = [];
   page.on("Runtime.consoleAPICalled", (params) => {
@@ -24,9 +50,36 @@ export const watchPage = (page) => {
   });
 
   const failedRequests = [];
-  page.on("Network.loadingFailed", (params) =>
-    failedRequests.push(params.errorText),
-  );
+  const unexpectedFailedRequests = [];
+  const requests = new Map();
+  let mainFrameId = null;
+  let currentLoaderId = null;
 
-  return { consoleErrors, failedRequests };
+  page.on("Page.frameNavigated", (params) => {
+    if (params.frame?.parentId) return;
+    mainFrameId = params.frame?.id ?? mainFrameId;
+    currentLoaderId = params.frame?.loaderId ?? currentLoaderId;
+  });
+
+  page.on("Network.requestWillBeSent", (params) => {
+    if (isMainDocument(params, mainFrameId) && params.loaderId) {
+      mainFrameId = mainFrameId ?? params.frameId ?? null;
+      currentLoaderId = params.loaderId;
+    }
+    requests.set(params.requestId, toRequestRecord(params));
+  });
+
+  page.on("Network.loadingFinished", (params) => {
+    requests.delete(params.requestId);
+  });
+
+  page.on("Network.loadingFailed", (params) => {
+    const request = requests.get(params.requestId);
+    requests.delete(params.requestId);
+    failedRequests.push(params.errorText);
+    if (isSupersededNavigationCancel(params, request, currentLoaderId)) return;
+    unexpectedFailedRequests.push(toFailureRecord(params, request));
+  });
+
+  return { consoleErrors, failedRequests, unexpectedFailedRequests };
 };

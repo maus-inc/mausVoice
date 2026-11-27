@@ -17,8 +17,6 @@ const ASSISTANT_EXPECTATIONS = {
   },
 };
 
-const isUnexpectedFailure = (errorText) => errorText !== "net::ERR_ABORTED";
-
 const failures = [];
 const check = (label, ok, detail = "") => {
   const suffix = detail ? `: ${detail}` : "";
@@ -290,7 +288,7 @@ const runClickProbe = async () => {
   let page;
   try {
     page = await newPage(browser.port);
-    const { consoleErrors, failedRequests } = watchPage(page);
+    const { consoleErrors, unexpectedFailedRequests } = watchPage(page);
     await page.send("Network.enable");
 
     for (const theme of ["light", "dark"]) {
@@ -303,7 +301,6 @@ const runClickProbe = async () => {
       await verifyViewportStressAndRtl(page, theme);
     }
 
-    const unexpectedFailed = failedRequests.filter(isUnexpectedFailure);
     check(
       "Zero console errors",
       consoleErrors.length === 0,
@@ -311,8 +308,8 @@ const runClickProbe = async () => {
     );
     check(
       "Zero unexpected failed requests",
-      unexpectedFailed.length === 0,
-      JSON.stringify(unexpectedFailed),
+      unexpectedFailedRequests.length === 0,
+      JSON.stringify(unexpectedFailedRequests),
     );
   } finally {
     page?.close();

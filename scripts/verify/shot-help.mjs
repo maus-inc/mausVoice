@@ -61,8 +61,6 @@ const contrastRatio = (fgCss, bgCss, canvasCss) => {
 
 const roundRatio = (value) => Math.round(value * 100) / 100;
 
-const isUnexpectedFailure = (errorText) => errorText !== "net::ERR_ABORTED";
-
 const MEASURE_EXPR = `(() => {
   const round = (n) => Math.round(n * 10) / 10;
   const rectOf = (el) => {
@@ -391,7 +389,8 @@ const runSweep = async () => {
   let page;
   try {
     page = await newPage(browser.port);
-    const { consoleErrors, failedRequests } = watchPage(page);
+    const { consoleErrors, failedRequests, unexpectedFailedRequests } =
+      watchPage(page);
     await page.send("Network.enable");
 
     const report = {
@@ -402,16 +401,13 @@ const runSweep = async () => {
       problems,
       consoleErrors,
       failedRequests,
-      unexpectedFailedRequests: [],
+      unexpectedFailedRequests,
     };
 
     for (const size of SIZES) {
       await captureHelpViewport(page, size, report, note);
     }
     await captureLiveTip(page, note);
-
-    const unexpectedFailed = failedRequests.filter(isUnexpectedFailure);
-    report.unexpectedFailedRequests = unexpectedFailed;
 
     const suffix = THEME === "dark" ? "-dark" : "";
     const reportPath = `${OUT}/${PREFIX}-layout${suffix}.json`;
@@ -421,10 +417,12 @@ const runSweep = async () => {
     console.log("FAILED_REQUESTS:", JSON.stringify(failedRequests));
     console.log(
       "UNEXPECTED_FAILED_REQUESTS:",
-      JSON.stringify(unexpectedFailed),
+      JSON.stringify(unexpectedFailedRequests),
     );
     console.log("PROBLEMS:", JSON.stringify(problems, null, 2));
-    return problems.length + consoleErrors.length + unexpectedFailed.length;
+    return (
+      problems.length + consoleErrors.length + unexpectedFailedRequests.length
+    );
   } finally {
     page?.close();
     browser.cleanup();
