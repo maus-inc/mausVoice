@@ -1,3 +1,10 @@
+import {
+  Locate,
+  Monitor,
+  PanelTop,
+  PartyPopper,
+  AppWindow,
+} from "lucide-react";
 import type {
   DictationPillVisibility,
   PillLocateGestureModifier,
@@ -22,6 +29,7 @@ import { PillLocateModifierSetting } from "../PillLocateModifierSetting";
 import { PillPlacementSetting } from "../PillPlacementSetting";
 import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
 import { useSettingsAvailability } from "../settings-availability";
+import { settingGlyphProps } from "../setting-row-chassis";
 
 export default function AppearanceSettingsPage() {
   const intl = useIntl();
@@ -88,6 +96,7 @@ export default function AppearanceSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Persistent keeps the pill on screen, While active shows it only during a recording, and Hidden removes it entirely." />
           }
+          icon={<AppWindow {...settingGlyphProps} />}
           control={
             <SegmentedControl<DictationPillVisibility>
               value={pillVisibility}
@@ -126,6 +135,7 @@ export default function AppearanceSettingsPage() {
             description={
               <FormattedMessage defaultMessage="Double-tap the chosen key to briefly highlight the current position of the mausVoice pill." />
             }
+            icon={<Locate {...settingGlyphProps} />}
             control={
               <PillLocateModifierSetting
                 value={pillLocateGestureModifier}
@@ -143,6 +153,7 @@ export default function AppearanceSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Which screen the pill returns to when you reset its position from the tray. This does not move it now." />
           }
+          icon={<Monitor {...settingGlyphProps} />}
           control={
             <SegmentedControl<PillResetMonitorStrategy>
               value={pillResetMonitorStrategy}
@@ -176,6 +187,7 @@ export default function AppearanceSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Keeps the mausVoice icon in the menu bar. Leave another way to open the app before hiding it." />
           }
+          icon={<PanelTop {...settingGlyphProps} />}
           checked={!menuBarIconHidden}
           onChange={handleToggleMenuBarIcon}
         />
@@ -188,6 +200,7 @@ export default function AppearanceSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Flame and firework animations on the pill when you hit a streak milestone." />
           }
+          icon={<PartyPopper {...settingGlyphProps} />}
           checked={!disablePillRewards}
           onChange={handleTogglePillRewards}
         />

@@ -23,6 +23,37 @@ two never drift apart.
   imitates a third-party UI (for example the Notes/Gmail mock-ups in
   `TutorialForm`). Comment why.
 
+## Icons
+
+- **One family: lucide at stroke 1.9.** MUI icons survive only inside the
+  sanctioned third-party mock-ups. A Material glyph next to a lucide glyph in
+  the same pane is the defect this rule exists to catch, and it is visible
+  without measuring anything. The settings surface is held to this end to end,
+  dialogs and pickers included, by `settings-row-icon-coverage.test.ts`.
+- **One size per context.** 22px for the glyphs that lead rows and rail items
+  (spread from the shared `settingGlyphProps`/rail constants, never a per-call
+  literal), 20px for chevrons, 18px for a mark inside an action pill, and 16px
+  for the settings search field's magnifier (`settingSearchGlyphProps`) or a
+  mark inside body copy. Provider marks are brand artwork via `ProviderLogo`,
+  at the same 22px box. One stroke everywhere: 1.9, from the shared props.
+  Lucide's own default is 2, so a glyph that omits `strokeWidth` is a defect
+  even when its size is right, and `settings-row-icon-coverage.test.ts` reads
+  every imported lucide element in the folder to catch one.
+- **Settings rows all lead with a glyph**, on `SettingRow` and
+  `SettingToggleRow` alike, in one lane whose width has a floor of the glyph
+  size, so titles align. Two marks are identity rather than icon and are the
+  standing exceptions: a provider's own artwork via `ProviderLogo`, and the
+  person's avatar. A wider mark widens its own lane rather than being centred
+  through its neighbours; centring it in a fixed 22px lane left a 48px avatar
+  3px from the card edge and 3px from its title. Glyphs are `aria-hidden`, and
+  so is a mark inside an action pill; the accessible name is the title plus,
+  for a pill, its verb. Colour is `text.secondary`, lifted to `error.main` only
+  for a destructive row.
+- **No icon tiles.** A neutral glyph never sits on a filled square, and no
+  glyph is tinted to carry emphasis that belongs to the title or the control.
+- Rows whose leading content is a key (the hotkey chips in the shortcuts
+  summary and dialog) are not settings and stay iconless.
+
 ## Interactive states
 
 Everything interactive ships all of: default, hover, **focus-visible**, active,
@@ -90,3 +121,5 @@ in agreement:
    themes, and every line that would print (`tight inset:`, `fat row:`, `empty pane:`,
    `mixed icons:`, `anchor drift:` and the rest) fixed or explained with the state it
    was seen in. Applies to the React UI, the native pill and any picture of either.
+7. Every row you added or edited in Settings leads with a lucide glyph from the
+   shared props, in the shared lane, with no tile behind it.

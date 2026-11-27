@@ -241,6 +241,55 @@ choice below names what it rules out.
   treated as a control, never substituted by a lucide glyph — see
   `docs/decisions/provider-logos-are-brand-colour-not-lucide-glyphs.md`.
 
+### Settings rows
+
+- Every row that a page anchors has a leading glyph: `SettingRow` and
+  `SettingToggleRow` both take `icon`, and the glyph names the kind of thing
+  the row controls (a microphone, a language, a spend ceiling). Rows that
+  simply hold a value or a switch follow the same rule, because a section
+  where half the rows lead with a mark reads as two half-built lists.
+- One size and one stroke, both spread from `settingGlyphProps` in
+  `setting-row-chassis.tsx` (22px, stroke 1.9). Never a per-row literal, and
+  never a different family: a Material magnifier beside a lucide microphone is
+  visible in the same eyeful.
+- The family rule covers the whole settings surface, not only the rows: a row
+  can lead with a lucide glyph and open a dialog full of Material ones, which is
+  one pane to the person who opened it. Every authored glyph under
+  `components/settings/` is lucide, dialogs, pickers, hotkey controls and the
+  photo well included, and `settings-row-icon-coverage.test.ts` fails on a
+  Material import anywhere in that folder. Library chrome that MUI draws for its
+  own controls — the `Select` dropdown arrow, for one — is one shape in the
+  theme rather than a per-surface choice, so it is not a settings icon and this
+  rule does not reach it.
+- The magnifier inside the settings search field is the one non-row glyph:
+  `settingSearchGlyphProps`, 16px at the same stroke. It is declared beside the
+  row props so the two sizes are read together.
+- The glyph sits in a lane with a `minWidth` of the glyph size
+  (`leadingGlyphSx`), so every glyph row measures 22px and the titles share one
+  edge. The floor is deliberately not a fixed `width`: a fixed lane centres the
+  one mark that is wider than it — the identity avatar — through both of its
+  neighbours, which left the 48px picture reaching 13px into the 16px gutter,
+  3px of air against its own title and 3px from the card edge. Measured on the
+  account page, that read as a crammed row. A wider mark gets a lane of its own
+  and both gutters stay at 16px; the trade is that this one title starts 26px
+  right of its neighbours, which is the honest consequence of a 48px avatar
+  rather than a spacing bug. The mark's `flexShrink` is off so it is never
+  squeezed, so do not pad individual titles to fake alignment either.
+- Glyphs are `aria-hidden` decoration. A row's accessible name is its title,
+  its description is the description, and neither ever includes the mark.
+- Colour is `text.secondary`, or `text.secondary` lifted to `error.main` on a
+  destructive row (`iconTone="danger"`). One glyph colour per scheme; no brand
+  hues, no badges, no gradients.
+- No tiles. A neutral glyph does not get a filled square behind it, and an
+  overdue update does not tint one. Emphasis belongs to the title and to the
+  control.
+- An action pill spells its verb instead of showing a chevron. Where a glyph
+  makes the verb faster to read it takes one at 18px, the size the app's own
+  buttons give `startIcon`; verbs that are unambiguous without a mark keep none.
+- Icons that carry a key rather than a setting are outside this rule: the
+  hotkey chips in the shortcuts card and its dialog summarise keys, not
+  settings, so they stay iconless.
+
 ## Dates
 
 - Display: Intl.DateTimeFormat(undefined, {dateStyle, timeStyle}). No dayjs format strings.
