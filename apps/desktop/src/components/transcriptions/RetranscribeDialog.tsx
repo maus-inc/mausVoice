@@ -69,7 +69,10 @@ const resolveToneId = (
   tones[0]?.id ??
   null;
 
-const useRetranscribeSelection = (open: boolean) => {
+const useRetranscribeSelection = (
+  open: boolean,
+  transcriptionId: string | null,
+) => {
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
   const tones = useAppStore((state) => {
     const toneIds = getSortedToneIds(state);
@@ -83,18 +86,19 @@ const useRetranscribeSelection = (open: boolean) => {
       toSelectableDictationLanguage(defaultLanguage),
     );
   const [selectionSession, setSelectionSession] = useState<{
+    transcriptionId: string;
     defaultToneId: string | null;
   } | null>(null);
 
   useEffect(() => {
-    if (!open) {
+    if (!open || transcriptionId === null) {
       if (selectionSession !== null) setSelectionSession(null);
       return;
     }
 
-    if (selectionSession === null) {
+    if (selectionSession?.transcriptionId !== transcriptionId) {
       const defaultToneId = tones[0]?.id ?? null;
-      setSelectionSession({ defaultToneId });
+      setSelectionSession({ transcriptionId, defaultToneId });
       setSelectedToneId(defaultToneId);
       setSelectedLanguage(toSelectableDictationLanguage(defaultLanguage));
       return;
@@ -108,21 +112,26 @@ const useRetranscribeSelection = (open: boolean) => {
     if (resolvedToneId !== selectedToneId) {
       setSelectedToneId(resolvedToneId);
     }
-  }, [open, defaultLanguage, tones, selectedToneId, selectionSession]);
+  }, [
+    open,
+    transcriptionId,
+    defaultLanguage,
+    tones,
+    selectedToneId,
+    selectionSession,
+  ]);
 
-  const resolvedLanguage =
-    open && selectionSession === null
-      ? toSelectableDictationLanguage(defaultLanguage)
-      : selectedLanguage;
+  const isCurrentSession =
+    open &&
+    transcriptionId !== null &&
+    selectionSession?.transcriptionId === transcriptionId;
+  const resolvedLanguage = isCurrentSession
+    ? selectedLanguage
+    : toSelectableDictationLanguage(defaultLanguage);
 
-  const resolvedToneId =
-    open && selectionSession === null
-      ? (tones[0]?.id ?? null)
-      : resolveToneId(
-          tones,
-          selectedToneId,
-          selectionSession?.defaultToneId ?? null,
-        );
+  const resolvedToneId = isCurrentSession
+    ? resolveToneId(tones, selectedToneId, selectionSession.defaultToneId)
+    : (tones[0]?.id ?? null);
 
   return {
     tones,
@@ -156,7 +165,7 @@ export const RetranscribeDialog = () => {
     setSelectedToneId,
     selectedLanguage,
     setSelectedLanguage,
-  } = useRetranscribeSelection(open);
+  } = useRetranscribeSelection(open, transcriptionId);
 
   const handleClose = useCallback(() => {
     closeRetranscribeDialog();
