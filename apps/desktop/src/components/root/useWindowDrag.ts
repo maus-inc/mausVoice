@@ -33,6 +33,15 @@ type TauriWindow = ReturnType<typeof getCurrentWindow>;
  */
 const DRAG_START_DISTANCE_PX = 4;
 
+/**
+ * Upper bound in ms on waiting for the restored window to report its new size.
+ *
+ * A restore lands within a frame or two on every platform this ships on, so this
+ * only fires when no resize event is coming at all. It is a fallback for a
+ * missing signal, not the ordering guarantee itself, which is the event.
+ */
+const RESTORE_SETTLE_TIMEOUT_MS = 500;
+
 const isPrimaryButtonHeld = (buttons: number): boolean => (buttons & 1) !== 0;
 
 const isWithinDragThreshold = (
@@ -78,6 +87,40 @@ const readGrab = async (
     return null;
   }
 };
+
+/**
+ * Settles once the restore has actually changed the window, bounded by a
+ * timeout.
+ *
+ * `unmaximize()` resolving is not proof that the window is restored. On Windows
+ * `tao` posts `set_maximized(false)` to the event-loop thread, so the command
+ * returns while the resize is still queued, and reading the size straight after
+ * it can still return the maximized geometry. The resize event is the
+ * observable that says the window now has its restored size; the timeout is
+ * there only so a platform that never emits one cannot strand the gesture.
+ */
+const waitForRestore = (win: TauriWindow): Promise<void> =>
+  new Promise((resolve) => {
+    let settled = false;
+    let unsubscribe: (() => void) | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      unsubscribe?.();
+      resolve();
+    };
+    const timeoutId = window.setTimeout(finish, RESTORE_SETTLE_TIMEOUT_MS);
+    win
+      .onResized(finish)
+      .then((stop) => {
+        // The resize can arrive before the listener is registered; drop the
+        // subscription rather than leaving a listener behind on that path.
+        if (settled) stop();
+        else unsubscribe = stop;
+      })
+      .catch(finish);
+  });
 
 const readRestoreTarget = async (
   win: TauriWindow,
@@ -135,6 +178,7 @@ const restoreAndDrag = async (win: TauriWindow, press: DragPoint) => {
       return;
     }
     await win.unmaximize();
+    await waitForRestore(win);
     const target = await readRestoreTarget(win, grab);
     if (target !== null) {
       await win.setPosition(new LogicalPosition(target.x, target.y));

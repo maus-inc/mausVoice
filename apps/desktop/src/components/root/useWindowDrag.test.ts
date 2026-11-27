@@ -25,6 +25,13 @@ const { platformState, windowMocks, showError } = vi.hoisted(() => ({
     setPosition: vi.fn((_position: { x: number; y: number }) =>
       Promise.resolve(undefined),
     ),
+    // The default fires the resize at once, so a test that is not about the
+    // wait does not have to drive it. The one test that is about the wait
+    // replaces this with a handler it controls.
+    onResized: vi.fn((handler: () => void): Promise<() => void> => {
+      handler();
+      return Promise.resolve(() => undefined);
+    }),
     // The pointer arrives in physical pixels, so the placement scales it back
     // to the logical space the size was read in.
     scaleFactor: vi.fn(() => Promise.resolve(1)),
@@ -95,6 +102,13 @@ const press = async (
   });
 };
 
+/**
+ * Dispatches a real `mousemove` and drains the restore chain it starts.
+ *
+ * The chain is four awaited Tauri calls deep, so a fixed number of microtask
+ * turns would depend on how many of them each fake resolves through. A
+ * macrotask flushes all of them and is what a browser would deliver anyway.
+ */
 const move = async (buttons: number, x: number, y: number) => {
   await act(async () => {
     window.dispatchEvent(
@@ -105,15 +119,22 @@ const move = async (buttons: number, x: number, y: number) => {
         clientY: y,
       }),
     );
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
   });
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` drops call history but not a `mockImplementation`, so each
+  // fake is given back the behaviour it starts with. Without this, the test
+  // that controls the resize event leaks its controller into the next one.
+  windowMocks.onResized.mockImplementation(
+    (handler: () => void): Promise<() => void> => {
+      handler();
+      return Promise.resolve(() => undefined);
+    },
+  );
+  windowMocks.unmaximize.mockImplementation(() => Promise.resolve(undefined));
   platformState.value = "windows";
   platformState.native = true;
   windowMocks.innerSize.mockResolvedValue({ width: 1920, height: 1040 });
@@ -153,6 +174,51 @@ describe("Windows drag-to-restore", () => {
     const [placed] = windowMocks.setPosition.mock.calls[0];
     expect({ x: placed.x, y: placed.y }).toEqual({
       x: 400 - (400 / 1920) * 1920,
+      y: 300 - 20,
+    });
+  });
+
+  it("waits for the restored size before placing the window", async () => {
+    // `unmaximize()` resolving is not proof of the restore: on Windows `tao`
+    // posts the resize to the event-loop thread, so a size read straight after
+    // it can still be the maximized geometry. The window here keeps reporting
+    // full-screen size until the resize event arrives, exactly like that race.
+    let restored = false;
+    let fireResize: (() => void) | null = null;
+    windowMocks.onResized.mockImplementation(
+      (handler: () => void) =>
+        new Promise<() => void>((resolve) => {
+          fireResize = handler;
+          resolve(() => undefined);
+        }),
+    );
+    windowMocks.innerSize.mockImplementation(() =>
+      Promise.resolve(
+        restored ? { width: 800, height: 600 } : { width: 1920, height: 1040 },
+      ),
+    );
+    windowMocks.unmaximize.mockImplementation(() => {
+      restored = true;
+      return Promise.resolve(undefined);
+    });
+    windowMocks.cursorPosition.mockResolvedValue({ x: 400, y: 300 });
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 480, y: 20 });
+
+    await move(1, 480, 60);
+    expect(windowMocks.setPosition).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireResize?.();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    const [placed] = windowMocks.setPosition.mock.calls[0];
+    // The fraction came from the maximized width (480 / 1920), and it is
+    // applied to the restored one, which is only correct if the placement
+    // waited for the resize.
+    expect({ x: placed.x, y: placed.y }).toEqual({
+      x: 400 - (480 / 1920) * 800,
       y: 300 - 20,
     });
   });

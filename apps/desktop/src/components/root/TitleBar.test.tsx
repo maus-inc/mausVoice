@@ -22,7 +22,9 @@ const { platformState, windowMocks, focusHandlers, showError } = vi.hoisted(
       startDragging: vi.fn(() => Promise.resolve()),
       isMaximized: vi.fn(() => Promise.resolve(false)),
       isMinimized: vi.fn(() => Promise.resolve(false)),
-      onResized: vi.fn((): Promise<() => void> => Promise.resolve(vi.fn())),
+      onResized: vi.fn((_handler: () => void): Promise<() => void> =>
+        Promise.resolve(vi.fn()),
+      ),
       outerSize: vi.fn(() => Promise.resolve({ width: 1280, height: 800 })),
       innerSize: vi.fn((): Promise<{ width: number; height: number }> =>
         windowMocks.outerSize(),
@@ -506,6 +508,18 @@ describe("TitleBar drag-to-restore on a maximized window", () => {
   beforeEach(() => {
     platformState.value = "windows";
     windowMocks.isMaximized.mockResolvedValue(true);
+    // The default fakes settle the restore at once; the wait for the restored
+    // size is covered on its own in `useWindowDrag.test.ts`.
+    windowMocks.onResized.mockImplementation(
+      (handler: () => void): Promise<() => void> => {
+        // Fire before, not after, the resize lands in the window metrics, so
+        // the restore's wait sees the same event the density code does. The
+        // hook only needs the event to have happened; the placement then reads
+        // the size the fake reports.
+        handler();
+        return Promise.resolve(() => undefined);
+      },
+    );
   });
 
   it("restores the window and keeps the drag when the bar is dragged down", async () => {
@@ -533,10 +547,7 @@ describe("TitleBar drag-to-restore on a maximized window", () => {
           clientY: 60,
         }),
       );
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
     });
 
     // One restore, one placement derived from the grab point, and the OS then

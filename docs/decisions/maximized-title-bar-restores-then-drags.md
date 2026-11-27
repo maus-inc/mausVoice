@@ -14,7 +14,7 @@ Two behaviours in the current bar make it worse. Tauri's injected `drag.js` star
 When the deferred drag commits and the window was maximized at the press, the renderer measures the grab point, unmaximizes, places the restored window under the pointer, and then starts the OS move.
 
 - The grab point is read on the maximized window, as a fraction of its width and a pixel offset from its top. A fraction, because the restored window is narrower and the press has to keep its place along the bar.
-- The placement is read after the restore, at the restored size, from `cursorPosition` scaled to logical pixels, and clamped so the bar never goes above the top of the work area.
+- The placement is read after the restore, at the restored size, from `cursorPosition` scaled to logical pixels, and clamped so the bar never goes above the top of the work area. The wait is the `onResized` event, not the `unmaximize` promise: `tao` posts `set_maximized(false)` to its event-loop thread, so that promise resolves while the resize is still queued and a size read straight after it can return the maximized geometry. The event is bounded by a 500ms timeout so a platform that never emits one cannot strand the gesture.
 - Only then does `startDragging()` run, so the OS move loop continues from a window already under the pointer.
 
 The decision lives in `apps/desktop/src/components/root/useWindowDrag.ts`, with the arithmetic in `apps/desktop/src/utils/window-drag.utils.ts` so it can be tested without a window. macOS is untouched: AppKit restores a zoomed window with `performWindowDragWithEvent:` and keeps it under the pointer itself.
