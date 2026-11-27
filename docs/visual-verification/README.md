@@ -78,6 +78,17 @@ cover, such as a dashboard route reached only through the mocked desktop app.
 The documented pattern, from that record: a `/tmp` directory outside the repository,
 `puppeteer-core` plus one Chromium payload, and a script that walks the routes.
 
+The repository's own installer is the shortest path, and it needs no download host:
+`@sparticuz/chromium` is on npm, carries a brotli-compressed browser plus its shared
+libraries, and resolves from the npm cache when the machine already has one.
+
+```bash
+node scripts/verify/install-chromium.mjs --dir /tmp/chr
+# prints CHROMIUM_PATH and LD_LIBRARY_PATH; the verify scripts read /tmp/chr directly
+```
+
+The manually staged `/tmp` route below is the fallback for a host where that fails:
+
 ```bash
 mkdir -p /tmp/shot /tmp/shots && cd /tmp/shot
 npm init -y
@@ -155,6 +166,37 @@ Three rules for the capture itself:
 When a capture cannot run, say so plainly and name the gap from
 `engineering/sandbox-coverage-gaps.md`. Never attach a recording you did not watch, and
 never describe a capture you did not make.
+
+### Get both sides of a pair from two real trees
+
+A before/after pair is worth only as much as the "before" is real. A frame produced by
+switching old CSS off in one browser is a claim about what the old code would have drawn,
+not what it drew. Build the base instead:
+
+```bash
+git worktree add /tmp/base-wt <base-sha>
+cd /tmp/base-wt && ln -s <this-repo>/node_modules node_modules
+for d in apps/preview apps/desktop packages/types packages/desktop-native-apis; do
+  ln -s <this-repo>/$d/node_modules $d/node_modules
+done
+# Serve the base's own catalogue on a second port, with the base's own vite.
+```
+
+Then capture the same harness URL, scenario, viewport and device scale factor from both
+ports. `scripts/verify/shot-settings.mjs` already takes `HARNESS_URL`; the pair is the
+same script pointed at 5293 and 5193. A demo this branch added does not exist in the base,
+so pair the real pages instead of a demo — the pages are what ships.
+
+Two traps that cost a whole pass:
+
+- **`fullPage: true` on a page whose body is a fixed-height shell writes a blank PNG.**
+  The frames come out uniformly dark, which reads like "the base drew nothing" rather than
+  like a capture bug. Capture the viewport and scroll to the top, and check the file size
+  or open one frame before trusting a batch.
+- **A DOM probe that looks for `[aria-hidden="true"]` inside a row also matches the
+  trailing chevron.** It reports a leading mark on a row that has none, and the count looks
+  clean while the pixels are wrong. Scope the probe to the leading slot, and let the crop
+  decide.
 
 ## 3. Inspect the pixels, and let them drive the code
 

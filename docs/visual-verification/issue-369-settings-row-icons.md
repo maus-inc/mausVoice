@@ -256,3 +256,39 @@ Two answers, and they are not equivalent:
 This is a human call, not one this change should make silently, so the frames are attached
 and the behaviour is left as it was. The row still leads with a glyph in the shared lane,
 which is the #369 requirement; only its vertical position inside a 364px panel is open.
+
+## Before and after, from two real trees
+
+Earlier passes compared against frames made by restoring old CSS inside one browser. That
+is weaker than a real pair, so this pass builds both trees: `a8e11e5` checked out with
+`git worktree add /tmp/base-wt a8e11e5`, its catalogue served on 5293, this branch's on
+5193, the same harness URL, the same scenario, the same 1280×900 viewport and the same
+`deviceScaleFactor`. Nothing about the capture differs between a pair except the code.
+
+| Page | Rows | Rows leading with a mark, base | … this head |
+| --- | --- | --- | --- |
+| Appearance | 4 | 0 | 4 |
+| Privacy and data | 5 | 1 | 5 |
+| System | 7 | 3 | 7 |
+| Dictation | 8 | 5 | 8 |
+
+The pairs are committed under `docs/assets/settings-icons-compare/` as
+`<page>.dark.png`, before on the left, after on the right.
+
+Two corrections this pass forced, both of which earlier text had wrong:
+
+- **The base did not misalign its titles.** It already reserved the empty leading slot,
+  so a row without a mark started its words on the same column as a row with one —
+  measured at x=577 for all seven System rows in both trees. The 4× crops of the single
+  `start_on_system_startup` row show it: same edge before and after, and the difference is
+  that the reserved slot is now filled. The change is additive. A first reading of the
+  full frame said the titles stepped; the crop and the measurement say they do not, and
+  they win.
+- **The gap was the switch rows.** On Dictation the three text-only rows were
+  `Spoken commands`, `Silence hallucination filter` and `Switch style while dictating`;
+  on Privacy and data the four were every switch row plus `Preserve audio on failure`.
+  That is the shape #369 names, and it is what the pairs show being closed.
+
+A DOM probe run during this pass reported `glyph: true` for base rows. It was matching the
+trailing chevron, not a leading mark, which is exactly the kind of reading that makes a
+green check lie. Counting leading marks and looking at the crop is what settled it.
