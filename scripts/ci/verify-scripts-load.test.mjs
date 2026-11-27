@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { watchPage } from "../verify/page-watch.mjs";
 
 /**
  * Every script under `scripts/verify/` has to be loadable.
@@ -101,3 +102,165 @@ for (const name of scriptNames) {
     );
   });
 }
+
+const createFakePage = () => {
+  const listeners = new Map();
+  return {
+    on(method, fn) {
+      if (!listeners.has(method)) listeners.set(method, []);
+      listeners.get(method).push(fn);
+    },
+    emit(method, params) {
+      for (const fn of listeners.get(method) ?? []) fn(params);
+    },
+  };
+};
+
+test("watchPage flags unexpected aborted requests on the active document", () => {
+  const page = createFakePage();
+  const { failedRequests, unexpectedFailedRequests } = watchPage(page);
+
+  page.emit("Network.requestWillBeSent", {
+    requestId: "doc-1",
+    frameId: "frame-main",
+    loaderId: "loader-1",
+    type: "Document",
+    request: { url: "http://127.0.0.1:5193/verify-harness/help.html" },
+  });
+  page.emit("Network.requestWillBeSent", {
+    requestId: "img-1",
+    frameId: "frame-main",
+    loaderId: "loader-1",
+    type: "Image",
+    request: { url: "http://127.0.0.1:5193/assets/pattern.png" },
+  });
+  page.emit("Network.loadingFailed", {
+    requestId: "img-1",
+    type: "Image",
+    errorText: "net::ERR_ABORTED",
+    canceled: true,
+  });
+
+  assert.deepEqual(failedRequests, ["net::ERR_ABORTED"]);
+  assert.deepEqual(unexpectedFailedRequests, [
+    {
+      url: "http://127.0.0.1:5193/assets/pattern.png",
+      type: "Image",
+      errorText: "net::ERR_ABORTED",
+      canceled: true,
+    },
+  ]);
+});
+
+test("watchPage excludes canceled requests superseded by an intentional top-level navigation", () => {
+  const page = createFakePage();
+  const { failedRequests, unexpectedFailedRequests } = watchPage(page);
+
+  page.emit("Network.requestWillBeSent", {
+    requestId: "doc-1",
+    frameId: "frame-main",
+    loaderId: "loader-1",
+    type: "Document",
+    request: {
+      url: "http://127.0.0.1:5193/verify-harness/help.html?view=help",
+    },
+  });
+  page.emit("Network.requestWillBeSent", {
+    requestId: "asset-1",
+    frameId: "frame-main",
+    loaderId: "loader-1",
+    type: "Script",
+    request: { url: "http://127.0.0.1:5193/chunk.js" },
+  });
+  page.emit("Network.requestWillBeSent", {
+    requestId: "doc-2",
+    frameId: "frame-main",
+    loaderId: "loader-2",
+    type: "Document",
+    request: {
+      url: "http://127.0.0.1:5193/verify-harness/help.html?view=dictionary",
+    },
+  });
+  page.emit("Network.loadingFailed", {
+    requestId: "asset-1",
+    type: "Script",
+    errorText: "net::ERR_ABORTED",
+    canceled: true,
+  });
+
+  assert.deepEqual(failedRequests, ["net::ERR_ABORTED"]);
+  assert.deepEqual(unexpectedFailedRequests, []);
+});
+
+test("watchPage does not let subframe document loads hide active main-frame aborts", () => {
+  const page = createFakePage();
+  const { unexpectedFailedRequests } = watchPage(page);
+
+  page.emit("Page.frameNavigated", {
+    frame: { id: "frame-main", loaderId: "loader-1" },
+  });
+  page.emit("Network.requestWillBeSent", {
+    requestId: "font-1",
+    frameId: "frame-main",
+    loaderId: "loader-1",
+    type: "Font",
+    request: { url: "http://127.0.0.1:5193/fonts/Satoshi.woff2" },
+  });
+  page.emit("Network.requestWillBeSent", {
+    requestId: "subdoc-1",
+    frameId: "frame-child",
+    loaderId: "loader-child",
+    type: "Document",
+    request: { url: "http://127.0.0.1:5193/frame.html" },
+  });
+  page.emit("Network.loadingFailed", {
+    requestId: "font-1",
+    type: "Font",
+    errorText: "net::ERR_ABORTED",
+    canceled: true,
+  });
+
+  assert.equal(unexpectedFailedRequests.length, 1);
+  assert.equal(
+    unexpectedFailedRequests[0].url,
+    "http://127.0.0.1:5193/fonts/Satoshi.woff2",
+  );
+});
+
+test("watchPage flags unexpected aborted requests inside an active subframe", () => {
+  const page = createFakePage();
+  const { unexpectedFailedRequests } = watchPage(page);
+
+  page.emit("Page.frameNavigated", {
+    frame: { id: "frame-main", loaderId: "loader-1" },
+  });
+  page.emit("Network.requestWillBeSent", {
+    requestId: "subdoc-1",
+    frameId: "frame-child",
+    loaderId: "loader-child",
+    type: "Document",
+    request: { url: "http://127.0.0.1:5193/frame.html" },
+  });
+  page.emit("Network.requestWillBeSent", {
+    requestId: "subimg-1",
+    frameId: "frame-child",
+    loaderId: "loader-child",
+    type: "Image",
+    request: { url: "http://127.0.0.1:5193/frame-img.png" },
+  });
+  page.emit("Network.loadingFailed", {
+    requestId: "subimg-1",
+    type: "Image",
+    errorText: "net::ERR_ABORTED",
+    canceled: true,
+  });
+
+  assert.deepEqual(unexpectedFailedRequests, [
+    {
+      url: "http://127.0.0.1:5193/frame-img.png",
+      type: "Image",
+      errorText: "net::ERR_ABORTED",
+      canceled: true,
+    },
+  ]);
+});
