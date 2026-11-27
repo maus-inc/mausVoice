@@ -242,7 +242,7 @@ export const SettingRowText = ({
  * the same tile — the tile is one object either way, and duplicating it is how
  * two surfaces that are meant to look identical drift apart.
  */
-export const summaryIconTileSize = 40;
+const summaryIconTileSize = 40;
 
 export const summaryIconTileSx: SystemStyleObject<Theme> = {
   display: "flex",
