@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
+import { formatjsBabelPlugin } from "./scripts/formatjs-plugin-options.mjs";
 import { vendorManualChunk } from "./scripts/vendor-manual-chunk.mjs";
 
 const host = process.env.TAURI_DEV_HOST;
@@ -110,6 +111,7 @@ export default defineConfig(async ({ mode }) => {
             "@tauri-apps/api/window": previewAlias("window"),
             "@tauri-apps/api/webviewWindow": previewAlias("webviewWindow"),
             "@tauri-apps/api/path": previewAlias("path"),
+            "@tauri-apps/api/dpi": previewAlias("dpi"),
             "@tauri-apps/plugin-http": previewAlias("http"),
             "@tauri-apps/plugin-log": previewAlias("log"),
             "@tauri-apps/plugin-opener": previewAlias("opener"),
@@ -151,26 +153,7 @@ export default defineConfig(async ({ mode }) => {
       gladiaBrowserPeerStubs(),
       react({
         babel: {
-          plugins: [
-            [
-              "babel-plugin-formatjs",
-              {
-                overrideIdFn: (
-                  id: string | undefined,
-                  defaultMessage: string | undefined,
-                  description: string | undefined,
-                  filePath: string | undefined,
-                ) =>
-                  formatjsOverrideIdFn(
-                    id,
-                    defaultMessage,
-                    description,
-                    filePath,
-                  ) ?? id,
-                ast: true,
-              },
-            ],
-          ],
+          plugins: [formatjsBabelPlugin(formatjsOverrideIdFn)],
         },
       }),
       svgr(),

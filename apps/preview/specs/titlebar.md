@@ -10,7 +10,7 @@ Frameless custom chrome: drag region + theme toggle + logo + window controls; in
 
 ## Visual tokens
 
-Bar 40px (DESIGN.md says ~46 — code is 40), level1 @ .88/.92 + blur(18px) saturate(1.2) + titleBarShadow, bottom hairline .06/.05, zIndex 20. Controls 16px glyphs in 28px buttons; theme toggle 28×28 radius 12 secondary, menu items 16px icons + check. Drag region full-bleed + double-click toggles maximize.
+Bar 40px (DESIGN.md says ~46 — code is 40), level1 @ .88/.92 + blur(18px) saturate(1.2) + titleBarShadow, bottom hairline .06/.05, zIndex 20. Controls 16px glyphs in 28px buttons; theme toggle 28×28 radius 12 secondary, menu items 16px icons + check. Drag region full-bleed + double-click toggles maximize. Dragging it restores a maximized window under the pointer before the move starts.
 
 ## Motion
 

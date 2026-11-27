@@ -29,6 +29,19 @@ const { platformState, windowMocks, focusHandlers, showError } = vi.hoisted(
       ),
       scaleFactor: vi.fn(() => Promise.resolve(1)),
       isFocused: vi.fn(() => Promise.resolve(true)),
+      // The drag-to-restore path measures the grab point and the placement
+      // through these four, so a fake without them fails the restore instead
+      // of exercising it.
+      innerPosition: vi.fn(() => Promise.resolve({ x: 0, y: 0 })),
+      cursorPosition: vi.fn((): Promise<{ x: number; y: number } | null> =>
+        Promise.resolve({ x: 0, y: 0 }),
+      ),
+      currentMonitor: vi.fn(() =>
+        Promise.resolve({ workArea: { position: { x: 0, y: 0 } } }),
+      ),
+      setPosition: vi.fn((_position: { x: number; y: number }) =>
+        Promise.resolve(undefined),
+      ),
       onFocusChanged: vi.fn((..._args: unknown[]): Promise<() => void> =>
         Promise.resolve(vi.fn()),
       ),
@@ -59,6 +72,10 @@ vi.mock("../../utils/env.utils", () => ({
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => windowMocks,
+  // The drag-to-restore placement reads the pointer and the monitor as module
+  // functions, not as window methods.
+  cursorPosition: () => windowMocks.cursorPosition(),
+  currentMonitor: () => windowMocks.currentMonitor(),
 }));
 
 vi.mock("./ThemeModeToggle", () => ({
@@ -482,6 +499,78 @@ describe("TitleBar on Windows and Linux", () => {
       document.removeEventListener("mousedown", documentMouseDown);
       document.removeEventListener("mouseup", documentMouseUp);
     }
+  });
+});
+
+describe("TitleBar drag-to-restore on a maximized window", () => {
+  beforeEach(() => {
+    platformState.value = "windows";
+    windowMocks.isMaximized.mockResolvedValue(true);
+  });
+
+  it("restores the window and keeps the drag when the bar is dragged down", async () => {
+    await renderBar();
+    const dragRegion = requireDragRegion();
+
+    await act(async () => {
+      dragRegion.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 0,
+          detail: 1,
+          clientX: 640,
+          clientY: 20,
+        }),
+      );
+    });
+    windowMocks.cursorPosition.mockResolvedValue({ x: 640, y: 60 });
+    await act(async () => {
+      window.dispatchEvent(
+        new MouseEvent("mousemove", {
+          bubbles: true,
+          buttons: 1,
+          clientX: 640,
+          clientY: 60,
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // One restore, one placement derived from the grab point, and the OS then
+    // carries the drag from there.
+    expect(windowMocks.unmaximize).toHaveBeenCalledTimes(1);
+    const [placed] = windowMocks.setPosition.mock.calls[0];
+    expect({ x: placed.x, y: placed.y }).toEqual({
+      x: 640 - (640 / 1280) * 1280,
+      y: 60 - 20,
+    });
+    expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a stationary double-click toggling maximize instead of restoring", async () => {
+    await renderBar();
+    const dragRegion = requireDragRegion();
+
+    await act(async () => {
+      dragRegion.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 0,
+          detail: 2,
+          clientX: 640,
+          clientY: 20,
+        }),
+      );
+      dragRegion.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(windowMocks.unmaximize).toHaveBeenCalledTimes(1);
+    expect(windowMocks.startDragging).not.toHaveBeenCalled();
+    expect(buttonByLabel("Maximize")).toBeTruthy();
   });
 });
 

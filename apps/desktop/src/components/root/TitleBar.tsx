@@ -34,6 +34,7 @@ import {
   TRAFFIC_DOT_SIZE,
   TRAFFIC_HIT_SIZE,
 } from "./titleBarGeometry";
+import { useWindowDrag } from "./useWindowDrag";
 import { WindowResizeHandles } from "./WindowResizeHandles";
 
 /** Window-control glyphs are 16px so they stay optically level with the 18px
@@ -53,24 +54,7 @@ const MAXIMIZE_GLYPH: IconNode = [
   ["rect", { x: "3", y: "5", width: "18", height: "14", rx: "2" }],
 ];
 
-/**
- * Minimum pointer travel in CSS pixels before a primary-button press on the
- * title bar hands off to `win.startDragging()`.
- *
- * Tauri's injected `drag.js` invokes `plugin:window|start_dragging` on the very
- * first `mousedown` (`detail === 1`) before the pointer has moved. On
- * undecorated windows (`decorations: false`) that immediate OS move loop
- * (1) unmaximizes a maximized window while leaving it at full-screen width
- * (tauri#11945), (2) swallows the first `mouseup` on Windows/Linux so the
- * browser never synthesizes `dblclick` (tauri#10767), and (3) on `detail === 2`
- * invokes `internal_toggle_maximize` right before `onDoubleClick` fires
- * `toggleMax`, toggling maximize twice and canceling out.
- */
-const DRAG_START_DISTANCE_PX = 4;
-
 type WindowSize = { width: number; height: number };
-
-type DragPoint = { x: number; y: number };
 
 const hasPositiveDimensions = (size: WindowSize | undefined): boolean => {
   if (size === undefined) return true;
@@ -365,111 +349,6 @@ const runWindowControl = async (
   }
 };
 
-const startWindowDrag = () => {
-  const win = getCurrentWindow();
-  if (typeof win.startDragging === "function") {
-    win.startDragging().catch(showErrorSnackbar);
-  }
-};
-
-const isPrimaryButtonHeld = (buttons: number): boolean => (buttons & 1) !== 0;
-
-const isWithinDragThreshold = (
-  origin: DragPoint | null,
-  clientX: number,
-  clientY: number,
-): boolean =>
-  origin !== null &&
-  Math.hypot(clientX - origin.x, clientY - origin.y) < DRAG_START_DISTANCE_PX;
-
-const isMacDoubleClickRelease = (
-  detail: number,
-  origin: DragPoint | null,
-  clientX: number,
-  clientY: number,
-): boolean =>
-  getPlatform() === "macos" &&
-  detail === 2 &&
-  isWithinDragThreshold(origin, clientX, clientY);
-
-/**
- * Arms `skipRef` across the current event dispatch and clears it on the next
- * macrotask (`setTimeout(..., 0)`), so it outlives microtasks between
- * `mouseup(detail === 2)` and a synthesized `dblclick`, yet expires if no
- * `dblclick` is dispatched.
- */
-const armSingleTurnDblClickSkip = (
-  skipRef: React.MutableRefObject<boolean>,
-) => {
-  skipRef.current = true;
-  window.setTimeout(() => {
-    skipRef.current = false;
-  }, 0);
-};
-
-const bindDeferredDrag = (
-  startX: number,
-  startY: number,
-  cleanupRef: React.MutableRefObject<(() => void) | null>,
-) => {
-  const controller = new AbortController();
-  const cleanup = () => {
-    controller.abort();
-    if (cleanupRef.current === cleanup) {
-      cleanupRef.current = null;
-    }
-  };
-
-  const handleMove = (moveEvent: MouseEvent) => {
-    if (!isPrimaryButtonHeld(moveEvent.buttons)) {
-      cleanup();
-      return;
-    }
-    if (
-      isWithinDragThreshold(
-        { x: startX, y: startY },
-        moveEvent.clientX,
-        moveEvent.clientY,
-      )
-    ) {
-      return;
-    }
-    cleanup();
-    startWindowDrag();
-  };
-
-  cleanupRef.current = cleanup;
-  window.addEventListener("mousemove", handleMove, {
-    signal: controller.signal,
-  });
-  window.addEventListener("mouseup", cleanup, {
-    capture: true,
-    signal: controller.signal,
-  });
-  window.addEventListener("blur", cleanup, {
-    signal: controller.signal,
-  });
-};
-
-const beginPlatformDrag = (
-  startX: number,
-  startY: number,
-  cleanupRef: React.MutableRefObject<(() => void) | null>,
-) => {
-  if (!isTauriRuntime()) return;
-  // On macOS, `tao`'s `drag_window()` passes `NSApp.currentEvent()` to
-  // `-[NSWindow performWindowDragWithEvent:]`, which requires the current
-  // AppKit event to be `LeftMouseDown`; AppKit's WindowServer natively waits
-  // for pointer movement before moving the window. On Windows and Linux,
-  // starting the OS move loop before pointer movement swallows `mouseup`
-  // (tauri#10767) and unmaximizes on a stationary click (tauri#11945).
-  if (getPlatform() === "macos") {
-    startWindowDrag();
-    return;
-  }
-  bindDeferredDrag(startX, startY, cleanupRef);
-};
-
 const useWindowControls = (
   applyMaximized: (value: boolean) => void,
   maximizedRef: React.MutableRefObject<boolean>,
@@ -517,84 +396,7 @@ const useWindowControls = (
     [],
   );
 
-  const dragCleanupRef = useRef<(() => void) | null>(null);
-  const doubleClickOriginRef = useRef<DragPoint | null>(null);
-  const skipNextDblClickRef = useRef(false);
-
-  useEffect(
-    () => () => {
-      dragCleanupRef.current?.();
-    },
-    [],
-  );
-
-  const onDragRegionMouseDown = useCallback(
-    (event: React.MouseEvent<HTMLElement>) => {
-      if (event.button !== 0) return;
-      // Prevent text selection on double-click and stop propagation before the
-      // event bubbles from the React root to `document`, where Tauri's injected
-      // `drag.js` listener lives.
-      event.preventDefault();
-      event.stopPropagation();
-      dragCleanupRef.current?.();
-      skipNextDblClickRef.current = false;
-
-      // The second press of a double-click is handled by `onDoubleClick` (or
-      // `onDragRegionMouseUp` on macOS); never start a drag on a multi-click.
-      if (event.detail >= 2) {
-        doubleClickOriginRef.current = { x: event.clientX, y: event.clientY };
-        return;
-      }
-      doubleClickOriginRef.current = null;
-      beginPlatformDrag(event.clientX, event.clientY, dragCleanupRef);
-    },
-    [],
-  );
-
-  const onDragRegionMouseUp = useCallback(
-    (event: React.MouseEvent<HTMLElement>) => {
-      if (event.button !== 0) return;
-      // On macOS, Tauri's `drag.js` invokes `internal_toggle_maximize` from a
-      // document-level `mouseup` listener when `detail === 2`. Stopping
-      // propagation here prevents `drag.js` from double-toggling.
-      event.stopPropagation();
-      dragCleanupRef.current?.();
-      const origin = doubleClickOriginRef.current;
-      doubleClickOriginRef.current = null;
-      // On macOS, `performWindowDragWithEvent:` on the first press consumes the
-      // first `mouseup` in AppKit, so WebKit may not synthesize `dblclick` on
-      // the second release even though `mouseup` arrives with `detail === 2`.
-      if (
-        isMacDoubleClickRelease(
-          event.detail,
-          origin,
-          event.clientX,
-          event.clientY,
-        )
-      ) {
-        armSingleTurnDblClickSkip(skipNextDblClickRef);
-        toggleMax();
-      }
-    },
-    [toggleMax],
-  );
-
-  const onDragRegionDoubleClick = useCallback(() => {
-    if (skipNextDblClickRef.current) {
-      skipNextDblClickRef.current = false;
-      return;
-    }
-    toggleMax();
-  }, [toggleMax]);
-
-  return {
-    minimize,
-    toggleMax,
-    close,
-    onDragRegionMouseDown,
-    onDragRegionMouseUp,
-    onDragRegionDoubleClick,
-  };
+  return { minimize, toggleMax, close };
 };
 
 /**
@@ -976,14 +778,16 @@ export const TitleBar = () => {
     containerRef,
   ] = useWindowMetrics(platform);
   const focused = useWindowFocused();
+  const { minimize, toggleMax, close } = useWindowControls(
+    setMaximized,
+    maximizedRef,
+    pendingMaximizedRef,
+  );
   const {
-    minimize,
-    toggleMax,
-    close,
-    onDragRegionMouseDown,
-    onDragRegionMouseUp,
-    onDragRegionDoubleClick,
-  } = useWindowControls(setMaximized, maximizedRef, pendingMaximizedRef);
+    onMouseDown: onDragRegionMouseDown,
+    onMouseUp: onDragRegionMouseUp,
+    onDoubleClick: onDragRegionDoubleClick,
+  } = useWindowDrag(maximizedRef, toggleMax);
 
   const minimizeLabel = intl.formatMessage({ defaultMessage: "Minimize" });
   const maximizeLabel = maximized

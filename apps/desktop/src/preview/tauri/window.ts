@@ -3,12 +3,16 @@ import { emit, listen, type EventCallback, type UnlistenFn } from "./event";
 export type LogicalPosition = { x: number; y: number };
 export type LogicalSize = { width: number; height: number };
 
+/** Work area of the simulated monitor, in the same CSS pixels as the viewport. */
+const WORK_AREA_ORIGIN: LogicalPosition = { x: 0, y: 0 };
+
 class PreviewWindow {
   readonly label = "preview";
   private maximized = false;
   private readonly minimized = false;
   private readonly focused = true;
   private readonly scale = 1;
+  private position: LogicalPosition = { x: 0, y: 0 };
 
   async show(): Promise<void> {
     /* preview stub: no native window to drive */
@@ -71,8 +75,9 @@ class PreviewWindow {
   async setResizable(_resizable: boolean): Promise<void> {
     /* preview stub: no native window to drive */
   }
-  async setPosition(_position: LogicalPosition): Promise<void> {
-    /* preview stub: no native window to drive */
+  setPosition(position: LogicalPosition): Promise<void> {
+    this.position = position;
+    return Promise.resolve();
   }
   async setSize(_size: LogicalSize): Promise<void> {
     /* preview stub: no native window to drive */
@@ -101,6 +106,33 @@ class PreviewWindow {
     // logical pixels (`window.innerWidth`/`innerHeight`), so a scale factor of
     // 1 keeps `size.width / scaleFactor` in CSS pixels on HiDPI screens.
     return Promise.resolve(this.scale);
+  }
+  innerPosition(): Promise<LogicalPosition> {
+    return Promise.resolve(this.position);
+  }
+  outerPosition(): Promise<LogicalPosition> {
+    return this.innerPosition();
+  }
+  cursorPosition(): Promise<LogicalPosition | null> {
+    // The browser preview has no pointer outside its own viewport, and the
+    // title bar only asks while a restore is in flight, so `null` is the honest
+    // answer rather than a coordinate the user never pointed at.
+    return Promise.resolve(null);
+  }
+  currentMonitor(): Promise<{
+    name: string | null;
+    scaleFactor: number;
+    position: LogicalPosition;
+    size: LogicalSize;
+    workArea: { position: LogicalPosition; size: LogicalSize };
+  }> {
+    return this.innerSize().then((size) => ({
+      name: null,
+      scaleFactor: this.scale,
+      position: WORK_AREA_ORIGIN,
+      size,
+      workArea: { position: WORK_AREA_ORIGIN, size },
+    }));
   }
   innerSize(): Promise<LogicalSize> {
     return Promise.resolve().then(() => ({
