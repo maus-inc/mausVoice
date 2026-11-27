@@ -74,6 +74,20 @@ describe("restoredPosition", () => {
     expect(position).toEqual({ x: -1600 - 275, y: 82 });
   });
 
+  it("clamps against a work-area origin on a monitor left of the primary", () => {
+    // The origin is negative there, so a clamp that assumed `0` would leave the
+    // bar above the visible area of that monitor and the window unreachable by
+    // its own drag region.
+    const position = restoredPosition(
+      { fractionX: 0.5, offsetY: 20 },
+      restored,
+      { x: -1600, y: -90 },
+      { x: -1920, y: -60 },
+    );
+    // -90 - 20 is above the work area's -60, so the clamp lifts it to -60.
+    expect(position).toEqual({ x: -1600 - 550, y: -60 });
+  });
+
   it("never places the bar above the top of the work area", () => {
     // A grab low on the bar with the pointer near the top of the screen would
     // otherwise put the bar off-screen, leaving the window unreachable by its

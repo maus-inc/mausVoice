@@ -223,6 +223,44 @@ describe("Windows drag-to-restore", () => {
     });
   });
 
+  it("still hands the drag over when the placement fails", async () => {
+    // The restore succeeded, so the person is holding a restored window under
+    // the pointer. Losing the handoff as well would leave a stuck window and a
+    // dead gesture, which is worse than a window the OS placed on its own.
+    windowMocks.setPosition.mockRejectedValueOnce(new Error("denied"));
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 400, y: 20 });
+    await move(1, 400, 60);
+
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start the drag when the button comes up during the restore", async () => {
+    // The press's own listeners are torn down when the restore starts, so a
+    // release in that window is only visible if something is still watching for
+    // it. Otherwise the window starts moving after the button is already up.
+    let fireResize: (() => void) | null = null;
+    windowMocks.onResized.mockImplementation(
+      (handler: () => void): Promise<() => void> => {
+        fireResize = handler;
+        return Promise.resolve(() => undefined);
+      },
+    );
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 400, y: 20 });
+    await move(1, 400, 60);
+
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      fireResize?.();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(windowMocks.unmaximize).toHaveBeenCalledTimes(1);
+    expect(windowMocks.startDragging).not.toHaveBeenCalled();
+  });
+
   it("subscribes to the resize before asking for the restore", async () => {
     // `onResized` only listens from the moment it is called and never replays a
     // resize that has already happened, so a restore that lands quickly is

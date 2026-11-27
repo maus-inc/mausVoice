@@ -2,7 +2,6 @@ import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
-import { formatjsBabelPlugin } from "../desktop/scripts/formatjs-plugin-options.mjs";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -50,7 +49,26 @@ export default defineConfig({
   plugins: [
     react({
       babel: {
-        plugins: [formatjsBabelPlugin(formatjsOverrideIdFn)],
+        plugins: [
+          [
+            "babel-plugin-formatjs",
+            {
+              overrideIdFn: (
+                id: string | undefined,
+                defaultMessage: string | undefined,
+                description: string | undefined,
+                filePath: string | undefined,
+              ) =>
+                formatjsOverrideIdFn(
+                  id,
+                  defaultMessage,
+                  description,
+                  filePath,
+                ) ?? id,
+              ast: true,
+            },
+          ],
+        ],
       },
     }),
   ],

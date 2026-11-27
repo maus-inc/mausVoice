@@ -180,6 +180,40 @@ const startWindowDrag = (win: TauriWindow) =>
   win.startDragging().catch(showErrorSnackbar);
 
 /**
+ * Puts the restored window under the grab point, if it can be measured.
+ *
+ * A window that cannot be placed is still a window the person is dragging, so
+ * every failure here is reported and swallowed. The gesture then continues from
+ * wherever the OS restored it, which is worse than intended but far better than
+ * a drag that stops dead under the pointer.
+ */
+const placeRestoredWindow = async (win: TauriWindow, grab: RestoreGrab) => {
+  try {
+    const target = await readRestoreTarget(win, grab);
+    if (target !== null) await win.setPosition(target);
+  } catch (error) {
+    showErrorSnackbar(error);
+  }
+};
+
+type Gesture = {
+  win: TauriWindow;
+  /** Primary press that started the gesture, in window CSS pixels. */
+  origin: DragPoint;
+  /** Whether the press landed on a maximized window. */
+  maximized: boolean;
+  /** Set once the gesture has committed to restoring, so it happens once. */
+  restored: boolean;
+  /**
+   * Set when the pointer is released while the restore is still in flight.
+   *
+   * The press's own listeners are torn down when the restore starts, so a
+   * release during the restore would otherwise be invisible and the window
+   * would begin moving after the button was already up.
+   */
+  released: boolean;
+};
+/**
  * Restores a maximized window under the pointer, then continues the drag.
  *
  * Both platforms need the restore done by hand. On Windows `tao` posts
@@ -195,10 +229,11 @@ const startWindowDrag = (win: TauriWindow) =>
  * The move is then handed to the OS from that position, so the rest of the
  * gesture follows the pointer without this side re-measuring it.
  */
-const restoreAndDrag = async (win: TauriWindow, press: DragPoint) => {
+const restoreAndDrag = async (gesture: Gesture) => {
+  const { win } = gesture;
   const restore = armRestoreWait(win);
   try {
-    const grab = await readGrab(win, press);
+    const grab = await readGrab(win, gesture.origin);
     if (grab === null) {
       restore.stop();
       startWindowDrag(win);
@@ -206,24 +241,15 @@ const restoreAndDrag = async (win: TauriWindow, press: DragPoint) => {
     }
     await win.unmaximize();
     await restore.wait();
-    const target = await readRestoreTarget(win, grab);
-    if (target !== null) await win.setPosition(target);
+    if (gesture.released) return;
+    await placeRestoredWindow(win, grab);
+    if (gesture.released) return;
     await startWindowDrag(win);
   } catch (error) {
     // A failed restore must not leave its listener armed for the next one.
     restore.stop();
     showErrorSnackbar(error);
   }
-};
-
-type Gesture = {
-  win: TauriWindow;
-  /** Primary press that started the gesture, in window CSS pixels. */
-  origin: DragPoint;
-  /** Whether the press landed on a maximized window. */
-  maximized: boolean;
-  /** Set once the gesture has committed to restoring, so it happens once. */
-  restored: boolean;
 };
 
 /**
@@ -267,7 +293,23 @@ const bindDeferredDrag = (
     // point on the bar, so the gesture restores first and then hands over.
     if (gesture.maximized && !gesture.restored) {
       gesture.restored = true;
-      restoreAndDrag(gesture.win, gesture.origin).catch(showErrorSnackbar);
+      // The press's listeners go away with `cleanup()`, so the release that
+      // ends the gesture has to be watched for separately: a restore that lands
+      // after the button came up must not start moving the window.
+      const watchRelease = new AbortController();
+      window.addEventListener(
+        "mouseup",
+        () => {
+          gesture.released = true;
+          watchRelease.abort();
+        },
+        { capture: true, signal: watchRelease.signal },
+      );
+      restoreAndDrag(gesture)
+        .catch(showErrorSnackbar)
+        .finally(() => {
+          watchRelease.abort();
+        });
       return;
     }
     startWindowDrag(gesture.win);
@@ -375,6 +417,7 @@ export const useWindowDrag = (
         origin: { x: event.clientX, y: event.clientY },
         maximized: maximizedRef.current,
         restored: false,
+        released: false,
       };
       if (!defersNativeDrag(getPlatform())) {
         startWindowDrag(gesture.win);

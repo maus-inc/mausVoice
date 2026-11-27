@@ -2,7 +2,6 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
-import { formatjsBabelPlugin } from "./scripts/formatjs-plugin-options.mjs";
 import { vendorManualChunk } from "./scripts/vendor-manual-chunk.mjs";
 
 const host = process.env.TAURI_DEV_HOST;
@@ -153,7 +152,26 @@ export default defineConfig(async ({ mode }) => {
       gladiaBrowserPeerStubs(),
       react({
         babel: {
-          plugins: [formatjsBabelPlugin(formatjsOverrideIdFn)],
+          plugins: [
+            [
+              "babel-plugin-formatjs",
+              {
+                overrideIdFn: (
+                  id: string | undefined,
+                  defaultMessage: string | undefined,
+                  description: string | undefined,
+                  filePath: string | undefined,
+                ) =>
+                  formatjsOverrideIdFn(
+                    id,
+                    defaultMessage,
+                    description,
+                    filePath,
+                  ) ?? id,
+                ast: true,
+              },
+            ],
+          ],
         },
       }),
       svgr(),
