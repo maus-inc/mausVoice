@@ -983,7 +983,7 @@ Patch-only per component → listed pages/dialogs.
 One row chassis for a whole settings surface. A card mixes four shapes: a row that opens a dialog, a row that holds a control, a row that reports a value, and a switch row. They read as one list only because all four lead with a mark in the same lane and put their controls in the same right-hand column.
 
 ## Visual tokens
-Row: min-height 56, px 2, py 1.25, gap 2, radius 1 (14) on the group card, hairline dividers between rows, level1 face. Label block: glyph lane then text column, gap 2. Glyph lane: \`settingGlyphProps\` = size 22, strokeWidth 1.9; lane width/height 22 fixed, flexShrink 0, children flexShrink 0 so a 48px avatar overhangs evenly instead of widening the lane; colour \`text.secondary\`, or \`error.main\` under \`iconTone="danger"\`. Provider marks use the same 22px box via \`ProviderLogo\`; the identity row leads with the avatar instead. No tiles, no tinted squares.
+Row: min-height 56, px 2, py 1.25, gap 2, radius 1 (14) on the group card, hairline dividers between rows, level1 face. Label block: glyph lane then text column, gap 2. Glyph lane: \`settingGlyphProps\` = size 22, strokeWidth 1.9; lane min-width/height 22, flexShrink 0, children flexShrink 0 so the 48px avatar takes a lane of its own rather than being centred through its neighbours; colour \`text.secondary\`, or \`error.main\` under \`iconTone="danger"\`. Provider marks use the same 22px box via \`ProviderLogo\`; the identity row leads with the avatar instead. No tiles, no tinted squares.
 
 ## Motion
 Static rows do not animate. Interactive rows: background-color 150ms ease on hover, 2px primary outline at offset −2 on focus-visible, disabled rows at 0.5 opacity with \`not-allowed\`. Switch rows carry no press scale.

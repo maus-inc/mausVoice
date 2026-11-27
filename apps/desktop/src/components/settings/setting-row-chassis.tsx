@@ -111,18 +111,16 @@ export const settingSearchGlyphProps = {
  * The one lane a row's leading mark sits in.
  *
  * A glyph names the kind of thing a row controls, so it is part of the row's
- * shape rather than decoration on it. The lane is the shared glyph size wide,
- * not the width of whatever was passed in, so a provider mark, a lucide glyph
- * and the person's picture cannot each start their row's title somewhere
- * different.
+ * shape rather than decoration on it. The lane's width has a floor at the shared
+ * glyph size, so every glyph is 22px and the titles share one edge.
  *
- * `width` rather than `minWidth` is the whole point. A minimum lets its
- * content grow the lane, and the identity row leads with a 48px avatar, so the
- * one row whose mark is biggest would have started its title 26px right of
- * every other row in the surface. The lane is fixed and the mark is centred in
- * it; an avatar wider than the lane overhangs it evenly on both sides, which is
- * what keeps the title on the common edge while the exception stays legible.
- * The row's own `overflow` is visible, so the overhang is drawn, not clipped.
+ * The floor is a `minWidth`, not a `width`. A fixed lane centres whatever is
+ * wider than it, and the identity row leads with a 48px avatar: centred in 22px
+ * it reached 13px into the 16px gutter, leaving 3px of air against its own
+ * title and 3px from the card edge, which reads as a crammed row. A minimum lets
+ * that one mark take a lane of its own, keeping both gutters at 16px and paying
+ * only the honest cost of a 48px avatar, which is that its title starts 26px
+ * right of the rows below it.
  */
 const leadingGlyphSx: SystemStyleObject<Theme> = {
   display: "flex",
