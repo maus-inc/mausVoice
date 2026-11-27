@@ -8,9 +8,9 @@ import {
   type SxProps,
   type Theme,
 } from "@mui/material";
-import type { ChangeEvent, ReactNode } from "react";
+import { Children, type ChangeEvent, type ReactNode } from "react";
 import { Link as RouterLink } from "react-router-dom";
-import { premiumSurface } from "../../styles/shadows";
+import type { SystemStyleObject } from "@mui/system";
 import { openExternalUrl } from "../../utils/open-url.utils";
 import { settingAnchorId } from "./settings-routes";
 import {
@@ -18,11 +18,36 @@ import {
   controlColumnSx,
   interactiveSx,
   rowSx,
+  settingsCardContentInset,
+  settingsCardSx,
+  settingsRowLeadingSlotWidth,
   SettingRowText,
   SettingRowValue,
+  trailingGlyphColumnSx,
   TrailingGlyph,
 } from "./setting-row-chassis";
 import { useSettingHighlight } from "./settings-highlight";
+
+/**
+ * The leading slot every row opens with, icon or no icon.
+ *
+ * The icon says a row opens or leaves, so only some rows carry one; the slot is
+ * the same width either way, which is what puts every label in a card on one
+ * column. Reserved inside the row rather than reported by the group, because a
+ * group is a list of rows and no row should have to know what its neighbours
+ * look like to be laid out.
+ *
+ * A `span`, not a `div`: the slot is a child of a row that is sometimes a
+ * button, and a button may only contain phrasing content.
+ */
+const leadingSlotSx: SystemStyleObject<Theme> = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+  width: settingsRowLeadingSlotWidth,
+  color: "text.secondary",
+};
 
 const highlightSx: SxProps<Theme> = {
   outline: "2px solid",
@@ -97,60 +122,102 @@ type SettingRowControlColumnProps = {
  * something that opens in place, and nothing when the row already spells out
  * its verb in the action pill.
  */
+/**
+ * The glyph that ends the column, when the row ends with one.
+ *
+ * Outward for a URL, a chevron for something that opens in place, and nothing
+ * when the row already spells out its verb in the action pill.
+ */
+const TrailingArrow = ({
+  externalUrl,
+  interactive,
+  action,
+}: {
+  externalUrl?: string;
+  interactive: boolean;
+  action?: SettingRowAction;
+}) => {
+  if (externalUrl) {
+    return (
+      <TrailingGlyph>
+        <ArrowUpRight size={18} strokeWidth={1.9} />
+      </TrailingGlyph>
+    );
+  }
+  if (!interactive || action) {
+    return null;
+  }
+  return (
+    <TrailingGlyph>
+      <ChevronRight size={20} strokeWidth={1.9} />
+    </TrailingGlyph>
+  );
+};
+
+/** The named action at the end of a row: a pill, not a control. */
+const ActionPill = ({ action }: { action: SettingRowAction }) => {
+  const theme = useTheme();
+  return (
+    <Box
+      component="span"
+      className="setting-row-action"
+      sx={actionPillSx(
+        action.tone ?? "primary",
+        `${cssPixels(theme.shape.borderRadius) - 2}px`,
+      )}
+    >
+      {action.label}
+    </Box>
+  );
+};
+
+/**
+ * How wide the column may be.
+ *
+ * A row that holds a control gives it the width it needs; a row that reports a
+ * value keeps the fixed column, so values still line up down a page; a row that
+ * only points somewhere keeps nothing but its glyph. The three cases are one
+ * decision, so it is made here rather than by each row.
+ */
+const columnFor = ({
+  control,
+  value,
+  action,
+}: {
+  control?: ReactNode;
+  value?: ReactNode;
+  action?: SettingRowAction;
+}): SystemStyleObject<Theme> => {
+  if (control) return contentControlColumnSx;
+  if (value || action) return controlColumnSx;
+  return trailingGlyphColumnSx;
+};
+
 const SettingRowControlColumn = ({
   value,
   control,
   action,
   externalUrl,
   interactive,
-}: SettingRowControlColumnProps) => {
-  const theme = useTheme();
-
-  let trailingIcon: ReactNode = null;
-  if (externalUrl) {
-    trailingIcon = (
-      <TrailingGlyph>
-        <ArrowUpRight size={18} strokeWidth={1.9} />
-      </TrailingGlyph>
-    );
-  } else if (interactive && !action) {
-    trailingIcon = (
-      <TrailingGlyph>
-        <ChevronRight size={20} strokeWidth={1.9} />
-      </TrailingGlyph>
-    );
-  }
-
-  // A row that holds a control gives it the width it needs; a row that only
-  // reports a value keeps the fixed column, so values still line up down a
-  // page. See `contentControlColumnSx` for why the two are not one width.
-  return (
-    <Box
-      sx={[
-        control ? contentControlColumnSx : controlColumnSx,
-        // A long reported value beside a named action must not consume the
-        // space the row's label and description need at compact widths.
-        ...(value && action ? [{ maxWidth: { xs: "45%", md: "60%" } }] : []),
-      ]}
-    >
-      <SettingRowValue value={value} />
-      {control}
-      {action && (
-        <Box
-          component="span"
-          className="setting-row-action"
-          sx={actionPillSx(
-            action.tone ?? "primary",
-            `${cssPixels(theme.shape.borderRadius) - 2}px`,
-          )}
-        >
-          {action.label}
-        </Box>
-      )}
-      {trailingIcon}
-    </Box>
-  );
-};
+}: SettingRowControlColumnProps) => (
+  <Box
+    sx={[
+      columnFor({ control, value, action }),
+      // A long reported value beside a named action must not consume the space
+      // the row's label and description need at compact widths.
+      ...(value && action ? [{ maxWidth: { xs: "45%", md: "60%" } }] : []),
+    ]}
+  >
+    <SettingRowValue value={value} />
+    {control}
+    {action && <ActionPill action={action} />}
+    <TrailingArrow
+      externalUrl={externalUrl}
+      interactive={interactive}
+      action={action}
+    />
+  </Box>
+);
 
 export type SettingRowProps = {
   /** Registry key: the row's anchor id and search identity. */
@@ -214,19 +281,9 @@ export const SettingRow = ({
 
   const body = (
     <>
-      {icon && (
-        <Box
-          aria-hidden
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            color: "text.secondary",
-            flexShrink: 0,
-          }}
-        >
-          {icon}
-        </Box>
-      )}
+      <Box component="span" aria-hidden sx={leadingSlotSx}>
+        {icon}
+      </Box>
       <SettingRowText
         title={title}
         description={description}
@@ -313,7 +370,10 @@ const StaticSettingRow = ({
         ? [
             {
               flexWrap: "wrap" as const,
-              "& > div:first-of-type": { flexBasis: "min(200px, 100%)" },
+              // By class, not by position: the row opens with its leading slot,
+              // which occupies the place a `:first-of-type` selector used to
+              // read as the label.
+              "& > .setting-row-label": { flexBasis: "min(200px, 100%)" },
               "& > :last-child": { maxWidth: "100%", ml: "auto" },
             },
           ]
@@ -369,13 +429,14 @@ export const SettingToggleRow = ({
         ...(highlight ? [highlightSx] : []),
       ]}
     >
+      <Box component="span" aria-hidden sx={leadingSlotSx} />
       <SettingRowText
         title={title}
         description={description}
         titleId={titleId}
         descriptionId={descriptionId}
       />
-      <Box sx={controlColumnSx}>
+      <Box sx={contentControlColumnSx}>
         <Switch
           checked={checked}
           onChange={(event) => {
@@ -449,24 +510,20 @@ const groupHeadingSx = (
   fontWeight: 700,
   color: danger ? "error.main" : "text.primary",
   ...(danger ? { letterSpacing: "0.06em", textTransform: "uppercase" } : {}),
-  mb: hasDescription ? 0.5 : 1.5,
+  mb: hasDescription ? 0.75 : 1.5,
 });
 
-/**
- * The card every group's rows sit in.
- *
- * Radius 1 is the app's card step (14). The 28 step belongs to large dialogs,
- * and a settings card sitting at a dialog's radius read softer than the world
- * it lives in.
- */
-const groupCardSx: SxProps<Theme> = (theme) => ({
-  border: 1,
-  borderRadius: 1,
-  bgcolor: "level1",
-  boxShadow: premiumSurface.light.rest,
-  ...theme.applyStyles("dark", { boxShadow: premiumSurface.dark.rest }),
-  overflow: "hidden",
-  "& > * + *": { borderTop: 1, borderColor: "divider" },
+/** The heading's line: the title names the card; its action belongs to its content. */
+const groupHeadingRowSx: SystemStyleObject<Theme> = {
+  display: "flex",
+  alignItems: "baseline",
+  justifyContent: "space-between",
+  gap: 2,
+};
+
+/** The action is a control, so its edge follows the rows' content edge. */
+const groupActionSx: SxProps<Theme> = (theme) => ({
+  marginRight: settingsCardContentInset(theme),
 });
 
 /**
@@ -485,6 +542,11 @@ const dangerCardSx: SxProps<Theme> = {
  * A titled card of rows. The card supplies the enclosure and the shared
  * control column does the alignment, so groups read as groups without relying
  * on whitespace alone.
+ *
+ * A group with nothing to show draws nothing. Every group is a list of rows
+ * behind their own availability, and when they are all unavailable the card
+ * still drew its heading and a two-pixel empty enclosure under it, which reads
+ * as a stray rule at the foot of the page.
  */
 export const SettingGroup = ({
   title,
@@ -492,44 +554,40 @@ export const SettingGroup = ({
   danger,
   action,
   children,
-}: SettingGroupProps) => (
-  <Box component="section" sx={{ mb: 4 }}>
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "baseline",
-        // The link sits on the heading's line and takes the leftover width only
-        // when the heading is long, which is what keeps the two ends of a
-        // two-up card from having their headings wrap differently.
-        justifyContent: action ? "space-between" : "flex-start",
-        gap: 2,
-      }}
-    >
-      <Typography
-        // A destructive group is presented as a label rather than as an equal
-        // of the section headings above it. Same words, different weight: the
-        // difference is the signal, and it costs the page no extra space.
-        variant={danger ? "caption" : "h6"}
-        component="h2"
-        sx={groupHeadingSx(Boolean(danger), Boolean(description))}
-      >
-        {title}
-      </Typography>
-      {action}
+}: SettingGroupProps) => {
+  if (Children.toArray(children).length === 0) {
+    return null;
+  }
+
+  return (
+    <Box component="section" sx={{ mb: 4 }}>
+      <Box sx={groupHeadingRowSx}>
+        <Typography
+          // A destructive group is presented as a label rather than as an equal
+          // of the section headings above it. Same words, different weight: the
+          // difference is the signal, and it costs the page no extra space.
+          variant={danger ? "caption" : "h6"}
+          component="h2"
+          sx={groupHeadingSx(Boolean(danger), Boolean(description))}
+        >
+          {title}
+        </Typography>
+        {action && <Box sx={groupActionSx}>{action}</Box>}
+      </Box>
+      {description && (
+        <Typography
+          variant="body2"
+          sx={{ color: "text.secondary", mb: 1.5, maxWidth: "72ch" }}
+        >
+          {description}
+        </Typography>
+      )}
+      <Box sx={[settingsCardSx, ...(danger ? [dangerCardSx] : [])]}>
+        {children}
+      </Box>
     </Box>
-    {description && (
-      <Typography
-        variant="body2"
-        sx={{ color: "text.secondary", mb: 1.5, maxWidth: "72ch" }}
-      >
-        {description}
-      </Typography>
-    )}
-    <Box sx={[groupCardSx, danger ? dangerCardSx : { borderColor: "divider" }]}>
-      {children}
-    </Box>
-  </Box>
-);
+  );
+};
 
 /**
  * The link on a group's heading line, for the page that owns the whole group.

@@ -187,19 +187,22 @@ const SettingsContent = ({
       </>
     );
   }
-  // The heading travels with the page it names. Centring the page alone left
-  // the heading stranded at the top of the surface with the free space halved
-  // into two gaps, one under the heading and one under the content, which read
-  // as a broken composition rather than a centred one. As one block, the spare
-  // space becomes the margin above and below the whole thing.
+  // Every page starts on the same line. This block used to take `auto` margins
+  // so a short page centred in the window, which meant the heading sat at a
+  // different height on every page and Shortcuts, the shortest of them, floated
+  // halfway down the window while the long pages started at the top. A
+  // settings surface is a place you move around in, and a title that jumps
+  // between pages makes the same surface look like a different one.
   //
-  // `auto` margins are what make that safe: they absorb free space when there
-  // is some, and resolve to zero when the page is taller than the surface, so a
-  // long page is laid out exactly as before.
+  // The heading and the page still travel as one block: the heading names the
+  // page below it, and a page that scrolled under a fixed heading would make
+  // the two read as unrelated. The gap after the header is wider than the gap
+  // between groups, so the header belongs to the whole page rather than to the
+  // first group.
   return (
-    <Box sx={{ my: "auto", width: "100%" }}>
+    <Box sx={{ width: "100%" }}>
       {activePage && (
-        <Box sx={{ mb: 4 }}>
+        <Box sx={{ mb: 5 }}>
           <Typography variant="h4" component="h1" sx={{ fontWeight: 700 }}>
             {SETTINGS_PAGE_COPY[activePage.id].title}
           </Typography>
@@ -305,11 +308,13 @@ export const SettingsLayout = () => {
           spacing={{ xs: 2, md: 4 }}
           sx={{
             alignItems: "flex-start",
-            // The scroll box above this is a definite height, so the surface can
-            // claim the rest of it. That is what gives the block below a free
-            // space to be centred in instead of the content sitting at the top of
-            // an otherwise empty window.
-            minHeight: "100%",
+            // The window's own content pane already insets this surface a
+            // little. A settings page spends the whole width it is given, so
+            // without its own inset the cards run almost to the window frame
+            // and the page reads as a document someone printed to the edge.
+            // The inset belongs here rather than to the shell, because the
+            // shell is shared with every other route.
+            p: { xs: 0, sm: 1.5 },
           }}
         >
           <Stack
@@ -386,19 +391,7 @@ export const SettingsLayout = () => {
               />
             )}
           </Box>
-          <Box
-            sx={{
-              flexGrow: 1,
-              minWidth: 0,
-              width: "100%",
-              // Stretched to the surface rather than to its own content, and a
-              // column, so the heading-and-page block below has free space to be
-              // centred in: see `minHeight` above.
-              alignSelf: "stretch",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
+          <Box sx={{ flexGrow: 1, minWidth: 0, width: "100%" }}>
             <SettingsContent
               searching={searching}
               hits={hits}
