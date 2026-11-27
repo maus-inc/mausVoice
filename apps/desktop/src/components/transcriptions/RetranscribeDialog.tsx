@@ -13,11 +13,13 @@ import {
 import { Check } from "lucide-react";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   closeRetranscribeDialog,
   retranscribeTranscriptionWithRecovery,
+  setRetranscribeDialogLanguage,
+  setRetranscribeDialogToneId,
 } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
 import {
@@ -48,30 +50,31 @@ const languageOptions = (
   label: getRenderSafeLanguageLabel(code),
 }));
 
-/**
- * A select option that shows a check beside the currently chosen value.
- *
- * Extracted so the style and language pickers read as one element per option
- * instead of a MenuItem wrapping the label and a conditional Check five JSX
- * levels deep inside Dialog>DialogContent>Stack>FormControl>Select. The `key`
- * stays at each `.map` call site; only the row shape moved.
- */
-const CheckableMenuItem = ({
-  value,
-  label,
-  selected,
-}: {
-  value: string;
-  label: React.ReactNode;
-  selected: boolean;
-}) => (
-  <MenuItem value={value} sx={chromeSelectMenuItemSx}>
+const renderCheckableMenuItem = (
+  value: string,
+  label: React.ReactNode,
+  selected: boolean,
+) => (
+  <MenuItem key={value} value={value} sx={chromeSelectMenuItemSx}>
     {label}
     {selected ? <Check size={16} strokeWidth={2} /> : null}
   </MenuItem>
 );
 
-const useRetranscribeSelection = (open: boolean) => {
+const resolveToneId = (
+  tones: Tone[],
+  selectedToneId: string | null,
+  defaultToneId: string | null,
+): string | null =>
+  tones.find((tone) => tone.id === selectedToneId)?.id ??
+  tones.find((tone) => tone.id === defaultToneId)?.id ??
+  tones[0]?.id ??
+  null;
+
+const useRetranscribeSelection = (
+  open: boolean,
+  transcriptionId: string | null,
+) => {
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
   const tones = useAppStore((state) => {
     const toneIds = getSortedToneIds(state);
@@ -79,24 +82,42 @@ const useRetranscribeSelection = (open: boolean) => {
       .map((toneId) => getRec(state.toneById, toneId))
       .filter((tone): tone is Tone => tone !== null);
   });
-  const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
-  const [selectedLanguage, setSelectedLanguage] =
-    useState<DictationLanguageCode>(
-      toSelectableDictationLanguage(defaultLanguage),
-    );
+  const selection = useAppStore(
+    (state) => state.transcriptions.retranscribeDialogSelection,
+  );
+
+  const isCurrentSession =
+    open &&
+    transcriptionId !== null &&
+    selection?.transcriptionId === transcriptionId;
+  const selectedLanguage =
+    isCurrentSession && selection
+      ? selection.selectedLanguage
+      : toSelectableDictationLanguage(defaultLanguage);
+  const resolvedToneId =
+    isCurrentSession && selection
+      ? resolveToneId(tones, selection.selectedToneId, selection.defaultToneId)
+      : (tones[0]?.id ?? null);
 
   useEffect(() => {
-    if (!open) return;
-    setSelectedToneId(tones[0]?.id ?? null);
-    setSelectedLanguage(toSelectableDictationLanguage(defaultLanguage));
-  }, [open, defaultLanguage, tones]);
+    if (!isCurrentSession || !selection) return;
+
+    const availableToneId = resolveToneId(
+      tones,
+      selection.selectedToneId,
+      selection.defaultToneId,
+    );
+    if (availableToneId !== selection.selectedToneId) {
+      setRetranscribeDialogToneId(availableToneId);
+    }
+  }, [isCurrentSession, selection, tones]);
 
   return {
     tones,
-    selectedToneId,
-    setSelectedToneId,
+    resolvedToneId,
+    setSelectedToneId: setRetranscribeDialogToneId,
     selectedLanguage,
-    setSelectedLanguage,
+    setSelectedLanguage: setRetranscribeDialogLanguage,
   };
 };
 
@@ -119,11 +140,11 @@ export const RetranscribeDialog = () => {
   const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
   const {
     tones,
-    selectedToneId,
+    resolvedToneId,
     setSelectedToneId,
     selectedLanguage,
     setSelectedLanguage,
-  } = useRetranscribeSelection(open);
+  } = useRetranscribeSelection(open, transcriptionId);
 
   const handleClose = useCallback(() => {
     closeRetranscribeDialog();
@@ -135,12 +156,12 @@ export const RetranscribeDialog = () => {
     closeRetranscribeDialog();
     void retranscribeTranscriptionWithRecovery({
       transcriptionId,
-      toneId: styleSelectionAvailable ? selectedToneId : null,
+      toneId: styleSelectionAvailable ? resolvedToneId : null,
       languageCode: selectedLanguage,
     });
   }, [
     transcriptionId,
-    selectedToneId,
+    resolvedToneId,
     selectedLanguage,
     isRetranscribing,
     styleSelectionAvailable,
@@ -167,7 +188,7 @@ export const RetranscribeDialog = () => {
               <Select
                 labelId={styleLabelId}
                 label={intl.formatMessage({ defaultMessage: "Style" })}
-                value={selectedToneId ?? ""}
+                value={resolvedToneId ?? ""}
                 onChange={(e) => {
                   const value = e.target.value;
                   setSelectedToneId(value || null);
@@ -182,14 +203,13 @@ export const RetranscribeDialog = () => {
                   )
                 }
               >
-                {tones.map((tone) => (
-                  <CheckableMenuItem
-                    key={tone.id}
-                    value={tone.id}
-                    label={tone.name}
-                    selected={tone.id === selectedToneId}
-                  />
-                ))}
+                {tones.map((tone) =>
+                  renderCheckableMenuItem(
+                    tone.id,
+                    tone.name,
+                    tone.id === resolvedToneId,
+                  ),
+                )}
               </Select>
             </FormControl>
           )}
@@ -214,14 +234,9 @@ export const RetranscribeDialog = () => {
                 )
               }
             >
-              {languageOptions.map(({ code, label }) => (
-                <CheckableMenuItem
-                  key={code}
-                  value={code}
-                  label={label}
-                  selected={code === selectedLanguage}
-                />
-              ))}
+              {languageOptions.map(({ code, label }) =>
+                renderCheckableMenuItem(code, label, code === selectedLanguage),
+              )}
             </Select>
           </FormControl>
         </Stack>

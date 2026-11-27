@@ -5,7 +5,7 @@ sidebar:
   order: 8
 ---
 
-mausVoice ships these built-in writing styles. Select one in the style picker before dictating, assign it per app, or bind it to a style hotkey.
+mausVoice ships these built-in writing styles. Select one in the style picker before dictating, assign it per app, or bind it to a style hotkey. During History retranscription, choose a style in the Retranscribe dialog; the selected style and language are applied to the existing row. See [Transcription history](../history/) for the workflow and its overwrite warning.
 
 ## Current built-in styles
 
