@@ -381,6 +381,7 @@ export const SettingsLayout = () => {
                 }}
               />
               <Stack
+                className="settings-layout-navigation"
                 component="nav"
                 aria-label={intl.formatMessage({
                   defaultMessage: "Settings sections",
