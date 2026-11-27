@@ -476,8 +476,12 @@ const workspaceSnapshot = (
   state.initialized = true;
   // The browser preview has no native keyboard listener. Model the common
   // listener platform so settings that depend on a global key source are
-  // visible instead of hiding behind an unknown capability.
+  // visible instead of hiding behind an unknown capability, and model its
+  // health as delivering a key stream for the same reason: a strategy without
+  // a live listener is a configuration that owns the global-shortcut rows but
+  // not the ones built on a stream, and previews are captured to review rows.
   state.hotkeyStrategy = "listener";
+  state.keyboardListenerHealth = "healthy_grab";
   // Dashboard preview scenarios should show the dashboard, not the one-time
   // desktop release dialog. A dedicated scenario can opt into that UI later.
   state.local.featureSeenAt = CURRENT_FEATURE_DATE;

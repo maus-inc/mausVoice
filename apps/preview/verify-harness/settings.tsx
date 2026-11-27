@@ -108,11 +108,14 @@ const App = () => {
         const { INITIAL_APP_STATE } = await import("@desktop/state/app.state");
         const { createDefaultPreferences } =
           await import("@desktop/actions/user-actions-core");
-        const state = structuredClone(INITIAL_APP_STATE) as any;
+        // No cast: `AppState` is exactly what this is, and the cast is what
+        // let an invalid health value through, so every settings capture of a
+        // listener platform hid the rows that need a delivering key stream.
+        const state = structuredClone(INITIAL_APP_STATE);
         state.userPrefs = createDefaultPreferences();
         state.settings.apiKeysStatus = "success";
         state.hotkeyStrategy = "listener";
-        state.keyboardListenerHealth = "healthy";
+        state.keyboardListenerHealth = "healthy_grab";
         setAppState(state, true);
         setReady(true);
       } catch (cause) {

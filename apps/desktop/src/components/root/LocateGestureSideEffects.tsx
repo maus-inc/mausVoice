@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { locatePill } from "../../actions/native.actions";
 import { useAppStore } from "../../store";
 import type { AppState } from "../../state/app.state";
+import { globalKeyStreamIsLive } from "../../utils/keyboard.utils";
 import {
   createLocateGestureDetector,
   type LocateGestureDetector,
@@ -15,13 +16,26 @@ import {
  * preference can move to another modifier while one is still held, and no key
  * event arrives to notice it. The detector drops the sequence when the family
  * it is watching stops being the selected one.
+ *
+ * The gate is `globalKeyStreamIsLive`, the predicate the settings row uses to
+ * decide whether to offer the gesture at all. Reading the same answer here is
+ * what keeps the two honest: a row that is shown watches for taps, and a tap
+ * counted here is one the row promised would work. A strategy-only check left
+ * the detector watching a listener that had failed, and it also disagreed with
+ * the row for the two live-but-unproven health states.
  */
 const applyState = (
   state: AppState,
   detector: LocateGestureDetector,
 ): boolean => {
   const selected = state.userPrefs?.pillLocateGestureModifier ?? "none";
-  if (state.hotkeyStrategy !== "listener" || selected === "none") {
+  if (
+    !globalKeyStreamIsLive(
+      state.hotkeyStrategy,
+      state.keyboardListenerHealth,
+    ) ||
+    selected === "none"
+  ) {
     detector.reset();
     return false;
   }

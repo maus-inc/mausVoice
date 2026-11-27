@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
+import type { KeyboardListenerHealth } from "../state/app.state";
 import {
   getDefaultHotkeyCombosForAction,
   getHotkeyCombosForAction,
   getKeycapLegend,
   getPrettyKeyName,
   getStyleSwitchActionNamesForKey,
+  globalKeyStreamIsLive,
+  listenerDeliversKeys,
+  listenerIsProvenHealthy,
   DICTATE_HOTKEY,
   OPEN_CHAT_HOTKEY,
   syncHotkeyCombosToNative,
@@ -339,5 +343,94 @@ describe("default hotkeys", () => {
     // Nothing ships a key for this one: an empty list is the honest answer, and
     // is what a row with no binding shows as "Not set".
     expect(getDefaultHotkeyCombosForAction(OPEN_CHAT_HOTKEY)).toEqual([]);
+  });
+});
+
+/**
+ * Every health state the native listener reports, each with the answer to the
+ * two questions the renderer asks about it. A table rather than one assertion
+ * per state, so a state added to `KeyboardListenerHealth` without an answer
+ * here fails the exhaustiveness check below instead of quietly falling through.
+ */
+const HEALTH_CASES: Array<{
+  health: KeyboardListenerHealth;
+  delivering: boolean;
+  proven: boolean;
+}> = [
+  { health: "starting", delivering: false, proven: false },
+  { health: "connected", delivering: true, proven: false },
+  { health: "healthy_grab", delivering: true, proven: true },
+  { health: "grab_failed", delivering: false, proven: false },
+  { health: "fallback_starting", delivering: true, proven: false },
+  { health: "degraded_listen_fallback", delivering: true, proven: true },
+  { health: "failed", delivering: false, proven: false },
+  { health: "stopped", delivering: false, proven: false },
+];
+
+describe("listener health predicates", () => {
+  it("answers every health state", () => {
+    for (const { health, delivering, proven } of HEALTH_CASES) {
+      expect({ health, delivering: listenerDeliversKeys(health) }).toEqual({
+        health,
+        delivering,
+      });
+      expect({ health, proven: listenerIsProvenHealthy(health) }).toEqual({
+        health,
+        proven,
+      });
+    }
+  });
+
+  it("counts a live but unproven listener as delivering keys", () => {
+    // `connected` and `fallback_starting` are the grace window after a child
+    // arrives. The child is publishing snapshots there; only the proof that the
+    // path stays alive is missing, which is why a gesture must not wait for it.
+    expect(listenerDeliversKeys("connected")).toBe(true);
+    expect(listenerDeliversKeys("fallback_starting")).toBe(true);
+  });
+
+  it("asks for proof before a failure episode is treated as over", () => {
+    // The failure notice resets on these two only. `connected` is reported by
+    // the same child that may die inside the grace window, so resetting there
+    // would re-notify on every flap of a listener that cannot stay up.
+    expect(listenerIsProvenHealthy("connected")).toBe(false);
+    expect(listenerIsProvenHealthy("fallback_starting")).toBe(false);
+  });
+});
+
+describe("globalKeyStreamIsLive", () => {
+  it("needs the listener strategy, because the bridge publishes no key stream", () => {
+    // macOS, Windows and Linux X11 report `listener`. A Wayland session reports
+    // `bridge`, where the compositor hands over registerable chords and no
+    // stream of held keys, so no gesture can be detected from it.
+    expect(globalKeyStreamIsLive("listener", "healthy_grab")).toBe(true);
+    expect(globalKeyStreamIsLive("bridge", "healthy_grab")).toBe(false);
+    expect(globalKeyStreamIsLive(null, "healthy_grab")).toBe(false);
+  });
+
+  it("needs a listener that is delivering, not merely configured", () => {
+    // A revoked accessibility permission stops the listener. The strategy still
+    // reads `listener`, and offering the gesture then would be a lie.
+    for (const health of [
+      "starting",
+      "grab_failed",
+      "failed",
+      "stopped",
+    ] as const) {
+      expect({
+        health,
+        live: globalKeyStreamIsLive("listener", health),
+      }).toEqual({ health, live: false });
+    }
+  });
+
+  it("stays live through the states Windows passes on the way to healthy", () => {
+    // Windows restarts the listener on resume, on session unlock and across the
+    // elevation relaunch, so these two states are routine there rather than
+    // momentary. Hiding the gesture's settings row in them is what made it look
+    // absent on Windows.
+    for (const health of ["connected", "fallback_starting"] as const) {
+      expect(globalKeyStreamIsLive("listener", health)).toBe(true);
+    }
   });
 });

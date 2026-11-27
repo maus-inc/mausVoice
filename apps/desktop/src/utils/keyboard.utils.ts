@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { AppState, type KeyboardListenerHealth } from "../state/app.state";
+import {
+  AppState,
+  type HotkeyStrategy,
+  type KeyboardListenerHealth,
+} from "../state/app.state";
 import { useAppStore } from "../store";
 import { getEffectiveStylingMode } from "./feature.utils";
 import { getPlatform } from "./platform.utils";
@@ -292,15 +296,75 @@ const keycapLabel = (pretty: string): string =>
   Object.hasOwn(KEYCAP_LABELS, pretty) ? KEYCAP_LABELS[pretty] : pretty;
 
 /**
- * Whether the native listener is currently delivering key snapshots.
+ * Health states in which the listener may already be delivering snapshots.
  *
- * Only these two health states mean a tap can actually be observed. The grab
- * path is the healthy one, and the listen fallback still reports keys even when
- * the tap could not be installed. Every other state is stopped, starting, or
- * failed, so anything that advertises a key gesture must not offer it.
+ * The two proven states are the steady ones: the grab path is alive, or the
+ * listen fallback took over and still reports keys.
+ *
+ * `connected` and `fallback_starting` join them because they are live, not
+ * dead. `connected` means the child connected and is speaking the wire
+ * protocol. Keys start arriving as soon as its hook installs, and a hook that
+ * cannot install reports `grab_failed` instead of resting here.
+ * `fallback_starting` means the child is already inside `rdev::listen()`. Both
+ * are waiting on the grace window that proves the path alive, and neither holds
+ * the stream back. A gesture that waits for the proof drops taps that were
+ * there to be seen, and the settings row that advertises it disappears for the
+ * same window.
+ *
+ * Every other state means no child is publishing keys: `starting` has no child
+ * yet, `grab_failed` is the moment between a failed hook and the listen
+ * fallback, and `failed` and `stopped` have none. Something built on a global
+ * stream must not claim to work in any of them.
  */
+const DELIVERING_HEALTH: ReadonlySet<KeyboardListenerHealth> = new Set([
+  "connected",
+  "healthy_grab",
+  "fallback_starting",
+  "degraded_listen_fallback",
+]);
+
+/**
+ * Health states that have proven a key path alive, not merely started one.
+ *
+ * The failure notice resets on these rather than on every delivering state:
+ * `connected` reports the same child that was just declared dead a moment
+ * earlier, so resetting there would let a child that keeps reconnecting and
+ * dying re-raise no more than one notice per flap. Proof is the signal that the
+ * episode is over.
+ */
+const PROVEN_HEALTH: ReadonlySet<KeyboardListenerHealth> = new Set([
+  "healthy_grab",
+  "degraded_listen_fallback",
+]);
+
+/** Whether the native listener may be publishing key snapshots right now. */
 export const listenerDeliversKeys = (health: KeyboardListenerHealth): boolean =>
-  health === "healthy_grab" || health === "degraded_listen_fallback";
+  DELIVERING_HEALTH.has(health);
+
+/** Whether the native listener has proven a key path alive. */
+export const listenerIsProvenHealthy = (
+  health: KeyboardListenerHealth,
+): boolean => PROVEN_HEALTH.has(health);
+
+/**
+ * Whether this build is receiving a global key stream right now.
+ *
+ * The strategy says whether a global source exists at all: macOS, Windows and
+ * Linux X11 run the native listener, while a Wayland session runs the
+ * compositor bridge instead, which registers chords and publishes no key
+ * stream. Health says whether that source is publishing snapshots, which is the
+ * only thing a gesture with no window focus can be detected from.
+ *
+ * Both halves are asked in one place because the answer is read in two: the
+ * settings row decides whether to offer the gesture, and the detector decides
+ * whether to watch for it. Two spellings of the same rule drift, and the pair
+ * that disagreed is what advertised a gesture on a dead listener and then hid
+ * one that was still arriving.
+ */
+export const globalKeyStreamIsLive = (
+  strategy: HotkeyStrategy | null,
+  health: KeyboardListenerHealth,
+): boolean => strategy === "listener" && listenerDeliversKeys(health);
 
 export const getKeycapLegend = (key: string): KeycapLegend => {
   const side = MODIFIER_SIDE_RE.exec(key)?.[1];

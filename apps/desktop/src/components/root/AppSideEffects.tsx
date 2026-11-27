@@ -85,7 +85,7 @@ import { getIsDevMode, isWindows } from "../../utils/env.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
   getStyleSwitchActionNamesForKey,
-  listenerDeliversKeys,
+  listenerIsProvenHealthy,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
@@ -503,8 +503,10 @@ export const AppSideEffects = () => {
         return;
       }
       // Reset the failure notification once the listener genuinely recovers, so a later
-      // failure episode can notify again.
-      if (listenerDeliversKeys(payload.state)) {
+      // failure episode can notify again. Proof, not merely a start: `connected` is
+      // reported by the same child that was declared failed a moment ago, so resetting
+      // there would re-notify on every reconnect of a listener that cannot stay up.
+      if (listenerIsProvenHealthy(payload.state)) {
         listenerFailureNotifiedRef.current = false;
       }
       if (payload.state === "failed" && !listenerFailureNotifiedRef.current) {

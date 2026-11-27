@@ -28,3 +28,40 @@ The feature works on macOS, Windows and Linux X11, where the listener runs. It d
 On macOS, choosing Control also starts the system Dictation shortcut. The docs say so, and the feature is disabled until the person chooses a modifier.
 
 The locate replay reuses the ring driver, so a future change to the outline's paint plan reaches it automatically. The tap and window values live in `apps/desktop/src/utils/locate-gesture.utils.ts` and have unit and fuzz tests. Any change to them must keep autorepeat, long holds and modifier combinations out of the trigger.
+
+## Correction, 2026-11-27
+
+Issue #356 reported the row as missing on Windows and read the strategy check as
+the cause. It is not. `platform/windows/mod.rs` re-exports
+`listener_hotkey_strategy`, so Windows has reported `listener` since the module
+was written, and `apps/desktop/src/__tests__/hotkey-strategy.contract.test.ts`
+now pins that mapping at the source. The check that can hide the row is the
+health half added on 2026-11-22, and it was too narrow in two ways.
+
+`listenerDeliversKeys` accepted only `healthy_grab` and
+`degraded_listen_fallback`, the two states that prove a key path alive. Keys
+arrive in `connected` as soon as the child's hook installs, and a hook that
+cannot install reports `grab_failed` instead of resting there.
+`fallback_starting` is already inside `rdev::listen()`. In both, only the grace
+window that promotes the state is outstanding, and the stream is not held back.
+Windows is the platform where that window is routine rather than momentary. It
+restarts the listener on wake, on session unlock and across the elevation
+relaunch, and Windows also removes a low-level hook that overruns
+`LowLevelHooksTimeout` without telling the process, so a live listener there
+reconnects more often than it does anywhere else. The row disappeared for the
+length of each one.
+
+The rule also lived in two places. The settings row asked the strategy and the
+health, and the detector asked only the strategy, so the two disagreed in both
+directions, offering the gesture on a failed listener and hiding it while taps
+were being delivered. `globalKeyStreamIsLive` now answers the question once and
+both readers call it. The failure notice in `AppSideEffects` keeps the proven
+states through `listenerIsProvenHealthy`, because a child that connects and dies
+inside the grace window would otherwise reset the notice on every flap.
+
+The preview seeds are part of the same defect. `preview/scenarios.ts` modelled
+the listener strategy without a health state, and the settings verify harness
+set `"healthy"`, which is not a member of `KeyboardListenerHealth`. Both left
+the row out of every capture, which is how a row that ships can be reviewed as
+missing. The harness now types the state it seeds, so an invalid value is a
+compile error rather than a silently hidden row.
