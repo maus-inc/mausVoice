@@ -6,24 +6,47 @@ The verification harnesses import the desktop font faces and tokens, and mount t
 
 ## Compare a change
 
-The pull request should include before and after captures, side by side, for the pages and widths affected. Save the comparison images under `reports/ui-verify/settings-compare/`. That directory and the light/dark layout JSON reports are intentionally tracked. Other screenshots and JSON measurements in `reports/ui-verify/` follow the repository's existing ignore rules.
+A useful visual comparison answers a question, not just fills a screenshot quota. Capture the **same real route, viewport, theme, browser build, and seeded state** on the exact base and PR-head commits. Select pages with the changed behavior and representative content: include mixed controls, descriptions, segmented choices, and page-specific states—not only pages whose cards are mostly switches. For Settings layout work, Appearance is a useful example because it shows the **Reset pill position** setting and its Current monitor / Cursor monitor choices; AI and models and Shortcuts show different control/content shapes. Capture at least one viewport near the reported width and, when a breakpoint changes, a width on each side of that transition.
+
+Use detached worktrees so the active PR branch is never switched or rewritten. Record both SHAs in the comparison note. Restart Vite whenever changing trees; a hot server can retain modules from the previous tree. If a preview dependency has no built workspace entry point, build its dependency chain in that worktree (for example, `pnpm --filter @repo/agent... build`). Verify the served route and title before trusting a capture.
 
 ```bash
-# Start the preview server after checking out each tree. Vite caches modules.
-pnpm --filter @maus-inc/preview dev --port 5193
+BASE_SHA=<exact-base-commit>
+HEAD_SHA=<exact-pr-head-commit>
+git worktree add --detach /tmp/ui-before "$BASE_SHA"
 
-# Capture the base tree, then the working tree after restarting the server.
-OUT_DIR=/tmp/shots/before node scripts/verify/shot-settings.mjs
-OUT_DIR=/tmp/shots/after node scripts/verify/shot-settings.mjs
+# In the base worktree: install locked deps if needed, then start the preview.
+cd /tmp/ui-before
+corepack pnpm install --offline --frozen-lockfile
+corepack pnpm --filter @repo/agent... build  # only if the preview reports missing workspace dist entries
+corepack pnpm --filter @maus-inc/preview dev
 
-# Build one image per page and width from its before and after captures.
-montage -background '#0f1012' -fill '#f4f4f5' -font DejaVu-Sans -pointsize 20 \
-  -label "Before: base branch" /tmp/shots/before/settings-1100-dictation.png \
-  -label "After: working branch" /tmp/shots/after/settings-1100-dictation.png \
-  -tile 2x1 -geometry '+16+16' reports/ui-verify/settings-compare/1100-dictation.png
+# In another shell, use the capture script from the PR checkout. Repeat for each
+# theme, and use identical values on base and head. The 900px example captures
+# content-rich routes in addition to controls made mostly of switches.
+SETTINGS_VIEWPORTS=900x900 SETTINGS_PAGES=appearance,ai-models,shortcuts \
+  THEME=light OUT_DIR=/tmp/ui-shots/before-light \
+  node scripts/verify/shot-settings.mjs
+THEME=dark OUT_DIR=/tmp/ui-shots/before-dark \
+  SETTINGS_VIEWPORTS=900x900 SETTINGS_PAGES=appearance,ai-models,shortcuts \
+  node scripts/verify/shot-settings.mjs
+
+# Stop the base preview, start it from the PR-head checkout, and repeat with
+# OUT_DIR=/tmp/ui-shots/after-light and /tmp/ui-shots/after-dark.
+
+# Compose matched full-size pairs; retain only intentional review artifacts.
+montage -background '#101216' -fill '#f5f5f5' -font DejaVu-Sans -pointsize 18 \
+  -label "BASE ${BASE_SHA:0:7} · Appearance · light · 900x900" \
+  /tmp/ui-shots/before-light/settings-900-appearance.png \
+  -label "HEAD ${HEAD_SHA:0:7} · Appearance · light · 900x900" \
+  /tmp/ui-shots/after-light/settings-900-appearance.png \
+  -tile 2x1 -geometry '900x900+12+38' \
+  docs/visual-verification/<topic>/appearance-light-before-after.png
 ```
 
-Restart the preview server between trees. A running Vite process can serve cached modules after a bulk checkout. Confirm the served tree before trusting a capture. The current settings rows expose `.setting-row-label`; the base version does not.
+`shot-settings.mjs` defaults to all eight pages at the supported 1280×900, 1100×700, and 800×600 sizes. `SETTINGS_VIEWPORTS=WIDTHxHEIGHT,...` and `SETTINGS_PAGES=route,...` narrow or extend the capture matrix for a specific review; valid route ids are `home`, `dictation`, `ai-models`, `shortcuts`, `appearance`, `privacy-data`, `system`, and `account`. `THEME` selects one scheme and `OUT_DIR` keeps temporary screenshots and geometry JSON outside the source tree. The script verifies the rendered heading, Satoshi font, MUI spacing token, layout geometry, and browser errors; inspect each selected image at full resolution too.
+
+Keep only the final, clearly labeled before/after comparisons and a short Markdown verification note in `docs/visual-verification/<topic>/`. Do not commit transient per-route PNGs, raw measurements, browser profiles, or duplicate screenshot matrices. In the PR description, embed the relevant comparison images with Markdown image links to the committed files so reviewers can see the evidence without browsing the repository. State the base/head SHAs, viewport/theme, browser version, what the harness fakes, what was visually checked, and any limitations; do not claim native-app behavior from the preview harness.
 
 ## Run the verification scripts
 
@@ -54,10 +77,10 @@ node scripts/verify/sweep-preview.mjs
 
 `shot-settings.mjs` checks eight settings pages at 1280x900, 1100x700, and the 800x600 minimum. It records page, row, heading, and action geometry in `settings-layout.json` and exits nonzero when its layout checks or browser console checks fail. Group headings sit above their cards at the card's left edge. Row labels keep their own leading slot, and a group action aligns with the row content edge. The distinction is deliberate: the heading names the whole group; the action is a control in that group.
 
-The settings capture defaults to light mode. Set `THEME=dark` to check the other scheme, and set `OUT_DIR` to write temporary captures outside the repository. Inspect every image at full size before adding it to a pull request. Check that the bundled Satoshi font rendered, spacing looks normal, the correct page and theme appear, and no content clips or overflows.
+The settings capture defaults to light mode. Set `THEME=dark` to check the other scheme. `OUT_DIR` controls where screenshots and geometry JSON are written; by default they go to `mausvoice-ui-verify` under the operating system's temporary directory, outside the repository. Inspect every image at full size before adding it to a pull request. Check that the bundled Satoshi font rendered, spacing looks normal, the correct page and theme appear, and no content clips or overflows.
 
 `click-settings.mjs` exercises the eight-page rail, active-page state, settings search (matching and empty results), slash/Escape keyboard behavior, and the Overview actions in both themes. It also checks that rendered switches expose their state and accessible labels, and tabs expose selection. This harness intentionally stubs Tauri and does not mount the full app shell, so global dialogs and preference persistence are verified by the desktop component tests rather than by this click-through.
 
-The Overview action-edge correction is compared before/after in both themes at all three supported widths under `reports/ui-verify/settings-compare/action-alignment-*`. The geometry JSON records each action's right edge and the first row's content edge; those values must match.
+For group actions, compare the action's measured right edge with the first row's content edge in the geometry JSON emitted to `OUT_DIR`; the values should match. Keep only intentional, reviewer-facing image pairs in `docs/visual-verification/`, not generated measurement dumps.
 
-`shot-help.mjs` checks `HelpPage`, sibling `DictionaryPage` heading alignment, and live `TipCard` rendering at `1280x900`, `1100x700`, `800x600`, and `560x700` in light and dark themes. It verifies `document.fonts.check('16px Satoshi')`, `--app-spacing`, applied `data-mui-color-scheme`, served tree markers (`[data-tip-title="true"]` on head vs absent on `EXPECTED_TREE=base`), unrounded WCAG AA contrast (`>= 4.5`), card rail alignment, and zero overflow, writing `help-layout.json` and `help-layout-dark.json` to `OUT_DIR` (default `reports/ui-verify/`). `click-help.mjs` verifies `Show again`, gated assistant routing (`off` and `on`), live `TipCard` in-page action and keyboard dismissal, target sizes, keyboard Tab focus traversal with `:focus-visible`, and `320px` reflow, clipped-text, RTL, and tripled-text viewport stress in both themes.
+`shot-help.mjs` checks `HelpPage`, sibling `DictionaryPage` heading alignment, and live `TipCard` rendering at `1280x900`, `1100x700`, `800x600`, and `560x700` in light and dark themes. It verifies `document.fonts.check('16px Satoshi')`, `--app-spacing`, applied `data-mui-color-scheme`, served tree markers (`[data-tip-title="true"]` on head vs absent on `EXPECTED_TREE=base`), unrounded WCAG AA contrast (`>= 4.5`), card rail alignment, and zero overflow, writing geometry JSON into `OUT_DIR`. `click-help.mjs` verifies `Show again`, gated assistant routing (`off` and `on`), live `TipCard` in-page action and keyboard dismissal, target sizes, keyboard Tab focus traversal with `:focus-visible`, and `320px` reflow, clipped-text, RTL, and tripled-text viewport stress in both themes.
