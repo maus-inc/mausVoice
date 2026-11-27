@@ -33,7 +33,7 @@ export const AITranscriptionDialog = () => {
           size="small"
           sx={{ ml: "auto" }}
         >
-          <X size={20} />
+          <X size={20} strokeWidth={1.9} />
         </IconButton>
       </DialogTitle>
       <DialogContent dividers>

@@ -111,7 +111,7 @@ export const AIAgentModeDialog = () => {
         fullWidth
       >
         <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <TriangleAlert size={20} />
+          <TriangleAlert size={20} strokeWidth={1.9} />
           <FormattedMessage defaultMessage="Enable power mode?" />
         </DialogTitle>
         <DialogContent>

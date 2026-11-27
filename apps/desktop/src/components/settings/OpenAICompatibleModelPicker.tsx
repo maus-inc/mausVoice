@@ -219,6 +219,7 @@ export const OpenAICompatibleModelPicker = ({
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, py: 1 }}>
         <CircleAlert
           size={20}
+          strokeWidth={1.9}
           style={{ flexShrink: 0, color: "var(--app-palette-error-main)" }}
         />
         <Typography variant="body2" color="error">

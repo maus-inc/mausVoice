@@ -63,7 +63,12 @@ const NOT_A_SURFACE = [
   /^apps\/desktop\/src\/.?test/i,
 ];
 
-const FOOTER = /^<!--\s*footer\s*-->/i;
+/**
+ * The authored body ends at the footer, and the pull request template spells that footer
+ * as a `MausAgent | Filed by` line while an earlier body used an HTML comment. Both are
+ * recognized, so bot text appended below either one never supplies the author's evidence.
+ */
+const FOOTER = /^(?:<!--\s*footer\s*-->|MausAgent \| Filed by )/;
 
 export const isUiPath = (path) =>
   UI_MARKERS.some((marker) => marker.test(path)) &&
@@ -139,15 +144,21 @@ export function checkVisualEvidence({ body, changedPaths = [] }) {
 
   if (all.length === 0) {
     noted.push("the description carries no image");
-  } else if (open.length === 0) {
-    failures.push({
-      rule: "V2",
-      message: `all ${all.length} image(s) sit inside a <details> fold. Evidence is read above the fold`,
-    });
-    failures.push({
-      rule: "V3",
-      message: "no image is unfolded",
-    });
+  } else {
+    // V2 is about any image a reviewer will not see, so a mixed description fails it
+    // too: one visible frame does not make a folded one visible.
+    if (all.length > open.length) {
+      failures.push({
+        rule: "V2",
+        message: `${all.length - open.length} of ${all.length} image(s) sit inside a <details> fold. Evidence is read above the fold`,
+      });
+    }
+    if (open.length === 0) {
+      failures.push({
+        rule: "V3",
+        message: "no image is unfolded",
+      });
+    }
   }
 
   return { failures, noted };
@@ -169,19 +180,21 @@ const run = (args) =>
  * without needing their common ancestor.
  */
 export const changedPaths = (base) => {
+  // `D` is in the filter because removing a component or a stylesheet changes what a
+  // person sees as surely as adding one does.
   const names = (args) => run(args).split("\n").filter(Boolean);
   if (!base) {
-    return names(["diff", "--cached", "--name-only", "--diff-filter=ACMR"]);
+    return names(["diff", "--cached", "--name-only", "--diff-filter=ACMRD"]);
   }
   try {
     return names([
       "diff",
       "--name-only",
-      "--diff-filter=ACMR",
+      "--diff-filter=ACMRD",
       `${base}...HEAD`,
     ]);
   } catch {
-    return names(["diff", "--name-only", "--diff-filter=ACMR", base, "HEAD"]);
+    return names(["diff", "--name-only", "--diff-filter=ACMRD", base, "HEAD"]);
   }
 };
 

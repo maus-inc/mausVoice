@@ -57,7 +57,7 @@ const AvatarHoverScrim = () => (
       transition: "opacity 150ms ease",
     }}
   >
-    <Camera size={20} />
+    <Camera size={20} strokeWidth={1.9} />
   </Box>
 );
 
@@ -89,7 +89,7 @@ const AvatarCameraBadge = () => (
       borderColor: "level2",
     }}
   >
-    <Camera size={15} />
+    <Camera size={15} strokeWidth={1.9} />
   </Box>
 );
 
@@ -200,7 +200,7 @@ export const ProfilePhotoWell = ({
         <Button
           size="small"
           color="inherit"
-          startIcon={<Camera size={18} />}
+          startIcon={<Camera size={18} strokeWidth={1.9} />}
           onClick={pickFile}
           disabled={saving}
         >
@@ -210,7 +210,7 @@ export const ProfilePhotoWell = ({
           <Button
             size="small"
             color="inherit"
-            startIcon={<Trash2 size={18} />}
+            startIcon={<Trash2 size={18} strokeWidth={1.9} />}
             onClick={onRemove}
             disabled={saving}
           >

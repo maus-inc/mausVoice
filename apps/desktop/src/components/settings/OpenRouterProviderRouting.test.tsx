@@ -75,14 +75,43 @@ describe("routing chevron", () => {
 
     // The resting colour the header sets for the glyph, and the hover colour
     // that replaces it. Asserting only the hover rule would pass on a header
-    // where the glyph inherits the title's tone and nothing visibly changes.
+    // where the glyph inherits the title's tone and nothing visibly changes,
+    // and asserting both colours somewhere in the sheet would pass on a header
+    // whose two states are swapped. So each colour is read from its own
+    // declaration: the resting rule carries no `:hover`, the hover rule does.
     const css = Array.from(document.querySelectorAll("style"))
       .map((style) => style.textContent ?? "")
       .join("");
-    expect(css).toContain(
-      ".expand-icon{color:var(--app-palette-text-secondary)",
+
+    const declarations = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap(
+      ([, selector, body]) => {
+        const match = /(?:^|;)\s*color:\s*([^;]+)/.exec(body);
+        return match && selector.includes(".expand-icon")
+          ? [{ selector: selector.trim(), color: match[1].trim() }]
+          : [];
+      },
     );
-    expect(css).toContain(".expand-icon{color:var(--app-palette-text-primary)");
+
+    const resting = declarations.filter(
+      (rule) => !rule.selector.includes(":hover"),
+    );
+    const hover = declarations.filter((rule) =>
+      rule.selector.includes(":hover"),
+    );
+
+    expect(resting.map((rule) => rule.color)).toContain(
+      "var(--app-palette-text-secondary)",
+    );
+    expect(hover.map((rule) => rule.color)).toContain(
+      "var(--app-palette-text-primary)",
+    );
+    // The other direction too, so swapped states fail rather than pass.
+    expect(resting.map((rule) => rule.color)).not.toContain(
+      "var(--app-palette-text-primary)",
+    );
+    expect(hover.map((rule) => rule.color)).not.toContain(
+      "var(--app-palette-text-secondary)",
+    );
     expect(ruleFor(String(generated)).length).toBeGreaterThan(0);
   });
 });

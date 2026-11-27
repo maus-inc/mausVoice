@@ -191,6 +191,7 @@ export const OpenRouterProviderRouting = ({
         <ChevronDown
           className="expand-icon"
           size={20}
+          strokeWidth={1.9}
           style={{
             transition: "transform 0.2s ease",
             transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
@@ -273,7 +274,7 @@ export const OpenRouterProviderRouting = ({
                           onClick={() => handleMoveProvider(index, "up")}
                           sx={{ p: 0.25 }}
                         >
-                          <ArrowUp size={20} />
+                          <ArrowUp size={20} strokeWidth={1.9} />
                         </IconButton>
                         <IconButton
                           size="small"
@@ -281,7 +282,7 @@ export const OpenRouterProviderRouting = ({
                           onClick={() => handleMoveProvider(index, "down")}
                           sx={{ p: 0.25 }}
                         >
-                          <ArrowDown size={20} />
+                          <ArrowDown size={20} strokeWidth={1.9} />
                         </IconButton>
                       </Stack>
                       <Typography variant="body2" sx={{ flex: 1 }}>
@@ -292,7 +293,7 @@ export const OpenRouterProviderRouting = ({
                         onClick={() => handleRemoveProvider(index)}
                         sx={{ p: 0.25 }}
                       >
-                        <X size={20} />
+                        <X size={20} strokeWidth={1.9} />
                       </IconButton>
                     </Paper>
                   ))}
@@ -312,6 +313,7 @@ export const OpenRouterProviderRouting = ({
                     startAdornment={
                       <Plus
                         size={20}
+                        strokeWidth={1.9}
                         style={{ marginRight: 4, flexShrink: 0 }}
                       />
                     }

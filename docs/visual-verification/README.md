@@ -39,9 +39,13 @@ pnpm --filter desktop dev:preview        # the app, on port 1420
 pnpm --filter @maus-inc/preview dev      # the component catalogue, on port 5193
 ```
 
-Both servers read `PREVIEW_ALLOWED_HOSTS` when the browser is not on localhost. Set it to
-the host you will browse from; without it the dev server refuses the origin and you get
-a blank page that looks like a code fault.
+`PREVIEW_ALLOWED_HOSTS` applies to the catalogue on port 5193 only
+(`apps/preview/vite.config.ts`): set it to the host you browse from, or the server refuses
+the origin and you get a blank page that looks like a code fault. The desktop server reads
+no such variable; it allows `*` when the request is to `localhost` and `.e2b.app` when the
+browser preview is on, which covers this repository's preview host. A capture driven from
+any other host has to go through the catalogue, or the desktop server needs a config change
+first, which is a separate decision.
 
 The preview mints its own fixture state. Two query parameters matter when capturing:
 
@@ -64,7 +68,7 @@ The documented pattern, from that record: a `/tmp` directory outside the reposit
 `puppeteer-core` plus one Chromium payload, and a script that walks the routes.
 
 ```bash
-mkdir -p /tmp/shot && cd /tmp/shot
+mkdir -p /tmp/shot /tmp/shots && cd /tmp/shot
 npm init -y
 npm install puppeteer-core @sparticuz/chromium
 ```
@@ -192,8 +196,13 @@ The body checker runs on every edit, so write to its shape from the start:
 
 ```bash
 node scripts/ci/check-pr-body.mjs <body.md>          # before you push the body
-node scripts/ci/check-visual-evidence.mjs <body.md>  # the image requirement
+node scripts/ci/check-visual-evidence.mjs <body.md> --base <base-sha>  # the image requirement
 ```
+
+`--base` is not optional in practice. Without it the checker reads only the staged index,
+so a committed UI change that is no longer staged names no UI path and the image
+requirement never runs; the failure then appears only after the push. Pass the base commit
+or branch the pull request targets.
 
 The visual section belongs under `## Summary` as its own visible heading that the fold
 rules allow, with the frames as markdown images and the light-mode statement and the
@@ -223,5 +232,5 @@ distinction is the honest part.
 - [ ] Before/after dark frames embedded in the pull request description, named by commit.
 - [ ] Light pass stated in the description; any light frame attached only where it is the subject.
 - [ ] Uncaptured surfaces and the reason listed.
-- [ ] `check-pr-body.mjs` and `check-visual-evidence.mjs` pass locally.
+- [ ] `check-pr-body.mjs` and `check-visual-evidence.mjs --base <sha>` pass locally.
 - [ ] `docs/visual-verification/` record updated; `AGENTS.md` references still accurate.

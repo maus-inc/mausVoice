@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -71,7 +71,9 @@ test("V2 and V3 fail when every image sits inside a details fold", () => {
   );
 });
 
-test("V2 is not raised when one image is unfolded beside a folded one", () => {
+test("V2 is raised when one unfolded image sits beside a folded one", () => {
+  // A visible frame does not make a folded one visible, so a mixed description fails V2
+  // and passes V3: the reviewer sees something, but not all of it.
   const parts = [
     md(),
     "",
@@ -86,7 +88,10 @@ test("V2 is not raised when one image is unfolded beside a folded one", () => {
     body: body(parts),
     changedPaths: ["apps/desktop/src/components/settings/SettingRow.tsx"],
   });
-  assert.deepEqual(failures, []);
+  assert.deepEqual(
+    failures.map((failure) => failure.rule),
+    ["V2"],
+  );
 });
 
 test("V5 rejects a local absolute path a reviewer cannot open", () => {
@@ -232,4 +237,32 @@ test("a shallow checkout with no merge base still reads the diff", () => {
     },
   );
   assert.match(out, /ok: visual evidence present/);
+});
+
+test("the template's MausAgent footer also ends the authored body", () => {
+  const text = `## Summary\n\nNothing to see.\n\nMausAgent | Filed by @someone\n\n${md()}\n`;
+  const { authored, found } = splitAuthored(text);
+  assert.equal(found, true);
+  assert.deepEqual(images(authored), []);
+
+  const { failures } = checkVisualEvidence({
+    body: text,
+    changedPaths: ["apps/desktop/src/components/settings/SettingRow.tsx"],
+  });
+  assert.equal(failures[0]?.rule, "V4");
+});
+
+test("a deleted UI file counts as a change to the surface", async () => {
+  // Deleting a stylesheet changes what a person sees, so the path has to reach the
+  // classifier instead of being filtered out of the diff before it is judged.
+  const { isUiPath } = await import("./check-visual-evidence.mjs");
+  assert.equal(
+    isUiPath("apps/desktop/src/components/settings/tokens.css"),
+    true,
+  );
+  const source = readFileSync(
+    new URL("./check-visual-evidence.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /--diff-filter=ACMRD/);
 });

@@ -80,9 +80,12 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || true
+          # Fail closed. A UI change must not reach a reviewer because the checkout
+          # could not read the base: an unavailable base means the evidence cannot be
+          # judged, not that it is present.
           if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
-            echo "::warning::Base $BASE_SHA is unreachable, so the visual evidence gate could not read the diff and did not run."
-            exit 0
+            echo "::error::Base $BASE_SHA is unreachable from this checkout, so the visual evidence gate could not read the diff. Re-run the job."
+            exit 1
           fi
           printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
           node scripts/ci/check-visual-evidence.mjs "$RUNNER_TEMP/pr-body.md" --base "$BASE_SHA"

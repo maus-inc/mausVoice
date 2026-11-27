@@ -368,4 +368,49 @@ describe("settings row icon coverage", () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it("gives every lucide glyph in the settings surface the shared stroke", () => {
+    // Lucide 0.544.0 defaults `strokeWidth` to 2, not to the 1.9 the surface
+    // draws. The row checks above only see a row's leading mark, so a glyph in a
+    // dialog, a picker, a button's `startIcon` or a well's empty state could carry
+    // the library default and look heavier than the row it sits behind. This reads
+    // every element of an imported lucide component in the folder and demands the
+    // shared stroke, which is the line the migrated glyphs crossed.
+    const settingsRoot = new URL(
+      "apps/desktop/src/components/settings/",
+      REPO_ROOT,
+    );
+    const offenders: string[] = [];
+
+    for (const { path, source } of everySource(settingsRoot)) {
+      const imported = new Set<string>();
+      for (const match of source.matchAll(
+        /import\s*\{([^}]+)\}\s*from\s*"lucide-react"/gu,
+      )) {
+        for (const name of match[1].split(",")) {
+          const trimmed = name.trim();
+          if (trimmed) imported.add(trimmed);
+        }
+      }
+      if (imported.size === 0) continue;
+
+      for (const match of source.matchAll(/<([A-Za-z0-9]+)\b([^>]*)>/gu)) {
+        const [, name, props] = match;
+        if (!imported.has(name)) continue;
+        // A spread of the shared props carries the stroke; a literal 1.9 is the
+        // same value spelled out; anything else inherits lucide's own default.
+        if (
+          props.includes("settingGlyphProps") ||
+          props.includes("settingSearchGlyphProps") ||
+          /strokeWidth=\{\s*1\.9\s*\}/u.test(props)
+        ) {
+          continue;
+        }
+        const line = source.slice(0, match.index).split("\n").length;
+        offenders.push(`${path}:${line} <${name}> without the shared stroke`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
 });

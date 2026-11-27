@@ -32,16 +32,23 @@ two never drift apart.
   dialogs and pickers included, by `settings-row-icon-coverage.test.ts`.
 - **One size per context.** 22px for the glyphs that lead rows and rail items
   (spread from the shared `settingGlyphProps`/rail constants, never a per-call
-  literal), 20px for chevrons, 16px or smaller only for a mark inside body
-  copy. Provider marks are brand artwork via `ProviderLogo`, at the same
-  22px box.
+  literal), 20px for chevrons, 18px for a mark inside an action pill, and 16px
+  for the settings search field's magnifier (`settingSearchGlyphProps`) or a
+  mark inside body copy. Provider marks are brand artwork via `ProviderLogo`,
+  at the same 22px box. One stroke everywhere: 1.9, from the shared props.
+  Lucide's own default is 2, so a glyph that omits `strokeWidth` is a defect
+  even when its size is right, and `settings-row-icon-coverage.test.ts` reads
+  every imported lucide element in the folder to catch one.
 - **Settings rows all lead with a glyph**, on `SettingRow` and
-  `SettingToggleRow` alike, in one lane of fixed width so titles align whether
-  the leading mark is a glyph, a provider logo or an avatar. A minimum width is
-  not enough: the widest mark would widen its own lane, which is the shift the
-  lane exists to remove. Glyphs are
-  `aria-hidden`; the accessible name is the title. Colour is
-  `text.secondary`, lifted to `error.main` only for a destructive row.
+  `SettingToggleRow` alike, in one lane whose width has a floor of the glyph
+  size, so titles align. Two marks are identity rather than icon and are the
+  standing exceptions: a provider's own artwork via `ProviderLogo`, and the
+  person's avatar. A wider mark widens its own lane rather than being centred
+  through its neighbours; centring it in a fixed 22px lane left a 48px avatar
+  3px from the card edge and 3px from its title. Glyphs are `aria-hidden`, and
+  so is a mark inside an action pill; the accessible name is the title plus,
+  for a pill, its verb. Colour is `text.secondary`, lifted to `error.main` only
+  for a destructive row.
 - **No icon tiles.** A neutral glyph never sits on a filled square, and no
   glyph is tinted to carry emphasis that belongs to the title or the control.
 - Rows whose leading content is a key (the hotkey chips in the shortcuts

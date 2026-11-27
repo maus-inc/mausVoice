@@ -108,15 +108,16 @@ const ModelRow = ({
           }}
         >
           {isFavorite ? (
-            <Star size={20} fill="currentColor" />
+            <Star size={20} fill="currentColor" strokeWidth={1.9} />
           ) : (
-            <Star size={20} />
+            <Star size={20} strokeWidth={1.9} />
           )}
         </IconButton>
       )}
       {selected && (
         <Check
           size={20}
+          strokeWidth={1.9}
           style={{ color: "var(--app-palette-text-primary)", flexShrink: 0 }}
           aria-label={intl.formatMessage({ defaultMessage: "Selected" })}
         />
@@ -284,7 +285,7 @@ export const OpenRouterModelPicker = ({
             )}
           </Typography>
         </Box>
-        <ChevronDown size={20} />
+        <ChevronDown size={20} strokeWidth={1.9} />
       </Paper>
     );
   }
@@ -310,13 +311,13 @@ export const OpenRouterModelPicker = ({
             input: {
               startAdornment: (
                 <InputAdornment position="start">
-                  <Search size={20} />
+                  <Search size={20} strokeWidth={1.9} />
                 </InputAdornment>
               ),
               endAdornment: (
                 <InputAdornment position="end">
                   <IconButton size="small" onClick={handleCollapse} edge="end">
-                    <X size={20} />
+                    <X size={20} strokeWidth={1.9} />
                   </IconButton>
                 </InputAdornment>
               ),

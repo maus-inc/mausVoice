@@ -309,7 +309,13 @@ const BusyDownloadButtons = ({
         size="small"
         variant={paused ? "contained" : "outlined"}
         color={paused ? "primary" : "warning"}
-        startIcon={paused ? <Play size={14} /> : <Pause size={14} />}
+        startIcon={
+          paused ? (
+            <Play size={14} strokeWidth={1.9} />
+          ) : (
+            <Pause size={14} strokeWidth={1.9} />
+          )
+        }
         sx={{
           ...buttonSx,
           minWidth: 0,
@@ -336,7 +342,7 @@ const BusyDownloadButtons = ({
         size="small"
         variant="text"
         color="inherit"
-        startIcon={<X size={14} />}
+        startIcon={<X size={14} strokeWidth={1.9} />}
         sx={{
           ...buttonSx,
           minWidth: 0,
@@ -654,6 +660,7 @@ export const AITranscriptionConfiguration = ({
             {showFitWarning && (
               <TriangleAlert
                 size={20}
+                strokeWidth={1.9}
                 aria-label={intl.formatMessage({
                   defaultMessage: "This model may not run well on this device",
                 })}
@@ -669,6 +676,7 @@ export const AITranscriptionConfiguration = ({
             {active && (
               <Check
                 size={20}
+                strokeWidth={1.9}
                 style={{
                   color: "var(--app-palette-text-primary)",
                   flexShrink: 0,

@@ -75,7 +75,7 @@ const HotkeyControlsFooter = ({
       {canAdd && (
         <Button
           variant="text"
-          startIcon={<Plus size={20} />}
+          startIcon={<Plus size={20} strokeWidth={1.9} />}
           size={buttonSize}
           sx={{ py: 0.5 }}
           onClick={onAdd}
@@ -120,7 +120,7 @@ const PrimaryHotkeyActions = ({
         onClick={onDisable}
         aria-label={intl.formatMessage({ defaultMessage: "Disable hotkey" })}
       >
-        <Ban size={20} />
+        <Ban size={20} strokeWidth={1.9} />
       </IconButton>
     );
   }
@@ -137,7 +137,7 @@ const PrimaryHotkeyActions = ({
           aria-label={intl.formatMessage({ defaultMessage: "Delete hotkey" })}
           onClick={() => onDeleteHotkey(primaryHotkey.id)}
         >
-          <X size={20} />
+          <X size={20} strokeWidth={1.9} />
         </IconButton>
       )}
       {canRevert && (
@@ -148,7 +148,7 @@ const PrimaryHotkeyActions = ({
           })}
           onClick={onRevertPrimary}
         >
-          <RotateCcw size={20} />
+          <RotateCcw size={20} strokeWidth={1.9} />
         </IconButton>
       )}
     </>
@@ -233,7 +233,7 @@ const AdditionalHotkeyRow = ({
       })}
       onClick={() => onDeleteHotkey(hotkey.id)}
     >
-      <X size={20} />
+      <X size={20} strokeWidth={1.9} />
     </IconButton>
   </Stack>
 );
