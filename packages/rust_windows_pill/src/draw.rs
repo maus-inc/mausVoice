@@ -2,6 +2,7 @@ use crate::constants::*;
 use crate::gfx::Gfx;
 use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
+use rust_pill_shared::flash_banner::BannerButton;
 use rust_pill_shared::{DRAG_INFLATE_SCALE, LONG_PRESS_OUTLINE_COLOR};
 
 /// Paints the whole pill window: begins the Direct2D frame, clears, then
@@ -586,6 +587,12 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
 
 // ── Flash message ────────────────────────────────────────────────
 
+/// Draws the flash banner above the pill.
+///
+/// The geometry is entirely [`rust_pill_shared::flash_banner`]'s: it bounds the
+/// banner by the window, wraps the message to the room the buttons leave and
+/// grows the height with the line count. This function measures and paints, and
+/// nothing else, so the three pills cannot disagree about where the banner goes.
 fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let flash_t = state.flash_t.get();
     if flash_t < 0.01 {
@@ -600,44 +607,41 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
     let reject_label = state.flash_reject_action_label.borrow();
-    let has_action = action_label.is_some();
-    let has_reject = reject_label.is_some();
 
-    let (text_w, _) = gfx.measure_text(&message, 12.0, true);
+    // A shared reborrow, so the closures that measure cannot hold the mutable
+    // borrow this function needs for the draw calls below.
+    let gfx_ref: &Gfx = gfx;
+    let (preferred_w, _) = gfx_ref.measure_text(&message, 12.0, true);
+    let measure = |text: &str| gfx_ref.measure_text(text, 12.0, true).0;
 
-    let action_w = if let Some(ref label) = *action_label {
-        let (aw, _) = gfx.measure_text(label, 11.0, true);
-        aw + FLASH_ACTION_PADDING_H * 2.0
-    } else {
-        0.0
+    let action_text: Option<&String> = (*action_label).as_ref();
+    let reject_text: Option<&String> = (*reject_label).as_ref();
+    let button_width = |label: Option<&String>| -> Option<f64> {
+        let text = label?;
+        let (w, _) = gfx_ref.measure_text(text, 11.0, true);
+        Some(w + FLASH_ACTION_PADDING_H * 2.0)
     };
-
-    let reject_w = if let Some(ref label) = *reject_label {
-        let (rw, _) = gfx.measure_text(label, 11.0, true);
-        rw + FLASH_ACTION_PADDING_H * 2.0
-    } else {
-        0.0
-    };
-
-    let mut action_section = 0.0;
-    if has_action {
-        action_section += FLASH_ACTION_GAP + action_w;
-    }
-    if has_reject {
-        action_section += FLASH_ACTION_GAP + reject_w;
-    }
-
-    let flash_w = (text_w + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
-
-    let scale = FLASH_MIN_SCALE + (1.0 - FLASH_MIN_SCALE) * flash_t;
-    let alpha = flash_t;
-
-    let (_, pill_y, _, _) = pill_position(state, ww, wh);
-    let full_x = (ww - flash_w) / 2.0;
-    let full_y = pill_y - FLASH_GAP - FLASH_HEIGHT;
-
-    let center_x = full_x + flash_w / 2.0;
-    let center_y = full_y + FLASH_HEIGHT / 2.0;
+    let widths = (
+        preferred_w,
+        button_width(action_text),
+        button_width(reject_text),
+    );
+    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    // The banner may use the whole window, and it is laid out in the painter's
+    // own space, which `draw_all` has already shifted by `content_offset`. So the
+    // surface is the canvas seen from that offset rather than the 200-unit
+    // content box, which used to cap a dictation toast at 196 units.
+    let surface =
+        rust_pill_shared::flash_banner::BannerSurface::of_painter(ww, state.content_offset().0);
+    let (layout, scale, alpha, (center_x, center_y)) =
+        rust_pill_shared::flash_banner::FlashFrame::resolve_for_window(
+            &message,
+            measure,
+            widths,
+            (pill_y, surface, wh, pill_x + pill_w / 2.0),
+            flash_t,
+            (&state.banner_lines, &state.banner_center),
+        );
 
     gfx.save();
     gfx.scale_around(center_x, center_y, scale, scale);
@@ -648,65 +652,46 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     } else {
         (0.0, 0.0, 0.0)
     };
+    let banner = layout.banner;
     gfx.fill_rounded_rect(
-        full_x,
-        full_y,
-        flash_w,
-        FLASH_HEIGHT,
+        banner.x,
+        banner.y,
+        banner.w,
+        banner.h,
         FLASH_RADIUS,
         [bg_r, bg_g, bg_b, 0.92 * alpha],
     );
 
-    // Message text
-    if has_action || has_reject {
-        let (_, th) = gfx.measure_text(&message, 12.0, true);
-        gfx.draw_text_top_left(
-            &message,
-            full_x + FLASH_PADDING_H,
-            full_y + (FLASH_HEIGHT - th) / 2.0,
-            12.0,
-            true,
-            false,
-            [1.0, 1.0, 1.0, 0.9 * alpha],
-        );
-    } else {
-        gfx.draw_text_centered(
-            &message,
-            full_x,
-            full_y,
-            flash_w,
-            FLASH_HEIGHT,
-            12.0,
-            true,
-            [1.0, 1.0, 1.0, 0.9 * alpha],
-        );
+    // Message text, one painted line per entry the shared wrap produced. A
+    // button keeps the block left aligned against its padding; without one the
+    // line is centred, which is the compact look a short toast has always had.
+    for (index, line, x) in layout.text_runs(|l| gfx.measure_text(l, 12.0, true).0) {
+        let (_, line_h) = gfx.measure_text(line, 12.0, true);
+        let y = layout.text.line_top(index, line_h);
+        gfx.draw_text_top_left(line, x, y, 12.0, true, false, [1.0, 1.0, 1.0, 0.9 * alpha]);
     }
 
-    // Reject button (drawn to the left of the accept button)
-    if let Some(ref label) = *reject_label {
-        let accept_offset = if has_action {
-            action_w + FLASH_ACTION_GAP
-        } else {
-            0.0
+    for (rect, button) in layout.buttons() {
+        let label = rust_pill_shared::flash_banner::button_label(button, action_text, reject_text);
+        let Some(label) = label else {
+            continue;
         };
-        let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
-        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
 
         gfx.fill_rounded_rect(
-            btn_x,
-            btn_y,
-            reject_w,
-            FLASH_ACTION_HEIGHT,
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
             FLASH_ACTION_RADIUS,
             [1.0, 1.0, 1.0, 0.2 * alpha],
         );
 
         gfx.draw_text_centered(
             label,
-            btn_x,
-            btn_y,
-            reject_w,
-            FLASH_ACTION_HEIGHT,
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
             11.0,
             true,
             [1.0, 1.0, 1.0, 0.95 * alpha],
@@ -718,72 +703,19 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         // shared crate so this cannot drift from the GTK and macOS pills on the
         // one number the painted pixels and the registered hit target have to
         // agree on.
+        let action = match button {
+            BannerButton::Action => ClickAction::FlashAction,
+            BannerButton::Reject => ClickAction::FlashReject,
+        };
         let (sx, sy, sw, sh) = rust_pill_shared::scaled_click_rect(
-            btn_x,
-            btn_y,
-            reject_w,
-            FLASH_ACTION_HEIGHT,
-            center_x,
-            center_y,
-            scale,
+            rect.x, rect.y, rect.w, rect.h, center_x, center_y, scale,
         );
-
         state.click_regions.borrow_mut().push(ClickRegion {
             x: sx,
             y: sy,
             w: sw,
             h: sh,
-            action: ClickAction::FlashReject,
-        });
-    }
-
-    // Action button
-    if let Some(ref label) = *action_label {
-        let btn_x = full_x + flash_w - FLASH_PADDING_H - action_w;
-        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
-
-        gfx.fill_rounded_rect(
-            btn_x,
-            btn_y,
-            action_w,
-            FLASH_ACTION_HEIGHT,
-            FLASH_ACTION_RADIUS,
-            [1.0, 1.0, 1.0, 0.2 * alpha],
-        );
-
-        gfx.draw_text_centered(
-            label,
-            btn_x,
-            btn_y,
-            action_w,
-            FLASH_ACTION_HEIGHT,
-            11.0,
-            true,
-            [1.0, 1.0, 1.0, 0.95 * alpha],
-        );
-
-        // The banner is painted inside the scale transform above, and a click
-        // arrives in unscaled window space, so the region has to be the painted
-        // rectangle rather than the laid-out one. The transform lives in the
-        // shared crate so this cannot drift from the GTK and macOS pills on the
-        // one number the painted pixels and the registered hit target have to
-        // agree on.
-        let (sx, sy, sw, sh) = rust_pill_shared::scaled_click_rect(
-            btn_x,
-            btn_y,
-            action_w,
-            FLASH_ACTION_HEIGHT,
-            center_x,
-            center_y,
-            scale,
-        );
-
-        state.click_regions.borrow_mut().push(ClickRegion {
-            x: sx,
-            y: sy,
-            w: sw,
-            h: sh,
-            action: ClickAction::FlashAction,
+            action,
         });
     }
 

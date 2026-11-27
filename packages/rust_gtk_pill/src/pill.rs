@@ -8,6 +8,8 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
 pub(crate) use rust_pill_shared::clock::monotonic_now as drag_clock_now;
+use rust_pill_shared::flash_banner::CelebrationHost;
+use rust_pill_shared::flash_banner::FlashHost;
 use rust_pill_shared::restore::ParkedWindow;
 
 use crate::constants::*;
@@ -137,16 +139,10 @@ fn on_dismiss_toast(state_tick: &Rc<PillState>) {
 
 /// Applies `InMessage::Fireworks`.
 fn on_fireworks(message: String, state_tick: &Rc<PillState>) {
-    *state_tick.flash_message.borrow_mut() = message;
-    state_tick.flash_is_error.set(false);
-    *state_tick.flash_action.borrow_mut() = None;
-    *state_tick.flash_action_label.borrow_mut() = None;
-    *state_tick.flash_reject_action.borrow_mut() = None;
-    *state_tick.flash_reject_action_label.borrow_mut() = None;
-    state_tick.flash_visible.set(true);
-    state_tick
-        .flash_timer
-        .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
+    state_tick.celebrate(
+        &message,
+        rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION,
+    );
 
     rust_pill_shared::fireworks::Fireworks {
         active: &state_tick.fireworks_active,
@@ -159,16 +155,7 @@ fn on_fireworks(message: String, state_tick: &Rc<PillState>) {
 
 /// Applies `InMessage::Flame`.
 fn on_flame(message: String, state_tick: &Rc<PillState>) {
-    *state_tick.flash_message.borrow_mut() = message;
-    state_tick.flash_is_error.set(false);
-    *state_tick.flash_action.borrow_mut() = None;
-    *state_tick.flash_action_label.borrow_mut() = None;
-    *state_tick.flash_reject_action.borrow_mut() = None;
-    *state_tick.flash_reject_action_label.borrow_mut() = None;
-    state_tick.flash_visible.set(true);
-    state_tick
-        .flash_timer
-        .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
+    state_tick.celebrate(&message, rust_pill_shared::flame::FLAME_TOTAL_DURATION);
 
     state_tick.flame_active.set(true);
     state_tick.flame_elapsed.set(0.0);
@@ -2210,14 +2197,7 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
 }
 
 fn clear_flash(state: &PillState) {
-    rust_pill_shared::clear_flash_state(
-        &state.flash_visible,
-        &state.flash_timer,
-        &state.flash_action,
-        &state.flash_action_label,
-        &state.flash_reject_action,
-        &state.flash_reject_action_label,
-    );
+    rust_pill_shared::flash_banner::FlashHost::clear_flash(state);
 }
 
 fn tick(state: &PillState, dt: f64) {
@@ -2329,7 +2309,7 @@ fn tick(state: &PillState, dt: f64) {
         .set((state.shimmer_phase.get() + SHIMMER_SPEED) % 1.0);
 
     // Fireworks
-    tick_fireworks(state);
+    state.tick_celebration(SPRING_DT);
 
     // Flame
     tick_flame(state);
@@ -2446,14 +2426,7 @@ fn tick_audio_levels(state: &PillState, phase: Phase, dt: f64) {
 /// banner yields the strip above the pill to a revealed style tooltip, so the
 /// banner and the selector never sit on top of each other.
 fn tick_flash(state: &PillState, tooltip_revealed: bool, dt: f64) {
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - dt;
-        if remaining <= 0.0 {
-            clear_flash(state);
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
+    rust_pill_shared::flash_banner::tick_banner_timer(state, dt);
     let flash_target = rust_pill_shared::flash_banner_target(
         state.flash_visible.get(),
         state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
@@ -2507,24 +2480,6 @@ fn tick_long_press(state: &PillState, dt: f64) {
 /// renderers cannot drift apart.
 fn tick_hold_and_ring(state: &PillState, dt: f64) {
     rust_pill_shared::RingHost::tick_hold_and_ring(state, dt);
-}
-
-/// The celebration, drawn from just above the pill.
-///
-/// The flight, the burst and the fade are shared with the other two pills; this
-/// copy only supplies the origin and the step it was already using.
-fn tick_fireworks(state: &PillState) {
-    let dt = SPRING_DT;
-    let ww = state.draw_width.get();
-    let wh = state.draw_height.get();
-    let (_, pill_y, ..) = draw::pill_position(state, ww, wh);
-    rust_pill_shared::fireworks::Fireworks {
-        active: &state.fireworks_active,
-        elapsed: &state.fireworks_elapsed,
-        next_launch: &state.fireworks_next_launch,
-        rockets: &state.fireworks_rockets,
-    }
-    .tick(dt, (ww / 2.0, pill_y - FLASH_GAP - FLASH_HEIGHT / 2.0));
 }
 
 /// The flame, swaying on its own schedule.
