@@ -2057,7 +2057,9 @@ fn reconcile_pending_existing_asset(
             outcome.skipped_existing = outcome.skipped_existing.saturating_add(1);
         }
         Err(err) => {
-            outcome.record_failure(format!("could not verify existing destination asset: {err}"));
+            outcome.record_failure(format!(
+                "could not verify existing destination asset: {err}"
+            ));
         }
     }
 }
