@@ -2001,6 +2001,67 @@ fn revert_asset_progress_entry(ctx: &mut AssetCopyContext<'_>, rel_key: &str) ->
     Ok(())
 }
 
+fn record_confirmed_existing_asset(
+    ctx: &AssetCopyContext<'_>,
+    rel_key: &str,
+    dst_path: &Path,
+    outcome: &mut AssetCopyOutcome,
+) {
+    let expected_digest = ctx.category.digests(ctx.progress).get(rel_key).cloned();
+    match expected_digest {
+        None => {
+            outcome.previously_migrated = outcome.previously_migrated.saturating_add(1);
+        }
+        Some(expected) => match sha256_file_hex(dst_path) {
+            Ok(actual) if actual == expected => {
+                outcome.previously_migrated = outcome.previously_migrated.saturating_add(1);
+            }
+            Ok(_) => {
+                outcome.skipped_existing = outcome.skipped_existing.saturating_add(1);
+            }
+            Err(err) => {
+                outcome.record_failure(format!("could not verify existing migrated asset: {err}"));
+            }
+        },
+    }
+}
+
+fn reconcile_pending_existing_asset(
+    ctx: &mut AssetCopyContext<'_>,
+    rel_key: &str,
+    dst_path: &Path,
+    expected_digest: &str,
+    outcome: &mut AssetCopyOutcome,
+) {
+    match sha256_file_hex(dst_path) {
+        Ok(actual_digest) if actual_digest == expected_digest => {
+            if let Err(confirm_err) = confirm_asset_progress_entry(ctx, rel_key, &actual_digest) {
+                log::warn!(
+                    "Failed to confirm recovered Voquill asset entry for {rel_key}: {confirm_err}"
+                );
+                outcome.record_failure(format!(
+                    "could not confirm recovered asset progress log: {confirm_err}"
+                ));
+            } else {
+                outcome.previously_migrated = outcome.previously_migrated.saturating_add(1);
+            }
+        }
+        Ok(_) => {
+            if let Err(revert_err) = revert_asset_progress_entry(ctx, rel_key) {
+                log::warn!(
+                    "Failed to revert unmatched Voquill asset intent for {rel_key}: {revert_err}"
+                );
+                outcome
+                    .record_failure(format!("could not revert asset progress log: {revert_err}"));
+            }
+            outcome.skipped_existing = outcome.skipped_existing.saturating_add(1);
+        }
+        Err(err) => {
+            outcome.record_failure(format!("could not verify existing destination asset: {err}"));
+        }
+    }
+}
+
 fn copy_regular_asset_file(
     src_path: &Path,
     dst_path: &Path,
@@ -2076,25 +2137,7 @@ fn copy_regular_asset_file(
             }
         }
         Ok(None) if was_already_confirmed => {
-            let expected_digest = ctx.category.digests(ctx.progress).get(&rel_key).cloned();
-            match expected_digest {
-                None => {
-                    outcome.previously_migrated = outcome.previously_migrated.saturating_add(1);
-                }
-                Some(expected) => match sha256_file_hex(dst_path) {
-                    Ok(actual) if actual == expected => {
-                        outcome.previously_migrated = outcome.previously_migrated.saturating_add(1);
-                    }
-                    Ok(_) => {
-                        outcome.skipped_existing = outcome.skipped_existing.saturating_add(1);
-                    }
-                    Err(err) => {
-                        outcome.record_failure(format!(
-                            "could not verify existing migrated asset: {err}"
-                        ));
-                    }
-                },
-            }
+            record_confirmed_existing_asset(ctx, &rel_key, dst_path, outcome);
         }
         Ok(None) if recorded_intent_for_publish => {
             if let Err(revert_err) = revert_asset_progress_entry(ctx, &rel_key) {
@@ -2108,39 +2151,13 @@ fn copy_regular_asset_file(
         }
         Ok(None) => {
             if let Some(expected_digest) = prior_pending_digest {
-                match sha256_file_hex(dst_path) {
-                    Ok(actual_digest) if actual_digest == expected_digest => {
-                        if let Err(confirm_err) =
-                            confirm_asset_progress_entry(ctx, &rel_key, &actual_digest)
-                        {
-                            log::warn!(
-                                "Failed to confirm recovered Voquill asset entry for {rel_key}: {confirm_err}"
-                            );
-                            outcome.record_failure(format!(
-                                "could not confirm recovered asset progress log: {confirm_err}"
-                            ));
-                        } else {
-                            outcome.previously_migrated =
-                                outcome.previously_migrated.saturating_add(1);
-                        }
-                    }
-                    Ok(_) => {
-                        if let Err(revert_err) = revert_asset_progress_entry(ctx, &rel_key) {
-                            log::warn!(
-                                "Failed to revert unmatched Voquill asset intent for {rel_key}: {revert_err}"
-                            );
-                            outcome.record_failure(format!(
-                                "could not revert asset progress log: {revert_err}"
-                            ));
-                        }
-                        outcome.skipped_existing = outcome.skipped_existing.saturating_add(1);
-                    }
-                    Err(err) => {
-                        outcome.record_failure(format!(
-                            "could not verify existing destination asset: {err}"
-                        ));
-                    }
-                }
+                reconcile_pending_existing_asset(
+                    ctx,
+                    &rel_key,
+                    dst_path,
+                    &expected_digest,
+                    outcome,
+                );
             } else {
                 outcome.skipped_existing = outcome.skipped_existing.saturating_add(1);
             }
