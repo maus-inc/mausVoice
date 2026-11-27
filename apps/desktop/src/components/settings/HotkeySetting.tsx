@@ -1,4 +1,4 @@
-import { Add, CancelOutlined, Close, RestartAlt } from "@mui/icons-material";
+import { Ban, Plus, RotateCcw, X } from "lucide-react";
 import { Button, IconButton, Stack, Switch, Typography } from "@mui/material";
 import type { Hotkey } from "@maus-inc/types";
 import { useId, type ReactNode } from "react";
@@ -20,6 +20,7 @@ import {
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { HotKey } from "../common/HotKey";
+import { settingDisabledGlyphProps } from "./setting-row-chassis";
 
 export type HotkeySettingProps = {
   title: ReactNode;
@@ -75,7 +76,7 @@ const HotkeyControlsFooter = ({
       {canAdd && (
         <Button
           variant="text"
-          startIcon={<Add />}
+          startIcon={<Plus size={20} strokeWidth={1.9} />}
           size={buttonSize}
           sx={{ py: 0.5 }}
           onClick={onAdd}
@@ -120,7 +121,7 @@ const PrimaryHotkeyActions = ({
         onClick={onDisable}
         aria-label={intl.formatMessage({ defaultMessage: "Disable hotkey" })}
       >
-        <CancelOutlined color="disabled" />
+        <Ban {...settingDisabledGlyphProps} size={20} />
       </IconButton>
     );
   }
@@ -137,7 +138,7 @@ const PrimaryHotkeyActions = ({
           aria-label={intl.formatMessage({ defaultMessage: "Delete hotkey" })}
           onClick={() => onDeleteHotkey(primaryHotkey.id)}
         >
-          <Close color="disabled" />
+          <X {...settingDisabledGlyphProps} size={20} />
         </IconButton>
       )}
       {canRevert && (
@@ -148,7 +149,7 @@ const PrimaryHotkeyActions = ({
           })}
           onClick={onRevertPrimary}
         >
-          <RestartAlt color="disabled" />
+          <RotateCcw {...settingDisabledGlyphProps} size={20} />
         </IconButton>
       )}
     </>
@@ -233,7 +234,7 @@ const AdditionalHotkeyRow = ({
       })}
       onClick={() => onDeleteHotkey(hotkey.id)}
     >
-      <Close color="disabled" />
+      <X {...settingDisabledGlyphProps} size={20} />
     </IconButton>
   </Stack>
 );

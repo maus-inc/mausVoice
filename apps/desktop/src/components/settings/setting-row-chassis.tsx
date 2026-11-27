@@ -133,6 +133,132 @@ export const contentControlColumnSx: SystemStyleObject<Theme> = {
 };
 
 /**
+ * The size and stroke every settings glyph is drawn at.
+ *
+ * Spread it into the lucide icon rather than typing a size per row: a card holds
+ * icons from several groups, and one row at 20px beside one at 24px reads as two
+ * icon sets. Third-party provider marks are the exception, since a mark is
+ * fitted into its own square and carries no stroke.
+ */
+export const settingGlyphProps = { size: 22, strokeWidth: 1.9 } as const;
+
+/**
+ * The one glyph that is not a row's leading mark: the magnifier inside the
+ * settings search field.
+ *
+ * It sits inside an input at the same stroke and a smaller size, so it is a
+ * second entry in the same vocabulary rather than a per-call literal. Written
+ * here instead of next to the field so the two sizes are read together and a
+ * change to the stroke cannot land on only one of them.
+ */
+export const settingSearchGlyphProps = {
+  size: 16,
+  strokeWidth: settingGlyphProps.strokeWidth,
+} as const;
+
+/**
+ * A glyph on a control that cannot be used right now.
+ *
+ * MUI's icons took a `color="disabled"` prop, and lucide has no colour of its own,
+ * so dropping the prop left four hotkey controls drawing at full contrast beside
+ * their disabled labels. The tone lives here rather than at each call site so the
+ * next disabled glyph reads one name instead of a literal per file.
+ */
+export const settingDisabledGlyphProps = {
+  ...settingGlyphProps,
+  style: { color: "var(--app-palette-action-disabled)" },
+} as const;
+
+/**
+ * The one lane a row's leading mark sits in.
+ *
+ * A glyph names the kind of thing a row controls, so it is part of the row's
+ * shape rather than decoration on it. The lane's width has a floor at the shared
+ * glyph size, so every glyph is 22px and the titles share one edge.
+ *
+ * The floor is a `minWidth`, not a `width`. A fixed lane centres whatever is
+ * wider than it, and the identity row leads with a 48px avatar: centred in 22px
+ * it reached 13px into the 16px gutter, leaving 3px of air against its own
+ * title and 3px from the card edge, which reads as a crammed row. A minimum lets
+ * that one mark take a lane of its own, keeping both gutters at 16px and paying
+ * only the honest cost of a 48px avatar, which is that its title starts 26px
+ * right of the rows below it.
+ */
+const leadingGlyphSx: SystemStyleObject<Theme> = {
+  display: "flex",
+  alignItems: "center",
+  flexShrink: 0,
+  // A floor, not a width. Every glyph is 22px, so the lane measures 22px and
+  // the titles share one edge; the one mark wider than that, the identity
+  // row's avatar, widens its own lane instead of being centred through both
+  // of its neighbours. Centred in a fixed 22px box a 48px picture reached 13px
+  // into the 16px gap, left 3px of air against its title, and pushed its own
+  // left edge 13px outside the lane every other mark starts on.
+  minWidth: settingGlyphProps.size,
+  height: settingGlyphProps.size,
+  color: "text.secondary",
+  // A flex item shrinks by default, so without this the wider avatar would be
+  // squeezed to the floor and the face cropped.
+  "& > *": { flexShrink: 0 },
+};
+
+/** A destructive row's glyph, in the palette's destructive colour. */
+const dangerGlyphSx: SystemStyleObject<Theme> = { color: "error.main" };
+
+/** The label block: the glyph lane, then the row's own text column. */
+const settingRowLabelSx: SystemStyleObject<Theme> = {
+  display: "flex",
+  alignItems: "center",
+  gap: 2,
+  flexGrow: 1,
+  minWidth: 0,
+  // The identity row's avatar is wider than the glyph lane and is meant to
+  // overhang it. Clipping here would crop the picture, so the label block keeps
+  // its own overflow visible and the lane's fixed width does the aligning.
+  overflow: "visible",
+};
+
+export type SettingIconTone = "secondary" | "danger";
+
+/**
+ * The label half of a row: the glyph lane, then the title and description.
+ *
+ * It is one element so that the wrap a wide control needs moves the whole label
+ * as a block. Left as siblings, the glyph would stay behind on the control's
+ * line while its own text moved below, which is the alignment the icon lane
+ * exists to prevent. The `component` follows the host row's content model:
+ * phrasing inside the label and button rows, a block inside a static row.
+ */
+export const SettingRowLabel = ({
+  icon,
+  iconTone = "secondary",
+  rootComponent = "span",
+  children,
+}: {
+  icon?: ReactNode;
+  iconTone?: SettingIconTone;
+  rootComponent?: "span" | "div";
+  children: ReactNode;
+}) => (
+  <Box
+    component={rootComponent}
+    className="setting-row-label"
+    sx={settingRowLabelSx}
+  >
+    {icon && (
+      <Box
+        component="span"
+        aria-hidden
+        sx={[leadingGlyphSx, ...(iconTone === "danger" ? [dangerGlyphSx] : [])]}
+      >
+        {icon}
+      </Box>
+    )}
+    {children}
+  </Box>
+);
+
+/**
  * The control column for a row whose only trailing thing is the glyph that says
  * the row goes somewhere.
  *
@@ -237,41 +363,6 @@ export const SettingRowText = ({
     )}
   </Box>
 );
-
-/**
- * The tile a summary row's leading glyph sits in.
- *
- * Shared rather than declared per row kind: a settings summary draws a label
- * with an icon beside it, and the models card draws two stacked lines beside
- * the same tile — the tile is one object either way, and duplicating it is how
- * two surfaces that are meant to look identical drift apart.
- */
-const summaryIconTileSize = 40;
-
-export const summaryIconTileSx: SystemStyleObject<Theme> = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  flexShrink: 0,
-  width: summaryIconTileSize,
-  height: summaryIconTileSize,
-  border: 1,
-  borderColor: "divider",
-  borderRadius: 1,
-  bgcolor: "level2",
-  color: "text.secondary",
-};
-
-/**
- * The tile of a row whose subject needs the person's attention: a provider with
- * no key, a model that is not downloaded. The row's own text carries the state;
- * the tint only agrees with it.
- */
-export const attentionTileSx: SystemStyleObject<Theme> = {
-  color: "warning.main",
-  borderColor: (theme: Theme) =>
-    `rgb(${theme.vars?.palette?.warning.mainChannel} / 0.4)`,
-};
 
 /**
  * A trailing glyph, tinted by the row rather than by the icon library.

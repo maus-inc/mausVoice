@@ -2,6 +2,7 @@ import { KeyRound, Keyboard } from "lucide-react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState } from "../../../store";
 import { SettingGroup, SettingRow } from "../SettingRow";
+import { settingGlyphProps } from "../setting-row-chassis";
 
 const openDialog = (key: "shortcutsDialogOpen" | "styleHotkeysDialogOpen") => {
   produceAppState((draft) => {
@@ -19,7 +20,7 @@ export default function ShortcutsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="The key that starts and stops dictation, and every other shortcut mausVoice listens for." />
           }
-          icon={<Keyboard size={22} strokeWidth={1.9} />}
+          icon={<Keyboard {...settingGlyphProps} />}
           onClick={() => openDialog("shortcutsDialogOpen")}
         />
       </SettingGroup>
@@ -31,7 +32,7 @@ export default function ShortcutsSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Bind a key to each writing style, so you can switch without opening the app." />
           }
-          icon={<KeyRound size={22} strokeWidth={1.9} />}
+          icon={<KeyRound {...settingGlyphProps} />}
           onClick={() => openDialog("styleHotkeysDialogOpen")}
         />
       </SettingGroup>

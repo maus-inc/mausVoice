@@ -39,6 +39,7 @@ import { ButtonDemo, FabDemo, IconButtonDemo } from "./buttons";
 import { HomeHeatmapDemo } from "./guides";
 import { Keycap3dDemo } from "./keycap";
 import { LayoutDemo, TitlebarDemo } from "./layout";
+import { SettingsRowDemo } from "./settings";
 import { DashboardMenuDemo, MorphIconDemo } from "./navigation";
 import {
   AssistantPanelDemo,
@@ -85,6 +86,7 @@ export const DEMOS: Record<string, ComponentType> = {
   "dashboard-menu": DashboardMenuDemo,
   "morph-icon": MorphIconDemo,
   layout: LayoutDemo,
+  "settings-row": SettingsRowDemo,
   titlebar: TitlebarDemo,
   "native-pill": NativePillDemo,
   "assistant-panel": AssistantPanelDemo,
