@@ -545,6 +545,7 @@ fn append_asset_progress_entry(
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(&path)?;
     let mut existing = Vec::new();
     file.read_to_end(&mut existing)?;
@@ -2270,8 +2271,7 @@ where
     // closed instead of creating a fresh DB that would mask the legacy profile.
     report.can_retry = true;
     rebuild_action_items(&mut report, Vec::new());
-    if let Err(err) =
-        save_manifest_with_sync(&dirs.current_config_dir, &report, &manifest_sync_dir)
+    if let Err(err) = save_manifest_with_sync(&dirs.current_config_dir, &report, &manifest_sync_dir)
     {
         log::warn!(
             "Failed to persist initial Voquill migration manifest; aborting startup migration: {err}"
@@ -7886,7 +7886,10 @@ mod tests {
         // and unblocks normal DB opening.
         let settled = run_startup_migration(&dirs).await;
         assert_eq!(settled.status, VoquillMigrationStatus::Completed);
-        assert_eq!(settled.database_phase, VoquillMigrationPhaseStatus::Migrated);
+        assert_eq!(
+            settled.database_phase,
+            VoquillMigrationPhaseStatus::Migrated
+        );
         assert_eq!(settled.audio_phase, VoquillMigrationPhaseStatus::Migrated);
         assert!(!dirs.promotion_marker_path().exists());
         assert!(ensure_no_pending_promotion_recovery(&dirs).is_ok());
@@ -7997,7 +8000,10 @@ mod tests {
 
         let resumed_b = run_startup_migration(&dirs_b).await;
         assert_eq!(resumed_b.status, VoquillMigrationStatus::Completed);
-        assert_eq!(resumed_b.database_phase, VoquillMigrationPhaseStatus::NotFound);
+        assert_eq!(
+            resumed_b.database_phase,
+            VoquillMigrationPhaseStatus::NotFound
+        );
         assert_eq!(resumed_b.audio_phase, VoquillMigrationPhaseStatus::Migrated);
         assert_eq!(fs::read(dirs_b.current_db_path()).unwrap(), db_bytes_before);
         assert_eq!(
@@ -8089,7 +8095,10 @@ mod tests {
         let db_state = OptionKeyDatabase::new(empty_pool);
         let retried = retry_migration(dirs.clone(), db_state).await.unwrap();
         assert_eq!(retried.status, VoquillMigrationStatus::Completed);
-        assert_eq!(retried.database_phase, VoquillMigrationPhaseStatus::Migrated);
+        assert_eq!(
+            retried.database_phase,
+            VoquillMigrationPhaseStatus::Migrated
+        );
         assert_eq!(retried.audio_phase, VoquillMigrationPhaseStatus::Migrated);
         assert_eq!(retried.counts.transcriptions, 1);
         assert!(dirs
