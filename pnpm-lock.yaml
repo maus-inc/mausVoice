@@ -366,6 +366,9 @@ importers:
       lucide:
         specifier: ^1.31.0
         version: 1.31.0
+      lucide-react:
+        specifier: ^0.544.0
+        version: 0.544.0(react@19.2.8)
       morphicons:
         specifier: ^1.7.0
         version: 1.7.0(react@19.2.8)

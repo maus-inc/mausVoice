@@ -7,11 +7,10 @@ import { useNavigate } from "react-router-dom";
 import { settingEntryOf } from "../../utils/settings-registry";
 import { settingAnchorId, settingsPagePath } from "./settings-routes";
 import {
-  attentionTileSx,
   contentControlColumnSx,
   interactiveSx,
   rowSx,
-  summaryIconTileSx,
+  SettingRowLabel,
   SettingRowText,
   SettingRowValue,
   TrailingGlyph,
@@ -52,14 +51,12 @@ export type SettingSummaryRowProps = SettingSummaryTarget & {
    * info glyph for the one person who wants it.
    */
   tooltip?: ReactNode;
-  /** Leading glyph, drawn in a tile: these rows lead a scan. */
+  /** Leading glyph, in the shared row lane: these rows lead a scan. */
   icon?: ReactNode;
   /** Reported state, right aligned before the chevron. */
   value?: ReactNode;
   /** A control in place of a value, such as a keycap cluster. */
   control?: ReactNode;
-  /** The row it reports needs setting up, and the tile should say so. */
-  attention?: boolean;
 };
 
 /**
@@ -141,7 +138,6 @@ export const SettingSummaryRow = ({
   icon,
   value,
   control,
-  attention,
 }: SettingSummaryRowProps) => {
   const navigate = useNavigate();
   const infoRef = useRef<HTMLSpanElement>(null);
@@ -160,20 +156,14 @@ export const SettingSummaryRow = ({
       onClick={() => navigate(to)}
       sx={[rowSx, interactiveSx]}
     >
-      {icon && (
-        <Box
-          aria-hidden
-          sx={[summaryIconTileSx, ...(attention ? [attentionTileSx] : [])]}
-        >
-          {icon}
-        </Box>
-      )}
       {/* No label ids: this row is its own control, so it is named by the
           title, tooltip and value it renders, in that order. */}
-      <SettingRowText
-        subtitle={subtitle}
-        title={<RowTitle title={title} tooltip={tooltip} infoRef={infoRef} />}
-      />
+      <SettingRowLabel icon={icon}>
+        <SettingRowText
+          subtitle={subtitle}
+          title={<RowTitle title={title} tooltip={tooltip} infoRef={infoRef} />}
+        />
+      </SettingRowLabel>
       <Box sx={contentControlColumnSx}>
         <SettingRowValue value={value} />
         {control}
