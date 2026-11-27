@@ -6,7 +6,7 @@ The settings harness imports the desktop font faces and tokens, and mounts the p
 
 ## Compare a change
 
-The pull request should include before and after captures, side by side, for the pages and widths affected. Save the comparison images under `reports/ui-verify/settings-compare/`. The files at that path are intentionally tracked. Other screenshots and JSON measurements in `reports/ui-verify/` follow the repository's existing ignore rules.
+The pull request should include before and after captures, side by side, for the pages and widths affected. Save the comparison images under `reports/ui-verify/settings-compare/`. The comparison images and the light/dark layout JSON reports are intentionally tracked. Other screenshots and JSON measurements in `reports/ui-verify/` follow the repository's existing ignore rules.
 
 ```bash
 # Start the preview server after checking out each tree. Vite caches modules.
