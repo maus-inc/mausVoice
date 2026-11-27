@@ -22,8 +22,7 @@ const git = (...args) =>
 const fail = (message) => {
   throw new Error(message);
 };
-const zeroSha = "0".repeat(40);
-const validSha = (sha) => /^[0-9a-f]{40}$/.test(sha) && sha !== zeroSha;
+const validSha = (sha) => /^[0-9a-f]{40}$/.test(sha) && !/^0+$/.test(sha);
 
 function rules(text) {
   const ids = [...text.matchAll(/^## (CS\d+)\. \S.+$/gm)].map((m) => m[1]);
@@ -273,17 +272,13 @@ function prepare(branch) {
 }
 
 function requireFastForward(previous, head) {
-  if (!validSha(head)) fail("Invalid outgoing topic SHA.");
-  // Git sends an all-zero previous OID only when this topic ref has no prior
-  // remote tip. This skips only the ancestry check; the base and receipt are
-  // still validated for the first publication below.
-  if (previous === zeroSha) return;
+  if (previous === "0".repeat(40)) return; // First publication of this branch.
   if (!validSha(previous)) fail("Invalid previous topic SHA.");
   try {
     git("merge-base", "--is-ancestor", previous, head);
   } catch {
     fail(
-      `Cannot verify a fast-forward from the remote topic tip (previous: ${previous}, head: ${head}). Fetch its history; if the topic has diverged, merge it into this branch, rerun the review and gates, then push the new head.`,
+      `Cannot verify a fast-forward from the remote topic tip (previous: ${previous}, head: ${head}). Fetch its history and merge it before pushing.`,
     );
   }
 }
@@ -299,7 +294,7 @@ function prePush(remote, updates) {
       if (fields.length !== 4) fail("Invalid pre-push ref update.");
       return { sha: fields[1], destination: fields[2], previous: fields[3] };
     });
-  if (changes.every(({ sha }) => sha === zeroSha)) return;
+  if (changes.every(({ sha }) => /^0{40}$/.test(sha))) return;
   const dir = reviewDir();
   const draft = join(dir, "receipt.md");
   const branch = readFileSync(join(dir, "base-branch"), "utf8");

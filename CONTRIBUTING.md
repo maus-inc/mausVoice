@@ -64,13 +64,8 @@ A branch carries the current tip of its base the whole time it is open. Bring th
 merge, `git fetch origin <base>` and then `git merge FETCH_HEAD`, before the first edit, before
 every push and before opening the pull request, never by rebase or force-push once the branch is
 pushed. Read what each merge brought in, and run the gates on the merged tree. The pull request
-names the base tip the head contains. The first topic push is only for a remote ref that does not
-yet exist; the hook treats Git's all-zero previous SHA as an initial publication but still checks
-the complete receipt and current base. Later topic pushes must be fast-forwards from the advertised
-remote tip. Fetch missing topic history; if the topic diverged, merge it into this branch, rerun the
-gates and prepare a fresh review before pushing the resulting head. After a merge the maintainer
-confirmed, the head branch is deleted. `AGENTS.md` holds the full rule under "Keep the branch
-current with its base".
+names the base tip the head contains. After a merge the maintainer confirmed, the head branch is
+deleted. `AGENTS.md` holds the full rule under "Keep the branch current with its base".
 
 Pull requests fill `.github/pull_request_template.md`, and `pnpm run check:pr-body -- <file>` checks the
 shape of the body. Every record of a review round, a babysit poll or a CI log goes inside a
