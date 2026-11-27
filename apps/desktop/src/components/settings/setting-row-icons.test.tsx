@@ -107,11 +107,13 @@ describe("settings row icons", () => {
     // computes nothing.
     for (const glyph of [rowGlyph, toggleGlyph]) {
       const rule = ruleOf(glyph);
-      // `width`, not `min-width`: a minimum lets a wider mark grow the lane and
-      // start its title further right than every other row in the surface.
-      expect(rule).toContain("width:22px");
+      // A 22px floor, not a fixed width: every glyph is 22px, so a glyph row
+      // still measures 22px and the titles share one edge, while the one mark
+      // that is wider, the identity avatar, widens its own lane instead of
+      // being centred through its neighbours.
+      expect(rule).toContain("min-width:22px");
       expect(rule).toContain("height:22px");
-      expect(rule).not.toContain("min-width:22px");
+      expect(rule).not.toMatch(/[;{]width:22px/);
       expect(rule).toContain("flex-shrink:0");
       // The colour is the app's own `text.secondary`, not MUI's stock
       // `rgba(0, 0, 0, 0.6)`: the two happen to resolve close in light mode and
@@ -215,12 +217,12 @@ describe("settings row icons", () => {
     expect(getComputedStyle(label).flexBasis).toBe("min(200px, 100%)");
   });
 
-  it("keeps a wide avatar overhanging the lane instead of widening it", () => {
-    // The identity row leads with a 48px picture. If the lane grew to fit it,
-    // that one title would start 26px right of every other title on the
-    // surface, which is the misalignment the lane exists to remove. A fixed
-    // lane plus a centred, non-shrinking child is what keeps the title edge
-    // common and the face uncropped.
+  it("widens the lane for a wide avatar instead of centring it through its neighbours", () => {
+    // The identity row leads with a 48px picture. Centred inside a fixed 22px
+    // lane it reached 13px into the 16px gutter, leaving 3px of air against its
+    // own title and 3px from the card edge, which reads as a crammed row. The
+    // lane is a floor, so the avatar gets a 48px lane of its own and both
+    // gutters stay at 16px.
     render(
       <SettingGroup title="Profile">
         <SettingRow
@@ -233,8 +235,9 @@ describe("settings row icons", () => {
 
     const glyph = glyphOf("name");
     const lane = ruleOf(glyph);
-    expect(lane).toContain("width:22px");
-    expect(lane).toContain("justify-content:center");
+    expect(lane).toContain("min-width:22px");
+    // No centring: a centred child is what pushed the picture outside the lane.
+    expect(lane).not.toContain("justify-content:center");
 
     // The guard that keeps a 48px picture whole inside a 22px lane: without it
     // the avatar is a flex item that shrinks to the lane and the face is cut.

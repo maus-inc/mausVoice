@@ -264,13 +264,17 @@ choice below names what it rules out.
 - The magnifier inside the settings search field is the one non-row glyph:
   `settingSearchGlyphProps`, 16px at the same stroke. It is declared beside the
   row props so the two sizes are read together.
-- The glyph sits in a lane of fixed `width` (`leadingGlyphSx`), so titles line
-  up whether a row leads with an icon, a provider logo, or the person's avatar.
-  A `minWidth` would let the widest mark grow the lane, which is how the 48px
-  identity avatar would push its one title 26px right of every other title. A
-  mark wider than the lane is centred in it and overhangs evenly, and its own
-  `flexShrink` is off so it is never squeezed; the lane's width is the
-  alignment, so do not pad individual titles to fake it.
+- The glyph sits in a lane with a `minWidth` of the glyph size
+  (`leadingGlyphSx`), so every glyph row measures 22px and the titles share one
+  edge. The floor is deliberately not a fixed `width`: a fixed lane centres the
+  one mark that is wider than it — the identity avatar — through both of its
+  neighbours, which left the 48px picture reaching 13px into the 16px gutter,
+  3px of air against its own title and 3px from the card edge. Measured on the
+  account page, that read as a crammed row. A wider mark gets a lane of its own
+  and both gutters stay at 16px; the trade is that this one title starts 26px
+  right of its neighbours, which is the honest consequence of a 48px avatar
+  rather than a spacing bug. The mark's `flexShrink` is off so it is never
+  squeezed, so do not pad individual titles to fake alignment either.
 - Glyphs are `aria-hidden` decoration. A row's accessible name is its title,
   its description is the description, and neither ever includes the mark.
 - Colour is `text.secondary`, or `text.secondary` lifted to `error.main` on a
@@ -279,6 +283,9 @@ choice below names what it rules out.
 - No tiles. A neutral glyph does not get a filled square behind it, and an
   overdue update does not tint one. Emphasis belongs to the title and to the
   control.
+- An action pill spells its verb instead of showing a chevron. Where a glyph
+  makes the verb faster to read it takes one at 18px, the size the app's own
+  buttons give `startIcon`; verbs that are unambiguous without a mark keep none.
 - Icons that carry a key rather than a setting are outside this rule: the
   hotkey chips in the shortcuts card and its dialog summarise keys, not
   settings, so they stay iconless.

@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   body:
-    name: Folded Body Check
+    name: Body and visual evidence
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -67,6 +67,28 @@ jobs:
       - name: Test the proposed body checker
         if: ${{ !cancelled() }}
         run: node --test scripts/ci/check-pr-body.test.mjs
+
+      # A change that alters what a person sees ships its screenshots in this
+      # description. The procedure is docs/visual-verification/README.md. The checker
+      # reads the diff against the PR's base, so it fails a UI change that carries no
+      # evidence without anyone having to remember to run it.
+      - name: Require visual evidence for a UI change
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || true
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "::warning::Base $BASE_SHA is unreachable, so the visual evidence gate could not read the diff and did not run."
+            exit 0
+          fi
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          node scripts/ci/check-visual-evidence.mjs "$RUNNER_TEMP/pr-body.md" --base "$BASE_SHA"
+      - name: Test the visual evidence checker
+        if: ${{ !cancelled() }}
+        run: node --test scripts/ci/check-visual-evidence.test.mjs
 
   standards:
     name: Full-diff coding standards review

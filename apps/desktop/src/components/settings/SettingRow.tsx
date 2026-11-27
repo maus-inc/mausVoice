@@ -66,6 +66,11 @@ const actionPillSx = (
   lineHeight: 1,
   whiteSpace: "nowrap",
   flexShrink: 0,
+  // A mark beside the verb keeps the pill on the same idiom as the app's buttons,
+  // which pair an 18px glyph with their label. The gap is the only spacing the
+  // pill needs; the glyph is centred by the flex line it sits on.
+  gap: 0.75,
+  "& > svg": { flexShrink: 0 },
   ...(tone === "error"
     ? {
         color: "error.main",
@@ -79,7 +84,12 @@ const actionPillSx = (
       }),
 });
 
-type SettingRowAction = { label: ReactNode; tone?: "primary" | "error" };
+type SettingRowAction = {
+  label: ReactNode;
+  tone?: "primary" | "error";
+  /** Leading mark beside the verb, for a verb a glyph makes faster to read. */
+  icon?: ReactNode;
+};
 
 type SettingRowControlColumnProps = {
   value?: ReactNode;
@@ -146,6 +156,7 @@ const SettingRowControlColumn = ({
             `${cssPixels(theme.shape.borderRadius) - 2}px`,
           )}
         >
+          {action.icon}
           {action.label}
         </Box>
       )}
@@ -171,7 +182,7 @@ export type SettingRowProps = {
    * Names the row's action instead of showing a chevron. Use it wherever the
    * verb is obvious enough to spell out.
    */
-  action?: { label: ReactNode; tone?: "primary" | "error" };
+  action?: SettingRowAction;
   /** Makes the whole row one button that opens a dialog or starts a task. */
   onClick?: () => void;
   /** Makes the row one button that opens this URL in the browser. */

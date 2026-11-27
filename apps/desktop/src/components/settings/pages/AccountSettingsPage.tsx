@@ -1,4 +1,4 @@
-import { Eraser, LockKeyhole, LogOut, Trash2 } from "lucide-react";
+import { Eraser, LockKeyhole, LogOut, Pencil, Trash2 } from "lucide-react";
 import { FormattedMessage } from "react-intl";
 import { signOut } from "../../../actions/login.actions";
 import { useMyProfileImage } from "../../../hooks/user.hooks";
@@ -51,7 +51,10 @@ export default function AccountSettingsPage() {
             <FormattedMessage defaultMessage="How you appear in mausVoice, and the name it writes with on your behalf." />
           }
           value={name || null}
-          action={{ label: <FormattedMessage defaultMessage="Edit" /> }}
+          action={{
+            label: <FormattedMessage defaultMessage="Edit" />,
+            icon: <Pencil {...settingGlyphProps} size={18} />,
+          }}
           onClick={() => openDialog("profileDialogOpen")}
         />
       </SettingGroup>

@@ -127,14 +127,18 @@ export const settingSearchGlyphProps = {
 const leadingGlyphSx: SystemStyleObject<Theme> = {
   display: "flex",
   alignItems: "center",
-  justifyContent: "center",
   flexShrink: 0,
-  width: settingGlyphProps.size,
+  // A floor, not a width. Every glyph is 22px, so the lane measures 22px and
+  // the titles share one edge; the one mark wider than that, the identity
+  // row's avatar, widens its own lane instead of being centred through both
+  // of its neighbours. Centred in a fixed 22px box a 48px picture reached 13px
+  // into the 16px gap, left 3px of air against its title, and pushed its own
+  // left edge 13px outside the lane every other mark starts on.
+  minWidth: settingGlyphProps.size,
   height: settingGlyphProps.size,
   color: "text.secondary",
-  // A flex item shrinks by default, and the one mark wider than this lane is
-  // the identity row's avatar. Without this the lane would squeeze the picture
-  // to 22px and crop the face, which is the failure a fixed lane invites.
+  // A flex item shrinks by default, so without this the wider avatar would be
+  // squeezed to the floor and the face cropped.
   "& > *": { flexShrink: 0 },
 };
 

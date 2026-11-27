@@ -130,9 +130,16 @@ inside a page the rule covers.
   is the focused element.
 - **Danger**: `iconTone="danger"` rows on `account` take `error.main` on the glyph
   while the title keeps `text.primary`; checked in both schemes.
-- **Avatar overhang**: on `account` the 48px avatar overhangs the 22px lane and the
-  title still starts on the same edge as every other row on the page, which is the
-  behaviour the fixed lane width was chosen for.
+- **Avatar lane, corrected after review**: the 48px avatar no longer overhangs a fixed
+  22px lane. Seen in the account frame, the overhang read as a crammed row, so the lane
+  became a `minWidth` and the avatar now gets a lane of its own. Measured before and
+  after on the account page at 1157×727: the avatar's left edge was 3px from the card
+  edge and 3px from its title; it is 16px and 16px now, and its lane measures 48px while
+  every glyph lane still measures 22px. The Name title moved from x=563 to x=589; the
+  other three rows on the page keep x=563. See the pair below.
+- **Action pill**: the Edit pill carries an 18px pencil, the size the app's own buttons
+  give `startIcon`, because the verb and the glyph read faster together than either
+  alone. Verb-only pills elsewhere keep no mark.
 
 ## What these captures are not
 
@@ -150,3 +157,36 @@ mirror access, so the two shared libraries that build needs (`libnspr4`, `libnss
 compiled from NSS and NSPR sources fetched from GitHub and linked from `/tmp` for the
 capture process only. The gate scripts were run from a `/tmp` copy, as the execution
 limits in `docs/decisions/stageshow-on-every-ui-touch.md` require.
+
+## Account profile row, before and after
+
+The row as it shipped (left) and at the head commit (right), both dark, captured from
+the same build at 1157×727 with device scale 2 and motion reduced. The before frame is
+produced by restoring the old lane rules in the capture browser only, so the two frames
+differ in nothing but this change.
+
+| Before | After |
+| --- | --- |
+| ![Account profile row before, dark](../assets/settings-icons-account-row-before.dark.png) | ![Account profile row after, dark](../assets/settings-icons-account-row-after.dark.png) |
+
+What changed, and what the frames show:
+
+- The avatar sits 16px from the card edge instead of 3px.
+- The avatar sits 16px from its title instead of 3px.
+- The Edit pill gained its pencil; its width grew 73.4px to hold a 30px-tall pill with an
+  18px mark and a 6px gap.
+- The Name title started 26px further right than the Sign out title below it. That is
+  the cost of a 48px mark against a 22px one, and it is the trade this lane makes: a
+  shared title edge with a 48px picture inside it would need the picture to overlap its
+  own row's text.
+
+The light scheme was captured for both frames and inspected at the same scale. It reads
+the same way: the gutters are symmetric, the pencil is legible at `text.primary` in the
+pill, and the avatar ring separates from the card at the same weight as in dark. No light
+frame is attached, because the change is not about light.
+
+**Sharing a higher lane was measured and set aside.** Rendering the Sign out row's lane at
+40px raises the whole page's title edge and drops the avatar to 40px, stepping all four
+titles to x=589. It removes the step entirely, but it moves three rows of a shipped page
+and shrinks the picture for a spacing-only gain, so it is a human call rather than one
+this change should make silently.
