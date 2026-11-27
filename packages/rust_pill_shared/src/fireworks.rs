@@ -167,15 +167,19 @@ fn rocket_from(launch: &FireworkLaunch, index: usize, origin: (f64, f64)) -> Roc
 impl Fireworks<'_> {
     /// Advance the animation by `dt` seconds.
     ///
-    /// `origin` is where the rockets leave from, in the caller's drawing space:
-    /// just above the pill, which is the one thing the three pills must supply
-    /// themselves.
+    /// `origin` is where a newly launched rocket starts, in the caller's drawing
+    /// space: just above the pill, which is the one thing the three pills must
+    /// supply themselves. It is optional because a rocket already in flight does
+    /// not need one. `None` means the banner has not painted yet: the burst still
+    /// advances, so its elapsed time and the rockets already in the air stay
+    /// correct, but nothing new launches until there is somewhere to launch
+    /// from, and the launch schedule is not consumed while it waits.
     ///
     /// A tick while the animation is not active does nothing and leaves the
     /// elapsed clock alone, so a celebration that has not started cannot be
     /// advanced by an idle frame -- and one that has finished stays finished
     /// until the caller starts it again.
-    pub fn tick(&self, dt: f64, origin: (f64, f64)) {
+    pub fn tick(&self, dt: f64, origin: Option<(f64, f64)>) {
         if !self.active.get() {
             return;
         }
@@ -186,12 +190,17 @@ impl Fireworks<'_> {
         let mut next = self.next_launch.get();
         let mut rockets = self.rockets.borrow_mut();
 
-        while next < FIREWORK_LAUNCHES.len() && elapsed >= FIREWORK_LAUNCHES[next].time {
-            let rocket = rocket_from(&FIREWORK_LAUNCHES[next], next, origin);
-            rockets.push(rocket);
-            next += 1;
+        // No origin means the banner has not painted, so the launch is held but
+        // the schedule is not consumed: `next_launch` stays where it is and the
+        // rocket goes out as soon as there is a point to launch from.
+        if let Some(origin) = origin {
+            while next < FIREWORK_LAUNCHES.len() && elapsed >= FIREWORK_LAUNCHES[next].time {
+                let rocket = rocket_from(&FIREWORK_LAUNCHES[next], next, origin);
+                rockets.push(rocket);
+                next += 1;
+            }
+            self.next_launch.set(next);
         }
-        self.next_launch.set(next);
 
         for rocket in rockets.iter_mut() {
             match rocket.phase {
@@ -313,7 +322,7 @@ mod tests {
     fn an_inactive_tick_does_nothing() {
         let h = Harness::new();
         h.active.set(false);
-        h.fw().tick(0.5, (0.0, 0.0));
+        h.fw().tick(0.5, Some((0.0, 0.0)));
         assert_eq!(h.elapsed.get(), 0.0);
         assert!(h.rockets.borrow().is_empty());
     }
@@ -323,7 +332,7 @@ mod tests {
     #[test]
     fn rockets_launch_on_schedule_and_burst() {
         let h = Harness::new();
-        h.fw().tick(1.0 / 60.0, (10.0, 20.0));
+        h.fw().tick(1.0 / 60.0, Some((10.0, 20.0)));
         assert_eq!(
             h.rockets.borrow().len(),
             1,
@@ -340,7 +349,7 @@ mod tests {
 
         // Past the first fuse: it has burst, kept all its sparks, and another
         // rocket has since joined it.
-        h.fw().tick(1.0, (10.0, 20.0));
+        h.fw().tick(1.0, Some((10.0, 20.0)));
         let rockets = h.rockets.borrow();
         let burst = rockets
             .iter()
@@ -354,7 +363,7 @@ mod tests {
     #[test]
     fn a_burst_fans_out() {
         let h = Harness::new();
-        h.fw().tick(1.2, (0.0, 0.0));
+        h.fw().tick(1.2, Some((0.0, 0.0)));
         let rockets = h.rockets.borrow();
         let burst = rockets
             .iter()
@@ -378,14 +387,14 @@ mod tests {
         let h = Harness::new();
         // Still running a second in.
         for _ in 0..60 {
-            h.fw().tick(1.0 / 60.0, (0.0, 0.0));
+            h.fw().tick(1.0 / 60.0, Some((0.0, 0.0)));
         }
         assert!(h.active.get(), "stopped before it finished");
 
         // Well past the duration with everything spent.
-        h.fw().tick(FIREWORKS_TOTAL_DURATION, (0.0, 0.0));
+        h.fw().tick(FIREWORKS_TOTAL_DURATION, Some((0.0, 0.0)));
         for _ in 0..200 {
-            h.fw().tick(0.05, (0.0, 0.0));
+            h.fw().tick(0.05, Some((0.0, 0.0)));
         }
         assert!(!h.active.get(), "the animation never finished");
         assert!(h.rockets.borrow().is_empty(), "spent rockets were kept");
@@ -396,7 +405,7 @@ mod tests {
     #[test]
     fn a_restart_forgets_the_previous_run() {
         let h = Harness::new();
-        h.fw().tick(1.2, (0.0, 0.0));
+        h.fw().tick(1.2, Some((0.0, 0.0)));
         assert!(h.elapsed.get() > 1.0);
         assert!(!h.rockets.borrow().is_empty());
 
@@ -419,7 +428,7 @@ mod tests {
         h.fw().restart(true);
         assert!(!h.active.get(), "reduced motion must not start the flight");
         for _ in 0..120 {
-            h.fw().tick(1.0 / 60.0, (0.0, 0.0));
+            h.fw().tick(1.0 / 60.0, Some((0.0, 0.0)));
         }
         assert!(
             h.rockets.borrow().is_empty(),
@@ -432,9 +441,9 @@ mod tests {
     #[test]
     fn a_rising_rocket_is_pulled_down() {
         let h = Harness::new();
-        h.fw().tick(1.0 / 60.0, (0.0, 0.0));
+        h.fw().tick(1.0 / 60.0, Some((0.0, 0.0)));
         let before = h.rockets.borrow()[0].vy;
-        h.fw().tick(1.0 / 60.0, (0.0, 0.0));
+        h.fw().tick(1.0 / 60.0, Some((0.0, 0.0)));
         let after = h.rockets.borrow()[0].vy;
         assert!(after > before, "gravity pulled the wrong way");
         let expected = FIREWORKS_GRAVITY / 60.0;

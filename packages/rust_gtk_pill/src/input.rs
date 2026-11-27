@@ -359,22 +359,11 @@ fn submit_send_button(state: &PillState) {
 }
 
 fn dismiss_flash(state: &PillState, reject: bool) {
-    let action = if reject {
-        state.flash_reject_action.borrow().clone()
-    } else {
-        state.flash_action.borrow().clone()
-    };
-    if let Some(action) = action {
-        ipc::send(&OutMessage::ToastAction { action });
-    }
-    rust_pill_shared::clear_flash_state(
-        &state.flash_visible,
-        &state.flash_timer,
-        &state.flash_action,
-        &state.flash_action_label,
-        &state.flash_reject_action,
-        &state.flash_reject_action_label,
-    );
+    rust_pill_shared::flash_banner::dismiss_flash(state, reject, |action| {
+        ipc::send(&OutMessage::ToastAction {
+            action: action.to_string(),
+        });
+    });
 }
 
 pub(crate) fn handle_scroll(state: &PillState, event: &gdk::EventScroll) {
