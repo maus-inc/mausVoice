@@ -86,7 +86,7 @@ import {
   ADD_TO_DICTIONARY_HOTKEY,
   getStyleSwitchActionNamesForKey,
   listenerIsProvenHealthy,
-  readListenerHealthSeed,
+  seedListenerHealth,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
@@ -280,15 +280,15 @@ export const AppSideEffects = () => {
     // an unchanged state, so the snapshot must not overwrite it.
     healthEventAppliedRef.current = false;
     try {
-      const health = await readListenerHealthSeed(
+      await seedListenerHealth(
         () => invoke<KeyboardListenerHealth>("get_key_listener_health"),
         () => healthEventAppliedRef.current,
+        (health) => {
+          produceAppState((draft) => {
+            draft.keyboardListenerHealth = health;
+          });
+        },
       );
-      if (health !== null) {
-        produceAppState((draft) => {
-          draft.keyboardListenerHealth = health;
-        });
-      }
     } catch (error) {
       getLogger().warning(`Failed to read keyboard listener health: ${error}`);
     }

@@ -11,7 +11,7 @@ import {
   globalKeyStreamIsLive,
   listenerDeliversKeys,
   listenerIsProvenHealthy,
-  readListenerHealthSeed,
+  seedListenerHealth,
   DICTATE_HOTKEY,
   OPEN_CHAT_HOTKEY,
   syncHotkeyCombosToNative,
@@ -436,42 +436,66 @@ describe("globalKeyStreamIsLive", () => {
   });
 });
 
-describe("readListenerHealthSeed", () => {
-  it("keeps the snapshot when no health event landed during the read", async () => {
-    const health = await readListenerHealthSeed(
+describe("seedListenerHealth", () => {
+  it("applies the snapshot when no health event landed during the read", async () => {
+    const applied: KeyboardListenerHealth[] = [];
+
+    await seedListenerHealth(
       () => Promise.resolve("starting"),
       () => false,
+      (health) => applied.push(health),
     );
 
-    expect(health).toBe("starting");
+    expect(applied).toEqual(["starting"]);
   });
 
   it("drops the snapshot when a health event landed while it was pending", async () => {
     // The event is newer than the snapshot, and Rust does not repeat an
     // unchanged state, so writing the older value back would strand the store on
     // a state the listener has already left.
+    const applied: KeyboardListenerHealth[] = [];
     let release: (health: KeyboardListenerHealth) => void = () => {};
     let eventApplied = false;
-    const pending = readListenerHealthSeed(
+    const pending = seedListenerHealth(
       () =>
         new Promise<KeyboardListenerHealth>((resolve) => {
           release = resolve;
         }),
       () => eventApplied,
+      (health) => applied.push(health),
     );
 
     eventApplied = true;
     release("starting");
+    await pending;
 
-    await expect(pending).resolves.toBeNull();
+    expect(applied).toEqual([]);
+  });
+
+  it("asks about newer events at the write, not only after the read", async () => {
+    // The guard and the write share one synchronous block, so an event that
+    // landed after the read resolved is still respected.
+    const applied: KeyboardListenerHealth[] = [];
+
+    await seedListenerHealth(
+      () => Promise.resolve("connected"),
+      () => true,
+      (health) => applied.push(health),
+    );
+
+    expect(applied).toEqual([]);
   });
 
   it("propagates a failed read instead of seeding a guess", async () => {
+    const applied: KeyboardListenerHealth[] = [];
+
     await expect(
-      readListenerHealthSeed(
+      seedListenerHealth(
         () => Promise.reject(new Error("listener not running")),
         () => false,
+        (health) => applied.push(health),
       ),
     ).rejects.toThrow("listener not running");
+    expect(applied).toEqual([]);
   });
 });

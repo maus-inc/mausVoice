@@ -367,22 +367,28 @@ export const globalKeyStreamIsLive = (
 ): boolean => strategy === "listener" && listenerDeliversKeys(health);
 
 /**
- * Reads the listener's health for the startup seed, unless a health event landed
- * while the read was pending.
+ * Applies the startup health seed, unless a health event landed while the read
+ * was pending.
  *
  * The seed exists because events emitted before the subscription registered are
  * lost, and the store would sit at its initial `stopped`. A seed that lands after
  * such an event would replace the newer value with an older snapshot, and the
  * native side does not repeat an unchanged state, so the stale value would stay
- * until the next transition, leaving a live listener reading as not live. Returns
- * `null` in that case and lets the event stand.
+ * until the next transition, leaving a live listener reading as not live.
+ *
+ * The check and the write happen in one synchronous block, so no event callback
+ * can slip in between them and be overwritten by the value it replaced.
  */
-export const readListenerHealthSeed = async (
+export const seedListenerHealth = async (
   readHealth: () => Promise<KeyboardListenerHealth>,
   hasNewerEvent: () => boolean,
-): Promise<KeyboardListenerHealth | null> => {
+  apply: (health: KeyboardListenerHealth) => void,
+): Promise<void> => {
   const health = await readHealth();
-  return hasNewerEvent() ? null : health;
+  if (hasNewerEvent()) {
+    return;
+  }
+  apply(health);
 };
 
 export const getKeycapLegend = (key: string): KeycapLegend => {
