@@ -1117,7 +1117,15 @@ const ApiKeyCard = ({
 
 const supportsContext = (key: SettingsApiKey, context: ApiKeyListContext) => {
   if (key.provider === "azure") {
-    return context === "transcription" ? !!key.azureRegion : !!key.baseUrl;
+    const hasRegion = !!key.azureRegion?.trim();
+    const hasBaseUrl = !!key.baseUrl?.trim();
+    // Incomplete Azure records missing both region and endpoint still count as
+    // needing attention, so keep them visible in both lists to allow repair or
+    // removal.
+    if (!hasRegion && !hasBaseUrl) {
+      return true;
+    }
+    return context === "transcription" ? hasRegion : hasBaseUrl;
   }
   const repo = getModelProviderRepo(key.provider);
   return context === "transcription"

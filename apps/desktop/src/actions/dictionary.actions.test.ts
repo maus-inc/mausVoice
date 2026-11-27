@@ -39,6 +39,7 @@ vi.mock("../utils/id.utils", () => ({
 
 import { createGlossaryTerms, loadDictionary } from "./dictionary.actions";
 import { trackDictionaryMutation } from "../utils/dictionary-mutations";
+import { beginLocalDataClear } from "../utils/local-data-write-gate";
 
 const persistAs = (term: Term): Promise<Term> => Promise.resolve(term);
 
@@ -205,5 +206,36 @@ describe("dictionary list reads during writes", () => {
     await loading;
     expect(termMocks.listTerms).toHaveBeenCalledTimes(2);
     expect(sources()).toEqual(["new word"]);
+  });
+
+  it("drops stale dictionary terms when local data is cleared while listTerms is in flight", async () => {
+    let resolveList!: (terms: Term[]) => void;
+    termMocks.listTerms.mockImplementationOnce(
+      () =>
+        new Promise<Term[]>((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+
+    const loading = loadDictionary();
+    await vi.waitFor(() =>
+      expect(termMocks.listTerms).toHaveBeenCalledTimes(1),
+    );
+    const releaseClear = await beginLocalDataClear();
+    releaseClear();
+
+    resolveList([
+      {
+        id: "stale-term",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        sourceValue: "StaleWord",
+        destinationValue: "",
+        isReplacement: false,
+      },
+    ]);
+    await loading;
+
+    expect(getAppState().dictionary.termIds).toEqual([]);
+    expect(getAppState().termById["stale-term"]).toBeUndefined();
   });
 });

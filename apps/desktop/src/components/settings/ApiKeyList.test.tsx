@@ -487,4 +487,55 @@ describe("ApiKeyList", () => {
 
     expect(editTestButton()?.disabled).toBe(false);
   });
+
+  it("shows Azure keys missing both region and baseUrl in both lists so they can be repaired or deleted", async () => {
+    const incompleteAzure: SettingsApiKey = {
+      id: "key-azure-incomplete",
+      name: "Broken Azure Key",
+      provider: "azure",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      keyFull: null,
+      azureRegion: null,
+      baseUrl: null,
+      credentialStatus: "invalid_format",
+      credentialIssue: "missing_region",
+    };
+    const speechAzure: SettingsApiKey = {
+      id: "key-azure-speech",
+      name: "Azure Speech",
+      provider: "azure",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      keyFull: "azure-speech-key",
+      azureRegion: "eastus",
+      baseUrl: null,
+      credentialStatus: "usable",
+      credentialIssue: null,
+    };
+    const openAiAzure: SettingsApiKey = {
+      id: "key-azure-openai",
+      name: "Azure OpenAI",
+      provider: "azure",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      keyFull: "azure-openai-key",
+      azureRegion: null,
+      baseUrl: "https://my-resource.openai.azure.com",
+      credentialStatus: "usable",
+      credentialIssue: null,
+    };
+    seedApiKeys([incompleteAzure, speechAzure, openAiAzure]);
+
+    await renderList("transcription", null);
+    expect(document.body.textContent).toContain("Broken Azure Key");
+    expect(document.body.textContent).toContain("Azure Speech");
+    expect(document.body.textContent).not.toContain("Azure OpenAI");
+    expect(document.querySelector("svg.lucide-pencil")).not.toBeNull();
+    expect(document.querySelector("svg.lucide-trash2")).not.toBeNull();
+
+    await renderList("post-processing", null);
+    expect(document.body.textContent).toContain("Broken Azure Key");
+    expect(document.body.textContent).toContain("Azure OpenAI");
+    expect(document.body.textContent).not.toContain("Azure Speech");
+    expect(document.querySelector("svg.lucide-pencil")).not.toBeNull();
+    expect(document.querySelector("svg.lucide-trash2")).not.toBeNull();
+  });
 });

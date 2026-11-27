@@ -228,12 +228,12 @@ export const VoquillMigrationBanner = () => {
   const dismissing = useAppStore((state) => state.voquillMigration.dismissing);
   const [dismissFailed, setDismissFailed] = useState(false);
   const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
   const handleRetry = useVoquillMigrationRetry();
 
   if (!isBannerVisible(report)) {

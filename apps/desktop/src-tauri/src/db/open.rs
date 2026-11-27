@@ -710,27 +710,72 @@ impl StrictOpenError {
     }
 }
 
-/// Open and migrate a database strictly without quarantining or replacing
-/// damaged files. Used during staged legacy Voquill migration so corrupt or
-/// schema-incompatible legacy databases fail truthfully instead of being
-/// silently replaced with an empty database.
-pub async fn open_app_database_strict(path: &Path) -> Result<SqlitePool, StrictOpenError> {
-    match try_open(path).await {
-        Ok(pool) => Ok(pool),
-        Err(OpenError::Integrity(message)) => Err(StrictOpenError::Integrity(message)),
-        Err(OpenError::Other(message)) => {
+fn classify_strict_open_error(err: OpenError) -> StrictOpenError {
+    match err {
+        OpenError::Integrity(message) => StrictOpenError::Integrity(message),
+        OpenError::Other(message) => {
             let lowered = message.to_ascii_lowercase();
             if lowered.contains("migration")
                 && (lowered.contains("not in the current migration set")
                     || lowered.contains("has been modified")
                     || lowered.contains("left incomplete"))
             {
-                Err(StrictOpenError::SchemaIncompatible(message))
+                StrictOpenError::SchemaIncompatible(message)
             } else {
-                Err(StrictOpenError::Other(message))
+                StrictOpenError::Other(message)
             }
         }
     }
+}
+
+/// Open and migrate a database strictly without quarantining or replacing
+/// damaged files. Used during staged legacy Voquill migration so corrupt or
+/// schema-incompatible legacy databases fail truthfully instead of being
+/// silently replaced with an empty database.
+pub async fn open_app_database_strict(path: &Path) -> Result<SqlitePool, StrictOpenError> {
+    try_open(path).await.map_err(classify_strict_open_error)
+}
+
+/// Open an already-migrated database read-only and verify its SQLite integrity
+/// and `_sqlx_migrations` ledger without altering the file header, journal
+/// mode, or sidecars. Used during Voquill promotion recovery so a failed
+/// manifest checkpoint never mutates the promoted file or invalidates its
+/// recovery marker digest.
+pub async fn open_app_database_readonly_verified(
+    path: &Path,
+) -> Result<SqlitePool, StrictOpenError> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .read_only(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(|err| classify_strict_open_error(classify_sqlx("connect readonly", err)))?;
+    let verification = async {
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&pool)
+            .await
+            .map_err(|err| classify_sqlx("integrity_check", err))?;
+        if !integrity.eq_ignore_ascii_case("ok") {
+            return Err(OpenError::Integrity(format!(
+                "SQLite integrity_check reported: {integrity}"
+            )));
+        }
+        reject_failed_migration(&pool).await?;
+        let applied = read_applied_migrations(&pool).await?;
+        let _retired = collect_retired_versions(&applied)?;
+        verify_applied_checksums(&applied.checksums)?;
+        Ok::<(), OpenError>(())
+    }
+    .await;
+    if let Err(err) = verification {
+        pool.close().await;
+        return Err(classify_strict_open_error(err));
+    }
+    Ok(pool)
 }
 
 /// Open the app database, applying migrations.

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { VoquillMigrationReport } from "@maus-inc/desktop-native-apis";
 import { ThemeProvider } from "@mui/material";
-import { act, createElement } from "react";
+import { act, createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "react-intl";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -81,36 +81,36 @@ describe("VoquillMigrationBanner", () => {
   let container: HTMLDivElement;
   let root: Root;
 
-  const render = () =>
-    act(() => {
-      root.render(
+  const render = (strict = false) => {
+    const content = createElement(
+      ThemeProvider,
+      { theme },
+      createElement(
+        IntlProvider,
+        { locale: "en", messages: en },
         createElement(
-          ThemeProvider,
-          { theme },
+          MemoryRouter,
+          { initialEntries: ["/dashboard/home"] },
           createElement(
-            IntlProvider,
-            { locale: "en", messages: en },
-            createElement(
-              MemoryRouter,
-              { initialEntries: ["/dashboard/home"] },
-              createElement(
-                Routes,
+            Routes,
+            null,
+            createElement(Route, {
+              path: "*",
+              element: createElement(
+                "div",
                 null,
-                createElement(Route, {
-                  path: "*",
-                  element: createElement(
-                    "div",
-                    null,
-                    createElement(VoquillMigrationBanner),
-                    createElement(LocationProbe),
-                  ),
-                }),
+                createElement(VoquillMigrationBanner),
+                createElement(LocationProbe),
               ),
-            ),
+            }),
           ),
         ),
-      );
+      ),
+    );
+    return act(() => {
+      root.render(strict ? createElement(StrictMode, null, content) : content);
     });
+  };
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -351,6 +351,33 @@ describe("VoquillMigrationBanner", () => {
     act(() => reviewModelsBtn!.click());
     expect(container.querySelector("#location")?.textContent).toBe(
       "/dashboard/settings/ai-models",
+    );
+  });
+
+  it("still shows the dismissal failure alert after React StrictMode effect replay", async () => {
+    dismissMock.mockResolvedValue(null);
+    setAppState((s) => ({
+      ...s,
+      voquillMigration: {
+        ...s.voquillMigration,
+        status: "success",
+        report: makeReport(),
+      },
+    }));
+
+    render(true);
+
+    const dismissBtn = container.querySelector(
+      'button[aria-label="Dismiss Voquill migration notice"]',
+    ) as HTMLButtonElement | null;
+    expect(dismissBtn).not.toBeNull();
+    await act(async () => {
+      dismissBtn!.click();
+      await Promise.resolve();
+    });
+    expect(dismissMock).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain(
+      "Could not dismiss this notice right now. Try again.",
     );
   });
 });
