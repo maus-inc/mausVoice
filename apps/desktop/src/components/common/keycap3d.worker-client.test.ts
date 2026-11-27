@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { keycapDashboardSize, keycapGrain } from "../../styles/keycap";
 import { layoutKeycap } from "./keycap3d.geometry";
 
 class FakeWorker {
@@ -183,7 +184,8 @@ it("disables the worker when posting a queued request fails", async () => {
   expect(await first).toBe(image);
   expect((await secondResult)[0].status).toBe("rejected");
   expect(worker.terminate).toHaveBeenCalledOnce();
-  expect(requestCapRaster(options)).toBeNull();
+  await expect(requestCapRaster(options)).resolves.toBe(image);
+  expect(requestCapRaster({ ...options, grain: 0.1 })).toBeNull();
   expect(vi.getTimerCount()).toBe(0);
 });
 
@@ -235,6 +237,67 @@ it("does not postpone a stalled worker timeout when new requests arrive", async 
   expect(worker.terminate).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it("reuses a completed raster without sending another worker message", async () => {
+  const { requestCapRaster } = await import("./keycap3d.worker-client");
+  const first = requireRequest(requestCapRaster(options));
+  const worker = FakeWorker.instances[0];
+  const image = { width: 1 } as ImageData;
+  worker.onmessage?.({ data: { id: 0, image } } as MessageEvent);
+  expect(await first).toBe(image);
+  const next = requireRequest(requestCapRaster(options));
+  expect(worker.postMessage).toHaveBeenCalledOnce();
+  await expect(next).resolves.toBe(image);
+});
+
+it.each([1, 2, 3])(
+  "prewarms the shared dashboard raster at DPR %s",
+  async (dpr) => {
+    vi.stubGlobal("devicePixelRatio", dpr);
+    const { prewarmDashboardKeycap } = await import("./keycap3d.prewarm");
+    const { capRasterOptions, getCachedCapRaster } =
+      await import("./keycap3d.raster");
+    const { requestCapRaster, releaseCapRaster } =
+      await import("./keycap3d.worker-client");
+    prewarmDashboardKeycap();
+    prewarmDashboardKeycap();
+    const visibleOptions = capRasterOptions(
+      layoutKeycap({ size: keycapDashboardSize, view: "front" }),
+      keycapGrain,
+      dpr,
+    );
+    const visible = requireRequest(requestCapRaster(visibleOptions));
+    releaseCapRaster(visible);
+    const worker = FakeWorker.instances[0];
+    expect(FakeWorker.instances).toHaveLength(1);
+    expect(worker.postMessage).toHaveBeenCalledExactlyOnceWith({
+      id: 0,
+      options: visibleOptions,
+    });
+    const image = { width: 1 } as ImageData;
+    worker.onmessage?.({ data: { id: 0, image } } as MessageEvent);
+    await expect(visible).resolves.toBe(image);
+    expect(getCachedCapRaster(visibleOptions)).toBe(image);
+    prewarmDashboardKeycap();
+    expect(worker.postMessage).toHaveBeenCalledOnce();
+  },
+);
+
+it.each(["unavailable", "failed", "stalled"])(
+  "keeps %s prewarming failures out of startup",
+  async (failure) => {
+    if (failure === "unavailable") vi.stubGlobal("Worker", undefined);
+    const { prewarmDashboardKeycap } = await import("./keycap3d.prewarm");
+    const allocate = vi.fn();
+    vi.stubGlobal("ImageData", allocate);
+    expect(prewarmDashboardKeycap()).toBeUndefined();
+    if (failure === "failed") FakeWorker.instances[0].onerror?.();
+    if (failure === "stalled") await vi.advanceTimersByTimeAsync(10000);
+    await Promise.resolve();
+    expect(allocate).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
 
 it("returns null if worker construction is blocked", async () => {
   vi.stubGlobal(

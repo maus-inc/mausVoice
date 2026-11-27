@@ -1,6 +1,6 @@
 import { Box, type SxProps, type Theme } from "@mui/material";
 import type { SystemStyleObject } from "@mui/system";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   keycapGrain,
   keycapLabel,
@@ -13,7 +13,11 @@ import {
   type KeycapRatios,
   type KeycapView,
 } from "./keycap3d.geometry";
-import { getCapRasterAsync } from "./keycap3d.raster";
+import {
+  capRasterOptions,
+  getCachedCapRaster,
+  getCapRasterAsync,
+} from "./keycap3d.raster";
 import { releaseCapRaster, requestCapRaster } from "./keycap3d.worker-client";
 import { geistPixelTextWidth } from "./keycap3d.font-metrics";
 
@@ -97,8 +101,6 @@ const useCapLayout = (
   );
 };
 
-/** Cap on the raster's longest side, so a 250px cap stays cheap to paint. */
-const MAX_RASTER = 420;
 /**
  * A keycap drawn as a rendered rounded box, so the 3/4 view on the onboarding
  * steps and the near-front view in the dashboard come from the same model and
@@ -119,7 +121,7 @@ const useKeycapRaster = ({
   grain: number;
   setRenderState: (state: "pending" | "ready" | "fallback") => void;
 }) => {
-  useEffect(() => {
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (canvas === null) return undefined;
     let media: MediaQueryList | undefined;
@@ -139,10 +141,8 @@ const useKeycapRaster = ({
       media = window.matchMedia?.(`(resolution: ${pixelRatio}dppx)`);
       media?.addEventListener("change", paint);
       if (contextLost) return;
-      const scale = Math.min(
-        Math.max(pixelRatio, 1),
-        MAX_RASTER / Math.max(layout.width, layout.height),
-      );
+      const options = capRasterOptions(layout, grain, pixelRatio);
+      const { scale } = options;
       canvas.width = Math.ceil(layout.width * scale);
       canvas.height = Math.ceil(layout.height * scale);
       setRenderState("pending");
@@ -156,7 +156,6 @@ const useKeycapRaster = ({
         setRenderState("fallback");
         return;
       }
-      const options = { layout, grain, scale };
       const put = (image: ImageData) => {
         if (!active || current !== generation) return;
         try {
@@ -173,6 +172,11 @@ const useKeycapRaster = ({
           if (active && current === generation) setRenderState("fallback");
         });
       };
+      const cached = getCachedCapRaster(options);
+      if (cached) {
+        put(cached);
+        return;
+      }
       pendingRequest = requestCapRaster(options);
       if (pendingRequest) pendingRequest.then(put, paintLocally);
       else paintLocally();

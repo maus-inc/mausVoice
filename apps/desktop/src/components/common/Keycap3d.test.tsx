@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -19,6 +19,7 @@ vi.mock("./keycap3d.worker-client", () => ({
 }));
 import { keycapGrain } from "../../styles/keycap";
 import { Keycap3d, keycapLabelFontSize } from "./Keycap3d";
+import { capRasterOptions, getCapRaster } from "./keycap3d.raster";
 import {
   ANGLE_VIEW,
   FRONT_VIEW,
@@ -175,6 +176,38 @@ describe("Keycap3d", () => {
     // The legend is DOM text rather than part of the canvas.
     expect(parts("label")).toHaveLength(1);
     expect(parts("label")[0].textContent).toBe("Shift");
+  });
+
+  it("paints a warmed raster before paint on the first mount and after navigation", () => {
+    const { paint, restore } = mockCanvas();
+    const size = 51.125;
+    const image = getCapRaster(
+      capRasterOptions(
+        layoutKeycap({ size, view: "front" }),
+        keycapGrain,
+        window.devicePixelRatio,
+      ),
+    );
+    const observed: number[] = [];
+    const Page = () => {
+      useLayoutEffect(() => {
+        observed.push(paint.mock.calls.length);
+      });
+      return <Keycap3d label="K" size={size} />;
+    };
+    try {
+      render(<Page />);
+      expect(observed).toEqual([1]);
+      expect(paint).toHaveBeenCalledWith(image, 0, 0);
+      expect(styleOf(parts("cap")[0]).visibility).toBe("visible");
+      expect(styleOf(parts("label")[0]).transform).toContain("matrix3d(");
+      render(null);
+      render(<Page />);
+      expect(observed).toEqual([1, 2]);
+      expect(workerRequest).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
   });
 
   it("shows a readable fallback when canvas is unavailable", () => {
@@ -565,7 +598,7 @@ describe("Keycap3d", () => {
     (view) => {
       const { restore } = mockCanvas();
       try {
-        render(<Keycap3d size={34} view={view} />);
+        render(<Keycap3d size={34.125} view={view} />);
         expect(workerRequest).toHaveBeenCalledWith(
           expect.objectContaining({ grain: keycapGrain }),
         );
