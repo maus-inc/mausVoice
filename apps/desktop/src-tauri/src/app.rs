@@ -616,6 +616,14 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 log::error!("{err}");
                 err.into()
             })?;
+        crate::system::voquill_migration::ensure_no_uncheckpointed_initial_migration(
+            &migration_dirs,
+            &report,
+        )
+        .map_err(|err| -> Box<dyn std::error::Error> {
+            log::error!("{err}");
+            err.into()
+        })?;
     }
 
     let db_path = {
