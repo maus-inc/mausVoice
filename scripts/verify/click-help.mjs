@@ -135,25 +135,29 @@ const verifyLiveTips = async (page, theme) => {
 
 const runClickProbe = async () => {
   const browser = await launch({ width: 1100, height: 700 });
-  const page = await newPage(browser.port);
-  const { consoleErrors } = watchPage(page);
-  await page.send("Network.enable");
-  await page.setViewport(1100, 700);
+  let page;
+  try {
+    page = await newPage(browser.port);
+    const { consoleErrors } = watchPage(page);
+    await page.send("Network.enable");
+    await page.setViewport(1100, 700);
 
-  for (const theme of ["light", "dark"]) {
-    await verifyShowAgain(page, theme);
-    await verifyAssistantAction(page, theme, "off");
-    await verifyAssistantAction(page, theme, "on");
-    await verifyLiveTips(page, theme);
+    for (const theme of ["light", "dark"]) {
+      await verifyShowAgain(page, theme);
+      await verifyAssistantAction(page, theme, "off");
+      await verifyAssistantAction(page, theme, "on");
+      await verifyLiveTips(page, theme);
+    }
+
+    check(
+      "Zero console errors",
+      consoleErrors.length === 0,
+      JSON.stringify(consoleErrors),
+    );
+  } finally {
+    page?.close();
+    browser.cleanup();
   }
-
-  check(
-    "Zero console errors",
-    consoleErrors.length === 0,
-    JSON.stringify(consoleErrors),
-  );
-  page.close();
-  browser.cleanup();
 };
 
 await runClickProbe();

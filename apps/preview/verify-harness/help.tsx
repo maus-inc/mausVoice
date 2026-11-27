@@ -217,9 +217,17 @@ const HelpHarness = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
     void seedHarnessStore()
-      .then(() => setReady(true))
-      .catch((cause) => setError(String(cause)));
+      .then(() => {
+        if (active) setReady(true);
+      })
+      .catch((cause) => {
+        if (active) setError(String(cause));
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   if (error) return <Box sx={{ p: 2 }}>harness error: {error}</Box>;

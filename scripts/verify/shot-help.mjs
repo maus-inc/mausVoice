@@ -342,34 +342,37 @@ const runSweep = async () => {
   const problems = [];
   const note = (label, detail) => problems.push(`${label}: ${detail}`);
   const browser = await launch({ width: 1280, height: 900 });
-  const page = await newPage(browser.port);
-  const { consoleErrors, failedRequests } = watchPage(page);
-  await page.send("Network.enable");
+  let page;
+  try {
+    page = await newPage(browser.port);
+    const { consoleErrors, failedRequests } = watchPage(page);
+    await page.send("Network.enable");
 
-  const report = {
-    theme: THEME,
-    prefix: PREFIX,
-    captures: [],
-    problems,
-    consoleErrors,
-    failedRequests,
-  };
+    const report = {
+      theme: THEME,
+      prefix: PREFIX,
+      captures: [],
+      problems,
+      consoleErrors,
+      failedRequests,
+    };
 
-  for (const size of SIZES) {
-    await captureHelpViewport(page, size, report, note);
+    for (const size of SIZES) {
+      await captureHelpViewport(page, size, report, note);
+    }
+    await captureLiveTip(page, note);
+
+    const reportPath = `${OUT}/${PREFIX}-${THEME}-report.json`;
+    writeFileSync(reportPath, JSON.stringify(report, null, 2));
+    console.log("REPORT:", reportPath);
+    console.log("CONSOLE_ERRORS:", JSON.stringify(consoleErrors));
+    console.log("FAILED_REQUESTS:", JSON.stringify(failedRequests));
+    console.log("PROBLEMS:", JSON.stringify(problems, null, 2));
+    return problems.length + consoleErrors.length;
+  } finally {
+    page?.close();
+    browser.cleanup();
   }
-  await captureLiveTip(page, note);
-
-  const reportPath = `${OUT}/${PREFIX}-${THEME}-report.json`;
-  writeFileSync(reportPath, JSON.stringify(report, null, 2));
-  console.log("REPORT:", reportPath);
-  console.log("CONSOLE_ERRORS:", JSON.stringify(consoleErrors));
-  console.log("FAILED_REQUESTS:", JSON.stringify(failedRequests));
-  console.log("PROBLEMS:", JSON.stringify(problems, null, 2));
-
-  page.close();
-  browser.cleanup();
-  return problems.length + consoleErrors.length;
 };
 
 if ((await runSweep()) > 0) {
