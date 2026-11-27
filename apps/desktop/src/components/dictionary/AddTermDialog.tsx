@@ -108,7 +108,6 @@ export const AddTermDialog = ({
               <FormattedMessage defaultMessage="Replacement" />
             </Typography>
             <Switch
-              size="small"
               checked={isReplacement}
               slotProps={{ input: { "aria-labelledby": replacementLabelId } }}
               onChange={(_, checked) => setIsReplacement(checked)}

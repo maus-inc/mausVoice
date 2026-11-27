@@ -3,12 +3,19 @@ import { FormattedMessage } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { resetTip } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
-import { ONBOARDING_TIPS } from "../../utils/tips";
+import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
+import { ONBOARDING_TIPS, tipAction } from "../../utils/tips";
 import { TIP_COPY, TIP_ICONS, TipCardFrame } from "../onboarding/TipCard";
 
 export default function HelpPage() {
   const navigate = useNavigate();
   const dismissed = useAppStore((s) => s.local.dismissedTipIds ?? []);
+  // The listing shows every tip, including the ones for features that are off.
+  // The switch is read here rather than hidden in the card: a tip is how
+  // someone learns the feature exists, so it stays, and its action leads to the
+  // row that turns the feature on instead of the route that feature owns.
+  const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
+  const features = { assistantModeEnabled };
 
   return (
     <Box sx={{ flexGrow: 1, height: "100%", pb: 2, pr: 2 }}>
@@ -26,6 +33,7 @@ export default function HelpPage() {
           {ONBOARDING_TIPS.map((tip) => {
             const copy = TIP_COPY[tip.id];
             const isDismissed = dismissed.includes(tip.id);
+            const action = tipAction(tip, features);
             return (
               <TipCardFrame
                 key={tip.id}
@@ -40,14 +48,16 @@ export default function HelpPage() {
                 sx={{ opacity: isDismissed ? 0.65 : 1 }}
                 actions={
                   <>
-                    {tip.href && (
+                    {action && (
                       <Button
                         size="small"
                         variant="outlined"
-                        onClick={() => navigate(tip.href as string)}
+                        onClick={() => navigate(action.href)}
                         sx={{ textTransform: "none", borderRadius: 999 }}
                       >
-                        {copy.action}
+                        {action.isSetup
+                          ? (copy.setupAction ?? copy.action)
+                          : copy.action}
                       </Button>
                     )}
                     {isDismissed && (

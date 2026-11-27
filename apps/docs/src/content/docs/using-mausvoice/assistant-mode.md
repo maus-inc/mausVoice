@@ -9,10 +9,12 @@ Assistant mode is an experimental command workflow, separate from ordinary dicta
 
 ## Configure it
 
-1. Open **Settings → AI and processing → Assistant mode**.
+1. Open **Settings → AI and models → Assistant mode**.
 2. Choose **API** and select or add a credential whose provider supports generative text. **Off** leaves the assistant without an LLM backend.
 3. Configure the **Assistant hotkey**.
 4. Turn on the separate **Assistant mode** switch. This feature is disabled by default.
+
+While the switch is off, each assistant entry point leads here rather than to a page with nothing to show. The **Talk to the assistant** guide on the Help page and the **Open chat** shortcut both open this row. The Assistant hold key is listed with a note that the switch is needed, and stays idle until it is on, because a hold gesture should not move you to another page. Pressing **Open chat** stops a recording in progress either way, so it never leaves the pill recording behind a page you are reading.
 
 The assistant has its own provider selection. Changing the transcription provider or the ordinary post-processing provider does not change the assistant's LLM setting. Requests, conversation context, accessibility results, and tool results needed by the conversation can be sent to the selected provider; review that provider's retention terms before using sensitive material.
 
@@ -22,7 +24,7 @@ Hold the configured assistant shortcut, speak an instruction, and release it. Th
 
 Useful companion shortcuts are listed under **Settings → Shortcuts → Hotkey shortcuts**:
 
-- **Open chat** opens the current assistant conversation in the main window.
+- **Open chat** opens the current assistant conversation in the main window. It opens the Assistant mode setting instead while the switch is off.
 - **Cancel transcription** cancels the active dictation or assistant session.
 
 The assistant can iterate through several model and tool steps. Watch the activity and permission prompts; a request is not necessarily finished after the first response.
@@ -31,7 +33,7 @@ The assistant can iterate through several model and tool steps. Watch the activi
 
 The built-in tool set can read the focused field and surrounding screen context, paste into the focused field, and close the pill conversation. Every permissioned request presents **Deny**, **Allow**, and **Always allow** choices. Inspect the stated reason and parameters before approving it.
 
-**Always allow** is broader than a one-time approval: it is remembered in the app's webview local storage by tool, not by an individual command. Clear local data removes these saved approvals from app-owned browser storage. For sensitive tools, prefer **Allow** so each use remains visible.
+**Always allow** is broader than a one-time approval: it is remembered in the app's webview local storage by tool and by conversation, not by an individual command, so a new conversation asks again. A grant saved by a build older than per-conversation scoping is still read as a global allow until you revoke it or clear local data. Clear local data removes these saved approvals from app-owned browser storage. For sensitive tools, prefer **Allow** so each use remains visible.
 
 ## Power mode
 

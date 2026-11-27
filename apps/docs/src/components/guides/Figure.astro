@@ -1,0 +1,42 @@
+---
+import FigureImage from "./FigureImage.astro";
+
+type Annotation = {
+  n: number;
+  title: string;
+  detail: string;
+};
+
+interface Props {
+  id: string;
+  alt: string;
+  title: string;
+  caption?: string;
+  annotations?: Annotation[];
+}
+
+const { id, alt, title, caption, annotations = [] } = Astro.props;
+---
+
+<figure class="mv-figure">
+  <FigureImage id={id} alt={alt} />
+  <figcaption class="mv-figure__caption">
+    <span class="mv-figure__title">{title}</span>
+    {caption && <span>{caption}</span>}
+    {
+      annotations.length > 0 && (
+        <ol class="mv-annotations">
+          {annotations.map((annotation) => (
+            <li class="mv-annotations__item">
+              <span class="mv-annotations__n">{annotation.n}</span>
+              <span class="mv-annotations__body">
+                <strong>{annotation.title}</strong>
+                <span>{annotation.detail}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      )
+    }
+  </figcaption>
+</figure>

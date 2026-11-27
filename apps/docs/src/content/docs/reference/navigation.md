@@ -11,6 +11,7 @@ sidebar:
 | History             | Saved transcripts, details, audio, export, deletion, and reprocessing                        | `/dashboard/transcriptions` |
 | Dictionary          | Glossary terms plus deterministic replacement/snippet rules                                  | `/dashboard/dictionary`     |
 | Styles              | Manual/application styling and style creation/editing                                        | `/dashboard/styling`        |
+| Help                | Onboarding guides, each with the action that continues it                                     | `/dashboard/help`           |
 | Chats               | Saved Assistant conversations; shown only when Assistant is enabled                          | `/dashboard/chats`          |
 | Settings            | Devices, processing, provider keys, permissions, privacy, diagnostics, and advanced behavior | `/dashboard/settings`       |
 

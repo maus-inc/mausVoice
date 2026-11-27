@@ -16,6 +16,7 @@ import { getEffectiveStylingMode } from "../../../utils/feature.utils";
 import { findPersonalApiKey } from "../../../utils/personal-use.utils";
 import { SegmentedControl } from "../../common/SegmentedControl";
 import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
+import { openAssistantModeDialog } from "../../../actions/assistant-mode.actions";
 import { setTipAction } from "../../onboarding/tip-actions";
 import { useSettingsFocus } from "../settings-highlight";
 import { useSettingsAvailability } from "../settings-availability";
@@ -25,10 +26,7 @@ import {
 } from "../PersonalApiKeyDialog";
 
 const openDialog = (
-  key:
-    | "aiTranscriptionDialogOpen"
-    | "aiPostProcessingDialogOpen"
-    | "agentModeDialogOpen",
+  key: "aiTranscriptionDialogOpen" | "aiPostProcessingDialogOpen",
 ) => {
   produceAppState((draft) => {
     draft.settings[key] = true;
@@ -184,7 +182,10 @@ export default function AiModelsSettingsPage() {
               label={<FormattedMessage defaultMessage="Beta" />}
             />
           }
-          onClick={() => openDialog("agentModeDialogOpen")}
+          // Shared with the toast the voice assistant raises when it is
+          // disabled, so the two surfaces cannot disagree about where this
+          // dialog lives.
+          onClick={openAssistantModeDialog}
         />
       </SettingGroup>
 

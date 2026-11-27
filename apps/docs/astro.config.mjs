@@ -16,6 +16,7 @@ const meta = (attrs) => ({ tag: "meta", attrs });
 const sidebar = [
   ["Getting started", "getting-started"],
   ["Using mausVoice", "using-mausvoice"],
+  ["Visual guides", "guides"],
   ["Configuration", "configuration"],
   ["Providers", "providers"],
   ["Privacy & security", "privacy-security"],
@@ -86,7 +87,7 @@ export default defineConfig({
           },
         },
       ],
-      customCss: ["./src/styles/custom.css"],
+      customCss: ["./src/styles/custom.css", "./src/styles/guides.css"],
       components: {
         SiteTitle: "./src/components/SiteTitle.astro",
       },

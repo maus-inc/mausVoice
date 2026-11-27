@@ -43,17 +43,25 @@ export const useSettingsAnchor = (
         if (!row || pending.current !== key) return;
         pending.current = null;
         const request = requestedFocus.current;
+        const active = document.activeElement;
+        // Focus moves to the row when the request came from inside the
+        // settings surface, and also when nothing holds focus at all: a link
+        // from another page takes its button away with the route, leaving
+        // focus on <body> and a keyboard user at the top of a page they did
+        // not choose. A person who has since focused something real keeps it.
+        const isUnclaimed =
+          active === null ||
+          active === document.body ||
+          active === document.documentElement ||
+          !active.isConnected;
         if (request?.key === key) {
           requestedFocus.current = null;
-          const active = document.activeElement;
           // Don't take focus back if the person moved it while a row was loading.
-          if (
-            active === request.origin ||
-            active === document.body ||
-            active === document.documentElement
-          ) {
+          if (active === request.origin || isUnclaimed) {
             focusSettingRow(row, key);
           }
+        } else if (request === null && isUnclaimed) {
+          focusSettingRow(row, key);
         }
         const reduceMotion = window.matchMedia?.(
           "(prefers-reduced-motion: reduce)",

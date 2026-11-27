@@ -1,6 +1,6 @@
 ---
 title: "App tour"
-description: "Find Home, History, Dictionary, Styles, Chats, and Settings in the current desktop interface."
+description: "Find Home, History, Dictionary, Styles, Help, Chats, and Settings in the current desktop interface."
 sidebar:
   order: 1
 ---
@@ -14,9 +14,10 @@ The activity chart groups dictations by the device's local calendar date. The da
 - **History** lists saved transcriptions and opens their details.
 - **Dictionary** manages glossary hints and replacement rules.
 - **Styles** manages the writing instructions applied during post-processing.
+- **Help** lists short guides for the features first run skips. Each guide carries one action, and the assistant guide opens the setting that turns the feature on while it is off.
 - **Chats** appears only when Assistant mode is enabled.
 - **Settings** sits at the bottom of the rail and contains device, shortcut, processing, diagnostic, and advanced controls.
 
 An internal `/dashboard/apps` route also exists, but it is currently a placeholder for future MCP/integration work and is not presented as a finished user feature.
 
-The native recording pill is a separate platform window/process. It remains visible over other applications when supported, reflects recording state, and can be repositioned. Closing or hiding the main dashboard does not turn the pill into an editor; dictated text still targets the application with focus.
+The native recording pill is a separate platform window/process. It remains visible over other applications when supported, reflects recording state, and can be repositioned. Closing or hiding the main dashboard does not change where dictated text goes, because delivery still targets the application with focus. With **Review before insert** on, the pill opens an editable review panel before delivery, and that panel is the one place the pill does accept edits. [The review guide](../guides/transcript-review/) covers it.
