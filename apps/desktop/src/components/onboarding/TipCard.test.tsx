@@ -84,7 +84,7 @@ vi.mock("framer-motion", async () => {
   };
 });
 
-import { TipCard, TipCardFrame } from "./TipCard";
+import { TipCard, TipCardFrame, tipActionButtonSx } from "./TipCard";
 
 ensureUiHarness();
 setMatchMedia(false);
@@ -501,5 +501,15 @@ describe("TipCardFrame", () => {
     expect(getComputedStyle(body as HTMLElement).color).toBe(
       "var(--app-palette-text-secondary)",
     );
+  });
+
+  it("derives tipActionButtonSx typography from labelMedium and allows narrow wrapping", () => {
+    const resolved = tipActionButtonSx(theme);
+    expect(resolved).toMatchObject({
+      fontSize: theme.typography.labelMedium.fontSize,
+      lineHeight: theme.typography.labelMedium.lineHeight,
+      maxWidth: "100%",
+    });
+    expect(resolved).not.toHaveProperty("whiteSpace");
   });
 });

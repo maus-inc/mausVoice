@@ -28,15 +28,16 @@ const dismissedTipCardSx: SxProps<Theme> = (theme) => ({
   borderStyle: "dashed",
   borderColor: ink(0.18),
   "& [data-tip-title='true']": { color: ink(0.76) },
-  "& [data-tip-icon='true']": { opacity: 0.72 },
+  "& [data-tip-icon='true']": { color: ink(0.48) },
   ...theme.applyStyles("dark", {
     borderColor: onDark(0.18),
     "& [data-tip-title='true']": { color: onDark(0.76) },
+    "& [data-tip-icon='true']": { color: onDark(0.48) },
   }),
 });
 
-const showAgainButtonSx: SxProps<Theme> = {
-  ...tipActionButtonSx,
+const showAgainButtonSx: SxProps<Theme> = (theme) => ({
+  ...tipActionButtonSx(theme),
   fontWeight: 500,
   px: 1.25,
   color: "text.secondary",
@@ -44,7 +45,7 @@ const showAgainButtonSx: SxProps<Theme> = {
     color: "text.primary",
     bgcolor: "action.hover",
   },
-};
+});
 
 export default function HelpPage() {
   const navigate = useNavigate();

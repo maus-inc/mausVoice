@@ -156,6 +156,9 @@ describe("HelpPage tip cards", () => {
       // Full opacity keeps secondary copy and action buttons readable instead
       // of multiplying text alpha below WCAG AA contrast.
       expect(style.opacity).toBe("1");
+      const icon = card.querySelector<HTMLElement>('[data-tip-icon="true"]');
+      expect(icon).not.toBeNull();
+      expect(getComputedStyle(icon as HTMLElement).opacity).toBe("1");
     }
 
     const activeCards = tipCards().filter(

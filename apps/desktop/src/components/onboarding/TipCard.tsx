@@ -194,20 +194,21 @@ const collectSx = (
 
 /**
  * Compact pill styling shared by tip action buttons in `TipCard` and
- * `HelpPage`. Overrides `MuiButton.root`'s 15px / 44px default so inline card
- * actions stay proportional to `titleSmall` / `body2` while remaining above
- * WCAG 2.2's 24x24px target minimum.
+ * `HelpPage`. Overrides `MuiButton.root`'s 15px / 44px default using the
+ * theme's `labelMedium` scale so inline card actions stay proportional to
+ * `titleSmall` / `body2` while remaining above WCAG 2.2's 24x24px target
+ * minimum.
  */
-export const tipActionButtonSx: SystemStyleObject<Theme> = {
+export const tipActionButtonSx = (theme: Theme): SystemStyleObject<Theme> => ({
   textTransform: "none",
   borderRadius: 999,
-  fontSize: "0.8125rem",
-  lineHeight: 1.35,
+  fontSize: theme.typography.labelMedium.fontSize,
+  lineHeight: theme.typography.labelMedium.lineHeight,
   px: 1.75,
   py: 0.5,
   minHeight: 32,
-  whiteSpace: "nowrap",
-};
+  maxWidth: "100%",
+});
 
 /**
  * Shared presentational shell for onboarding tips.
