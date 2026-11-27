@@ -4,11 +4,14 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  closeRetranscribeDialog,
+  openRetranscribeDialog,
+} from "../../actions/transcriptions.actions";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
 
 const mocks = vi.hoisted(() => ({
-  closeRetranscribeDialog: vi.fn(),
   importAudioFile: vi.fn().mockResolvedValue(undefined),
   openFileDialog: vi.fn().mockResolvedValue("/tmp/import.wav"),
   retranscribeTranscriptionWithRecovery: vi.fn().mockResolvedValue({
@@ -21,12 +24,18 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: mocks.openFileDialog,
 }));
 
-vi.mock("../../actions/transcriptions.actions", () => ({
-  closeRetranscribeDialog: mocks.closeRetranscribeDialog,
-  importAudioFile: mocks.importAudioFile,
-  retranscribeTranscriptionWithRecovery:
-    mocks.retranscribeTranscriptionWithRecovery,
-}));
+vi.mock("../../actions/transcriptions.actions", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../actions/transcriptions.actions")
+    >();
+  return {
+    ...actual,
+    importAudioFile: mocks.importAudioFile,
+    retranscribeTranscriptionWithRecovery:
+      mocks.retranscribeTranscriptionWithRecovery,
+  };
+});
 
 vi.mock("react-intl", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-intl")>();
@@ -282,11 +291,7 @@ describe("Retranscribe style availability", () => {
       started: true,
       update: null,
     });
-    produceAppState((draft) => {
-      draft.transcriptions.retranscribeDialogOpen = true;
-      draft.transcriptions.retranscribeDialogTranscriptionId =
-        "transcription-1";
-    });
+    openRetranscribeDialog("transcription-1");
     container = document.createElement("div");
     document.body.appendChild(container);
   });
@@ -401,10 +406,9 @@ describe("Retranscribe style availability", () => {
 
     await act(async () => {
       produceAppState((draft) => {
-        draft.transcriptions.retranscribeDialogTranscriptionId =
-          "transcription-2";
         draft.dictationLanguageOverride = "de";
       });
+      openRetranscribeDialog("transcription-2");
     });
 
     expect(styleSelect.textContent).toContain(tone.name);
@@ -571,20 +575,12 @@ describe("Retranscribe style availability", () => {
     await chooseOption(languageSelect, "Français");
 
     await act(async () => {
-      produceAppState((draft) => {
-        draft.transcriptions.retranscribeDialogOpen = false;
-      });
-    });
-    await act(async () => {
+      closeRetranscribeDialog();
       produceAppState((draft) => {
         draft.toneById[newestTone.id] = newestTone;
         draft.dictationLanguageOverride = "de";
       });
-    });
-    await act(async () => {
-      produceAppState((draft) => {
-        draft.transcriptions.retranscribeDialogOpen = true;
-      });
+      openRetranscribeDialog("transcription-1");
     });
 
     expect(styleSelect.textContent).toContain(newestTone.name);

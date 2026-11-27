@@ -13,11 +13,13 @@ import {
 import { Check } from "lucide-react";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   closeRetranscribeDialog,
   retranscribeTranscriptionWithRecovery,
+  setRetranscribeDialogLanguage,
+  setRetranscribeDialogToneId,
 } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
 import {
@@ -80,65 +82,42 @@ const useRetranscribeSelection = (
       .map((toneId) => getRec(state.toneById, toneId))
       .filter((tone): tone is Tone => tone !== null);
   });
-  const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
-  const [selectedLanguage, setSelectedLanguage] =
-    useState<DictationLanguageCode>(
-      toSelectableDictationLanguage(defaultLanguage),
-    );
-  const [selectionSession, setSelectionSession] = useState<{
-    transcriptionId: string;
-    defaultToneId: string | null;
-  } | null>(null);
-
-  useEffect(() => {
-    if (!open || transcriptionId === null) {
-      if (selectionSession !== null) setSelectionSession(null);
-      return;
-    }
-
-    if (selectionSession?.transcriptionId !== transcriptionId) {
-      const defaultToneId = tones[0]?.id ?? null;
-      setSelectionSession({ transcriptionId, defaultToneId });
-      setSelectedToneId(defaultToneId);
-      setSelectedLanguage(toSelectableDictationLanguage(defaultLanguage));
-      return;
-    }
-
-    const resolvedToneId = resolveToneId(
-      tones,
-      selectedToneId,
-      selectionSession.defaultToneId,
-    );
-    if (resolvedToneId !== selectedToneId) {
-      setSelectedToneId(resolvedToneId);
-    }
-  }, [
-    open,
-    transcriptionId,
-    defaultLanguage,
-    tones,
-    selectedToneId,
-    selectionSession,
-  ]);
+  const selection = useAppStore(
+    (state) => state.transcriptions.retranscribeDialogSelection,
+  );
 
   const isCurrentSession =
     open &&
     transcriptionId !== null &&
-    selectionSession?.transcriptionId === transcriptionId;
-  const resolvedLanguage = isCurrentSession
-    ? selectedLanguage
-    : toSelectableDictationLanguage(defaultLanguage);
+    selection?.transcriptionId === transcriptionId;
+  const selectedLanguage =
+    isCurrentSession && selection
+      ? selection.selectedLanguage
+      : toSelectableDictationLanguage(defaultLanguage);
+  const resolvedToneId =
+    isCurrentSession && selection
+      ? resolveToneId(tones, selection.selectedToneId, selection.defaultToneId)
+      : (tones[0]?.id ?? null);
 
-  const resolvedToneId = isCurrentSession
-    ? resolveToneId(tones, selectedToneId, selectionSession.defaultToneId)
-    : (tones[0]?.id ?? null);
+  useEffect(() => {
+    if (!isCurrentSession || !selection) return;
+
+    const availableToneId = resolveToneId(
+      tones,
+      selection.selectedToneId,
+      selection.defaultToneId,
+    );
+    if (availableToneId !== selection.selectedToneId) {
+      setRetranscribeDialogToneId(availableToneId);
+    }
+  }, [isCurrentSession, selection, tones]);
 
   return {
     tones,
     resolvedToneId,
-    setSelectedToneId,
-    selectedLanguage: resolvedLanguage,
-    setSelectedLanguage,
+    setSelectedToneId: setRetranscribeDialogToneId,
+    selectedLanguage,
+    setSelectedLanguage: setRetranscribeDialogLanguage,
   };
 };
 
