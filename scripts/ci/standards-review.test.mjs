@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -334,4 +336,123 @@ it("selects the immutable checker and fails closed on an incomplete base", (t) =
   );
   assert.doesNotMatch(partial.stdout, /proposed checker/);
   assert.notEqual(run("missing-base").status, 0);
+});
+
+it("accepts a real first push and topic fast-forward, then rejects divergence", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "standards-topic-push-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const remote = join(dir, "origin.git");
+  const repo = join(dir, "repo");
+  const other = join(dir, "other");
+  const hooks = join(dir, "hooks");
+  mkdirSync(hooks);
+  const gitAt = (cwd, ...args) =>
+    execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const gitDir = (...args) =>
+    execFileSync("git", ["--git-dir", remote, ...args], {
+      encoding: "utf8",
+    }).trim();
+  const commit = (cwd, message) => {
+    gitAt(cwd, "add", "-A");
+    gitAt(cwd, "commit", "-qm", message);
+    return gitAt(cwd, "rev-parse", "HEAD");
+  };
+  const invoke = (args, input = "") =>
+    spawnSync(process.execPath, [script, ...args], {
+      cwd: repo,
+      input,
+      encoding: "utf8",
+    });
+  const prepare = () => {
+    const result = invoke(["prepare", "stack/base"]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const draft = join(repo, ".git", "standards-review", "receipt.md");
+    writeFileSync(draft, completeRows(readFileSync(draft, "utf8")));
+  };
+  const push = () =>
+    spawnSync("git", ["push", "--quiet", "origin", "topic:refs/heads/topic"], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+  const remoteTopic = () =>
+    gitAt(repo, "ls-remote", "--refs", "origin", "refs/heads/topic");
+
+  gitAt(dir, "init", "--bare", "-q", remote);
+  gitAt(dir, "init", "-q", "-b", "stack/base", repo);
+  gitAt(repo, "config", "user.name", "Fixture");
+  gitAt(repo, "config", "user.email", "fixture@example.invalid");
+  gitAt(repo, "config", "commit.gpgsign", "false");
+  writeFileSync(join(repo, "CODING_STANDARDS.md"), standards);
+  commit(repo, "base");
+  gitAt(repo, "remote", "add", "origin", remote);
+  gitAt(repo, "push", "--quiet", "origin", "HEAD:refs/heads/stack/base");
+  gitDir("symbolic-ref", "HEAD", "refs/heads/stack/base");
+  gitAt(repo, "switch", "-q", "-c", "topic");
+
+  const changed = join(repo, "nested", "last.bin");
+  mkdirSync(join(repo, "nested"));
+  writeFileSync(changed, Buffer.from([0, 1, 2, 3]));
+  const hook = join(hooks, "pre-push");
+  writeFileSync(
+    hook,
+    `#!/bin/sh\nexec "${process.execPath}" "${script}" pre-push "$1"\n`,
+  );
+  chmodSync(hook, 0o755);
+  gitAt(repo, "config", "core.hooksPath", hooks);
+
+  assert.equal(remoteTopic(), "");
+  const first = commit(repo, "first topic publication");
+  prepare();
+  const firstPush = push();
+  assert.equal(firstPush.status, 0, `${firstPush.stdout}\n${firstPush.stderr}`);
+  assert.equal(remoteTopic().split("\t")[0], first);
+  const artifacts = join(repo, ".git", "standards-review");
+  const draft = join(artifacts, "receipt.md");
+  const lastReview = join(artifacts, "last-review.md");
+  assert.equal(existsSync(draft), false);
+  assert.ok(readFileSync(lastReview, "utf8").includes(first));
+
+  writeFileSync(changed, Buffer.from([4, 5, 6, 7]));
+  const fastForward = commit(repo, "fast-forward topic update");
+  prepare();
+  const updatePush = push();
+  assert.equal(
+    updatePush.status,
+    0,
+    `${updatePush.stdout}\n${updatePush.stderr}`,
+  );
+  assert.equal(remoteTopic().split("\t")[0], fastForward);
+
+  writeFileSync(join(repo, "local-only.txt"), "local work\n");
+  const local = commit(repo, "local work after common tip");
+  gitAt(dir, "clone", "--quiet", remote, other);
+  gitAt(other, "config", "user.name", "Other");
+  gitAt(other, "config", "user.email", "other@example.invalid");
+  gitAt(other, "checkout", "-q", "-B", "topic", "origin/topic");
+  writeFileSync(join(other, "nested", "last.bin"), Buffer.from([8, 9, 10, 11]));
+  const sibling = commit(other, "divergent remote work");
+  gitAt(
+    other,
+    "push",
+    "--quiet",
+    "--force",
+    "origin",
+    "topic:refs/heads/topic",
+  );
+  gitAt(repo, "fetch", "--quiet", "origin", "refs/heads/topic");
+  assert.equal(remoteTopic().split("\t")[0], sibling);
+
+  prepare();
+  const rejectedByGate = invoke(
+    ["pre-push", "origin"],
+    `refs/heads/topic ${local} refs/heads/topic ${sibling}\n`,
+  );
+  assert.equal(rejectedByGate.status, 1, rejectedByGate.stdout);
+  assert.match(rejectedByGate.stderr, /Cannot verify a fast-forward/);
+  assert.equal(existsSync(draft), true);
+  const rejectedByGit = push();
+  assert.notEqual(rejectedByGit.status, 0);
+  assert.match(rejectedByGit.stderr, /non-fast-forward/);
+  assert.equal(remoteTopic().split("\t")[0], sibling);
+  assert.equal(gitAt(repo, "rev-parse", "HEAD"), local);
 });
