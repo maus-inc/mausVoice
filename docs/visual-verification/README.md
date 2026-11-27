@@ -237,6 +237,12 @@ evidence that is not read.
   section the reader meets before any fold. Do not bury the frames in a `<details>`
   block, a review comment or a link to a run artifact. `scripts/ci/check-visual-evidence.mjs`
   fails the pull request when the description carries no image.
+- **Pin the commit in a repository image URL.** `.../raw/HEAD/docs/assets/x.png` resolves
+  `HEAD` to the default branch, not to the pull request, so a frame committed on a feature
+  branch 404s from the description that shows it. Every `raw/HEAD` image in an earlier
+  revision of this evidence was a broken link that looked fine in the markdown. Use
+  `.../raw/<full-head-sha>/docs/assets/x.png`, and re-check each one after a push:
+  `curl -s -o /dev/null -w '%{http_code}' <url>` should print 302, not 404.
 - **Attach, do not link a local path.** Use the URL GitHub returns when you upload a
   file through the API, or a repository `docs/assets/` path for an image worth keeping.
   `docs/assets/` is for evidence that stays: a before/after pair for a shipped change, a
