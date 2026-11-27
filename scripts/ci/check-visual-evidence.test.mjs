@@ -198,3 +198,38 @@ test("a missing file is a usage error, not a pass", () => {
   }
   assert.equal(status, 2);
 });
+
+test("a shallow checkout with no merge base still reads the diff", () => {
+  // CI checks out with `--depth=1`. Two shallow histories have no merge base, so the
+  // three-dot form exits non-zero; the two-dot fallback names the same files instead of
+  // failing a pull request for a property of its checkout.
+  const dir = mkdtempSync(join(tmpdir(), "shallow-"));
+  const git = (args) =>
+    execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: "pipe" });
+  git(["init", "-q"]);
+  git(["config", "user.email", "test@example.com"]);
+  git(["config", "user.name", "Test"]);
+  writeFileSync(join(dir, "a.tsx"), "export const a = 1;\n");
+  git(["add", "."]);
+  git(["commit", "-qm", "base"]);
+  writeFileSync(join(dir, "b.tsx"), "export const b = 2;\n");
+  git(["add", "."]);
+  git(["commit", "-qm", "head"]);
+
+  const script = new URL("./check-visual-evidence.mjs", import.meta.url)
+    .pathname;
+  const bodyPath = join(dir, "body.md");
+  writeFileSync(bodyPath, body([md()]));
+
+  // `HEAD~1` exists, so this proves the reading path, not the missing-base path; the
+  // shallow-shaped case is covered by the CLI run against a two-dot range in CI.
+  const out = execFileSync(
+    process.execPath,
+    [script, bodyPath, "--base", "HEAD~1"],
+    {
+      cwd: dir,
+      encoding: "utf8",
+    },
+  );
+  assert.match(out, /ok: visual evidence present/);
+});

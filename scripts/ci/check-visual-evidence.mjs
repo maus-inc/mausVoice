@@ -159,12 +159,30 @@ const run = (args) =>
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-/** Files changed by the diff under review: the base range when given, else the index. */
+/**
+ * Files changed by the diff under review: the base range when given, else the index.
+ *
+ * The three-dot form is the pull request's own view, but it needs a merge base, and CI
+ * checks out with `--depth=1`, where two shallow histories have none and git exits with
+ * "no merge base". That is a property of the checkout, not of the change, so the two-dot
+ * tree comparison is the fallback: it names the same files from the same two commits
+ * without needing their common ancestor.
+ */
 export const changedPaths = (base) => {
-  const args = base
-    ? ["diff", "--name-only", "--diff-filter=ACMR", `${base}...HEAD`]
-    : ["diff", "--cached", "--name-only", "--diff-filter=ACMR"];
-  return run(args).split("\n").filter(Boolean);
+  const names = (args) => run(args).split("\n").filter(Boolean);
+  if (!base) {
+    return names(["diff", "--cached", "--name-only", "--diff-filter=ACMR"]);
+  }
+  try {
+    return names([
+      "diff",
+      "--name-only",
+      "--diff-filter=ACMR",
+      `${base}...HEAD`,
+    ]);
+  } catch {
+    return names(["diff", "--name-only", "--diff-filter=ACMR", base, "HEAD"]);
+  }
 };
 
 const parseArgs = (argv) => {
