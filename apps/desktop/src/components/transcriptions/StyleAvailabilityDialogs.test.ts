@@ -380,6 +380,7 @@ describe("Retranscribe style availability", () => {
   it("resets style and language when the target changes while open", async () => {
     produceAppState((draft) => {
       draft.toneById[alternateTone.id] = alternateTone;
+      draft.dictationLanguageOverride = "en";
     });
     await renderDialog();
 
