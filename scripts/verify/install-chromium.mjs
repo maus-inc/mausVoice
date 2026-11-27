@@ -223,6 +223,14 @@ if (hasBrowser(OUT)) {
 
 function installChromiumPackage(packageDir) {
   mkdirSync(packageDir);
+  // npm refuses to install into a directory it does not recognise as a project:
+  // with no manifest it reports "up to date", writes nothing, and the extraction
+  // then fails on a package that was never unpacked. The manifest is npm's own,
+  // not the browser's, so it is written here and removed with the staging tree.
+  writeFileSync(
+    path.join(packageDir, "package.json"),
+    JSON.stringify({ name: "chromium-staging", private: true }, null, 2),
+  );
   log(`Installing @sparticuz/chromium@${VERSION} …`);
   try {
     execFileSync(

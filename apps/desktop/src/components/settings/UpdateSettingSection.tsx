@@ -6,7 +6,9 @@ import { checkForAppUpdates } from "../../actions/updater.actions";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { useAppStore } from "../../store";
 import { formatMediumDateTime } from "../../utils/format.utils";
+import { CircleArrowUp } from "lucide-react";
 import { SettingRow } from "./SettingRow";
+import { settingGlyphProps } from "./setting-row-chassis";
 
 export const UpdateSettingSection = () => {
   const intl = useIntl();
@@ -77,6 +79,7 @@ export const UpdateSettingSection = () => {
     <SettingRow
       settingKey="software_update"
       title={<FormattedMessage defaultMessage="Software update" />}
+      icon={<CircleArrowUp {...settingGlyphProps} />}
       description={
         <>
           {versionLabel}.{" "}

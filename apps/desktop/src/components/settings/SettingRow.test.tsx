@@ -268,6 +268,28 @@ describe("SettingRow", () => {
     expect(row?.querySelector(".setting-row-action")?.tagName).toBe("SPAN");
   });
 
+  it("hides an action pill's mark from assistive technology", () => {
+    // The mark repeats the verb beside it, so the pill's text is the whole name. Left
+    // announced, a lucide glyph contributes nothing and the name is read twice over.
+    render(
+      createElement(SettingRow, {
+        settingKey: "name",
+        title: "Name",
+        action: {
+          label: "Edit",
+          icon: createElement("svg", { "data-testid": "pill-mark" }),
+        },
+        onClick: () => undefined,
+      }),
+    );
+
+    const pill = container.querySelector(".setting-row-action");
+    const mark = container.querySelector('[data-testid="pill-mark"]');
+    expect(mark).not.toBeNull();
+    expect(mark?.closest('[aria-hidden="true"]')).not.toBeNull();
+    expect(pill?.textContent).toBe("Edit");
+  });
+
   it("prints a destructive group's heading as a label, not a section heading", () => {
     render(
       <SettingGroup title="Danger zone" danger>
@@ -352,11 +374,21 @@ describe("SettingRow", () => {
       expect(row.children[1]?.classList.contains("setting-row-label")).toBe(
         true,
       );
-      return Number.parseFloat(getComputedStyle(slot).width);
+      // The slot's width is a floor, so jsdom cannot resolve a used width for it.
+      // What the browser resolves is the emitted rule, and one shared rule is the
+      // claim: every row's slot is the same size, so the words share a column.
+      const generated = Array.from(slot.classList).find((name) =>
+        name.startsWith("css-"),
+      );
+      const css = Array.from(document.querySelectorAll("style"))
+        .map((style) => style.textContent ?? "")
+        .join("");
+      const rule = css.slice(css.indexOf(`.${generated}{`));
+      return rule.slice(0, rule.indexOf("}"));
     });
 
     expect(new Set(widths).size).toBe(1);
-    expect(widths[0]).toBeGreaterThan(0);
+    expect(widths[0]).toContain("min-width");
   });
 
   it("keeps a group heading on the card edge and its action on the row content edge", () => {

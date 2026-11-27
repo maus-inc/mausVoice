@@ -95,13 +95,9 @@ it("translates the delete failure when a local write cannot start", () => {
         ),
       ),
     );
-    const button =
-      host.querySelector(
-        'button[aria-label="Eliminar tecla de acceso rápido"]',
-      ) ??
-      Array.from(host.querySelectorAll("button")).find((item) =>
-        item.querySelector('[data-testid="CloseIcon"]'),
-      );
+    // The delete control is the one named for it; the glyph inside is lucide's
+    // and carries no test id, so the translated name is what identifies it.
+    const button = host.querySelector('button[aria-label="Eliminar atajo"]');
     expect(button).toBeTruthy();
     act(() =>
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true })),

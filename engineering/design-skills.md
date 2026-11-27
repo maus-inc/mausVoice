@@ -267,6 +267,15 @@ Copy strings load it too. `craft.md` Type gives sentence case, one weight step a
 no caps hierarchy, and Restraint gives the word budget. `antislop-copywriting` and
 `unslop` still own the English; Stageshow owns how many words and where they sit.
 
+### Capture and evidence
+
+A change that alters a rendered surface is delivered with its screenshots in the pull
+request description, above the folds, the dark frames attached and the light frames
+inspected and stated. The full procedure, the mocked backend it drives and the gate that
+enforces it are in `docs/visual-verification/README.md`; `scripts/ci/check-visual-evidence.mjs`
+fails a UI diff whose description carries no unfolded image. A captured surface that
+looks wrong is a defect and the code changes, whatever the tests say.
+
 ### Two modes, one skill
 
 **Product mode** is for the thing itself. The kit is never imported into

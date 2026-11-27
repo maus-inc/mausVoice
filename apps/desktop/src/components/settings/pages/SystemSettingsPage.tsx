@@ -1,8 +1,11 @@
 import {
-  DescriptionOutlined,
-  KeyboardAltOutlined,
-  TroubleshootOutlined,
-} from "@mui/icons-material";
+  BellRing,
+  FileText,
+  Power,
+  ShieldCheck,
+  Stethoscope,
+  Keyboard,
+} from "lucide-react";
 import type { ChangeEvent } from "react";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -22,6 +25,7 @@ import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
 import { UpdateChannelSetting } from "../UpdateChannelSetting";
 import { UpdateSettingSection } from "../UpdateSettingSection";
 import { useSettingsAvailability } from "../settings-availability";
+import { settingGlyphProps } from "../setting-row-chassis";
 import {
   runInputPermissionSetup,
   useInputPermissionSetupRunning,
@@ -146,6 +150,7 @@ export default function SystemSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Launches mausVoice when you sign in, so dictation is ready before you are." />
           }
+          icon={<Power {...settingGlyphProps} />}
           checked={autoLaunchEnabled}
           disabled={autoLaunchStatus === "loading"}
           onChange={handleToggleAutoLaunch}
@@ -159,6 +164,7 @@ export default function SystemSettingsPage() {
             description={
               <FormattedMessage defaultMessage="Asks for administrator permission every time mausVoice starts, instead of configuring input permissions manually. Takes effect on the next launch." />
             }
+            icon={<ShieldCheck {...settingGlyphProps} />}
             checked={alwaysRequestAdmin}
             onChange={handleToggleAlwaysRequestAdmin}
           />
@@ -177,7 +183,7 @@ export default function SystemSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Runs the setup that lets the pill capture your keys and type for you." />
           }
-          icon={<KeyboardAltOutlined />}
+          icon={<Keyboard {...settingGlyphProps} />}
           disabled={setupRunning}
           onClick={() => setSetupConfirmOpen(true)}
         />
@@ -193,6 +199,7 @@ export default function SystemSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Opens the update window by itself when a new version is available." />
           }
+          icon={<BellRing {...settingGlyphProps} />}
           checked={!ignoreUpdateDialog}
           onChange={handleToggleShowUpdates}
         />
@@ -206,7 +213,7 @@ export default function SystemSettingsPage() {
           description={
             <FormattedMessage defaultMessage="Version, platform paths, and a support bundle you can send us." />
           }
-          icon={<TroubleshootOutlined />}
+          icon={<Stethoscope {...settingGlyphProps} />}
           onClick={() =>
             produceAppState((draft) => {
               draft.settings.diagnosticsDialogOpen = true;
@@ -222,7 +229,7 @@ export default function SystemSettingsPage() {
           description={
             <FormattedMessage defaultMessage="The licence this copy of mausVoice ships under." />
           }
-          icon={<DescriptionOutlined />}
+          icon={<FileText {...settingGlyphProps} />}
           externalUrl={LICENCE_URL}
         />
       </SettingGroup>

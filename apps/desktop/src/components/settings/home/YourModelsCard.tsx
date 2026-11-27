@@ -1,5 +1,5 @@
 import { getRec } from "@maus-inc/utilities";
-import { AudioLines, Bot, WandSparkles } from "lucide-react";
+import { AudioLines, Bot, WandSparkles, type LucideIcon } from "lucide-react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useAppStore } from "../../../store";
 import type { AppState } from "../../../state/app.state";
@@ -30,6 +30,7 @@ import {
   ProviderLogo,
 } from "../../common/provider-logos/ProviderLogo";
 import { SettingSummaryRow } from "../SettingSummaryRow";
+import { settingGlyphProps } from "../setting-row-chassis";
 import { settingsPagePath } from "../settings-routes";
 
 /**
@@ -46,17 +47,17 @@ const apiKeyOf = (
 /**
  * One model row's state, resolved to the words the row shows.
  *
- * `attention` is set only where the app knows the choice is unfinished: a
- * provider mode with no provider selected, or a local model whose status has
- * loaded and says it is not on disk. An unloaded status says nothing, so it
- * does not raise one.
+ * The words carry the state on their own. A row with no provider selected says
+ * "Not configured", and a local model whose loaded status says it is not on
+ * disk says "Not downloaded yet". A colour on the glyph would repeat that in a
+ * second channel, which is the one thing the design document rules out for a
+ * status.
  */
 type ModelSummary = {
   /** The model, provider or state the row names. */
   model: string;
   /** Where the work happens, when that is knowable. */
   location: string | null;
-  attention: boolean;
   /**
    * The provider the row resolves to, when it resolves to one.
    *
@@ -165,7 +166,6 @@ export const YourModelsCard = () => {
       return {
         model: reenterKey,
         location: null,
-        attention: true,
         provider: hasProviderLogo(key.provider) ? key.provider : undefined,
       };
     }
@@ -173,18 +173,17 @@ export const YourModelsCard = () => {
     // "Cloud" beside it would describe a request the app never makes. The page
     // that owns the setting is one click away and names the missing piece.
     if (!key || !dispatches) {
-      return { model: notConfigured, location: null, attention: true };
+      return { model: notConfigured, location: null };
     }
     const name = getProviderDisplayName(key.provider, context);
     // A provider this build has no entry for is the same answer: nothing here
     // can say where the work happens, so the row does not say anything.
     if (!name) {
-      return { model: notConfigured, location: null, attention: true };
+      return { model: notConfigured, location: null };
     }
     return {
       model: name,
       location: locationWord(getProviderLocation(key.provider, key.baseUrl)),
-      attention: false,
       provider: hasProviderLogo(key.provider) ? key.provider : undefined,
     };
   };
@@ -205,13 +204,12 @@ export const YourModelsCard = () => {
             ? intl.formatMessage({ defaultMessage: "Not downloaded yet" })
             : localModelName,
           location: onThisComputer,
-          attention: localModelMissing,
         }
       : apiRowOf(transcriptionKey, "transcription", transcriptionDispatches);
 
   const postProcessingSummary: ModelSummary =
     postProcessingMode === "none"
-      ? { model: off, location: null, attention: false }
+      ? { model: off, location: null }
       : apiRowOf(
           postProcessingKey,
           "post-processing",
@@ -220,24 +218,24 @@ export const YourModelsCard = () => {
 
   const agentSummary: ModelSummary =
     agentMode === "none"
-      ? { model: off, location: null, attention: false }
+      ? { model: off, location: null }
       : apiRowOf(agentKey, "post-processing", agentDispatches);
 
   /**
    * What leads a row: the provider's own mark when the row resolves to one, and
-   * the generic lucide glyph otherwise.
+   * the job's glyph otherwise.
    *
-   * The glyph is not a fallback for a missing logo — it names the *job* the row
-   * reports (transcription, post processing, assistant). A row that names a
-   * provider shows that provider instead, because the job is already its
-   * subtitle. Both cases fill the same 20px box, so the three rows keep one
-   * rhythm.
+   * A provider's mark is its identity, so it leads the row that names it. Every
+   * other row leads with the job it reports (transcription, post processing,
+   * assistant), drawn from the app's one icon family at the shared settings
+   * size. Both fill the same lane, so the three rows keep one rhythm rather than
+   * one row starting a little left of the others.
    */
-  const leadingGlyph = (summary: ModelSummary, glyph: React.ReactNode) =>
+  const leadingGlyph = (summary: ModelSummary, Glyph: LucideIcon) =>
     summary.provider ? (
-      <ProviderLogo provider={summary.provider} size={20} />
+      <ProviderLogo provider={summary.provider} size={settingGlyphProps.size} />
     ) : (
-      glyph
+      <Glyph {...settingGlyphProps} />
     );
 
   return (
@@ -251,33 +249,24 @@ export const YourModelsCard = () => {
     >
       <SettingSummaryRow
         linksTo="ai_transcription"
-        icon={leadingGlyph(
-          transcriptionSummary,
-          <AudioLines size={20} strokeWidth={1.9} />,
-        )}
+        icon={leadingGlyph(transcriptionSummary, AudioLines)}
         subtitle={<FormattedMessage defaultMessage="AI transcription" />}
         title={transcriptionSummary.model}
         value={transcriptionSummary.location}
-        attention={transcriptionSummary.attention}
       />
       <SettingSummaryRow
         linksTo="ai_post_processing"
-        icon={leadingGlyph(
-          postProcessingSummary,
-          <WandSparkles size={20} strokeWidth={1.9} />,
-        )}
+        icon={leadingGlyph(postProcessingSummary, WandSparkles)}
         subtitle={<FormattedMessage defaultMessage="AI post processing" />}
         title={postProcessingSummary.model}
         value={postProcessingSummary.location}
-        attention={postProcessingSummary.attention}
       />
       <SettingSummaryRow
         linksTo="assistant_mode"
-        icon={leadingGlyph(agentSummary, <Bot size={20} strokeWidth={1.9} />)}
+        icon={leadingGlyph(agentSummary, Bot)}
         subtitle={<FormattedMessage defaultMessage="Assistant mode" />}
         title={agentSummary.model}
         value={agentSummary.location}
-        attention={agentSummary.attention}
       />
     </SettingGroup>
   );

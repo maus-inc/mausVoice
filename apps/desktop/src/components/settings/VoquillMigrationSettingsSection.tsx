@@ -1,9 +1,11 @@
 import type { VoquillMigrationReport } from "@maus-inc/desktop-native-apis";
 import { Alert, Box, Chip, Stack, Typography } from "@mui/material";
+import { PackageOpen } from "lucide-react";
 import type { ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useAppStore } from "../../store";
 import { SettingRow } from "./SettingRow";
+import { settingGlyphProps } from "./setting-row-chassis";
 import {
   VoquillMigrationRetryButton,
   VoquillMigrationReviewKeysButton,
@@ -160,6 +162,10 @@ export const VoquillMigrationSettingsSection = () => {
   return (
     <SettingRow
       settingKey="voquill_migration"
+      // One language on the surface: a row leads with a lucide glyph at the
+      // shared size and stroke. An import is a package arriving, which is what
+      // the mark says; the row's own words carry the state.
+      icon={<PackageOpen {...settingGlyphProps} />}
       title={
         <Stack
           direction="row"
