@@ -296,20 +296,26 @@ const keycapLabel = (pretty: string): string =>
   Object.hasOwn(KEYCAP_LABELS, pretty) ? KEYCAP_LABELS[pretty] : pretty;
 
 /**
- * Health states in which the listener may already be delivering snapshots.
+ * Health states in which a listener exists and is on its way to publishing keys.
  *
  * The two proven states are the steady ones: the grab path is alive, or the
  * listen fallback took over and still reports keys.
  *
- * `connected` and `fallback_starting` join them because they are live, not
- * dead. `connected` means the child connected and is speaking the wire
- * protocol. Keys start arriving as soon as its hook installs, and a hook that
- * cannot install reports `grab_failed` instead of resting here.
- * `fallback_starting` means the child is already inside `rdev::listen()`. Both
- * are waiting on the grace window that proves the path alive, and neither holds
- * the stream back. A gesture that waits for the proof drops taps that were
- * there to be seen, and the settings row that advertises it disappears for the
- * same window.
+ * `connected` and `fallback_starting` join them because a child is running and
+ * no failure has been reported. `connected` is emitted by the child in shared
+ * setup, before its platform loop installs the hook, so a key pressed in that
+ * window is not seen yet. `fallback_starting` is the child already inside
+ * `rdev::listen()`. Both last until the hook installs, until the child reports
+ * `grab_failed`, or until the grace window closes, which is sub-second in the
+ * ordinary case and repeats after every restart, wake, unlock and elevation
+ * relaunch.
+ *
+ * The distinction matters for what reads this set. A stored preference, such as
+ * the pill-locate setting, is offered here: the gesture cannot fire in the
+ * sub-second before the hook installs because there are no keys to see, and
+ * hiding a stored setting for that window is the defect that made the row look
+ * missing on Windows. A one-shot action must not treat these two as proof, and
+ * the failure notice does not: it uses `PROVEN_HEALTH`.
  *
  * Every other state means no child is publishing keys: `starting` has no child
  * yet, `grab_failed` is the moment between a failed hook and the listen
