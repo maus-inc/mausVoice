@@ -262,18 +262,12 @@ const rasteriseCapIncrementally = (
       reject(new Error("Keycap raster request cancelled"));
     };
     signal.addEventListener("abort", cancel, { once: true });
-    let raster: ReturnType<typeof createRaster>;
-    try {
-      raster = createRaster(options);
-    } catch (error) {
-      signal.removeEventListener("abort", cancel);
-      reject(error);
-      return;
-    }
-    const { image, mask, sample } = raster;
+    let raster: ReturnType<typeof createRaster> | undefined;
     let row = 0;
     const step = () => {
       try {
+        raster ??= createRaster(options);
+        const { image, mask, sample } = raster;
         const deadline = performance.now() + 8;
         do {
           if (row < image.height) {

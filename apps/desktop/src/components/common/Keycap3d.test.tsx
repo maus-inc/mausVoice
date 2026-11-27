@@ -243,6 +243,7 @@ describe("Keycap3d", () => {
 
   it("shows the fallback when local raster creation fails", async () => {
     const { restore } = mockCanvas();
+    vi.useFakeTimers();
     vi.stubGlobal(
       "ImageData",
       vi.fn(function () {
@@ -252,11 +253,12 @@ describe("Keycap3d", () => {
     try {
       render(<Keycap3d label="K" size={37.125} />);
       await act(async () => {
-        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(0);
       });
       expect(box().getAttribute("data-keycap-fallback")).toBe("true");
       expect(styleOf(parts("label")[0]).visibility).toBe("visible");
     } finally {
+      vi.useRealTimers();
       restore();
     }
   });

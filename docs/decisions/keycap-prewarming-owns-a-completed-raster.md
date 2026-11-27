@@ -25,7 +25,9 @@ Startup does not spend main-thread time rendering an invisible decoration.
 Worker replies enter the renderer's existing eight-image LRU cache. A layout
 effect copies an available image into a mounted canvas before the browser paints.
 A cache miss still uses asynchronous rendering. No raster computation runs
-synchronously in the layout effect.
+synchronously in the layout effect. The incremental local renderer also defers
+its image and mask allocation until its first scheduled slice, so unsupported
+worker environments do not allocate raster buffers before the initial paint.
 
 ## Consequences
 

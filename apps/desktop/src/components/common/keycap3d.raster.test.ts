@@ -107,6 +107,38 @@ it("yields between rows instead of finishing a whole raster in one task", async 
   }
 });
 
+it("defers local allocation and cancels before allocating abandoned work", async () => {
+  const allocate = vi.fn(function (width: number, height: number) {
+    return new TestImageData(width, height);
+  });
+  vi.stubGlobal("ImageData", allocate);
+  vi.useFakeTimers();
+  try {
+    const { getCapRasterAsync } = await import("./keycap3d.raster");
+    const options = {
+      layout: layoutKeycap({ size: 29, view: "front" }),
+      grain: 0.17,
+      scale: 1,
+    };
+    const controller = new AbortController();
+    const cancelled = getCapRasterAsync(options, controller.signal);
+    expect(allocate).not.toHaveBeenCalled();
+    controller.abort();
+    await expect(cancelled).rejects.toThrow("cancelled");
+    await vi.runAllTimersAsync();
+    expect(allocate).not.toHaveBeenCalled();
+    const retained = getCapRasterAsync(options, new AbortController().signal);
+    expect(allocate).not.toHaveBeenCalled();
+    await vi.runAllTimersAsync();
+    await expect(retained).resolves.toMatchObject({
+      width: expect.any(Number),
+    });
+    expect(allocate).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("bounds the completed cache and retains recently used rasters", async () => {
   vi.stubGlobal("ImageData", TestImageData);
   const { getCapRaster, getCachedCapRaster } =
