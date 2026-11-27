@@ -226,3 +226,41 @@ test("watchPage does not let subframe document loads hide active main-frame abor
     "http://127.0.0.1:5193/fonts/Satoshi.woff2",
   );
 });
+
+test("watchPage flags unexpected aborted requests inside an active subframe", () => {
+  const page = createFakePage();
+  const { unexpectedFailedRequests } = watchPage(page);
+
+  page.emit("Page.frameNavigated", {
+    frame: { id: "frame-main", loaderId: "loader-1" },
+  });
+  page.emit("Network.requestWillBeSent", {
+    requestId: "subdoc-1",
+    frameId: "frame-child",
+    loaderId: "loader-child",
+    type: "Document",
+    request: { url: "http://127.0.0.1:5193/frame.html" },
+  });
+  page.emit("Network.requestWillBeSent", {
+    requestId: "subimg-1",
+    frameId: "frame-child",
+    loaderId: "loader-child",
+    type: "Image",
+    request: { url: "http://127.0.0.1:5193/frame-img.png" },
+  });
+  page.emit("Network.loadingFailed", {
+    requestId: "subimg-1",
+    type: "Image",
+    errorText: "net::ERR_ABORTED",
+    canceled: true,
+  });
+
+  assert.deepEqual(unexpectedFailedRequests, [
+    {
+      url: "http://127.0.0.1:5193/frame-img.png",
+      type: "Image",
+      errorText: "net::ERR_ABORTED",
+      canceled: true,
+    },
+  ]);
+});

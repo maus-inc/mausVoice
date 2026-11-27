@@ -15,12 +15,11 @@
  * `Network.enable` stays with the caller, because a probe that enables it has
  * to do so before the navigation it wants to watch.
  */
-const isSupersededNavigationCancel = (params, request, currentLoaderId) =>
+const isSupersededNavigationCancel = (params, request, supersededLoaderIds) =>
   Boolean(
     params.canceled &&
     request?.loaderId &&
-    currentLoaderId &&
-    request.loaderId !== currentLoaderId,
+    supersededLoaderIds.has(request.loaderId),
   );
 
 const toRequestRecord = (params) => ({
@@ -52,19 +51,31 @@ export const watchPage = (page) => {
   const failedRequests = [];
   const unexpectedFailedRequests = [];
   const requests = new Map();
+  const activeLoaderIds = new Set();
+  const supersededLoaderIds = new Set();
   let mainFrameId = null;
   let currentLoaderId = null;
+
+  const advanceTopLevelLoader = (nextLoaderId) => {
+    if (!nextLoaderId || nextLoaderId === currentLoaderId) return;
+    for (const id of activeLoaderIds) supersededLoaderIds.add(id);
+    activeLoaderIds.clear();
+    currentLoaderId = nextLoaderId;
+    activeLoaderIds.add(nextLoaderId);
+  };
 
   page.on("Page.frameNavigated", (params) => {
     if (params.frame?.parentId) return;
     mainFrameId = params.frame?.id ?? mainFrameId;
-    currentLoaderId = params.frame?.loaderId ?? currentLoaderId;
+    advanceTopLevelLoader(params.frame?.loaderId);
   });
 
   page.on("Network.requestWillBeSent", (params) => {
     if (isMainDocument(params, mainFrameId) && params.loaderId) {
       mainFrameId = mainFrameId ?? params.frameId ?? null;
-      currentLoaderId = params.loaderId;
+      advanceTopLevelLoader(params.loaderId);
+    } else if (params.loaderId) {
+      activeLoaderIds.add(params.loaderId);
     }
     requests.set(params.requestId, toRequestRecord(params));
   });
@@ -77,7 +88,9 @@ export const watchPage = (page) => {
     const request = requests.get(params.requestId);
     requests.delete(params.requestId);
     failedRequests.push(params.errorText);
-    if (isSupersededNavigationCancel(params, request, currentLoaderId)) return;
+    if (isSupersededNavigationCancel(params, request, supersededLoaderIds)) {
+      return;
+    }
     unexpectedFailedRequests.push(toFailureRecord(params, request));
   });
 
