@@ -1939,14 +1939,28 @@ fn decode_relative_asset_key(rel_key: &str) -> Option<PathBuf> {
     has_component.then_some(path)
 }
 
-fn ensure_journal_dir_synced(ctx: &mut AssetCopyContext<'_>, synced_now: bool) -> io::Result<()> {
+fn ensure_journal_dir_synced_fields(
+    config_dir: &Path,
+    journal_dir_synced: &mut bool,
+    sync_journal_dir: &dyn Fn(&Path) -> io::Result<()>,
+    synced_now: bool,
+) -> io::Result<()> {
     if synced_now {
-        ctx.journal_dir_synced = true;
-    } else if !ctx.journal_dir_synced {
-        (ctx.sync_journal_dir)(ctx.config_dir)?;
-        ctx.journal_dir_synced = true;
+        *journal_dir_synced = true;
+    } else if !*journal_dir_synced {
+        sync_journal_dir(config_dir)?;
+        *journal_dir_synced = true;
     }
     Ok(())
+}
+
+fn ensure_journal_dir_synced(ctx: &mut AssetCopyContext<'_>, synced_now: bool) -> io::Result<()> {
+    ensure_journal_dir_synced_fields(
+        ctx.config_dir,
+        &mut ctx.journal_dir_synced,
+        ctx.sync_journal_dir,
+        synced_now,
+    )
 }
 
 fn confirm_asset_progress_entry(
@@ -2004,6 +2018,11 @@ fn copy_regular_asset_file(
     let was_already_confirmed = ctx.category.contains(ctx.progress, &rel_key);
     let prior_pending_digest = ctx.category.pending(ctx.progress).get(&rel_key).cloned();
     let mut recorded_intent_for_publish = false;
+    let config_dir = ctx.config_dir;
+    let category = ctx.category;
+    let progress = &mut *ctx.progress;
+    let journal_dir_synced = &mut ctx.journal_dir_synced;
+    let sync_journal_dir = ctx.sync_journal_dir;
     let copy_result = copy_file_non_destructive_hashed(
         src_path,
         ctx.dst_root,
@@ -2016,15 +2035,15 @@ fn copy_regular_asset_file(
                 prior_pending_digest.as_deref() == Some(staged_sha256);
             if !was_already_confirmed && !same_intent_already_recorded {
                 dir_synced_now = append_asset_progress_record_with_sync(
-                    ctx.config_dir,
+                    config_dir,
                     '?',
-                    ctx.category,
+                    category,
                     &rel_key,
                     Some(staged_sha256),
-                    ctx.sync_journal_dir,
+                    sync_journal_dir,
                 )?;
-                ctx.category
-                    .pending_mut(ctx.progress)
+                category
+                    .pending_mut(progress)
                     .insert(rel_key.clone(), staged_sha256.to_string());
                 recorded_intent_for_publish = true;
             }
@@ -2032,7 +2051,12 @@ fn copy_regular_asset_file(
             // before any asset publication that relies on a newly appended or
             // replayed journal record (e.g. after a prior attempt created the
             // journal file and failed on dir sync).
-            ensure_journal_dir_synced(ctx, dir_synced_now)?;
+            ensure_journal_dir_synced_fields(
+                config_dir,
+                journal_dir_synced,
+                sync_journal_dir,
+                dir_synced_now,
+            )?;
             Ok(())
         },
     );
@@ -2077,9 +2101,8 @@ fn copy_regular_asset_file(
                 log::warn!(
                     "Failed to revert Voquill asset progress entry for {rel_key}: {revert_err}"
                 );
-                outcome.record_failure(format!(
-                    "could not revert asset progress log: {revert_err}"
-                ));
+                outcome
+                    .record_failure(format!("could not revert asset progress log: {revert_err}"));
             }
             outcome.skipped_existing = outcome.skipped_existing.saturating_add(1);
         }
@@ -9076,7 +9099,11 @@ mod tests {
             let dirs_b = make_dirs(&ws_b);
             let legacy_db_b = dirs_b.legacy_db_path().unwrap();
             seed_voquill_db(&legacy_db_b, 111, false).await;
-            let legacy_audio = dirs_b.legacy_data_dir.as_ref().unwrap().join(AUDIO_DIR_NAME);
+            let legacy_audio = dirs_b
+                .legacy_data_dir
+                .as_ref()
+                .unwrap()
+                .join(AUDIO_DIR_NAME);
             fs::create_dir_all(&legacy_audio).unwrap();
             fs::write(legacy_audio.join("later.wav"), b"RIFFlater").unwrap();
 
