@@ -473,15 +473,23 @@ describe("seedListenerHealth", () => {
   });
 
   it("asks about newer events at the write, not only after the read", async () => {
-    // The guard and the write share one synchronous block, so an event that
-    // landed after the read resolved is still respected.
+    // The guard and the write share one synchronous block. The flag flips after
+    // the read has produced its value and before the helper resumes, which is
+    // the ordering a constant `true` cannot model.
     const applied: KeyboardListenerHealth[] = [];
+    let eventApplied = false;
 
-    await seedListenerHealth(
-      () => Promise.resolve("connected"),
-      () => true,
+    const pending = seedListenerHealth(
+      () =>
+        Promise.resolve<KeyboardListenerHealth>("connected").then((health) => {
+          eventApplied = true;
+          return health;
+        }),
+      () => eventApplied,
       (health) => applied.push(health),
     );
+
+    await pending;
 
     expect(applied).toEqual([]);
   });
