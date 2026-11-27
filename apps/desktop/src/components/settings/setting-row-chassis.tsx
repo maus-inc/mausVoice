@@ -108,6 +108,19 @@ export const settingSearchGlyphProps = {
 } as const;
 
 /**
+ * A glyph on a control that cannot be used right now.
+ *
+ * MUI's icons took a `color="disabled"` prop, and lucide has no colour of its own,
+ * so dropping the prop left four hotkey controls drawing at full contrast beside
+ * their disabled labels. The tone lives here rather than at each call site so the
+ * next disabled glyph reads one name instead of a literal per file.
+ */
+export const settingDisabledGlyphProps = {
+  ...settingGlyphProps,
+  style: { color: "var(--app-palette-action-disabled)" },
+} as const;
+
+/**
  * The one lane a row's leading mark sits in.
  *
  * A glyph names the kind of thing a row controls, so it is part of the row's

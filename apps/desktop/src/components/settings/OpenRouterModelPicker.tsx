@@ -285,7 +285,11 @@ export const OpenRouterModelPicker = ({
             )}
           </Typography>
         </Box>
-        <ChevronDown size={20} strokeWidth={1.9} />
+        <ChevronDown
+          size={20}
+          strokeWidth={1.9}
+          style={{ color: "var(--app-palette-text-secondary)" }}
+        />
       </Paper>
     );
   }
@@ -311,7 +315,13 @@ export const OpenRouterModelPicker = ({
             input: {
               startAdornment: (
                 <InputAdornment position="start">
-                  <Search size={20} strokeWidth={1.9} />
+                  <Search
+                    size={20}
+                    strokeWidth={1.9}
+                    style={{
+                      color: "var(--app-palette-text-secondary)",
+                    }}
+                  />
                 </InputAdornment>
               ),
               endAdornment: (

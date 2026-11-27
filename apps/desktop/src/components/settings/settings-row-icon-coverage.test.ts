@@ -369,6 +369,45 @@ describe("settings row icon coverage", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("keeps the colour each migrated glyph used to inherit from MUI", () => {
+    // MUI's icons took `color="warning"`, `color="disabled"` and `color="action"`,
+    // and lucide draws in `currentColor` with no default tone of its own. Swapping
+    // the component therefore dropped six tones on the floor: a power-mode warning
+    // lost its caution, four hotkey controls drew at full contrast while disabled,
+    // and the model picker's chevron and search glyph lost their muted action tone.
+    // Each of those sites now names a palette variable, and this holds them to it so
+    // a later edit cannot quietly make a glyph inherit its neighbour's colour again.
+    const settingsRoot = new URL(
+      "apps/desktop/src/components/settings/",
+      REPO_ROOT,
+    );
+    const required: Record<string, string[]> = {
+      "AIAgentModeDialog.tsx": ["--app-palette-warning-main"],
+      "OpenRouterModelPicker.tsx": [
+        "--app-palette-text-secondary",
+        "--app-palette-text-secondary",
+      ],
+      "HotkeySetting.tsx": ["settingDisabledGlyphProps"],
+    };
+
+    for (const [file, tones] of Object.entries(required)) {
+      const source = everySource(settingsRoot).find(
+        ({ path }) => path === file,
+      )?.source;
+      expect(source, file).toBeTruthy();
+      for (const tone of tones) {
+        expect(source, `${file} keeps ${tone}`).toContain(tone);
+      }
+    }
+
+    // The disabled tone has one home, so the next disabled glyph uses it.
+    const chassis = everySource(settingsRoot).find(
+      ({ path }) => path === "setting-row-chassis.tsx",
+    )?.source;
+    expect(chassis).toContain("settingDisabledGlyphProps");
+    expect(chassis).toContain("var(--app-palette-action-disabled)");
+  });
+
   it("gives every lucide glyph in the settings surface the shared stroke", () => {
     // Lucide 0.544.0 defaults `strokeWidth` to 2, not to the 1.9 the surface
     // draws. The row checks above only see a row's leading mark, so a glyph in a
@@ -402,6 +441,7 @@ describe("settings row icon coverage", () => {
         if (
           props.includes("settingGlyphProps") ||
           props.includes("settingSearchGlyphProps") ||
+          props.includes("settingDisabledGlyphProps") ||
           /strokeWidth=\{\s*1\.9\s*\}/u.test(props)
         ) {
           continue;

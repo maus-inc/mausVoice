@@ -20,6 +20,7 @@ import {
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { HotKey } from "../common/HotKey";
+import { settingDisabledGlyphProps } from "./setting-row-chassis";
 
 export type HotkeySettingProps = {
   title: ReactNode;
@@ -120,7 +121,7 @@ const PrimaryHotkeyActions = ({
         onClick={onDisable}
         aria-label={intl.formatMessage({ defaultMessage: "Disable hotkey" })}
       >
-        <Ban size={20} strokeWidth={1.9} />
+        <Ban {...settingDisabledGlyphProps} size={20} />
       </IconButton>
     );
   }
@@ -137,7 +138,7 @@ const PrimaryHotkeyActions = ({
           aria-label={intl.formatMessage({ defaultMessage: "Delete hotkey" })}
           onClick={() => onDeleteHotkey(primaryHotkey.id)}
         >
-          <X size={20} strokeWidth={1.9} />
+          <X {...settingDisabledGlyphProps} size={20} />
         </IconButton>
       )}
       {canRevert && (
@@ -148,7 +149,7 @@ const PrimaryHotkeyActions = ({
           })}
           onClick={onRevertPrimary}
         >
-          <RotateCcw size={20} strokeWidth={1.9} />
+          <RotateCcw {...settingDisabledGlyphProps} size={20} />
         </IconButton>
       )}
     </>
@@ -233,7 +234,7 @@ const AdditionalHotkeyRow = ({
       })}
       onClick={() => onDeleteHotkey(hotkey.id)}
     >
-      <X size={20} strokeWidth={1.9} />
+      <X {...settingDisabledGlyphProps} size={20} />
     </IconButton>
   </Stack>
 );
