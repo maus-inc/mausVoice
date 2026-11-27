@@ -101,10 +101,48 @@ export const images = (text) => {
  * @param {{ body: string, changedPaths?: string[] }} input
  * @returns {{ failures: { rule: string, message: string }[], noted: string[] }}
  */
-export function checkVisualEvidence({ body, changedPaths = [] }) {
-  const failures = [];
-  const noted = [];
+/** V5: an image a reviewer cannot open is not evidence. */
+const localPathFailures = (sources) =>
+  sources
+    .filter((source) => LOCAL_PATH.test(source))
+    .map((source) => ({
+      rule: "V5",
+      message: `image "${source}" is a local path a reviewer cannot open. Upload it and use the returned URL, or commit it under docs/assets/`,
+    }));
 
+/** V4: a surface changed and the description shows nothing at all. */
+const missingEvidenceFailure = (surfaced) => {
+  const shown = surfaced.slice(0, 3).join(", ");
+  const more = surfaced.length > 3 ? ", …" : "";
+  return {
+    rule: "V4",
+    message: `the diff under review touches ${surfaced.length} UI path(s) with no unfolded image in the description (${shown}${more}). Capture the touched surfaces and embed the dark frames per docs/visual-verification/README.md`,
+  };
+};
+
+/**
+ * V2 and V3, which are about the images that exist: V2 for any a reviewer will not see,
+ * so a mixed description fails it too, and V3 for having none above the fold at all.
+ */
+const foldFailures = (all, open) =>
+  all.length === 0
+    ? []
+    : [
+        ...(all.length > open.length
+          ? [
+              {
+                rule: "V2",
+                message: `${all.length - open.length} of ${all.length} image(s) sit inside a <details> fold. Evidence is read above the fold`,
+              },
+            ]
+          : []),
+        ...(open.length === 0
+          ? [{ rule: "V3", message: "no image is unfolded" }]
+          : []),
+      ];
+
+export function checkVisualEvidence({ body, changedPaths = [] }) {
+  const noted = [];
   const { authored, found } = splitAuthored(body ?? "");
   if (!found) {
     noted.push(
@@ -115,25 +153,10 @@ export function checkVisualEvidence({ body, changedPaths = [] }) {
   const surfaced = changedPaths.filter(isUiPath);
   const all = images(authored);
   const open = images(withoutFolds(authored));
-
-  for (const source of all) {
-    if (LOCAL_PATH.test(source)) {
-      failures.push({
-        rule: "V5",
-        message: `image "${source}" is a local path a reviewer cannot open. Upload it and use the returned URL, or commit it under docs/assets/`,
-      });
-    }
-  }
+  const failures = localPathFailures(all);
 
   if (surfaced.length > 0 && all.length === 0) {
-    failures.push({
-      rule: "V4",
-      message: `the diff under review touches ${surfaced.length} UI path(s) with no unfolded image in the description (${surfaced
-        .slice(0, 3)
-        .join(
-          ", ",
-        )}${surfaced.length > 3 ? ", …" : ""}). Capture the touched surfaces and embed the dark frames per docs/visual-verification/README.md`,
-    });
+    failures.push(missingEvidenceFailure(surfaced));
     return { failures, noted };
   }
 
@@ -142,24 +165,8 @@ export function checkVisualEvidence({ body, changedPaths = [] }) {
     return { failures, noted };
   }
 
-  if (all.length === 0) {
-    noted.push("the description carries no image");
-  } else {
-    // V2 is about any image a reviewer will not see, so a mixed description fails it
-    // too: one visible frame does not make a folded one visible.
-    if (all.length > open.length) {
-      failures.push({
-        rule: "V2",
-        message: `${all.length - open.length} of ${all.length} image(s) sit inside a <details> fold. Evidence is read above the fold`,
-      });
-    }
-    if (open.length === 0) {
-      failures.push({
-        rule: "V3",
-        message: "no image is unfolded",
-      });
-    }
-  }
+  if (all.length === 0) noted.push("the description carries no image");
+  failures.push(...foldFailures(all, open));
 
   return { failures, noted };
 }
@@ -213,6 +220,15 @@ const parseArgs = (argv) => {
   return args;
 };
 
+/** Reads the body from the file argument, `-` for stdin, or the environment. */
+const readBody = (file) => {
+  if (file) return readFileSync(file === "-" ? 0 : file, "utf8");
+  return process.env.PR_BODY;
+};
+
+const USAGE =
+  "usage: check-visual-evidence.mjs <path> [--base <ref>] | PR_BODY=... <path|--base>\n";
+
 const main = () => {
   const args = parseArgs(process.argv.slice(2));
   if (args.error) {
@@ -220,27 +236,17 @@ const main = () => {
     return 2;
   }
   if (!args.file && !process.env.PR_BODY) {
-    process.stderr.write(
-      "usage: check-visual-evidence.mjs <path> [--base <ref>] | PR_BODY=... <path|--base>\n",
-    );
+    process.stderr.write(USAGE);
     return 2;
   }
 
   let body;
-  try {
-    body = args.file
-      ? readFileSync(args.file === "-" ? 0 : args.file, "utf8")
-      : process.env.PR_BODY;
-  } catch (error) {
-    process.stderr.write(`cannot read the body: ${error.message}\n`);
-    return 2;
-  }
-
   let paths = [];
   try {
+    body = readBody(args.file);
     paths = changedPaths(args.base);
   } catch (error) {
-    process.stderr.write(`cannot read the diff: ${error.message}\n`);
+    process.stderr.write(`cannot read the input: ${error.message}\n`);
     return 2;
   }
 
@@ -248,19 +254,18 @@ const main = () => {
     body,
     changedPaths: paths,
   });
-
   for (const note of noted) process.stdout.write(`note: ${note}\n`);
-  for (const failure of failures)
+  for (const failure of failures) {
     process.stdout.write(`${failure.rule}: ${failure.message}\n`);
-
-  if (failures.length > 0) {
-    process.stdout.write(
-      `\n${failures.length} violation(s). The procedure is docs/visual-verification/README.md\n`,
-    );
-    return 1;
   }
-  process.stdout.write("ok: visual evidence present\n");
-  return 0;
+  if (failures.length === 0) {
+    process.stdout.write("ok: visual evidence present\n");
+    return 0;
+  }
+  process.stdout.write(
+    `\n${failures.length} violation(s). The procedure is docs/visual-verification/README.md\n`,
+  );
+  return 1;
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {

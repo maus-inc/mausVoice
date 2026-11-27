@@ -99,6 +99,55 @@ type SettingRowControlColumnProps = {
   interactive: boolean;
 };
 
+/** The arrow a row ends with, chosen by what the row does when pressed. */
+const trailingAffordance = ({
+  externalUrl,
+  interactive,
+  action,
+}: Pick<
+  SettingRowControlColumnProps,
+  "externalUrl" | "interactive" | "action"
+>): ReactNode => {
+  if (externalUrl) {
+    return (
+      <TrailingGlyph>
+        <ArrowUpRight size={18} strokeWidth={1.9} />
+      </TrailingGlyph>
+    );
+  }
+  if (interactive && !action) {
+    return (
+      <TrailingGlyph>
+        <ChevronRight size={20} strokeWidth={1.9} />
+      </TrailingGlyph>
+    );
+  }
+  return null;
+};
+
+/**
+ * The verb a row names instead of leaving it to a chevron.
+ *
+ * The mark is `aria-hidden` for the same reason the leading glyph is: it repeats the
+ * verb beside it, so the pill's text is its whole name.
+ */
+const ActionPill = ({
+  action,
+  radius,
+}: {
+  action: SettingRowAction;
+  radius: string;
+}) => (
+  <Box
+    component="span"
+    className="setting-row-action"
+    sx={actionPillSx(action.tone ?? "primary", radius)}
+  >
+    {action.icon && <span aria-hidden>{action.icon}</span>}
+    {action.label}
+  </Box>
+);
+
 /**
  * The right-hand column: the reported value, the control, the action pill and
  * the trailing affordance, in that order.
@@ -118,20 +167,7 @@ const SettingRowControlColumn = ({
 }: SettingRowControlColumnProps) => {
   const theme = useTheme();
 
-  let trailingIcon: ReactNode = null;
-  if (externalUrl) {
-    trailingIcon = (
-      <TrailingGlyph>
-        <ArrowUpRight size={18} strokeWidth={1.9} />
-      </TrailingGlyph>
-    );
-  } else if (interactive && !action) {
-    trailingIcon = (
-      <TrailingGlyph>
-        <ChevronRight size={20} strokeWidth={1.9} />
-      </TrailingGlyph>
-    );
-  }
+  const trailingIcon = trailingAffordance({ externalUrl, interactive, action });
 
   // A row that holds a control gives it the width it needs; a row that only
   // reports a value keeps the fixed column, so values still line up down a
@@ -148,17 +184,10 @@ const SettingRowControlColumn = ({
       <SettingRowValue value={value} />
       {control}
       {action && (
-        <Box
-          component="span"
-          className="setting-row-action"
-          sx={actionPillSx(
-            action.tone ?? "primary",
-            `${cssPixels(theme.shape.borderRadius) - 2}px`,
-          )}
-        >
-          {action.icon && <span aria-hidden>{action.icon}</span>}
-          {action.label}
-        </Box>
+        <ActionPill
+          action={action}
+          radius={`${cssPixels(theme.shape.borderRadius) - 2}px`}
+        />
       )}
       {trailingIcon}
     </Box>
