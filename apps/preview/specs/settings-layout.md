@@ -1,7 +1,7 @@
 # SettingsLayout (`settings-layout`)
 
 - Status: **reused** — the production Settings shell.
-- Source of truth: `apps/desktop/src/components/settings/SettingsLayout.tsx` and `SettingsLayout.test.tsx`.
+- Source of truth: `apps/desktop/src/components/settings/SettingsLayout.tsx` and `apps/desktop/src/components/settings/SettingsLayout.test.tsx`.
 - Used in: every dashboard Settings route.
 
 ## Purpose
