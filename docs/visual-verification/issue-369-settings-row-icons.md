@@ -19,12 +19,20 @@ with its own control before each capture so no popup covered a row.
 
 Images live in `docs/assets/`:
 
+Attached to the pull request, and committed here as the pairs:
+
 | File | Surface |
 | --- | --- |
-| `settings-icons-dictation.light.png`, `.dark.png` | Dialog, control, value and switch rows on one page |
-| `settings-icons-ai-models.light.png`, `.dark.png` | Provider-logo marks sharing the glyph lane |
-| `settings-icons-account.light.png`, `.dark.png` | Identity row (avatar), danger rows |
-| `settings-icons-catalogue.light.png`, `.dark.png` | The committed preview demo and its live spec |
+| `settings-icons-compare/dictation.dark.png` | The three switch rows that had no mark, plus the descriptor rows beside them |
+| `settings-icons-compare/privacy-data.dark.png` | Four of five rows gaining a mark |
+| `settings-icons-compare/system.dark.png` | Startup and update switches |
+| `settings-icons-compare/appearance.dark.png` | A page where no row had a mark |
+| `settings-icons-account-row-before.dark.png`, `-after.dark.png` | The identity row, where the lane itself was wrong |
+
+Looked at but deliberately not committed, because the description keeps to the dark frames
+and a full sweep is a pull-request attachment rather than a repository commit: the light
+frames for the same four pages, and the 1280, 1100 and 800 captures behind the geometry
+table. `scripts/verify/shot-settings.mjs` regenerates all of them.
 
 ## Measurements
 
