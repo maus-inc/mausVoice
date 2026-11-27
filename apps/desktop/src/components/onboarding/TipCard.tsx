@@ -7,8 +7,8 @@ import {
   X,
 } from "lucide-react";
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
-import type { SxProps } from "@mui/material/styles";
-import type { SystemStyleObject, Theme } from "@mui/system";
+import type { SxProps, Theme } from "@mui/material/styles";
+import type { SystemStyleObject } from "@mui/system";
 import {
   AnimatePresence,
   motion,
@@ -193,21 +193,33 @@ const collectSx = (
 };
 
 /**
- * The presentational shell both tip surfaces render: a notification _row_,
- * not a banner. The base face is a flat level1 row with a 1px hairline and
- * the standard card radius — the material of an in-flow list row, which is
- * how `HelpPage` lists the tips. `TipCard` overrides the face to the
- * floating-layer material (paper + premium lift), because the live tips
- * float over the page.
+ * Compact pill styling shared by tip action buttons in `TipCard` and
+ * `HelpPage`. Overrides `MuiButton.root`'s 15px / 44px default so inline card
+ * actions stay proportional to `titleSmall` / `body2` while remaining above
+ * WCAG 2.2's 24x24px target minimum.
+ */
+export const tipActionButtonSx: SystemStyleObject<Theme> = {
+  textTransform: "none",
+  borderRadius: 999,
+  fontSize: "0.8125rem",
+  lineHeight: 1.35,
+  px: 1.75,
+  py: 0.5,
+  minHeight: 32,
+  whiteSpace: "nowrap",
+};
+
+/**
+ * Shared presentational shell for onboarding tips.
  *
- * Deliberately quiet (Linear's inbox rows are the reference class for this
- * component): a bare 16px glyph at `text.secondary` instead of an icon tile,
- * the affordances gathered on the right the way the app's toasts gather
- * theirs, and no drop shadow in-flow (elevation is for floating layers).
+ * Renders a flat `level1` card with a 1px hairline and standard card radius
+ * for in-flow use on `HelpPage`. `TipCard` overrides the outer face to
+ * transparent inside its floating elevated card.
  *
- * `HelpPage` lists the same tips with a "Show again" action in place of the
- * dismiss control, so the copy, icons, and frame are all single-sourced here
- * and a change to tip presentation is made in one place.
+ * The 16px leading glyph aligns with the title line rather than centering
+ * vertically against a multi-line body, and actions sit in a wrapping row
+ * beneath the description so active cards, dismissed cards (with an extra
+ * "Show again" control), and narrower windows keep one consistent text rail.
  */
 export const TipCardFrame = ({
   title,
@@ -233,7 +245,7 @@ export const TipCardFrame = ({
    * two different effects a bare click on it should trigger.
    */
   onActivate?: () => void;
-  sx?: SxProps;
+  sx?: SxProps<Theme>;
 }) => {
   const interactive = Boolean(onActivate);
   const handleKeyDown = (event: React.KeyboardEvent) => {
@@ -259,14 +271,14 @@ export const TipCardFrame = ({
         const overrides = collectSx(sx, theme);
         return {
           display: "flex",
-          alignItems: "center",
-          gap: 1,
-          p: 2,
-          pr: 1.5,
+          alignItems: "flex-start",
+          gap: 1.5,
+          px: 2.25,
+          py: 2,
           borderRadius: 1,
           border: 1,
           borderColor: "divider",
-          // Flat on purpose: in-flow, the row separates by its luminance step
+          // Flat on purpose: in-flow, the card separates by its luminance step
           // (level1 over level0) and its hairline — no `premiumSurface` cast.
           bgcolor: "level1",
           ...(interactive && {
@@ -286,9 +298,13 @@ export const TipCardFrame = ({
         <Box
           component="span"
           aria-hidden
+          data-tip-icon="true"
           sx={{
             display: "flex",
             alignItems: "center",
+            justifyContent: "center",
+            width: 20,
+            height: 20,
             flexShrink: 0,
             color: "text.secondary",
           }}
@@ -300,32 +316,46 @@ export const TipCardFrame = ({
         <Typography
           variant="titleSmall"
           component={headingLevel ?? "p"}
-          sx={{ letterSpacing: "-0.01em", maxWidth: "60ch" }}
+          data-tip-title="true"
+          sx={{
+            color: "text.primary",
+            letterSpacing: "-0.01em",
+            maxWidth: "60ch",
+          }}
         >
           {title}
         </Typography>
         <Typography
           variant="body2"
-          color="text.secondary"
-          sx={{ mt: 0.25, maxWidth: "60ch" }}
+          sx={{
+            color: "text.secondary",
+            mt: 0.5,
+            maxWidth: "60ch",
+            textWrap: "pretty",
+          }}
         >
           {body}
         </Typography>
+        {actions && (
+          <Stack
+            direction="row"
+            useFlexGap
+            spacing={1}
+            sx={{
+              flexWrap: "wrap",
+              alignItems: "center",
+              mt: 1.5,
+            }}
+            // A live action's own button already runs its own effect on
+            // click. Stopping the row's click here keeps that one effect
+            // from also re-firing as this row's activation, the same
+            // single-effect-per-click guarantee `onActivate` depends on.
+            onClick={(event) => event.stopPropagation()}
+          >
+            {actions}
+          </Stack>
+        )}
       </Box>
-      {actions && (
-        <Stack
-          direction="row"
-          spacing={0.5}
-          sx={{ flexShrink: 0, alignItems: "center", ml: 1 }}
-          // A live action's own button already runs its own effect on
-          // click. Stopping the row's click here keeps that one effect
-          // from also re-firing as this row's activation, the same
-          // single-effect-per-click guarantee `onActivate` depends on.
-          onClick={(event) => event.stopPropagation()}
-        >
-          {actions}
-        </Stack>
-      )}
     </Box>
   );
 };
@@ -516,7 +546,7 @@ export const TipCard = ({ id }: { id: OnboardingTipId }) => {
                     onClick={() => getTipAction(id)?.()}
                     // A quiet secondary action: no arrow, which would read
                     // as a marketing CTA in an otherwise neutral row.
-                    sx={{ textTransform: "none", borderRadius: 999 }}
+                    sx={tipActionButtonSx}
                   >
                     {liveAction.label}
                   </Button>

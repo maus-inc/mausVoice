@@ -1,11 +1,50 @@
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Button, Stack, Typography } from "@mui/material";
+import type { SxProps, Theme } from "@mui/material/styles";
 import { FormattedMessage } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { resetTip } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
+import { ink, onDark } from "../../styles/palette";
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
 import { ONBOARDING_TIPS, tipAction } from "../../utils/tips";
-import { TIP_COPY, TIP_ICONS, TipCardFrame } from "../onboarding/TipCard";
+import { DashboardEntryLayout } from "../dashboard/DashboardEntryLayout";
+import {
+  TIP_COPY,
+  TIP_ICONS,
+  TipCardFrame,
+  tipActionButtonSx,
+} from "../onboarding/TipCard";
+
+/**
+ * Recessed surface styling for dismissed tips on the Help page.
+ *
+ * Dropping the card onto the `level0` canvas with a dashed hairline and a
+ * slightly softened title makes dismissed tips distinct from active `level1`
+ * cards without whole-card opacity, which pushed secondary body copy below
+ * WCAG AA contrast and dimmed the "Show again" control.
+ */
+const dismissedTipCardSx: SxProps<Theme> = (theme) => ({
+  bgcolor: "transparent",
+  borderStyle: "dashed",
+  borderColor: ink(0.18),
+  "& [data-tip-title='true']": { color: ink(0.76) },
+  "& [data-tip-icon='true']": { opacity: 0.72 },
+  ...theme.applyStyles("dark", {
+    borderColor: onDark(0.18),
+    "& [data-tip-title='true']": { color: onDark(0.76) },
+  }),
+});
+
+const showAgainButtonSx: SxProps<Theme> = {
+  ...tipActionButtonSx,
+  fontWeight: 500,
+  px: 1.25,
+  color: "text.secondary",
+  "&:hover": {
+    color: "text.primary",
+    bgcolor: "action.hover",
+  },
+};
 
 export default function HelpPage() {
   const navigate = useNavigate();
@@ -18,42 +57,48 @@ export default function HelpPage() {
   const features = { assistantModeEnabled };
 
   return (
-    <Box sx={{ flexGrow: 1, height: "100%", pb: 2, pr: 2 }}>
-      <Box sx={{ height: "100%", overflow: "auto" }}>
-        <Stack spacing={2} sx={{ maxWidth: 640, pt: 1 }}>
-          {/* This route's only heading, and the shell renders no `h1`, so
-              `component` supplies the level while `variant` keeps the size.
-              The size and weight match the other dashboard page headers. */}
-          <Typography variant="h5" component="h1" sx={{ fontWeight: 700 }}>
-            <FormattedMessage defaultMessage="Help and onboarding" />
-          </Typography>
-          <Typography variant="subtitle1" color="text.secondary">
-            <FormattedMessage defaultMessage="Short guides for the features first run skips. Dismissed tips can be shown again here." />
-          </Typography>
-          {ONBOARDING_TIPS.map((tip) => {
-            const copy = TIP_COPY[tip.id];
-            const isDismissed = dismissed.includes(tip.id);
-            const action = tipAction(tip, features);
-            return (
-              <TipCardFrame
-                key={tip.id}
-                icon={TIP_ICONS[tip.id]}
-                title={copy.title}
-                body={copy.body}
-                headingLevel="h2"
-                // This list is where dismissed tips are browsed, so the dimming
-                // is the only signal distinguishing them from live ones. It
-                // belongs to the card rather than to `TipCardFrame`, which also
-                // serves first-run tips that cannot be dismissed at all.
-                sx={{ opacity: isDismissed ? 0.65 : 1 }}
-                actions={
+    <DashboardEntryLayout>
+      <Stack spacing={1.5} sx={{ mb: 4 }}>
+        {/* This route's only heading, and the shell renders no `h1`, so
+            `component` supplies the level while `variant` matches the other
+            dashboard page headers (`ScrollListPage`, `SettingsLayout`). */}
+        <Typography variant="h4" component="h1" sx={{ fontWeight: 700 }}>
+          <FormattedMessage defaultMessage="Help and onboarding" />
+        </Typography>
+        <Typography
+          variant="subtitle1"
+          sx={{ color: "text.secondary", maxWidth: "56ch" }}
+        >
+          <FormattedMessage defaultMessage="Short guides for the features first run skips. Dismissed tips can be shown again here." />
+        </Typography>
+      </Stack>
+
+      <Stack spacing={1.5}>
+        {ONBOARDING_TIPS.map((tip) => {
+          const copy = TIP_COPY[tip.id];
+          const isDismissed = dismissed.includes(tip.id);
+          const action = tipAction(tip, features);
+          const hasActions = Boolean(action) || isDismissed;
+          return (
+            <TipCardFrame
+              key={tip.id}
+              icon={TIP_ICONS[tip.id]}
+              title={copy.title}
+              body={copy.body}
+              headingLevel="h2"
+              // Dismissed tips recede onto the canvas with a dashed hairline
+              // rather than dimming the whole card via opacity, keeping copy
+              // and actions legible while separating them from active tips.
+              sx={isDismissed ? dismissedTipCardSx : undefined}
+              actions={
+                hasActions ? (
                   <>
                     {action && (
                       <Button
                         size="small"
                         variant="outlined"
                         onClick={() => navigate(action.href)}
-                        sx={{ textTransform: "none", borderRadius: 999 }}
+                        sx={tipActionButtonSx}
                       >
                         {action.isSetup
                           ? (copy.setupAction ?? copy.action)
@@ -65,17 +110,18 @@ export default function HelpPage() {
                         size="small"
                         variant="text"
                         onClick={() => resetTip(tip.id)}
+                        sx={showAgainButtonSx}
                       >
                         <FormattedMessage defaultMessage="Show again" />
                       </Button>
                     )}
                   </>
-                }
-              />
-            );
-          })}
-        </Stack>
-      </Box>
-    </Box>
+                ) : undefined
+              }
+            />
+          );
+        })}
+      </Stack>
+    </DashboardEntryLayout>
   );
 }

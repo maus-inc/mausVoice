@@ -486,4 +486,20 @@ describe("TipCardFrame", () => {
     expect(onActionClick).toHaveBeenCalledTimes(1);
     expect(onActivate).not.toHaveBeenCalled();
   });
+
+  it("top-aligns its leading glyph and renders description copy in secondary text", async () => {
+    await renderFrame({
+      icon: createElement("span", null, "*"),
+      title: "Title",
+      body: "Description copy",
+    });
+
+    const card = frameCard();
+    expect(getComputedStyle(card).alignItems).toBe("flex-start");
+    const body = card.querySelector(".MuiTypography-body2");
+    expect(body).not.toBeNull();
+    expect(getComputedStyle(body as HTMLElement).color).toBe(
+      "var(--app-palette-text-secondary)",
+    );
+  });
 });

@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ThemeProvider } from "@mui/material/styles";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
+import {
+  ensureUiHarness,
+  setMatchMedia,
+} from "../../../test/helpers/jsdom-ui-harness";
+import { THEME_PROVIDER_CONFIG, theme } from "../../theme";
 
 vi.mock("react-intl", async (importOriginal) => {
   const { reactIntlMockModule } =
@@ -28,27 +33,35 @@ import { TipCardFrame } from "../onboarding/TipCard";
 import HelpPage from "./HelpPage";
 
 ensureUiHarness();
+setMatchMedia(false);
 
 let container: HTMLDivElement;
 let root: Root;
 
 /** The tip cards `TipCardFrame` renders, one per onboarding tip, in order. */
-const tipCards = (): HTMLElement[] =>
-  [...container.querySelectorAll<HTMLElement>(".MuiBox-root")].filter(
-    (element) => getComputedStyle(element).borderTopWidth === "1px",
+const tipCards = (): HTMLElement[] => [
+  ...container.querySelectorAll<HTMLElement>('[data-tip-frame="true"]'),
+];
+
+const recessedCards = (): HTMLElement[] =>
+  tipCards().filter(
+    (card) => getComputedStyle(card).borderTopStyle === "dashed",
   );
 
-const dimmedCards = (): HTMLElement[] =>
-  tipCards().filter((card) => getComputedStyle(card).opacity !== "1");
-
-const showAgainCount = (): number =>
-  [...container.querySelectorAll("button")].filter(
+const showAgainButtons = (): HTMLButtonElement[] =>
+  [...container.querySelectorAll<HTMLButtonElement>("button")].filter(
     (button) => button.textContent === "Show again",
-  ).length;
+  );
 
 const renderPage = async () => {
   await act(async () => {
-    root.render(createElement(MemoryRouter, null, createElement(HelpPage)));
+    root.render(
+      createElement(
+        ThemeProvider,
+        { theme, ...THEME_PROVIDER_CONFIG },
+        createElement(MemoryRouter, null, createElement(HelpPage)),
+      ),
+    );
   });
 };
 
@@ -90,43 +103,89 @@ describe("HelpPage tip cards", () => {
     );
   });
 
-  it("uses second-level headings for the tips beneath the page title", async () => {
+  it("uses the shared dashboard heading scale and second-level headings for tips", async () => {
     await renderPage();
-    expect(container.querySelector("h1")?.textContent).toBe(
-      "Help and onboarding",
-    );
+    const heading = container.querySelector("h1");
+    expect(heading?.textContent).toBe("Help and onboarding");
+    expect(heading?.classList.contains("MuiTypography-h4")).toBe(true);
     expect(container.querySelectorAll("h2")).toHaveLength(5);
   });
 
-  it("dims exactly the tips the user has dismissed", async () => {
+  it("centers content in the shared small dashboard container without a nested scroll wrapper", async () => {
+    await renderPage();
+    const layoutContainer = container.querySelector(".MuiContainer-maxWidthSm");
+    expect(layoutContainer).not.toBeNull();
+    expect(layoutContainer?.contains(container.querySelector("h1"))).toBe(true);
+    expect(tipCards().every((card) => layoutContainer?.contains(card))).toBe(
+      true,
+    );
+
+    const hasNestedScrollContainer = [
+      ...container.querySelectorAll<HTMLElement>("*"),
+    ].some((element) => {
+      const style = getComputedStyle(element);
+      return (
+        style.overflow === "auto" ||
+        style.overflowY === "auto" ||
+        style.overflow === "scroll" ||
+        style.overflowY === "scroll"
+      );
+    });
+    expect(hasNestedScrollContainer).toBe(false);
+  });
+
+  it("renders the supporting description in secondary text color", async () => {
+    await renderPage();
+    const subtitle = container.querySelector(".MuiTypography-subtitle1");
+    expect(subtitle).not.toBeNull();
+    expect(getComputedStyle(subtitle as HTMLElement).color).toBe(
+      "var(--app-palette-text-secondary)",
+    );
+  });
+
+  it("distinguishes dismissed tips with a recessed dashed frame at full opacity", async () => {
     mocks.state.local.dismissedTipIds = ["writing-styles", "update-channel"];
     await renderPage();
 
-    // The dimming is the only signal that a tip was dismissed: this list is
-    // where dismissed tips are browsed, so a card that looks identical to a live
-    // one leaves the user no way to tell them apart. "Show again" is rendered
-    // only for a dismissed tip, so its count pins the expectation without
-    // depending on which tips come first.
-    expect(showAgainCount()).toBe(2);
-    expect(dimmedCards()).toHaveLength(2);
-    expect(getComputedStyle(dimmedCards()[0]).opacity).toBe("0.65");
+    expect(showAgainButtons()).toHaveLength(2);
+    expect(recessedCards()).toHaveLength(2);
+    for (const card of recessedCards()) {
+      const style = getComputedStyle(card);
+      expect(style.borderTopStyle).toBe("dashed");
+      expect(style.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+      // Full opacity keeps secondary copy and action buttons readable instead
+      // of multiplying text alpha below WCAG AA contrast.
+      expect(style.opacity).toBe("1");
+    }
+
+    const activeCards = tipCards().filter(
+      (card) => getComputedStyle(card).borderTopStyle === "solid",
+    );
+    expect(activeCards).toHaveLength(3);
   });
 
-  it("dims a single dismissed tip and no other", async () => {
+  it("marks only the single dismissed tip recessed and wires Show again to resetTip", async () => {
     mocks.state.local.dismissedTipIds = ["writing-styles"];
     await renderPage();
 
-    expect(showAgainCount()).toBe(1);
-    expect(dimmedCards()).toHaveLength(1);
+    expect(showAgainButtons()).toHaveLength(1);
+    expect(recessedCards()).toHaveLength(1);
     expect(tipCards()).toHaveLength(5);
+
+    act(() => {
+      showAgainButtons()[0].click();
+    });
+    expect(mocks.resetTip).toHaveBeenCalledTimes(1);
+    expect(mocks.resetTip).toHaveBeenCalledWith("writing-styles");
   });
 
-  it("dims nothing when no tip has been dismissed", async () => {
+  it("keeps every card active when no tip has been dismissed", async () => {
     await renderPage();
 
-    expect(dimmedCards()).toHaveLength(0);
-    expect(tipCards().map((card) => getComputedStyle(card).opacity)).toEqual(
-      tipCards().map(() => "1"),
-    );
+    expect(showAgainButtons()).toHaveLength(0);
+    expect(recessedCards()).toHaveLength(0);
+    expect(
+      tipCards().map((card) => getComputedStyle(card).borderTopStyle),
+    ).toEqual(tipCards().map(() => "solid"));
   });
 });
