@@ -148,6 +148,12 @@ const armRestoreWait = (win: TauriWindow) => {
   };
 };
 
+/**
+ * The logical position that puts the grab point back under the pointer.
+ *
+ * Returns `null` when the window or the pointer cannot be measured, which the
+ * caller reports and continues from.
+ */
 const readRestoreTarget = async (
   win: TauriWindow,
   grab: RestoreGrab,
@@ -155,8 +161,7 @@ const readRestoreTarget = async (
   try {
     // All four of these are physical pixels, so they combine directly. The
     // result stays physical and is converted to the logical position
-    // `setPosition` takes at the call site, which is the one place the two
-    // spaces meet.
+    // `setPosition` takes, which is the one place the two spaces meet.
     const [size, pointer, monitor, scale] = await Promise.all([
       win.innerSize(),
       cursorPosition(),
@@ -213,6 +218,7 @@ type Gesture = {
    */
   released: boolean;
 };
+
 /**
  * Restores a maximized window under the pointer, then continues the drag.
  *
