@@ -1,9 +1,8 @@
-import { useEffect } from "react";
 import { isReadyForFullApp } from "../../actions/elevation.actions";
 import { useElevationStartupReady } from "../../hooks/elevation.hooks";
 import Router from "../../router";
 import { useAppStore } from "../../store";
-import { prewarmDashboardKeycap } from "../common/keycap3d.prewarm";
+import { usePrewarmDashboardKeycap } from "../common/keycap3d.prewarm";
 import { AppSideEffects } from "./AppSideEffects";
 import { AppViewport } from "./AppViewport";
 import { DictationSideEffects } from "./DictationSideEffects";
@@ -17,10 +16,7 @@ import { LoadingApp } from "./LoadingApp";
 import { UpdateDialog } from "./UpdateDialog";
 
 export const AppWithLoading = () => {
-  useEffect(() => {
-    const timer = setTimeout(prewarmDashboardKeycap, 0);
-    return () => clearTimeout(timer);
-  }, []);
+  usePrewarmDashboardKeycap();
 
   const initialized = useAppStore((state) => state.initialized);
   const hotkeyStrategy = useAppStore((state) => state.hotkeyStrategy);
