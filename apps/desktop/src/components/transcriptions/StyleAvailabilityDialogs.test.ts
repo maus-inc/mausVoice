@@ -4,11 +4,14 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  closeRetranscribeDialog,
+  openRetranscribeDialog,
+} from "../../actions/transcriptions.actions";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
 
 const mocks = vi.hoisted(() => ({
-  closeRetranscribeDialog: vi.fn(),
   importAudioFile: vi.fn().mockResolvedValue(undefined),
   openFileDialog: vi.fn().mockResolvedValue("/tmp/import.wav"),
   retranscribeTranscriptionWithRecovery: vi.fn().mockResolvedValue({
@@ -21,12 +24,18 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: mocks.openFileDialog,
 }));
 
-vi.mock("../../actions/transcriptions.actions", () => ({
-  closeRetranscribeDialog: mocks.closeRetranscribeDialog,
-  importAudioFile: mocks.importAudioFile,
-  retranscribeTranscriptionWithRecovery:
-    mocks.retranscribeTranscriptionWithRecovery,
-}));
+vi.mock("../../actions/transcriptions.actions", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../actions/transcriptions.actions")
+    >();
+  return {
+    ...actual,
+    importAudioFile: mocks.importAudioFile,
+    retranscribeTranscriptionWithRecovery:
+      mocks.retranscribeTranscriptionWithRecovery,
+  };
+});
 
 vi.mock("react-intl", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-intl")>();
@@ -76,6 +85,24 @@ const tone: Tone = {
   isSystem: false,
   createdAt: 1,
   sortOrder: 0,
+};
+
+const alternateTone: Tone = {
+  id: "tone-2",
+  name: "Email",
+  promptTemplate: "Format as a concise email.",
+  isSystem: false,
+  createdAt: 0,
+  sortOrder: 1,
+};
+
+const newestTone: Tone = {
+  id: "tone-3",
+  name: "Chat",
+  promptTemplate: "Format as a chat message.",
+  isSystem: false,
+  createdAt: 2,
+  sortOrder: 2,
 };
 
 const postProcessingKey: ApiKey = {
@@ -143,6 +170,30 @@ const settle = async () => {
   await act(async () => {
     await Promise.resolve();
   });
+};
+
+const chooseOption = async (select: HTMLElement, label: string) => {
+  await act(async () => {
+    select.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+    );
+  });
+  await settle();
+
+  const option = [
+    ...document.body.querySelectorAll<HTMLElement>(
+      '[role="option"], [role="menuitem"]',
+    ),
+  ].find((candidate) => candidate.textContent?.includes(label));
+  expect(option).toBeDefined();
+  if (!option) throw new Error(`${label} option was not rendered.`);
+
+  await act(async () => {
+    option.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+  });
+  await settle();
 };
 
 describe("Import audio style availability", () => {
@@ -240,11 +291,7 @@ describe("Retranscribe style availability", () => {
       started: true,
       update: null,
     });
-    produceAppState((draft) => {
-      draft.transcriptions.retranscribeDialogOpen = true;
-      draft.transcriptions.retranscribeDialogTranscriptionId =
-        "transcription-1";
-    });
+    openRetranscribeDialog("transcription-1");
     container = document.createElement("div");
     document.body.appendChild(container);
   });
@@ -290,5 +337,253 @@ describe("Retranscribe style availability", () => {
         toneId: expect.any(String),
       }),
     );
+  });
+
+  it("uses the newly selected style for retranscription", async () => {
+    produceAppState((draft) => {
+      draft.toneById[alternateTone.id] = alternateTone;
+    });
+    await renderDialog();
+
+    const styleSelect = document.querySelector<HTMLElement>(
+      '[role="dialog"] [role="combobox"]',
+    );
+    expect(styleSelect).toBeDefined();
+    if (!styleSelect) throw new Error("Style selector was not rendered.");
+    expect(styleSelect.textContent).toContain(tone.name);
+
+    await chooseOption(styleSelect, alternateTone.name);
+    expect(styleSelect.textContent).toContain(alternateTone.name);
+
+    const languageSelect = document.querySelectorAll<HTMLElement>(
+      '[role="dialog"] [role="combobox"]',
+    )[1];
+    expect(languageSelect).toBeDefined();
+    if (!languageSelect) throw new Error("Language selector was not rendered.");
+
+    await chooseOption(languageSelect, "Français");
+
+    expect(languageSelect.textContent).toContain("Français");
+    expect(styleSelect.textContent).toContain(alternateTone.name);
+
+    const transcribe = findButton("Transcribe");
+    expect(transcribe).toBeDefined();
+    if (!transcribe) throw new Error("Transcribe button was not rendered.");
+    await act(async () => {
+      transcribe.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mocks.retranscribeTranscriptionWithRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionId: "transcription-1",
+        toneId: alternateTone.id,
+        languageCode: "fr",
+      }),
+    );
+  });
+
+  it("resets style and language when the target changes while open", async () => {
+    produceAppState((draft) => {
+      draft.toneById[alternateTone.id] = alternateTone;
+      draft.dictationLanguageOverride = "en";
+    });
+    await renderDialog();
+
+    const [styleSelect, languageSelect] =
+      document.querySelectorAll<HTMLElement>(
+        '[role="dialog"] [role="combobox"]',
+      );
+    expect(styleSelect).toBeDefined();
+    expect(languageSelect).toBeDefined();
+    if (!styleSelect || !languageSelect) {
+      throw new Error("Retranscription selectors were not rendered.");
+    }
+
+    await chooseOption(styleSelect, alternateTone.name);
+    await chooseOption(languageSelect, "Français");
+    expect(styleSelect.textContent).toContain(alternateTone.name);
+    expect(languageSelect.textContent).toContain("Français");
+
+    await act(async () => {
+      produceAppState((draft) => {
+        draft.dictationLanguageOverride = "de";
+      });
+      openRetranscribeDialog("transcription-2");
+    });
+
+    expect(styleSelect.textContent).toContain(tone.name);
+    expect(languageSelect.textContent).toContain("Deutsch");
+
+    const transcribe = findButton("Transcribe");
+    expect(transcribe).toBeDefined();
+    if (!transcribe) throw new Error("Transcribe button was not rendered.");
+    await act(async () => {
+      transcribe.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mocks.retranscribeTranscriptionWithRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionId: "transcription-2",
+        toneId: tone.id,
+        languageCode: "de",
+      }),
+    );
+  });
+
+  it("keeps selections when available styles change", async () => {
+    produceAppState((draft) => {
+      draft.toneById[alternateTone.id] = alternateTone;
+    });
+    await renderDialog();
+
+    const [styleSelect, languageSelect] =
+      document.querySelectorAll<HTMLElement>(
+        '[role="dialog"] [role="combobox"]',
+      );
+    expect(styleSelect).toBeDefined();
+    expect(languageSelect).toBeDefined();
+    if (!styleSelect || !languageSelect) {
+      throw new Error("Retranscription selectors were not rendered.");
+    }
+
+    await chooseOption(styleSelect, alternateTone.name);
+    await chooseOption(languageSelect, "Français");
+
+    await act(async () => {
+      produceAppState((draft) => {
+        draft.toneById[newestTone.id] = newestTone;
+      });
+    });
+
+    expect(styleSelect.textContent).toContain(alternateTone.name);
+    expect(languageSelect.textContent).toContain("Français");
+
+    await act(async () => {
+      produceAppState((draft) => {
+        delete draft.toneById[alternateTone.id];
+      });
+    });
+
+    expect(styleSelect.textContent).toContain(tone.name);
+    expect(languageSelect.textContent).toContain("Français");
+
+    const transcribe = findButton("Transcribe");
+    expect(transcribe).toBeDefined();
+    if (!transcribe) throw new Error("Transcribe button was not rendered.");
+    await act(async () => {
+      transcribe.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mocks.retranscribeTranscriptionWithRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionId: "transcription-1",
+        toneId: tone.id,
+        languageCode: "fr",
+      }),
+    );
+  });
+
+  it("falls back to the first remaining style when the selection and default disappear", async () => {
+    produceAppState((draft) => {
+      draft.toneById[alternateTone.id] = alternateTone;
+    });
+    await renderDialog();
+
+    const styleSelect = document.querySelector<HTMLElement>(
+      '[role="dialog"] [role="combobox"]',
+    );
+    expect(styleSelect).toBeDefined();
+    if (!styleSelect) throw new Error("Style selector was not rendered.");
+
+    await chooseOption(styleSelect, alternateTone.name);
+
+    await act(async () => {
+      produceAppState((draft) => {
+        draft.toneById[newestTone.id] = newestTone;
+        delete draft.toneById[alternateTone.id];
+        delete draft.toneById[tone.id];
+      });
+    });
+
+    expect(styleSelect.textContent).toContain(newestTone.name);
+
+    const transcribe = findButton("Transcribe");
+    expect(transcribe).toBeDefined();
+    if (!transcribe) throw new Error("Transcribe button was not rendered.");
+    await act(async () => {
+      transcribe.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mocks.retranscribeTranscriptionWithRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionId: "transcription-1",
+        toneId: newestTone.id,
+      }),
+    );
+  });
+
+  it("does not submit a stale style when no styles remain", async () => {
+    await renderDialog();
+
+    const styleSelect = document.querySelector<HTMLElement>(
+      '[role="dialog"] [role="combobox"]',
+    );
+    expect(styleSelect).toBeDefined();
+    if (!styleSelect) throw new Error("Style selector was not rendered.");
+    expect(styleSelect.textContent).toContain(tone.name);
+
+    await act(async () => {
+      produceAppState((draft) => {
+        delete draft.toneById[tone.id];
+      });
+    });
+
+    expect(styleSelect.textContent).not.toContain(tone.name);
+
+    const transcribe = findButton("Transcribe");
+    expect(transcribe).toBeDefined();
+    if (!transcribe) throw new Error("Transcribe button was not rendered.");
+    await act(async () => {
+      transcribe.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mocks.retranscribeTranscriptionWithRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionId: "transcription-1",
+        toneId: null,
+      }),
+    );
+  });
+
+  it("loads current defaults when the dialog opens again", async () => {
+    produceAppState((draft) => {
+      draft.toneById[alternateTone.id] = alternateTone;
+    });
+    await renderDialog();
+
+    const [styleSelect, languageSelect] =
+      document.querySelectorAll<HTMLElement>(
+        '[role="dialog"] [role="combobox"]',
+      );
+    expect(styleSelect).toBeDefined();
+    expect(languageSelect).toBeDefined();
+    if (!styleSelect || !languageSelect) {
+      throw new Error("Retranscription selectors were not rendered.");
+    }
+
+    await chooseOption(styleSelect, alternateTone.name);
+    await chooseOption(languageSelect, "Français");
+
+    await act(async () => {
+      closeRetranscribeDialog();
+      produceAppState((draft) => {
+        draft.toneById[newestTone.id] = newestTone;
+        draft.dictationLanguageOverride = "de";
+      });
+      openRetranscribeDialog("transcription-1");
+    });
+
+    expect(styleSelect.textContent).toContain(newestTone.name);
+    expect(languageSelect.textContent).toContain("Deutsch");
   });
 });

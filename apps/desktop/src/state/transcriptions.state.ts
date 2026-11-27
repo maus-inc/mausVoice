@@ -1,5 +1,13 @@
 import { Nullable } from "@maus-inc/types";
+import type { DictationLanguageCode } from "../utils/language.utils";
 import { ActionStatus } from "../types/state.types";
+
+export type RetranscribeDialogSelection = {
+  transcriptionId: string;
+  defaultToneId: Nullable<string>;
+  selectedToneId: Nullable<string>;
+  selectedLanguage: DictationLanguageCode;
+};
 
 export type TranscriptionsState = {
   transcriptionIds: string[];
@@ -8,6 +16,7 @@ export type TranscriptionsState = {
   detailsDialogTranscriptionId: Nullable<string>;
   retranscribeDialogOpen: boolean;
   retranscribeDialogTranscriptionId: Nullable<string>;
+  retranscribeDialogSelection: Nullable<RetranscribeDialogSelection>;
   retranscribingIds: string[];
   retranscriptionSuccessIds: string[];
 };
@@ -19,6 +28,7 @@ export const INITIAL_TRANSCRIPTIONS_STATE: TranscriptionsState = {
   detailsDialogTranscriptionId: null,
   retranscribeDialogOpen: false,
   retranscribeDialogTranscriptionId: null,
+  retranscribeDialogSelection: null,
   retranscribingIds: [],
   retranscriptionSuccessIds: [],
 };

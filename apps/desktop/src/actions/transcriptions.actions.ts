@@ -1,4 +1,4 @@
-import { Transcription } from "@maus-inc/types";
+import { Nullable, Transcription } from "@maus-inc/types";
 import { delayed, getRec } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import { getIntl } from "../i18n/intl";
@@ -49,6 +49,11 @@ import {
 import type { ReplacementRule } from "../utils/string.utils";
 import type { ToastAction } from "../types/toast.types";
 import {
+  toSelectableDictationLanguage,
+  type DictationLanguageCode,
+} from "../utils/language.utils";
+import { getSortedToneIds } from "../utils/tone.utils";
+import {
   getMyDictationLanguage,
   getMyEffectiveUserId,
   getMyUserPreferences,
@@ -87,18 +92,71 @@ export const closeTranscriptionDetailsDialog = () => {
 };
 
 export const openRetranscribeDialog = (transcriptionId: string) => {
-  if (isRetranscribingId(getAppState().transcriptions, transcriptionId)) {
+  const state = getAppState();
+  if (isRetranscribingId(state.transcriptions, transcriptionId)) {
     return;
   }
+
+  const currentSelection = state.transcriptions.retranscribeDialogSelection;
+  const shouldResetSelection =
+    !state.transcriptions.retranscribeDialogOpen ||
+    state.transcriptions.retranscribeDialogTranscriptionId !==
+      transcriptionId ||
+    currentSelection?.transcriptionId !== transcriptionId;
+
+  const defaultToneId = getSortedToneIds(state)[0] ?? null;
+  const defaultLanguage = toSelectableDictationLanguage(
+    getMyDictationLanguage(state),
+  );
+
   produceAppState((draft) => {
     draft.transcriptions.retranscribeDialogTranscriptionId = transcriptionId;
     draft.transcriptions.retranscribeDialogOpen = true;
+    if (shouldResetSelection) {
+      draft.transcriptions.retranscribeDialogSelection = {
+        transcriptionId,
+        defaultToneId,
+        selectedToneId: defaultToneId,
+        selectedLanguage: defaultLanguage,
+      };
+    }
   });
 };
 
 export const closeRetranscribeDialog = () => {
   produceAppState((draft) => {
     draft.transcriptions.retranscribeDialogOpen = false;
+    draft.transcriptions.retranscribeDialogSelection = null;
+  });
+};
+
+export const setRetranscribeDialogToneId = (toneId: Nullable<string>) => {
+  produceAppState((draft) => {
+    const selection = draft.transcriptions.retranscribeDialogSelection;
+    if (
+      !draft.transcriptions.retranscribeDialogOpen ||
+      selection?.transcriptionId !==
+        draft.transcriptions.retranscribeDialogTranscriptionId
+    ) {
+      return;
+    }
+    selection.selectedToneId = toneId;
+  });
+};
+
+export const setRetranscribeDialogLanguage = (
+  language: DictationLanguageCode,
+) => {
+  produceAppState((draft) => {
+    const selection = draft.transcriptions.retranscribeDialogSelection;
+    if (
+      !draft.transcriptions.retranscribeDialogOpen ||
+      selection?.transcriptionId !==
+        draft.transcriptions.retranscribeDialogTranscriptionId
+    ) {
+      return;
+    }
+    selection.selectedLanguage = language;
   });
 };
 
