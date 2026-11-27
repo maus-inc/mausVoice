@@ -495,4 +495,25 @@ describe("i18n catalogs", () => {
       }
     }
   });
+
+  it("never ships em dashes or non-range en dashes in any locale catalog", () => {
+    const locales = loadLocales();
+    const prohibitedDash =
+      /\u2014|\u2015|(?<!\d)\u2013|\u2013(?!\d)|&[mn]dash;|&#(?:8211|8212|x2013|x2014);/i;
+
+    const offenders: string[] = [];
+    for (const locale of manifest.supportedLocales as string[]) {
+      const catalog = locales[locale] ?? {};
+      for (const [key, value] of Object.entries(catalog)) {
+        if (typeof value === "string" && prohibitedDash.test(value)) {
+          offenders.push(`${locale}:${key}=${JSON.stringify(value)}`);
+        }
+      }
+    }
+
+    expect(
+      offenders,
+      "locale catalogs must never ship em dashes or non-range en dashes",
+    ).toEqual([]);
+  });
 });

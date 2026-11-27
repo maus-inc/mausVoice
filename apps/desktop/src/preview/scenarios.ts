@@ -1,3 +1,4 @@
+import type { VoquillMigrationReport } from "@maus-inc/desktop-native-apis";
 import type {
   ApiKey,
   AppTarget,
@@ -17,6 +18,10 @@ import { CURRENT_FEATURE_DATE } from "../utils/feature.utils";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { createDefaultPreferences } from "../actions/user.actions";
 import { getDefaultSystemTones } from "../utils/tone.utils";
+import {
+  PERSONAL_GROQ_API_KEY_ID,
+  PERSONAL_GROQ_API_KEY_NAME,
+} from "../utils/personal-use.utils";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 
 const PREVIEW_SCENARIOS = [
@@ -25,6 +30,7 @@ const PREVIEW_SCENARIOS = [
   "welcome",
   "onboarding",
   "permission-denied",
+  "voquill-migration",
 ] as const;
 
 export type PreviewScenarioId = (typeof PREVIEW_SCENARIOS)[number];
@@ -62,6 +68,12 @@ export const PREVIEW_SCENARIO_DEFINITIONS: PreviewScenarioDefinition[] = [
     label: "Permission needed",
     description: "A dashboard workspace with the permissions dialog visible.",
   },
+  {
+    id: "voquill-migration",
+    label: "Voquill migration",
+    description:
+      "A migrated Voquill workspace with API keys waiting to be re-entered.",
+  },
 ];
 
 export type PreviewData = {
@@ -76,6 +88,7 @@ export type PreviewData = {
   dailyActivity: DailyWordActivity[];
   conversations: Conversation[];
   chatMessages: ChatMessage[];
+  voquillMigrationReport?: VoquillMigrationReport | null;
 };
 
 /**
@@ -592,6 +605,114 @@ const onboardingSnapshot = (): PreviewScenarioSnapshot => {
   };
 };
 
+const voquillMigrationApiKeys: ApiKey[] = [
+  {
+    id: PERSONAL_GROQ_API_KEY_ID,
+    name: PERSONAL_GROQ_API_KEY_NAME,
+    provider: "groq",
+    createdAt: "2026-07-12T10:15:00.000Z",
+    keySuffix: "…8k2m",
+    keyFull: null,
+    credentialStatus: "needs_reentry",
+    credentialIssue: "legacy_encryption",
+    transcriptionModel: "whisper-large-v3-turbo",
+    postProcessingModel: null,
+  },
+  {
+    id: "voquill-openai-key",
+    name: "OpenAI (migrated)",
+    provider: "openai",
+    createdAt: "2026-07-14T16:40:00.000Z",
+    keySuffix: "…4p9x",
+    keyFull: null,
+    credentialStatus: "needs_reentry",
+    credentialIssue: "legacy_encryption",
+    transcriptionModel: null,
+    postProcessingModel: "gpt-4o-mini",
+  },
+  {
+    id: "voquill-ollama-key",
+    name: "Ollama local",
+    provider: "ollama",
+    createdAt: "2026-08-01T12:00:00.000Z",
+    keySuffix: null,
+    keyFull: null,
+    credentialStatus: "usable",
+    credentialIssue: null,
+    baseUrl: "http://127.0.0.1:11434",
+    postProcessingModel: "llama3.2",
+  },
+];
+
+const voquillMigrationSnapshot = (): PreviewScenarioSnapshot => {
+  const baseData = populatedWorkspaceData();
+  const migratedApiKeys = clone(voquillMigrationApiKeys);
+  const report: VoquillMigrationReport = {
+    schemaVersion: 1,
+    status: "completed",
+    legacyDetected: true,
+    legacySourcePreserved: true,
+    detectedAt: now,
+    completedAt: now,
+    dismissedAt: null,
+    attemptCount: 1,
+    databasePhase: "migrated",
+    modelsPhase: "migrated",
+    audioPhase: "migrated",
+    storagePhase: "not_found",
+    counts: {
+      hasProfile: true,
+      hasPreferences: true,
+      transcriptions: baseData.transcriptions.length,
+      dictionaryTerms: baseData.terms.length,
+      hotkeys: baseData.hotkeys.length,
+      tones: baseData.customTones.length,
+      appTargets: baseData.appTargets.length,
+      providerEntries: migratedApiKeys.length,
+      providersNeedingAttention: 2,
+      localModelsMigrated: 1,
+      audioFilesMigrated: 2,
+      storageFilesMigrated: 0,
+    },
+    removedModesReset: ["cloud_transcription"],
+    issues: [],
+    actionItems: [
+      {
+        kind: "reenter_api_keys",
+        targetSection: "ai_models",
+        count: 2,
+        providers: ["groq", "openai"],
+      },
+      {
+        kind: "review_removed_cloud_mode",
+        targetSection: "ai_models",
+        count: 1,
+        providers: [],
+      },
+    ],
+    canRetry: false,
+  };
+
+  const snapshot = workspaceSnapshot({
+    ...baseData,
+    apiKeys: migratedApiKeys,
+    voquillMigrationReport: report,
+  });
+  snapshot.state.settings.aiTranscription.selectedApiKeyId =
+    PERSONAL_GROQ_API_KEY_ID;
+  snapshot.state.settings.aiPostProcessing.selectedApiKeyId =
+    "voquill-openai-key";
+  snapshot.state.voquillMigration = {
+    report: clone(report),
+    status: "success",
+    dismissing: false,
+    dismissFailed: false,
+    retrying: false,
+    error: null,
+  };
+  return snapshot;
+};
+
 export const createPreviewScenario = (
   scenario: PreviewScenarioId,
 ): PreviewScenarioSnapshot => {
@@ -606,6 +727,8 @@ export const createPreviewScenario = (
       return workspaceSnapshot(populatedWorkspaceData(), {
         permissionsDenied: true,
       });
+    case "voquill-migration":
+      return voquillMigrationSnapshot();
     case "populated":
     default:
       return populatedSnapshot();

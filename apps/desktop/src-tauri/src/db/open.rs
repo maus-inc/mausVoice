@@ -559,9 +559,15 @@ async fn read_applied_migrations(pool: &SqlitePool) -> Result<AppliedMigrations,
         checksums: std::collections::HashMap::new(),
     };
     for row in applied {
-        let version: i64 = row.get("version");
-        let description: String = row.get("description");
-        let checksum: Vec<u8> = row.get("checksum");
+        let version: i64 = row
+            .try_get("version")
+            .map_err(|err| classify_sqlx("decode applied migration version", err))?;
+        let description: String = row
+            .try_get("description")
+            .map_err(|err| classify_sqlx("decode applied migration description", err))?;
+        let checksum: Vec<u8> = row
+            .try_get("checksum")
+            .map_err(|err| classify_sqlx("decode applied migration checksum", err))?;
         migrations.descriptions.insert(version, description);
         migrations.checksums.insert(version, checksum);
     }
@@ -691,6 +697,92 @@ async fn retire_versions(pool: &SqlitePool, retired: &[i64]) -> Result<(), OpenE
         .await
         .map_err(|err| classify_sqlx("commit retirement transaction", err))?;
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StrictOpenError {
+    Integrity(String),
+    SchemaIncompatible(String),
+    Other(String),
+}
+
+impl StrictOpenError {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Integrity(message) | Self::SchemaIncompatible(message) | Self::Other(message) => {
+                message
+            }
+        }
+    }
+}
+
+fn classify_strict_open_error(err: OpenError) -> StrictOpenError {
+    match err {
+        OpenError::Integrity(message) => StrictOpenError::Integrity(message),
+        OpenError::Other(message) => {
+            let lowered = message.to_ascii_lowercase();
+            if lowered.contains("migration")
+                && (lowered.contains("not in the current migration set")
+                    || lowered.contains("has been modified")
+                    || lowered.contains("previously failed")
+                    || lowered.contains("left incomplete"))
+            {
+                StrictOpenError::SchemaIncompatible(message)
+            } else {
+                StrictOpenError::Other(message)
+            }
+        }
+    }
+}
+
+/// Open and migrate a database strictly without quarantining or replacing
+/// damaged files. Used during staged legacy Voquill migration so corrupt or
+/// schema-incompatible legacy databases fail truthfully instead of being
+/// silently replaced with an empty database.
+pub async fn open_app_database_strict(path: &Path) -> Result<SqlitePool, StrictOpenError> {
+    try_open(path).await.map_err(classify_strict_open_error)
+}
+
+/// Open an already-migrated database read-only and verify its SQLite integrity
+/// and `_sqlx_migrations` ledger without altering the file header, journal
+/// mode, or sidecars. Used during Voquill promotion recovery so a failed
+/// manifest checkpoint never mutates the promoted file or invalidates its
+/// recovery marker digest.
+pub async fn open_app_database_readonly_verified(
+    path: &Path,
+) -> Result<SqlitePool, StrictOpenError> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .read_only(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(|err| classify_strict_open_error(classify_sqlx("connect readonly", err)))?;
+    let verification = async {
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&pool)
+            .await
+            .map_err(|err| classify_sqlx("integrity_check", err))?;
+        if !integrity.eq_ignore_ascii_case("ok") {
+            return Err(OpenError::Integrity(format!(
+                "SQLite integrity_check reported: {integrity}"
+            )));
+        }
+        reject_failed_migration(&pool).await?;
+        let applied = read_applied_migrations(&pool).await?;
+        let _retired = collect_retired_versions(&applied)?;
+        verify_applied_checksums(&applied.checksums)?;
+        Ok::<(), OpenError>(())
+    }
+    .await;
+    if let Err(err) = verification {
+        pool.close().await;
+        return Err(classify_strict_open_error(err));
+    }
+    Ok(pool)
 }
 
 /// Open the app database, applying migrations.
@@ -2399,5 +2491,46 @@ mod tests {
         let legacy = rows.iter().find(|row| row.id == "legacy").unwrap();
         assert_eq!(flagged.post_process_fallback, Some(true));
         assert_eq!(legacy.post_process_fallback, None);
+    }
+
+    #[tokio::test]
+    async fn strict_open_classifies_failed_migration_ledger_row_as_schema_incompatible() {
+        let temp = TempDb::new();
+        let pool = try_open(&temp.path).await.expect("migrate to head");
+        sqlx::query("UPDATE _sqlx_migrations SET success = false WHERE version = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let err = open_app_database_strict(&temp.path).await.unwrap_err();
+        assert!(
+            matches!(err, StrictOpenError::SchemaIncompatible(_)),
+            "expected SchemaIncompatible for previously failed migration, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_applied_migrations_returns_error_instead_of_panicking_on_blob_description() {
+        let temp = TempDb::new();
+        let pool = try_open(&temp.path).await.expect("migrate to head");
+        sqlx::query("UPDATE _sqlx_migrations SET description = x'fffe' WHERE version = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let err = open_app_database_strict(&temp.path).await.unwrap_err();
+        assert!(
+            matches!(err, StrictOpenError::Other(_)),
+            "expected non-panicking decode error, got {err:?}"
+        );
+        let ro_err = open_app_database_readonly_verified(&temp.path)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(ro_err, StrictOpenError::Other(_)),
+            "expected non-panicking decode error from readonly verifier, got {ro_err:?}"
+        );
     }
 }

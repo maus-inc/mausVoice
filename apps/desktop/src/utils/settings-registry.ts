@@ -295,6 +295,13 @@ export const SETTING_ENTRIES: SettingEntry[] = [
     incognito_mode: ["private", "incognito", "no history"],
     include_incognito_in_stats: ["stats", "usage"],
     preserve_audio_on_failure: ["failed audio", "replay", "snapshot"],
+    voquill_migration: [
+      "voquill",
+      "migration",
+      "import",
+      "legacy",
+      "re-enter api keys",
+    ],
   }),
   ...settingsForGroup("privacy-data", "dictionary_learning", {
     auto_learn_dictionary: ["autolearn", "dictionary", "corrections"],

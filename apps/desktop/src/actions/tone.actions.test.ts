@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAppState, produceAppState, setAppState } from "../store";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { LOCAL_USER_ID } from "../utils/user.utils";
-import type { LocalDataWriteLease } from "../utils/local-data-write-gate";
+import {
+  beginLocalDataClear,
+  type LocalDataWriteLease,
+} from "../utils/local-data-write-gate";
 import {
   applyInDictationStyleSwitch,
   applyWritingStyleSelection,
   deleteTone,
+  loadTones,
   upsertTone,
   selectToneByHotkey,
   switchWritingStyleBackward,
@@ -14,24 +18,27 @@ import {
 } from "./tone.actions";
 import { seedManualStyles } from "../../test/helpers/tone-test.utils";
 
-const { setSelectedToneIdMock, setPreferencesMock } = vi.hoisted(() => ({
-  setPreferencesMock: vi.fn((prefs: unknown) => Promise.resolve(prefs)),
-  setSelectedToneIdMock: vi.fn(
-    (toneId: string, lease?: LocalDataWriteLease) => {
-      produceAppState((draft) => {
-        const user = draft.userById[LOCAL_USER_ID];
-        if (user) {
-          user.selectedToneId = toneId;
-        }
-      }, lease);
-      return Promise.resolve();
-    },
-  ),
-}));
+const { listTonesMock, setSelectedToneIdMock, setPreferencesMock } = vi.hoisted(
+  () => ({
+    listTonesMock: vi.fn<() => Promise<unknown[]>>(() => Promise.resolve([])),
+    setPreferencesMock: vi.fn((prefs: unknown) => Promise.resolve(prefs)),
+    setSelectedToneIdMock: vi.fn(
+      (toneId: string, lease?: LocalDataWriteLease) => {
+        produceAppState((draft) => {
+          const user = draft.userById[LOCAL_USER_ID];
+          if (user) {
+            user.selectedToneId = toneId;
+          }
+        }, lease);
+        return Promise.resolve();
+      },
+    ),
+  }),
+);
 
 vi.mock("../repos", () => ({
   getToneRepo: () => ({
-    listTones: vi.fn(() => Promise.resolve([])),
+    listTones: listTonesMock,
     upsertTone: vi.fn((tone: unknown) => Promise.resolve(tone)),
     deleteTone: vi.fn(),
   }),
@@ -218,18 +225,23 @@ describe("writing style switch channels share one state transition", () => {
     expect(selectedToneId()).toBe("chat");
   });
 
-  it("applies the in-memory selection before the persist promise settles", () => {
-    setSelectedToneIdMock.mockReturnValue(new Promise(() => undefined));
+  it("applies the in-memory selection before the persist promise settles", async () => {
+    let resolvePersist!: () => void;
+    setSelectedToneIdMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolvePersist = resolve;
+      }),
+    );
     const pending = applyInDictationStyleSwitch({
       channel: "hotkey",
       toneId: "chat",
     });
     expect(selectedToneId()).toBe("chat");
-    // Deliberately not awaited: the persist promise never settles (see the
-    // mock above), and the point under test is that the in-memory selection
-    // lands before persistence can resolve. `pending` is asserted as a promise
-    // so the test still fails loudly if the switch ever stops returning one.
     expect(pending).toBeInstanceOf(Promise);
+    // Release the deferred persist promise after verifying the synchronous
+    // in-memory update so the write lease does not leak into later tests.
+    resolvePersist();
+    await pending;
   });
 
   it("skips persist when there is no user so in-memory and disk stay aligned", async () => {
@@ -243,5 +255,34 @@ describe("writing style switch channels share one state transition", () => {
     setSelectedToneIdMock.mockRejectedValueOnce(new Error("sqlite down"));
     await applyWritingStyleSelection("email");
     expect(selectedToneId()).toBe("email");
+  });
+
+  it("drops stale tones when local data is cleared while listTones is in flight", async () => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+    let resolveList!: (tones: unknown[]) => void;
+    listTonesMock.mockImplementationOnce(
+      () =>
+        new Promise<unknown[]>((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+
+    const loading = loadTones();
+    const releaseClear = await beginLocalDataClear();
+    releaseClear();
+
+    resolveList([
+      {
+        id: "stale-tone",
+        name: "Stale Tone",
+        promptTemplate: "Keep concise",
+        isSystem: false,
+        sortOrder: 1,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    await loading;
+
+    expect(getAppState().toneById["stale-tone"]).toBeUndefined();
   });
 });

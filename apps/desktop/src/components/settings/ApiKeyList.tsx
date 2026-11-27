@@ -1,8 +1,10 @@
 import { Check, Pencil, Plus, Trash2 } from "lucide-react";
 import {
+  Alert,
   Autocomplete,
   Box,
   Button,
+  Chip,
   CircularProgress,
   Dialog,
   Divider,
@@ -43,6 +45,13 @@ import { getModelProviderRepo } from "../../repos";
 import type { FetchModelsOptions } from "../../repos/model-provider.repo";
 import { cssEase, duration, easeOutQuint } from "../../styles/motion";
 import { selectedOutlineSx } from "../../styles/selection";
+import {
+  apiKeyNeedsAttention,
+  apiKeyNeedsReentry,
+  getApiKeyCredentialIssue,
+  isApiKeyUsable,
+} from "../../utils/api-key.utils";
+import { ApiKeyAttentionMessage } from "./ApiKeyAttentionMessage";
 import { getProviderFormConfig } from "./api-key-provider-config";
 import { OllamaModelPicker } from "./OllamaModelPicker";
 import { OpenAICompatibleModelPicker } from "./OpenAICompatibleModelPicker";
@@ -75,6 +84,7 @@ const ApiKeyFormActions = ({
   canSave,
   onTest,
   testing,
+  testDisabled,
 }: {
   onCancel: () => void;
   onSave: () => void;
@@ -82,6 +92,7 @@ const ApiKeyFormActions = ({
   canSave: boolean;
   onTest?: () => void;
   testing?: boolean;
+  testDisabled?: boolean;
 }) => {
   return (
     <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
@@ -90,7 +101,7 @@ const ApiKeyFormActions = ({
           variant="outlined"
           size="small"
           onClick={onTest}
-          disabled={testing || saving}
+          disabled={testing || saving || testDisabled}
         >
           {testing ? (
             <FormattedMessage defaultMessage="Testing..." />
@@ -269,6 +280,7 @@ type EditApiKeyCardProps = {
   onSave: (payload: {
     name: string;
     key: string;
+    clearKey?: boolean;
     baseUrl?: string | null;
     azureRegion?: string | null;
     includeV1Path?: boolean | null;
@@ -281,6 +293,102 @@ type EditApiKeyCardProps = {
   context: ApiKeyListContext;
 };
 
+const EditApiKeyAttentionAlert = ({
+  apiKey,
+  onResetKeyless,
+  disabled,
+}: {
+  apiKey: SettingsApiKey;
+  onResetKeyless?: () => void;
+  disabled: boolean;
+}) => {
+  if (!apiKeyNeedsAttention(apiKey)) {
+    return null;
+  }
+  return (
+    <Alert
+      severity="warning"
+      sx={{
+        py: 0.5,
+        boxShadow: "none",
+        alignItems: "center",
+        "& .MuiAlert-action": {
+          pt: 0,
+          alignItems: "center",
+          pl: 1.5,
+        },
+      }}
+      action={
+        onResetKeyless ? (
+          <Button
+            size="small"
+            color="inherit"
+            onClick={onResetKeyless}
+            disabled={disabled}
+            sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
+          >
+            <FormattedMessage defaultMessage="Use without key" />
+          </Button>
+        ) : undefined
+      }
+    >
+      <ApiKeyAttentionMessage issue={getApiKeyCredentialIssue(apiKey)} />
+    </Alert>
+  );
+};
+
+const buildEditApiKeySavePayload = ({
+  name,
+  fieldValues,
+  clearKey,
+  includeV1Path,
+  config,
+  apiKey,
+}: {
+  name: string;
+  fieldValues: Record<string, string>;
+  clearKey: boolean;
+  includeV1Path: boolean;
+  config: ReturnType<typeof getProviderFormConfig>;
+  apiKey: SettingsApiKey;
+}) => {
+  const hasField = (key: string) => config.fields.some((f) => f.key === key);
+  return {
+    name,
+    key: clearKey ? "" : fieldValues.apiKey || "",
+    clearKey,
+    baseUrl: fieldValues.baseUrl || config.defaultBaseUrl || apiKey.baseUrl,
+    azureRegion: fieldValues.azureRegion || apiKey.azureRegion,
+    includeV1Path: config.showIncludeV1Path
+      ? includeV1Path
+      : apiKey.includeV1Path,
+    transcriptionModel: hasField("transcriptionModel")
+      ? fieldValues.transcriptionModel || null
+      : undefined,
+    transcriptionPath: hasField("transcriptionPath")
+      ? fieldValues.transcriptionPath || null
+      : undefined,
+  };
+};
+
+const buildInitialEditFieldValues = (
+  apiKey: SettingsApiKey,
+): Record<string, string> => {
+  const initial: Record<string, string> = {};
+  if (apiKey.baseUrl) initial.baseUrl = apiKey.baseUrl;
+  if (apiKey.azureRegion) initial.azureRegion = apiKey.azureRegion;
+  if (apiKey.transcriptionModel)
+    initial.transcriptionModel = apiKey.transcriptionModel;
+  if (apiKey.transcriptionPath)
+    initial.transcriptionPath = apiKey.transcriptionPath;
+  return initial;
+};
+
+const isEditTestDisabled = (
+  apiKey: SettingsApiKey,
+  enteredKey: string | undefined,
+): boolean => apiKeyNeedsReentry(apiKey) && !(enteredKey ?? "").trim();
+
 const EditApiKeyCard = ({
   apiKey,
   onSave,
@@ -290,16 +398,9 @@ const EditApiKeyCard = ({
   context,
 }: EditApiKeyCardProps) => {
   const [name, setName] = useState(apiKey.name);
-  const [fieldValues, setFieldValues] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {};
-    if (apiKey.baseUrl) initial.baseUrl = apiKey.baseUrl;
-    if (apiKey.azureRegion) initial.azureRegion = apiKey.azureRegion;
-    if (apiKey.transcriptionModel)
-      initial.transcriptionModel = apiKey.transcriptionModel;
-    if (apiKey.transcriptionPath)
-      initial.transcriptionPath = apiKey.transcriptionPath;
-    return initial;
-  });
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>(() =>
+    buildInitialEditFieldValues(apiKey),
+  );
   const [includeV1Path, setIncludeV1Path] = useState(
     apiKey.includeV1Path ?? true,
   );
@@ -309,6 +410,10 @@ const EditApiKeyCard = ({
     () => getProviderFormConfig(apiKey.provider, context),
     [apiKey.provider, context],
   );
+  const canResetToKeyless =
+    apiKeyNeedsReentry(apiKey) &&
+    !config.fields.some((f) => f.key === "apiKey" && f.required);
+  const testDisabled = isEditTestDisabled(apiKey, fieldValues.apiKey);
 
   const canSave =
     !!name &&
@@ -323,53 +428,29 @@ const EditApiKeyCard = ({
     setFieldValues((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  const handleSave = useCallback(async () => {
-    if (!canSave || saving) return;
-    setSaving(true);
-    try {
-      const baseUrl =
-        fieldValues.baseUrl || config.defaultBaseUrl || apiKey.baseUrl;
-      const azureRegion = fieldValues.azureRegion || apiKey.azureRegion;
-      const includeV1PathValue = config.showIncludeV1Path
-        ? includeV1Path
-        : apiKey.includeV1Path;
-      const hasTranscriptionModelField = config.fields.some(
-        (f) => f.key === "transcriptionModel",
-      );
-      const transcriptionModel = hasTranscriptionModelField
-        ? fieldValues.transcriptionModel || null
-        : undefined;
-      const hasTranscriptionPathField = config.fields.some(
-        (f) => f.key === "transcriptionPath",
-      );
-      const transcriptionPath = hasTranscriptionPathField
-        ? fieldValues.transcriptionPath || null
-        : undefined;
-
-      await onSave({
-        name,
-        key: fieldValues.apiKey || "",
-        baseUrl,
-        azureRegion,
-        includeV1Path: includeV1PathValue,
-        transcriptionModel,
-        transcriptionPath,
-      });
-    } catch (error) {
-      console.error("Failed to save API key", error);
-    } finally {
-      setSaving(false);
-    }
-  }, [
-    canSave,
-    saving,
-    name,
-    fieldValues,
-    includeV1Path,
-    config,
-    apiKey,
-    onSave,
-  ]);
+  const handleSave = useCallback(
+    async (clearKey = false) => {
+      if (!canSave || saving) return;
+      setSaving(true);
+      try {
+        await onSave(
+          buildEditApiKeySavePayload({
+            name,
+            fieldValues,
+            clearKey,
+            includeV1Path,
+            config,
+            apiKey,
+          }),
+        );
+      } catch (error) {
+        console.error("Failed to save API key", error);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [canSave, saving, name, fieldValues, includeV1Path, config, apiKey, onSave],
+  );
 
   const handleTest = useCallback(() => {
     const overrides: Partial<SettingsApiKey> = { name };
@@ -416,6 +497,13 @@ const EditApiKeyCard = ({
           />
         </Typography>
       </Stack>
+      <EditApiKeyAttentionAlert
+        apiKey={apiKey}
+        onResetKeyless={
+          canResetToKeyless ? () => void handleSave(true) : undefined
+        }
+        disabled={saving || testing}
+      />
       <TextField
         label={<FormattedMessage defaultMessage="Key name" />}
         value={name}
@@ -440,6 +528,7 @@ const EditApiKeyCard = ({
         canSave={canSave}
         onTest={handleTest}
         testing={testing}
+        testDisabled={testDisabled}
       />
     </Paper>
   );
@@ -515,6 +604,10 @@ const ModelPickerForProvider = ({
   onModelChange: (model: string | null) => void;
   disabled: boolean;
 }) => {
+  if (!isApiKeyUsable(apiKey)) {
+    return null;
+  }
+
   if (apiKey.provider === "openrouter" && context === "post-processing") {
     return (
       <ModelSetupSection context={context}>
@@ -722,6 +815,70 @@ const ApiKeyCardAction = ({
   </Tooltip>
 );
 
+const ApiKeyCardAttentionBadge = ({
+  needsAttention,
+  needsReentry,
+}: {
+  needsAttention: boolean;
+  needsReentry: boolean;
+}) =>
+  needsAttention ? (
+    <Chip
+      size="small"
+      color="warning"
+      label={
+        needsReentry ? (
+          <FormattedMessage defaultMessage="Re-enter key" />
+        ) : (
+          <FormattedMessage defaultMessage="Needs attention" />
+        )
+      }
+    />
+  ) : null;
+
+const ApiKeyCardAttentionAlert = ({
+  apiKey,
+  needsReentry,
+  disabled,
+  onEdit,
+}: {
+  apiKey: SettingsApiKey;
+  needsReentry: boolean;
+  disabled: boolean;
+  onEdit: () => void;
+}) => (
+  <Alert
+    severity="warning"
+    sx={{
+      py: 0.5,
+      boxShadow: "none",
+      alignItems: "center",
+      "& .MuiAlert-action": {
+        pt: 0,
+        alignItems: "center",
+        pl: 1.5,
+      },
+    }}
+    action={
+      <Button
+        size="small"
+        color="inherit"
+        onClick={onEdit}
+        disabled={disabled}
+        sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
+      >
+        {needsReentry ? (
+          <FormattedMessage defaultMessage="Re-enter key" />
+        ) : (
+          <FormattedMessage defaultMessage="Edit" />
+        )}
+      </Button>
+    }
+  >
+    <ApiKeyAttentionMessage issue={getApiKeyCredentialIssue(apiKey)} />
+  </Alert>
+);
+
 const ApiKeyCard = ({
   apiKey,
   selected,
@@ -752,6 +909,8 @@ const ApiKeyCard = ({
     [apiKey.provider, context],
   );
   const currentModel = getModelForContext(apiKey, context);
+  const needsAttention = apiKeyNeedsAttention(apiKey);
+  const needsReentry = apiKeyNeedsReentry(apiKey);
 
   return (
     <Paper
@@ -759,7 +918,7 @@ const ApiKeyCard = ({
       sx={[
         {
           p: 2,
-          borderColor: "divider",
+          borderColor: needsAttention ? "warning.main" : "divider",
           borderWidth: 1,
           display: "flex",
           flexDirection: "column",
@@ -854,6 +1013,10 @@ const ApiKeyCard = ({
               >
                 {apiKey.name}
               </Typography>
+              <ApiKeyCardAttentionBadge
+                needsAttention={needsAttention}
+                needsReentry={needsReentry}
+              />
               {selected && (
                 <Check
                   size={16}
@@ -910,7 +1073,7 @@ const ApiKeyCard = ({
             variant="outlined"
             size="small"
             onClick={onTest}
-            disabled={testing || deleting}
+            disabled={testing || deleting || needsReentry}
           >
             {testing ? (
               <FormattedMessage defaultMessage="Testing..." />
@@ -933,6 +1096,14 @@ const ApiKeyCard = ({
           />
         </Stack>
       </Stack>
+      {needsAttention && (
+        <ApiKeyCardAttentionAlert
+          apiKey={apiKey}
+          needsReentry={needsReentry}
+          disabled={deleting || testing}
+          onEdit={onEdit}
+        />
+      )}
       <ModelPickerForProvider
         apiKey={apiKey}
         context={context}
@@ -946,7 +1117,15 @@ const ApiKeyCard = ({
 
 const supportsContext = (key: SettingsApiKey, context: ApiKeyListContext) => {
   if (key.provider === "azure") {
-    return context === "transcription" ? !!key.azureRegion : !!key.baseUrl;
+    const hasRegion = !!key.azureRegion?.trim();
+    const hasBaseUrl = !!key.baseUrl?.trim();
+    // Incomplete Azure records missing both region and endpoint still count as
+    // needing attention, so keep them visible in both lists to allow repair or
+    // removal.
+    if (!hasRegion && !hasBaseUrl) {
+      return true;
+    }
+    return context === "transcription" ? hasRegion : hasBaseUrl;
   }
   const repo = getModelProviderRepo(key.provider);
   return context === "transcription"
@@ -963,6 +1142,7 @@ export const ApiKeyList = ({
   context,
   compactCards = false,
 }: ApiKeyListProps) => {
+  const intl = useIntl();
   const allApiKeys = useAppStore((state) => state.settings.apiKeys);
 
   const apiKeys = allApiKeys.filter((key) => supportsContext(key, context));
@@ -981,14 +1161,17 @@ export const ApiKeyList = ({
       return;
     }
 
+    const preferredDefault =
+      apiKeys.find((key) => isApiKeyUsable(key)) ?? apiKeys[0];
+
     if (selectedApiKeyId === null) {
-      onChange(apiKeys[0]?.id ?? null);
+      onChange(preferredDefault?.id ?? null);
       return;
     }
 
     const exists = apiKeys.some((key) => key.id === selectedApiKeyId);
     if (!exists) {
-      onChange(apiKeys[0]?.id ?? null);
+      onChange(preferredDefault?.id ?? null);
     }
   }, [apiKeys, selectedApiKeyId, onChange]);
 
@@ -1099,6 +1282,7 @@ export const ApiKeyList = ({
       payload: {
         name: string;
         key: string;
+        clearKey?: boolean;
         baseUrl?: string | null;
         azureRegion?: string | null;
         includeV1Path?: boolean | null;
@@ -1109,7 +1293,7 @@ export const ApiKeyList = ({
       await updateApiKey({
         id: apiKeyId,
         name: payload.name,
-        key: payload.key || undefined,
+        key: payload.clearKey ? "" : payload.key || undefined,
         baseUrl: payload.baseUrl,
         azureRegion: payload.azureRegion,
         includeV1Path: payload.includeV1Path,
@@ -1130,6 +1314,14 @@ export const ApiKeyList = ({
 
   const handleTestEditingApiKey = useCallback(
     async (apiKey: SettingsApiKey, overrides: Partial<SettingsApiKey>) => {
+      if (apiKeyNeedsReentry(apiKey) && !(overrides.keyFull ?? "").trim()) {
+        showErrorSnackbar(
+          intl.formatMessage({
+            defaultMessage: "Re-enter the API key before testing.",
+          }),
+        );
+        return;
+      }
       const merged = { ...apiKey, ...overrides };
       if (
         apiKey.provider === "openai-compatible" &&
@@ -1155,7 +1347,7 @@ export const ApiKeyList = ({
         setTestingApiKeyId(null);
       }
     },
-    [context],
+    [context, intl],
   );
 
   const loadingState = (

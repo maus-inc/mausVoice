@@ -12,12 +12,27 @@ pub(crate) const STORAGE_DIR_NAME: &str = "storage";
 
 // Pre-rebrand values: the app identifier and database filename changed when
 // the product was renamed from Voquill to mausVoice. Tauri derives the config
-// directory from the identifier, so an upgraded install opens a brand-new
-// directory and a brand-new database. Copy the legacy database (plus any
-// WAL/SHM side files) into the current location once, idempotently, so
-// existing users keep their transcriptions, preferences, and stored API keys.
-const LEGACY_CONFIG_DIR_NAME: &str = "com.voquill.desktop";
-const LEGACY_DB_FILENAME: &str = "voquill.db";
+// and data directories from the bundle identifier, so we pair each mausVoice
+// flavor only with its matching Voquill flavor to avoid cross-flavor leakage.
+pub(crate) const LEGACY_PROD_IDENTIFIER: &str = "com.voquill.desktop";
+const LEGACY_DEV_IDENTIFIER: &str = "com.voquill.desktop.dev";
+const LEGACY_LOCAL_IDENTIFIER: &str = "com.voquill.desktop.local";
+pub(crate) const LEGACY_DB_FILENAME: &str = "voquill.db";
+
+pub(crate) fn legacy_identifier_for(current_identifier: &str) -> Option<&'static str> {
+    match current_identifier {
+        "com.mausinc.desktop" => Some(LEGACY_PROD_IDENTIFIER),
+        "com.mausinc.desktop.dev" => Some(LEGACY_DEV_IDENTIFIER),
+        "com.mausinc.desktop.local" => Some(LEGACY_LOCAL_IDENTIFIER),
+        _ => None,
+    }
+}
+
+pub(crate) fn sibling_legacy_dir(current_dir: &Path) -> Option<PathBuf> {
+    let leaf = current_dir.file_name()?.to_str()?;
+    let legacy_leaf = legacy_identifier_for(leaf)?;
+    current_dir.parent().map(|base| base.join(legacy_leaf))
+}
 
 pub fn database_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
     let mut path = app
@@ -26,62 +41,32 @@ pub fn database_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
         .map_err(|err| io::Error::other(err.to_string()))?;
     fs::create_dir_all(&path)?;
     path.push(crate::db::DB_FILENAME);
-
-    if !path.exists() {
-        migrate_legacy_database(app, &path)?;
-    }
-
     Ok(path)
 }
 
-fn legacy_database_dir(app: &tauri::AppHandle) -> io::Result<Option<PathBuf>> {
+pub(crate) fn legacy_voquill_config_dir(app: &tauri::AppHandle) -> io::Result<Option<PathBuf>> {
     let current_config_dir = app
         .path()
         .app_config_dir()
         .map_err(|error| io::Error::other(error.to_string()))?;
-    Ok(current_config_dir
-        .parent()
-        .map(|base| base.join(LEGACY_CONFIG_DIR_NAME)))
+    Ok(sibling_legacy_dir(&current_config_dir))
 }
 
-fn migrate_legacy_database(app: &tauri::AppHandle, current_path: &Path) -> io::Result<()> {
-    let Some(legacy_dir) = legacy_database_dir(app)? else {
-        return Ok(());
-    };
-    if !legacy_dir.is_dir() {
-        return Ok(());
-    }
-
-    let legacy_db = legacy_dir.join(LEGACY_DB_FILENAME);
-    if !legacy_db.exists() {
-        return Ok(());
-    }
-
-    if let Some(parent) = current_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    fs::copy(&legacy_db, current_path)?;
-    for sidecar in ["-wal", "-shm"] {
-        let legacy_sidecar = legacy_dir.join(format!("{LEGACY_DB_FILENAME}{sidecar}"));
-        if legacy_sidecar.exists() {
-            let _ = fs::copy(
-                &legacy_sidecar,
-                current_path.with_file_name(format!("{}{sidecar}", crate::db::DB_FILENAME)),
-            );
-        }
-    }
-    log::info!("Migrated legacy database from {legacy_db:?} to {current_path:?}");
-
-    Ok(())
+pub(crate) fn legacy_voquill_data_dir(app: &tauri::AppHandle) -> io::Result<Option<PathBuf>> {
+    let current_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    Ok(sibling_legacy_dir(&current_data_dir))
 }
 
 /// Delete the previous-brand database and SQLite sidecars during an explicit
-/// local-data clear. The startup migration copies these files so users can
-/// recover their old data; leaving that source behind would make the clear
-/// appear successful while the same user data remained on disk.
+/// local-data clear. Normal migration preserves the legacy source untouched so
+/// users can recover or verify their old data; explicit local-data clear
+/// removes both the current database and the legacy database files so wiped
+/// user data does not remain behind on disk.
 pub fn delete_legacy_database(app: &tauri::AppHandle) -> io::Result<usize> {
-    let Some(legacy_dir) = legacy_database_dir(app)? else {
+    let Some(legacy_dir) = legacy_voquill_config_dir(app)? else {
         return Ok(0);
     };
     delete_legacy_database_files_in(&legacy_dir)

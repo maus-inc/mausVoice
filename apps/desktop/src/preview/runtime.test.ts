@@ -939,4 +939,228 @@ describe("browser preview transport", () => {
       } satisfies Partial<PreviewOperationError>);
     }
   });
+
+  it("handles voquill_migration_* commands and returns credentialStatus on api_key_create", async () => {
+    const status = await invokePreviewCommand<{
+      status: string;
+      legacyDetected: boolean;
+    }>("voquill_migration_status");
+    expect(status.status).toBe("not_needed");
+    expect(status.legacyDetected).toBe(false);
+
+    const dismissed = await invokePreviewCommand<{ status: string }>(
+      "voquill_migration_dismiss",
+    );
+    expect(dismissed.status).toBe("not_needed");
+
+    const retried = await invokePreviewCommand<{ status: string }>(
+      "voquill_migration_retry",
+    );
+    expect(retried.status).toBe("not_needed");
+
+    await invokePreviewCommand("api_key_create", {
+      apiKey: {
+        id: "preview-groq-key",
+        name: "Preview Groq",
+        provider: "groq",
+        key: `${"gsk"}_preview_1234`,
+      },
+    });
+    const keys = await invokePreviewCommand<
+      {
+        id: string;
+        credentialStatus: string;
+        credentialIssue: string | null;
+      }[]
+    >("api_key_list");
+    const created = keys.find((key) => key.id === "preview-groq-key");
+    expect(created?.credentialStatus).toBe("usable");
+    expect(created?.credentialIssue).toBeNull();
+  });
+
+  it("recomputes Voquill migration action items dynamically as keys are re-entered or dismissed", async () => {
+    applyPreviewScenario("voquill-migration");
+
+    const initial = await invokePreviewCommand<{
+      status: string;
+      dismissedAt: string | null;
+      counts: { providersNeedingAttention: number };
+      actionItems: { kind: string; count: number; providers: string[] }[];
+    }>("voquill_migration_status");
+    expect(initial.status).toBe("completed");
+    expect(initial.counts.providersNeedingAttention).toBe(2);
+    expect(initial.actionItems[0]).toMatchObject({
+      kind: "reenter_api_keys",
+      providers: ["groq", "openai"],
+    });
+
+    await invokePreviewCommand("api_key_update", {
+      request: { id: "personal-groq", key: `${"gsk"}_reentered_1` },
+    });
+    await invokePreviewCommand("api_key_delete", { id: "voquill-openai-key" });
+
+    const resolved = await invokePreviewCommand<{
+      status: string;
+      counts: { providersNeedingAttention: number };
+      actionItems: { kind: string }[];
+    }>("voquill_migration_status");
+    expect(resolved.status).toBe("completed");
+    expect(resolved.counts.providersNeedingAttention).toBe(0);
+    expect(
+      resolved.actionItems.some((item) => item.kind === "reenter_api_keys"),
+    ).toBe(false);
+
+    const dismissed = await invokePreviewCommand<{
+      dismissedAt: string | null;
+    }>("voquill_migration_dismiss");
+    expect(dismissed.dismissedAt).not.toBeNull();
+  });
+
+  it("marks whitespace-only key updates as needs_reentry for required-key providers", async () => {
+    applyPreviewScenario("voquill-migration");
+
+    const updated = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_update", {
+      request: { id: "personal-groq", key: "   " },
+    });
+    expect(updated.credentialStatus).toBe("needs_reentry");
+    expect(updated.credentialIssue).toBe("missing_key");
+
+    const status = await invokePreviewCommand<{
+      counts: { providersNeedingAttention: number };
+    }>("voquill_migration_status");
+    expect(status.counts.providersNeedingAttention).toBe(2);
+  });
+
+  it("counts invalid_format credentials in Voquill migration attention totals and action items", async () => {
+    applyPreviewScenario("voquill-migration");
+
+    const updated = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_update", {
+      request: { id: "personal-groq", key: ` ${"gsk"}_padded_1 ` },
+    });
+    expect(updated.credentialStatus).toBe("invalid_format");
+    expect(updated.credentialIssue).toBe("invalid_key_format");
+
+    const status = await invokePreviewCommand<{
+      counts: { providersNeedingAttention: number };
+      actionItems: { kind: string; count: number; providers: string[] }[];
+    }>("voquill_migration_status");
+    expect(status.counts.providersNeedingAttention).toBe(2);
+    expect(status.actionItems[0]).toMatchObject({
+      kind: "reenter_api_keys",
+      count: 2,
+      providers: ["groq", "openai"],
+    });
+  });
+
+  it("rejects C1 control characters, validates Azure region on create/update, and flags missing required secrets", async () => {
+    const withC1Control = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_create", {
+      apiKey: {
+        id: "preview-c1-control",
+        name: "Bad C1 key",
+        provider: "openai",
+        key: `${"sk"}_bad\u0085key`,
+      },
+    });
+    expect(withC1Control.credentialStatus).toBe("invalid_format");
+    expect(withC1Control.credentialIssue).toBe("invalid_key_format");
+
+    const missingRequiredSecret = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+      keySuffix: string | null;
+    }>("api_key_create", {
+      apiKey: {
+        id: "preview-missing-secret",
+        name: "Empty OpenAI",
+        provider: "openai",
+        key: "",
+      },
+    });
+    expect(missingRequiredSecret.credentialStatus).toBe("needs_reentry");
+    expect(missingRequiredSecret.credentialIssue).toBe("missing_key");
+    expect(missingRequiredSecret.keySuffix).toBeNull();
+
+    const createdAzure = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_create", {
+      apiKey: {
+        id: "preview-azure-no-region",
+        name: "Azure Speech",
+        provider: "azure",
+        key: "azure-test-secret",
+      },
+    });
+    expect(createdAzure.credentialStatus).toBe("invalid_format");
+    expect(createdAzure.credentialIssue).toBe("missing_region");
+
+    const reenteredStillMissingRegion = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_update", {
+      request: { id: "preview-azure-no-region", key: "azure-updated-secret" },
+    });
+    expect(reenteredStillMissingRegion.credentialStatus).toBe("invalid_format");
+    expect(reenteredStillMissingRegion.credentialIssue).toBe("missing_region");
+
+    const fixedAzureRegion = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_update", {
+      request: { id: "preview-azure-no-region", azureRegion: "eastus" },
+    });
+    expect(fixedAzureRegion.credentialStatus).toBe("usable");
+    expect(fixedAzureRegion.credentialIssue).toBeNull();
+
+    const blankCompatEndpoint = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_create", {
+      apiKey: {
+        id: "preview-compat-blank",
+        name: "Blank compat",
+        provider: "openai-compatible",
+        key: "",
+        baseUrl: "   ",
+      },
+    });
+    expect(blankCompatEndpoint.credentialStatus).toBe("invalid_format");
+    expect(blankCompatEndpoint.credentialIssue).toBe("missing_endpoint");
+
+    const endpointWithUserinfo = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_create", {
+      apiKey: {
+        id: "preview-compat-userinfo",
+        name: "Local compat",
+        provider: "openai-compatible",
+        key: "",
+        baseUrl: "http://user:pass@localhost:8000/v1",
+      },
+    });
+    expect(endpointWithUserinfo.credentialStatus).toBe("invalid_format");
+    expect(endpointWithUserinfo.credentialIssue).toBe("missing_endpoint");
+
+    const fixedEndpoint = await invokePreviewCommand<{
+      credentialStatus: string;
+      credentialIssue: string | null;
+    }>("api_key_update", {
+      request: {
+        id: "preview-compat-userinfo",
+        baseUrl: "http://localhost:8000/v1",
+      },
+    });
+    expect(fixedEndpoint.credentialStatus).toBe("usable");
+    expect(fixedEndpoint.credentialIssue).toBeNull();
+  });
 });

@@ -25,6 +25,10 @@ import type { SettingAvailability } from "../../utils/settings-registry";
  * target while its provider data loads, then focus it if it becomes available.
  * This snapshot is shared across the separate settings routes.
  */
+const isVoquillMigrationDetected = (
+  report: { legacyDetected: boolean; status: string } | null,
+): boolean => Boolean(report?.legacyDetected && report.status !== "not_needed");
+
 export const useSettingsAvailability = (): SettingAvailability => {
   const platform = getPlatform();
   const snapshot = useAppStore((state) => {
@@ -61,6 +65,10 @@ export const useSettingsAvailability = (): SettingAvailability => {
       deleteAccount: loggedIn,
       // Provider-dependent availability remains unknown until the list loads.
       apiKeysKnown: state.settings.apiKeysStatus === "success",
+      voquillMigrationKnown: state.voquillMigration.status === "success",
+      voquillMigrationDetected: isVoquillMigrationDetected(
+        state.voquillMigration.report,
+      ),
     };
   });
 
@@ -78,6 +86,8 @@ export const useSettingsAvailability = (): SettingAvailability => {
     signOut,
     deleteAccount,
     apiKeysKnown,
+    voquillMigrationKnown,
+    voquillMigrationDetected,
   } = snapshot;
 
   return useMemo(
@@ -108,6 +118,9 @@ export const useSettingsAvailability = (): SettingAvailability => {
       change_password: changePassword,
       sign_out: signOut,
       delete_account: deleteAccount,
+      voquill_migration: voquillMigrationKnown
+        ? voquillMigrationDetected
+        : undefined,
     }),
     [
       dictationLimitEnabled,
@@ -123,6 +136,8 @@ export const useSettingsAvailability = (): SettingAvailability => {
       signOut,
       deleteAccount,
       apiKeysKnown,
+      voquillMigrationKnown,
+      voquillMigrationDetected,
     ],
   );
 };

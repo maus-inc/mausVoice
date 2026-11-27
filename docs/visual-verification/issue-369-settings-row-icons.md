@@ -228,3 +228,31 @@ What the pixels showed, and what changed because of them:
 Light was captured and inspected at the same widths. The gutters, the pill's pencil
 and the column edges read the same as in dark; no light frame is attached, because the
 change is not about light.
+
+## A tall row separates the mark from its title
+
+The base's `VoquillMigrationSettingsSection` arrived in the second base bump. It is a
+`SettingRow` whose body is a whole panel: status chips, two alerts and a counts line, 364px
+tall in the `voquill-migration` scenario. §369's rule gives it a glyph, and the lane
+centres a mark vertically on its row, so the glyph sits at y=170.8 while its title starts
+at y=10 — 160px from the words it names, against 11px on every other row.
+
+Measured, dark and light, at 1157×727:
+
+| Row | Height | Lane top | First text top |
+| --- | --- | --- | --- |
+| `incognito_mode` | 65.5 | 21.8 | 10 |
+| `preserve_audio_on_failure` | 85.8 | 31.9 | 10 |
+| `voquill_migration` | 363.7 | 170.8 | 10 |
+
+Two answers, and they are not equivalent:
+
+- **Centre every mark on its row**, which is shipped behaviour and what makes the 48px
+  identity avatar sit right against a two-line label. It breaks only this one row.
+- **Pin every mark to its title's first line.** It fixes this row with one exception-free
+  rule. It moves the mark up about 11px on every ordinary row and pulls the 48px avatar
+  off the centre of its label, so it re-decides a look that is already shipped.
+
+This is a human call, not one this change should make silently, so the frames are attached
+and the behaviour is left as it was. The row still leads with a glyph in the shared lane,
+which is the #369 requirement; only its vertical position inside a 364px panel is open.

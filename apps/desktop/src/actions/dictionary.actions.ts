@@ -13,16 +13,26 @@ import {
 import { getLogger } from "../utils/log.utils";
 import {
   type LocalDataWriteLease,
+  getLocalDataClearGeneration,
+  isLocalDataClearRequested,
   withLocalDataWrite,
 } from "../utils/local-data-write-gate";
 
 export const loadDictionary = async (): Promise<void> => {
+  const clearGeneration = getLocalDataClearGeneration();
+  const isClearStillSame = () =>
+    !isLocalDataClearRequested() &&
+    clearGeneration === getLocalDataClearGeneration();
+
   while (true) {
+    if (!isClearStillSame()) return;
     const beforeWait = dictionaryMutationRevision();
     await waitForDictionaryMutations();
+    if (!isClearStillSame()) return;
     const revision = dictionaryMutationRevision();
     if (beforeWait !== revision) continue;
     const terms = await getTermRepo().listTerms();
+    if (!isClearStillSame()) return;
     if (revision !== dictionaryMutationRevision()) continue;
     const activeTerms = terms.sort(
       (a, b) => dayjs(b.createdAt).valueOf() - dayjs(a.createdAt).valueOf(),

@@ -43,6 +43,10 @@ import {
   TranscriptionsState,
 } from "./transcriptions.state";
 import { INITIAL_UPDATER_STATE, UpdaterState } from "./updater.state";
+import {
+  INITIAL_VOQUILL_MIGRATION_STATE,
+  type VoquillMigrationState,
+} from "./voquill-migration.state";
 
 export type SnackbarMode = "info" | "success" | "error";
 export type SnackbarAction = {
@@ -143,6 +147,7 @@ export type AppState = {
   toneEditor: ToneEditorState;
   settings: SettingsState;
   updater: UpdaterState;
+  voquillMigration: VoquillMigrationState;
   login: LoginState;
   pillConversationId: Nullable<string>;
   assistantInputMode: AssistantInputMode;
@@ -254,5 +259,6 @@ export const INITIAL_APP_STATE: AppState = {
   toneEditor: INITIAL_TONE_EDITOR_STATE,
   settings: INITIAL_SETTINGS_STATE,
   updater: INITIAL_UPDATER_STATE,
+  voquillMigration: INITIAL_VOQUILL_MIGRATION_STATE,
   login: INITIAL_LOGIN_STATE,
 };

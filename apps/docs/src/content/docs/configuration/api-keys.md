@@ -22,6 +22,8 @@ The top-level rows are more than duplicate password fields:
 - Saving **Personal Deepgram** prefers that record for transcription when the current choice is unset, Local, or already one of the managed personal records.
 - Saving **Personal Groq** assigns `whisper-large-v3-turbo` for transcription and `openai/gpt-oss-20b` for generation when those model fields need defaults. It can make Groq the transcription fallback and set post-processing and the Assistant backend to API when those choices are unset or already managed by this personal record.
 - An unrelated provider record you explicitly selected is preserved. The separate Assistant feature switch remains its own control.
+- Both dialogs include an explicit **Test key** action so you can verify a newly entered or re-entered key on demand before saving. mausVoice never auto-probes keys in the background on launch or dialog open.
+- If a saved personal or task key was imported from Voquill's older encryption format or cannot be decrypted on this device, **Settings → AI & Models** displays **Re-enter key** instead of **Configured**, and runtime dispatch falls back safely until you re-enter and save the key.
 
 Use the full task dialog when you need another record name, provider, or model.
 

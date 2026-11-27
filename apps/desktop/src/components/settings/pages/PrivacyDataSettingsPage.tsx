@@ -27,6 +27,7 @@ import { ConfirmDialog } from "../../common/ConfirmDialog";
 import { AudioTransmissionDisclosure } from "../AudioTransmissionDisclosure";
 import { ProviderSettingLinkStatus } from "../ProviderSettingLinkStatus";
 import { SettingGroup, SettingRow, SettingToggleRow } from "../SettingRow";
+import { VoquillMigrationSettingsSection } from "../VoquillMigrationSettingsSection";
 import { useSettingsAvailability } from "../settings-availability";
 import { settingGlyphProps } from "../setting-row-chassis";
 
@@ -175,6 +176,7 @@ export default function PrivacyDataSettingsPage() {
             "settings page: setPreserveAudioOnFailure",
           )}
         />
+        {availability.voquill_migration && <VoquillMigrationSettingsSection />}
       </SettingGroup>
 
       <SettingGroup

@@ -320,6 +320,7 @@ describe("settings row icon coverage", () => {
       "apps/desktop/src/components/settings/PillPlacementSetting.tsx",
       "apps/desktop/src/components/settings/UpdateChannelSetting.tsx",
       "apps/desktop/src/components/settings/UpdateSettingSection.tsx",
+      "apps/desktop/src/components/settings/VoquillMigrationSettingsSection.tsx",
       "apps/desktop/src/components/settings/home/YourModelsCard.tsx",
       "apps/desktop/src/components/settings/pages/AccountSettingsPage.tsx",
       "apps/desktop/src/components/settings/pages/AiModelsSettingsPage.tsx",

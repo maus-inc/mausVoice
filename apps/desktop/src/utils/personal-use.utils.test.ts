@@ -171,6 +171,22 @@ describe("resolvePersonalTranscriptionTarget", () => {
 
     expect(target).toBeNull();
   });
+
+  it("switches away from an unusable adopted personal Groq key when Deepgram is saved", () => {
+    const importedGroqId = "voquill-imported-groq-1";
+    const target = resolvePersonalTranscriptionTarget({
+      deepgramKeyId: PERSONAL_DEEPGRAM_API_KEY_ID,
+      groqKeyId: null,
+      ownedPersonalKeyIds: [PERSONAL_DEEPGRAM_API_KEY_ID, importedGroqId],
+      currentMode: "api",
+      currentApiKeyId: importedGroqId,
+    });
+
+    expect(target).toEqual({
+      mode: "api",
+      apiKeyId: PERSONAL_DEEPGRAM_API_KEY_ID,
+    });
+  });
 });
 
 describe("buildPersonalGroqKeyUpdate", () => {
@@ -216,6 +232,22 @@ describe("buildPersonalGroqKeyUpdate", () => {
     expect(update).toEqual({
       id: PERSONAL_GROQ_API_KEY_ID,
       transcriptionModel: PERSONAL_GROQ_TRANSCRIPTION_MODEL,
+    });
+  });
+
+  it("always rewrites a migrated key whose credentialStatus needs re-entry", () => {
+    const update = buildPersonalGroqKeyUpdate(
+      personalGroqKey({
+        keyFull: null,
+        credentialStatus: "needs_reentry",
+        credentialIssue: "legacy_encryption",
+      }),
+      "gsk_reentered",
+    );
+
+    expect(update).toEqual({
+      id: PERSONAL_GROQ_API_KEY_ID,
+      key: "gsk_reentered",
     });
   });
 });

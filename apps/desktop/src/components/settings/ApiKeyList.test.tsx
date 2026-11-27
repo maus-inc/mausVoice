@@ -377,4 +377,165 @@ describe("ApiKeyList", () => {
       document.querySelector('input[aria-label="Transcription model"]'),
     ).toBeNull();
   });
+
+  it("flags migrated legacy keys needing re-entry, skips model fetches, and disables Test", async () => {
+    const legacyKey: SettingsApiKey = {
+      ...groqKey,
+      id: "key-legacy-groq",
+      keyFull: null,
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+    };
+    seedApiKeys([legacyKey]);
+    await renderList("transcription", "key-legacy-groq");
+
+    expect(document.body.textContent).toContain("Re-enter key");
+    expect(document.body.textContent).toContain(
+      "This key was imported from Voquill's older encryption format and could not be unlocked. Enter your key again to re-encrypt it with mausVoice.",
+    );
+    // Unusable migrated key must not auto-fetch remote model lists.
+    expect(mocks.getTranscriptionModels).not.toHaveBeenCalled();
+
+    const testButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "Test",
+    ) as HTMLButtonElement | undefined;
+    expect(testButton?.disabled).toBe(true);
+  });
+
+  it("lets optional-key providers in needs_reentry clear the unreadable secret via Use without key", async () => {
+    const legacyOllama: SettingsApiKey = {
+      id: "key-legacy-ollama",
+      name: "Local Ollama",
+      provider: "ollama",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      keyFull: null,
+      baseUrl: "http://127.0.0.1:11434",
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+    };
+    seedApiKeys([legacyOllama]);
+    await renderList("post-processing", "key-legacy-ollama");
+
+    const editButton = document
+      .querySelector("svg.lucide-pencil")
+      ?.closest("button") as HTMLButtonElement | null;
+    expect(editButton).not.toBeNull();
+    await act(async () => {
+      editButton?.click();
+      await Promise.resolve();
+    });
+
+    const keylessButton = [
+      ...document.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.trim() === "Use without key");
+    expect(keylessButton).toBeDefined();
+
+    await act(async () => {
+      keylessButton?.click();
+      await Promise.resolve();
+    });
+    expect(mocks.updateApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "key-legacy-ollama",
+        key: "",
+      }),
+    );
+  });
+
+  it("keeps the edit form Test button disabled for needs_reentry keys until a replacement key is entered", async () => {
+    const legacyCompatible: SettingsApiKey = {
+      id: "key-legacy-compatible",
+      name: "Custom OpenAI",
+      provider: "openai-compatible",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      keyFull: null,
+      baseUrl: "https://example.invalid/v1",
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+    };
+    seedApiKeys([legacyCompatible]);
+    await renderList("post-processing", "key-legacy-compatible");
+
+    const editButton = document
+      .querySelector("svg.lucide-pencil")
+      ?.closest("button") as HTMLButtonElement | null;
+    expect(editButton).not.toBeNull();
+    await act(async () => {
+      editButton?.click();
+      await Promise.resolve();
+    });
+
+    const editTestButton = () =>
+      [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent?.trim() === "Test",
+      );
+    expect(editTestButton()?.disabled).toBe(true);
+
+    const passwordInput = document.querySelector<HTMLInputElement>(
+      'input[type="password"]',
+    );
+    expect(passwordInput).not.toBeNull();
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    await act(async () => {
+      nativeValueSetter?.call(passwordInput, `${"sk"}-reentered-123`);
+      passwordInput?.dispatchEvent(new Event("input", { bubbles: true }));
+      passwordInput?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(editTestButton()?.disabled).toBe(false);
+  });
+
+  it("shows Azure keys missing both region and baseUrl in both lists so they can be repaired or deleted", async () => {
+    const incompleteAzure: SettingsApiKey = {
+      id: "key-azure-incomplete",
+      name: "Broken Azure Key",
+      provider: "azure",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      keyFull: null,
+      azureRegion: null,
+      baseUrl: null,
+      credentialStatus: "invalid_format",
+      credentialIssue: "missing_region",
+    };
+    const speechAzure: SettingsApiKey = {
+      id: "key-azure-speech",
+      name: "Azure Speech",
+      provider: "azure",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      keyFull: "azure-speech-key",
+      azureRegion: "eastus",
+      baseUrl: null,
+      credentialStatus: "usable",
+      credentialIssue: null,
+    };
+    const openAiAzure: SettingsApiKey = {
+      id: "key-azure-openai",
+      name: "Azure OpenAI",
+      provider: "azure",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      keyFull: "azure-openai-key",
+      azureRegion: null,
+      baseUrl: "https://my-resource.openai.azure.com",
+      credentialStatus: "usable",
+      credentialIssue: null,
+    };
+    seedApiKeys([incompleteAzure, speechAzure, openAiAzure]);
+
+    await renderList("transcription", null);
+    expect(document.body.textContent).toContain("Broken Azure Key");
+    expect(document.body.textContent).toContain("Azure Speech");
+    expect(document.body.textContent).not.toContain("Azure OpenAI");
+    expect(document.querySelector("svg.lucide-pencil")).not.toBeNull();
+    expect(document.querySelector("svg.lucide-trash2")).not.toBeNull();
+
+    await renderList("post-processing", null);
+    expect(document.body.textContent).toContain("Broken Azure Key");
+    expect(document.body.textContent).toContain("Azure OpenAI");
+    expect(document.body.textContent).not.toContain("Azure Speech");
+    expect(document.querySelector("svg.lucide-pencil")).not.toBeNull();
+    expect(document.querySelector("svg.lucide-trash2")).not.toBeNull();
+  });
 });
