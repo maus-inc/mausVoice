@@ -6,6 +6,7 @@
 import { writeFileSync } from "node:fs";
 import { createReportDirectory } from "./browser-config.mjs";
 import { launch, newPage, sleep } from "./cdp.mjs";
+import { watchPage } from "./page-watch.mjs";
 
 const OUT = createReportDirectory();
 
@@ -14,16 +15,7 @@ const BASE = process.env.PREVIEW_URL || "http://127.0.0.1:5193";
 const { port, cleanup } = await launch({ width: 1280, height: 900 });
 const page = await newPage(port);
 
-const consoleErrors = [];
-page.on("Runtime.consoleAPICalled", (params) => {
-  if (params.type === "error") {
-    consoleErrors.push(
-      params.args.map((a) => a.value ?? a.description ?? "").join(" "),
-    );
-  }
-});
-const failedRequests = [];
-page.on("Network.loadingFailed", (p) => failedRequests.push(p.errorText));
+const { consoleErrors, failedRequests } = watchPage(page);
 
 await page.send("Network.enable");
 await page.setViewport(1280, 900);
