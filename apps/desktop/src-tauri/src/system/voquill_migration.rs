@@ -9160,7 +9160,9 @@ mod tests {
                     .iter()
                     .any(|issue| issue.code == "manifest_read_failed"));
 
-                let retried = retry_migration(&dirs_b).await;
+                let live_pool = open_app_database(&dirs_b.current_db_path()).await.unwrap();
+                let db_state = OptionKeyDatabase::new(live_pool);
+                let retried = retry_migration(dirs_b.clone(), db_state).await.unwrap();
                 assert_eq!(retried.status, VoquillMigrationStatus::Completed);
                 assert_eq!(retried.audio_phase, VoquillMigrationPhaseStatus::Migrated);
                 assert_eq!(retried.counts.audio_files_migrated, 1);
