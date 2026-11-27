@@ -63,24 +63,30 @@ const isWithinDragThreshold = (
 const defersNativeDrag = (platform: Platform): boolean => platform !== "macos";
 
 /**
- * Where the pointer grabbed the title bar, in window coordinates.
+ * Where the pointer grabbed the title bar, as a fraction of the window.
  *
  * The browser reports the press in CSS pixels inside the window's client area,
- * and the client area is the whole window on an undecorated shell. The window's
- * own origin is read rather than assumed, because a maximized window is not
- * necessarily at `(0, 0)` on a multi-monitor desktop.
+ * and the client area is the whole window on an undecorated shell. That makes
+ * the press an offset from the window's own top-left corner, which is what a
+ * fraction needs, so where the window sits on the desktop is not part of this
+ * measurement. Only the unit has to change: `innerSize` is physical, so the
+ * press is scaled up by the window's own scale factor.
  */
 const readGrab = async (
   win: TauriWindow,
   press: DragPoint,
 ): Promise<RestoreGrab | null> => {
   try {
-    const [origin, size] = await Promise.all([
-      win.innerPosition(),
+    const [size, scale] = await Promise.all([
       win.innerSize(),
+      win.scaleFactor(),
     ]);
+    const factor = scale || 1;
+    // The press is an offset inside the window, not a point on the desktop, so
+    // the window's own position plays no part. It only has to be converted from
+    // CSS pixels to the physical pixels `innerSize` is reported in.
     return grabPoint(
-      { x: press.x + origin.x, y: press.y + origin.y },
+      { x: press.x * factor, y: press.y * factor },
       { width: size.width, height: size.height },
     );
   } catch {
@@ -125,27 +131,26 @@ const waitForRestore = (win: TauriWindow): Promise<void> =>
 const readRestoreTarget = async (
   win: TauriWindow,
   grab: RestoreGrab,
-): Promise<DragPoint | null> => {
+): Promise<LogicalPosition | null> => {
   try {
-    // The pointer is read in physical pixels while the size was read in
-    // logical ones, so the pointer is scaled down to match rather than the
-    // window being compared in two units at once.
+    // All four of these are physical pixels, so they combine directly. The
+    // result stays physical and is converted to the logical position
+    // `setPosition` takes at the call site, which is the one place the two
+    // spaces meet.
     const [size, pointer, monitor, scale] = await Promise.all([
       win.innerSize(),
       cursorPosition(),
       currentMonitor(),
       win.scaleFactor(),
     ]);
-    const logicalPointer = {
-      x: pointer.x / (scale || 1),
-      y: pointer.y / (scale || 1),
-    };
-    return restoredPosition(
+    const target = restoredPosition(
       grab,
       size,
-      logicalPointer,
+      pointer,
       monitor?.workArea.position ?? { x: 0, y: 0 },
     );
+    const factor = scale || 1;
+    return new LogicalPosition(target.x / factor, target.y / factor);
   } catch {
     return null;
   }
@@ -180,9 +185,7 @@ const restoreAndDrag = async (win: TauriWindow, press: DragPoint) => {
     await win.unmaximize();
     await waitForRestore(win);
     const target = await readRestoreTarget(win, grab);
-    if (target !== null) {
-      await win.setPosition(new LogicalPosition(target.x, target.y));
-    }
+    if (target !== null) await win.setPosition(target);
     await startWindowDrag(win);
   } catch (error) {
     showErrorSnackbar(error);

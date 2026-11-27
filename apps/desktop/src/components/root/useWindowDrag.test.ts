@@ -223,21 +223,27 @@ describe("Windows drag-to-restore", () => {
     });
   });
 
-  it("places the restored window in logical pixels on a scaled display", async () => {
-    // `cursorPosition` reports physical pixels while the window size is
-    // logical, so a 2x display would otherwise place the window at twice the
-    // pointer's offset and jump it off to one side.
-    windowMocks.innerSize.mockResolvedValue({ width: 1280, height: 800 });
+  it("keeps one unit on a scaled display", async () => {
+    // Every Tauri read here is physical: `innerSize`, `cursorPosition` and the
+    // monitor work area. The browser press is CSS pixels, so it has to be
+    // scaled up before it is turned into a fraction, and the result scaled back
+    // down for `setPosition`. At 2x with a 1600x1000 physical window, a press
+    // 100 CSS pixels in is 200 physical pixels, and a quarter of the width.
+    windowMocks.innerSize.mockResolvedValue({ width: 1600, height: 1000 });
     windowMocks.cursorPosition.mockResolvedValue({ x: 800, y: 600 });
     windowMocks.scaleFactor.mockResolvedValue(2);
     const { handlers } = await renderHook(true);
-    await press(handlers!, 1, { x: 160, y: 20 });
-    await move(1, 160, 60);
+    await press(handlers!, 1, { x: 100, y: 10 });
+    await move(1, 100, 60);
 
     const [placed] = windowMocks.setPosition.mock.calls[0];
+    // A quarter of the way along means 0.25 of the *restored* width, which
+    // this fake also reports as 1600 because it does not change size. So the
+    // physical left edge is 800 - 0.25 * 1600 and the top is 600 - 20, and both
+    // are halved for the logical `setPosition`.
     expect({ x: placed.x, y: placed.y }).toEqual({
-      x: 400 - (160 / 1280) * 1280,
-      y: 300 - 20,
+      x: (800 - (200 / 1600) * 1600) / 2,
+      y: (600 - 20) / 2,
     });
   });
 
@@ -324,7 +330,7 @@ describe("Windows drag-to-restore", () => {
   it("hands the drag over even when the grab point cannot be measured", async () => {
     // A failed measurement must not strand the gesture: the window still has
     // to follow the pointer, just without the placement correction.
-    windowMocks.innerPosition.mockRejectedValueOnce(new Error("no position"));
+    windowMocks.scaleFactor.mockRejectedValueOnce(new Error("no scale"));
     const { handlers } = await renderHook(true);
     await press(handlers!);
     await move(1, 400, 60);

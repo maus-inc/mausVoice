@@ -196,4 +196,9 @@ export const getCurrentWindow = (): Window => currentWindow;
 export const getAllWindows = (): Promise<Window[]> =>
   Promise.resolve([currentWindow]);
 export const currentMonitor = (): Promise<null> => Promise.resolve(null);
+
+// The module-level pointer read the title bar's drag-to-restore path uses. The
+// preview has no pointer outside its own viewport and no restore to drive, so
+// this resolves `null`, which the caller already treats as "cannot place".
+export const cursorPosition = (): Promise<null> => Promise.resolve(null);
 export const availableMonitors = (): Promise<never[]> => Promise.resolve([]);

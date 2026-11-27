@@ -45,6 +45,8 @@ describe("grabPoint", () => {
 });
 
 describe("restoredPosition", () => {
+  // Physical pixels throughout, because that is the only unit the caller can
+  // read the window, the pointer and the work area in.
   const grab: RestoreGrab = { fractionX: 0.25, offsetY: 18 };
   const restored = { width: 1100, height: 700 };
 

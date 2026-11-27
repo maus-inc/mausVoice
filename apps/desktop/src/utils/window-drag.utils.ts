@@ -7,6 +7,12 @@
  * top, then read back at the restored size. A fraction rather than a pixel
  * offset across, because the restored window is narrower than the maximized
  * one and the grab point has to keep its relative place along the bar.
+ *
+ * Every value here is in physical pixels, which is the only unit Tauri reports
+ * window position, window size, the pointer and the monitor work area in. The
+ * caller converts the browser's CSS-pixel press into that space once, by its
+ * scale factor, before building a `RestoreGrab`. Mixing the two units is what
+ * makes a restore land off the pointer on a scaled display.
  */
 export type RestoreGrab = {
   /** Grab point as a fraction of the window width, clamped to 0..1. */
@@ -24,9 +30,9 @@ const clamp = (value: number, min: number, max: number): number =>
 /**
  * Reads a grab point out of the window the OS is about to restore.
  *
- * `grab` is in the same space as `size`, which the caller supplies. A zero or
- * negative width cannot produce a fraction, so the window is treated as
- * grabbed at its left edge rather than dividing by zero.
+ * `grab` must be in the same space as `size`. A zero or negative width cannot
+ * produce a fraction, so the window is treated as grabbed at its left edge
+ * rather than dividing by zero.
  */
 export const grabPoint = (grab: Point, size: Size): RestoreGrab => ({
   fractionX: size.width > 0 ? clamp(grab.x / size.width, 0, 1) : 0,

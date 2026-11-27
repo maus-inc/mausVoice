@@ -554,6 +554,8 @@ describe("TitleBar drag-to-restore on a maximized window", () => {
     // carries the drag from there.
     expect(windowMocks.unmaximize).toHaveBeenCalledTimes(1);
     const [placed] = windowMocks.setPosition.mock.calls[0];
+    // The grab is a fraction of the bar, so the window lands with that same
+    // fraction of its width to the left of the pointer.
     expect({ x: placed.x, y: placed.y }).toEqual({
       x: 640 - (640 / 1280) * 1280,
       y: 60 - 20,
