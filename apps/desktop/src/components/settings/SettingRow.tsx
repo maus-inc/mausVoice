@@ -192,9 +192,6 @@ const ActionPill = ({ action }: { action: SettingRowAction }) => {
       {/* The mark repeats the verb beside it, so it is decoration: the pill's
           text is its whole accessible name. */}
       {action.icon && <span aria-hidden>{action.icon}</span>}
-      {/* The mark repeats the verb beside it, so it is decoration: the pill's
-          text is its whole accessible name. */}
-      {action.icon && <span aria-hidden>{action.icon}</span>}
       {action.label}
     </Box>
   );

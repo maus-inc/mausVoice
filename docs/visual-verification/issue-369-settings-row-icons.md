@@ -190,3 +190,41 @@ frame is attached, because the change is not about light.
 titles to x=589. It removes the step entirely, but it moves three rows of a shipped page
 and shrinks the picture for a spacing-only gain, so it is a human call rather than one
 this change should make silently.
+
+## After the base moved: the merge pass
+
+The base branch moved from `12b0b09` to `6feba41` mid-review, and its settings
+work (#363, #383) rebuilt the same row from the other direction: a leading slot shared
+by every row, a trailing glyph column, and an action pill that takes a radius. The
+merge kept both ends and the capture was rerun against the merged tree, because a
+chassis that moves is exactly the thing a diff cannot show.
+
+Method: `scripts/verify/shot-settings.mjs` from the base's own harness, pointed at
+`CHROMIUM_PATH` and `LD_LIBRARY_PATH` for a browser kept outside the repository, at
+all three supported widths, both themes. It exits nonzero on a layout failure or a
+console error, and both runs reported `PROBLEMS: []` and `CONSOLE_ERRORS: []`. The
+dialog round trip and the account row were captured separately through the mocked
+Tauri runtime on port 1420.
+
+What the pixels showed, and what changed because of them:
+
+- **The Edit pill drew two pencils.** The merge kept the base's pill and folded this
+  branch's `action.icon` into it, and the resolution left the icon line twice, one
+  copy per side. No test asserted the pill's contents, so the merge was green. The
+  frame showed it immediately. The duplicate is gone and
+  `setting-row-icons.test.tsx` now counts the pill's marks; reverting the fix fails it.
+- **Every row on a page shares one title column.** Twelve rows on the dictation page
+  measured title `x=577` and slot `24`. Before the merge the switch rows had no lane
+  at all, which was #369's own defect.
+- **The avatar keeps its 48px lane.** The frame reads 16px to the card edge and 16px
+  to the title, and the Name title sits 26px right of the row below it. That step is
+  the documented cost of a 48px mark in a 22px language, not a regression.
+- **The rail clipping at 800px** (`Privac`, `nodels`) is in the base's own committed
+  before/after pair under `reports/ui-verify/settings-compare/`, so it predates this
+  change and is not touched here.
+- The dialog opens over the dimmed page, Escape closes it, and the four title columns
+  measure identically before and after the round trip in both themes.
+
+Light was captured and inspected at the same widths. The gutters, the pill's pencil
+and the column edges read the same as in dark; no light frame is attached, because the
+change is not about light.

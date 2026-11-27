@@ -251,4 +251,29 @@ describe("settings row icons", () => {
     expect(css).toContain(`.${generated}>*{`);
     expect(css).toMatch(new RegExp(`\\.${generated}>\\*\\{[^}]*flex-shrink:0`));
   });
+
+  it("draws an action pill's mark once", () => {
+    // The pill's mark is decoration that repeats the verb beside it, so a second
+    // copy is a visible defect: the account row's Edit pill shipped with two
+    // pencils side by side after the row chassis was merged. One mark per pill.
+    render(
+      <SettingGroup title="Profile">
+        <SettingRow
+          settingKey="name"
+          title="Name"
+          action={{
+            label: "Edit",
+            icon: createElement(Mic, { size: 18 }),
+          }}
+        />
+      </SettingGroup>,
+    );
+
+    const pill = requireElement(
+      container.querySelector(".setting-row-action"),
+      "the action pill",
+    );
+    expect(pill.querySelectorAll("svg")).toHaveLength(1);
+    expect(pill.textContent).toBe("Edit");
+  });
 });

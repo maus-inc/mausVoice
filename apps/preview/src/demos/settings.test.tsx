@@ -90,12 +90,13 @@ describe("SettingsRowDemo", () => {
       expect(container.querySelector(`#setting-${key}`)).not.toBeNull();
     }
 
-    // The glyph lane is the only aria-hidden direct child of a label block, and
-    // it is one element per row.
-    const glyphs = container.querySelectorAll(
-      ".setting-row-label > [aria-hidden='true']",
+    // The glyph lane is one aria-hidden slot per row, and it leads the row: the
+    // lane is a sibling of the label block, so every row's words start on the
+    // same column whether or not the row carries a mark.
+    const lanes = anchors.map((key) =>
+      container.querySelector(`#setting-${key} > [aria-hidden]`),
     );
-    expect(glyphs.length).toBe(anchors.length);
+    expect(lanes.filter(Boolean)).toHaveLength(anchors.length);
 
     // Switch rows keep the glyph beside their name rather than inside it. The
     // switch is found by its role and the name a person hears, not by the id
