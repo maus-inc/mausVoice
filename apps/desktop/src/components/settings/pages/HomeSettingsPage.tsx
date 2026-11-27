@@ -15,10 +15,6 @@ import { YourModelsCard } from "../home/YourModelsCard";
  * same as every other settings page. Centring the cards here instead put the
  * free space *between* the heading and the cards, which is what made the page
  * look like it had come apart.
- *
- * Both cards are groups of summary rows, so both tell their group that the rows
- * lead with a tile: the heading is set outside the card and lines its text up
- * with theirs from that width.
  */
 export default function HomeSettingsPage() {
   return (

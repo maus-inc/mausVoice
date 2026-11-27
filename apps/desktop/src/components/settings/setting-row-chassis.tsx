@@ -75,54 +75,6 @@ export const settingsCardSx = (theme: Theme): SystemStyleObject<Theme> => ({
   },
 });
 
-/**
- * The inset of a card's content: the row inset plus the border between the
- * card's edge and its rows.
- *
- * Composed as a `calc()` expression rather than a number. The theme's spacing is
- * itself an expression, because the app swaps a spacing variable at runtime
- * instead of baking pixel values into every rule, so adding to it by parsing it
- * would throw the variable away.
- */
-const cardContentInset = (theme: Theme): string =>
-  `calc(${theme.spacing(settingsRowInset)} + ${settingsCardBorderWidth}px)`;
-
-/**
- * The inset for a heading set above a card whose rows have no leading slot, so
- * its text starts where the rows' text starts.
- */
-export const cardContentInsetSx: SystemStyleObject<Theme> = {
-  px: cardContentInset,
-};
-
-/**
- * The inset a group heading, its description and its way out take so their
- * text lines up with the *text* of the rows in the card below.
- *
- * A heading that stopped at the card's edge or at the card's own padding sat a
- * column away from the words it names: one column left of them when the rows
- * carry icons, and a different one when they do not.
- *
- * `leadingWidth` is what the group's rows put before their label: the slot
- * above, the tile a summary row leads with, or nothing at all. A heading is set
- * once for the whole card, so the card has to say which of the three it holds; a
- * group that guesses 24 over a card of 40s sits 16px left of every row it names.
- *
- * Only the left edge takes that offset. The right edge is the card's content
- * edge, so the group's way out ends where the rows' controls end rather than a
- * slot further in.
- */
-export const groupHeadingInsetSx = (
-  leadingWidth?: number,
-): SystemStyleObject<Theme> => ({
-  pl:
-    leadingWidth === undefined
-      ? cardContentInset
-      : (theme) =>
-          `calc(${cardContentInset(theme)} + ${leadingWidth}px + ${theme.spacing(2)})`,
-  pr: cardContentInset,
-});
-
 export const interactiveSx: SystemStyleObject<Theme> = {
   cursor: "pointer",
   transition: "background-color 150ms ease",

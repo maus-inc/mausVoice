@@ -1,28 +1,13 @@
-// Screenshots and measures the settings surface at every window size the app
-// allows.
-//
-// The issue this verifies is a layout one: pages that start on different lines,
-// headings that do not share a column with the rows they name, groups that drift
-// apart. None of that is visible in a unit test, so this drives the real surface
-// through the verification harness and asserts the geometry it renders:
-//
-//   - every page starts on the same line, at every width;
-//   - every row's label starts on one column within a page;
-//   - every group heading sits on that column;
-//   - no group draws a heading over an empty card;
-//   - nothing is clipped and nothing overflows horizontally at 800x600, the
-//     window's minimum.
-//
-// Run the preview app first (`pnpm --filter @maus-inc/preview dev`), then
-// `node scripts/verify/shot-settings.mjs`. Measurements land in
-// `reports/ui-verify/settings-layout.json`; screenshots sit beside it and are
-// not committed.
+// Captures settings geometry at supported window sizes and checks headings, assets, and overflow.
 import { writeFileSync } from "node:fs";
 import { createReportDirectory } from "./browser-config.mjs";
 import { launch, newPage, sleep, waitForTruthy } from "./cdp.mjs";
 import { watchPage } from "./page-watch.mjs";
 
 const OUT = createReportDirectory();
+const EXPECTED_HEADING_ALIGNMENT =
+  process.env.EXPECTED_HEADING_ALIGNMENT || "card-edge";
+const THEME = process.env.THEME || "light";
 
 const HARNESS_BASE =
   process.env.HARNESS_URL ||
@@ -53,13 +38,7 @@ const note = (label, detail) => problems.push(`${label}: ${detail}`);
 /** A measured value, or `null` when the page drew nothing to measure. */
 const orNull = (value) => (value === undefined ? null : value);
 
-/**
- * One group as the committed report keeps it.
- *
- * A group's own box says where it starts and how tall it is, which is how the
- * vertical rhythm between groups shows up in a diff. Its heading and its first
- * label say whether the two share a column.
- */
+/** Reports group dimensions and heading alignment against the card edge. */
 const reportedGroup = ({ title, rows, card, columns }) => {
   const head = title ?? {};
   const frame = card ?? {};
@@ -69,6 +48,7 @@ const reportedGroup = ({ title, rows, card, columns }) => {
     top: orNull(frame.y),
     height: orNull(frame.h),
     labelX: orNull(columns[0]),
+    cardX: orNull(frame.x),
     headingX: orNull(head.x),
   };
 };
@@ -116,13 +96,20 @@ const page = await newPage(port);
 const { consoleErrors, failedRequests } = watchPage(page);
 await page.send("Network.enable");
 
-const report = { sizes: [], consoleErrors, failedRequests, problems };
+const report = {
+  theme: THEME,
+  expectedHeadingAlignment: EXPECTED_HEADING_ALIGNMENT,
+  sizes: [],
+  consoleErrors,
+  failedRequests,
+  problems,
+};
 
 for (const { width, height } of SIZES) {
   await page.setViewport(width, height);
 
   for (const id of PAGES) {
-    await page.goto(`${HARNESS_BASE}?page=${id}&theme=light`);
+    await page.goto(`${HARNESS_BASE}?page=${id}&theme=${THEME}`);
     const readiness = await waitForTruthy({
       evaluate: (expression) => page.evaluate(expression),
       expression: "Boolean(document.querySelector('h1'))",
@@ -135,6 +122,30 @@ for (const { width, height } of SIZES) {
     // The page chunks mount after the shell, so the measured frame is the one
     // after the rows exist rather than the one with the loading state in it.
     await sleep(1200);
+    await page.evaluate("document.fonts.ready.then(() => true)");
+
+    const assetReadiness = await page.evaluate(`(() => {
+      const faces = Array.from(document.fonts).map((face) => ({
+        family: face.family.replace(/[\"']/g, ""),
+        status: face.status,
+      }));
+      const root = getComputedStyle(document.documentElement);
+      const body = getComputedStyle(document.body);
+      return {
+        satoshiLoaded: faces.some((face) => face.family === "Satoshi" && face.status === "loaded"),
+        uiFont: body.fontFamily,
+        spacing: root.getPropertyValue("--app-spacing").trim() || body.getPropertyValue("--app-spacing").trim(),
+      };
+    })()`);
+    if (
+      !assetReadiness.satoshiLoaded ||
+      !assetReadiness.uiFont.includes("Satoshi")
+    ) {
+      note(`${width}px ${id} font`, JSON.stringify(assetReadiness));
+    }
+    if (!assetReadiness.spacing) {
+      note(`${width}px ${id} spacing`, "--app-spacing is not defined");
+    }
 
     const metrics = await page.evaluate(measure);
     writeFileSync(
@@ -150,9 +161,7 @@ for (const { width, height } of SIZES) {
     ].filter((x) => x !== null);
 
     // The check is per card, not per page: the overview sets two cards side by
-    // side, and each one's heading has to line up with its own rows. A page-wide
-    // column would either pass a card that drifted or fail a page that is
-    // deliberately two columns.
+    // side, and each heading names its own card from that card's outer edge.
     for (const group of metrics.groups) {
       const columns = [...new Set(group.columns)];
       const name = group.title?.text ?? "untitled";
@@ -162,7 +171,19 @@ for (const { width, height } of SIZES) {
           `rows start at ${columns.join(", ")}`,
         );
       }
-      if (columns.length === 1 && group.title && group.title.x !== columns[0]) {
+      if (EXPECTED_HEADING_ALIGNMENT === "card-edge") {
+        if (group.title && group.card && group.title.x !== group.card.x) {
+          note(
+            `${width}px ${id} "${name}" heading edge`,
+            `heading at ${group.title.x}, card at ${group.card.x}`,
+          );
+        }
+      } else if (
+        EXPECTED_HEADING_ALIGNMENT === "row-label" &&
+        group.title &&
+        columns.length === 1 &&
+        group.title.x !== columns[0]
+      ) {
         note(
           `${width}px ${id} "${name}" heading column`,
           `heading at ${group.title.x}, rows at ${columns[0]}`,

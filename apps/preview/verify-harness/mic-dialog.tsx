@@ -7,6 +7,8 @@
  * screenshotted outside the Tauri runtime, which is the only place the rest of
  * the suite ever exercises it by reading the DOM.
  */
+import "@desktop/styles/fonts.css";
+import "@desktop/styles/tokens.css";
 import { Box, CssBaseline, ThemeProvider } from "@mui/material";
 import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";

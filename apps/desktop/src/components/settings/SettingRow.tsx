@@ -16,13 +16,11 @@ import { settingAnchorId } from "./settings-routes";
 import {
   contentControlColumnSx,
   controlColumnSx,
-  groupHeadingInsetSx,
   interactiveSx,
   rowSx,
   settingsCardSx,
   settingsRowLeadingSlotWidth,
   SettingRowText,
-  summaryIconTileSize,
   SettingRowValue,
   trailingGlyphColumnSx,
   TrailingGlyph,
@@ -480,21 +478,6 @@ export const SettingToggleRow = ({
   );
 };
 
-/**
- * The width each row shape puts before its label.
- *
- * `none` is absent rather than zero: a heading inset by zero still carries the
- * gap that follows a slot, and a row with no slot has no gap to follow.
- */
-const LEADING_WIDTH: Record<
-  NonNullable<SettingGroupProps["leadsWith"]>,
-  number | undefined
-> = {
-  glyph: settingsRowLeadingSlotWidth,
-  tile: summaryIconTileSize,
-  none: undefined,
-};
-
 export type SettingGroupProps = {
   title: ReactNode;
   description?: ReactNode;
@@ -508,17 +491,6 @@ export type SettingGroupProps = {
    * where it reads as another thing to check instead of a way to go deeper.
    */
   action?: ReactNode;
-  /**
-   * What the group's rows put before their label, when it is not the ordinary
-   * icon slot.
-   *
-   * A summary row leads with a 40px tile when it has a glyph, and with nothing
-   * at all when it does not. The heading is set outside the card, so it has to
-   * be told which of the three the rows do, or it lines up with the wrong
-   * column by the width of a slot. Only the heading reads this; the rows keep
-   * their own geometry.
-   */
-  leadsWith?: "glyph" | "tile" | "none";
   children: ReactNode;
 };
 
@@ -583,18 +555,15 @@ export const SettingGroup = ({
   description,
   danger,
   action,
-  leadsWith = "glyph",
   children,
 }: SettingGroupProps) => {
   if (Children.toArray(children).length === 0) {
     return null;
   }
 
-  const headingInsetSx = groupHeadingInsetSx(LEADING_WIDTH[leadsWith]);
-
   return (
     <Box component="section" sx={{ mb: 4 }}>
-      <Box sx={[groupHeadingRowSx, headingInsetSx]}>
+      <Box sx={groupHeadingRowSx}>
         <Typography
           // A destructive group is presented as a label rather than as an equal
           // of the section headings above it. Same words, different weight: the
@@ -610,10 +579,7 @@ export const SettingGroup = ({
       {description && (
         <Typography
           variant="body2"
-          sx={[
-            { color: "text.secondary", mb: 1.5, maxWidth: "72ch" },
-            headingInsetSx,
-          ]}
+          sx={{ color: "text.secondary", mb: 1.5, maxWidth: "72ch" }}
         >
           {description}
         </Typography>

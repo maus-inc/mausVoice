@@ -356,20 +356,19 @@ describe("SettingRow", () => {
     expect(widths[0]).toBeGreaterThan(0);
   });
 
-  it("sets a group heading on the column its rows' labels start on", () => {
+  it("sets a group heading on the card's edge, not the row text's", () => {
     render(
       <ThemeProvider theme={theme}>
-        <SettingGroup title="Audio">
+        <SettingGroup
+          title="Audio"
+          description="How the microphone behaves."
+          action={<a href="/audio">All audio</a>}
+        >
           <SettingRow settingKey="audio" title="Audio" />
         </SettingGroup>
       </ThemeProvider>,
     );
 
-    const row = requireElement(
-      container.querySelector("#setting-audio"),
-      "the row",
-    );
-    const slot = requireElement(row.firstElementChild, "the leading slot");
     const heading = requireElement(
       container.querySelector("h2"),
       "the group heading",
@@ -378,67 +377,22 @@ describe("SettingRow", () => {
       heading.parentElement,
       "the heading's line",
     );
-    const rowInset = getComputedStyle(row).paddingLeft;
-    const slotWidth = getComputedStyle(slot).width;
-
-    // The heading is outside the card, so its inset is the card's content
-    // inset (the row's) plus the leading slot and the gap after it, which is
-    // the whole distance a row takes before its label starts. jsdom reports
-    // the theme's spacing as the `calc()` expression it is, so the assertion
-    // is on the composition; the rendered column is measured by the capture
-    // harness.
-    const headingInset = getComputedStyle(headingLine).paddingLeft;
-    expect(rowInset).not.toBe("0");
-    expect(slotWidth).not.toBe("0px");
-    expect(headingInset).toContain(rowInset);
-    expect(headingInset).toContain(slotWidth);
-  });
-
-  it("sets a group's heading on the width its rows lead with", () => {
-    render(
-      <ThemeProvider theme={theme}>
-        <SettingGroup title="Glyph-led">
-          <SettingRow settingKey="glyph" title="Glyph" />
-        </SettingGroup>
-        <SettingGroup title="Tile-led" leadsWith="tile">
-          <SettingRow settingKey="tile" title="Tile" />
-        </SettingGroup>
-        <SettingGroup title="Bare" leadsWith="none">
-          <SettingRow settingKey="bare" title="Bare" />
-        </SettingGroup>
-      </ThemeProvider>,
+    const description = requireElement(
+      container.querySelector("h2 + p") ?? headingLine.nextElementSibling,
+      "the group description",
     );
 
-    const lines = ["Glyph-led", "Tile-led", "Bare"].map((title) => {
-      const heading = requireElement(
-        Array.from(container.querySelectorAll("h2")).find(
-          (candidate) => candidate.textContent === title,
-        ),
-        `the ${title} heading`,
-      );
-      return requireElement(heading.parentElement, "the heading's line");
-    });
-    const insets = lines.map((line) => getComputedStyle(line).paddingLeft);
-    const rights = lines.map((line) => getComputedStyle(line).paddingRight);
-    const rowInset = getComputedStyle(
-      requireElement(container.querySelector("#setting-bare"), "the bare row"),
-    ).paddingLeft;
-
-    // A summary row leads with a 40px tile where an ordinary row leads with a
-    // 24px glyph, and a row with no glyph leads with nothing. A heading set once
-    // for the card has to be told which of the three it is over, or it lines up
-    // with the wrong column by the width of a slot.
-    expect(insets[0]).toContain("24px");
-    expect(insets[1]).toContain("40px");
-    // The bare heading starts on the card's content edge, the row's own inset
-    // plus the border between that inset and the card.
-    expect(insets[2]).toContain(rowInset);
-    expect(insets[2]).not.toContain("24px");
-    expect(insets[1]).not.toBe(insets[0]);
-    // The offset belongs to the leading edge only. A heading inset on both sides
-    // pushed the group's way out away from the edge its rows end on.
-    expect(rights[1]).toContain(rowInset);
-    expect(rights[1]).not.toContain("40px");
+    // Keep the heading and description at the card edge, apart from row labels.
+    // jsdom serializes unset padding as "0".
+    expect(Number.parseFloat(getComputedStyle(headingLine).paddingLeft)).toBe(
+      0,
+    );
+    expect(Number.parseFloat(getComputedStyle(headingLine).paddingRight)).toBe(
+      0,
+    );
+    expect(Number.parseFloat(getComputedStyle(description).paddingLeft)).toBe(
+      0,
+    );
   });
 
   it("draws nothing for a group with no rows to show", () => {

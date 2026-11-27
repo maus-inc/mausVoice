@@ -27,6 +27,8 @@
  * shows that it is loading, because nothing has recorded a shortcut in a
  * harness that has never dictated anything.
  */
+import "@desktop/styles/fonts.css";
+import "@desktop/styles/tokens.css";
 import { Box, CssBaseline, Stack, ThemeProvider } from "@mui/material";
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";

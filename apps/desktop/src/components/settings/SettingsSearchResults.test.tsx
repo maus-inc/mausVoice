@@ -106,27 +106,6 @@ describe("SettingsSearchResults", () => {
     );
   });
 
-  it("starts each page's results on the card's own text column", () => {
-    renderHits([hitFor("microphone"), hitFor("audio")]);
-
-    const row = requireElement(
-      container.querySelector("button"),
-      "the result row",
-    );
-    const heading = requireElement(
-      container.querySelector("h2"),
-      "the page heading over the results",
-    );
-    const headingInset = getComputedStyle(heading).paddingLeft;
-    const rowInset = getComputedStyle(row).paddingLeft;
-
-    // The heading sits above the card rather than in it, so it carries the
-    // card's inset plus the border the rows sit inside. Without that it
-    // started a pixel left of every result under it.
-    expect(headingInset).toContain(rowInset);
-    expect(headingInset).not.toBe(rowInset);
-  });
-
   it("names each group of results with a heading", () => {
     renderHits([hitFor("microphone")]);
 

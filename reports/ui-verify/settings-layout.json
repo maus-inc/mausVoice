@@ -1,4 +1,6 @@
 {
+  "theme": "light",
+  "expectedHeadingAlignment": "card-edge",
   "sizes": [
     {
       "width": 1280,
@@ -15,8 +17,8 @@
         977
       ],
       "headingColumns": [
-        537,
-        977
+        520,
+        904
       ],
       "groups": [
         {
@@ -25,15 +27,17 @@
           "top": 177.2,
           "height": 46.3,
           "labelX": null,
-          "headingX": 537
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Your models",
           "rows": 3,
-          "top": 209.2,
-          "height": 257.9,
+          "top": 177.2,
+          "height": 214.7,
           "labelX": 977,
-          "headingX": 977
+          "cardX": 904,
+          "headingX": 904
         }
       ],
       "overflowX": 0
@@ -53,7 +57,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -62,31 +66,35 @@
           "top": 177.2,
           "height": 153.3,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Language",
           "rows": 2,
           "top": 406.5,
-          "height": 153.3,
+          "height": 133,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "While you dictate",
           "rows": 3,
-          "top": 635.7,
-          "height": 259.3,
+          "top": 615.5,
+          "height": 239,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Output",
           "rows": 5,
-          "top": 971,
+          "top": 930.5,
           "height": 390.3,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -106,7 +114,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -115,7 +123,8 @@
           "top": 177.2,
           "height": 133,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Post processing",
@@ -123,7 +132,8 @@
           "top": 386.2,
           "height": 218.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Assistant",
@@ -131,15 +141,17 @@
           "top": 681,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Styles",
           "rows": 1,
           "top": 824.5,
-          "height": 108,
+          "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -159,7 +171,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -168,7 +180,8 @@
           "top": 177.2,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Styles",
@@ -176,7 +189,8 @@
           "top": 320.7,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -196,32 +210,35 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
           "title": "Pill",
           "rows": 2,
           "top": 177.2,
-          "height": 234.3,
+          "height": 193.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Menu bar",
           "rows": 1,
-          "top": 487.5,
+          "top": 447,
           "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Celebrations",
           "rows": 1,
-          "top": 651.2,
+          "top": 610.7,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -241,7 +258,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -250,7 +267,8 @@
           "top": 177.2,
           "height": 153.3,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Dictionary learning",
@@ -258,7 +276,8 @@
           "top": 406.5,
           "height": 153.3,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Devices",
@@ -266,7 +285,8 @@
           "top": 635.7,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -286,7 +306,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -295,7 +315,8 @@
           "top": 177.2,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Input permissions",
@@ -303,7 +324,8 @@
           "top": 367.2,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Updates",
@@ -311,7 +333,8 @@
           "top": 510.7,
           "height": 218.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Support",
@@ -319,7 +342,8 @@
           "top": 805.5,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Legal",
@@ -327,7 +351,8 @@
           "top": 949,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -347,7 +372,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -356,7 +381,8 @@
           "top": 177.2,
           "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Danger zone",
@@ -364,7 +390,8 @@
           "top": 328.9,
           "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -384,8 +411,7 @@
         593
       ],
       "headingColumns": [
-        537,
-        593
+        520
       ],
       "groups": [
         {
@@ -394,7 +420,8 @@
           "top": 177.2,
           "height": 46.3,
           "labelX": null,
-          "headingX": 537
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Your models",
@@ -402,7 +429,8 @@
           "top": 331.5,
           "height": 191.5,
           "labelX": 593,
-          "headingX": 593
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -422,7 +450,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -431,7 +459,8 @@
           "top": 177.2,
           "height": 153.3,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Language",
@@ -439,23 +468,26 @@
           "top": 406.5,
           "height": 173.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "While you dictate",
           "rows": 3,
           "top": 656,
-          "height": 299.8,
+          "height": 279.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Output",
           "rows": 5,
-          "top": 1031.7,
-          "height": 491.5,
+          "top": 1011.5,
+          "height": 471.3,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -475,7 +507,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -484,31 +516,35 @@
           "top": 177.2,
           "height": 173.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Post processing",
           "rows": 3,
           "top": 426.7,
-          "height": 279.5,
+          "height": 259.3,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Assistant",
           "rows": 1,
-          "top": 782.2,
+          "top": 762,
           "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Styles",
           "rows": 1,
-          "top": 946,
-          "height": 148.5,
+          "top": 925.7,
+          "height": 128.3,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -528,7 +564,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -537,7 +573,8 @@
           "top": 177.2,
           "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Styles",
@@ -545,7 +582,8 @@
           "top": 341,
           "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -565,7 +603,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -574,7 +612,8 @@
           "top": 177.2,
           "height": 300.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Menu bar",
@@ -582,7 +621,8 @@
           "top": 553.7,
           "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Celebrations",
@@ -590,7 +630,8 @@
           "top": 717.5,
           "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -610,32 +651,35 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
           "title": "History and storage",
           "rows": 2,
           "top": 177.2,
-          "height": 193.8,
+          "height": 173.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Dictionary learning",
           "rows": 2,
-          "top": 447,
+          "top": 426.7,
           "height": 173.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Devices",
           "rows": 1,
-          "top": 696.5,
+          "top": 676.2,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -655,7 +699,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -664,7 +708,8 @@
           "top": 177.2,
           "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Input permissions",
@@ -672,31 +717,35 @@
           "top": 387.5,
           "height": 87.8,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Updates",
           "rows": 3,
           "top": 551.2,
-          "height": 279.5,
+          "height": 259.3,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Support",
           "rows": 1,
-          "top": 906.7,
-          "height": 87.8,
+          "top": 886.5,
+          "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Legal",
           "rows": 1,
-          "top": 1070.5,
+          "top": 1030,
           "height": 67.5,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -716,7 +765,7 @@
         577
       ],
       "headingColumns": [
-        577
+        520
       ],
       "groups": [
         {
@@ -725,7 +774,8 @@
           "top": 177.2,
           "height": 108,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         },
         {
           "title": "Danger zone",
@@ -733,7 +783,8 @@
           "top": 349.1,
           "height": 128.3,
           "labelX": 577,
-          "headingX": 577
+          "cardX": 520,
+          "headingX": 520
         }
       ],
       "overflowX": 0
@@ -753,25 +804,26 @@
         329
       ],
       "headingColumns": [
-        273,
-        329
+        256
       ],
       "groups": [
         {
           "title": "Shortcuts",
           "rows": 1,
-          "top": 307,
+          "top": 283.8,
           "height": 46.3,
           "labelX": null,
-          "headingX": 273
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Your models",
           "rows": 3,
-          "top": 461.3,
+          "top": 438,
           "height": 191.5,
           "labelX": 329,
-          "headingX": 329
+          "cardX": 256,
+          "headingX": 256
         }
       ],
       "overflowX": 0
@@ -791,7 +843,7 @@
         313
       ],
       "headingColumns": [
-        313
+        256
       ],
       "groups": [
         {
@@ -800,7 +852,8 @@
           "top": 283.8,
           "height": 153.3,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Language",
@@ -808,7 +861,8 @@
           "top": 513,
           "height": 173.5,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "While you dictate",
@@ -816,15 +870,17 @@
           "top": 762.5,
           "height": 299.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Output",
           "rows": 5,
           "top": 1138.3,
-          "height": 511.8,
+          "height": 471.3,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         }
       ],
       "overflowX": 0
@@ -844,40 +900,44 @@
         313
       ],
       "headingColumns": [
-        313
+        256
       ],
       "groups": [
         {
           "title": "Transcription",
           "rows": 2,
-          "top": 307,
+          "top": 283.8,
           "height": 173.5,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Post processing",
           "rows": 3,
-          "top": 556.5,
-          "height": 299.8,
+          "top": 533.3,
+          "height": 279.5,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Assistant",
           "rows": 1,
-          "top": 932.3,
+          "top": 888.8,
           "height": 87.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Styles",
           "rows": 1,
-          "top": 1096,
+          "top": 1052.5,
           "height": 151.3,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         }
       ],
       "overflowX": 0
@@ -897,7 +957,7 @@
         313
       ],
       "headingColumns": [
-        313
+        256
       ],
       "groups": [
         {
@@ -906,7 +966,8 @@
           "top": 283.8,
           "height": 87.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Styles",
@@ -914,7 +975,8 @@
           "top": 447.5,
           "height": 87.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         }
       ],
       "overflowX": 0
@@ -934,7 +996,7 @@
         313
       ],
       "headingColumns": [
-        313
+        256
       ],
       "groups": [
         {
@@ -943,7 +1005,8 @@
           "top": 283.8,
           "height": 300.5,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Menu bar",
@@ -951,7 +1014,8 @@
           "top": 660.3,
           "height": 87.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Celebrations",
@@ -959,7 +1023,8 @@
           "top": 824,
           "height": 87.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         }
       ],
       "overflowX": 0
@@ -979,7 +1044,7 @@
         313
       ],
       "headingColumns": [
-        313
+        256
       ],
       "groups": [
         {
@@ -988,23 +1053,26 @@
           "top": 283.8,
           "height": 193.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Dictionary learning",
           "rows": 2,
           "top": 553.5,
-          "height": 193.8,
+          "height": 173.5,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Devices",
           "rows": 1,
-          "top": 823.3,
+          "top": 803,
           "height": 67.5,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         }
       ],
       "overflowX": 0
@@ -1024,7 +1092,7 @@
         313
       ],
       "headingColumns": [
-        313
+        256
       ],
       "groups": [
         {
@@ -1033,7 +1101,8 @@
           "top": 283.8,
           "height": 87.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Input permissions",
@@ -1041,7 +1110,8 @@
           "top": 494,
           "height": 87.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Updates",
@@ -1049,7 +1119,8 @@
           "top": 657.8,
           "height": 279.5,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Support",
@@ -1057,7 +1128,8 @@
           "top": 1013.3,
           "height": 87.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Legal",
@@ -1065,7 +1137,8 @@
           "top": 1177,
           "height": 67.5,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         }
       ],
       "overflowX": 0
@@ -1085,7 +1158,7 @@
         313
       ],
       "headingColumns": [
-        313
+        256
       ],
       "groups": [
         {
@@ -1094,7 +1167,8 @@
           "top": 283.8,
           "height": 87.8,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         },
         {
           "title": "Danger zone",
@@ -1102,7 +1176,8 @@
           "top": 435.5,
           "height": 108,
           "labelX": 313,
-          "headingX": 313
+          "cardX": 256,
+          "headingX": 256
         }
       ],
       "overflowX": 0

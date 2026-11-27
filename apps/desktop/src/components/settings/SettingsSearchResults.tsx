@@ -5,12 +5,7 @@ import {
   searchResultsByPage,
   type SettingHit,
 } from "../../utils/settings-registry";
-import {
-  cardContentInsetSx,
-  interactiveSx,
-  rowSx,
-  settingsCardSx,
-} from "./setting-row-chassis";
+import { interactiveSx, rowSx, settingsCardSx } from "./setting-row-chassis";
 import { SETTINGS_PAGE_COPY } from "./settings-page-copy";
 
 export const SettingsSearchResults = ({
@@ -44,7 +39,6 @@ export const SettingsSearchResults = ({
                 letterSpacing: "0.06em",
                 mb: 1.5,
               },
-              cardContentInsetSx,
             ]}
           >
             {SETTINGS_PAGE_COPY[page.id].title}
