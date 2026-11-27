@@ -18,6 +18,8 @@ use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibi
 use crate::state::{ClickAction, DropRecord, PillState, WindowMode};
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
 use rust_pill_shared::edge::MonitorRect;
+use rust_pill_shared::flash_banner::CelebrationHost;
+use rust_pill_shared::flash_banner::FlashHost;
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
 use rust_pill_shared::restore::ParkedWindow;
 
@@ -954,14 +956,7 @@ fn stick_on_new_assistant_content(
 }
 
 fn clear_flash(state: &PillState) {
-    rust_pill_shared::clear_flash_state(
-        &state.flash_visible,
-        &state.flash_timer,
-        &state.flash_action,
-        &state.flash_action_label,
-        &state.flash_reject_action,
-        &state.flash_reject_action_label,
-    );
+    rust_pill_shared::flash_banner::FlashHost::clear_flash(state);
 }
 
 /// Applies one IPC message to the pill state and marks the surface dirty so
@@ -1003,16 +998,11 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             clear_flash(state);
         }
         InMessage::Fireworks { message } => {
-            *state.flash_message.borrow_mut() = message;
-            state.flash_is_error.set(false);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-            *state.flash_reject_action.borrow_mut() = None;
-            *state.flash_reject_action_label.borrow_mut() = None;
-            state.flash_visible.set(true);
-            state
-                .flash_timer
-                .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
+            state.celebrate(
+                &message,
+                rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION,
+            );
+
             rust_pill_shared::fireworks::Fireworks {
                 active: &state.fireworks_active,
                 elapsed: &state.fireworks_elapsed,
@@ -1022,16 +1012,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             .restart(reduced_motion());
         }
         InMessage::Flame { message } => {
-            *state.flash_message.borrow_mut() = message;
-            state.flash_is_error.set(false);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-            *state.flash_reject_action.borrow_mut() = None;
-            *state.flash_reject_action_label.borrow_mut() = None;
-            state.flash_visible.set(true);
-            state
-                .flash_timer
-                .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
+            state.celebrate(&message, rust_pill_shared::flame::FLAME_TOTAL_DURATION);
 
             state.flame_active.set(true);
             state.flame_elapsed.set(0.0);
@@ -1380,20 +1361,13 @@ fn tick(state: &PillState, dt: f64) {
         .shimmer_phase
         .set((state.shimmer_phase.get() + SHIMMER_SPEED * frame_scale) % 1.0);
 
-    tick_fireworks(state, dt);
+    state.tick_celebration(dt);
     tick_flame(state, dt);
     tick_flash_blue(state, dt);
     tick_transcript(state, dt);
     tick_long_press(state, dt);
 
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - dt;
-        if remaining <= 0.0 {
-            clear_flash(state);
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
+    rust_pill_shared::flash_banner::tick_banner_timer(state, dt);
     let flash_target = rust_pill_shared::flash_banner_target(
         state.flash_visible.get(),
         state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
@@ -1465,23 +1439,6 @@ fn tick(state: &PillState, dt: f64) {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
         state.scroll_offset.set(max_scroll);
     }
-}
-
-/// The celebration, drawn from just above the pill.
-///
-/// The flight, the burst and the fade are shared with the other two pills -- the
-/// arithmetic here was identical on all three, down to the gravity constant.
-fn tick_fireworks(state: &PillState, dt: f64) {
-    let ww = state.draw_width.get();
-    let wh = state.draw_height.get();
-    let (_, pill_y, _, _) = draw::pill_position(state, ww, wh);
-    rust_pill_shared::fireworks::Fireworks {
-        active: &state.fireworks_active,
-        elapsed: &state.fireworks_elapsed,
-        next_launch: &state.fireworks_next_launch,
-        rockets: &state.fireworks_rockets,
-    }
-    .tick(dt, (ww / 2.0, pill_y - FLASH_GAP - FLASH_HEIGHT / 2.0));
 }
 
 /// The flame, swaying on its own schedule.
