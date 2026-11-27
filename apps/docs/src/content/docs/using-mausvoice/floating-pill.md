@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-The pill is the small always-on-top recording indicator implemented separately for macOS, Windows, and GTK/Linux. Its job is status and quick spatial feedback, not transcript editing.
+The pill is the small always-on-top recording indicator implemented separately for macOS, Windows, and GTK/Linux. It reports recording state and gives quick spatial feedback. With **Review before insert** enabled it also hosts the editable review panel, so a transcript can be corrected in the same surface you were watching while you spoke. [The review guide](../guides/transcript-review/) shows every decision and the expiry.
 
 ## Reposition it
 

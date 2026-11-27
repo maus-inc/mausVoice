@@ -1,0 +1,22 @@
+---
+import FigureImage from "./FigureImage.astro";
+
+type Props = { title: string } & (
+  | { image: string; alt?: string }
+  | { image?: undefined; alt?: never }
+);
+
+const { title, image, alt } = Astro.props;
+---
+
+<li class="mv-step">
+  <span class="mv-step__title">{title}</span>
+  <span class="mv-step__body"><slot /></span>
+  {
+    image && (
+      <span class="mv-step__figure">
+        <FigureImage id={image} alt={alt ?? title} />
+      </span>
+    )
+  }
+</li>
