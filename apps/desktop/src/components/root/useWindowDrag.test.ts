@@ -309,6 +309,33 @@ describe("Windows drag-to-restore", () => {
     });
   });
 
+  it("clamps to a nonzero work-area origin on a scaled display", async () => {
+    // The two halves of the arithmetic meet here: the origin comes from the
+    // monitor in physical pixels, the press comes from the browser in CSS
+    // pixels, and the clamp compares them. A monitor left of and above the
+    // primary has a negative origin, so a clamp that mixed units or assumed
+    // zero would put the bar off the top of that screen. The pointer is high
+    // enough that the unclamped top, 600 physical pixels above the window
+    // origin, would land above the work area entirely.
+    windowMocks.innerSize.mockResolvedValue({ width: 1600, height: 1000 });
+    windowMocks.cursorPosition.mockResolvedValue({ x: 800, y: -100 });
+    windowMocks.currentMonitor.mockResolvedValue({
+      workArea: { position: { x: -1920, y: -40 } },
+    });
+    windowMocks.scaleFactor.mockResolvedValue(2);
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 100, y: 10 });
+    await move(1, 100, 60);
+
+    const [placed] = windowMocks.setPosition.mock.calls[0];
+    // -100 - 20 is above the origin, so the top is pinned to -40 physical and
+    // both coordinates are halved for the logical `setPosition`.
+    expect({ x: placed.x, y: placed.y }).toEqual({
+      x: (800 - (200 / 1600) * 1600) / 2,
+      y: -40 / 2,
+    });
+  });
+
   it("restores on a sideways drag that stays on the bar", async () => {
     // A maximized window already fills the work area. A horizontal drag that
     // stayed on the bar used to move nothing at all.
