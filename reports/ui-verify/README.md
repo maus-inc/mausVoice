@@ -23,6 +23,12 @@ montage -background '#0f1012' -fill '#f4f4f5' -font DejaVu-Sans -pointsize 20 \
   -tile 2x1 -geometry '+16+16' reports/ui-verify/settings-compare/1100-dictation.png
 ```
 
+The dev server caches modules, so a tree swapped under a running server is not
+what the next probe measures: restart `pnpm --filter @maus-inc/preview dev`
+after checking out a different tree, then confirm the page it serves is the one
+you meant (the branch has `.setting-row-label` on the rows; the base does not)
+before trusting a capture.
+
 The JSON is committed deliberately: it is small, it is text, and a reviewer can
 read a diff of it. Regenerating it is expected whenever the UI changes, and the
 diff is the point: it shows what the change did to the measured numbers.
