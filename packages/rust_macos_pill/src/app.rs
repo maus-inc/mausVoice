@@ -22,6 +22,8 @@ use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibi
 use crate::nsstring::with_ns_string;
 use rust_pill_shared::clock::monotonic_now as drag_now;
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
+use rust_pill_shared::flash_banner::CelebrationHost;
+use rust_pill_shared::flash_banner::FlashHost;
 use rust_pill_shared::hover::{HoverFrame, HoverIntent};
 use rust_pill_shared::restore::ParkedWindow;
 
@@ -902,16 +904,10 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
             clear_flash(&ctx.state);
         }
         InMessage::Fireworks { message } => {
-            *ctx.state.flash_message.borrow_mut() = message;
-            ctx.state.flash_is_error.set(false);
-            *ctx.state.flash_action.borrow_mut() = None;
-            *ctx.state.flash_action_label.borrow_mut() = None;
-            *ctx.state.flash_reject_action.borrow_mut() = None;
-            *ctx.state.flash_reject_action_label.borrow_mut() = None;
-            ctx.state.flash_visible.set(true);
-            ctx.state
-                .flash_timer
-                .set(rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION);
+            ctx.state.celebrate(
+                &message,
+                rust_pill_shared::fireworks::FIREWORKS_TOTAL_DURATION,
+            );
 
             rust_pill_shared::fireworks::Fireworks {
                 active: &ctx.state.fireworks_active,
@@ -922,16 +918,8 @@ fn apply_message(ctx: &AppContext, msg: InMessage, dt: f64, now: f64) {
             .restart(reduced_motion());
         }
         InMessage::Flame { message } => {
-            *ctx.state.flash_message.borrow_mut() = message;
-            ctx.state.flash_is_error.set(false);
-            *ctx.state.flash_action.borrow_mut() = None;
-            *ctx.state.flash_action_label.borrow_mut() = None;
-            *ctx.state.flash_reject_action.borrow_mut() = None;
-            *ctx.state.flash_reject_action_label.borrow_mut() = None;
-            ctx.state.flash_visible.set(true);
             ctx.state
-                .flash_timer
-                .set(rust_pill_shared::flame::FLAME_TOTAL_DURATION);
+                .celebrate(&message, rust_pill_shared::flame::FLAME_TOTAL_DURATION);
 
             ctx.state.flame_active.set(true);
             ctx.state.flame_elapsed.set(0.0);
@@ -1541,14 +1529,7 @@ fn update_hover(view: id, ctx: &AppContext) {
 // ── Animation tick ────────────────────────────────────────────────
 
 fn clear_flash(state: &PillState) {
-    rust_pill_shared::clear_flash_state(
-        &state.flash_visible,
-        &state.flash_timer,
-        &state.flash_action,
-        &state.flash_action_label,
-        &state.flash_reject_action,
-        &state.flash_reject_action_label,
-    );
+    rust_pill_shared::flash_banner::FlashHost::clear_flash(state);
 }
 
 fn ns_rect_to_monitor_rect(frame: NSRect) -> rust_pill_shared::edge::MonitorRect {
@@ -1788,7 +1769,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
         .set((state.shimmer_phase.get() + SHIMMER_SPEED * frame_scale) % 1.0);
 
     // Fireworks
-    tick_fireworks(state, dt);
+    state.tick_celebration(dt);
 
     // Flame
     tick_flame(state, dt);
@@ -1803,14 +1784,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     tick_long_press(state, window, dt);
 
     // Flash message timer
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - dt;
-        if remaining <= 0.0 {
-            clear_flash(state);
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
+    rust_pill_shared::flash_banner::tick_banner_timer(state, dt);
     let flash_target = rust_pill_shared::flash_banner_target(
         state.flash_visible.get(),
         state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
@@ -1896,23 +1870,6 @@ fn tick(state: &PillState, window: id, dt: f64) {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
         state.scroll_offset.set(max_scroll);
     }
-}
-
-/// The celebration, drawn from just above the pill.
-///
-/// The flight, the burst and the fade are shared with the other two pills -- the
-/// arithmetic here was identical on all three, down to the gravity constant.
-fn tick_fireworks(state: &PillState, dt: f64) {
-    let ww = state.draw_width.get();
-    let wh = state.draw_height.get();
-    let (_, pill_y, _, _) = draw::pill_position(state, ww, wh);
-    rust_pill_shared::fireworks::Fireworks {
-        active: &state.fireworks_active,
-        elapsed: &state.fireworks_elapsed,
-        next_launch: &state.fireworks_next_launch,
-        rockets: &state.fireworks_rockets,
-    }
-    .tick(dt, (ww / 2.0, pill_y - FLASH_GAP - FLASH_HEIGHT / 2.0));
 }
 
 /// The flame, swaying on its own schedule.

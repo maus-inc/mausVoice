@@ -3,6 +3,7 @@ use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
+use rust_pill_shared::flash_banner::BannerButton;
 use rust_pill_shared::{DRAG_INFLATE_SCALE, LONG_PRESS_OUTLINE_COLOR};
 
 /// Paints the whole pill window: clears, scales for the UI scale factor, then
@@ -590,6 +591,12 @@ fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
 // ── Flash message ────────────────────────────────────────────────
 
+/// Draws the flash banner above the pill.
+///
+/// The geometry is entirely [`rust_pill_shared::flash_banner`]'s: it bounds the
+/// banner by the window, wraps the message to the room the buttons leave and
+/// grows the height with the line count. This function measures and paints, and
+/// nothing else, so the three pills cannot disagree about where the banner goes.
 fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let flash_t = state.flash_t.get();
     if flash_t < 0.01 {
@@ -604,50 +611,49 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
     let reject_label = state.flash_reject_action_label.borrow();
-    let has_action = action_label.is_some();
-    let has_reject = reject_label.is_some();
 
+    // The preferred width is measured at the size the banner has always used
+    // for it, one point above the paint size, so a short toast keeps exactly the
+    // width it had. The wrap measures at the paint size, because those are the
+    // glyphs that have to fit.
     ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(13.0);
-    let text_extents = ctx.text_extents(&message);
-
-    let action_w = if let Some(ref label) = *action_label {
+    let preferred_w = ctx.text_extents(&message).width;
+    let measure = |text: &str| {
         ctx.select_font_face("Satoshi", false, true);
-        ctx.set_font_size(11.0);
-        let ext = ctx.text_extents(label);
-        ext.width + FLASH_ACTION_PADDING_H * 2.0
-    } else {
-        0.0
+        ctx.set_font_size(12.0);
+        ctx.text_extents(text).width
     };
 
-    let reject_w = if let Some(ref label) = *reject_label {
+    let action_text: Option<&String> = (*action_label).as_ref();
+    let reject_text: Option<&String> = (*reject_label).as_ref();
+    let button_width = |label: Option<&String>| -> Option<f64> {
+        let text = label?;
         ctx.select_font_face("Satoshi", false, true);
         ctx.set_font_size(11.0);
-        let ext = ctx.text_extents(label);
-        ext.width + FLASH_ACTION_PADDING_H * 2.0
-    } else {
-        0.0
+        Some(ctx.text_extents(text).width + FLASH_ACTION_PADDING_H * 2.0)
     };
-
-    let mut action_section = 0.0;
-    if has_action {
-        action_section += FLASH_ACTION_GAP + action_w;
-    }
-    if has_reject {
-        action_section += FLASH_ACTION_GAP + reject_w;
-    }
-
-    let flash_w = (text_extents.width + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
-
-    let scale = FLASH_MIN_SCALE + (1.0 - FLASH_MIN_SCALE) * flash_t;
-    let alpha = flash_t;
-
-    let (_, pill_y, _, _) = pill_position(state, ww, wh);
-    let full_x = (ww - flash_w) / 2.0;
-    let full_y = pill_y - FLASH_GAP - FLASH_HEIGHT;
-
-    let center_x = full_x + flash_w / 2.0;
-    let center_y = full_y + FLASH_HEIGHT / 2.0;
+    let widths = (
+        preferred_w,
+        button_width(action_text),
+        button_width(reject_text),
+    );
+    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    // The banner may use the whole window, and it is laid out in the painter's
+    // own space, which `draw_all` has already shifted by `content_offset`. So the
+    // surface is the room the painter actually fills rather than the pill's own
+    // box, which used to cap a dictation toast at 196 units in a 600-unit window.
+    let surface =
+        rust_pill_shared::flash_banner::BannerSurface::of_painter(ww, state.content_offset().0);
+    let (layout, scale, alpha, (center_x, center_y)) =
+        rust_pill_shared::flash_banner::FlashFrame::resolve_for_window(
+            &message,
+            measure,
+            widths,
+            (pill_y, surface, wh, pill_x + pill_w / 2.0),
+            flash_t,
+            (&state.banner_lines, &state.banner_center),
+        );
 
     ctx.save();
     ctx.translate(center_x, center_y);
@@ -660,102 +666,53 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     } else {
         (0.0, 0.0, 0.0)
     };
-    gfx::rounded_rect(ctx, full_x, full_y, flash_w, FLASH_HEIGHT, FLASH_RADIUS);
+    let banner = layout.banner;
+    gfx::rounded_rect(ctx, banner.x, banner.y, banner.w, banner.h, FLASH_RADIUS);
     ctx.set_source_rgba(bg_r, bg_g, bg_b, 0.92 * alpha);
     ctx.fill();
 
-    // Message text
+    // Message text, one painted line per entry the shared wrap produced. A
+    // button keeps the block left aligned against its padding; without one the
+    // line is centred, which is the compact look a short toast has always had.
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
     ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(12.0);
-    let text_left = if has_action || has_reject {
-        full_x + FLASH_PADDING_H
-    } else {
-        full_x + (flash_w - text_extents.width) / 2.0
-    };
-    let tx = text_left - text_extents.x_bearing;
-    let ty = full_y + (FLASH_HEIGHT - text_extents.height) / 2.0 - text_extents.y_bearing;
-    ctx.move_to(tx, ty);
-    ctx.show_text(&message);
-
-    // Reject button (drawn to the left of the accept button)
-    if let Some(ref label) = *reject_label {
-        let accept_offset = if has_action {
-            action_w + FLASH_ACTION_GAP
-        } else {
-            0.0
-        };
-        let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
-        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
-
-        gfx::rounded_rect(
-            ctx,
-            btn_x,
-            btn_y,
-            reject_w,
-            FLASH_ACTION_HEIGHT,
-            FLASH_ACTION_RADIUS,
-        );
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
-        ctx.fill();
-
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
-        ctx.select_font_face("Satoshi", false, true);
-        ctx.set_font_size(11.0);
-        let label_ext = ctx.text_extents(label);
-        let lx = btn_x + (reject_w - label_ext.width) / 2.0 - label_ext.x_bearing;
-        let ly = btn_y + (FLASH_ACTION_HEIGHT - label_ext.height) / 2.0 - label_ext.y_bearing;
-        ctx.move_to(lx, ly);
-        ctx.show_text(label);
-
-        register_scaled_click(
-            state,
-            btn_x,
-            btn_y,
-            reject_w,
-            FLASH_ACTION_HEIGHT,
-            center_x,
-            center_y,
-            scale,
-            ClickAction::FlashReject,
-        );
+    for (index, line, x) in layout.text_runs(|l| ctx.text_extents(l).width) {
+        let extents = ctx.text_extents(line);
+        let y = layout.text.line_top(index, extents.height);
+        ctx.move_to(x - extents.x_bearing, y - extents.y_bearing);
+        ctx.show_text(line);
     }
 
-    // Action button
-    if let Some(ref label) = *action_label {
-        let btn_x = full_x + flash_w - FLASH_PADDING_H - action_w;
-        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
+    for (rect, button) in layout.buttons() {
+        let label = rust_pill_shared::flash_banner::button_label(button, action_text, reject_text);
+        let Some(label) = label else {
+            continue;
+        };
 
-        gfx::rounded_rect(
-            ctx,
-            btn_x,
-            btn_y,
-            action_w,
-            FLASH_ACTION_HEIGHT,
-            FLASH_ACTION_RADIUS,
-        );
+        gfx::rounded_rect(ctx, rect.x, rect.y, rect.w, rect.h, FLASH_ACTION_RADIUS);
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
         ctx.fill();
 
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
         ctx.select_font_face("Satoshi", false, true);
         ctx.set_font_size(11.0);
-        let label_ext = ctx.text_extents(label);
-        let lx = btn_x + (action_w - label_ext.width) / 2.0 - label_ext.x_bearing;
-        let ly = btn_y + (FLASH_ACTION_HEIGHT - label_ext.height) / 2.0 - label_ext.y_bearing;
-        ctx.move_to(lx, ly);
+        let extents = ctx.text_extents(label);
+        ctx.move_to(
+            rect.x + (rect.w - extents.width) / 2.0 - extents.x_bearing,
+            rect.y + (rect.h - extents.height) / 2.0 - extents.y_bearing,
+        );
         ctx.show_text(label);
 
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one.
+        let action = match button {
+            BannerButton::Action => ClickAction::FlashAction,
+            BannerButton::Reject => ClickAction::FlashReject,
+        };
         register_scaled_click(
-            state,
-            btn_x,
-            btn_y,
-            action_w,
-            FLASH_ACTION_HEIGHT,
-            center_x,
-            center_y,
-            scale,
-            ClickAction::FlashAction,
+            state, rect.x, rect.y, rect.w, rect.h, center_x, center_y, scale, action,
         );
     }
 
