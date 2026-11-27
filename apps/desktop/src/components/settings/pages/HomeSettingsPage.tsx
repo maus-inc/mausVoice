@@ -11,10 +11,10 @@ import { YourModelsCard } from "../home/YourModelsCard";
  * nothing on this page carries an anchor of its own — see `SettingSummaryRow`.
  *
  * The page holds no opinion about where it sits vertically. Its heading and its
- * cards travel together as one block, centred when there is room and otherwise
- * laid out from the top — see the `auto` margins in `SettingsLayout`. Centring
- * the cards here instead put the free space *between* the heading and the cards,
- * which is what made the page look like it had come apart.
+ * cards travel together as one block that starts at the top of the surface, the
+ * same as every other settings page. Centring the cards here instead put the
+ * free space *between* the heading and the cards, which is what made the page
+ * look like it had come apart.
  */
 export default function HomeSettingsPage() {
   return (

@@ -7,6 +7,8 @@
  * screenshotted outside the Tauri runtime, which is the only place the rest of
  * the suite ever exercises it by reading the DOM.
  */
+import "@desktop/styles/fonts.css";
+import "@desktop/styles/tokens.css";
 import { Box, CssBaseline, ThemeProvider } from "@mui/material";
 import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
@@ -14,6 +16,7 @@ import { IntlProvider } from "react-intl";
 import { THEME_PROVIDER_CONFIG, theme } from "@desktop/theme";
 import { SonnerToaster } from "@desktop/components/root/SonnerToaster";
 import en from "@desktop/i18n/locales/en.json";
+import { installFakeTauri } from "./fake-tauri";
 
 /**
  * A deterministic stand-in for the Tauri command surface.
@@ -118,48 +121,19 @@ const handlers: Record<string, (args: any) => unknown> = {
 
 (globalThis as any).__stats = stats;
 (globalThis as any).__unhandled = unhandled;
-const eventCallbacks = new Map<number, (payload: unknown) => void>();
-let nextEventId = 1;
 
-(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
-  unregisterListener: (_id: number) => {},
-};
-(window as any).__TAURI_INTERNALS__ = {
-  // The settings dialog only ever lives in the main window, and the local-data
-  // write gate refuses writes from any other label. Labelling it anything else
-  // would make the harness test a window the feature is never shown in.
-  metadata: {
-    currentWindow: { label: "main" },
-    currentWebview: { label: "main" },
-  },
-  // `listen()` registers its callback through `transformCallback` before
-  // invoking `plugin:event|listen`. Without it the readiness subscription
-  // throws and the harness never receives events.
-  transformCallback: (callback: (payload: unknown) => void) => {
-    const id = nextEventId++;
-    eventCallbacks.set(id, callback);
-    return id;
-  },
-  runCallback: (id: number, payload: unknown) => {
-    eventCallbacks.get(id)?.(payload);
-  },
-  unregisterCallback: (id: number) => {
-    eventCallbacks.delete(id);
-  },
-  invoke: (cmd: string, args: any) => {
-    const handler = handlers[cmd];
-    if (!handler) {
-      unhandled.add(cmd);
-      // Every unmapped command is recorded and rejected, so a gap fails loudly
-      // in the probe output instead of silently returning undefined. Rejection
-      // rather than a synchronous throw, because the real `invoke` always
-      // returns a promise and a caller is entitled to rely on that.
-      return Promise.reject(new Error(`harness: no fake for command "${cmd}"`));
-    }
-    return Promise.resolve(handler(args));
-  },
-};
-(globalThis as any).__stats = stats;
+installFakeTauri((cmd, args) => {
+  const handler = handlers[cmd];
+  if (!handler) {
+    unhandled.add(cmd);
+    // Every unmapped command is recorded and rejected, so a gap fails loudly in
+    // the probe output instead of silently returning undefined. Rejection rather
+    // than a silent undefined, because the real `invoke` always returns a
+    // promise and a caller is entitled to rely on that.
+    throw new Error(`harness: no fake for command "${cmd}"`);
+  }
+  return handler(args);
+});
 
 const LazyDialog = React.lazy(() =>
   import("@desktop/components/settings/MicrophoneDialog").then((m) => ({
