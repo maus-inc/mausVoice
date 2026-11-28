@@ -3,6 +3,7 @@
     "apps/desktop/src/preview/tauri/app.ts",
     "apps/desktop/src/preview/tauri/autostart.ts",
     "apps/desktop/src/preview/tauri/core.ts",
+    "apps/desktop/src/preview/tauri/dpi.ts",
     "apps/desktop/src/preview/tauri/event.ts",
     "apps/desktop/src/preview/tauri/http.ts",
     "apps/desktop/src/preview/tauri/log.ts",

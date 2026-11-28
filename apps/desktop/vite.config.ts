@@ -110,6 +110,7 @@ export default defineConfig(async ({ mode }) => {
             "@tauri-apps/api/window": previewAlias("window"),
             "@tauri-apps/api/webviewWindow": previewAlias("webviewWindow"),
             "@tauri-apps/api/path": previewAlias("path"),
+            "@tauri-apps/api/dpi": previewAlias("dpi"),
             "@tauri-apps/plugin-http": previewAlias("http"),
             "@tauri-apps/plugin-log": previewAlias("log"),
             "@tauri-apps/plugin-opener": previewAlias("opener"),
