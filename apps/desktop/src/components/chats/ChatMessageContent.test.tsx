@@ -89,7 +89,7 @@ describe("ChatMessageContent bubble spacing, wrapping, and markdown containment"
     expect(editingUserSx.color).toBe("text.primary");
     expect(editingUserSx.border).toBe(1);
     expect(editingUserSx["& button"]).toEqual({
-      overflowWrap: "normal",
+      overflowWrap: "break-word",
       wordBreak: "normal",
     });
   });
@@ -210,6 +210,33 @@ describe("ChatMessageContent bubble spacing, wrapping, and markdown containment"
       "https://docs.example.com/guide",
       "a link in the chat",
     );
+
+    openExternalUrlMock.mockClear();
+    await act(async () => {
+      anchors[0].dispatchEvent(
+        new MouseEvent("auxclick", {
+          button: 1,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(openExternalUrlMock).toHaveBeenCalledWith(
+      "https://docs.example.com/guide",
+      "a link in the chat",
+    );
+
+    openExternalUrlMock.mockClear();
+    await act(async () => {
+      anchors[0].dispatchEvent(
+        new MouseEvent("auxclick", {
+          button: 2,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(openExternalUrlMock).not.toHaveBeenCalled();
   });
 
   it("renders multi-part text messages and inline edit mode without button character breaking", async () => {
@@ -241,7 +268,7 @@ describe("ChatMessageContent bubble spacing, wrapping, and markdown containment"
         editor={
           <MessageEditForm
             draft="Updated prompt"
-            confirmDrop={false}
+            confirmDrop={true}
             onChange={() => {}}
             onCancel={() => {}}
             onSave={() => {}}
@@ -260,9 +287,19 @@ describe("ChatMessageContent bubble spacing, wrapping, and markdown containment"
     const cancelButton = Array.from(container.querySelectorAll("button")).find(
       (btn) => btn.textContent?.includes("Cancel"),
     );
+    const confirmButton = Array.from(container.querySelectorAll("button")).find(
+      (btn) => btn.textContent?.includes("Drop later messages and resend"),
+    );
     expect(cancelButton).toBeTruthy();
+    expect(confirmButton).toBeTruthy();
     expect(getComputedStyle(cancelButton as HTMLElement).overflowWrap).toBe(
+      "break-word",
+    );
+    expect(getComputedStyle(confirmButton as HTMLElement).whiteSpace).toBe(
       "normal",
+    );
+    expect(getComputedStyle(confirmButton as HTMLElement).maxWidth).toBe(
+      "100%",
     );
   });
 });

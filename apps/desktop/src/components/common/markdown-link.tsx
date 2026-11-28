@@ -30,9 +30,17 @@ export const createMarkdownLink = (description: string) => {
         target="_blank"
         rel="noopener noreferrer"
         onClick={(event) => {
-          // Intercept every click in the desktop window so modified or middle
-          // clicks do not attempt to open an unhosted tab or navigate the app
-          // webview, while keeping the real href for context menus and AT.
+          // Intercept every click in the desktop window so modified clicks do
+          // not open an unhosted tab or navigate the app webview, while
+          // keeping the real href for context menus and assistive technology.
+          event.preventDefault();
+          openExternalUrl(url, description);
+        }}
+        onAuxClick={(event) => {
+          // Middle-click fires `auxclick` rather than `click`; route it through
+          // the native opener as well while leaving right-click context menus
+          // (`button === 2`) untouched.
+          if (event.button !== 1) return;
           event.preventDefault();
           openExternalUrl(url, description);
         }}

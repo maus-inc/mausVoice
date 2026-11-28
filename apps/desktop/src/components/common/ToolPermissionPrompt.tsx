@@ -4,6 +4,10 @@ import { Check, CheckCheck, X } from "lucide-react";
 import { FormattedMessage } from "react-intl";
 import { overlayOnDark } from "../../styles/palette";
 import { useAppStore } from "../../store";
+import {
+  chatBubbleMaxWidth,
+  wrappableActionButtonSx,
+} from "./chat-bubble.styles";
 import { ToolParamsTooltip } from "./ToolParamsTooltip";
 
 type ToolPermissionPromptProps = {
@@ -27,8 +31,8 @@ const PermissionActions = ({
 }: PermissionActionsProps) => {
   const iconSize = overlay ? 14 : 16;
   const textButtonSx = overlay
-    ? { color: overlayOnDark.muted, minWidth: 0 }
-    : undefined;
+    ? { ...wrappableActionButtonSx, color: overlayOnDark.muted }
+    : wrappableActionButtonSx;
   return (
     <Stack
       direction="row"
@@ -54,6 +58,7 @@ const PermissionActions = ({
         variant="contained"
         onClick={onAllow}
         startIcon={<Check size={iconSize} strokeWidth={1.9} />}
+        sx={wrappableActionButtonSx}
       >
         <FormattedMessage defaultMessage="Allow" />
       </Button>
@@ -174,7 +179,7 @@ export const ToolPermissionPrompt = ({
       <Box
         sx={{
           minWidth: 0,
-          maxWidth: { xs: "86%", sm: "78%" },
+          maxWidth: chatBubbleMaxWidth,
           px: 2,
           py: 1.5,
           borderRadius: 2.5,

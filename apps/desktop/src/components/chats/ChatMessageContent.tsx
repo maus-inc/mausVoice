@@ -5,6 +5,10 @@ import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  chatBubbleMaxWidth,
+  wrappableActionButtonSx,
+} from "../common/chat-bubble.styles";
 import { createMarkdownLink } from "../common/markdown-link";
 import {
   ReasoningPart,
@@ -39,10 +43,7 @@ const thinkingShimmer = keyframes`
   100% { background-position: -200% 50%; }
 `;
 
-export const chatBubbleMaxWidth = {
-  xs: "86%",
-  sm: "78%",
-} as const;
+export { chatBubbleMaxWidth };
 
 const ChatMarkdownTable = ({ children, ...props }: ComponentProps<"table">) => (
   <Box data-chat-table-scroll="" sx={{ maxWidth: "100%", overflowX: "auto" }}>
@@ -168,7 +169,7 @@ export const bubbleSx = (isMe: boolean, editing = false) => {
     lineHeight: 1.55,
     overflowWrap: "anywhere",
     wordBreak: "normal",
-    "& button": { overflowWrap: "normal", wordBreak: "normal" },
+    "& button": { overflowWrap: "break-word", wordBreak: "normal" },
     ...markdownBlockSx(filled),
     ...markdownCodeAndTableSx(filled),
   };
@@ -232,7 +233,12 @@ export const MessageEditForm = ({
           gap: 1,
         }}
       >
-        <Button size="small" variant="text" onClick={onCancel}>
+        <Button
+          size="small"
+          variant="text"
+          onClick={onCancel}
+          sx={wrappableActionButtonSx}
+        >
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
         <Button
@@ -240,6 +246,7 @@ export const MessageEditForm = ({
           variant="contained"
           disabled={!draft.trim()}
           onClick={onSave}
+          sx={wrappableActionButtonSx}
         >
           {confirmDrop ? (
             <FormattedMessage defaultMessage="Drop later messages and resend" />
@@ -295,25 +302,30 @@ const MessageBody = ({
       </Markdown>
     );
   } else {
+    const keyCounts = new Map<string, number>();
     normalBody = (
       <Stack spacing={1} sx={{ minWidth: 0 }}>
-        {texts.map((part, index) => (
-          <Box
-            key={index}
-            sx={{
-              minWidth: 0,
-              "& > *": { mt: 0, mb: 0 },
-              "& > * + *": { mt: 1 },
-            }}
-          >
-            <Markdown
-              remarkPlugins={[remarkGfm]}
-              components={markdownComponents}
+        {texts.map((part) => {
+          const seen = keyCounts.get(part.text) ?? 0;
+          keyCounts.set(part.text, seen + 1);
+          return (
+            <Box
+              key={`${seen}-${part.text.slice(0, 48)}`}
+              sx={{
+                minWidth: 0,
+                "& > *": { mt: 0, mb: 0 },
+                "& > * + *": { mt: 1 },
+              }}
             >
-              {part.text}
-            </Markdown>
-          </Box>
-        ))}
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                components={markdownComponents}
+              >
+                {part.text}
+              </Markdown>
+            </Box>
+          );
+        })}
       </Stack>
     );
   }

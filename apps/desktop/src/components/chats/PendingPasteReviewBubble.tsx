@@ -10,7 +10,10 @@ import {
 } from "../../actions/pending-paste-review.actions";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import { getIntl } from "../../i18n/intl";
-import { chatBubbleMaxWidth } from "./ChatMessageContent";
+import {
+  chatBubbleMaxWidth,
+  wrappableActionButtonSx,
+} from "../common/chat-bubble.styles";
 
 type PendingPasteReviewBubbleProps = {
   message: ChatMessage;
@@ -140,6 +143,7 @@ export const PendingPasteReviewBubble = ({
               startIcon={<ContentCopyRounded />}
               disabled={busy || !text.trim()}
               onClick={copyForManualPaste}
+              sx={wrappableActionButtonSx}
             >
               <FormattedMessage defaultMessage="Copy for manual paste" />
             </Button>
@@ -149,6 +153,7 @@ export const PendingPasteReviewBubble = ({
               startIcon={<DoNotDisturbRounded />}
               disabled={busy}
               onClick={cancel}
+              sx={wrappableActionButtonSx}
             >
               <FormattedMessage defaultMessage="Cancel" />
             </Button>
