@@ -22,6 +22,7 @@ vi.mock("react-intl", async (importOriginal) => {
     await import("../../../test/helpers/react-intl-mock");
   return reactIntlWithIdsModule(importOriginal);
 });
+import de from "../../i18n/locales/de.json";
 import en from "../../i18n/locales/en.json";
 import { activityHeatmapGeometry } from "../../styles/activity-heatmap";
 import {
@@ -63,11 +64,13 @@ describe("ActivityHeatmap", () => {
     wordCount: number,
     status: DailyActivityStatus = "success",
     dark = false,
+    locale = "en",
+    messages: Record<string, string> = en,
   ) => {
     useIsDarkModeMock.mockReturnValue(dark);
     act(() => {
       root.render(
-        <IntlProvider locale="en" messages={en}>
+        <IntlProvider locale={locale} messages={messages}>
           <ThemeProvider theme={createTheme()}>
             <ActivityHeatmap
               activity={
@@ -700,11 +703,17 @@ describe("ActivityHeatmap", () => {
     const lightSwatch = container.querySelector<HTMLElement>(
       '[data-testid="activity-heatmap-legend-swatch-skeleton"]',
     );
+    const lightLabelBar = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-legend-label-skeleton-bar"]',
+    );
 
     expect(window.getComputedStyle(lightPastCell!).backgroundColor).toBe(
       expectedLightRgb,
     );
     expect(window.getComputedStyle(lightSwatch!).backgroundColor).toBe(
+      expectedLightRgb,
+    );
+    expect(window.getComputedStyle(lightLabelBar!).backgroundColor).toBe(
       expectedLightRgb,
     );
     expect(window.getComputedStyle(lightFutureCell!).backgroundColor).toBe(
@@ -723,6 +732,9 @@ describe("ActivityHeatmap", () => {
     const darkSwatch = container.querySelector<HTMLElement>(
       '[data-testid="activity-heatmap-legend-swatch-skeleton"]',
     );
+    const darkLabelBar = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-legend-label-skeleton-bar"]',
+    );
 
     expect(window.getComputedStyle(darkPastCell!).backgroundColor).toBe(
       expectedDarkRgb,
@@ -730,7 +742,35 @@ describe("ActivityHeatmap", () => {
     expect(window.getComputedStyle(darkSwatch!).backgroundColor).toBe(
       expectedDarkRgb,
     );
+    expect(window.getComputedStyle(darkLabelBar!).backgroundColor).toBe(
+      expectedDarkRgb,
+    );
     expect(expectedDarkRgb).not.toBe(expectedLightRgb);
+  });
+
+  it("sizes skeleton legend label bars from the active locale without showing text", () => {
+    renderHeatmap(0, "loading", false, "de", de);
+
+    const skeletonSlots = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-testid="activity-heatmap-legend-label-skeleton"]',
+      ),
+    );
+    expect(skeletonSlots).toHaveLength(2);
+    expect(skeletonSlots.map((slot) => slot.textContent)).toEqual([
+      "Weniger",
+      "Mehr",
+    ]);
+
+    for (const slot of skeletonSlots) {
+      expect(slot.getAttribute("aria-hidden")).toBe("true");
+      const hiddenLabel = slot.querySelector<HTMLElement>("span");
+      expect(hiddenLabel).not.toBeNull();
+      const hiddenStyle = window.getComputedStyle(hiddenLabel!);
+      expect(hiddenStyle.visibility).toBe("hidden");
+      expect(hiddenStyle.fontSize).toBe("9px");
+      expect(hiddenStyle.lineHeight).toBe("1");
+    }
   });
 
   it("disables skeleton pulse animation when reduced motion is preferred", () => {

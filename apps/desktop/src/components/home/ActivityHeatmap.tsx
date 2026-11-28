@@ -42,10 +42,12 @@ import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 const MS_PER_SECOND = 1000;
 const HEATMAP_TOOLTIP_ENTER_MS = Math.round(duration.instant * MS_PER_SECOND);
 const CELL_BORDER_RADIUS = 0.15;
-// Matches the 4-character 9px monospace "Less"/"More" labels while the 10px
-// swatches govern the legend row height.
-const LEGEND_LABEL_PLACEHOLDER_WIDTH = 22;
 const LEGEND_LABEL_PLACEHOLDER_HEIGHT = 6;
+const LEGEND_LABEL_SX = {
+  fontFamily: "var(--font-data)",
+  fontSize: 9,
+  lineHeight: 1,
+} as const;
 const SKELETON_FUTURE_CELL_SX = {
   width: activityHeatmapGeometry.cellSize,
   height: activityHeatmapGeometry.cellSize,
@@ -127,16 +129,14 @@ const useHeatmapPresentation = (
   status: DailyActivityStatus,
   hasActivityData: boolean,
 ): HeatmapPresentation => {
-  const [prevStatus, setPrevStatus] = useState(status);
   const [lastSettledStatus, setLastSettledStatus] =
     useState<SettledActivityStatus>(status === "loading" ? "idle" : status);
 
-  if (status !== prevStatus) {
-    setPrevStatus(status);
+  useLayoutEffect(() => {
     if (status !== "loading") {
       setLastSettledStatus(status);
     }
-  }
+  }, [status]);
 
   return resolveHeatmapPresentation(status, hasActivityData, lastSettledStatus);
 };
@@ -623,6 +623,48 @@ const ActivityHeatmapResults = ({
   );
 };
 
+const LegendLabelSkeleton = ({
+  skeletonColor,
+  children,
+}: {
+  skeletonColor: string;
+  children: ReactNode;
+}) => (
+  <Box
+    component="span"
+    aria-hidden="true"
+    data-testid="activity-heatmap-legend-label-skeleton"
+    sx={{
+      position: "relative",
+      display: "inline-flex",
+      alignItems: "center",
+    }}
+  >
+    <Typography
+      component="span"
+      variant="caption"
+      sx={{
+        ...LEGEND_LABEL_SX,
+        visibility: "hidden",
+        userSelect: "none",
+      }}
+    >
+      {children}
+    </Typography>
+    <Box
+      component="span"
+      data-testid="activity-heatmap-legend-label-skeleton-bar"
+      sx={{
+        position: "absolute",
+        insetInline: 0,
+        height: LEGEND_LABEL_PLACEHOLDER_HEIGHT,
+        borderRadius: CELL_BORDER_RADIUS,
+        bgcolor: skeletonColor,
+      }}
+    />
+  </Box>
+);
+
 const ActivityHeatmapLegendSkeleton = ({
   swatchKeys,
   skeletonColor,
@@ -647,15 +689,9 @@ const ActivityHeatmapLegendSkeleton = ({
         ...skeletonPulseSx(prefersReducedMotion),
       }}
     >
-      <Box
-        data-testid="activity-heatmap-legend-label-skeleton"
-        sx={{
-          width: LEGEND_LABEL_PLACEHOLDER_WIDTH,
-          height: LEGEND_LABEL_PLACEHOLDER_HEIGHT,
-          borderRadius: CELL_BORDER_RADIUS,
-          bgcolor: skeletonColor,
-        }}
-      />
+      <LegendLabelSkeleton skeletonColor={skeletonColor}>
+        <FormattedMessage defaultMessage="Less" />
+      </LegendLabelSkeleton>
       {swatchKeys.map((swatchKey) => (
         <Box
           key={swatchKey}
@@ -668,15 +704,9 @@ const ActivityHeatmapLegendSkeleton = ({
           }}
         />
       ))}
-      <Box
-        data-testid="activity-heatmap-legend-label-skeleton"
-        sx={{
-          width: LEGEND_LABEL_PLACEHOLDER_WIDTH,
-          height: LEGEND_LABEL_PLACEHOLDER_HEIGHT,
-          borderRadius: CELL_BORDER_RADIUS,
-          bgcolor: skeletonColor,
-        }}
-      />
+      <LegendLabelSkeleton skeletonColor={skeletonColor}>
+        <FormattedMessage defaultMessage="More" />
+      </LegendLabelSkeleton>
     </Stack>
   );
 };
@@ -702,10 +732,8 @@ const ActivityHeatmapLegend = ({ colors }: { colors: HeatmapColors }) => {
       <Typography
         variant="caption"
         sx={{
+          ...LEGEND_LABEL_SX,
           color: "text.secondary",
-          fontFamily: "var(--font-data)",
-          fontSize: 9,
-          lineHeight: 1,
         }}
       >
         <FormattedMessage defaultMessage="Less" />
@@ -725,10 +753,8 @@ const ActivityHeatmapLegend = ({ colors }: { colors: HeatmapColors }) => {
       <Typography
         variant="caption"
         sx={{
+          ...LEGEND_LABEL_SX,
           color: "text.secondary",
-          fontFamily: "var(--font-data)",
-          fontSize: 9,
-          lineHeight: 1,
         }}
       >
         <FormattedMessage defaultMessage="More" />
