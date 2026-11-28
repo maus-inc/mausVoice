@@ -42,14 +42,26 @@ health half added on 2026-11-22, and it was too narrow in two ways.
 `degraded_listen_fallback`, the two states that prove a key path alive. Keys
 arrive in `connected` as soon as the child's hook installs, and a hook that
 cannot install reports `grab_failed` instead of resting there.
-`fallback_starting` is already inside `rdev::listen()`. In both, only the grace
-window that promotes the state is outstanding, and the stream is not held back.
-Windows is the platform where that window is routine rather than momentary. It
-restarts the listener on wake, on session unlock and across the elevation
-relaunch, and Windows also removes a low-level hook that overruns
-`LowLevelHooksTimeout` without telling the process, so a live listener there
-reconnects more often than it does anywhere else. The row disappeared for the
-length of each one.
+`fallback_starting` is already inside `rdev::listen()`. So the predicate now
+accepts any state in which the listener has not reported failure, rather than
+only the two that prove a key path alive. That is not the same as claiming every
+keypress is observable: `connected` says a child is on the wire, not that its
+hook is installed, and the availability rule does not own the hook's liveness.
+
+Windows is the platform where the wait before that first state is routine rather
+than momentary: it restarts the listener on wake and on session unlock, through
+the `desktop_resume` event that calls `restart_key_listener`, and the elevation
+relaunch starts a new process. The row disappeared for the length of each one.
+
+Windows also removes a low-level hook that overruns `LowLevelHooksTimeout`
+without telling the process. That removal is not one of those triggers, and
+nothing here watches for it: the child keeps running, the socket stays open, and
+no exit or EOF reaches the respawn loop, which restarts the child only after the
+connection drops. A listener in that state stays `connected` with a hook that is
+no longer installed, and the row keeps offering a gesture that has gone quiet
+until the next wake, unlock or relaunch respawns the child. Detecting it would
+need a watchdog the native listener does not have; this change does not add one
+and does not claim the state is observable.
 
 The rule also lived in two places. The settings row asked the strategy and the
 health, and the detector asked only the strategy, so the two disagreed in both
