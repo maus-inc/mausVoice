@@ -1725,8 +1725,11 @@ async fn read_private_http_response_body(
             _ = &mut *cancellation => {
                 return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
             }
+            // A server that sends headers and then truncates the body fails
+            // here rather than in `send`, so the same classification has to
+            // cover both halves of the exchange.
             result = response.chunk() => result
-                .map_err(|_| "Unable to read the private-network response".to_string())?,
+                .map_err(|error| private_http_transport_failure(&error))?,
         };
         let Some(chunk) = chunk else {
             break;
@@ -10483,13 +10486,24 @@ mod tests {
         .is_err());
     }
 
+    /// Mirrors the private-network client, which disables proxies for loopback
+    /// targets. An inherited `HTTP_PROXY` would otherwise send these requests
+    /// to the proxy, and the refused-connection case would pass for the wrong
+    /// reason.
+    fn loopback_test_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("a proxy-free client must build")
+    }
+
     #[tokio::test]
     async fn private_http_transport_failure_names_a_refused_connection() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let error = reqwest::Client::new()
+        let error = loopback_test_client()
             .get(format!("http://127.0.0.1:{port}/health"))
             .send()
             .await
@@ -10514,7 +10528,7 @@ mod tests {
             drop(socket);
         });
 
-        let error = reqwest::Client::new()
+        let error = loopback_test_client()
             .get(format!("http://{address}/health"))
             .send()
             .await
@@ -10524,6 +10538,43 @@ mod tests {
         assert_eq!(
             private_http_transport_failure(&error),
             "Private-network request failed: the connection closed before the response completed"
+        );
+    }
+
+    #[tokio::test]
+    async fn private_http_transport_failure_reaches_the_body_reader() {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            // Headers arrive, so `send` succeeds; the body then stops halfway
+            // through the length it promised, which is what a sidecar killed
+            // during inference leaves behind.
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 64\r\n\r\npartial")
+                .await
+                .unwrap();
+            socket.flush().await.unwrap();
+            drop(socket);
+        });
+
+        let response = loopback_test_client()
+            .get(format!("http://{address}/health"))
+            .send()
+            .await
+            .expect("headers alone must not fail the request");
+        let (_cancel, mut cancellation) = tokio::sync::oneshot::channel::<()>();
+
+        let error = read_private_http_response_body(response, 1_024, &mut cancellation)
+            .await
+            .expect_err("a truncated body must fail the read");
+        server.await.unwrap();
+
+        assert_eq!(
+            error,
+            "Private-network request failed: the response body was interrupted"
         );
     }
 

@@ -5,6 +5,15 @@ import { describe, it } from "node:test";
 const read = (path) =>
   readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
 
+// A setting that is commented out changes nothing, so the checks below have to
+// read the active lines only. Otherwise a `# set(GGML_AVX2 ON ...)` note, or a
+// raised-out line left in place during a bisect, would decide the result.
+const activeLines = (source) =>
+  source
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+
 // Every toolchain file the release, desktop-build and sidecar-test workflows
 // feed to CMake. The transcription sidecar ships as a compiled binary, so the
 // baseline these files select is the baseline every user's CPU must meet.
@@ -40,33 +49,36 @@ const WORKFLOWS = [
 describe("transcription sidecar CPU baseline", () => {
   for (const [platform, path] of Object.entries(TOOLCHAINS)) {
     it(`disables native tuning in the ${platform} toolchain`, () => {
-      assert.match(read(path), /set\(GGML_NATIVE OFF CACHE BOOL "" FORCE\)/);
+      assert.ok(
+        activeLines(read(path)).includes(
+          'set(GGML_NATIVE OFF CACHE BOOL "" FORCE)',
+        ),
+        `${platform} must set GGML_NATIVE OFF outside a comment`,
+      );
     });
 
     it(`pins every instruction set wider than the baseline off in ${platform}`, () => {
-      const source = read(path);
+      const lines = activeLines(read(path));
 
       for (const option of WIDER_THAN_BASELINE) {
-        assert.match(
-          source,
-          new RegExp(`set\\(${option} OFF CACHE BOOL "" FORCE\\)`),
-          `${option} must be forced off; GGML_NATIVE=OFF alone leaves it enabled`,
+        assert.ok(
+          lines.includes(`set(${option} OFF CACHE BOOL "" FORCE)`),
+          `${option} must be forced off outside a comment; GGML_NATIVE=OFF alone leaves it enabled`,
         );
-        assert.doesNotMatch(
-          source,
-          new RegExp(`set\\(${option} ON`),
+        assert.ok(
+          !lines.some((line) => line.startsWith(`set(${option} ON`)),
           `${option} must not be re-enabled`,
         );
       }
     });
 
     it(`keeps AVX enabled as the shipped ${platform} baseline`, () => {
-      const source = read(path);
+      const lines = activeLines(read(path));
 
       // The startup guard in src/cpu_requirements.rs names AVX, so the build
       // and the check have to agree on the same floor.
-      assert.doesNotMatch(source, /set\(GGML_AVX OFF/);
-      assert.doesNotMatch(source, /set\(GGML_SSE42 OFF/);
+      assert.ok(!lines.some((line) => line.startsWith("set(GGML_AVX OFF")));
+      assert.ok(!lines.some((line) => line.startsWith("set(GGML_SSE42 OFF")));
     });
   }
 
@@ -80,9 +92,11 @@ describe("transcription sidecar CPU baseline", () => {
       // Every line that sets the variable, not merely every workflow that
       // names a file: a filename in a comment or a stale echo would satisfy a
       // substring search while CMake still used its default baseline.
-      const assignments = source
-        .split("\n")
-        .filter((line) => line.includes("CMAKE_TOOLCHAIN_FILE"));
+      // Comments are excluded for the same reason: prose about the variable is
+      // not an assignment, and a commented-out export sets nothing.
+      const assignments = activeLines(source).filter((line) =>
+        line.includes("CMAKE_TOOLCHAIN_FILE"),
+      );
 
       assert.ok(
         assignments.length > 0,

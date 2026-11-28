@@ -144,6 +144,42 @@ describe("BaseSidecar exit diagnostics", () => {
     );
   });
 
+  it("strips a colour sequence the shell split across chunks", async () => {
+    const sidecar = new TestSidecar();
+    const spawn = captureSpawn();
+
+    const started = sidecar.ensureStarted();
+    started.catch(() => {});
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+
+    // The escape arrives in pieces, so cleaning each chunk on its own would
+    // leave the parameter bytes behind as literal text.
+    spawn.onStderr?.("\u001b[3");
+    spawn.onStderr?.("1mERROR decoder stopped\n");
+    spawn.onClose?.({ code: 1, signal: null });
+
+    await expect(started).rejects.toThrow(
+      "Sidecar exited (code=1, signal=unknown): ERROR decoder stopped",
+    );
+  });
+
+  it("keeps a complete line when a huge fragment follows it", async () => {
+    const sidecar = new TestSidecar();
+    const spawn = captureSpawn();
+
+    const started = sidecar.ensureStarted();
+    started.catch(() => {});
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+
+    spawn.onStderr?.("fatal: no usable audio device\n");
+    spawn.onStderr?.("x".repeat(8_192));
+    spawn.onClose?.({ code: 1, signal: null });
+
+    await expect(started).rejects.toThrow(
+      "Sidecar exited (code=1, signal=unknown): fatal: no usable audio device",
+    );
+  });
+
   it("does not let an unterminated fragment replace a complete line", async () => {
     const sidecar = new TestSidecar();
     const spawn = captureSpawn();

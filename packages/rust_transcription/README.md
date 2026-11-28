@@ -49,9 +49,10 @@ has no runtime dispatch between instruction-set variants. A binary built that wa
 illegal instruction on every CPU older than Intel Haswell or AMD Excavator, which covers machines
 sold from 2011 through 2013. `src/cpu_requirements.rs` checks for AVX before the sidecar binds its
 socket, so a CPU below the baseline produces one explicit startup error instead of a process that
-disappears mid-request. Set `RUST_TRANSCRIPTION_ALLOW_UNSUPPORTED_CPU=1` to start anyway; that only
-makes sense for a build compiled on the same machine. Local builds leave the native defaults in
-place, so they compile for the host and never need the override.
+disappears mid-request. A host without AVX can still run a sidecar that was compiled for it, which is
+what a local build on that host produces, because local builds leave ggml on the native defaults.
+That pairing needs `RUST_TRANSCRIPTION_ALLOW_UNSUPPORTED_CPU=1`, since the startup check cannot tell
+the two builds apart. Hosts with AVX need nothing set.
 
 ## Run
 

@@ -70,19 +70,18 @@ type StderrLines = { detail: string; pending: string };
  * Reads stderr chunks into whole lines and reports the last complete one.
  *
  * Shell chunks split on arbitrary boundaries, so a chunk can stop in the
- * middle of a line. The unterminated tail waits in `pending` and is joined to
- * the next chunk instead of being quoted as if it were a whole line, which is
- * what keeps a two-part `ERROR` line readable and stops a fragment from
- * replacing a complete line.
+ * middle of a line, or even inside a colour sequence. The raw text is therefore
+ * buffered first and only whole lines are cleaned: stripping per chunk would
+ * leave `[31m` behind when the escape itself was split, and quoting the
+ * unterminated tail would show half a sentence. The tail waits in `pending` and
+ * is joined to the next chunk. Only that tail is capped, so a long complete
+ * line still contributes its first characters instead of being dropped.
  */
 const readStderr = (chunk: string, previous: StderrLines): StderrLines => {
-  const buffered = `${previous.pending}${stripSgrColor(chunk)}`.slice(
-    -SIDECAR_STDERR_PENDING_LIMIT,
-  );
-  const lines = buffered.split(/\r?\n/);
-  const pending = lines.pop() ?? "";
+  const lines = `${previous.pending}${chunk}`.split(/\r?\n/);
+  const pending = (lines.pop() ?? "").slice(-SIDECAR_STDERR_PENDING_LIMIT);
   const lastComplete = lines
-    .map((line) => line.trim())
+    .map((line) => stripSgrColor(line).trim())
     .filter((line) => line.length > 0)
     .at(-1);
 
