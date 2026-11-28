@@ -48,12 +48,14 @@ vi.mock("../../actions/chat.actions", () => ({
   canReuseEmptyConversation: (id: string | null | undefined) =>
     isEmptyInStore(id),
   requestNewConversation: mocks.requestNewConversation,
-  resolveReusableEmptyConversation: async (id: string | null | undefined) =>
-    isEmptyInStore(id)
-      ? (getAppState().conversationById[id as string] ?? null)
-      : null,
+  resolveReusableEmptyConversation: (id: string | null | undefined) =>
+    Promise.resolve(
+      id && isEmptyInStore(id)
+        ? (getAppState().conversationById[id] ?? null)
+        : null,
+    ),
   deleteConversation: mocks.deleteConversation,
-  loadChatMessages: vi.fn(async () => undefined),
+  loadChatMessages: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("./ChatsSideEffects", () => ({ ChatsSideEffects: () => null }));
 vi.mock("./ConversationLayout", () => ({ ConversationLayout: () => null }));
@@ -485,6 +487,7 @@ it("exits cleanly without looping when unmounted before a pending new-thread req
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
+  let mounted = true;
   try {
     await act(async () =>
       root.render(
@@ -500,6 +503,7 @@ it("exits cleanly without looping when unmounted before a pending new-thread req
     });
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
 
+    mounted = false;
     act(() => root.unmount());
     await act(async () => {
       if (!finishHydration)
@@ -513,7 +517,9 @@ it("exits cleanly without looping when unmounted before a pending new-thread req
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
     expect(mocks.showErrorSnackbar).not.toHaveBeenCalled();
   } finally {
-    act(() => root.unmount());
+    if (mounted) {
+      act(() => root.unmount());
+    }
     host.remove();
     mocks.requestNewConversation.mockReset();
     mocks.showErrorSnackbar.mockReset();
@@ -564,9 +570,9 @@ it("reports a failed new-thread request once without changing selection and perm
 
     let retryId = "";
     mocks.requestNewConversation.mockImplementationOnce(
-      async (_currentId: string | null, conversation: Conversation) => {
+      (_currentId: string | null, conversation: Conversation) => {
         retryId = conversation.id;
-        return { conversation, created: true };
+        return Promise.resolve({ conversation, created: true });
       },
     );
     await act(async () => button.click());

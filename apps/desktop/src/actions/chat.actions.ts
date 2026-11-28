@@ -438,42 +438,46 @@ export const deleteConversation = async (id: string): Promise<void> => {
   deletingConversationIds.add(id);
   abortAgent(id);
 
-  let finishDelete: () => void = () => {};
-  const deleteGate = new Promise<void>((resolve) => {
-    finishDelete = resolve;
-  });
+  const runDelete = async (): Promise<void> => {
+    try {
+      // Wait without holding a write lease. A queued send may still need one to
+      // settle, so acquiring the lease before this wait would deadlock the queue.
+      const previous = sendQueuesByConversationId.get(id) ?? Promise.resolve();
+      await previous.catch(() => undefined);
+      sendQueuesByConversationId.delete(id);
+
+      await withLocalDataWrite(async (lease) => {
+        await getConversationRepo().deleteConversation(id, lease);
+        produceAppState((draft) => {
+          // Immer draft deletion is intentional. DeepSource JS-0320 flags the
+          // dynamic key, but this is type-safe and matches the repo pattern.
+          delete draft.conversationById[id]; // skipcq: JS-0320
+          draft.chat.conversationIds = draft.chat.conversationIds.filter(
+            (conversationId) => conversationId !== id,
+          );
+
+          const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
+          for (const messageId of messageIds) {
+            delete draft.chatMessageById[messageId]; // skipcq: JS-0320
+          }
+          delete draft.chatMessageIdsByConversationId[id]; // skipcq: JS-0320
+        }, lease);
+      });
+    } finally {
+      deletingConversationIds.delete(id);
+    }
+  };
+
+  const running = runDelete();
+  const deleteGate = running.catch(() => undefined);
   activeDeletesByConversationId.set(id, deleteGate);
 
   try {
-    // Wait without holding a write lease. A queued send may still need one to
-    // settle, so acquiring the lease before this wait would deadlock the queue.
-    const previous = sendQueuesByConversationId.get(id) ?? Promise.resolve();
-    await previous.catch(() => undefined);
-    sendQueuesByConversationId.delete(id);
-
-    await withLocalDataWrite(async (lease) => {
-      await getConversationRepo().deleteConversation(id, lease);
-      produceAppState((draft) => {
-        // Immer draft deletion is intentional. DeepSource JS-0320 flags the
-        // dynamic key, but this is type-safe and matches the repo pattern.
-        delete draft.conversationById[id]; // skipcq: JS-0320
-        draft.chat.conversationIds = draft.chat.conversationIds.filter(
-          (conversationId) => conversationId !== id,
-        );
-
-        const messageIds = draft.chatMessageIdsByConversationId[id] ?? [];
-        for (const messageId of messageIds) {
-          delete draft.chatMessageById[messageId]; // skipcq: JS-0320
-        }
-        delete draft.chatMessageIdsByConversationId[id]; // skipcq: JS-0320
-      }, lease);
-    });
+    await running;
   } finally {
-    deletingConversationIds.delete(id);
     if (activeDeletesByConversationId.get(id) === deleteGate) {
       activeDeletesByConversationId.delete(id);
     }
-    finishDelete();
   }
 };
 

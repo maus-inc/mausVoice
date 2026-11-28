@@ -27,9 +27,9 @@ vi.mock("../../actions/chat.actions", () => ({
     return Array.isArray(ids) && ids.length === 0;
   },
   deleteConversation: vi.fn(),
-  loadChatMessages: vi.fn(async () => undefined),
+  loadChatMessages: vi.fn(() => Promise.resolve()),
   requestNewConversation: chatActionMocks.requestNewConversation,
-  resolveReusableEmptyConversation: vi.fn(async () => null),
+  resolveReusableEmptyConversation: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock("./ChatsSideEffects", () => ({ ChatsSideEffects: () => null }));
 vi.mock("./ConversationLayout", () => ({
