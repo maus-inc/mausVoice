@@ -7,9 +7,10 @@ set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod" CACHE STRING "" FORCE)
 # default, and this static build has no runtime dispatch between
 # instruction-set variants, so an x86_64 binary built that way faults with an
 # illegal instruction on pre-Haswell Macs, which covers the 2011 through 2013
-# models. Pin the shipped x86_64 baseline to AVX and leave every wider
-# extension off. The ARM values above are unaffected. src/cpu_requirements.rs
-# checks AVX at startup.
+# models. A few entry-level parts of those years shipped with AVX disabled.
+# Pin the shipped x86_64 baseline to AVX and leave every wider extension off.
+# The ARM values above are unaffected. src/cpu_requirements.rs checks AVX at
+# startup.
 set(GGML_AVX2 OFF CACHE BOOL "" FORCE)
 set(GGML_AVX_VNNI OFF CACHE BOOL "" FORCE)
 set(GGML_BMI2 OFF CACHE BOOL "" FORCE)

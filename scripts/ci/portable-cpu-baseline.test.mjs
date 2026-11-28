@@ -119,7 +119,7 @@ describe("transcription sidecar CPU baseline", () => {
           ({ text }) =>
             text.length > 0 &&
             !text.startsWith("#") &&
-            text.includes("CMAKE_TOOLCHAIN_FILE"),
+            /CMAKE_TOOLCHAIN_FILE["']?\s*[:=]/.test(text),
         );
 
       assert.ok(

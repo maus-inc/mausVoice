@@ -79,7 +79,10 @@ type StderrLines = { detail: string; pending: string };
  */
 const readStderr = (chunk: string, previous: StderrLines): StderrLines => {
   const lines = `${previous.pending}${chunk}`.split(/\r?\n/);
-  const pending = (lines.pop() ?? "").slice(-SIDECAR_STDERR_PENDING_LIMIT);
+  // The head of an unterminated line is the part worth keeping: it carries the
+  // level and the first words, and the quoted detail is the first 200
+  // characters anyway. Keeping the tail would quote the middle of a sentence.
+  const pending = (lines.pop() ?? "").slice(0, SIDECAR_STDERR_PENDING_LIMIT);
   let lastComplete = previous.detail;
   for (const line of lines) {
     const cleaned = stripSgrColor(line).trim();

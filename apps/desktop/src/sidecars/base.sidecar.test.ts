@@ -191,6 +191,32 @@ describe("BaseSidecar exit diagnostics", () => {
     );
   });
 
+  it("keeps the head of a single line larger than the buffer", async () => {
+    const sidecar = new TestSidecar();
+    const spawn = captureSpawn();
+
+    const started = sidecar.ensureStarted();
+    started.catch(() => {});
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+
+    // A compact panic message can still be one enormous line. The level and the
+    // first words are what identify it, so the cap keeps the head.
+    spawn.onStderr?.(`ERROR ${"y".repeat(5_000)}`);
+    spawn.onStderr?.("\n");
+    spawn.onClose?.({ code: 1, signal: null });
+
+    await expect(started).rejects.toThrow(
+      /^Sidecar exited \(code=1, signal=unknown\): ERROR y+$/,
+    );
+    // The startup catch reports the same message a second time, which is why
+    // this asserts the content rather than the count.
+    expect(
+      sidecar.errors.every((message) =>
+        /^Sidecar exited .*ERROR y+$/.test(message),
+      ),
+    ).toBe(true);
+  });
+
   it("does not let an unterminated fragment replace a complete line", async () => {
     const sidecar = new TestSidecar();
     const spawn = captureSpawn();

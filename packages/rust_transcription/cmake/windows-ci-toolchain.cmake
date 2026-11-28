@@ -9,8 +9,10 @@ set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 # in the first quantized kernel it reaches and dies on pre-Haswell CPUs with
 # the Windows exception code 0xC000001D. Pin the shipped baseline to AVX, the
 # level Intel Sandy Bridge and AMD Bulldozer introduced in 2011, and leave
-# every wider extension off so the same binary runs on any supported CPU.
-# src/cpu_requirements.rs checks the AVX requirement at startup.
+# every wider extension off so the same binary runs on any supported CPU. A few
+# entry-level parts of that generation shipped with AVX disabled, so
+# src/cpu_requirements.rs checks the feature at startup rather than trusting the
+# level.
 set(GGML_AVX2 OFF CACHE BOOL "" FORCE)
 set(GGML_AVX_VNNI OFF CACHE BOOL "" FORCE)
 set(GGML_BMI2 OFF CACHE BOOL "" FORCE)
