@@ -148,6 +148,22 @@ describe("transcription sidecar CPU baseline", () => {
     });
   }
 
+  for (const workflow of WORKFLOWS) {
+    it(`retires the cargo cache when the baseline changes in ${workflow}`, () => {
+      const source = read(workflow);
+
+      // whisper-rs-sys declares no rerun-if-env-changed for the toolchain, so a
+      // restored target directory keeps the instruction set of the run that
+      // filled it. The cache key has to carry the toolchain content, or the fix
+      // reaches CI on a fresh runner and never reaches a cached release build.
+      assert.match(
+        source,
+        /key:.*hashFiles\('packages\/rust_transcription\/cmake\/\*-ci-toolchain\.cmake'\)/,
+        `${workflow} must hash the toolchain files into its cargo cache key`,
+      );
+    });
+  }
+
   it("lets the sidecar build inherit the toolchain from the environment", () => {
     const source = read("apps/desktop/scripts/prepare-sidecars.mjs");
     const cargoSpawn = source.slice(

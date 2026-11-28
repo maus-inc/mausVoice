@@ -108,6 +108,7 @@ jobs:
         with:
           workspaces: |
             apps/desktop/src-tauri -> target
+          key: ${{ matrix.os }}-${{ hashFiles('packages/rust_transcription/cmake/*-ci-toolchain.cmake') }}
 
       - name: Set Windows-only build environment
         if: matrix.os == 'windows-latest'

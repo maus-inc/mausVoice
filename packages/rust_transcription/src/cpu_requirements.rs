@@ -41,20 +41,41 @@ pub(crate) fn override_requested(value: Option<&str>) -> bool {
     matches!(value.map(str::trim), Some("1" | "true" | "yes"))
 }
 
-/// Fails startup when the CPU cannot execute the shipped engine.
-#[cfg(target_arch = "x86_64")]
-pub(crate) fn check() -> Result<(), String> {
-    let Some(message) = requirement_error(std::arch::is_x86_feature_detected!("avx")) else {
-        return Ok(());
+/// Decides startup from the detected capability and the operator's override.
+///
+/// Kept pure so the CI suite can exercise a missing-attribute host on a runner
+/// that has the attribute: a regression that makes `check` always succeed would
+/// otherwise be invisible on every machine the tests run on.
+pub(crate) fn evaluate(
+    has_required_feature: bool,
+    override_value: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(message) = requirement_error(has_required_feature) else {
+        return Ok(None);
     };
-    let override_value = std::env::var(ALLOW_UNSUPPORTED_CPU_ENV).ok();
 
-    if override_requested(override_value.as_deref()) {
-        eprintln!("warning: {message}");
-        return Ok(());
+    if override_requested(override_value) {
+        return Ok(Some(message));
     }
 
     Err(message)
+}
+
+/// Fails startup when the CPU cannot execute the shipped engine.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn check() -> Result<(), String> {
+    let override_value = std::env::var(ALLOW_UNSUPPORTED_CPU_ENV).ok();
+
+    match evaluate(
+        std::arch::is_x86_feature_detected!("avx"),
+        override_value.as_deref(),
+    )? {
+        Some(message) => {
+            eprintln!("warning: {message}");
+            Ok(())
+        }
+        None => Ok(()),
+    }
 }
 
 /// Every other supported architecture, Apple Silicon and ARM64 Windows, has
@@ -66,7 +87,7 @@ pub(crate) fn check() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{override_requested, requirement_error, ALLOW_UNSUPPORTED_CPU_ENV};
+    use super::{evaluate, override_requested, requirement_error, ALLOW_UNSUPPORTED_CPU_ENV};
 
     #[test]
     fn supported_cpu_reports_no_error() {
@@ -83,6 +104,30 @@ mod tests {
         // failure name: it is what separates a bad machine from a bad build.
         assert!(message.contains("AVX baseline"));
         assert!(message.contains(ALLOW_UNSUPPORTED_CPU_ENV));
+    }
+
+    #[test]
+    fn supported_cpu_starts_without_an_override() {
+        assert_eq!(evaluate(true, None), Ok(None));
+        assert_eq!(evaluate(true, Some("1")), Ok(None));
+    }
+
+    #[test]
+    fn unsupported_cpu_fails_without_an_override() {
+        assert_eq!(
+            evaluate(false, None),
+            Err(requirement_error(false).expect("missing AVX must have a message"))
+        );
+        assert!(evaluate(false, Some("0")).is_err());
+    }
+
+    #[test]
+    fn override_lets_an_unsupported_cpu_start_with_a_warning() {
+        let warning = evaluate(false, Some("1"))
+            .expect("the override must not fail startup")
+            .expect("the override still has to warn");
+
+        assert!(warning.contains(ALLOW_UNSUPPORTED_CPU_ENV));
     }
 
     #[test]

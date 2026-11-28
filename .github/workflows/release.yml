@@ -138,7 +138,12 @@ jobs:
             packages/rust_transcription -> packages/rust_transcription/target
             packages/rust_pill_shared -> packages/rust_pill_shared/target
             packages/rust_gtk_pill -> packages/rust_gtk_pill/target
-          key: ubuntu-release-verify-rust
+          # The sidecar's ggml build is cached under this key, and whisper-rs-sys
+          # declares no rerun-if-env-changed for CMAKE_TOOLCHAIN_FILE, so a
+          # restored build would keep the instruction set of the run that
+          # populated the cache. Hashing the toolchain files retires the cache
+          # whenever the baseline changes.
+          key: ubuntu-release-verify-rust-${{ hashFiles('packages/rust_transcription/cmake/*-ci-toolchain.cmake') }}
       - name: Install system dependencies
         shell: bash
         run: |
@@ -258,7 +263,7 @@ jobs:
         with:
           workspaces: |
             apps/desktop/src-tauri -> ${{ matrix.os == 'windows-latest' && 'D:\cargo' || 'target' }}
-          key: ${{ matrix.os }}-release
+          key: ${{ matrix.os }}-release-${{ hashFiles('packages/rust_transcription/cmake/*-ci-toolchain.cmake') }}
 
       - name: Set Windows-only build environment
         if: matrix.os == 'windows-latest'

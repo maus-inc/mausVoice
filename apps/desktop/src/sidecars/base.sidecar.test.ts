@@ -101,6 +101,7 @@ describe("BaseSidecar exit diagnostics", () => {
     const expected =
       "Sidecar exited (code=1, signal=unknown): 2026-11-28T08:00:01Z ERROR weights are corrupt";
     await expect(started).rejects.toThrow(expected);
+    expect(sidecar.errors).toContain(expected);
     expect(sidecar.errors.length).toBeGreaterThan(0);
     expect(sidecar.errors.every((message) => message === expected)).toBe(true);
   });
@@ -118,6 +119,7 @@ describe("BaseSidecar exit diagnostics", () => {
     await expect(started).rejects.toThrow(
       "Sidecar exited (code=unknown, signal=4)",
     );
+    expect(sidecar.errors).toContain("Sidecar exited (code=unknown, signal=4)");
     expect(
       sidecar.errors.every(
         (message) => message === "Sidecar exited (code=unknown, signal=4)",
@@ -142,6 +144,9 @@ describe("BaseSidecar exit diagnostics", () => {
     await expect(started).rejects.toThrow(
       "Sidecar exited (code=1, signal=unknown): ERROR weights are corrupt",
     );
+    expect(sidecar.errors).toContain(
+      "Sidecar exited (code=1, signal=unknown): ERROR weights are corrupt",
+    );
   });
 
   it("strips a colour sequence the shell split across chunks", async () => {
@@ -161,6 +166,9 @@ describe("BaseSidecar exit diagnostics", () => {
     await expect(started).rejects.toThrow(
       "Sidecar exited (code=1, signal=unknown): ERROR decoder stopped",
     );
+    expect(sidecar.errors).toContain(
+      "Sidecar exited (code=1, signal=unknown): ERROR decoder stopped",
+    );
   });
 
   it("keeps a complete line when a huge fragment follows it", async () => {
@@ -176,6 +184,9 @@ describe("BaseSidecar exit diagnostics", () => {
     spawn.onClose?.({ code: 1, signal: null });
 
     await expect(started).rejects.toThrow(
+      "Sidecar exited (code=1, signal=unknown): fatal: no usable audio device",
+    );
+    expect(sidecar.errors).toContain(
       "Sidecar exited (code=1, signal=unknown): fatal: no usable audio device",
     );
   });
@@ -194,6 +205,9 @@ describe("BaseSidecar exit diagnostics", () => {
     await expect(started).rejects.toThrow(
       "Sidecar exited (code=1, signal=unknown): first failure line",
     );
+    expect(sidecar.errors).toContain(
+      "Sidecar exited (code=1, signal=unknown): first failure line",
+    );
   });
 
   it("bounds the quoted detail so a long diagnostic cannot flood the message", async () => {
@@ -210,5 +224,12 @@ describe("BaseSidecar exit diagnostics", () => {
     await expect(started).rejects.toThrow(
       /^Sidecar exited \(code=1, signal=unknown\): failure: x{191}$/,
     );
+    expect(
+      sidecar.errors.some((message) =>
+        /^Sidecar exited \(code=1, signal=unknown\): failure: x{191}$/.test(
+          message,
+        ),
+      ),
+    ).toBe(true);
   });
 });
