@@ -48,10 +48,9 @@ only the two that prove a key path alive. That is not the same as claiming every
 keypress is observable: `connected` says a child is on the wire, not that its
 hook is installed, and the availability rule does not own the hook's liveness.
 
-Windows is the platform where the wait before that first state is routine rather
-than momentary: it restarts the listener on wake and on session unlock, through
-the `desktop_resume` event that calls `restart_key_listener`, and the elevation
-relaunch starts a new process. The row disappeared for the length of each one.
+Windows is where that wait is routine rather than momentary: it restarts the
+listener on wake and on session unlock through `desktop_resume`, and the
+elevation relaunch starts a new process. The row disappeared for each one.
 
 Windows also removes a low-level hook that overruns `LowLevelHooksTimeout`
 without telling the process. That is not one of those triggers and nothing here
