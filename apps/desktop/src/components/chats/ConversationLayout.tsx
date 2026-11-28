@@ -238,7 +238,7 @@ export const ConversationLayout = ({
               </Stack>
             </Box>
           ) : (
-            <Stack spacing={1.5}>
+            <Stack spacing={1.5} sx={{ minWidth: 0 }}>
               {messageIds.map((id) => (
                 <ChatMessageBubble key={id} id={id} />
               ))}

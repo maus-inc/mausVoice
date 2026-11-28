@@ -35,9 +35,11 @@ import {
 const MessageActions = ({
   items,
   visible,
+  isMe,
 }: {
   items: ReadonlyArray<{ key: string; label: string; run: () => void }>;
   visible: boolean;
+  isMe: boolean;
 }) => {
   const noHover = useNoHoverPointer();
   return (
@@ -46,6 +48,7 @@ const MessageActions = ({
       spacing={0.25}
       sx={{
         mt: 0.5,
+        justifyContent: isMe ? "flex-end" : "flex-start",
         // Faded, never hidden. `visibility: hidden` removes the element's hit
         // box, which makes the row impossible to hover, impossible to focus,
         // and invisible to assistive technology. Fading keeps the row laid out
@@ -251,6 +254,7 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
 
   return (
     <Stack
+      sx={{ minWidth: 0 }}
       onMouseEnter={() => setActionsVisible(true)}
       onMouseLeave={() => setActionsVisible(false)}
       onFocus={() => setActionsVisible(true)}
@@ -282,7 +286,11 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
         }
       />
       {showActions ? (
-        <MessageActions items={actions} visible={actionsVisible} />
+        <MessageActions
+          items={actions}
+          visible={actionsVisible}
+          isMe={message.role === "user"}
+        />
       ) : null}
       {ctxMenu.renderMenu()}
     </Stack>

@@ -4,6 +4,10 @@ import { Check, CheckCheck, X } from "lucide-react";
 import { FormattedMessage } from "react-intl";
 import { overlayOnDark } from "../../styles/palette";
 import { useAppStore } from "../../store";
+import {
+  chatBubbleMaxWidth,
+  wrappableActionButtonSx,
+} from "./chat-bubble.styles";
 import { ToolParamsTooltip } from "./ToolParamsTooltip";
 
 type ToolPermissionPromptProps = {
@@ -27,14 +31,16 @@ const PermissionActions = ({
 }: PermissionActionsProps) => {
   const iconSize = overlay ? 14 : 16;
   const textButtonSx = overlay
-    ? { color: overlayOnDark.muted, minWidth: 0 }
-    : undefined;
+    ? { ...wrappableActionButtonSx, color: overlayOnDark.muted }
+    : wrappableActionButtonSx;
   return (
     <Stack
       direction="row"
-      spacing={1}
       sx={{
         justifyContent: overlay ? "flex-end" : "flex-start",
+        flexWrap: "wrap",
+        gap: 1,
+        rowGap: 0.5,
         mt: overlay ? 0.75 : 0,
       }}
     >
@@ -52,6 +58,7 @@ const PermissionActions = ({
         variant="contained"
         onClick={onAllow}
         startIcon={<Check size={iconSize} strokeWidth={1.9} />}
+        sx={wrappableActionButtonSx}
       >
         <FormattedMessage defaultMessage="Allow" />
       </Button>
@@ -90,7 +97,7 @@ const PermissionDetails = ({
       }
     : { heading: undefined, secondary: "text.secondary", iconSize: 16 };
   return (
-    <Stack spacing={0.25}>
+    <Stack spacing={0.25} sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
       <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
         <Typography
           variant="body2"
@@ -168,10 +175,11 @@ export const ToolPermissionPrompt = ({
     );
   }
   return (
-    <Stack direction="row" sx={{ justifyContent: "flex-start" }}>
+    <Stack direction="row" sx={{ minWidth: 0, justifyContent: "flex-start" }}>
       <Box
         sx={{
-          maxWidth: "75%",
+          minWidth: 0,
+          maxWidth: chatBubbleMaxWidth,
           px: 2,
           py: 1.5,
           borderRadius: 2.5,
