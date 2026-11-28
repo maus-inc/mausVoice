@@ -26,67 +26,30 @@ Rebuild when any of these changes:
 
 Do not rebuild for a TypeScript-only change, a docs change, or a migration.
 
-## The second delivery, groups G9 to G13
+## Payload groups
 
-G1 to G8 cover the gates the branch already passes. `engineering/sandbox-coverage-gaps.md`
-records the stages it cannot cover, and the specification now carries a group for each.
-The second delivery shipped these five groups on 2026-11-05, so the table records what each
-one carries and its measured size. Extend the same branch and manifest if a task needs more.
+`engineering/sandbox-vendored-toolchain.md` lists the groups shipped on `vendor/sandbox-toolchain` (core Rust/sysroot/native groups G1 through G8, repository-gate groups G9 through G13, and general CLI, compiler, browser, runtime, and document groups G16 through G27). `engineering/sandbox-coverage-gaps.md` lists the remaining open gaps and `engineering/sandbox-capability-gaps.md` lists unvendored general tools.
 
-| Group | Carries                                                                    | Opens                                                    | Measured                        |
-| ----- | -------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------- |
-| G9    | `ffmpeg`, `ffprobe`, `gifsicle`                                            | the capture encode and GIF assembly                      | 160 MB                          |
-| G10   | `ggml-tiny.bin`, `ggml-base.bin`, the SenseVoice bundle, `MODELS.txt`      | whisper and SenseVoice loads, not all four ignored tests | 463 MB                          |
-| G11   | `tauri-driver` 2.0.6, optional `chromedriver` 152.0.0                      | `test:webdriver` on Linux                                | 24 MB                           |
-| G12   | `rust-std` for `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, 1.88.0 | `cargo check --target` on platform gated code            | 47.5 MB packed, 245 MB unpacked |
-| G13   | `gitleaks` 8.18.0                                                          | the history scan                                         | 7 MB                            |
-
-`tesseract` and its `tessdata` ship in G19, so the `ui-capture` OCR check can run, and the
-fourth delivery adds Chromium 156 in G25, so the capture itself no longer needs a browser
-from elsewhere on Linux x86-64. The payload carries `tauri-driver` 2.0.6 rather than 2.1.0,
-because 2.1.0 needs rustc 1.90 and this repository pins 1.88.0.
-
-Keep the same branch, the same orphan commit rule, and the same manifest. Amending one orphan
-commit of this size is cheaper than a second branch, so fold a further delivery into the
-existing commit and move the tip.
-
-Nothing in G9 to G13 changes the trust model. Every binary and every model needs an upstream
-URL, a published digest where one exists, and a line in `MANIFEST.sha256`. Where the digest is
-your own build output, say so in `README.md`, the same way the licence group does.
-
-## The third and fourth deliveries, groups G16 to G22 and G23 to G27
-
-The third delivery shipped G16 to G22 on 2026-11-05 and the fourth shipped G23 to G27 on
-2026-11-09. Both are folded into the same orphan commit, which now reads
-`3025c92b50c9d8977941b689a779068997896d38`, so a consumer fetches every group from one
-place. `engineering/sandbox-coverage-gaps.md` records what each group opens and its measured
-size. The third delivery adds debugging and tracing, native build tools including the
-autotools, database clients, OCR, shell and crypto tooling, cross compilers with emulation,
-and supply-chain scanners. The fourth delivery adds the native C/C++ compiler and binutils,
-fontconfig with the DejaVu and Liberation fonts plus `tzdata` and `locales`, Chromium with
-its library closure, a headless OpenJDK 17 JRE, Ruby, CPython and Perl, and the G27 document,
-media-metadata and debugging tools. Two files cross GitHub's 100 MB hard limit in the fourth
-delivery, so `chromium` and the JVM's `lib/modules` are split into `.part-*` pieces.
+Keep one orphan commit on `vendor/sandbox-toolchain`, one manifest, and the same trust model across rebuilds. Every binary and model needs an upstream URL, a published digest where one exists (or a note in `README.md` on the branch when built from source), licence texts under `LICENSES/`, and a matching line in `MANIFEST.sha256`. Split any file at or above 90 MiB into `.part-NN` chunks of 94,371,840 bytes.
 
 ## The prompt to hand over
 
 > Build the `vendor/sandbox-toolchain` orphan branch for `maus-inc/mausVoice`,
 > following `docs/sandbox-toolchain-vendor-spec.md` exactly. Re-pin everything to this
-> repository's current versions. Do not copy the equivalent branch on
-> `better-Shape/app`, which is a different application on a different Rust pin with a
-> browser group this repository does not need.
+> repository's current versions rather than copying a toolchain branch from another
+> project.
 >
 > Contract:
 >
 > - One commit, zero parents, on the branch `vendor/sandbox-toolchain`. Never merge it
->   into `main` and never open a pull request from it. The repository runs a
->   `secret-scan.yml` workflow on `pull_request`, and a pull request over roughly
->   3.8 GB of payload is a bad idea.
-> - Root tree exactly `FETCH.md`, `LICENSES`, `MANIFEST.sha256`, `README.md`, `drivers`,
->   `models`, `native`, `rust`, `system`. Nothing else at the root.
-> - Groups G1 to G8 as specified. Add the further groups only when the task that
->   triggered the rebuild names one of them. The shipped payload now carries G9 to G13,
->   G16 to G22 and G23 to G27, including Chromium in G25.
+>   into `main` and never open a pull request from it. The repository runs
+>   `secret-scan.yml` on `pull_request`, so never open a pull request over a multi-gigabyte
+>   binary payload.
+> - Root tree contains `FETCH.md`, `LICENSES`, `MANIFEST.sha256`, `README.md`, `drivers`,
+>   `models`, `native`, `rust`, and `system`, and nothing else at the root.
+> - Include groups G1 through G8, G9 through G13, and G16 through G27 as specified in
+>   `docs/sandbox-toolchain-vendor-spec.md`, plus any additional group requested by the
+>   task that triggered the rebuild.
 > - No file may reach 100 MiB. Split any archive at or above 90 MiB into `.part-NN`
 >   pieces of exactly 94,371,840 bytes, zero-padded from `00`, and list both the parts
 >   and the reassembled name in the manifest.
@@ -115,7 +78,7 @@ Verify against the GitHub API rather than accepting the build report. The checks
 matter most, in order:
 
 1. `git/trees/<sha>?recursive=1` returns `truncated: false`, and the root tree is
-   exactly the seven entries above. Confirm `parents` is empty on the commit.
+   exactly the nine entries above. Confirm `parents` is empty on the commit.
 2. Recompute all seven `Cargo.lock` digests locally with `sha256sum` and compare them
    against `rust/Cargo.lock.sha256`. This is the cheapest decisive check.
 3. Compare the `MANIFEST.sha256` digests for both `native/` archives against the pins
@@ -137,28 +100,16 @@ matter most, in order:
 Then read the branch `README.md` gate table and check the numbers are internally
 consistent. Do not treat a reported gate result as reproduced unless you ran it.
 
-For a second delivery, add these checks.
+Additional verification checks for the non-Rust payload groups:
 
-- G9. Each media binary runs under `env -i` with a version banner. `ffmpeg -f lavfi -i
-testsrc=duration=1:size=320x240:rate=30 -f gif -` writes bytes, which proves the encoder
-  is present and not only the demuxer.
-- G10. Each model digest matches `MODELS.txt`, and every delivered model file loads through
-  the loader that will consume it, the sidecar for the ONNX bundles and whisper for the GGML
-  weights. `MODELS.txt` is metadata and loads through nothing, so it is excluded from the load
-  check. A model that loads is not a transcript that is correct, so record only loading.
-- G12. `rustc --print target-list` proves nothing, because it lists targets without their
-  standard libraries. Check `lib/rustlib/<target>/lib/libstd-*.rlib` exists for both
-  `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, run `cargo check --target` for each
-  and confirm it reaches the code instead of failing on `core`, and match the component
-  digests against `channel-rust-1.88.0.toml`.
-- G13. `gitleaks detect --log-opts="<base>..<head>" --config <base>:gitleaks.toml` reports
-  the same finding count as the last CI run on the same commit. A bare `--source .` scans a
-  different commit set and cannot be compared.
-- G11. `WebKitWebDriver` exists in the extracted sysroot at the recorded path, and
-  `tauri-driver --version` runs.
+- G9. Each media binary runs under `env -i` with a version banner. `ffmpeg -f lavfi -i testsrc=duration=1:size=320x240:rate=30 -f gif -` writes bytes, which proves the encoder is present and not only the demuxer.
+- G10. Each model digest matches `MODELS.txt`, and every delivered model file loads through the loader that will consume it, the sidecar for the ONNX bundles and whisper for the GGML weights. `MODELS.txt` is metadata and loads through nothing, so it is excluded from the load check. A model that loads is not a transcript that is correct, so record only loading.
+- G12. `rustc --print target-list` proves nothing, because it lists targets without their standard libraries. Check `lib/rustlib/<target>/lib/libstd-*.rlib` exists for both `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, run `cargo check --target` for each and confirm it reaches the code instead of failing on `core`, and match the component digests against `channel-rust-1.88.0.toml`.
+- G13. Write the trusted base commit's `gitleaks.toml` to a `.toml` file under `/tmp` (gitleaks dispatches config parsing on filename extension) and confirm `gitleaks detect --log-opts="<base>..<head>" -c /tmp/<dir>/gitleaks.toml` matches the CI scan result, and that `node scripts/ci/test-secret-history-scan.mjs --require-live` passes with the binary installed at `/usr/local/bin/gitleaks`.
+- G11. `WebKitWebDriver` exists in the extracted sysroot at the recorded path, and `tauri-driver --version` runs.
+- G16 through G27. Verify every executable runs under `env -i` from its relocated `/tmp` tree per `FETCH.md`, and verify split binaries (`chromium`, `pandoc`, `trivy`, `libLLVM-14.so.1`, and OpenJDK `lib/modules`) reassemble with executable bits preserved and pass `sha256sum -c MANIFEST.sha256`.
 
-Record the outcome in `engineering/sandbox-vendored-toolchain.md`, including anything
-you found that the build report did not mention.
+Record any group additions or wiring changes in `engineering/sandbox-vendored-toolchain.md` and `engineering/sandbox-coverage-gaps.md`.
 
 ## Traps that have already cost time
 

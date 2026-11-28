@@ -15,7 +15,7 @@ This file is the short form. `AGENTS.md` holds the binding rules, and the
 - [ ] `pnpm run check-types`
 - [ ] `pnpm run test`
 - [ ] `pnpm run format:check`
-- [ ] `pnpm run test:secret-scan`
+- [ ] `pnpm run test:secret-scan` (for live Phase 2, ensure `gitleaks` is installed at `/usr/local/bin/gitleaks`, `/usr/bin/gitleaks`, or `/opt/homebrew/bin/gitleaks`; in a restricted sandbox, fetch the verified binary from `vendor/sandbox-toolchain` per `engineering/sandbox-vendored-toolchain.md`)
 - [ ] `node scripts/ci/verify-skills.mjs` if you touched `.agents/skills/` or `skills-lock.json`
 - [ ] `node scripts/ci/verify-skills.mjs` printed no `IGNORED` line, if you installed or updated a skill; fix one with a scoped `.gitignore` negation, never by deleting the file
 - [ ] `pnpm gen:bindings` produced no diff, if you touched a Tauri command or `packages/desktop-native-apis`
@@ -29,7 +29,7 @@ Touched-package checks, the ones `AGENTS.md` names:
 - [ ] `pnpm --filter @repo/agent test` all passed
 - [ ] `pnpm --filter @maus-inc/preview test` all passed, if you touched `apps/preview`
 - [ ] `node --test scripts/ci/*.test.mjs` all passed, if you touched `scripts/ci`
-- [ ] `pnpm run check:pr-body -- .github/pull_request_template.md` passes, and `gh pr view <n> --json body -q .body | pnpm run check:pr-body -- -` passes on the live body before you call it ready
+- [ ] `pnpm run check:pr-body .github/pull_request_template.md` passes, and `gh pr view <n> --json body -q .body | pnpm run check:pr-body -` passes on the live body before you call it ready
 - [ ] After modifying a built TypeScript package under `packages/`, rebuilt it before checking downstream consumers
 
 ## Rust checks
@@ -53,50 +53,17 @@ The pin is 1.88.0 and no crate in the tree declares a `rust-version` floor, so
 
 ## Blocked sandbox
 
-This section is about the Arena agent sandbox and nothing else. On a host that reaches
-the wider internet, install the toolchain and go straight to the gates. Decide which
-situation you are in with `command -v cargo` and one `curl -m 8 -o /dev/null -w
-'%{http_code}'` per host, then follow the matching branch below.
+Apply this section whenever a restricted Linux x86-64 sandbox cannot reach upstream mirrors, crate registries, or GitHub Release redirects. On a host that reaches upstream hosts directly, install tooling normally and skip the vendored payload. Probe with `command -v <tool>` and `curl -m 8 -o /dev/null -w '%{http_code}' <url>` before assuming either case.
 
-That sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
-`registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach
-`sh.rustup.rs`, `crates.io`, `static.rust-lang.org` or `huggingface.co`, and
-`apt-get update` fails against every Debian mirror even though `sudo` works.
+Whenever any required tool, scanner, browser, media utility, WebDriver driver, model weight, Rust toolchain, or crate registry is missing on the host, check `engineering/sandbox-vendored-toolchain.md` and the orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` before reporting a gate as unavailable. This rule applies to TypeScript, UI, security, and Rust tasks alike.
 
-If the Rust toolchain or the crate registry is unreachable, fetch the orphan branch
-`vendor/sandbox-toolchain` on `maus-inc/mausVoice` first and follow its `FETCH.md`. It
-carries the toolchain, the crate registry, the Debian 12 sysroot, the command line
-tools, the two native archives, the second-delivery groups G9 to G13 (media tools,
-model weights, the WebDriver driver chain, the cross-target Rust standard libraries
-and the gitleaks binary), the third-delivery groups G16 to G22 (debuggers and
-tracers, native build tools, database clients, OCR, shell and crypto tooling, cross
-compilers with emulation, and supply-chain scanners), and the fourth-delivery groups
-G23 to G27 (the native C/C++ compiler and binutils, fontconfig with fonts plus
-`tzdata` and `locales`, Chromium, the OpenJDK 17 JRE, Ruby, CPython and Perl, and the
-document, media-metadata and debugging tools). Then:
-
-- [ ] I set `$CARGO_HOME/config.toml` from the shipped `rust/cargo-config.toml`, because `cargo --config <path>` does not reach `cargo clippy`
-- [ ] I exported `CARGO_NET_OFFLINE=true`
-- [ ] I exported a `CARGO_TARGET_DIR` outside the workspace, so a multi-gigabyte target directory stays out of the snapshot cap
-- [ ] I ran the Rust gates without `--ignore-rust-version`
-- [ ] I ran `cargo test` with `CARGO_BUILD_JOBS=1`
-- [ ] I set `SHERPA_ONNX_ARCHIVE_DIR` and, where needed, `MAUSVOICE_ORT_DYLIB_PATH` from the pre-seeded `native/` payloads, because the `build.rs` downloads point at GitHub Releases, which redirect to a blocked host
-- [ ] I put `cmake` on `PATH` before building `packages/rust_transcription`
-- [ ] I verified the sysroot before any link step: `find "$GTK_SYSROOT" -xtype l -name "lib*.so*"` and `find "$GTK_SYSROOT" -type l -lname '/*'` both print nothing
-- [ ] I installed with `CHROMEDRIVER_SKIP_DOWNLOAD=true`, or with `--ignore-scripts`, because `chromedriver@152.0.0` is in `onlyBuiltDependencies` and its install script downloads from a blocked host
-- [ ] I checked `system/PKGS.txt` for a tool before calling it missing, and read `engineering/sandbox-coverage-gaps.md` before calling a stage blocked
-- [ ] For every gate that still cannot run, I said so in the PR body with the reason and the substitute command I ran, rather than marking it passed
-
-The gap register in `engineering/sandbox-coverage-gaps.md` names what the current payload cannot close: model weights (G10), audio devices, a `dmg`/`msi` packer for a release build (G14) and the accepted gaps. The media tools (G9), Chromium (G25), `tauri-driver` (G11) and the gitleaks binary (G13) are now in the payload. G14 and the rest are vendorable, so read the register before calling one impossible. Name the gap number in the PR body when one of them stops a gate.
-
-The `--ignored` tests in
-`packages/rust_transcription/tests/sidecar_integration.rs` download models from
-`huggingface.co`. The whisper weights are overridable with
-`RUST_TRANSCRIPTION_MODEL_URL_<UPPERCASE_ID>`, and the sidecar test injects a loopback URL
-that way, so a local mirror is a valid route for `ggml-tiny` and `ggml-base`. The ONNX
-artifact sets (Parakeet CTC, Parakeet TDT, Canary 1B, SenseVoice) have no such override,
-so those cannot be redirected. Record a test as unrunnable with the G10 reason only after
-checking for a mirror, and do not report it as passed.
+- [ ] I checked `engineering/sandbox-vendored-toolchain.md` and `vendor/sandbox-toolchain` (`FETCH.md` and `system/PKGS.txt`) before marking any gate `not run`
+- [ ] For standalone static binaries such as `gitleaks`, I fetched the single file via `gh api`, verified its SHA-256 against the branch manifest, and installed `gitleaks` at `/usr/local/bin/gitleaks` so `pnpm run test:secret-scan` Phase 2 runs live
+- [ ] For full payload fetches, I downloaded the tarball via `codeload.github.com` into `/tmp`, reassembled `.part-*` files preserving executable bits, verified `sha256sum -c MANIFEST.sha256`, and did not run `git fetch origin vendor/sandbox-toolchain` inside the repository checkout
+- [ ] I installed JS dependencies with `CHROMEDRIVER_SKIP_DOWNLOAD=true pnpm install --frozen-lockfile` (or `--ignore-scripts` only when `turbo run build` is not needed)
+- [ ] When Rust checks apply: I copied `rust/cargo-config.toml` into `$CARGO_HOME/config.toml` outside the workspace, exported `CARGO_NET_OFFLINE=true` and an out-of-workspace `CARGO_TARGET_DIR`, ran without `--ignore-rust-version`, ran `cargo test` with `CARGO_BUILD_JOBS=1`, set `SHERPA_ONNX_ARCHIVE_DIR` and `MAUSVOICE_ORT_DYLIB_PATH`, put `cmake` on `PATH`, and verified no broken or absolute symlinks in the extracted sysroot
+- [ ] When real-model sidecar tests apply: I wired `RUST_TRANSCRIPTION_MODELS_DIR` to the vendored Whisper (`ggml-tiny.bin`, `ggml-base.bin`) and SenseVoice models from `models/`, and reported gap `G10` only for unvendored bundles (Parakeet CTC, Parakeet TDT, Canary 1B, and larger Whisper weights)
+- [ ] For every gate that genuinely remains blocked by an open gap or accepted limit in `engineering/sandbox-coverage-gaps.md` (unvendored G10 model bundles, G14 release bundlers, G15 bare install flag, or accepted hardware, credential, and native-OS limits), I named the gap ID, the reason, and the substitute check in the PR body rather than marking it passed
 
 ## UI rule
 
@@ -105,7 +72,7 @@ checking for a mirror, and do not report it as passed.
 - [ ] I loaded the skills the routing table in `engineering/design-skills.md` requires for this task, in its mandatory order
 - [ ] I loaded `.agents/skills/stageshow/SKILL.md` and `references/craft.md` for this change, because it touches a form of UI in some file (app, pill, installer, docs, marketing, README, SVG, i18n, PR capture), and I named the mode, product or illustrated
 - [ ] Product mode: I walked the `verify.md` You see / You do table against the surface in light and dark and listed every film line that would print, each fixed or explained with its state
-- [ ] Illustrated mode: `film.mjs --gate` ended `rehearsal passed` at the shown width, at 390, with `--states` and with `--dark`, run from a `/tmp` copy and never inside `.agents/skills/stageshow`; or I named gap G25 and gave the by-eye review against the closest gold example, and `REHEARSAL.md` sits beside the figure
+- [ ] Illustrated mode: `film.mjs --gate` ended `rehearsal passed` at the shown width, at 390, with `--states` and with `--dark`, run from a `/tmp` copy and never inside `.agents/skills/stageshow` (use `system/tools/bin/chromium` from `vendor/sandbox-toolchain` or `scripts/verify/install-chromium.mjs` when Chrome is absent on the host); or, if a browser genuinely cannot run on the host platform, name the environment limit and give the by-eye review against the closest gold example, and place `REHEARSAL.md` beside the figure
 - [ ] I said the one difference between my result and the closest gold example or shipped mausVoice surface, and fixed it when mine was the emptier, flatter, smaller or more boxed one
 - [ ] I report which skills I loaded, which I refused, and what each one changed
 - [ ] No hard-coded colour, radius, duration or font size in a component. Tokens come from `apps/desktop/src/styles/`
@@ -131,7 +98,8 @@ checking for a mirror, and do not report it as passed.
 
 ## Never
 
-- Never extract a vendored payload, set `CARGO_HOME`, `CARGO_TARGET_DIR` or
+- Never extract a vendored payload, run `git fetch origin vendor/sandbox-toolchain`
+  into the repository's `.git` directory, set `CARGO_HOME`, `CARGO_TARGET_DIR`, or
   `RUSTUP_HOME`, or write build output inside `/home/user`. The workspace is
   snapshotted against a size and file cap. Keep all of it in `/tmp`.
 - Never commit a `.cargo/config.toml` with the vendored source replacement. It breaks

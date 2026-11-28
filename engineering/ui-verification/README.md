@@ -50,7 +50,7 @@ Keep only the final, clearly labeled before/after comparisons and a short Markdo
 
 ## Run the verification scripts
 
-Install the pinned Chromium once, then start the preview app on port 5193. The scripts do not start the server themselves.
+Install the pinned Chromium once, then start the preview app on port 5193. The scripts do not start the server themselves. On a restricted Linux x86-64 host where `install-chromium.mjs` cannot reach npm or where the full capture stack (`ffmpeg`, `ffprobe`, `gifsicle`, `tesseract`, Chromium) is needed, use `system/tools/bin/chromium` from `vendor/sandbox-toolchain` per `engineering/sandbox-vendored-toolchain.md`.
 
 ```bash
 node scripts/verify/install-chromium.mjs

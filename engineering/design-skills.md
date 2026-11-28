@@ -348,10 +348,11 @@ nothing else matters when it is wrong.
    only with the list of states you looked at.
 3. Illustrated mode: film with `scripts/film.mjs --gate` from an out-of-tree copy (see
    Execution limits) at the shown width and at 390, plus `--states --gate` and
-   `--dark`. The gate ends `rehearsal passed` or the work is not done. When no Chrome
-   exists on the host, the gate is a hypothesis awaiting verification: say so, name
-   gap G25 from `engineering/sandbox-coverage-gaps.md` (Chromium 156 ships in the fourth
-   delivery, at `system/tools/bin/chromium`), and give the still-frame review
+   `--dark`. The gate ends `rehearsal passed` or the work is not done. On restricted
+   Linux x86-64 hosts, use `system/tools/bin/chromium` from `vendor/sandbox-toolchain`
+   (see `engineering/sandbox-vendored-toolchain.md`) or `scripts/verify/install-chromium.mjs`.
+   When a browser still cannot run on the host platform, treat the gate as a hypothesis
+   awaiting verification, name the environment limit, and give the still-frame review
    you did by eye against the closest gold example instead.
 4. Hold the result beside the closest gold example or the nearest shipped mausVoice
    surface and say the one difference. If yours is the emptier, flatter, smaller or
