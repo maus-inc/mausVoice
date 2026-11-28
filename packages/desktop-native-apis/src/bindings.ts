@@ -5,6 +5,12 @@
 
 
 export const commands = {
+/**
+ * Retire only the recovery copy after a normal stop reply was received.
+ */
+async acknowledgeRecording(ownerId: string, generation: number) : Promise<void> {
+    await TAURI_INVOKE("acknowledge_recording", { ownerId, generation });
+},
 async apiKeyCreate(apiKey: ApiKeyCreateRequest) : Promise<Result<ApiKeyView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("api_key_create", { apiKey }) };
@@ -53,6 +59,14 @@ async appTargetUpsert(args: AppTargetUpsertArgs) : Promise<Result<AppTarget, str
     else return { status: "error", error: e  as any };
 }
 },
+async cancelPrivateHttpRequest(requestId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_private_http_request", { requestId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cancelTyping() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cancel_typing") };
@@ -93,6 +107,12 @@ async chatMessageUpdate(message: ChatMessage) : Promise<Result<ChatMessage, stri
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The stage timing of the most recent capture start, oldest stage first.
+ */
+async captureStartupTiming() : Promise<CaptureStartupStage[]> {
+    return await TAURI_INVOKE("capture_startup_timing");
+},
 async checkAccessibilityPermission() : Promise<Result<PermissionStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_accessibility_permission") };
@@ -123,6 +143,25 @@ async checkFocusedPasteTarget() : Promise<Result<PasteTargetState, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Check a non-default update channel at runtime. Stable keeps using the
+ * updater plugin's bundled endpoint; this builds an identical updater aimed
+ * at the channel manifest and registers the found update in the same
+ * resource table, so download, install, relaunch, and signature
+ * verification all run the stock plugin path untouched.
+ * 
+ * Pin this command boundary to the desktop app's Wry runtime. UpdaterExt is
+ * generic; this is an application/bindings choice, not a plugin restriction.
+ * Tauri injects the Webview; JavaScript supplies only `channel`.
+ */
+async checkForChannelUpdate(channel: string) : Promise<Result<ChannelUpdateMetadata | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_for_channel_update", { channel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async checkMicrophonePermission() : Promise<Result<PermissionStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_microphone_permission") };
@@ -134,6 +173,45 @@ async checkMicrophonePermission() : Promise<Result<PermissionStatus, string>> {
 async clearLocalData() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("clear_local_data") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Closes a microphone held open by [`warm_microphone`], and returns to opening
+ * the device on each press.
+ */
+async closeMicrophone() : Promise<void> {
+    await TAURI_INVOKE("close_microphone");
+},
+async completeLocalDataClear() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("complete_local_data_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async composerDiscardText(requestId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composer_discard_text", { requestId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async composerPeekText(requestId: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composer_peek_text", { requestId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async composerRegisterText(requestId: string, text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composer_register_text", { requestId, text }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -179,14 +257,22 @@ async copyToClipboard(text: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * Downloads a `.pkg` installer to a temp directory and opens it with
- * macOS Installer.app. This is used as a fallback when the normal in-place
- * updater cannot write to the app's install location.
- */
-async downloadAndOpenMacInstaller(url: string) : Promise<Result<null, string>> {
+async dailyActivityList(startDate: string, endDate: string) : Promise<Result<DailyWordActivity[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("download_and_open_mac_installer", { url }) };
+    return { status: "ok", data: await TAURI_INVOKE("daily_activity_list", { startDate, endDate }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Downloads a `.dmg` installer to a temp directory and opens it through
+ * macOS's default handler. This is used as a fallback when the normal
+ * in-place updater cannot write to the app's install location.
+ */
+async downloadAndOpenMacInstaller(url: string, signatureUrl: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_and_open_mac_installer", { url, signatureUrl }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -243,11 +329,16 @@ async findPidByWindowTitle(titleSubstring: string) : Promise<Result<number | nul
 },
 /**
  * Opens a draggable, always-on-top webview window pointed at the given URL
- * and returns a stable id that can be used to destroy it later. The window
- * renders any URL the platform webview can load (the same set the main
- * window can load). The window is independent of the main app window — it
- * will not be backgrounded behind other windows because of the always-on-top
- * flag.
+ * or a trusted local app route and returns a stable id that can be used to
+ * destroy it later.
+ * 
+ * External URLs are restricted to http(s) and to a small allow-list of
+ * trusted schemes/hosts. This is the only place in the app that creates a
+ * webview pointed at a non-local origin. Localhost loopback is the only
+ * remote host that also receives IPC (via `floating-*` `remote.urls`);
+ * the GitHub Pages docs host is allowed to load but has no IPC capability.
+ * We keep the navigation allow-list small to avoid a compromised or
+ * confused caller creating a floating window on an attacker-controlled origin.
  */
 async floatingWindowCreate(args: CreateFloatingWindowArgs) : Promise<Result<FloatingWindowInfo, string>> {
     try {
@@ -383,6 +474,32 @@ async hotkeyList() : Promise<Result<Hotkey[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async hotkeyReplaceStyleHotkeys(prefix: string, hotkeys: Hotkey[], expected: Hotkey[] | null) : Promise<Result<Hotkey[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("hotkey_replace_style_hotkeys", { prefix, hotkeys, expected }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Replace the whole dictation group -- the primary `dictate` shortcut plus the
+ * additional language shortcuts -- in one transaction.
+ * 
+ * `additional` carries every row of the group the caller keeps, including any
+ * extra `dictate` row a user bound in the shortcuts dialog, so saving a
+ * language change cannot delete a shortcut the dialog never displayed.
+ * `expected` is the group the caller edited; passing `None` replaces whatever
+ * the group holds now, which is still atomic.
+ */
+async hotkeyReplaceDictationLanguageHotkeys(primary: Hotkey, additional: Hotkey[], expected: Hotkey[] | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("hotkey_replace_dictation_language_hotkeys", { primary, additional, expected }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async hotkeySave(hotkey: Hotkey) : Promise<Result<Hotkey, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("hotkey_save", { hotkey }) };
@@ -396,6 +513,33 @@ async listGpus() : Promise<GpuAdapterInfo[]> {
 },
 async listMicrophones() : Promise<InputDeviceDescriptor[]> {
     return await TAURI_INVOKE("list_microphones");
+},
+/**
+ * One readable line describing the capture path: whether a stream is held, the
+ * linger policy, the pre-roll length, and whether the last start reused a
+ * stream or opened a device.
+ */
+async microphoneReadinessReport() : Promise<string> {
+    return await TAURI_INVOKE("microphone_readiness_report");
+},
+/**
+ * Whether a capture stream is held open right now.
+ */
+async microphoneReady() : Promise<boolean> {
+    return await TAURI_INVOKE("microphone_ready");
+},
+/**
+ * What is holding the microphone right now, as one readable line.
+ * 
+ * Answers the question a user asks when the microphone is unavailable: is it
+ * me, or is another application using it? The answer is measured rather than
+ * inferred, and every state that cannot be measured says so rather than
+ * reporting "nothing is using it".
+ * 
+ * Shape: `idle`, `held_by_other[Zoom]`, or `unavailable:<reason>`.
+ */
+async microphoneUsage() : Promise<string> {
+    return await TAURI_INVOKE("microphone_usage");
 },
 async notifyPillStyleInfo(count: number, name: string) : Promise<void> {
     await TAURI_INVOKE("notify_pill_style_info", { count, name });
@@ -432,9 +576,44 @@ async paste(text: string, keybind: string | null, skipClipboardRestore: boolean 
     else return { status: "error", error: e  as any };
 }
 },
-async pauseRecording() : Promise<Result<null, string>> {
+async privateHttpRequest(request: PrivateHttpRequest) : Promise<Result<PrivateHttpResponse, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pause_recording") };
+    return { status: "ok", data: await TAURI_INVOKE("private_http_request", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openaiCompatibleHttpRequest(apiKeyId: string, request: PrivateHttpRequest) : Promise<Result<PrivateHttpResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("openai_compatible_http_request", { apiKeyId, request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Release an abandoned lease without affecting a different owner.
+ */
+async discardRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discard_recording", { ownerId, generation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async forceStopRecording() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("force_stop_recording") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pauseRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pause_recording", { ownerId, generation }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -455,6 +634,30 @@ async purgeStaleTranscriptionAudio() : Promise<Result<string[], string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Resolves the device a press would use, without opening a capture stream.
+ * 
+ * Returns the device label it settled on, which the next start then tries
+ * first. No microphone indicator appears, because nothing is capturing.
+ */
+async prepareMicrophone(preferredInputDevice: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prepare_microphone", { preferredInputDevice }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fully terminates the application process (including the tray icon).
+ * 
+ * Distinct from the main-window close path, which only hides to tray.
+ * Used by the elevation-declined dialog's "Close mausVoice" action and any
+ * other UI that must actually quit rather than background the app.
+ */
+async quitApp() : Promise<void> {
+    await TAURI_INVOKE("quit_app");
 },
 async readAccessibilityFieldValues(fields: FieldValueRequest[]) : Promise<Result<FieldValueResult[], string>> {
     try {
@@ -523,6 +726,24 @@ async requestMicrophonePermission() : Promise<Result<PermissionStatus, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Ask the native pill overlay to re-publish its current geometry.
+ * 
+ * The pill emits `pill-position-changed` on its own only after the user drags
+ * it, so a session that never moved the pill left the desktop without any
+ * geometry and windows anchored to the pill (the review composer) opened at
+ * the OS-chosen centre of the screen. The frontend calls this once its
+ * listener is registered, which makes the anchor available from the first
+ * use instead of the second.
+ */
+async requestPillPosition() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("request_pill_position") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async resetKeyListenerState() : Promise<void> {
     await TAURI_INVOKE("reset_key_listener_state");
 },
@@ -533,6 +754,10 @@ async resetKeyListenerState() : Promise<void> {
  * default centre-bottom of a monitor. `strategy` selects which monitor:
  * `"current"` (the monitor the pill lives on, the historical default) or
  * `"cursor"` (the monitor under the mouse).
+ * 
+ * Async so the main thread does not wait on the local-data write gate: the
+ * clear can be queued behind a whole local-data wipe, which holds that gate for
+ * its duration.
  */
 async resetPillPosition(strategy: string | null) : Promise<Result<null, string>> {
     try {
@@ -556,9 +781,23 @@ async resolveAppPids(identity: AppIdentity) : Promise<Result<AppProcessMatch[], 
     else return { status: "error", error: e  as any };
 }
 },
-async resumeRecording() : Promise<Result<null, string>> {
+/**
+ * Re-registers the global keyboard hook. Used by the Windows resume
+ * handler in `platform::windows::lifecycle` to recover from a
+ * sleep/wake or session-unlock transition that tore down the
+ * low-level hook installed by `rdev::grab`.
+ */
+async restartKeyListener() : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("resume_recording") };
+    return { status: "ok", data: await TAURI_INVOKE("restart_key_listener") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resumeRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resume_recording", { ownerId, generation }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -579,6 +818,17 @@ async retryKeyListener() : Promise<Result<null, string>> {
 async runNativeSetup() : Promise<NativeSetupResult> {
     return await TAURI_INVOKE("run_native_setup");
 },
+/**
+ * Strict, shell-free execution for an allow-listed command.
+ * 
+ * Security properties:
+ * - No shell is invoked; `command` is tokenized into argv by whitespace only
+ * (no quoting, no metacharacter evaluation). A token like `;rm -rf /` is
+ * passed as a single literal argument to the binary.
+ * - The binary must appear in `ALLOWED_COMMANDS` (exact name match); path
+ * traversal (e.g. `/bin/sh`, `../../sh`) is rejected.
+ * - Per-command timeout and output-size cap bound resource use.
+ */
 async runTerminalCommand(command: string) : Promise<Result<RunTerminalCommandResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("run_terminal_command", { command }) };
@@ -586,6 +836,35 @@ async runTerminalCommand(command: string) : Promise<Result<RunTerminalCommandRes
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Set the localized dashboard action labels and sync the tray item to the
+ * main window's actual visibility.
+ */
+async setDashboardMenuLabels(openLabel: string, hideLabel: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_dashboard_menu_labels", { openLabel, hideLabel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A23: Mirror the TS playInteractionChime preference into Rust so the
+ * native thock path (pill overlays call audio_feedback::play_thock directly,
+ * bypassing the TS gate in tryPlayAudioChime) honors the user's choice.
+ */
+async setInteractionChimeEnabled(enabled: boolean) : Promise<void> {
+    await TAURI_INVOKE("set_interaction_chime_enabled", { enabled });
+},
+/**
+ * Mirror the TS interactionFeedbackVolume preference into Rust so the
+ * thock gain is applied on the warm path AND the fallback path. The
+ * Rust side clamps to a safe range, so an out-of-range value from the
+ * frontend can never blow out the sink.
+ */
+async setInteractionFeedbackVolume(volume: number) : Promise<void> {
+    await TAURI_INVOKE("set_interaction_feedback_volume", { volume });
 },
 async setMenuIcon(variant: MenuIconVariant) : Promise<Result<null, string>> {
     try {
@@ -598,6 +877,14 @@ async setMenuIcon(variant: MenuIconVariant) : Promise<Result<null, string>> {
 async setPhase(phase: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_phase", { phase }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setPillPlacement(placement: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_pill_placement", { placement }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -684,7 +971,7 @@ async setTrayVisible(visible: boolean) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async simulateType(text: string, delayMs: number) : Promise<Result<null, string>> {
+async simulateType(text: string, delayMs: number) : Promise<Result<SimulatedTypingOutcome, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("simulate_type", { text, delayMs }) };
 } catch (e) {
@@ -700,9 +987,33 @@ async startKeyListener() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async startRecording(args: StartRecordingArgs | null) : Promise<Result<StartRecordingResponse, string>> {
+async recordingGeneration(ownerId: string) : Promise<Result<number, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_recording", { args }) };
+    return { status: "ok", data: await TAURI_INVOKE("recording_generation", { ownerId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async claimBrowserRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("claim_browser_recording", { ownerId, generation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async releaseBrowserRecording(ownerId: string, generation: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("release_browser_recording", { ownerId, generation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startRecording(ownerId: string, generation: number, args: StartRecordingArgs | null) : Promise<Result<StartRecordingResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_recording", { ownerId, generation, args }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -711,14 +1022,6 @@ async startRecording(args: StartRecordingArgs | null) : Promise<Result<StartReco
 async stopKeyListener() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("stop_key_listener") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async stopRecording() : Promise<Result<StopRecordingResponse, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stop_recording") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -735,14 +1038,6 @@ async storageGetDownloadUrl(path: string) : Promise<Result<string, string>> {
 async storageUploadData(args: StorageUploadArgs) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("storage_upload_data", { args }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async storeTranscriptionAudio(id: string, samples: number[], sampleRate: number) : Promise<Result<TranscriptionAudioSnapshot, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_transcription_audio", { id, samples, sampleRate }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -840,7 +1135,15 @@ async toneUpsert(tone: Tone) : Promise<Result<Tone, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async transcriptionAudioLoad(id: string) : Promise<Result<TranscriptionAudioData, string>> {
+async transcriptionAppendWarnings(id: string, warnings: string[]) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcription_append_warnings", { id, warnings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async transcriptionAudioLoad(id: string) : Promise<Result<TranscriptionAudioSamplesData, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("transcription_audio_load", { id }) };
 } catch (e) {
@@ -864,6 +1167,14 @@ async transcriptionDelete(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async transcriptionImportAudio() : Promise<Result<TranscriptionAudioData | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcription_import_audio") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async transcriptionList(limit: number | null, offset: number | null) : Promise<Result<Transcription[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("transcription_list", { limit, offset }) };
@@ -880,9 +1191,52 @@ async transcriptionUpdate(transcription: Transcription) : Promise<Result<Transcr
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * How long the device stays open after a dictation stops, in milliseconds.
+ * 
+ * Separate from [`warm_microphone`] because it opens nothing. It only sets the
+ * policy the next stop reads, so a user who never asked for a held microphone
+ * can still get a fast second press: the stream from the recording they just
+ * finished is left open for this window and the next press adopts it.
+ * 
+ * `0` closes the device at stop, which is the default and the only value with
+ * no microphone indicator between dictations.
+ */
+async setMicrophoneLinger(lingerMs: number) : Promise<void> {
+    await TAURI_INVOKE("set_microphone_linger", { lingerMs });
+},
+/**
+ * How much audio from before a press to keep, in seconds.
+ * 
+ * The open path takes the pre-roll as an argument, which covers the case where
+ * keep-ready is on and a stream is already held. With keep-ready off there is no
+ * open, so nothing ever set it: a cold press fell back to the recorder's own
+ * 500 ms default and the slider did nothing. This is the same policy-only shape
+ * as [`set_microphone_linger`] -- no device is opened, no state is held, and the
+ * value applies to whichever path opens next.
+ */
+async setMicrophonePreroll(prerollSeconds: number) : Promise<void> {
+    await TAURI_INVOKE("set_microphone_preroll", { prerollSeconds });
+},
 async userGetOne() : Promise<Result<User | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("user_get_one") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async userRecordUsage(eventId: string, localDate: string, wordCount: number) : Promise<Result<User, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("user_record_usage", { eventId, localDate, wordCount }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async userPreferencesCompareSetExpansionFlags(args: UserPreferencesCompareSetExpansionFlagsArgs) : Promise<Result<UserPreferences | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("user_preferences_compare_set_expansion_flags", { args }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -904,6 +1258,14 @@ async userPreferencesSet(preferences: UserPreferences) : Promise<Result<UserPref
     else return { status: "error", error: e  as any };
 }
 },
+async userPreferencesSetExpansionFlags(args: UserPreferencesSetExpansionFlagsArgs) : Promise<Result<UserPreferences, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("user_preferences_set_expansion_flags", { args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async userSetOne(user: User) : Promise<Result<User, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("user_set_one", { user }) };
@@ -912,9 +1274,52 @@ async userSetOne(user: User) : Promise<Result<User, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async voquillMigrationDismiss() : Promise<Result<VoquillMigrationReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voquill_migration_dismiss") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voquillMigrationRetry() : Promise<Result<VoquillMigrationReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voquill_migration_retry") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async voquillMigrationStatus() : Promise<Result<VoquillMigrationReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voquill_migration_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async writeAccessibilityFields(entries: AccessibilityWriteEntry[]) : Promise<Result<AccessibilityWriteResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("write_accessibility_fields", { entries }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opens the microphone and holds it, without recording.
+ * 
+ * `prerollSeconds` is how much audio from before the press to keep, so a word
+ * that starts as the user presses is not clipped. Zero keeps the device ready
+ * without retaining audio.
+ * 
+ * `lingerMs` is how long the device stays open after a recording stops.
+ * `Number.MAX_SAFE_INTEGER` means "until the user releases it", which is what
+ * the keep-ready preference sends; anything smaller is a real window.
+ */
+async warmMicrophone(prerollSeconds: number, lingerMs: number, preferredMicrophone: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("warm_microphone", { prerollSeconds, lingerMs, preferredMicrophone }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -958,9 +1363,11 @@ details?: string | null }
 export type AccessibilityFocusTarget = { appPid: number; elementIndexPath: number[]; fingerprintChain: ElementFingerprint[] | null; backend?: string | null; jabStringPath?: JabElementId[] | null }
 export type AccessibilityWriteEntry = { appPid: number; elementIndexPath: number[]; fingerprintChain: ElementFingerprint[] | null; value: string; backend?: string | null; jabWriteMethod?: JabWriteMethod; jabStringPath?: JabElementId[] | null }
 export type AccessibilityWriteResult = { succeeded: number; failed: number; errors: string[] }
-export type ApiKeyCreateRequest = { id: string; name: string; provider: string; key: string; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null }
-export type ApiKeyUpdateRequest = { id: string; name?: string | null; key?: string | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null }
-export type ApiKeyView = { id: string; name: string; provider: string; createdAt: number; keySuffix?: string | null; keyFull?: string | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null }
+export type ApiKeyCreateRequest = { id: string; name: string; provider: string; key: string; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null; transcriptionPath?: string | null }
+export type ApiKeyCredentialIssue = "legacy_encryption" | "decryption_failed" | "missing_key" | "invalid_key_format" | "missing_endpoint" | "missing_region"
+export type ApiKeyCredentialStatus = "usable" | "needs_reentry" | "invalid_format"
+export type ApiKeyUpdateRequest = { id: string; name?: string | null; key?: string | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null; transcriptionPath?: string | null; clearTranscriptionPath?: boolean | null }
+export type ApiKeyView = { id: string; name: string; provider: string; createdAt: number; keySuffix?: string | null; keyFull?: string | null; credentialStatus: ApiKeyCredentialStatus; credentialIssue?: ApiKeyCredentialIssue | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null; transcriptionPath?: string | null }
 /**
  * Stable, relaunch-surviving identifier for a host application. PIDs change
  * every launch; these fields do not. Populated by `get_focused_field_info`
@@ -995,11 +1402,32 @@ export type AppProcessMatch = { pid: number; exePath: string | null; appName: st
 export type AppTarget = { id: string; name: string; createdAt: string; toneId: string | null; iconPath: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AppTargetUpsertArgs = { id: string; name: string; toneId?: string | null; iconPath?: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_macos_clip" | "alert_windows_10_clip" | "alert_windows_11_clip"
+/**
+ * One stage of a capture start, as the UI reads it.
+ */
+export type CaptureStartupStage = { stage: string; micros: number }
+/**
+ * Update metadata for a channel check. Mirrors the updater plugin's own
+ * metadata shape so the frontend reuses the stock install path; `rawJson`
+ * travels as text because specta cannot type an open JSON value, and the
+ * date travels as unix seconds for the same reason.
+ */
+export type ChannelUpdateMetadata = { rid: number; currentVersion: string; version: string; dateUnix: number | null; body: string | null; rawJson: string }
 export type ChatMessage = { id: string; conversationId: string; role: string; content: string; createdAt: number; metadata: string | null }
 export type CompositorBinding = { actionName: string; keys: string[] }
 export type Conversation = { id: string; title: string; createdAt: number; updatedAt: number }
-export type CreateFloatingWindowArgs = { url: string; title: string | null; width: number | null; height: number | null; minWidth: number | null; minHeight: number | null; x: number | null; y: number | null; decorations: boolean | null; transparent: boolean | null; resizable: boolean | null; focused: boolean | null }
+export type CreateFloatingWindowArgs = { url: string; 
+/**
+ * When set, load a local app route instead of an external URL. This is
+ * used by the composer so it never depends on localhost or a network
+ * origin.
+ */
+route: string | null; title: string | null; width: number | null; height: number | null; minWidth: number | null; minHeight: number | null; x: number | null; y: number | null; decorations: boolean | null; transparent: boolean | null; resizable: boolean | null; focused: boolean | null }
 export type CurrentAppInfoResponse = { appName: string; iconBase64: string }
+/**
+ * Per-local-calendar-day word usage, without any transcription content.
+ */
+export type DailyWordActivity = { localDate: string; wordCount: number }
 export type ElementFingerprint = { automationId: string | null; className: string | null; controlType: number; name: string | null; frameworkId: string | null; childIndex: number; 
 /**
  * macOS only. AXRole of the element at this depth (e.g. "AXTextArea").
@@ -1033,11 +1461,10 @@ details?: string | null }
 export type FieldValueRequest = { appPid: number; elementIndexPath: number[]; fingerprintChain: ElementFingerprint[] | null; backend?: string | null; jabStringPath?: JabElementId[] | null }
 export type FieldValueResult = { value: string | null; error: string | null }
 export type FloatingWindowInfo = { id: string; url: string; title: string }
-export type GoogleAuthEventPayload = { idToken: string; accessToken: string; refreshToken: string | null; expiresIn: number; tokenType: string; user: GoogleUserInfo }
-export type GoogleUserInfo = { sub: string; email: string | null; name: string | null; picture: string | null }
 export type GpuAdapterInfo = { name: string; vendor: number; device: number; deviceType: string; backend: string }
 export type Hotkey = { id: string; actionName: string; keys: string[] }
-export type InputDeviceDescriptor = { label: string; isDefault: boolean; caution: boolean }
+export type HttpRedirectMode = "follow" | "manual" | "error"
+export type InputDeviceDescriptor = { label: string; isDefault: boolean; caution: boolean; bluetooth: boolean }
 /**
  * Canonical string identifier for a JAB element at one level of the tree.
  * JAB has no developer-assigned ID, so we combine `name` + `role` (English)
@@ -1099,16 +1526,28 @@ export type PermissionKind = "microphone" | "accessibility"
 export type PermissionState = "authorized" | "denied" | "restricted" | "not-determined"
 export type PermissionStatus = { kind: PermissionKind; state: PermissionState; promptShown: boolean }
 export type PillWindowSize = "dictation" | "assistant_compact" | "assistant_expanded" | "assistant_typing"
+export type PrivateHttpRequest = { requestId: string; url: string; method: string; redirect?: HttpRedirectMode | null; headers: Partial<{ [key in string]: string }>; 
+/**
+ * RFC 4648 standard Base64 body. A string is substantially smaller than
+ * the JSON number array Specta generates for `Vec<u8>` and keeps large
+ * local audio/model requests within the command's explicit limits.
+ */
+bodyBase64: string | null }
+export type PrivateHttpResponse = { status: number; headers: Partial<{ [key in string]: string }>; 
+/**
+ * RFC 4648 standard Base64 response body, decoded by secureFetch.
+ */
+bodyBase64: string }
 export type RemoteReceiverStatus = { enabled: boolean; deviceId: string; deviceName: string; listenAddress: string | null; port: number | null; pairingCode: string; lastSenderDeviceId: string | null; lastEventId: string | null; lastDeliveryStatus: string | null; lastDeliveryAt: string | null; lastError: string | null; lastTargetClassName: string | null; lastTargetTitle: string | null; lastTargetEditable: boolean | null; devicePlatform: string }
 export type RemoteSenderDeliverArgs = { targetDeviceId: string; text: string; mode: string }
 export type RemoteSenderPairArgs = { receiverDeviceId: string; receiverName: string; receiverPlatform: string; receiverAddress: string; pairingCode: string }
 export type RunTerminalCommandResponse = { stdout: string; stderr: string; exitCode: number }
 export type ScreenContextInfo = { screenContext: string | null }
 export type ScreenVisibleArea = { topInset: number; bottomInset: number; leftInset: number; rightInset: number }
-export type StartRecordingArgs = { preferredMicrophone: string | null }
+export type SimulatedTypingOutcome = "completed" | "cancelled_before_start"
+export type StartRecordingArgs = { preferredMicrophone: string | null; waitForRelease?: boolean }
 export type StartRecordingResponse = { sampleRate: number }
 export type StartRemoteReceiverArgs = { port?: number | null }
-export type StopRecordingResponse = { samples: number[]; sampleRate: number }
 export type StorageUploadArgs = { path: string; data: number[] }
 /**
  * Static machine capabilities used to recommend (or discourage) local
@@ -1118,13 +1557,85 @@ export type StorageUploadArgs = { path: string; data: number[] }
 export type SystemCapabilities = { ramGb: number; cpuCores: number; gpus: GpuAdapterInfo[] }
 export type Term = { id: string; createdAt: number; createdByUserId: string; sourceValue: string; destinationValue: string; isReplacement: boolean; isDeleted: boolean }
 export type TextFieldInfo = { cursorPosition: number | null; selectionLength: number | null; textContent: string | null }
-export type Tone = { id: string; name: string; promptTemplate: string; createdAt: number; sortOrder: number }
-export type Transcription = { id: string; transcript: string; timestamp: number; audio?: TranscriptionAudioSnapshot | null; modelSize?: string | null; inferenceDevice?: string | null; rawTranscript?: string | null; sanitizedTranscript?: string | null; transcriptionPrompt?: string | null; postProcessPrompt?: string | null; transcriptionApiKeyId?: string | null; postProcessApiKeyId?: string | null; transcriptionMode?: string | null; postProcessMode?: string | null; postProcessDevice?: string | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
-export type TranscriptionAudioData = { samples: number[]; sampleRate: number }
+export type Tone = { id: string; name: string; promptTemplate: string; createdAt: number; sortOrder: number; category?: string | null; outputLength?: string | null; exampleInputOutput?: string | null }
+export type Transcription = { id: string; transcript: string; timestamp: number; audio?: TranscriptionAudioSnapshot | null; modelSize?: string | null; inferenceDevice?: string | null; rawTranscript?: string | null; sanitizedTranscript?: string | null; transcriptionPrompt?: string | null; postProcessPrompt?: string | null; transcriptionApiKeyId?: string | null; postProcessApiKeyId?: string | null; transcriptionMode?: string | null; postProcessMode?: string | null; postProcessDevice?: string | null; 
+/**
+ * Resolved model id used for post-processing (e.g. "openai/gpt-oss-20b").
+ */
+postProcessModel?: string | null; 
+/**
+ * Provider slug (e.g. "cerebras") selected for post-processing,
+ * persisted even when the request fails so history attributes the
+ * attempt instead of showing "no provider selected".
+ */
+postProcessProvider?: string | null; 
+/**
+ * True when a post-processing request was attempted and failed.
+ */
+postProcessFailed?: boolean | null; 
+/**
+ * True when a provider edit could not be applied to the transcript.
+ */
+postProcessEditFailed?: boolean | null; 
+/**
+ * Number of edit-application failures in this transcription retry chain.
+ */
+postProcessEditFailureCount?: number | null; 
+/**
+ * True after the one automatic full-audio retranscription was consumed.
+ */
+postProcessEditAutoRetryUsed?: boolean | null; 
+/**
+ * Tone the claimed recovery pass restyles with, or an empty string when
+ * the failed run used none.
+ */
+postProcessEditRetryToneId?: string | null; 
+/**
+ * Language the claimed recovery pass retranscribes with, or an empty
+ * string when the failed run used no override.
+ */
+postProcessEditRetryLanguageCode?: string | null; 
+/**
+ * Failure count the recovery claim was written at. A restart matches the
+ * live count against it to tell a claim that never reported back from one
+ * whose pass ran and failed again.
+ */
+postProcessEditRetryClaimCount?: number | null; 
+/**
+ * Sanitized, non-secret error message from a failed post-processing
+ * request.
+ */
+postProcessError?: string | null; 
+/**
+ * True when post-processing failed and local fast styling produced the
+ * stored transcript instead. Persisted so the row still reads as
+ * degraded after a save/load cycle.
+ */
+postProcessFallback?: boolean | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
+export type TranscriptionAudioData = { 
+/**
+ * Little-endian signed 16-bit mono PCM. The IPC serializer still carries
+ * bytes as a JSON number array, but packed PCM is materially smaller than
+ * sending each sample as a floating-point JSON value.
+ */
+pcm16Le: number[]; sampleRate: number }
+export type TranscriptionAudioSamplesData = { samples: number[]; sampleRate: number }
 export type TranscriptionAudioSnapshot = { filePath: string; durationMs: number }
 export type TrayLanguageMenuItem = { code: string; label: string; checked: boolean }
-export type User = { id: string; name: string; bio: string; company?: string | null; title?: string | null; onboarded: boolean; preferredMicrophone?: string | null; preferredLanguage?: string | null; wordsThisMonth?: number; wordsThisMonthMonth?: string | null; wordsTotal?: number; playInteractionChime?: boolean; hasFinishedTutorial?: boolean; hasMigratedPreferredMicrophone?: boolean; cohort?: string | null; stylingMode?: string | null; selectedToneId?: string | null; activeToneIds?: string | null; streak?: number | null; streakRecordedAt?: string | null; referralSource?: string | null }
-export type UserPreferences = { userId: string; transcriptionMode?: string | null; transcriptionApiKeyId?: string | null; transcriptionDevice?: string | null; transcriptionModelSize?: string | null; postProcessingMode?: string | null; postProcessingApiKeyId?: string | null; postProcessingOllamaUrl?: string | null; postProcessingOllamaModel?: string | null; agentMode?: string | null; agentModeApiKeyId?: string | null; openclawGatewayUrl?: string | null; openclawToken?: string | null; activeToneId?: string | null; gotStartedAt?: number | null; gpuEnumerationEnabled?: boolean; pasteKeybind?: string | null; lastSeenFeature?: string | null; languageSwitchEnabled?: boolean; secondaryDictationLanguage?: string | null; activeDictationLanguage?: string | null; additionalDictationLanguages?: string[] | null; preferredMicrophone?: string | null; ignoreUpdateDialog?: boolean; incognitoModeEnabled?: boolean; incognitoModeIncludeInStats?: boolean; dictationLimitMinutes?: number; dictationPillVisibility?: string; useNewBackend?: boolean; realtimeOutputEnabled?: boolean; remoteOutputEnabled?: boolean; remoteTargetDeviceId?: string | null; remoteReceiverPort?: number | null; remoteReceiverAutoStart?: boolean; dictationAudioDim?: number; menuBarIconHidden?: boolean; insertionMethod?: string | null; typingSpeedMs?: number | null; 
+export type User = { id: string; name: string; bio: string; company?: string | null; title?: string | null; onboarded: boolean; preferredMicrophone?: string | null; preferredLanguage?: string | null; wordsThisMonth?: number; wordsThisMonthMonth?: string | null; wordsTotal?: number; playInteractionChime?: boolean; interactionFeedbackVolume?: number | null; hasFinishedTutorial?: boolean; hasMigratedPreferredMicrophone?: boolean; cohort?: string | null; stylingMode?: string | null; selectedToneId?: string | null; activeToneIds?: string | null; streak?: number | null; streakRecordedAt?: string | null; referralSource?: string | null; 
+/**
+ * When the profile row was first written. `None` for rows that predate
+ * migration 89; the TS repo decides how to report those. Declared last so
+ * the positional `?N` binds in `upsert_user` keep reading in the order the
+ * struct has always used.
+ */
+createdAt?: string | null; 
+/**
+ * When the user completed onboarding. Independent of `created_at`: a
+ * profile is created on the first name step, onboarding finishes later.
+ */
+onboardedAt?: string | null }
+export type UserPreferences = { userId: string; transcriptionMode?: string | null; transcriptionApiKeyId?: string | null; transcriptionDevice?: string | null; transcriptionModelSize?: string | null; postProcessingMode?: string | null; postProcessingApiKeyId?: string | null; postProcessingOllamaUrl?: string | null; postProcessingOllamaModel?: string | null; agentMode?: string | null; agentModeApiKeyId?: string | null; openclawGatewayUrl?: string | null; openclawToken?: string | null; activeToneId?: string | null; gotStartedAt?: number | null; gpuEnumerationEnabled?: boolean; pasteKeybind?: string | null; lastSeenFeature?: string | null; languageSwitchEnabled?: boolean; secondaryDictationLanguage?: string | null; activeDictationLanguage?: string | null; additionalDictationLanguages?: string[] | null; preferredMicrophone?: string | null; ignoreUpdateDialog?: boolean; incognitoModeEnabled?: boolean; incognitoModeIncludeInStats?: boolean; preserveAudioOnFailure?: boolean; dictationLimitMinutes?: number; dictationPillVisibility?: string; useNewBackend?: boolean; realtimeOutputEnabled?: boolean; remoteOutputEnabled?: boolean; remoteTargetDeviceId?: string | null; remoteReceiverPort?: number | null; remoteReceiverAutoStart?: boolean; dictationAudioDim?: number; menuBarIconHidden?: boolean; insertionMethod?: string | null; typingSpeedMs?: number | null; 
 /**
  * Which monitor "Reset Pill Position" re-homes the pill onto:
  * "current" (the monitor the pill lives on) or "cursor".
@@ -1134,8 +1645,84 @@ pillResetMonitorStrategy?: string;
  * Request admin elevation (UAC) on every startup. Windows-only; off by
  * default so existing behavior is unchanged.
  */
-alwaysRequestAdminOnStartup?: boolean }
+alwaysRequestAdminOnStartup?: boolean; 
+/**
+ * JSON object of expansion feature-name -> boolean flag. Stored as a
+ * serialized string; defaults to an empty object so every flag is off.
+ */
+expansionFlags?: string; 
+/**
+ * Where the dictation pill anchors on screen. Accepted values are
+ * "top" or "bottom"; any other value is treated as the default
+ * "bottom" so legacy data never breaks the UI.
+ */
+pillPlacement?: string; 
+/**
+ * Delay (ms) between a hands-free stop and the actual paste/type
+ * action. NULL disables the delay (immediate paste on stop).
+ */
+handsFreeDelayMs?: number | null; inDictationStyleSwitchingEnabled?: boolean; 
+/**
+ * Which modifier double-tap replays the pill outline. Accepted values are
+ * "none", "alt", "shift" and "control"; the default disables the gesture.
+ */
+pillLocateGestureModifier?: string; hallucinationFilterEnabled?: boolean; 
+/**
+ * Style short dictations with the deterministic local transforms instead
+ * of the configured provider. Default on.
+ */
+fastStyleShortDictationsEnabled?: boolean; reviewBeforeInsert?: boolean | null; agentEnabledTools?: string | null; agentMaxIterations?: number; agentPermissionTimeoutMs?: number; 
+/**
+ * Deterministic spoken formatting / scratch-that. Default on.
+ */
+spokenCommandsEnabled?: boolean; 
+/**
+ * Automatically add corrected names and words as glossary terms when
+ * the user edits a transcription. Enabled by default.
+ */
+autoLearnDictionaryEnabled?: boolean; 
+/**
+ * Watch the target app after dictation and offer to add corrected names
+ * as glossary terms. Disabled by default because it polls the focused
+ * text field through the accessibility APIs.
+ */
+autoLearnFromEditsEnabled?: boolean; 
+/**
+ * Opt-in consent for sending dictionary terms as ElevenLabs keyterms,
+ * which adds a 20% transcription surcharge. Off by default.
+ */
+elevenLabsKeytermsEnabled?: boolean; 
+/**
+ * Update channel this client is subscribed to: "stable" or "beta".
+ */
+updateChannel?: string; 
+/**
+ * Hold the capture device open between dictations.
+ * 
+ * These three were added to the TypeScript `UserPreferences` and the UI,
+ * but not to this struct, so `user_preferences_set` silently dropped them:
+ * the preference looked saved until the next launch read back the default.
+ * `serde` ignores unknown fields, so the mismatch was not an error anywhere
+ * -- the values simply never reached the database.
+ */
+keepMicrophoneReady?: boolean; 
+/**
+ * Seconds of audio from before the press that the recorder keeps.
+ */
+microphonePrerollSeconds?: number; 
+/**
+ * How long the device stays open after a dictation stops, in ms.
+ */
+microphoneLingerMs?: number }
+export type UserPreferencesCompareSetExpansionFlagsArgs = { expected: string; flags: string }
 export type UserPreferencesGetArgs = { userId: string }
+export type UserPreferencesSetExpansionFlagsArgs = { flags: string }
+export type VoquillMigrationActionItem = { kind: string; targetSection: string; count: number; providers: string[] }
+export type VoquillMigrationCounts = { hasProfile: boolean; hasPreferences: boolean; transcriptions: number; dictionaryTerms: number; hotkeys: number; tones: number; appTargets: number; providerEntries: number; providersNeedingAttention: number; localModelsMigrated: number; audioFilesMigrated: number; storageFilesMigrated: number }
+export type VoquillMigrationIssue = { category: string; code: string; detail: string }
+export type VoquillMigrationPhaseStatus = "not_found" | "pending" | "migrated" | "partial" | "failed" | "skipped"
+export type VoquillMigrationReport = { schemaVersion: number; status: VoquillMigrationStatus; legacyDetected: boolean; legacySourcePreserved: boolean; detectedAt: string | null; completedAt: string | null; dismissedAt: string | null; attemptCount: number; databasePhase: VoquillMigrationPhaseStatus; modelsPhase: VoquillMigrationPhaseStatus; audioPhase: VoquillMigrationPhaseStatus; storagePhase: VoquillMigrationPhaseStatus; counts: VoquillMigrationCounts; removedModesReset: string[]; issues: VoquillMigrationIssue[]; actionItems: VoquillMigrationActionItem[]; canRetry: boolean }
+export type VoquillMigrationStatus = "not_needed" | "completed" | "partial" | "failed" | "skipped_existing_profile"
 
 /** tauri-specta globals **/
 

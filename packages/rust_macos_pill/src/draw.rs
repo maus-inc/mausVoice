@@ -1,9 +1,10 @@
 use crate::gfx::{self, Ctx};
-use crate::ipc::{Phase, PillPermission, PillStreaming};
+use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
-use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
+use rust_pill_shared::flash_banner::BannerButton;
+use rust_pill_shared::{DRAG_INFLATE_SCALE, LONG_PRESS_OUTLINE_COLOR};
 
 /// Paints the whole pill window: clears, scales for the UI scale factor, then
 /// draws the pill, panel, transcript, and overlays in z-order.
@@ -27,18 +28,21 @@ pub(crate) fn draw_all(ctx: &Ctx, state: &PillState, view_w: f64, view_h: f64) {
     if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
         draw_assistant_panel(ctx, state, ww, wh);
     } else if state.flash_t.get() < 0.01 {
-        let pill_area_top = wh - PILL_AREA_HEIGHT;
-        draw_tooltip(ctx, state, ww, pill_area_top);
+        draw_tooltip(ctx, state, ww, wh);
     }
 
     if !state.assistant_active.get() && state.flame_active.get() {
         draw_flame(ctx, state, ww, wh);
     }
 
-    draw_pill(ctx, state, ww, wh);
+    paint_pill_attached(ctx, state, ww, wh, |ctx| {
+        draw_pill(ctx, state, ww, wh);
+    });
 
     if state.flash_blue_active.get() {
-        draw_flash_blue(ctx, state, ww, wh);
+        paint_pill_attached(ctx, state, ww, wh, |ctx| {
+            draw_flash_blue(ctx, state, ww, wh);
+        });
     }
 
     if state.assistant_active.get() {
@@ -59,16 +63,18 @@ pub(crate) fn draw_all(ctx: &Ctx, state: &PillState, view_w: f64, view_h: f64) {
         }
 
         draw_cancel_button(ctx, state, ww, wh);
+    }
 
-        // Long-press outline indicator. `ring_alpha` stays pinned for the whole
-        // hold and eases out after release, so the outline survives the
-        // press→drag hand-off and never vanishes under an inflated pill.
-        if state.ring_alpha.get() > 0.0
-            || rust_pill_shared::pulse_is_running(state.arm_pulse.get())
-        {
+    // Long-press and locate outline. The ring alpha stays pinned for the whole
+    // hold and eases out after release, so the outline survives the press→drag
+    // hand-off and never vanishes under an inflated pill. It draws with the
+    // assistant panel open too, because a locate replay answers "where is the
+    // pill" and the long-press ring is the only feedback for a hold that arms a
+    // drag, which the panel does not disable. GTK draws it the same way.
+    if state.ring.alpha() > 0.0 || rust_pill_shared::pulse_is_running(state.ring.arm_pulse()) {
+        paint_pill_attached(ctx, state, ww, wh, |ctx| {
             draw_long_press_ring(ctx, state, ww, wh);
-        }
-
+        });
     }
 
     ctx.restore();
@@ -103,7 +109,7 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
         panel_bottom - PILL_BOTTOM_INSET - base_h
     } else {
         // Collapsed: sit closer to the bottom; expanded: rise up to centered position
-        let collapsed_bottom = 6.0;
+        let collapsed_bottom = COLLAPSED_BOTTOM_INSET;
         let expanded_bottom = (PILL_AREA_HEIGHT - EXPANDED_PILL_HEIGHT) / 2.0;
         let bottom_offset = gfx::lerp(collapsed_bottom, expanded_bottom, expand_t);
         wh - bottom_offset - base_h
@@ -111,7 +117,12 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
 
     let center_x = base_x + base_w / 2.0;
     let center_y = base_y + base_h / 2.0;
-    (center_x - pill_w / 2.0, center_y - pill_h / 2.0, pill_w, pill_h)
+    (
+        center_x - pill_w / 2.0,
+        center_y - pill_h / 2.0,
+        pill_w,
+        pill_h,
+    )
 }
 
 /// Corner radius for the pill at its *current* size.
@@ -129,6 +140,26 @@ pub(crate) fn pill_radius(pill_w: f64, pill_h: f64, inflate: f64) -> f64 {
     (pill_w.min(pill_h) * 0.5).min(cap)
 }
 
+/// Share the exact paint-only transform between the body and attached outlines.
+/// Register click regions in unscaled coordinates and preserve overlay order.
+fn paint_pill_attached(ctx: &Ctx, state: &PillState, ww: f64, wh: f64, paint: impl FnOnce(&Ctx)) {
+    let (dsx, dsy) = state.crossing.borrow().scales();
+    let deformed = dsx != 1.0 || dsy != 1.0;
+    if deformed {
+        let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
+        let (dcx, dcy) = (rx + pill_w / 2.0, ry + pill_h / 2.0);
+        ctx.save();
+        ctx.translate(dcx, dcy);
+        ctx.scale(dsx, dsy);
+        ctx.translate(-dcx, -dcy);
+    }
+
+    paint(ctx);
+    if deformed {
+        ctx.restore();
+    }
+}
+
 /// Renders the pill body and its current content (waveform, paused bar,
 /// loading, transcript, controls) and registers the pill's click region.
 fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
@@ -138,9 +169,9 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let bg_alpha = gfx::lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
     let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
-    let is_typing = state.assistant_active.get()
-        && *state.assistant_input_mode.borrow() == "type";
-    if is_typing {
+    // Typing (and a transcript under review) replaces the pill body with the
+    // panel and its entry.
+    if state.is_typing() {
         return;
     }
 
@@ -165,33 +196,56 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             draw_loading(ctx, rx, ry, pill_w, pill_h, radius, expand_t, state);
         }
         Phase::Idle if expand_t > 0.5 && (state.hovered.get() || state.assistant_active.get()) => {
-            draw_idle_label(ctx, rx, ry, pill_w, pill_h, expand_t);
+            draw_idle_label(ctx, rx, ry, pill_w, pill_h, expand_t, state);
         }
         _ => {}
     }
 
-    gfx::rounded_rect(ctx, rx + 0.5, ry + 0.5, pill_w - 1.0, pill_h - 1.0, radius - 0.5);
+    gfx::rounded_rect(
+        ctx,
+        rx + 0.5,
+        ry + 0.5,
+        pill_w - 1.0,
+        pill_h - 1.0,
+        radius - 0.5,
+    );
     ctx.set_source_rgba(1.0, 1.0, 1.0, BORDER_ALPHA);
     ctx.set_line_width(1.0);
     ctx.stroke();
 
     state.click_regions.borrow_mut().push(ClickRegion {
-        x: rx, y: ry, w: pill_w, h: pill_h,
+        x: rx,
+        y: ry,
+        w: pill_w,
+        h: pill_h,
         action: ClickAction::Pill,
     });
 }
 
 #[allow(clippy::too_many_arguments)]
 fn draw_waveform(
-    ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    expand_t: f64, fade: f64, state: &PillState,
+    ctx: &Ctx,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    expand_t: f64,
+    fade: f64,
+    state: &PillState,
 ) {
     let wave_phase = state.wave_phase.get();
     let level = state.current_level.get();
     let baseline = ry + pill_h / 2.0;
 
     ctx.save();
-    gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
+    gfx::rounded_rect(
+        ctx,
+        rx,
+        ry,
+        pill_w,
+        pill_h,
+        pill_radius(pill_w, pill_h, state.inflate_t.get()),
+    );
     ctx.clip();
 
     for config in WAVE_CONFIGS {
@@ -230,8 +284,13 @@ fn draw_waveform(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_edge_gradient(
-    ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    radius: f64, expand_t: f64,
+    ctx: &Ctx,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    radius: f64,
+    expand_t: f64,
 ) {
     ctx.save();
     gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, radius);
@@ -241,23 +300,29 @@ fn draw_edge_gradient(
 
     // Left edge gradient
     ctx.draw_linear_gradient_in_rect(
-        rx, ry, pill_w * 0.18, pill_h,
-        rx, 0.0, rx + pill_w * 0.18, 0.0,
-        &[
-            (0.0, 0.0, 0.0, 0.0, alpha),
-            (1.0, 0.0, 0.0, 0.0, 0.0),
-        ],
+        rx,
+        ry,
+        pill_w * 0.18,
+        pill_h,
+        rx,
+        0.0,
+        rx + pill_w * 0.18,
+        0.0,
+        &[(0.0, 0.0, 0.0, 0.0, alpha), (1.0, 0.0, 0.0, 0.0, 0.0)],
     );
 
     // Right edge gradient
     let right_start = rx + pill_w * 0.85;
     ctx.draw_linear_gradient_in_rect(
-        right_start, ry, pill_w * 0.15, pill_h,
-        right_start, 0.0, rx + pill_w, 0.0,
-        &[
-            (0.0, 0.0, 0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0, 0.0, alpha),
-        ],
+        right_start,
+        ry,
+        pill_w * 0.15,
+        pill_h,
+        right_start,
+        0.0,
+        rx + pill_w,
+        0.0,
+        &[(0.0, 0.0, 0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0, alpha)],
     );
 
     ctx.restore();
@@ -265,42 +330,58 @@ fn draw_edge_gradient(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_loading(
-    ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    radius: f64, expand_t: f64, state: &PillState,
+    ctx: &Ctx,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    radius: f64,
+    expand_t: f64,
+    state: &PillState,
 ) {
     ctx.save();
     gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, radius);
     ctx.clip();
 
-    let bar_h = 2.0;
-    let bar_y = ry + (pill_h - bar_h) / 2.0;
-    let pad = pill_h * 0.1;
-    let track_x = rx + pad;
-    let track_w = pill_w - pad * 2.0;
+    let stage_ref = state.stage_text.borrow();
+    let stage = rust_pill_shared::active_stage_text(stage_ref.as_deref());
+    let bar = rust_pill_shared::loading_bar_layout(
+        rx,
+        ry,
+        pill_w,
+        pill_h,
+        state.loading_offset.get(),
+        expand_t,
+        stage.is_some(),
+    );
 
-    // Track line
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.15 * expand_t);
-    ctx.set_line_width(bar_h);
-    ctx.set_line_cap_round();
-    ctx.move_to(track_x, bar_y + bar_h / 2.0);
-    ctx.line_to(track_x + track_w, bar_y + bar_h / 2.0);
-    ctx.stroke();
+    // Paint the loading bar first so it sits dimly behind any stage text.
+    if bar.track_w > 0.0 {
+        ctx.set_source_rgba(1.0, 1.0, 1.0, bar.track_alpha);
+        ctx.rectangle(bar.track_x, bar.bar_y, bar.track_w, bar.bar_h);
+        ctx.fill();
 
-    // Moving indicator
-    let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
-    let offset = state.loading_offset.get();
-    let ind_x = track_x + (track_w + indicator_w) * offset - indicator_w;
+        if let Some((draw_left, draw_right)) = bar.indicator_span {
+            ctx.set_source_rgba(1.0, 1.0, 1.0, bar.indicator_alpha);
+            ctx.rectangle(draw_left, bar.bar_y, draw_right - draw_left, bar.bar_h);
+            ctx.fill();
+        }
+    }
 
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7 * expand_t);
-    ctx.set_line_width(bar_h);
-    ctx.set_line_cap_round();
-
-    let draw_left = ind_x.max(track_x);
-    let draw_right = (ind_x + indicator_w).min(track_x + track_w);
-    if draw_right > draw_left {
-        ctx.move_to(draw_left, bar_y + bar_h / 2.0);
-        ctx.line_to(draw_right, bar_y + bar_h / 2.0);
-        ctx.stroke();
+    if let Some(stage) = stage {
+        ctx.select_font_face("Satoshi", false, false);
+        ctx.set_font_size(12.0);
+        let max_w = rust_pill_shared::loading_stage_text_budget(pill_w, EXPANDED_PILL_WIDTH);
+        let stage = rust_pill_shared::text_fit::elide_to_width(stage, max_w, "…", |s| {
+            ctx.text_extents(s).width
+        });
+        let ext = ctx.text_extents(&stage);
+        let tx = rx + (pill_w - ext.width) / 2.0 - ext.x_bearing;
+        let ty = ry + (pill_h - ext.height) / 2.0 - ext.y_bearing;
+        let text_alpha = rust_pill_shared::loading_stage_text_alpha(expand_t);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha);
+        ctx.move_to(tx, ty);
+        ctx.show_text(&stage);
     }
 
     ctx.restore();
@@ -308,23 +389,132 @@ fn draw_loading(
     draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
 }
 
-fn draw_idle_label(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.4 * expand_t);
-    ctx.select_font_face("Satoshi", false, true);
+fn draw_idle_label(
+    ctx: &Ctx,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    expand_t: f64,
+    state: &PillState,
+) {
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(12.0);
-    let text = "Click to dictate";
-    let extents = ctx.text_extents(text);
-    let tx = rx + (pill_w - extents.width) / 2.0 - extents.x_bearing;
-    let ty = ry + (pill_h - extents.height) / 2.0 - extents.y_bearing;
-    ctx.move_to(tx, ty);
-    ctx.show_text(text);
+
+    let drag_t = state.drag_label_t.get();
+    let text_idle = rust_pill_shared::LABEL_IDLE_TEXT;
+    let text_drag = rust_pill_shared::LABEL_DRAG_TEXT;
+
+    // Pre-measure for stable centering
+    let ext_idle = ctx.text_extents(text_idle);
+    let ext_drag = ctx.text_extents(text_drag);
+
+    let base_y = ry + (pill_h - ext_idle.height) / 2.0 - ext_idle.y_bearing;
+
+    // Crossfade with slight vertical slide (shared constants)
+    let (alpha_idle, alpha_drag) = rust_pill_shared::label_crossfade_alpha(drag_t, expand_t);
+    let (y_idle_offset, y_drag_offset) = rust_pill_shared::label_slide_y(base_y, drag_t);
+
+    // Idle label slides slightly up as it fades
+    if alpha_idle > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        ctx.set_source_rgba(1.0, 1.0, 1.0, alpha_idle);
+        let tx = rx + (pill_w - ext_idle.width) / 2.0 - ext_idle.x_bearing;
+        ctx.save();
+        ctx.move_to(tx, y_idle_offset);
+        ctx.show_text(text_idle);
+        ctx.restore();
+    }
+
+    // Drag label slides slightly down as it fades in
+    if alpha_drag > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        ctx.set_source_rgba(1.0, 1.0, 1.0, alpha_drag);
+        let tx = rx + (pill_w - ext_drag.width) / 2.0 - ext_drag.x_bearing;
+        ctx.save();
+        ctx.move_to(tx, y_drag_offset);
+        ctx.show_text(text_drag);
+        ctx.restore();
+    }
 }
 
 // ── Tooltip (dictation style selector) ────────────────────────────
 
-fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, pill_area_top: f64) {
+pub(crate) fn tooltip_rendered_origin(
+    pill: (f64, f64, f64, f64),
+    tooltip_width: f64,
+    progress: f64,
+    blend: f64,
+) -> (f64, f64) {
+    let (x, y) = rust_pill_shared::placement::tooltip_origin(
+        pill.0,
+        pill.1,
+        pill.2,
+        pill.3,
+        tooltip_width,
+        TOOLTIP_HEIGHT,
+        TOOLTIP_GAP,
+        blend,
+    );
+    (x, y + (1.0 - progress) * 4.0 * (1.0 - 2.0 * blend))
+}
+
+fn selector_click_regions(
+    pill: (f64, f64, f64, f64),
+    width: f64,
+    progress: f64,
+    blend: f64,
+) -> [ClickRegion; 2] {
+    let (x, y) = tooltip_rendered_origin(pill, width, progress, blend);
+    [
+        ClickRegion {
+            x,
+            y,
+            w: width / 2.0,
+            h: TOOLTIP_HEIGHT,
+            action: ClickAction::StyleBackward,
+        },
+        ClickRegion {
+            x: x + width / 2.0,
+            y,
+            w: width / 2.0,
+            h: TOOLTIP_HEIGHT,
+            action: ClickAction::StyleForward,
+        },
+    ]
+}
+
+pub(crate) fn refresh_selector_click_regions(state: &PillState) {
+    let mut regions = state.click_regions.borrow_mut();
+    regions.retain(|r| {
+        !matches!(
+            r.action,
+            ClickAction::StyleBackward | ClickAction::StyleForward
+        )
+    });
+    if state.assistant_active.get()
+        || state.panel_open_t.get() > 0.01
+        || state.flash_t.get() >= 0.01
+        || state.tooltip_opacity() < 0.01
+        || state.style_count.get() <= 1
+        || state.style_name.borrow().is_empty()
+        || state.tooltip_width.get() <= 0.0
+    {
+        return;
+    }
+    let pill = pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let targets = selector_click_regions(
+        pill,
+        state.tooltip_width.get(),
+        state.tooltip_t.get(),
+        state.selector_placement.borrow().blend(),
+    );
+    // The selector paints first, underneath the pill and its other controls.
+    regions.splice(0..0, targets);
+}
+
+fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let tooltip_t = state.tooltip_t.get();
-    if tooltip_t < 0.01 {
+    let alpha = state.tooltip_opacity();
+    if alpha < 0.01 {
         return;
     }
 
@@ -336,12 +526,18 @@ fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, pill_area_top: f64) {
     let tooltip_w = TOOLTIP_FIXED_WIDTH;
     state.tooltip_width.set(tooltip_w);
 
-    let tooltip_rx = (ww - tooltip_w) / 2.0;
-    let y_offset = (1.0 - tooltip_t) * 4.0;
-    let tooltip_ry = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT + y_offset;
-    let alpha = tooltip_t;
+    let blend = state.selector_placement.borrow().blend();
+    let (tooltip_rx, tooltip_ry) =
+        tooltip_rendered_origin(pill_position(state, ww, wh), tooltip_w, tooltip_t, blend);
 
-    gfx::rounded_rect(ctx, tooltip_rx, tooltip_ry, tooltip_w, TOOLTIP_HEIGHT, TOOLTIP_RADIUS);
+    gfx::rounded_rect(
+        ctx,
+        tooltip_rx,
+        tooltip_ry,
+        tooltip_w,
+        TOOLTIP_HEIGHT,
+        TOOLTIP_RADIUS,
+    );
     ctx.set_source_rgba(0.0, 0.0, 0.0, 0.92 * alpha);
     ctx.fill();
 
@@ -361,7 +557,7 @@ fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, pill_area_top: f64) {
 
     // Style name text
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    ctx.select_font_face("Satoshi", false, true);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(13.0);
     let text_extents = ctx.text_extents(&style_name);
     let text_area_left = tooltip_rx + padding_h + chevron_area;
@@ -371,26 +567,36 @@ fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, pill_area_top: f64) {
     let ty = center_y - text_extents.height / 2.0 - text_extents.y_bearing;
 
     ctx.save();
-    ctx.rectangle(text_area_left, tooltip_ry, text_area_right - text_area_left, TOOLTIP_HEIGHT);
+    ctx.rectangle(
+        text_area_left,
+        tooltip_ry,
+        text_area_right - text_area_left,
+        TOOLTIP_HEIGHT,
+    );
     ctx.clip();
     ctx.move_to(tx, ty);
     ctx.show_text(&style_name);
     ctx.restore();
 
-    // Click regions for tooltip
-    let mid_x = tooltip_rx + tooltip_w / 2.0;
-    state.click_regions.borrow_mut().push(ClickRegion {
-        x: tooltip_rx, y: tooltip_ry, w: mid_x - tooltip_rx, h: TOOLTIP_HEIGHT,
-        action: ClickAction::StyleBackward,
-    });
-    state.click_regions.borrow_mut().push(ClickRegion {
-        x: mid_x, y: tooltip_ry, w: tooltip_rx + tooltip_w - mid_x, h: TOOLTIP_HEIGHT,
-        action: ClickAction::StyleForward,
-    });
+    state
+        .click_regions
+        .borrow_mut()
+        .extend(selector_click_regions(
+            pill_position(state, ww, wh),
+            tooltip_w,
+            tooltip_t,
+            blend,
+        ));
 }
 
 // ── Flash message ────────────────────────────────────────────────
 
+/// Draws the flash banner above the pill.
+///
+/// The geometry is entirely [`rust_pill_shared::flash_banner`]'s: it bounds the
+/// banner by the window, wraps the message to the room the buttons leave and
+/// grows the height with the line count. This function measures and paints, and
+/// nothing else, so the three pills cannot disagree about where the banner goes.
 fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let flash_t = state.flash_t.get();
     if flash_t < 0.01 {
@@ -404,33 +610,50 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
-    let has_action = action_label.is_some();
+    let reject_label = state.flash_reject_action_label.borrow();
 
+    // The preferred width is measured at the size the banner has always used
+    // for it, one point above the paint size, so a short toast keeps exactly the
+    // width it had. The wrap measures at the paint size, because those are the
+    // glyphs that have to fit.
     ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(13.0);
-    let text_extents = ctx.text_extents(&message);
+    let preferred_w = ctx.text_extents(&message).width;
+    let measure = |text: &str| {
+        ctx.select_font_face("Satoshi", false, true);
+        ctx.set_font_size(12.0);
+        ctx.text_extents(text).width
+    };
 
-    let action_w = if let Some(ref label) = *action_label {
+    let action_text: Option<&String> = (*action_label).as_ref();
+    let reject_text: Option<&String> = (*reject_label).as_ref();
+    let button_width = |label: Option<&String>| -> Option<f64> {
+        let text = label?;
         ctx.select_font_face("Satoshi", false, true);
         ctx.set_font_size(11.0);
-        let ext = ctx.text_extents(label);
-        ext.width + FLASH_ACTION_PADDING_H * 2.0
-    } else {
-        0.0
+        Some(ctx.text_extents(text).width + FLASH_ACTION_PADDING_H * 2.0)
     };
-    let action_section = if has_action { FLASH_ACTION_GAP + action_w } else { 0.0 };
-
-    let flash_w = (text_extents.width + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
-
-    let scale = FLASH_MIN_SCALE + (1.0 - FLASH_MIN_SCALE) * flash_t;
-    let alpha = flash_t;
-
-    let (_, pill_y, _, _) = pill_position(state, ww, wh);
-    let full_x = (ww - flash_w) / 2.0;
-    let full_y = pill_y - FLASH_GAP - FLASH_HEIGHT;
-
-    let center_x = full_x + flash_w / 2.0;
-    let center_y = full_y + FLASH_HEIGHT / 2.0;
+    let widths = (
+        preferred_w,
+        button_width(action_text),
+        button_width(reject_text),
+    );
+    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    // The banner may use the whole window, and it is laid out in the painter's
+    // own space, which `draw_all` has already shifted by `content_offset`. So the
+    // surface is the room the painter actually fills rather than the pill's own
+    // box, which used to cap a dictation toast at 196 units in a 600-unit window.
+    let surface =
+        rust_pill_shared::flash_banner::BannerSurface::of_painter(ww, state.content_offset().0);
+    let (layout, scale, alpha, (center_x, center_y)) =
+        rust_pill_shared::flash_banner::FlashFrame::resolve_for_window(
+            &message,
+            measure,
+            widths,
+            (pill_y, surface, wh, pill_x + pill_w / 2.0),
+            flash_t,
+            (&state.banner_lines, &state.banner_center),
+        );
 
     ctx.save();
     ctx.translate(center_x, center_y);
@@ -438,53 +661,95 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     ctx.translate(-center_x, -center_y);
 
     // Background
-    let (bg_r, bg_g, bg_b) = if is_error { (0.35, 0.05, 0.05) } else { (0.0, 0.0, 0.0) };
-    gfx::rounded_rect(ctx, full_x, full_y, flash_w, FLASH_HEIGHT, FLASH_RADIUS);
+    let (bg_r, bg_g, bg_b) = if is_error {
+        (0.35, 0.05, 0.05)
+    } else {
+        (0.0, 0.0, 0.0)
+    };
+    let banner = layout.banner;
+    gfx::rounded_rect(ctx, banner.x, banner.y, banner.w, banner.h, FLASH_RADIUS);
     ctx.set_source_rgba(bg_r, bg_g, bg_b, 0.92 * alpha);
     ctx.fill();
 
-    // Message text
+    // Message text, one painted line per entry the shared wrap produced. A
+    // button keeps the block left aligned against its padding; without one the
+    // line is centred, which is the compact look a short toast has always had.
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
     ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(12.0);
-    let text_left = if has_action {
-        full_x + FLASH_PADDING_H
-    } else {
-        full_x + (flash_w - text_extents.width) / 2.0
-    };
-    let tx = text_left - text_extents.x_bearing;
-    let ty = full_y + (FLASH_HEIGHT - text_extents.height) / 2.0 - text_extents.y_bearing;
-    ctx.move_to(tx, ty);
-    ctx.show_text(&message);
+    for (index, line, x) in layout.text_runs(|l| ctx.text_extents(l).width) {
+        let extents = ctx.text_extents(line);
+        let y = layout.text.line_top(index, extents.height);
+        ctx.move_to(x - extents.x_bearing, y - extents.y_bearing);
+        ctx.show_text(line);
+    }
 
-    // Action button
-    if let Some(ref label) = *action_label {
-        let btn_x = full_x + flash_w - FLASH_PADDING_H - action_w;
-        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
+    for (rect, button) in layout.buttons() {
+        let label = rust_pill_shared::flash_banner::button_label(button, action_text, reject_text);
+        let Some(label) = label else {
+            continue;
+        };
 
-        gfx::rounded_rect(ctx, btn_x, btn_y, action_w, FLASH_ACTION_HEIGHT, FLASH_ACTION_RADIUS);
+        gfx::rounded_rect(ctx, rect.x, rect.y, rect.w, rect.h, FLASH_ACTION_RADIUS);
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
         ctx.fill();
 
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
         ctx.select_font_face("Satoshi", false, true);
         ctx.set_font_size(11.0);
-        let label_ext = ctx.text_extents(label);
-        let lx = btn_x + (action_w - label_ext.width) / 2.0 - label_ext.x_bearing;
-        let ly = btn_y + (FLASH_ACTION_HEIGHT - label_ext.height) / 2.0 - label_ext.y_bearing;
-        ctx.move_to(lx, ly);
+        let extents = ctx.text_extents(label);
+        ctx.move_to(
+            rect.x + (rect.w - extents.width) / 2.0 - extents.x_bearing,
+            rect.y + (rect.h - extents.height) / 2.0 - extents.y_bearing,
+        );
         ctx.show_text(label);
 
-        state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x,
-            y: btn_y,
-            w: action_w,
-            h: FLASH_ACTION_HEIGHT,
-            action: ClickAction::FlashAction,
-        });
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one.
+        let action = match button {
+            BannerButton::Action => ClickAction::FlashAction,
+            BannerButton::Reject => ClickAction::FlashReject,
+        };
+        register_scaled_click(
+            state, rect.x, rect.y, rect.w, rect.h, center_x, center_y, scale, action,
+        );
     }
 
     ctx.restore();
+}
+
+/// Register the hit target for a toast button the banner painted inside the
+/// scale transform.
+///
+/// Pointer coordinates and the input shape are both in unscaled window space,
+/// so a target registered with the laid-out rectangle covers a different part
+/// of the window than the pixels drawn there, and for the whole scale animation
+/// a click on the visible half of the button misses. Both buttons go through
+/// here so the transform and the region construction have one implementation
+/// each, and so a change to either reaches the reject and accept buttons
+/// together.
+#[allow(clippy::too_many_arguments)]
+fn register_scaled_click(
+    state: &PillState,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    center_x: f64,
+    center_y: f64,
+    scale: f64,
+    action: ClickAction,
+) {
+    let (region_x, region_y, region_w, region_h) =
+        rust_pill_shared::scaled_click_rect(x, y, w, h, center_x, center_y, scale);
+    state.click_regions.borrow_mut().push(ClickRegion {
+        x: region_x,
+        y: region_y,
+        w: region_w,
+        h: region_h,
+        action,
+    });
 }
 
 // ── Flash blue border ────────────────────────────────────────────
@@ -544,7 +809,14 @@ fn draw_broadcast_transcript(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let rise = (1.0 - alpha) * 6.0;
     let box_y = pill_y - TRANSCRIPT_GAP - TRANSCRIPT_HEIGHT + rise;
 
-    gfx::rounded_rect(ctx, box_x, box_y, box_w, TRANSCRIPT_HEIGHT, TRANSCRIPT_RADIUS);
+    gfx::rounded_rect(
+        ctx,
+        box_x,
+        box_y,
+        box_w,
+        TRANSCRIPT_HEIGHT,
+        TRANSCRIPT_RADIUS,
+    );
     ctx.set_source_rgba(0.0, 0.0, 0.0, alpha);
     ctx.fill();
 
@@ -569,7 +841,13 @@ fn draw_broadcast_transcript(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
 // ── Flame ────────────────────────────────────────────────────────
 
-fn draw_flame_tongue(ctx: &Ctx, cx: f64, base_y: f64, h: f64, hw: f64, sway: f64,
+fn draw_flame_tongue(
+    ctx: &Ctx,
+    cx: f64,
+    base_y: f64,
+    h: f64,
+    hw: f64,
+    sway: f64,
     gradient_stops: &[(f64, f64, f64, f64, f64)],
 ) {
     use std::f64::consts::PI;
@@ -583,15 +861,21 @@ fn draw_flame_tongue(ctx: &Ctx, cx: f64, base_y: f64, h: f64, hw: f64, sway: f64
     ctx.move_to(cx - hw, base_y - base_r);
     // Left edge: bulges out slightly in lower third, then narrows to tip
     ctx.curve_to(
-        cx - hw * 1.15, base_y - h * 0.35,
-        cx - hw * 0.12 + sway * 0.3, base_y - h * 0.72,
-        tip_x, tip_y,
+        cx - hw * 1.15,
+        base_y - h * 0.35,
+        cx - hw * 0.12 + sway * 0.3,
+        base_y - h * 0.72,
+        tip_x,
+        tip_y,
     );
     // Right edge: mirror, tip back down to base
     ctx.curve_to(
-        cx + hw * 0.12 + sway * 0.3, base_y - h * 0.72,
-        cx + hw * 1.15, base_y - h * 0.35,
-        cx + hw, base_y - base_r,
+        cx + hw * 0.12 + sway * 0.3,
+        base_y - h * 0.72,
+        cx + hw * 1.15,
+        base_y - h * 0.35,
+        cx + hw,
+        base_y - base_r,
     );
     // Rounded bottom: arc from right to left
     ctx.arc(cx, base_y - base_r, hw, 0.0, PI);
@@ -614,7 +898,8 @@ fn draw_flame(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let usable = pill_w - inset * 2.0;
 
     let fade_in = (elapsed / 0.3).clamp(0.0, 1.0);
-    let fade_out = ((FLAME_TOTAL_DURATION - elapsed) / 0.8).clamp(0.0, 1.0);
+    let fade_out =
+        ((rust_pill_shared::flame::FLAME_TOTAL_DURATION - elapsed) / 0.8).clamp(0.0, 1.0);
     let alpha = fade_in * fade_out;
     if alpha < 0.01 {
         return;
@@ -627,14 +912,20 @@ fn draw_flame(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         let w = tongue.width * (0.85 + 0.15 * flicker);
         let hw = w / 2.0;
 
-        let sway = tongue.phase.sin() * FLAME_SWAY
-            + (tongue.phase * 1.7 + 1.0).sin() * FLAME_SWAY * 0.4;
+        let sway = tongue.phase.sin() * rust_pill_shared::flame::FLAME_SWAY
+            + (tongue.phase * 1.7 + 1.0).sin() * rust_pill_shared::flame::FLAME_SWAY * 0.4;
 
         let base_x = pill_x + inset + usable * tongue.t;
         let cx = base_x + sway * 0.3;
 
         // Layer 1: outer glow — wide, soft, dim
-        draw_flame_tongue(ctx, cx, base_y, h * 1.2, hw * 1.5, sway * 1.1,
+        draw_flame_tongue(
+            ctx,
+            cx,
+            base_y,
+            h * 1.2,
+            hw * 1.5,
+            sway * 1.1,
             &[
                 (0.0, 0.7, 0.7, 0.7, alpha * 0.15),
                 (0.4, 0.4, 0.4, 0.4, alpha * 0.08),
@@ -643,7 +934,13 @@ fn draw_flame(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         );
 
         // Layer 2: main flame body
-        draw_flame_tongue(ctx, cx, base_y, h, hw, sway,
+        draw_flame_tongue(
+            ctx,
+            cx,
+            base_y,
+            h,
+            hw,
+            sway,
             &[
                 (0.0, 1.0, 1.0, 1.0, alpha * 0.85),
                 (0.25, 1.0, 1.0, 1.0, alpha * 0.65),
@@ -653,7 +950,13 @@ fn draw_flame(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         );
 
         // Layer 3: inner bright core — narrow, hot white
-        draw_flame_tongue(ctx, cx, base_y, h * 0.55, hw * 0.35, sway * 0.5,
+        draw_flame_tongue(
+            ctx,
+            cx,
+            base_y,
+            h * 0.55,
+            hw * 0.35,
+            sway * 0.5,
             &[
                 (0.0, 1.0, 1.0, 1.0, alpha * 0.95),
                 (0.5, 1.0, 1.0, 1.0, alpha * 0.5),
@@ -674,7 +977,7 @@ fn draw_fireworks(ctx: &Ctx, state: &PillState, _ww: f64, _wh: f64) {
         // Trail
         if rocket.trail.len() > 1 && rocket.trail_alpha > 0.01 {
             let n = rocket.trail.len();
-            ctx.set_line_width(FIREWORKS_ROCKET_LINE_WIDTH);
+            ctx.set_line_width(rust_pill_shared::fireworks::FIREWORKS_ROCKET_LINE_WIDTH);
             ctx.set_line_cap_round();
             for i in 1..n {
                 let alpha = (i as f64 / n as f64) * rocket.trail_alpha * 0.8;
@@ -687,14 +990,21 @@ fn draw_fireworks(ctx: &Ctx, state: &PillState, _ww: f64, _wh: f64) {
 
         // Bright head while rising
         if rocket.phase == RocketPhase::Rising {
-            let hs = FIREWORKS_HEAD_SIZE / 2.0;
+            let hs = rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE / 2.0;
             ctx.set_source_rgba(cr, cg, cb, 0.95);
-            gfx::rounded_rect(ctx, rocket.x - hs, rocket.y - hs, FIREWORKS_HEAD_SIZE, FIREWORKS_HEAD_SIZE, hs);
+            gfx::rounded_rect(
+                ctx,
+                rocket.x - hs,
+                rocket.y - hs,
+                rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE,
+                rust_pill_shared::fireworks::FIREWORKS_HEAD_SIZE,
+                hs,
+            );
             ctx.fill();
         }
 
         // Sparks
-        ctx.set_line_width(FIREWORKS_SPARK_LINE_WIDTH);
+        ctx.set_line_width(rust_pill_shared::fireworks::FIREWORKS_SPARK_LINE_WIDTH);
         ctx.set_line_cap_round();
         for spark in &rocket.sparks {
             if spark.life <= 0.0 {
@@ -726,10 +1036,23 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
-    let is_compact = state.assistant_compact.get();
-    let is_typing = *state.assistant_input_mode.borrow() == "type";
+    // A pending review always needs the full panel: the transcript and its
+    // buttons do not fit the compact surface.
+    let review_id = state.pending_review_id();
+    let is_compact = state.assistant_compact.get() && review_id.is_none();
+    // A review types into the same entry the assistant uses.
+    let is_typing = state.is_typing();
+    let review_actions_h = if review_id.is_some() {
+        REVIEW_ACTIONS_HEIGHT
+    } else {
+        0.0
+    };
 
-    let panel_w = if is_compact { PANEL_COMPACT_WIDTH } else { PANEL_EXPANDED_WIDTH };
+    let panel_w = if is_compact {
+        PANEL_COMPACT_WIDTH
+    } else {
+        PANEL_EXPANDED_WIDTH
+    };
     let panel_x = (ww - panel_w) / 2.0;
     let panel_y = PANEL_TOP_MARGIN;
     let panel_h = wh - PANEL_TOP_MARGIN - PANEL_BOTTOM_MARGIN;
@@ -739,11 +1062,25 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
     // Panel background
     ctx.save();
-    gfx::rounded_rect(ctx, panel_x, panel_y + y_shift, panel_w, panel_h, PANEL_RADIUS);
+    gfx::rounded_rect(
+        ctx,
+        panel_x,
+        panel_y + y_shift,
+        panel_w,
+        panel_h,
+        PANEL_RADIUS,
+    );
     ctx.set_source_rgba(0.0, 0.0, 0.0, PANEL_BG_ALPHA * alpha);
     ctx.fill();
 
-    gfx::rounded_rect(ctx, panel_x + 0.5, panel_y + y_shift + 0.5, panel_w - 1.0, panel_h - 1.0, PANEL_RADIUS - 0.5);
+    gfx::rounded_rect(
+        ctx,
+        panel_x + 0.5,
+        panel_y + y_shift + 0.5,
+        panel_w - 1.0,
+        panel_h - 1.0,
+        PANEL_RADIUS - 0.5,
+    );
     ctx.set_source_rgba(1.0, 1.0, 1.0, PANEL_BORDER_ALPHA * alpha);
     ctx.set_line_width(1.0);
     ctx.stroke();
@@ -764,7 +1101,7 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         let content_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0;
 
         let scroll_bottom = if is_typing {
-            py + panel_h - PANEL_INPUT_HEIGHT
+            py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
         } else {
             py + panel_h
         };
@@ -778,13 +1115,21 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT + SCROLL_BOTTOM_PAD
         };
 
-        draw_transcript(ctx, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad);
+        draw_transcript(
+            ctx, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad,
+        );
 
         // Top gradient
         let grad_h = PANEL_TRANSCRIPT_TOP_OFFSET + 16.0;
         ctx.draw_linear_gradient_in_rect(
-            panel_x, py, panel_w, grad_h,
-            0.0, py, 0.0, py + grad_h,
+            panel_x,
+            py,
+            panel_w,
+            grad_h,
+            0.0,
+            py,
+            0.0,
+            py + grad_h,
             &[
                 (0.0, 0.0, 0.0, 0.0, 0.98 * alpha),
                 (0.38, 0.0, 0.0, 0.0, 0.82 * alpha),
@@ -793,12 +1138,22 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         );
 
         // Bottom gradient
-        let bot_area = if is_typing { 0.0 } else { PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT };
+        let bot_area = if is_typing {
+            0.0
+        } else {
+            PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT
+        };
         let bot_grad_h = bot_area + 16.0;
         let bot_y = scroll_bottom - bot_grad_h;
         ctx.draw_linear_gradient_in_rect(
-            panel_x, bot_y, panel_w, bot_grad_h,
-            0.0, bot_y, 0.0, scroll_bottom,
+            panel_x,
+            bot_y,
+            panel_w,
+            bot_grad_h,
+            0.0,
+            bot_y,
+            0.0,
+            scroll_bottom,
             &[
                 (0.0, 0.0, 0.0, 0.0, 0.0),
                 (0.28, 0.0, 0.0, 0.0, 0.82 * alpha),
@@ -814,13 +1169,35 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         }
 
         let open_x = panel_x + PANEL_HEADER_OFFSET_LEFT + HEADER_BUTTON_SIZE + 4.0;
-        draw_panel_button(ctx, open_x, py + PANEL_HEADER_OFFSET_TOP,
-            HEADER_BUTTON_SIZE, alpha, ButtonIcon::OpenInNew);
+        draw_panel_button(
+            ctx,
+            open_x,
+            py + PANEL_HEADER_OFFSET_TOP,
+            HEADER_BUTTON_SIZE,
+            alpha,
+            ButtonIcon::OpenInNew,
+        );
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: open_x, y: py + PANEL_HEADER_OFFSET_TOP,
-            w: HEADER_BUTTON_SIZE, h: HEADER_BUTTON_SIZE,
+            x: open_x,
+            y: py + PANEL_HEADER_OFFSET_TOP,
+            w: HEADER_BUTTON_SIZE,
+            h: HEADER_BUTTON_SIZE,
             action: ClickAction::OpenInNew,
         });
+
+        // Review buttons sit between the text and the input bar, outside the
+        // scroll area so they cannot be scrolled out of reach.
+        if let Some(ref review_id) = review_id {
+            draw_review_actions(
+                ctx,
+                state,
+                review_id,
+                panel_x,
+                py + panel_h - PANEL_INPUT_HEIGHT - REVIEW_ACTIONS_HEIGHT,
+                panel_w,
+                alpha,
+            );
+        }
 
         // Input bar
         if is_typing {
@@ -845,7 +1222,10 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
             if has_text {
                 state.click_regions.borrow_mut().push(ClickRegion {
-                    x: send_x, y: send_y, w: send_btn_size, h: send_btn_size,
+                    x: send_x,
+                    y: send_y,
+                    w: send_btn_size,
+                    h: send_btn_size,
                     action: ClickAction::SendButton,
                 });
             }
@@ -853,23 +1233,39 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     }
 
     // Close button drawn last
-    draw_panel_button(ctx, panel_x + PANEL_HEADER_OFFSET_LEFT, py + PANEL_HEADER_OFFSET_TOP,
-        HEADER_BUTTON_SIZE, alpha, ButtonIcon::Close);
+    draw_panel_button(
+        ctx,
+        panel_x + PANEL_HEADER_OFFSET_LEFT,
+        py + PANEL_HEADER_OFFSET_TOP,
+        HEADER_BUTTON_SIZE,
+        alpha,
+        ButtonIcon::Close,
+    );
     state.click_regions.borrow_mut().push(ClickRegion {
         x: panel_x + PANEL_HEADER_OFFSET_LEFT,
         y: py + PANEL_HEADER_OFFSET_TOP,
-        w: HEADER_BUTTON_SIZE, h: HEADER_BUTTON_SIZE,
+        w: HEADER_BUTTON_SIZE,
+        h: HEADER_BUTTON_SIZE,
         action: ClickAction::AssistantClose,
     });
 }
 
 #[allow(clippy::too_many_arguments)]
 fn draw_compact_content(
-    ctx: &Ctx, panel_x: f64, panel_y: f64, panel_w: f64,
-    content_height: f64, alpha: f64, state: &PillState,
+    ctx: &Ctx,
+    panel_x: f64,
+    panel_y: f64,
+    panel_w: f64,
+    content_height: f64,
+    alpha: f64,
+    state: &PillState,
 ) {
     let text = "What can I help you with?";
-    let text_alpha = if state.phase.get() == Phase::Recording { 0.96 } else { 0.8 };
+    let text_alpha = if state.phase.get() == Phase::Recording {
+        0.96
+    } else {
+        0.8
+    };
     ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
     ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(18.0);
@@ -880,17 +1276,101 @@ fn draw_compact_content(
     ctx.show_text(text);
 }
 
+fn draw_message_separator(ctx: &Ctx, index: usize, area_x: f64, y: f64, alpha: f64) -> f64 {
+    if index == 0 {
+        return y;
+    }
+    let y = y + 16.0;
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
+    ctx.set_line_width(1.0);
+    ctx.move_to(area_x, y);
+    ctx.line_to(area_x + 36.0, y);
+    ctx.stroke();
+    y + 8.0
+}
+
+fn draw_tool_result_line(ctx: &Ctx, msg: &PillMessage, area_x: f64, y: f64, alpha: f64) -> f64 {
+    let tool_desc = msg
+        .tool_description
+        .as_deref()
+        .or(msg.tool_name.as_deref())
+        .unwrap_or("Tool");
+    let reason = msg.reason.as_deref().unwrap_or("");
+    let display = if reason.is_empty() {
+        tool_desc.to_string()
+    } else {
+        format!("{tool_desc} — {reason}")
+    };
+
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(12.0);
+
+    draw_wrench_icon(ctx, area_x, y + 2.0, 12.0, 0.5 * alpha);
+    let text_x = area_x + 18.0;
+    ctx.move_to(text_x, y + 12.0);
+    ctx.show_text(&display);
+    y + 18.0
+}
+
+fn draw_message_text(
+    ctx: &Ctx,
+    content: &str,
+    is_error: bool,
+    area_x: f64,
+    y: f64,
+    area_w: f64,
+    alpha: f64,
+) -> f64 {
+    let color_alpha = if is_error { 0.94 } else { 0.92 };
+    let (r, g, b) = if is_error {
+        (1.0, 0.4, 0.4)
+    } else {
+        (1.0, 1.0, 1.0)
+    };
+
+    ctx.set_source_rgba(r, g, b, color_alpha * alpha);
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(14.0);
+
+    let mut y = y;
+    for line in &wrap_text(ctx, content, area_w) {
+        ctx.move_to(area_x, y + 20.0 * 0.75);
+        ctx.show_text(line);
+        y += 20.0;
+    }
+    y
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_transcript(
-    ctx: &Ctx, state: &PillState,
-    area_x: f64, area_y: f64, area_w: f64, area_h: f64, alpha: f64,
-    top_pad: f64, bottom_pad: f64,
+    ctx: &Ctx,
+    state: &PillState,
+    area_x: f64,
+    area_y: f64,
+    area_w: f64,
+    area_h: f64,
+    alpha: f64,
+    top_pad: f64,
+    bottom_pad: f64,
 ) {
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
     let permissions = state.assistant_permissions.borrow();
+    let review = state.assistant_review.borrow();
 
-    if messages.is_empty() && permissions.is_empty() {
+    if messages.is_empty() && permissions.is_empty() && review.is_none() {
+        // Both halves of the scroll state go with the content. Nothing sets
+        // them on this path below, so a panel that has just been emptied keeps
+        // the height of the transcript it used to hold: the wheel can then
+        // scroll the next transcript past its own last line, and the content is
+        // not visible even though it is there. The offset is the other half of
+        // the same state, and it is what the next transcript is laid out from —
+        // a panel emptied while scrolled drew the following transcript starting
+        // above its own first line, and its opening lines were off the top.
+        // An empty panel has no scrollable content and no place in it.
+        state.scroll_offset.set(0.0);
+        state.content_height.set(0.0);
         return;
     }
 
@@ -898,24 +1378,19 @@ fn draw_transcript(
     ctx.rectangle(area_x, area_y, area_w, area_h);
     ctx.clip();
 
+    // Everything drawn from here on scrolls, so its click regions have to be
+    // checked against the visible band before they are handed to the input
+    // layer. See the filter at the end of this function.
+    let region_start = state.click_regions.borrow().len();
+
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
 
     ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
 
-    let line_height = 20.0;
-
     for (i, msg) in messages.iter().enumerate() {
-        if i > 0 {
-            y += 16.0;
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
-            ctx.set_line_width(1.0);
-            ctx.move_to(area_x, y);
-            ctx.line_to(area_x + 36.0, y);
-            ctx.stroke();
-            y += 8.0;
-        }
+        y = draw_message_separator(ctx, i, area_x, y, alpha);
 
         if let Some(ref stream) = *streaming {
             if stream.message_id == msg.id {
@@ -924,39 +1399,9 @@ fn draw_transcript(
         }
 
         if msg.is_tool_result {
-            let tool_desc = msg.tool_description.as_deref()
-                .or(msg.tool_name.as_deref())
-                .unwrap_or("Tool");
-            let reason = msg.reason.as_deref().unwrap_or("");
-            let display = if reason.is_empty() {
-                tool_desc.to_string()
-            } else {
-                format!("{tool_desc} — {reason}")
-            };
-
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-            ctx.select_font_face("Satoshi", false, false);
-            ctx.set_font_size(12.0);
-
-            draw_wrench_icon(ctx, area_x, y + 2.0, 12.0, 0.5 * alpha);
-            let text_x = area_x + 18.0;
-            ctx.move_to(text_x, y + 12.0);
-            ctx.show_text(&display);
-            y += 18.0;
+            y = draw_tool_result_line(ctx, msg, area_x, y, alpha);
         } else if let Some(ref content) = msg.content {
-            let color_alpha = if msg.is_error { 0.94 } else { 0.92 };
-            let (r, g, b) = if msg.is_error { (1.0, 0.4, 0.4) } else { (1.0, 1.0, 1.0) };
-
-            ctx.set_source_rgba(r, g, b, color_alpha * alpha);
-            ctx.select_font_face("Satoshi", false, false);
-            ctx.set_font_size(14.0);
-
-            let lines = wrap_text(ctx, content, area_w);
-            for line in &lines {
-                ctx.move_to(area_x, y + line_height * 0.75);
-                ctx.show_text(line);
-                y += line_height;
-            }
+            y = draw_message_text(ctx, content, msg.is_error, area_x, y, area_w, alpha);
         } else {
             y = draw_thinking_text(ctx, area_x, y, alpha, state);
         }
@@ -967,15 +1412,40 @@ fn draw_transcript(
         y = draw_permission_card(ctx, state, perm, area_x, y, area_w, alpha);
     }
 
+    if review.is_some() {
+        if !messages.is_empty() || !permissions.is_empty() {
+            y += 12.0;
+        }
+        y = draw_review_text(ctx, state, area_x, y, area_w, alpha);
+    }
+
     let total_height = y + scroll - area_y + bottom_pad;
     state.content_height.set(total_height);
+
+    // Trim the click targets to the part of the panel still on screen. A
+    // button the user cannot see must not take their click, and a button that
+    // is half out must only answer on the half that shows.
+    {
+        let mut regions = state.click_regions.borrow_mut();
+        let scrolled = regions.split_off(region_start);
+        regions.extend(scrolled.into_iter().filter_map(|mut region| {
+            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            region.y = y;
+            region.h = h;
+            Some(region)
+        }));
+    }
 
     ctx.restore();
 }
 
 fn draw_streaming_activity(
-    ctx: &Ctx, streaming: &PillStreaming,
-    x: f64, mut y: f64, _w: f64, alpha: f64,
+    ctx: &Ctx,
+    streaming: &PillStreaming,
+    x: f64,
+    mut y: f64,
+    _w: f64,
+    alpha: f64,
 ) -> f64 {
     ctx.select_font_face("Satoshi", true, false);
     ctx.set_font_size(12.0);
@@ -993,7 +1463,11 @@ fn draw_streaming_activity(
     }
 
     if !streaming.reasoning.is_empty() {
-        let label = if streaming.is_streaming { "Thinking…" } else { "Thought process" };
+        let label = if streaming.is_streaming {
+            "Thinking…"
+        } else {
+            "Thought process"
+        };
         ctx.move_to(x, y + 12.0);
         ctx.show_text(label);
         y += 16.0;
@@ -1002,9 +1476,7 @@ fn draw_streaming_activity(
     y
 }
 
-fn draw_thinking_text(
-    ctx: &Ctx, x: f64, y: f64, alpha: f64, state: &PillState,
-) -> f64 {
+fn draw_thinking_text(ctx: &Ctx, x: f64, y: f64, alpha: f64, state: &PillState) -> f64 {
     let text = "Thinking";
     ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
@@ -1020,7 +1492,11 @@ fn draw_thinking_text(
     for ch in text.chars() {
         let ch_str = ch.to_string();
         let ch_ext = ctx.text_extents(&ch_str);
-        let pos = if full_width > 0.0 { (char_x - x) / full_width } else { 0.0 };
+        let pos = if full_width > 0.0 {
+            (char_x - x) / full_width
+        } else {
+            0.0
+        };
         let dist = (pos - grad_center).abs();
         let ch_alpha = gfx::lerp(0.92, 0.34, (dist * 2.0).clamp(0.0, 1.0));
 
@@ -1033,10 +1509,199 @@ fn draw_thinking_text(
     y + 20.0
 }
 
+/// The transcript under review, drawn in the panel body like an assistant
+/// message. The text comes from the entry, which is loaded with the transcript
+/// when the review arrives, so what is shown here is exactly what will be
+/// inserted, edits included. It scrolls with the rest of the panel, so there is
+/// no cap on its length.
+fn draw_review_text(ctx: &Ctx, state: &PillState, x: f64, y: f64, w: f64, alpha: f64) -> f64 {
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
+    ctx.select_font_face("Satoshi", false, true);
+    ctx.set_font_size(11.0);
+    ctx.move_to(x, y + 12.0);
+    ctx.show_text("REVIEW TRANSCRIPT");
+
+    let mut text_y = y + REVIEW_TITLE_HEIGHT;
+
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(14.0);
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.92 * alpha);
+    let text = state.entry_text.borrow();
+    let (preview, _) = rust_pill_shared::bound_review_preview_text(&text);
+    for line in wrap_text(ctx, preview.as_str(), w)
+        .into_iter()
+        .take(rust_pill_shared::MAX_REVIEW_PREVIEW_LINES)
+    {
+        ctx.move_to(x, text_y + REVIEW_LINE_HEIGHT * 0.75);
+        ctx.show_text(&line);
+        text_y += REVIEW_LINE_HEIGHT;
+    }
+
+    text_y
+}
+
+/// The decisions the user can take on the transcript. Drawn as a fixed row
+/// above the input bar, so a long transcript can scroll behind it without ever
+/// taking the buttons with it.
+#[allow(clippy::too_many_arguments)]
+fn draw_review_actions(
+    ctx: &Ctx,
+    state: &PillState,
+    review_id: &str,
+    panel_x: f64,
+    y: f64,
+    panel_w: f64,
+    alpha: f64,
+) {
+    // Bound to a local: the borrow cannot live inside the temporaries of a
+    // single statement, because `hint` outlives them.
+    let hint_binding = state.assistant_review.borrow();
+    let hint = hint_binding
+        .as_ref()
+        .and_then(|review| review.hint.as_deref())
+        .unwrap_or("Edit below, then press Enter to insert");
+
+    // Every caption here is drawn by the pill, so every caption has to come
+    // from the desktop's locale. The English fallbacks only apply to a sender
+    // that predates these fields.
+    let review = state.assistant_review.borrow();
+    let edit_label = review
+        .as_ref()
+        .and_then(|review| review.edit_label.as_deref())
+        .unwrap_or("Edit");
+    let insert_label = review
+        .as_ref()
+        .and_then(|review| review.insert_label.as_deref())
+        .unwrap_or("Insert");
+    let copy_label = review
+        .as_ref()
+        .and_then(|review| review.copy_label.as_deref())
+        .unwrap_or("Copy");
+    let cancel_label = review
+        .as_ref()
+        .and_then(|review| review.cancel_label.as_deref())
+        .unwrap_or("Cancel");
+
+    // Rendered right to left so Insert (the default action) sits closest to
+    // the edge of the panel, matching the permission card's layout.
+    let buttons = [
+        (
+            insert_label,
+            ClickAction::ReviewInsert(review_id.to_string()),
+            0.92,
+        ),
+        (
+            edit_label,
+            ClickAction::ReviewEdit(review_id.to_string()),
+            0.8,
+        ),
+        (
+            copy_label,
+            ClickAction::ReviewCopy(review_id.to_string()),
+            0.7,
+        ),
+        (
+            cancel_label,
+            ClickAction::ReviewCancel(review_id.to_string()),
+            0.5,
+        ),
+    ];
+
+    // The hint and the buttons share this line, so the hint has to know how much
+    // room the button row leaves before it can be drawn. Measuring the buttons
+    // first is what makes that possible; previously the hint was drawn first
+    // and the French and German translations -- both far longer than the English
+    // default -- ran under the leftmost button by 35.7px and 32.6px.
+    // Measure at the size the labels are actually drawn at, which is 11px
+    // (see `set_font_size` further down, just before `show_text`).
+    //
+    // Nothing between the last explicit size and here sets it back, and that
+    // matters more here than in the GTK port: `Ctx::set_font_size` writes a Rust
+    // `Cell` (`gfx.rs:291`) that `save`/`restore` cannot restore, because the
+    // state stack belongs to the CGContext while the font size is ours. The 14px
+    // set for the transcript text above therefore survives, so every button came out
+    // about a quarter wider than its 11px label needed, and `row_width` being the
+    // sum of those widths meant the hint was budgeted less room than it had.
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(11.0);
+    let btn_widths: Vec<f64> = buttons
+        .iter()
+        .map(|(label, _, _)| {
+            let text_width = ctx.text_extents(label).width;
+            (text_width + 20.0).max(PERM_BUTTON_WIDTH * 0.8)
+        })
+        .collect();
+    let row_width: f64 =
+        btn_widths.iter().sum::<f64>() + PERM_BUTTON_GAP * (btn_widths.len() as f64 - 1.0);
+    let buttons_left = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - row_width;
+    let hint_x = panel_x + PANEL_CONTENT_SIDE_INSET;
+    let hint_budget =
+        rust_pill_shared::text_fit::hint_budget(buttons_left, hint_x, PERM_BUTTON_GAP);
+
+    let hint = rust_pill_shared::text_fit::elide_to_width(hint, hint_budget, "…", |s| {
+        ctx.text_extents(s).width
+    });
+    if !hint.is_empty() {
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
+        ctx.select_font_face("Satoshi", false, false);
+        ctx.set_font_size(11.0);
+        ctx.move_to(hint_x, y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0);
+        ctx.show_text(&hint);
+    }
+
+    let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;
+    let mut btn_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET;
+
+    for ((label, action, text_alpha), btn_w) in buttons.into_iter().zip(btn_widths) {
+        btn_x -= btn_w;
+
+        gfx::rounded_rect(ctx, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.08 * alpha);
+        ctx.fill();
+
+        gfx::rounded_rect(
+            ctx,
+            btn_x + 0.5,
+            btn_y + 0.5,
+            btn_w - 1.0,
+            PERM_BUTTON_HEIGHT - 1.0,
+            5.5,
+        );
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.15 * alpha);
+        ctx.set_line_width(1.0);
+        ctx.stroke();
+
+        ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
+        ctx.select_font_face("Satoshi", false, false);
+        ctx.set_font_size(11.0);
+        let ext = ctx.text_extents(label);
+        ctx.move_to(
+            btn_x + (btn_w - ext.width) / 2.0 - ext.x_bearing,
+            btn_y + (PERM_BUTTON_HEIGHT - ext.height) / 2.0 - ext.y_bearing,
+        );
+        ctx.show_text(label);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x,
+            y: btn_y,
+            w: btn_w,
+            h: PERM_BUTTON_HEIGHT,
+            action,
+        });
+
+        btn_x -= PERM_BUTTON_GAP;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_permission_card(
-    ctx: &Ctx, state: &PillState, perm: &PillPermission,
-    x: f64, y: f64, w: f64, alpha: f64,
+    ctx: &Ctx,
+    state: &PillState,
+    perm: &PillPermission,
+    x: f64,
+    y: f64,
+    w: f64,
+    alpha: f64,
 ) -> f64 {
     let card_h = PERM_CARD_HEIGHT;
 
@@ -1069,14 +1734,25 @@ fn draw_permission_card(
     let mut btn_x = x + w - 12.0;
 
     for (i, (label, text_alpha)) in btn_labels.iter().rev().enumerate() {
-        let btn_w = if i == 0 { PERM_BUTTON_WIDTH + 16.0 } else { PERM_BUTTON_WIDTH };
+        let btn_w = if i == 0 {
+            PERM_BUTTON_WIDTH + 16.0
+        } else {
+            PERM_BUTTON_WIDTH
+        };
         btn_x -= btn_w;
 
         gfx::rounded_rect(ctx, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0);
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.08 * alpha);
         ctx.fill();
 
-        gfx::rounded_rect(ctx, btn_x + 0.5, btn_y + 0.5, btn_w - 1.0, PERM_BUTTON_HEIGHT - 1.0, 5.5);
+        gfx::rounded_rect(
+            ctx,
+            btn_x + 0.5,
+            btn_y + 0.5,
+            btn_w - 1.0,
+            PERM_BUTTON_HEIGHT - 1.0,
+            5.5,
+        );
         ctx.set_source_rgba(1.0, 1.0, 1.0, 0.15 * alpha);
         ctx.set_line_width(1.0);
         ctx.stroke();
@@ -1097,7 +1773,11 @@ fn draw_permission_card(
             _ => ClickAction::PermissionAlwaysAllow(perm.id.clone()),
         };
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x, y: btn_y, w: btn_w, h: PERM_BUTTON_HEIGHT, action,
+            x: btn_x,
+            y: btn_y,
+            w: btn_w,
+            h: PERM_BUTTON_HEIGHT,
+            action,
         });
 
         btn_x -= PERM_BUTTON_GAP;
@@ -1107,8 +1787,12 @@ fn draw_permission_card(
 }
 
 fn draw_user_prompt_preview(
-    ctx: &Ctx, panel_x: f64, panel_y: f64, panel_w: f64,
-    prompt: &str, alpha: f64,
+    ctx: &Ctx,
+    panel_x: f64,
+    panel_y: f64,
+    panel_w: f64,
+    prompt: &str,
+    alpha: f64,
 ) {
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
     ctx.select_font_face("Satoshi", false, false);
@@ -1127,7 +1811,9 @@ fn draw_user_prompt_preview(
 
     let ext = ctx.text_extents(&display);
     let tx = panel_x + panel_w - PANEL_HEADER_OFFSET_RIGHT - ext.width - ext.x_bearing;
-    let ty = panel_y + PANEL_HEADER_OFFSET_TOP + HEADER_BUTTON_SIZE / 2.0 - ext.height / 2.0 - ext.y_bearing;
+    let ty = panel_y + PANEL_HEADER_OFFSET_TOP + HEADER_BUTTON_SIZE / 2.0
+        - ext.height / 2.0
+        - ext.y_bearing;
     ctx.move_to(tx, ty);
     ctx.show_text(&display);
 }
@@ -1138,10 +1824,7 @@ enum ButtonIcon {
     OpenInNew,
 }
 
-fn draw_panel_button(
-    ctx: &Ctx,
-    x: f64, y: f64, size: f64, alpha: f64, icon: ButtonIcon,
-) {
+fn draw_panel_button(ctx: &Ctx, x: f64, y: f64, size: f64, alpha: f64, icon: ButtonIcon) {
     gfx::rounded_rect(ctx, x, y, size, size, size / 4.0);
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.06 * alpha);
     ctx.fill();
@@ -1180,11 +1863,23 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     ctx.scale(scale, scale);
     ctx.translate(-(KB_BUTTON_SIZE / 2.0), -(KB_BUTTON_SIZE / 2.0));
 
-    ctx.arc(KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0, 0.0, TAU);
+    ctx.arc(
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0,
+        0.0,
+        TAU,
+    );
     ctx.set_source_rgba(0.0, 0.0, 0.0, 0.92 * alpha);
     ctx.fill();
 
-    ctx.arc(KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0 - 0.5, 0.0, TAU);
+    ctx.arc(
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0 - 0.5,
+        0.0,
+        TAU,
+    );
     ctx.set_source_rgba(1.0, 1.0, 1.0, BORDER_ALPHA * alpha);
     ctx.set_line_width(1.0);
     ctx.stroke();
@@ -1196,7 +1891,10 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
     if kb_t > 0.5 {
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x, y: btn_y, w: KB_BUTTON_SIZE, h: KB_BUTTON_SIZE,
+            x: btn_x,
+            y: btn_y,
+            w: KB_BUTTON_SIZE,
+            h: KB_BUTTON_SIZE,
             action: ClickAction::KeyboardButton,
         });
     }
@@ -1206,8 +1904,14 @@ fn draw_keyboard_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 /// crossfading in with `fade`.
 #[allow(clippy::too_many_arguments)]
 fn draw_paused(
-    ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    expand_t: f64, fade: f64, state: &PillState,
+    ctx: &Ctx,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    expand_t: f64,
+    fade: f64,
+    state: &PillState,
 ) {
     ctx.save();
     let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
@@ -1279,11 +1983,17 @@ fn draw_cancel_button(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             ClickAction::PauseDictation
         };
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: pause_x, y: pause_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            x: pause_x,
+            y: pause_y,
+            w: CANCEL_BUTTON_SIZE,
+            h: CANCEL_BUTTON_SIZE,
             action: pause_action,
         });
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x, y: btn_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            x: btn_x,
+            y: btn_y,
+            w: CANCEL_BUTTON_SIZE,
+            h: CANCEL_BUTTON_SIZE,
             action: ClickAction::CancelDictation,
         });
     }
@@ -1309,7 +2019,7 @@ fn wrap_text(ctx: &Ctx, text: &str, max_width: f64) -> Vec<String> {
             let test = if current_line.is_empty() {
                 word.to_string()
             } else {
-                format!("{} {}", current_line, word)
+                format!("{current_line} {word}")
             };
             let extents = ctx.text_extents(&test);
             if extents.width > max_width && !current_line.is_empty() {
@@ -1333,231 +2043,28 @@ fn wrap_text(ctx: &Ctx, text: &str, max_width: f64) -> Vec<String> {
 
 /// Draws the long-press progress ring around the pill, kept at full
 /// completion while dragging so the outline reads as a drag affordance.
-/// Opacity is owned by `state.ring_alpha` (pinned while held, eased out after
+/// Opacity is owned by the ring state (pinned while held, eased out after
 /// release), never by the press-progress ramp.
+/// Core Graphics adapter for the shared ring painter.
+struct CgRing<'a>(&'a Ctx);
+
+rust_pill_shared::impl_cairo_ring_painter!(CgRing<'_>, TAU);
+
 fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
-    let alpha = state.ring_alpha.get();
-    let pulsing = rust_pill_shared::pulse_is_running(state.arm_pulse.get());
-    if alpha <= 0.0 && !pulsing {
-        return;
-    }
-
-    // Full outline while dragging; mid-press it tracks the eased hold ramp;
-    // after release or cancel it fades from the level actually reached instead
-    // of snapping to a complete outline.
-    let progress = if state.dragging.get() {
-        1.0
-    } else if state.long_press_active.get() {
-        long_press_progress(state.long_press_elapsed.get())
-    } else {
-        state.ring_release_progress.get()
-    };
-
-    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
-    let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
-
-    // The ring drifts outward slightly as it fades, so it dissolves away from
-    // the pill rather than collapsing onto it.
-    let drift = if state.dragging.get() || state.long_press_active.get() {
-        0.0
-    } else {
-        rust_pill_shared::ring_release_drift(state.release_elapsed.get())
-    };
-    let inset = 2.0 + drift;
-    let ox = pill_x - inset;
-    let oy = pill_y - inset;
-    let ow = pill_w + inset * 2.0;
-    let oh = pill_h + inset * 2.0;
-    let r = (radius + inset).min(oh / 2.0);
-
-    // Shared perimeter construction — identical geometry on every platform so
-    // the long-press ring traces the same path across Linux/macOS/Windows.
-    let path = rounded_rectangle_perimeter(ox, oy, ow, oh, r, RoundedRectArcSteps::Auto);
-    let (distances, total_len) = path_distances(&path);
-    let head_len = total_len * progress.clamp(0.0, 1.0);
-    let wave_phase = state.wave_phase.get();
-    let arm_t = state.arm_t.get();
-
+    let (x, y, w, h) = pill_position(state, ww, wh);
     ctx.save();
     ctx.set_line_cap_round();
     ctx.set_line_join_round();
-
-    // Ambient layer: the unfilled track, so the ring reads as a path being
-    // travelled rather than a line appearing out of nothing.
-    if alpha > 0.0 {
-        ctx.set_line_width(1.0);
-        ctx.set_source_rgba(
-            LONG_PRESS_OUTLINE_COLOR.0,
-            LONG_PRESS_OUTLINE_COLOR.1,
-            LONG_PRESS_OUTLINE_COLOR.2,
-            0.085 * alpha,
-        );
-        if let Some(first) = path.first() {
-            ctx.new_sub_path();
-            ctx.move_to(first.0, first.1);
-            for p in path.iter().skip(1) {
-                ctx.line_to(p.0, p.1);
-            }
-            ctx.stroke();
-        }
-    }
-
-    if alpha > 0.0 && head_len > 0.0 {
-        // Primary layer: the comet. Brightness is envelope × glimmer evaluated
-        // per evenly-spaced segment — the portable stand-in for a gradient
-        // along a path, which Core Graphics cannot stroke directly.
-        let mut points = state.ring_points.borrow_mut();
-        rust_pill_shared::resample_perimeter(
-            &path,
-            &distances,
-            total_len,
-            rust_pill_shared::RING_SEGMENT_PX,
-            &mut points,
-        );
-
-        let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
-        for w in points.windows(2) {
-            let (x1, y1, _) = w[0];
-            let (x2, y2, d) = w[1];
-            if d > head_len {
-                break;
-            }
-            let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
-            let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
-            let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
-            if a < 0.012 {
-                continue;
-            }
-            ctx.set_line_width(
-                rust_pill_shared::RING_CORE_WIDTH
-                    + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
-            );
-            ctx.set_source_rgba(
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                a,
-            );
-            ctx.new_sub_path();
-            ctx.move_to(x1, y1);
-            ctx.line_to(x2, y2);
-            ctx.stroke();
-        }
-
-        // Secondary layer: the soft head. Concentric discs approximate a radial
-        // falloff without allocating a gradient every frame. It dissolves and
-        // blooms before completion so nothing bright is left at the seam.
-        let head_fade = rust_pill_shared::ring_head_fade(progress, arm_t);
-        let head_alpha = rust_pill_shared::RING_HEAD_ALPHA * head_fade * alpha;
-        if head_alpha > 0.004 && points.len() >= 2 {
-            let idx = (((head_len / total_len) * (points.len() - 1) as f64).round() as usize)
-                .clamp(1, points.len() - 1);
-            let (hx, hy, _) = points[idx];
-            let head_r = rust_pill_shared::ring_head_radius(progress);
-            let steps = rust_pill_shared::RING_HEAD_STEPS;
-            for k in (1..=steps).rev() {
-                let rr = head_r * (k as f64 / steps as f64);
-                let falloff = (1.0 - (k - 1) as f64 / steps as f64).powf(2.2);
-                ctx.set_source_rgba(
-                    LONG_PRESS_OUTLINE_COLOR.0,
-                    LONG_PRESS_OUTLINE_COLOR.1,
-                    LONG_PRESS_OUTLINE_COLOR.2,
-                    head_alpha * falloff * 0.5,
-                );
-                ctx.new_sub_path();
-                ctx.arc(hx, hy, rr, 0.0, TAU);
-                ctx.fill();
-            }
-        }
-    }
-
-    // Confirmation layer: an expanding halo the moment the gesture arms, with a
-    // trailing echo. This is the payoff the old ring never gave.
-    if pulsing {
-        let t = rust_pill_shared::pulse_progress(state.arm_pulse.get());
-        for delay in [0.0, rust_pill_shared::RING_PULSE_ECHO_DELAY] {
-            let tt = ((t - delay) / (1.0 - delay)).clamp(0.0, 1.0);
-            if tt <= 0.0 {
-                continue;
-            }
-            let e = rust_pill_shared::ease_out_cubic(tt);
-            let spread = rust_pill_shared::RING_PULSE_SPREAD * e;
-            let halo = rounded_rectangle_perimeter(
-                ox - spread,
-                oy - spread,
-                ow + spread * 2.0,
-                oh + spread * 2.0,
-                r + spread,
-                RoundedRectArcSteps::Auto,
-            );
-            let echo = if delay > 0.0 { 0.5 } else { 1.0 };
-            ctx.set_line_width(2.2 + (0.5 - 2.2) * e);
-            ctx.set_source_rgba(
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                rust_pill_shared::RING_PULSE_ALPHA * (1.0 - e).powf(1.8) * echo,
-            );
-            if let Some(first) = halo.first() {
-                ctx.new_sub_path();
-                ctx.move_to(first.0, first.1);
-                for p in halo.iter().skip(1) {
-                    ctx.line_to(p.0, p.1);
-                }
-                ctx.stroke();
-            }
-        }
-    }
-
+    rust_pill_shared::paint_ring_frame(
+        &mut CgRing(ctx),
+        state,
+        rust_pill_shared::PillRect::new(x, y, w, h),
+        LONG_PRESS_OUTLINE_COLOR,
+    );
     ctx.restore();
 }
 
 // ── Balloon pop animation ─────────────────────────────────────────
-
-
-/// Progress of the long-press gesture, in `0.0..=1.0`.
-///
-/// The ramp only starts once `LONG_PRESS_HOLD_DELAY` has elapsed, so a quick
-/// click never renders a partially-filled outline, and reaches 1.0 exactly when
-/// the gesture arms at `LONG_PRESS_DURATION`.
-pub(crate) fn long_press_progress(elapsed: f64) -> f64 {
-    rust_pill_shared::hold_progress(elapsed, LONG_PRESS_HOLD_DELAY, LONG_PRESS_DURATION)
-}
-
-#[cfg(test)]
-mod long_press_tests {
-    use super::*;
-
-    #[test]
-    fn no_progress_before_hold_delay() {
-        assert_eq!(long_press_progress(0.0), 0.0);
-        assert_eq!(long_press_progress(LONG_PRESS_HOLD_DELAY), 0.0);
-    }
-
-    #[test]
-    fn quick_click_never_shows_progress() {
-        // A typical click is well under the hold delay.
-        assert_eq!(long_press_progress(0.05), 0.0);
-    }
-
-    #[test]
-    fn completes_exactly_at_duration() {
-        assert_eq!(long_press_progress(LONG_PRESS_DURATION), 1.0);
-    }
-
-    #[test]
-    fn saturates_after_duration() {
-        assert_eq!(long_press_progress(LONG_PRESS_DURATION * 4.0), 1.0);
-    }
-
-    #[test]
-    fn ramps_monotonically_between_delay_and_duration() {
-        let mid = (LONG_PRESS_HOLD_DELAY + LONG_PRESS_DURATION) / 2.0;
-        let p = long_press_progress(mid);
-        assert!(p > 0.0 && p < 1.0, "expected partial progress, got {p}");
-        assert!(long_press_progress(mid) <= long_press_progress(mid + 0.01));
-    }
-}
 
 /// Horizontal gap between the pill edge and its side controls.
 ///
@@ -1647,5 +2154,52 @@ mod control_layout_tests {
         assert_eq!(py, cy, "both controls share a baseline");
         let pill_centre = PILL_Y + PILL_H / 2.0;
         assert!((py + CANCEL_BUTTON_SIZE / 2.0 - pill_centre).abs() < f64::EPSILON);
+    }
+}
+
+#[cfg(test)]
+mod selector_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn selector_gap_and_action_targets_follow_the_live_pill() {
+        for pill in [(40.0, 80.0, 120.0, 24.0), (30.0, 75.0, 140.0, 34.0)] {
+            let above = tooltip_rendered_origin(pill, 172.0, 1.0, 0.0);
+            let below = tooltip_rendered_origin(pill, 172.0, 1.0, 1.0);
+            assert_eq!(pill.1 - above.1 - TOOLTIP_HEIGHT, TOOLTIP_GAP);
+            assert_eq!(below.1 - pill.1 - pill.3, TOOLTIP_GAP);
+            for blend in [0.0, 0.5, 1.0] {
+                for progress in [0.11, 0.5, 1.0] {
+                    let origin = tooltip_rendered_origin(pill, 172.0, progress, blend);
+                    let targets = selector_click_regions(pill, 172.0, progress, blend);
+                    assert_eq!((targets[0].x, targets[0].y), origin);
+                    assert_eq!(targets[1].x, origin.0 + 86.0);
+                    assert_eq!(targets[1].y, origin.1);
+                    assert_eq!(targets[0].w + targets[1].w, 172.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rendered_selector_origin_tracks_entry_motion_on_both_sides() {
+        for blend in [0.0, 0.5, 1.0] {
+            let rest = tooltip_rendered_origin((0.0, 100.0, 240.0, 48.0), 172.0, 1.0, blend);
+            for progress in [0.11, 0.5, 1.0] {
+                let painted =
+                    tooltip_rendered_origin((0.0, 100.0, 240.0, 48.0), 172.0, progress, blend);
+                assert_eq!(painted.0, rest.0);
+                let expected_y = rest.1 + (1.0 - progress) * 4.0 * (1.0 - 2.0 * blend);
+                assert!((painted.1 - expected_y).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn long_transcript_review_bounds_text() {
+        let long_transcript = "Transcription word ".repeat(4000);
+        let (preview, truncated) = rust_pill_shared::bound_review_preview_text(&long_transcript);
+        assert!(truncated);
+        assert!(preview.len() <= rust_pill_shared::MAX_REVIEW_PREVIEW_CHARS + 60);
     }
 }

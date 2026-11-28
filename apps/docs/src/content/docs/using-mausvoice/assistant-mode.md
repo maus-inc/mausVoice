@@ -9,10 +9,12 @@ Assistant mode is an experimental command workflow, separate from ordinary dicta
 
 ## Configure it
 
-1. Open **Settings → Processing → Assistant mode**.
+1. Open **Settings → AI and models → Assistant mode**.
 2. Choose **API** and select or add a credential whose provider supports generative text. **Off** leaves the assistant without an LLM backend.
 3. Configure the **Assistant hotkey**.
 4. Turn on the separate **Assistant mode** switch. This feature is disabled by default.
+
+While the switch is off, each assistant entry point leads here rather than to a page with nothing to show. The **Talk to the assistant** guide on the Help page and the **Open chat** shortcut both open this row. The Assistant hold key is listed with a note that the switch is needed, and stays idle until it is on, because a hold gesture should not move you to another page. Pressing **Open chat** stops a recording in progress either way, so it never leaves the pill recording behind a page you are reading.
 
 The assistant has its own provider selection. Changing the transcription provider or the ordinary post-processing provider does not change the assistant's LLM setting. Requests, conversation context, accessibility results, and tool results needed by the conversation can be sent to the selected provider; review that provider's retention terms before using sensitive material.
 
@@ -20,9 +22,9 @@ The assistant has its own provider selection. Changing the transcription provide
 
 Hold the configured assistant shortcut, speak an instruction, and release it. The voice is transcribed using the active transcription configuration, but the recognized text becomes a chat message rather than a normal history row. The assistant conversation appears in the pill and under **Chats** in the main navigation.
 
-Useful companion shortcuts are listed under **Settings → General → Hotkey shortcuts**:
+Useful companion shortcuts are listed under **Settings → Shortcuts → Hotkey shortcuts**:
 
-- **Open chat** opens the current assistant conversation in the main window.
+- **Open chat** opens the current assistant conversation in the main window. It opens the Assistant mode setting instead while the switch is off.
 - **Cancel transcription** cancels the active dictation or assistant session.
 
 The assistant can iterate through several model and tool steps. Watch the activity and permission prompts; a request is not necessarily finished after the first response.
@@ -31,11 +33,11 @@ The assistant can iterate through several model and tool steps. Watch the activi
 
 The built-in tool set can read the focused field and surrounding screen context, paste into the focused field, and close the pill conversation. Every permissioned request presents **Deny**, **Allow**, and **Always allow** choices. Inspect the stated reason and parameters before approving it.
 
-**Always allow** is broader than a one-time approval: it is remembered in the app's webview local storage by tool, not by an individual command. The danger-zone database reset does not clear that browser storage. For sensitive tools, prefer **Allow** so each use remains visible.
+**Always allow** is broader than a one-time approval: it is remembered in the app's webview local storage by tool and by conversation, not by an individual command, so a new conversation asks again. A grant saved by a build older than per-conversation scoping is still read as a global allow until you revoke it or clear local data. Clear local data removes these saved approvals from app-owned browser storage. For sensitive tools, prefer **Allow** so each use remains visible.
 
 ## Power mode
 
-Power mode adds the `run_terminal_command` tool. On Windows it invokes the proposed string through `cmd /C`; on macOS and Linux it uses `sh -c`. Commands run with the mausVoice process's full user permissions and are not placed in a sandbox. They can read or change files, start programs, install software when permissions allow, and expose information through their output.
+Power mode adds the `run_terminal_command` tool. The Rust backend validates each command against `ALLOWED_COMMANDS` (Unix: `ls`, `pwd`, `echo`, `cat`, `which`, `whoami`, `date`, `uname`, `df`, `du`, `head`, `tail`, `wc`, plus `open`/`xdg-open`; Windows: `whoami`, `where`, `hostname`, `explorer`) and executes directly, without a shell (`sh -c` / `cmd /C`). Shell metacharacters such as `/`, `\`, `;`, `|`, `&`, and `$` are rejected anywhere in an argument, and a bare `..` argument is refused. Absolute paths and paths into subdirectories or parent directories are not allowed. Commands may use bare names in their default working directory and other non-path arguments, but cannot be directed to an arbitrary location. Commands run with the mausVoice process's full user permissions.
 
 Enabling power mode requires a warning confirmation, and the dialog asks you to restart mausVoice before relying on the change. Keep it off unless the task genuinely needs shell access. Never approve a command you do not understand, and avoid **Always allow** for terminal execution. Turning the switch off and restarting removes the terminal tool from the assistant, but previously remembered always-allow storage is a separate setting.
 

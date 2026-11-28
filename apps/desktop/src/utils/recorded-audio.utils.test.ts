@@ -1,0 +1,381 @@
+import { describe, expect, it } from "vitest";
+import { invokeStopRecording } from "./native-recording-session";
+
+import {
+  decodeStopRecordingPayload,
+  encodeRecordedAudio,
+} from "./recorded-audio.utils";
+
+const encode = (sampleRate: number, samples: number[]): ArrayBuffer => {
+  const buffer = new ArrayBuffer(4 + samples.length * 4);
+  const view = new DataView(buffer);
+  view.setUint32(0, sampleRate, true);
+  samples.forEach((sample, index) =>
+    view.setFloat32(4 + index * 4, sample, true),
+  );
+  return buffer;
+};
+
+describe("a capture that arrived as an object payload", () => {
+  it("keeps the fault and both lengths", () => {
+    // The preview runtime and the test doubles reach this branch instead of the
+    // binary one. It used to return only the samples, so a faulted capture
+    // reported nothing at all on that path.
+    const decoded = decodeStopRecordingPayload({
+      samples: [0.5, 0.25],
+      sampleRate: 16_000,
+      captureFault: "fatal",
+      capturedMs: 1_400,
+      expectedMs: 6_000,
+    });
+
+    expect(decoded.captureFault).toBe("fatal");
+    expect(decoded.capturedMs).toBe(1_400);
+    expect(decoded.expectedMs).toBe(6_000);
+    expect(decoded.samples).toEqual(Float32Array.from([0.5, 0.25]));
+  });
+
+  it("invents no fault and no lengths of its own", () => {
+    const decoded = decodeStopRecordingPayload({
+      samples: [0.5],
+      sampleRate: 16_000,
+      // A hostile or stale payload: not the token the native side sends.
+      captureFault: "maybe",
+      capturedMs: "1400",
+      expectedMs: Number.NaN,
+    });
+
+    expect(decoded.captureFault).toBeUndefined();
+    expect(decoded.capturedMs).toBeUndefined();
+    expect(decoded.expectedMs).toBeUndefined();
+  });
+});
+
+describe("decodeStopRecordingPayload", () => {
+  it("decodes the raw [rate u32][f32...] IPC body", () => {
+    const decoded = decodeStopRecordingPayload(encode(48_000, [0.5, -0.25, 1]));
+    expect(decoded.sampleRate).toBe(48_000);
+    expect(decoded.samples).toBeInstanceOf(Float32Array);
+    expect(Array.from(decoded.samples)).toEqual([0.5, -0.25, 1]);
+  });
+
+  it("decodes a byte view that starts at an unaligned offset", () => {
+    const body = new Uint8Array(encode(16_000, [0.125, -0.5]));
+    const padded = new Uint8Array(body.byteLength + 1);
+    padded.set(body, 1);
+    const decoded = decodeStopRecordingPayload(padded.subarray(1));
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(Array.from(decoded.samples)).toEqual([0.125, -0.5]);
+  });
+
+  it("decodes a number[] byte array from a JSON IPC fallback", () => {
+    const bytes = Array.from(new Uint8Array(encode(44_100, [0.75])));
+    const decoded = decodeStopRecordingPayload(bytes);
+    expect(decoded.sampleRate).toBe(44_100);
+    expect(Array.from(decoded.samples)).toEqual([0.75]);
+  });
+
+  it("returns an empty recording for the not-recording header and junk", () => {
+    expect(decodeStopRecordingPayload(encode(0, []))).toEqual({
+      samples: new Float32Array(0),
+      sampleRate: 0,
+    });
+    expect(decodeStopRecordingPayload(null).samples).toHaveLength(0);
+    expect(decodeStopRecordingPayload(new ArrayBuffer(2)).sampleRate).toBe(0);
+  });
+
+  it("decodes object payloads from the preview runtime", () => {
+    const payload = { samples: [0.1, 0.2], sampleRate: 16_000 };
+    const decoded = decodeStopRecordingPayload(payload);
+    // Compared against f32-rounded values, because the decoder returns a
+    // Float32Array and 0.1 is not representable in one.
+    expect(Array.from(decoded.samples)).toEqual(
+      Array.from(new Float32Array([0.1, 0.2])),
+    );
+    expect(decoded.sampleRate).toBe(16_000);
+  });
+
+  it("copies a Float32Array so the caller cannot write back into the payload", () => {
+    const samples = new Float32Array([0.5]);
+    const decoded = decodeStopRecordingPayload({ samples, sampleRate: 16_000 });
+    decoded.samples[0] = 99;
+    expect(samples[0]).toBe(0.5);
+  });
+
+  it.each([
+    ["null", null],
+    ["a string", "nope"],
+    ["a number", 7],
+    ["a plain object", {}],
+    // Array-like but not an array: `Float32Array.from` would have produced
+    // `[NaN, NaN]` here, which is a recording of the wrong shape rather than an
+    // obvious failure.
+    ["an array-like object", { length: 2 }],
+  ])("rejects a samples field that is %s", (_label, samples) => {
+    // `{ samples: null }` is the shape that mattered: the decoder used to cast
+    // any object with a `samples` key, so this came back typed as a recording
+    // with null samples, and the first `.length` on it threw inside the stop
+    // handler's try block. A native stop that had already succeeded became
+    // "Failed to stop recording" and a null audio result.
+    const decoded = decodeStopRecordingPayload({ samples, sampleRate: 16_000 });
+    expect(decoded.samples).toHaveLength(0);
+    expect(decoded.sampleRate).toBe(0);
+  });
+
+  it.each([
+    ["a missing sampleRate", { samples: [0.1] }],
+    ["a string sampleRate", { samples: [0.1], sampleRate: "16000" }],
+    ["NaN", { samples: [0.1], sampleRate: Number.NaN }],
+  ])("decodes to an empty recording for %s", (_label, payload) => {
+    const decoded = decodeStopRecordingPayload(payload);
+    expect(decoded.sampleRate).toBe(0);
+    expect(Array.from(decoded.samples)).toEqual(
+      Array.from(new Float32Array([0.1])),
+    );
+  });
+});
+
+describe("encodeRecordedAudio", () => {
+  it("round-trips through the decoder used by stop_recording", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeRecordedAudio(new Float32Array([0.5, -0.25, 1]), 48_000),
+    );
+    expect(decoded.sampleRate).toBe(48_000);
+    expect(Array.from(decoded.samples)).toEqual([0.5, -0.25, 1]);
+  });
+
+  it("accepts a plain number[] the store path can hold", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeRecordedAudio([0.125, -0.5], 16_000),
+    );
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(Array.from(decoded.samples)).toEqual([0.125, -0.5]);
+  });
+
+  it("encodes an empty recording as the bare header", () => {
+    const bytes = encodeRecordedAudio(new Float32Array(0), 16_000);
+    expect(bytes.byteLength).toBe(4);
+    const decoded = decodeStopRecordingPayload(bytes);
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(decoded.samples).toHaveLength(0);
+  });
+
+  it("round-trips the capture-failed flag native sets on a partial recording", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeRecordedAudio(new Float32Array([0.5]), 16_000, true),
+    );
+    // The flag lives in the top bit of the header, so the rate a caller reads
+    // stays the rate the device reported.
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(decoded.captureFailed).toBe(true);
+    expect(Array.from(decoded.samples)).toEqual(
+      Array.from(new Float32Array([0.5])),
+    );
+  });
+
+  it("leaves captureFailed unset for a complete recording", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeRecordedAudio(new Float32Array([0.5]), 16_000),
+    );
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(decoded.captureFailed).toBeUndefined();
+  });
+
+  it("masks the capture-failed bit out of the sample rate native sends", () => {
+    const bytes = encodeRecordedAudio(new Float32Array([0.25]), 48_000, true);
+    // Native frames the same header; a reader that ignored the flag would see
+    // 0x8000BB80 as the rate.
+    expect(new DataView(bytes.buffer).getUint32(0, true)).toBe(0x8000_bb80);
+    expect(decodeStopRecordingPayload(bytes).sampleRate).toBe(48_000);
+  });
+
+  it("does not write into the caller's samples", () => {
+    const samples = new Float32Array([0.5]);
+    encodeRecordedAudio(samples, 16_000);
+    expect(samples[0]).toBe(0.5);
+  });
+});
+
+describe("a capture that faulted mid-recording", () => {
+  /** `CAPTURE_TRAILER_MAGIC` in the Rust encoder. */
+  const MAGIC = 0x4341_5054;
+
+  /** The body the Rust stop path produces for a faulted capture. */
+  const encodeWithTrailer = (
+    sampleRate: number,
+    samples: number[],
+    capturedMs: number,
+    expectedMs: number,
+  ): ArrayBuffer => {
+    const buffer = new ArrayBuffer(4 + samples.length * 4 + 16);
+    const view = new DataView(buffer);
+    view.setUint32(0, sampleRate, true);
+    samples.forEach((sample, index) =>
+      view.setFloat32(4 + index * 4, sample, true),
+    );
+    const trailer = 4 + samples.length * 4;
+    view.setUint32(trailer, capturedMs, true);
+    view.setUint32(trailer + 4, expectedMs, true);
+    view.setUint32(trailer + 8, 1, true);
+    view.setUint32(trailer + 12, MAGIC, true);
+    return buffer;
+  };
+
+  it("reports the fault and both lengths", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeWithTrailer(16_000, [0.5, -0.5], 1_400, 6_000),
+    );
+
+    expect(decoded.captureFault).toBe("fatal");
+    expect(decoded.capturedMs).toBe(1_400);
+    expect(decoded.expectedMs).toBe(6_000);
+  });
+
+  it("keeps every sample and none of the trailer as audio", () => {
+    const decoded = decodeStopRecordingPayload(
+      encodeWithTrailer(16_000, [0.5, -0.5], 1_400, 6_000),
+    );
+
+    // Reading the trailer without excising it would hand the last 12 bytes to
+    // the decoder as three samples of noise.
+    expect(Array.from(decoded.samples)).toEqual([0.5, -0.5]);
+  });
+
+  it("leaves an ordinary recording with no trailer and no fault", () => {
+    const decoded = decodeStopRecordingPayload(encode(48_000, [0.5, -0.25]));
+
+    // The flag is what distinguishes them; a body whose last word happens to be
+    // a sample value must not be read as a trailer.
+    expect(decoded.captureFault).toBeUndefined();
+    expect(Array.from(decoded.samples)).toEqual([0.5, -0.25]);
+    expect(decoded.samples).toHaveLength(2);
+  });
+
+  it("does not mistake ordinary audio for a trailer", () => {
+    // A last sample whose bit pattern equals the fault flag, with no trailer
+    // behind it: 0x3f800001 is 1.0000001f, an unremarkable sample. Keying off
+    // the flag alone reported a fault and ate three samples here, and real
+    // speech sets that low bit almost always.
+    const buffer = new ArrayBuffer(4 + 4);
+    const view = new DataView(buffer);
+    view.setUint32(0, 48_000, true);
+    view.setUint32(4, 1, true);
+
+    const decoded = decodeStopRecordingPayload(buffer);
+
+    expect(decoded.captureFault).toBeUndefined();
+    expect(decoded.samples).toHaveLength(1);
+  });
+
+  it("decodes the bytes the Rust encoder actually produces", () => {
+    // The literal body `the_faulted_body_is_exactly_these_bytes` asserts on the
+    // Rust side, byte for byte: rate 16 kHz, one sample of 0.5, then 1 400 ms
+    // captured of 6 000 ms, flags 1, magic "TPAC" little-endian. The two decoders
+    // are separate implementations, so this is what keeps them saying the same
+    // thing rather than each agreeing with itself.
+    const bytes = new Uint8Array([
+      0x80,
+      0x3e,
+      0x00,
+      0x00, // 16_000
+      0x00,
+      0x00,
+      0x00,
+      0x3f, // 0.5f
+      0x78,
+      0x05,
+      0x00,
+      0x00, // 1_400 ms
+      0x70,
+      0x17,
+      0x00,
+      0x00, // 6_000 ms
+      0x01,
+      0x00,
+      0x00,
+      0x00, // flags
+      0x54,
+      0x50,
+      0x41,
+      0x43, // magic
+    ]);
+
+    const decoded = decodeStopRecordingPayload(bytes.buffer);
+
+    expect(decoded.sampleRate).toBe(16_000);
+    expect(Array.from(decoded.samples)).toEqual([0.5]);
+    expect(decoded.captureFault).toBe("fatal");
+    expect(decoded.capturedMs).toBe(1_400);
+    expect(decoded.expectedMs).toBe(6_000);
+  });
+
+  it("decodes both the partial flag and the timing trailer without losing audio", () => {
+    const bytes = encodeWithTrailer(16_000, [0.25, -0.5], 900, 3_000);
+    new DataView(bytes).setUint32(0, 0x8000_0000 | 16_000, true);
+    const decoded = decodeStopRecordingPayload(bytes);
+    expect(decoded).toMatchObject({
+      sampleRate: 16_000,
+      captureFailed: true,
+      captureFault: "fatal",
+      capturedMs: 900,
+      expectedMs: 3_000,
+    });
+    expect(Array.from(decoded.samples)).toEqual([0.25, -0.5]);
+  });
+
+  it("never misreads a long healthy recording, whatever its last sample", () => {
+    // The regression this pins: 103 of 200 ordinary recordings were read as
+    // faulted when the flag bit alone decided, losing three samples and raising
+    // an error toast for every one of them.
+    const samples = Array.from(
+      { length: 64 },
+      (_, index) => Math.sin(index * 0.7) * 0.3,
+    );
+    for (const tail of [1.0000001, 0.1, 0.30000001192092896, -0.7]) {
+      const body = samples.slice();
+      body[body.length - 1] = tail;
+      const decoded = decodeStopRecordingPayload(
+        encode(48_000, body as number[]),
+      );
+      expect(decoded.captureFault, `tail ${tail}`).toBeUndefined();
+      expect(decoded.samples, `tail ${tail}`).toHaveLength(body.length);
+    }
+  });
+
+  it("keeps the audio when the body is too short to hold a trailer", () => {
+    const buffer = new ArrayBuffer(8);
+    const view = new DataView(buffer);
+    view.setUint32(0, 48_000, true);
+    view.setUint32(4, 1, true);
+
+    // Untrusted, so the fault is dropped rather than a sample being sliced off
+    // a real recording.
+    const decoded = decodeStopRecordingPayload(buffer);
+
+    expect(decoded.captureFault).toBeUndefined();
+    expect(decoded.samples).toHaveLength(1);
+  });
+
+  it("keeps the audio when a magic arrives without its flag", () => {
+    const body = new ArrayBuffer(4 + 4 + 16);
+    const view = new DataView(body);
+    view.setUint32(0, 48_000, true);
+    view.setUint32(4, 0.5, true);
+    // Magic present, flag clear: not a trailer this build wrote.
+    view.setUint32(8 + 12, MAGIC, true);
+
+    const decoded = decodeStopRecordingPayload(body);
+
+    expect(decoded.captureFault).toBeUndefined();
+    expect(decoded.samples.length).toBe(1 + 16 / 4);
+  });
+
+  it("carries the fault through the invoke wrapper", async () => {
+    const decoded = await invokeStopRecording(async () =>
+      encodeWithTrailer(16_000, [0.25], 900, 3_000),
+    );
+
+    expect(decoded.captureFault).toBe("fatal");
+    expect(decoded.expectedMs).toBe(3_000);
+  });
+});

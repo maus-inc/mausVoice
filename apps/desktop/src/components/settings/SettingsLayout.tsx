@@ -1,0 +1,454 @@
+import { isComposingKey } from "../common/ime-keyboard";
+import { Search } from "lucide-react";
+import {
+  Box,
+  InputAdornment,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
+import { FormattedMessage, useIntl } from "react-intl";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Link,
+  Navigate,
+  Outlet,
+  useLocation,
+  useMatch,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
+import {
+  SETTINGS_PAGES,
+  searchSettings,
+  type SettingHit,
+} from "../../utils/settings-registry";
+import { visuallyHidden } from "../../styles/a11y";
+import { useSettingsAvailability } from "./settings-availability";
+import { SETTINGS_PAGE_COPY } from "./settings-page-copy";
+import {
+  rememberLastSettingsPage,
+  resolveSettingsTarget,
+  settingAnchorId,
+  settingsPagePath,
+  SETTINGS_BASE_PATH,
+} from "./settings-routes";
+import {
+  SettingsFocusContext,
+  SettingsHighlightContext,
+} from "./settings-highlight";
+import { useSettingsAnchor } from "./use-settings-anchor";
+import { SettingsSearchResults } from "./SettingsSearchResults";
+import { settingSearchGlyphProps } from "./setting-row-chassis";
+
+const settingsWideLayoutQuery = "@container settings-layout (min-width: 680px)";
+
+/**
+ * Rail entry for one page. Links, not buttons: each page is a route, the
+ * browser owns back and forward, and `aria-current` marks where you are without
+ * a scroll spy guessing.
+ *
+ * The highlight is the text itself and nothing else. A filled box around the
+ * current row made the rail look like a control standing beside the page rather
+ * than the list of pages it is — and at eight rows, eight boxes waiting to be
+ * filled is more furniture than navigation. Weight carries "you are here";
+ * colour carries "this is live", which is the one thing a hovered row and the
+ * current row share.
+ */
+const SettingsRailLink = ({
+  pageId,
+  selected,
+}: {
+  pageId: (typeof SETTINGS_PAGES)[number]["id"];
+  selected: boolean;
+}) => (
+  <Box
+    component={Link}
+    to={settingsPagePath(pageId)}
+    aria-current={selected ? "page" : undefined}
+    sx={{
+      display: "flex",
+      alignItems: "center",
+      minHeight: 32,
+      px: 1.5,
+      borderRadius: 1,
+      fontSize: "0.8125rem",
+      fontWeight: selected ? 600 : 500,
+      color: selected ? "text.primary" : "text.secondary",
+      textDecoration: "none",
+      whiteSpace: "nowrap",
+      transition: "color 150ms ease",
+      "&:hover": { color: "text.primary" },
+      "&:focus-visible": {
+        outline: "2px solid",
+        outlineColor: "primary.main",
+        outlineOffset: -2,
+      },
+    }}
+  >
+    {SETTINGS_PAGE_COPY[pageId].title}
+  </Box>
+);
+
+/**
+ * Whether a keydown should move focus to the search box.
+ *
+ * A bare `/` from anywhere on the surface is the shortcut people expect from a
+ * search box. A modified `/` belongs to the browser or the app, and a `/` typed
+ * inside a field has to reach that field, so both are left alone.
+ */
+const isSearchShortcut = (event: KeyboardEvent): boolean => {
+  if (
+    event.key !== "/" ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.altKey ||
+    isComposingKey(event) ||
+    event.defaultPrevented
+  ) {
+    return false;
+  }
+  const target = event.target as HTMLElement | null;
+  return (
+    !target ||
+    (!/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) &&
+      !target.isContentEditable &&
+      !target.closest?.('[role="dialog"], [role="alertdialog"]'))
+  );
+};
+
+/**
+ * The settings surface: a rail of pages, a search field, and the current page.
+ *
+ * The rail and the search field sit in their own column that stays put while
+ * the page scrolls, so navigation never scrolls out of reach. The page uses a
+ * side rail only when its own content area leaves enough room for readable
+ * settings rows. The dashboard navigation reduces that area, so the application
+ * window width is not a useful breakpoint. In compact mode, page links wrap to
+ * another row instead of hiding in a horizontal scroll strip.
+ */
+const useRememberLastSettingsPage = (
+  activePage: ReturnType<typeof useSettingsActivePage>,
+) => {
+  useEffect(() => {
+    if (activePage) rememberLastSettingsPage(activePage.id);
+  }, [activePage]);
+};
+
+const useSearchShortcut = (
+  searchInput: React.RefObject<HTMLInputElement | null>,
+) => {
+  // `/` reaches search from anywhere on the surface, which is the shortcut
+  // people already expect from search boxes.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isSearchShortcut(event)) return;
+      event.preventDefault();
+      searchInput.current?.focus();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [searchInput]);
+};
+
+const useSettingsActivePage = () => {
+  const pageMatch = useMatch(`${SETTINGS_BASE_PATH}/:page`);
+  return SETTINGS_PAGES.find((page) => page.id === pageMatch?.params.page);
+};
+
+const SettingsContent = ({
+  searching,
+  hits,
+  openHit,
+  activePage,
+}: {
+  searching: boolean;
+  hits: SettingHit[];
+  openHit: (hit: SettingHit) => void;
+  activePage: ReturnType<typeof useSettingsActivePage>;
+}) => {
+  if (searching) {
+    return (
+      <>
+        <Box component="h1" sx={visuallyHidden}>
+          <FormattedMessage defaultMessage="Search settings" />
+        </Box>
+        <SettingsSearchResults hits={hits} onSelect={openHit} />
+      </>
+    );
+  }
+  // Every page starts on the same line. This block used to take `auto` margins
+  // so a short page centred in the window, which meant the heading sat at a
+  // different height on every page and Shortcuts, the shortest of them, floated
+  // halfway down the window while the long pages started at the top. A
+  // settings surface is a place you move around in, and a title that jumps
+  // between pages makes the same surface look like a different one.
+  //
+  // The heading and the page still travel as one block: the heading names the
+  // page below it, and a page that scrolled under a fixed heading would make
+  // the two read as unrelated. The gap after the header is wider than the gap
+  // between groups, so the header belongs to the whole page rather than to the
+  // first group.
+  return (
+    <Box sx={{ width: "100%" }}>
+      {activePage && (
+        <Box sx={{ mb: 5 }}>
+          <Typography variant="h4" component="h1" sx={{ fontWeight: 700 }}>
+            {SETTINGS_PAGE_COPY[activePage.id].title}
+          </Typography>
+          <Typography
+            variant="body1"
+            sx={{ color: "text.secondary", mt: 1, maxWidth: "72ch" }}
+          >
+            {SETTINGS_PAGE_COPY[activePage.id].description}
+          </Typography>
+        </Box>
+      )}
+      <Outlet />
+    </Box>
+  );
+};
+
+const handleSearchKeyDown = (
+  event: React.KeyboardEvent,
+  {
+    hits,
+    setQuery,
+    openHit,
+  }: {
+    hits: SettingHit[];
+    setQuery: (query: string) => void;
+    openHit: (hit: SettingHit) => void;
+  },
+): void => {
+  // A key pressed while an input method editor is composing belongs
+  // to the IME, not to the search box: for Korean and Chinese that
+  // is how a candidate list is confirmed, and for Japanese how a
+  // conversion is committed. Chrome reports the boundary as key
+  // code 229 with an empty `key`, and the composing flag stays true
+  // on the event that ends the composition, so both are checked
+  // before anything acts on the key.
+  if (isComposingKey(event.nativeEvent)) {
+    return;
+  }
+  if (event.key === "Escape") {
+    setQuery("");
+    return;
+  }
+  // Enter opens the first result, the way a search box behaves
+  // everywhere else: the panel is one Tab away for anyone who
+  // would rather pick a different row.
+  if (event.key === "Enter" && hits.length > 0) {
+    event.preventDefault();
+    openHit(hits[0]);
+  }
+};
+
+export const SettingsLayout = () => {
+  const intl = useIntl();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activePage = useSettingsActivePage();
+  const [query, setQuery] = useState("");
+  const searchInput = useRef<HTMLInputElement | null>(null);
+  const availability = useSettingsAvailability();
+  const hits = useMemo(
+    () => searchSettings(query, { availability, messages: intl.messages }),
+    [query, availability, intl.messages],
+  );
+
+  const clearQuery = useCallback(() => setQuery(""), []);
+  const { highlight, focusSetting, requestFocus, cancelPendingFocus } =
+    useSettingsAnchor(location.hash, activePage?.id, availability, clearQuery);
+  useRememberLastSettingsPage(activePage);
+  useSearchShortcut(searchInput);
+
+  // A query belongs to the page it was typed on. Without this, picking a page
+  // from the rail while a search is open leaves the results panel standing in
+  // for the page that was just chosen, because the rail only changes the route.
+  useEffect(() => {
+    setQuery("");
+  }, [location.pathname]);
+
+  const openHit = (hit: SettingHit) => {
+    requestFocus(hit.entry.key);
+    setQuery("");
+    const target = `${settingsPagePath(hit.entry.page)}#${settingAnchorId(
+      hit.entry.key,
+    )}`;
+    // A hit for a row on the page already open, with that row already in the
+    // address, is a navigation to where we are: the router would change
+    // nothing, the hash effect below would not run, and the row the person
+    // picked would neither light up nor scroll into view. So the one case the
+    // effect cannot see is handled here, with the same call it makes.
+    if (`${location.pathname}${location.hash}` === target) {
+      focusSetting(hit.entry.key);
+      return;
+    }
+    navigate(target);
+  };
+
+  const searching = query.trim().length > 0;
+
+  return (
+    <SettingsFocusContext.Provider value={focusSetting}>
+      <SettingsHighlightContext.Provider value={highlight}>
+        <Box
+          className="settings-layout-frame"
+          sx={{
+            width: "100%",
+            minWidth: 0,
+            containerName: "settings-layout",
+            containerType: "inline-size",
+          }}
+        >
+          <Stack
+            className="settings-layout-split"
+            direction="column"
+            spacing={2}
+            useFlexGap
+            sx={{
+              alignItems: "flex-start",
+              // The window's own content pane already insets this surface a
+              // little. A settings page spends the whole width it is given, so
+              // without its own inset the cards run almost to the window frame
+              // and the page reads as a document someone printed to the edge.
+              // The inset belongs here rather than to the shell, because the
+              // shell is shared with every other route.
+              p: { xs: 0, sm: 1.5 },
+              [settingsWideLayoutQuery]: {
+                flexDirection: "row",
+                gap: 4,
+              },
+            }}
+          >
+            <Stack
+              className="settings-layout-rail"
+              spacing={2}
+              sx={{
+                width: "100%",
+                flexShrink: 0,
+                position: "sticky",
+                top: 0,
+                // Selected segmented buttons can have their own stacking order;
+                // the sticky rail must remain above the scrolled page controls.
+                zIndex: 10,
+                bgcolor: "background.default",
+                alignSelf: "flex-start",
+                [settingsWideLayoutQuery]: {
+                  // At 680px of page space, 208px plus the 32px gap leaves a
+                  // 416px reading column after the 24px outer inset.
+                  width: 208,
+                },
+              }}
+            >
+              <TextField
+                inputRef={searchInput}
+                className="settings-layout-search"
+                sx={{
+                  width: "100%",
+                  maxWidth: 360,
+                  "& input::placeholder": {
+                    color: "text.secondary",
+                    opacity: 1,
+                  },
+                }}
+                fullWidth
+                size="small"
+                value={query}
+                onChange={(event) => {
+                  cancelPendingFocus();
+                  setQuery(event.target.value);
+                }}
+                onKeyDown={(event) =>
+                  handleSearchKeyDown(event, { hits, setQuery, openHit })
+                }
+                placeholder={intl.formatMessage({
+                  defaultMessage: "Search settings",
+                })}
+                slotProps={{
+                  htmlInput: {
+                    "aria-label": intl.formatMessage({
+                      defaultMessage: "Search settings",
+                    }),
+                  },
+                  input: {
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <Search {...settingSearchGlyphProps} />
+                      </InputAdornment>
+                    ),
+                  },
+                }}
+              />
+              <Stack
+                className="settings-layout-navigation"
+                component="nav"
+                aria-label={intl.formatMessage({
+                  defaultMessage: "Settings sections",
+                })}
+                direction="row"
+                spacing={0.25}
+                useFlexGap
+                sx={{
+                  flexWrap: "wrap",
+                  pb: 0.5,
+                  [settingsWideLayoutQuery]: {
+                    flexDirection: "column",
+                    flexWrap: "nowrap",
+                    pb: 0,
+                  },
+                }}
+              >
+                {SETTINGS_PAGES.map((page) => (
+                  <SettingsRailLink
+                    key={page.id}
+                    pageId={page.id}
+                    selected={page.id === activePage?.id}
+                  />
+                ))}
+              </Stack>
+            </Stack>
+            <Box component="span" role="status" sx={visuallyHidden}>
+              {searching && (
+                <FormattedMessage
+                  defaultMessage="{count, plural, =0 {No settings found.} one {# setting found.} other {# settings found.}}"
+                  values={{ count: hits.length }}
+                />
+              )}
+            </Box>
+            <Box sx={{ flexGrow: 1, minWidth: 0, width: "100%" }}>
+              <SettingsContent
+                searching={searching}
+                hits={hits}
+                openHit={openHit}
+                activePage={activePage}
+              />
+            </Box>
+          </Stack>
+        </Box>
+      </SettingsHighlightContext.Provider>
+    </SettingsFocusContext.Provider>
+  );
+};
+
+/**
+ * `/dashboard/settings` on its own, plus any unknown page name under it.
+ *
+ * Resolves `?setting=` and `?section=` links to the page that owns them and the
+ * row to land on, and otherwise reopens the last page visited. Old links keep
+ * working, and `Cmd+,` stops resetting the surface to the first page every
+ * time.
+ */
+export const SettingsEntryRedirect = () => {
+  const [params] = useSearchParams();
+  const availability = useSettingsAvailability();
+  const target = resolveSettingsTarget(
+    { setting: params.get("setting"), section: params.get("section") },
+    availability,
+  );
+  const to = target.setting
+    ? `${settingsPagePath(target.page)}#${settingAnchorId(target.setting.key)}`
+    : settingsPagePath(target.page);
+  return <Navigate to={to} replace />;
+};

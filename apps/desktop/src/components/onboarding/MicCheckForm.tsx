@@ -1,6 +1,5 @@
 import { ArrowForward, Check } from "@mui/icons-material";
 import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import {
@@ -9,72 +8,92 @@ import {
 } from "../../actions/onboarding.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
+import { isLocalDataClearRequested } from "../../utils/local-data-write-gate";
 import { AudioWaveform } from "../common/AudioWaveform";
 import { MicrophoneSelector } from "../microphone/MicrophoneSelector";
+import {
+  runGuardedRecordingStart,
+  subscribeRecordingAbortForClear,
+} from "../root/recording-start-gate";
 import {
   BackButton,
   DualPaneLayout,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
+import {
+  stopAdmittedRecording,
+  type NativeRecordingHandle,
+} from "../../utils/native-recording-session";
 
-export const MicCheckForm = () => {
-  const theme = useTheme();
+type RecordingState = "idle" | "starting" | "recording" | "stopping";
 
-  const [recordingState, setRecordingState] = useState<
-    "idle" | "starting" | "recording" | "stopping"
-  >("idle");
-  const [showMicSelector, setShowMicSelector] = useState(false);
-  const preferredMicrophone = useAppStore(
-    (state) => state.onboarding.preferredMicrophone,
-  );
-
-  const audioLevels = useAppStore((state) => state.audioLevels);
+const useMicCheckRecording = (preferredMicrophone: string | null) => {
+  const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const overlayPhase = useAppStore((state) => state.overlayPhase);
-  const didSignUpWithAccount = useAppStore(
-    (state) => state.onboarding.didSignUpWithAccount,
-  );
-
   const isGlobalRecording =
     overlayPhase === "recording" || overlayPhase === "loading";
   const isRecording = recordingState === "recording";
   const isStarting = recordingState === "starting";
+  const mountedRef = useRef(true);
+  const opIdRef = useRef(0);
+  const recordingStateRef = useRef(recordingState);
+  const handleRef = useRef<NativeRecordingHandle | null>(null);
+  recordingStateRef.current = recordingState;
 
-  const startRecording = useCallback(async () => {
-    if (isGlobalRecording || recordingState !== "idle") {
-      return;
+  const setSyncedRecordingState = useCallback((next: RecordingState) => {
+    recordingStateRef.current = next;
+    if (mountedRef.current) {
+      setRecordingState(next);
     }
+  }, []);
 
-    setRecordingState("starting");
-
-    try {
-      await invoke<void>("start_recording", {
-        args: { preferredMicrophone },
-      });
-      setRecordingState("recording");
-    } catch (error) {
-      console.error("Failed to start recording", error);
-      setRecordingState("idle");
-    }
-  }, [isGlobalRecording, recordingState, preferredMicrophone]);
+  const startRecording = useCallback(
+    () =>
+      runGuardedRecordingStart({
+        isBlocked: () =>
+          isGlobalRecording || recordingStateRef.current !== "idle",
+        ownership: {
+          isMounted: () => mountedRef.current,
+          currentOpId: () => opIdRef.current,
+        },
+        opIdRef,
+        handleRef,
+        preferredMicrophone,
+        setState: setSyncedRecordingState,
+        onError: (error) => console.error("Failed to start recording", error),
+      }),
+    [isGlobalRecording, preferredMicrophone, setSyncedRecordingState],
+  );
 
   const stopRecording = useCallback(async () => {
-    if (recordingState !== "recording" && recordingState !== "starting") {
+    const currentState = recordingStateRef.current;
+    if (currentState !== "recording" && currentState !== "starting") {
       return;
     }
 
-    setRecordingState("stopping");
+    opIdRef.current += 1;
+    setSyncedRecordingState("stopping");
 
+    // Stop the recording this form admitted. A global stop would reach whatever
+    // session is current, which a later start may own. The admission is retained
+    // before capture starts, so this reaches the device even while the start reply
+    // is still pending; the bumped op id keeps a late reply from publishing over
+    // the stop.
+    const handle = handleRef.current;
+    handleRef.current = null;
     try {
-      await invoke("stop_recording");
+      await stopAdmittedRecording(handle);
     } catch (error) {
       console.error("Failed to stop recording", error);
     } finally {
-      setRecordingState("idle");
-      produceAppState((draft) => {
-        draft.audioLevels = [];
-      });
+      setSyncedRecordingState("idle");
+      if (!isLocalDataClearRequested()) {
+        produceAppState((draft) => {
+          draft.audioLevels = [];
+        });
+      }
     }
-  }, [recordingState]);
+  }, [setSyncedRecordingState]);
 
   const stopRecordingRef = useRef(stopRecording);
   useEffect(() => {
@@ -82,20 +101,54 @@ export const MicCheckForm = () => {
   }, [stopRecording]);
 
   useEffect(() => {
-    if (!showMicSelector) {
-      void startRecording();
-    }
-
+    mountedRef.current = true;
+    const unsubscribeClear = subscribeRecordingAbortForClear(
+      () =>
+        recordingStateRef.current === "starting" ||
+        recordingStateRef.current === "recording",
+      () => stopRecordingRef.current(),
+    );
     return () => {
-      void stopRecordingRef.current();
+      mountedRef.current = false;
+      unsubscribeClear();
     };
-  }, [showMicSelector, preferredMicrophone]);
+  }, []);
 
   useEffect(() => {
     if (isGlobalRecording && (isRecording || isStarting)) {
       void stopRecording();
     }
   }, [isGlobalRecording, isRecording, isStarting, stopRecording]);
+
+  return { recordingState, startRecording, stopRecording };
+};
+
+export const MicCheckForm = () => {
+  const theme = useTheme();
+
+  const [showMicSelector, setShowMicSelector] = useState(false);
+  const preferredMicrophone = useAppStore(
+    (state) => state.onboarding.preferredMicrophone,
+  );
+
+  const audioLevels = useAppStore((state) => state.audioLevels);
+  const didSignUpWithAccount = useAppStore(
+    (state) => state.onboarding.didSignUpWithAccount,
+  );
+  const { recordingState, startRecording, stopRecording } =
+    useMicCheckRecording(preferredMicrophone);
+  const isRecording = recordingState === "recording";
+  const isStarting = recordingState === "starting";
+
+  useEffect(() => {
+    if (!showMicSelector) {
+      void startRecording();
+    }
+
+    return () => {
+      void stopRecording();
+    };
+  }, [showMicSelector, preferredMicrophone]);
 
   const handleChangeMicrophone = async () => {
     trackButtonClick("onboarding_try_another_mic");

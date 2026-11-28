@@ -32,8 +32,7 @@ pub fn get_keyboard_language() -> Result<String, String> {
 
         if len == 0 {
             return Err(format!(
-                "Failed to get locale language name for lang_id 0x{:04X}",
-                lang_id
+                "Failed to get locale language name for lang_id 0x{lang_id:04X}"
             ));
         }
 

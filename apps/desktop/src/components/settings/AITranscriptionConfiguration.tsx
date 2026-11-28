@@ -1,8 +1,4 @@
-import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
-import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import PauseRoundedIcon from "@mui/icons-material/PauseRounded";
-import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
-import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
+import { Check, Pause, Play, TriangleAlert, X } from "lucide-react";
 import {
   Box,
   Button,
@@ -57,13 +53,13 @@ import {
   type LocalWhisperModel,
   normalizeLocalWhisperModel,
 } from "../../utils/local-transcription.utils";
-import { activeRowCheckSx, activeRowSx } from "../../styles/selection";
-import { duration, easeOutCubic } from "../../styles/motion";
+import { activeRowSx, selectedOutlineSx } from "../../styles/selection";
+import { cssEase, duration, easeOutCubic } from "../../styles/motion";
 import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
 
-const ease = `cubic-bezier(${easeOutCubic.join(", ")})`;
+const ease = cssEase(easeOutCubic);
 const buttonTransition = `background-color ${duration.fast}s ${ease}, border-color ${duration.fast}s ${ease}, transform ${duration.instant}s ${ease}`;
 
 const buttonSx = {
@@ -187,6 +183,49 @@ const ModelStatusText = ({
   return <>{validationError}</>;
 };
 
+type ModelMetaTextProps = {
+  helper: string;
+  downloading: boolean;
+  paused: boolean;
+  selectable: boolean;
+  validationError: string | null;
+};
+
+const ModelMetaText = ({
+  helper,
+  downloading,
+  paused,
+  selectable,
+  validationError,
+}: ModelMetaTextProps) => {
+  return (
+    <>
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+          display: "block",
+        }}
+      >
+        {helper}
+      </Typography>
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        <ModelStatusText
+          downloading={downloading}
+          paused={paused}
+          selectable={selectable}
+          validationError={validationError}
+        />
+      </Typography>
+    </>
+  );
+};
+
 const PausedStatusBadge = ({
   paused,
   compactPercent,
@@ -272,9 +311,9 @@ const BusyDownloadButtons = ({
         color={paused ? "primary" : "warning"}
         startIcon={
           paused ? (
-            <PlayArrowRoundedIcon sx={{ fontSize: 14 }} />
+            <Play size={14} strokeWidth={1.9} />
           ) : (
-            <PauseRoundedIcon sx={{ fontSize: 14 }} />
+            <Pause size={14} strokeWidth={1.9} />
           )
         }
         sx={{
@@ -303,7 +342,7 @@ const BusyDownloadButtons = ({
         size="small"
         variant="text"
         color="inherit"
-        startIcon={<CloseRoundedIcon sx={{ fontSize: 14 }} />}
+        startIcon={<X size={14} strokeWidth={1.9} />}
         sx={{
           ...buttonSx,
           minWidth: 0,
@@ -426,7 +465,11 @@ const ModelDownloadActionButtons = ({
   );
 };
 
-export const AITranscriptionConfiguration = () => {
+export const AITranscriptionConfiguration = ({
+  compactCards = false,
+}: {
+  compactCards?: boolean;
+}) => {
   const intl = useIntl();
   const transcription = useAppStore((state) => state.settings.aiTranscription);
   const effectiveMode = useAppStore(getEffectiveTranscriptionMode);
@@ -487,7 +530,7 @@ export const AITranscriptionConfiguration = () => {
       return;
     }
 
-    void setPreferredTranscriptionModelSize(fallbackModel);
+    void setPreferredTranscriptionModelSize(fallbackModel).catch(() => {});
   }, [
     transcription,
     localTranscriptionConfig.modelStatusesLoaded,
@@ -496,11 +539,11 @@ export const AITranscriptionConfiguration = () => {
   ]);
 
   const handleModeChange = useCallback((mode: TranscriptionMode) => {
-    void setPreferredTranscriptionMode(mode);
+    void setPreferredTranscriptionMode(mode).catch(() => {});
   }, []);
 
   const handleDeviceChange = useCallback((device: string) => {
-    void setPreferredTranscriptionDevice(device);
+    void setPreferredTranscriptionDevice(device).catch(() => {});
   }, []);
 
   const handleModelSizeChange = useCallback(
@@ -511,13 +554,13 @@ export const AITranscriptionConfiguration = () => {
         return;
       }
 
-      void setPreferredTranscriptionModelSize(modelSize);
+      void setPreferredTranscriptionModelSize(modelSize).catch(() => {});
     },
     [transcription],
   );
 
   const handleApiKeyChange = useCallback((id: string | null) => {
-    void setPreferredTranscriptionApiKeyId(id);
+    void setPreferredTranscriptionApiKeyId(id).catch(() => {});
   }, []);
 
   const handleDownloadModel = useCallback(
@@ -615,49 +658,40 @@ export const AITranscriptionConfiguration = () => {
               {label}
             </Typography>
             {showFitWarning && (
-              <WarningAmberRoundedIcon
-                fontSize="small"
-                titleAccess={intl.formatMessage({
+              <TriangleAlert
+                size={20}
+                strokeWidth={1.9}
+                aria-label={intl.formatMessage({
                   defaultMessage: "This model may not run well on this device",
                 })}
-                sx={{
+                style={{
+                  flexShrink: 0,
                   color:
                     fit?.level === "discouraged"
-                      ? "error.main"
-                      : "warning.main",
+                      ? "var(--app-palette-error-main)"
+                      : "var(--app-palette-warning-main)",
                 }}
               />
             )}
             {active && (
-              <CheckRoundedIcon
-                fontSize="small"
-                sx={activeRowCheckSx}
-                titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
+              <Check
+                size={20}
+                strokeWidth={1.9}
+                style={{
+                  color: "var(--app-palette-text-primary)",
+                  flexShrink: 0,
+                }}
+                aria-label={intl.formatMessage({ defaultMessage: "Selected" })}
               />
             )}
           </Stack>
-          <Typography
-            variant="caption"
-            sx={{
-              color: "text.secondary",
-              display: "block",
-            }}
-          >
-            {helper}
-          </Typography>
-          <Typography
-            variant="caption"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
-            <ModelStatusText
-              downloading={downloading}
-              paused={paused}
-              selectable={selectable}
-              validationError={status?.validationError || null}
-            />
-          </Typography>
+          <ModelMetaText
+            helper={helper}
+            downloading={downloading}
+            paused={paused}
+            selectable={selectable}
+            validationError={status?.validationError || null}
+          />
         </Box>
       </MenuItem>
     );
@@ -684,12 +718,13 @@ export const AITranscriptionConfiguration = () => {
     return (
       <Box
         key={value}
-        sx={{
+        sx={(theme) => ({
           border: 1,
-          borderColor: active ? "primary.main" : "divider",
+          borderColor: "divider",
           borderRadius: 1.5,
           p: 1.25,
-        }}
+          ...(active ? selectedOutlineSx(theme) : null),
+        })}
       >
         <Stack spacing={0.75}>
           <Stack
@@ -709,28 +744,13 @@ export const AITranscriptionConfiguration = () => {
               >
                 {label}
               </Typography>
-              <Typography
-                variant="caption"
-                sx={{
-                  color: "text.secondary",
-                  display: "block",
-                }}
-              >
-                {helper}
-              </Typography>
-              <Typography
-                variant="caption"
-                sx={{
-                  color: "text.secondary",
-                }}
-              >
-                <ModelStatusText
-                  downloading={downloading}
-                  paused={paused}
-                  selectable={selectable}
-                  validationError={status?.validationError || null}
-                />
-              </Typography>
+              <ModelMetaText
+                helper={helper}
+                downloading={downloading}
+                paused={paused}
+                selectable={selectable}
+                validationError={status?.validationError || null}
+              />
             </Box>
             <ModelDownloadActionButtons
               model={value}
@@ -867,6 +887,13 @@ export const AITranscriptionConfiguration = () => {
                 ).map((opt) => renderModelMenuItem(opt))}
 
                 <ListSubheader sx={subheaderSx}>
+                  <FormattedMessage defaultMessage="SenseVoice (Multilingual)" />
+                </ListSubheader>
+                {LOCAL_MODEL_OPTIONS.filter(
+                  (opt) => opt.category === "sherpa",
+                ).map((opt) => renderModelMenuItem(opt))}
+
+                <ListSubheader sx={subheaderSx}>
                   <FormattedMessage defaultMessage="OpenAI Whisper (Multilingual GGML)" />
                 </ListSubheader>
                 {LOCAL_MODEL_OPTIONS.filter(
@@ -960,6 +987,7 @@ export const AITranscriptionConfiguration = () => {
             selectedApiKeyId={transcription.selectedApiKeyId}
             onChange={handleApiKeyChange}
             context="transcription"
+            compactCards={compactCards}
           />
         )}
       </AnimateSwitch>

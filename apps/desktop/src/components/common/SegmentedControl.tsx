@@ -16,6 +16,7 @@ export type SegmentedControlProps<Value extends string> = {
   options: SegmentedControlOption<Value>[];
   onChange: (value: Value) => void;
   ariaLabel?: string;
+  allowReselect?: boolean;
   /**
    * Horizontal placement of the track within its flex-column container.
    * Defaults to `start` so existing call sites are unaffected; `center` centres
@@ -24,9 +25,34 @@ export type SegmentedControlProps<Value extends string> = {
   align?: SegmentedControlAlign;
 };
 
+const activeIndicatorSx = {
+  position: "absolute",
+  inset: 0,
+  borderRadius: 1.5,
+  bgcolor: "background.paper",
+  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.7)",
+  zIndex: 0,
+  pointerEvents: "none",
+} as const;
+
+const activeIndicatorDarkSx = (theme: {
+  applyStyles: (
+    scheme: "dark",
+    styles: { boxShadow: string },
+  ) => Record<string, unknown>;
+}) =>
+  theme.applyStyles("dark", {
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
+  });
+
 const tabSx = {
   textTransform: "none",
   minHeight: "unset",
+  minWidth: 0,
+  // MUI tabs do not shrink by default, which clips longer translations when
+  // the track reaches its container's width. Let labels wrap instead.
+  flexShrink: 1,
+  overflowWrap: "anywhere",
   py: 1.25,
   px: 2.5,
   borderRadius: 1.5,
@@ -36,9 +62,11 @@ const tabSx = {
   "&.Mui-selected": {
     color: "text.primary",
   },
-  "&:hover:not(.Mui-selected)": {
-    color: "text.primary",
-    bgcolor: "rgba(255,255,255,0.05)",
+  "@media (hover: hover)": {
+    "&:hover:not(.Mui-selected)": {
+      color: "text.primary",
+      bgcolor: "action.hover",
+    },
   },
 };
 
@@ -47,6 +75,7 @@ export const SegmentedControl = <Value extends string>({
   options,
   onChange,
   ariaLabel,
+  allowReselect = false,
   align = "start",
 }: SegmentedControlProps<Value>) => {
   const reduceMotion = useReducedMotion();
@@ -85,20 +114,7 @@ export const SegmentedControl = <Value extends string>({
 
     // Static fallback for reduced motion, matching the sidebar implementation.
     if (reduceMotion) {
-      return (
-        <Box
-          sx={{
-            position: "absolute",
-            inset: 0,
-            borderRadius: 1.5,
-            bgcolor: "background.paper",
-            boxShadow:
-              "inset 0 1px 3px rgba(0,0,0,0.2), 0 1px 2px rgba(0,0,0,0.05)",
-            zIndex: 0,
-            pointerEvents: "none",
-          }}
-        />
-      );
+      return <Box sx={[activeIndicatorSx, activeIndicatorDarkSx]} />;
     }
 
     // Shared-layout highlight: the selected-tab background slides between
@@ -108,16 +124,7 @@ export const SegmentedControl = <Value extends string>({
         component={motion.div}
         layoutId={layoutId}
         transition={springSnappy}
-        sx={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: 1.5,
-          bgcolor: "background.paper",
-          boxShadow:
-            "inset 0 1px 3px rgba(0,0,0,0.2), 0 1px 2px rgba(0,0,0,0.05)",
-          zIndex: 0,
-          pointerEvents: "none",
-        }}
+        sx={[activeIndicatorSx, activeIndicatorDarkSx]}
       />
     );
   };
@@ -160,6 +167,11 @@ export const SegmentedControl = <Value extends string>({
               </>
             }
             sx={tabSx}
+            onClick={
+              allowReselect && option.value === value && !option.disabled
+                ? () => onChange(option.value)
+                : undefined
+            }
             disabled={option.disabled}
           />
         ))}

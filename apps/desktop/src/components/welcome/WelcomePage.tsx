@@ -27,12 +27,13 @@ export default function WelcomePage() {
   useEffect(() => {
     if (shouldGotoOnboarding) {
       nav("/onboarding");
-      clearGotStartedAt();
+      void clearGotStartedAt().catch(() => {});
     }
   }, [shouldGotoOnboarding]);
 
   return (
     <Box
+      component="main"
       sx={{
         position: "relative",
         width: "100%",

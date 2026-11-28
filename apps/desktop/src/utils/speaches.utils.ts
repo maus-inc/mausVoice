@@ -1,4 +1,8 @@
-import { fetch } from "@tauri-apps/plugin-http";
+import {
+  buildTranscriptionFormData,
+  throwHttpError,
+} from "@maus-inc/utilities";
+import { secureFetch as fetch } from "./secure-fetch.utils";
 
 export const SPEACHES_DEFAULT_URL = "http://localhost:8000";
 export const SPEACHES_DEFAULT_MODEL = "Systran/faster-whisper-large-v3";
@@ -16,15 +20,24 @@ export const speachesTestIntegration = async ({
   try {
     response = await fetch(`${url}/health`);
   } catch (error) {
+    // No HTTP response ever arrived, so there is no status to report. This stays
+    // a plain error: a statusless failure is still worth another attempt, and a
+    // made-up one would be read as a client error that must not be retried.
     throw new Error(
       `Unable to connect to Speaches at ${url}. Make sure Speaches is running. ${error}`,
     );
   }
 
   if (!response.ok) {
-    throw new Error(
-      `Speaches returned an error (status ${response.status}). Check your configuration.`,
-    );
+    // The status is carried as data, not as prose, so a retry policy can read a
+    // terminal 4xx as terminal and honour a rate-limit hint on a 429 or 503.
+    await throwHttpError(response, {
+      // The message never uses the body, and this probe has no abort signal, so
+      // an unread body is better than an unbounded read against a stalled server.
+      body: "",
+      message: () =>
+        `Speaches returned an error (status ${response.status}). Check your configuration.`,
+    });
   }
 
   return true;
@@ -37,6 +50,7 @@ export type SpeachesTranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  signal?: AbortSignal;
 };
 
 export type SpeachesTranscribeAudioOutput = {
@@ -50,35 +64,36 @@ export const speachesTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  signal,
 }: SpeachesTranscriptionArgs): Promise<SpeachesTranscribeAudioOutput> => {
   const url = baseUrl.replace(/\/$/, "");
 
-  const formData = new FormData();
-  const file = new Blob([blob], { type: `audio/${ext}` });
-  formData.append("file", file, `audio.${ext}`);
-  formData.append("model", model);
-  if (prompt) {
-    formData.append("prompt", prompt);
-  }
-  if (language && language !== "auto") {
-    formData.append("language", language);
-  }
+  const formData = buildTranscriptionFormData({
+    blob,
+    ext,
+    model,
+    prompt,
+    language,
+  });
 
   const response = await fetch(`${url}/v1/audio/transcriptions`, {
     method: "POST",
     body: formData,
+    signal,
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "Unknown error");
-    throw new Error(
-      `Speaches transcription failed: ${response.status} - ${errorText}`,
-    );
+    await throwHttpError(response, {
+      message: (errorText) =>
+        `Speaches transcription failed: ${response.status} - ${errorText}`,
+    });
   }
 
   const data = (await response.json()) as { text?: string };
 
   if (!data.text) {
+    // A 2xx body with no text is a malformed payload, not an HTTP failure, so
+    // there is no status to report and it stays a plain error.
     throw new Error("Transcription failed: no text in response");
   }
 

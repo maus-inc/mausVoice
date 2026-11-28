@@ -253,7 +253,7 @@ export const PermissionsDialog = () => {
 
   useEffect(() => {
     if (open) {
-      setGotStartedAtNow();
+      void setGotStartedAtNow().catch(() => {});
     }
   }, [open]);
 

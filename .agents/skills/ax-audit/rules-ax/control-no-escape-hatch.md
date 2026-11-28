@@ -1,0 +1,93 @@
+---
+title: No way to interrupt, redirect, or undo agent action
+slug: control-no-escape-hatch
+category: control
+defaultTier: release-blocker
+surfaces: agent-chat, agent-tool-execution
+ax-pattern: Escape Hatch
+detection: hybrid
+related: control-no-approval-gate, trust-no-escalation-path, comm-no-intent-handshake, comm-unrequested-action-no-consent
+---
+
+## No way to interrupt, redirect, or undo agent action
+
+Agent starts a long response or multi-step workflow. User realizes it's wrong but there's no stop, undo, or "go back": they watch it do the wrong thing and can't intervene. Autonomy without exit is coercion.
+
+## What goes wrong
+
+User asks the agent to refactor a module. It begins a 12-step migration; at step 3 the user sees it's wrong. No stop button: it runs to completion, leaving the codebase in an unwanted state. Manual revert takes longer than doing it themselves.
+
+## Detection
+
+**Surfaces:** agent-chat, agent-tool-execution
+
+**Auditability:** hybrid
+
+**Static signals:**
+1. Find agent execution UI (chat panels, action panels, tool execution views).
+2. Check for cancel/stop during execution (`onCancel`, `AbortController`, `useChat().stop`, `query.interrupt`).
+3. Trace the signal to the server. `stop()` aborts the client fetch; the route has to pass `req.signal` as `abortSignal` into `streamText` (or the loop), and each tool's `execute` has to read it, or the executor finishes every remaining call after Stop.
+4. Check for undo/revert after completion. Flag flows with neither.
+
+**Concrete commands:**
+```bash
+rg -l 'AbortController|onCancel|stopGenerat' --type=ts src/
+rg -A 10 'isGenerating|isStreaming|isPending' --type=ts src/ | rg -v 'cancel|stop|abort'
+rg -n 'abortSignal|req\.signal|request\.signal' --type=ts src/app/api/ src/server/
+```
+
+**Judgment signals:**
+- A cancel button not wired to `AbortController.abort()` is a false affordance, worse than nothing.
+- A `stop()` that closes the stream while the server loop keeps executing tools is the same false affordance one layer down: the UI goes quiet and the emails still go out.
+
+**False-positive guards:**
+- Skip `// ax-audit-ignore:control-no-escape-hatch`, test, and Storybook files.
+
+## Fix
+
+During execution: stop button wired to `AbortController`, and the signal threaded through the route into the loop and each tool. After completion: undo/revert for reversible actions. For irreversible actions, the approval gate (`control-no-approval-gate`) is the pre-execution escape hatch.
+
+## Examples
+
+**Anti-pattern (fails):**
+
+```tsx
+<div>
+  {messages.map((m) => <Message key={m.id} {...m} />)}
+  {isGenerating && <Spinner />}
+  {/* no stop button, no undo */}
+</div>
+```
+
+**Applied (passes):**
+
+```tsx
+<div>
+  {messages.map((m) => <Message key={m.id} {...m} />)}
+  {isGenerating && (
+    <>
+      <Spinner />
+      <Button onClick={onStop} aria-label="Stop generating">Stop</Button>
+    </>
+  )}
+  {!isGenerating && <Button onClick={onUndo} variant="ghost">Undo</Button>}
+</div>
+```
+
+## Default tier and overrides
+
+**Defaults to:** `release-blocker`
+
+| Surface | Tier |
+|---|---|
+| Agent tool execution | release-blocker |
+| Agent chat | release-blocker |
+| Agent config | fix-this-sprint |
+| Agent dashboard | fix-this-sprint |
+
+## Suppression
+
+```tsx
+{/* ax-audit-ignore:control-no-escape-hatch, single status check, completes in <1s */}
+<StatusCheckResult result={result} />
+```

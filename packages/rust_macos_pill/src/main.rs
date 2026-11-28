@@ -4,17 +4,19 @@
 extern crate objc;
 
 mod app;
-mod font;
 mod constants;
 mod draw;
+mod font;
 mod gfx;
 mod input;
 mod ipc;
+mod nsstring;
 mod state;
 
 fn main() {
     font::install_embedded_satoshi();
+    let saved_position = rust_pill_shared::restore::saved_position_from_process_args();
     let (sender, receiver) = std::sync::mpsc::channel();
     ipc::start_stdin_reader(sender);
-    app::run(receiver);
+    app::run(receiver, saved_position);
 }

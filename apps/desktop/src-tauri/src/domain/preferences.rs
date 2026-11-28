@@ -56,6 +56,8 @@ pub struct UserPreferences {
     pub incognito_mode_enabled: bool,
     #[serde(default)]
     pub incognito_mode_include_in_stats: bool,
+    #[serde(default = "default_preserve_audio_on_failure")]
+    pub preserve_audio_on_failure: bool,
     #[serde(default = "default_dictation_limit_minutes")]
     pub dictation_limit_minutes: i64,
     #[serde(default = "default_dictation_pill_visibility")]
@@ -88,6 +90,101 @@ pub struct UserPreferences {
     /// default so existing behavior is unchanged.
     #[serde(default)]
     pub always_request_admin_on_startup: bool,
+    /// JSON object of expansion feature-name -> boolean flag. Stored as a
+    /// serialized string; defaults to an empty object so every flag is off.
+    #[serde(default = "default_expansion_flags")]
+    pub expansion_flags: String,
+    /// Where the dictation pill anchors on screen. Accepted values are
+    /// "top" or "bottom"; any other value is treated as the default
+    /// "bottom" so legacy data never breaks the UI.
+    #[serde(default = "default_pill_placement")]
+    pub pill_placement: String,
+    /// Delay (ms) between a hands-free stop and the actual paste/type
+    /// action. NULL disables the delay (immediate paste on stop).
+    #[serde(default)]
+    pub hands_free_delay_ms: Option<i64>,
+    #[serde(default)]
+    pub in_dictation_style_switching_enabled: bool,
+    /// Which modifier double-tap replays the pill outline. Accepted values are
+    /// "none", "alt", "shift" and "control"; the default disables the gesture.
+    #[serde(default = "default_pill_locate_gesture_modifier")]
+    pub pill_locate_gesture_modifier: String,
+    #[serde(default = "default_hallucination_filter_enabled")]
+    pub hallucination_filter_enabled: bool,
+    /// Style short dictations with the deterministic local transforms instead
+    /// of the configured provider. Default on.
+    #[serde(default = "default_true")]
+    pub fast_style_short_dictations_enabled: bool,
+    #[serde(default)]
+    pub review_before_insert: Option<bool>,
+    #[serde(default)]
+    pub agent_enabled_tools: Option<String>,
+    #[serde(default = "default_agent_max_iterations")]
+    pub agent_max_iterations: i64,
+    #[serde(default = "default_agent_permission_timeout_ms")]
+    pub agent_permission_timeout_ms: i64,
+    /// Deterministic spoken formatting / scratch-that. Default on.
+    #[serde(default = "default_true")]
+    pub spoken_commands_enabled: bool,
+    /// Automatically add corrected names and words as glossary terms when
+    /// the user edits a transcription. Enabled by default.
+    #[serde(default = "default_auto_learn_dictionary_enabled")]
+    pub auto_learn_dictionary_enabled: bool,
+    /// Watch the target app after dictation and offer to add corrected names
+    /// as glossary terms. Disabled by default because it polls the focused
+    /// text field through the accessibility APIs.
+    #[serde(default)]
+    pub auto_learn_from_edits_enabled: bool,
+    /// Opt-in consent for sending dictionary terms as ElevenLabs keyterms,
+    /// which adds a 20% transcription surcharge. Off by default.
+    #[serde(default)]
+    pub eleven_labs_keyterms_enabled: bool,
+    /// Update channel this client is subscribed to: "stable" or "beta".
+    #[serde(default = "default_update_channel")]
+    pub update_channel: String,
+    /// Hold the capture device open between dictations.
+    ///
+    /// These three were added to the TypeScript `UserPreferences` and the UI,
+    /// but not to this struct, so `user_preferences_set` silently dropped them:
+    /// the preference looked saved until the next launch read back the default.
+    /// `serde` ignores unknown fields, so the mismatch was not an error anywhere
+    /// -- the values simply never reached the database.
+    #[serde(default)]
+    pub keep_microphone_ready: bool,
+    /// Seconds of audio from before the press that the recorder keeps.
+    #[serde(default = "default_microphone_preroll_seconds")]
+    pub microphone_preroll_seconds: f64,
+    /// How long the device stays open after a dictation stops, in ms.
+    #[serde(default)]
+    pub microphone_linger_ms: i64,
+}
+
+fn default_hallucination_filter_enabled() -> bool {
+    true
+}
+
+fn default_agent_max_iterations() -> i64 {
+    20
+}
+
+fn default_agent_permission_timeout_ms() -> i64 {
+    60_000
+}
+
+fn default_auto_learn_dictionary_enabled() -> bool {
+    true
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_expansion_flags() -> String {
+    "{}".to_string()
+}
+
+fn default_update_channel() -> String {
+    "stable".to_string()
 }
 
 fn default_pill_reset_monitor_strategy() -> String {
@@ -104,4 +201,50 @@ fn default_dictation_limit_minutes() -> i64 {
 
 fn default_dictation_audio_dim() -> f64 {
     1.0
+}
+
+fn default_preserve_audio_on_failure() -> bool {
+    true
+}
+
+fn default_pill_placement() -> String {
+    "bottom".to_string()
+}
+
+fn default_pill_locate_gesture_modifier() -> String {
+    "none".to_string()
+}
+
+/// Matches the recorder's own default and the TypeScript field's fallback, so a
+/// row written before this preference existed behaves like one saved with the
+/// slider untouched.
+fn default_microphone_preroll_seconds() -> f64 {
+    0.5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn expansion_flags_defaults_to_empty_object_when_missing() {
+        let payload = json!({
+            "userId": "user-1",
+            "transcriptionMode": "online",
+        });
+        let prefs: UserPreferences = serde_json::from_value(payload).unwrap();
+        assert_eq!(prefs.expansion_flags, "{}");
+    }
+
+    #[test]
+    fn expansion_flags_preserves_explicit_value() {
+        let payload = json!({
+            "userId": "user-1",
+            "transcriptionMode": "online",
+            "expansionFlags": "{\"meetingNotesEnabled\":true}",
+        });
+        let prefs: UserPreferences = serde_json::from_value(payload).unwrap();
+        assert_eq!(prefs.expansion_flags, "{\"meetingNotesEnabled\":true}");
+    }
 }

@@ -7,8 +7,10 @@
     "dev": "astro dev --port 3490",
     "build": "astro build",
     "preview": "astro preview",
-    "lint": "echo 'no lint configured'",
-    "check-types": "astro check"
+    "lint": "node scripts/check-docs-prose.mjs && node scripts/check-figure-markers.mjs",
+    "check-types": "astro check && node scripts/check-docs-prose.mjs",
+    "figures": "node scripts/capture-app.mjs",
+    "figures:check": "node scripts/check-figure-markers.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.3",

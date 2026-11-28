@@ -1,10 +1,15 @@
+import { stripTrailingCharacters } from "@maus-inc/utilities";
+
 export const OPENAI_COMPATIBLE_DEFAULT_URL = "http://127.0.0.1:8080";
+
+export const OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH =
+  "/audio/transcriptions";
 
 export const normalizeOpenAICompatibleBaseUrl = (
   baseUrl?: string | null,
 ): string => {
   const candidate = baseUrl?.trim() || OPENAI_COMPATIBLE_DEFAULT_URL;
-  return candidate.replace(/\/+$/, "");
+  return stripTrailingCharacters(candidate, "/");
 };
 
 export const buildOpenAICompatibleUrl = (
@@ -21,3 +26,22 @@ export const buildOpenAICompatibleUrl = (
 
   return shouldIncludeV1 ? `${normalized}/v1` : normalized;
 };
+
+export const buildOpenAICompatibleTranscriptionUrl = (
+  baseUrl?: string | null,
+  includeV1Path?: boolean | null,
+  transcriptionPath?: string | null,
+): string => {
+  const trimmed = transcriptionPath?.trim();
+  const normalized = trimmed?.startsWith("/") ? trimmed : `/${trimmed}`;
+  const path = trimmed
+    ? normalized
+    : OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH;
+  return `${buildOpenAICompatibleUrl(baseUrl, includeV1Path)}${path}`;
+};
+
+export const appendOpenAICompatiblePath = (
+  apiBaseUrl: string,
+  path: string,
+): string =>
+  `${normalizeOpenAICompatibleBaseUrl(apiBaseUrl)}/${path.replace(/^\/+/, "")}`;

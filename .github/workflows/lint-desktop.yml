@@ -2,49 +2,65 @@ name: Lint Desktop
 on:
   push:
     paths:
+      - "scripts/ci/run-with-diagnostics.sh"
       - "apps/desktop/**"
+      - "apps/preview/**"
       - "packages/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "turbo.json"
       - ".nvmrc"
+      - "rust-toolchain.toml"
       - "patches/**"
       - "scripts/generate-app-icons.mjs"
+      - "scripts/ci/fallow.test.mjs"
+      - ".fallowrc.json"
       - ".github/workflows/lint-desktop.yml"
+permissions: {}
 
-# Least privilege: linting only needs to read the checked-out source.
-permissions:
-  contents: read
-  actions: write
+# trigger-manual: false
 
-# Run every stacked PR independently, but cancel superseded runs for the same
-# PR (or the same branch for push/manual events) to avoid consuming runner slots.
+# These workflows run on branch pushes only, not PR events.
+# An earlier version of this comment was shared verbatim with `test-docs` and said
+# "or manual requests". That was true of `test-docs` alone and false here, so it
+# told these readers they could trigger a run they could not. If manual triggering
+# is wanted it needs adding to the `on:` block, which is a maintainer's decision
+# and not a comment's.
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   lint:
     name: Lint Desktop (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
+    # Least privilege: linting installs dependencies and runs lifecycle
+    # scripts, so the job token must stay read-only regardless of the
+    # repository's default token scope.
+    permissions:
+      contents: read
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: macOS
-            os: macos-14
+            os: macos-15
           - label: Windows
             os: windows-latest
           - label: Linux
             os: ubuntu-22.04
     steps:
       - name: Checkout source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 50
       - name: Setup pnpm
         uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -72,11 +88,38 @@ jobs:
             build-essential pkg-config cmake \
             libgtk-3-dev "$WEBKIT_PKG" \
             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxdo-dev \
-            libgtk-layer-shell-dev imagemagick
+            libgtk-layer-shell-dev imagemagick xvfb xauth python3-xlib
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build dependencies
         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
+      - name: Resolve Fallow baseline
+        if: matrix.os == 'ubuntu-22.04'
+        id: fallow-baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          pr_base="$(gh pr list --repo "$GITHUB_REPOSITORY" \
+            --head "$GITHUB_REF_NAME" \
+            --state open --json baseRefName --jq '.[0].baseRefName // empty')"
+          if [ -n "$pr_base" ]; then
+            echo "branch=$pr_base" >> "$GITHUB_OUTPUT"
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; then
+            echo "branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "sha=$PUSH_BEFORE" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Test Fallow integration
+        if: matrix.os == 'ubuntu-22.04'
+        env:
+          BASE_SHA: ${{ steps.fallow-baseline.outputs.sha }}
+          DEFAULT_BRANCH: ${{ steps.fallow-baseline.outputs.branch }}
+        run: node --test scripts/ci/fallow.test.mjs
       - name: Lint TypeScript
         if: matrix.os == 'ubuntu-22.04'
         run: pnpm --filter desktop run lint
@@ -84,24 +127,39 @@ jobs:
         working-directory: apps/desktop/src-tauri
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
-        run: cargo clippy -- -D warnings
+        shell: bash
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" clippy cargo clippy --locked -- -D warnings
       - name: Lint native pill (Windows)
         if: matrix.os == 'windows-latest'
-        run: cargo clippy --manifest-path packages/rust_windows_pill/Cargo.toml --all-targets -- -D warnings
+        shell: bash
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" windows-native-pill cargo clippy --locked --manifest-path packages/rust_windows_pill/Cargo.toml --all-targets -- -D warnings
       - name: Lint native pill (macOS)
-        if: matrix.os == 'macos-14'
-        run: cargo clippy --manifest-path packages/rust_macos_pill/Cargo.toml --all-targets -- -D warnings
+        if: matrix.os == 'macos-15'
+        run: cargo clippy --locked --manifest-path packages/rust_macos_pill/Cargo.toml --all-targets -- -D warnings
       - name: Lint native pill (Linux)
         if: matrix.os == 'ubuntu-22.04'
-        run: cargo clippy --manifest-path packages/rust_gtk_pill/Cargo.toml --all-targets -- -D warnings
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" gtk-native-pill cargo clippy --locked --manifest-path packages/rust_gtk_pill/Cargo.toml --all-targets -- -D warnings
       - name: Test native pill
         if: matrix.os == 'windows-latest'
-        run: cargo test --manifest-path packages/rust_windows_pill/Cargo.toml
+        run: cargo test --locked --manifest-path packages/rust_windows_pill/Cargo.toml
+      - name: Test native pill (macOS)
+        if: matrix.os == 'macos-15'
+        run: cargo test --locked --manifest-path packages/rust_macos_pill/Cargo.toml
+      - name: Test native pill (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml
+      - name: Exercise GTK review keys on a virtual X display
+        if: matrix.os == 'ubuntu-22.04'
+        working-directory: packages/rust_gtk_pill
+        run: |
+          cargo build --locked --bin mausvoice-gtk-pill
+          xvfb-run -a /usr/bin/python3 tests/review_escape.py "${CARGO_TARGET_DIR:-target}/debug/mausvoice-gtk-pill"
       - name: Test shared pill geometry
         if: matrix.os == 'ubuntu-22.04'
-        run: cargo test --manifest-path packages/rust_pill_shared/Cargo.toml
+        run: cargo test --locked --manifest-path packages/rust_pill_shared/Cargo.toml
       - name: Verify app icons
         if: matrix.os == 'ubuntu-22.04'
-        run: |
-          sudo apt-get install -y imagemagick
-          node scripts/generate-app-icons.mjs --check
+        run: node scripts/generate-app-icons.mjs --check

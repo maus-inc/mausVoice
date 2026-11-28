@@ -1,0 +1,145 @@
+name: PR Body Fold Check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+# trigger-manual: false
+
+# A pull request description only stays readable while the long records sit behind a fold.
+# Review rounds, babysit polls and CI logs are the three that grow without limit, and each
+# one is a row in a folded table rather than a new section. This workflow is hygiene, not
+# security: it keeps one screen of summary above the folds.
+#
+# The check runs the copy of the checker from the base branch, so a pull request cannot
+# weaken the guard that judges it. The head copy still runs its own tests, which catches a
+# change that breaks the checker without letting that change pass the body.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  body:
+    name: Body and visual evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          # This job installs nothing, so it must not reach for a package-manager cache.
+          package-manager-cache: false
+      - name: Take the checker from the base branch
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          guard="$RUNNER_TEMP/check-pr-body.mjs"
+          # The event's base SHA can sit further back than the checkout's depth, and
+          # a tree lookup on a missing object exits 128, which `set -e` turns into a
+          # failed job before the body is ever read. Fetch the commit first, and fall
+          # back to the head copy when the fetch is refused, so the body is always
+          # checked by one copy or the other.
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || true
+          if git cat-file -e "$BASE_SHA:scripts/ci/check-pr-body.mjs" 2>/dev/null; then
+            git show "$BASE_SHA:scripts/ci/check-pr-body.mjs" > "$guard"
+            echo "checker: the base branch copy at $BASE_SHA"
+          else
+            cp scripts/ci/check-pr-body.mjs "$guard"
+            echo "checker: the head copy, because the base branch copy is unreachable"
+          fi
+          printf 'GUARD=%s\n' "$guard" >> "$GITHUB_ENV"
+      - name: Check the body
+        # The body arrives through the environment, never spliced into the shell.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" | node "$GUARD" -
+      - name: Test the proposed body checker
+        if: ${{ !cancelled() }}
+        run: node --test scripts/ci/check-pr-body.test.mjs
+
+      # A change that alters what a person sees ships its screenshots in this
+      # description. The procedure is docs/visual-verification/README.md. The checker
+      # reads the diff against the PR's base, so it fails a UI change that carries no
+      # evidence without anyone having to remember to run it.
+      - name: Require visual evidence for a UI change
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || true
+          # Fail closed. A UI change must not reach a reviewer because the checkout
+          # could not read the base: an unavailable base means the evidence cannot be
+          # judged, not that it is present.
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "::error::Base $BASE_SHA is unreachable from this checkout, so the visual evidence gate could not read the diff. Re-run the job."
+            exit 1
+          fi
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          node scripts/ci/check-visual-evidence.mjs "$RUNNER_TEMP/pr-body.md" --base "$BASE_SHA"
+      - name: Test the visual evidence checker
+        if: ${{ !cancelled() }}
+        run: node --test scripts/ci/check-visual-evidence.test.mjs
+
+  standards:
+    name: Full-diff coding standards review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout reviewed history
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          # Git's infinite depth, limited to this SHA. With 0, checkout v5 also
+          # fetches every unrelated branch, including the multi-GB vendor payload.
+          fetch-depth: 2147483647
+          persist-credentials: false
+      - name: Select the Node version
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          # This job installs nothing, so it must not reach for a package-manager cache.
+          package-manager-cache: false
+      - name: Verify the receipt against the event commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          file=scripts/ci/standards-review.mjs
+          guard="$RUNNER_TEMP/standards-review.mjs"
+          # The event's base SHA can sit past this checkout's history once the base
+          # moves, so fetch it before reading its tree. A commit that still cannot be
+          # read is an error, not permission to use the head checker.
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || true
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "::error::Base $BASE_SHA is not reachable from this checkout, so the receipt cannot be verified against the base checker."
+            exit 1
+          fi
+          policy=$(git ls-tree --name-only "$BASE_SHA" -- "$file" CODING_STANDARDS.md)
+          if [[ -z "$policy" ]]; then
+            echo "First introduction of the policy on this base; using the proposed checker."
+            cp "$file" "$guard"
+          elif grep -Fxq "$file" <<< "$policy"; then
+            git show "$BASE_SHA:$file" > "$guard"
+          else
+            echo "::error::Base $BASE_SHA has CODING_STANDARDS.md but no $file. Restore the base checker before verifying receipts."
+            exit 1
+          fi
+          node "$guard" check-pr
+      - name: Test proposed checker with positive and negative fixtures
+        if: ${{ !cancelled() }}
+        run: node --test scripts/ci/standards-review.test.mjs

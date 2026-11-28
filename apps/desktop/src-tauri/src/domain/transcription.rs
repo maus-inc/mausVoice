@@ -37,6 +37,48 @@ pub struct Transcription {
     pub post_process_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_process_device: Option<String>,
+    /// Resolved model id used for post-processing (e.g. "openai/gpt-oss-20b").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_model: Option<String>,
+    /// Provider slug (e.g. "cerebras") selected for post-processing,
+    /// persisted even when the request fails so history attributes the
+    /// attempt instead of showing "no provider selected".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_provider: Option<String>,
+    /// True when a post-processing request was attempted and failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_failed: Option<bool>,
+    /// True when a provider edit could not be applied to the transcript.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_edit_failed: Option<bool>,
+    /// Number of edit-application failures in this transcription retry chain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_edit_failure_count: Option<i64>,
+    /// True after the one automatic full-audio retranscription was consumed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_edit_auto_retry_used: Option<bool>,
+    /// Tone the claimed recovery pass restyles with, or an empty string when
+    /// the failed run used none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_edit_retry_tone_id: Option<String>,
+    /// Language the claimed recovery pass retranscribes with, or an empty
+    /// string when the failed run used no override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_edit_retry_language_code: Option<String>,
+    /// Failure count the recovery claim was written at. A restart matches the
+    /// live count against it to tell a claim that never reported back from one
+    /// whose pass ran and failed again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_edit_retry_claim_count: Option<i64>,
+    /// Sanitized, non-secret error message from a failed post-processing
+    /// request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_error: Option<String>,
+    /// True when post-processing failed and local fast styling produced the
+    /// stored transcript instead. Persisted so the row still reads as
+    /// degraded after a save/load cycle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_fallback: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcription_duration_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -8,23 +8,22 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import { useId } from "react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { getIsAssistantModeEnabled } from "../../utils/assistant-mode.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
-import {
-  ADD_TO_DICTIONARY_HOTKEY,
-  AGENT_DICTATE_HOTKEY,
-  CANCEL_TRANSCRIPTION_HOTKEY,
-  DICTATE_HOTKEY,
-  OPEN_CHAT_HOTKEY,
-  SWITCH_WRITING_STYLE_BACKWARD_HOTKEY,
-  SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
-} from "../../utils/keyboard.utils";
 import { HotkeySetting } from "./HotkeySetting";
+import {
+  DIALOG_SHORTCUTS,
+  SHORTCUT_COPY,
+  shortcutDescription,
+} from "./shortcut-copy";
 
 export const ShortcutsDialog = () => {
-  const isAssistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
+  const titleId = useId();
+  const descriptionId = useId();
+  const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
   const { open, hotkeysStatus, isManualStyling } = useAppStore((state) => ({
     open: state.settings.shortcutsDialogOpen,
     hotkeysStatus: state.settings.hotkeysStatus,
@@ -53,62 +52,31 @@ export const ShortcutsDialog = () => {
       );
     }
 
+    // Every key stays listed. An assistant key pressed while the feature is
+    // off opens the setting that turns it on, so hiding the row would hide the
+    // one place that says so, and someone who already bound the key would have
+    // no way back to it.
     return (
       <Stack spacing={3}>
-        <HotkeySetting
-          title={<FormattedMessage defaultMessage="Hold to dictate" />}
-          description={
-            <FormattedMessage defaultMessage="Hold the key to record, release to transcribe your speech into text with AI." />
-          }
-          actionName={DICTATE_HOTKEY}
-        />
-        {isAssistantModeEnabled && (
+        {DIALOG_SHORTCUTS.map((row) => (
           <HotkeySetting
-            title={<FormattedMessage defaultMessage="Assistant mode" />}
-            description={
-              <FormattedMessage defaultMessage="Dictate commands for the AI to follow instead of just cleaning up text." />
-            }
-            actionName={AGENT_DICTATE_HOTKEY}
+            key={row.action}
+            title={row.title}
+            description={shortcutDescription(row, { assistantModeEnabled })}
+            actionName={row.action}
           />
-        )}
-        <HotkeySetting
-          title={<FormattedMessage defaultMessage="Cancel transcription" />}
-          description={
-            <FormattedMessage defaultMessage="Cancel the current dictation or agent session." />
-          }
-          actionName={CANCEL_TRANSCRIPTION_HOTKEY}
-        />
-        <HotkeySetting
-          title={<FormattedMessage defaultMessage="Open chat" />}
-          description={
-            <FormattedMessage defaultMessage="Open the current assistant conversation in the main window." />
-          }
-          actionName={OPEN_CHAT_HOTKEY}
-        />
-        <HotkeySetting
-          title={<FormattedMessage defaultMessage="Add to dictionary" />}
-          description={
-            <FormattedMessage defaultMessage="Add the currently selected text to your dictionary." />
-          }
-          actionName={ADD_TO_DICTIONARY_HOTKEY}
-        />
+        ))}
         {isManualStyling && (
           <>
             <HotkeySetting
-              title={<FormattedMessage defaultMessage="Next writing style" />}
-              description={
-                <FormattedMessage defaultMessage="Cycle forward through your active writing styles while dictating." />
-              }
-              actionName={SWITCH_WRITING_STYLE_FORWARD_HOTKEY}
+              title={SHORTCUT_COPY.nextStyle.title}
+              description={SHORTCUT_COPY.nextStyle.description}
+              actionName={SHORTCUT_COPY.nextStyle.action}
             />
             <HotkeySetting
-              title={
-                <FormattedMessage defaultMessage="Previous writing style" />
-              }
-              description={
-                <FormattedMessage defaultMessage="Cycle backward through your active writing styles while dictating." />
-              }
-              actionName={SWITCH_WRITING_STYLE_BACKWARD_HOTKEY}
+              title={SHORTCUT_COPY.previousStyle.title}
+              description={SHORTCUT_COPY.previousStyle.description}
+              actionName={SHORTCUT_COPY.previousStyle.action}
             />
           </>
         )}
@@ -117,13 +85,20 @@ export const ShortcutsDialog = () => {
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
-      <DialogTitle>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      fullWidth
+      maxWidth="sm"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+    >
+      <DialogTitle id={`${titleId}-wrapper`}>
         <Stack spacing={1}>
-          <Typography variant="h6">
+          <Typography id={titleId} variant="h6">
             <FormattedMessage defaultMessage="Keyboard shortcuts" />
           </Typography>
-          <Typography variant="body2" color="textSecondary">
+          <Typography id={descriptionId} variant="body2" color="textSecondary">
             <FormattedMessage defaultMessage="Customize your keyboard shortcuts. Keyboard shortcuts can be triggered from within any app." />
           </Typography>
         </Stack>

@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getAppState, produceAppState } from "../store";
 import { registerPairedRemoteDevices } from "../utils/app.utils";
 import { getPlatform } from "../utils/platform.utils";
+import { withLocalDataWrite } from "../utils/local-data-write-gate";
 import {
   setRemoteOutputEnabled,
   setRemoteTargetDeviceId,
@@ -83,8 +84,19 @@ export const parseRemotePairingInvite = (
     throw new Error("Pair code is not a valid mausVoice remote invite.");
   }
 
-  const decoded = decodeBase64Url(trimmed.slice(INVITE_PREFIX.length));
-  const invite = JSON.parse(decoded) as RemotePairingInvite;
+  const decoded = trimmed.slice(INVITE_PREFIX.length);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decodeBase64Url(decoded));
+  } catch {
+    // A malformed base64 payload or a non-JSON body must not surface the raw
+    // SyntaxError or DOMException text in the snackbar.
+    throw new Error("Pair code is not a valid mausVoice remote invite.");
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Pair code is not a valid mausVoice remote invite.");
+  }
+  const invite = parsed as RemotePairingInvite;
   if (
     invite.version !== 1 ||
     !invite.receiverDeviceId ||
@@ -103,27 +115,30 @@ export const pairWithRemoteInvite = async (
   inviteCode: string,
 ): Promise<PairedRemoteDevice> => {
   const invite = parseRemotePairingInvite(inviteCode);
-  const previousTargetId =
-    getAppState().userPrefs?.remoteTargetDeviceId ?? null;
-  const device = await invoke<PairedRemoteDevice>(
-    "remote_sender_pair_with_receiver",
-    {
-      args: {
-        receiverDeviceId: invite.receiverDeviceId,
-        receiverName: invite.receiverDeviceName,
-        receiverPlatform: invite.receiverPlatform,
-        receiverAddress: invite.receiverAddress,
-        pairingCode: invite.pairingCode,
-      },
-    },
-  );
 
-  produceAppState((draft) => {
-    registerPairedRemoteDevices(draft, [device]);
+  return withLocalDataWrite(async (lease) => {
+    const previousTargetId =
+      getAppState().userPrefs?.remoteTargetDeviceId ?? null;
+    const device = await invoke<PairedRemoteDevice>(
+      "remote_sender_pair_with_receiver",
+      {
+        args: {
+          receiverDeviceId: invite.receiverDeviceId,
+          receiverName: invite.receiverDeviceName,
+          receiverPlatform: invite.receiverPlatform,
+          receiverAddress: invite.receiverAddress,
+          pairingCode: invite.pairingCode,
+        },
+      },
+    );
+
+    produceAppState((draft) => {
+      registerPairedRemoteDevices(draft, [device]);
+    }, lease);
+    await setRemoteTargetDeviceId(device.id, lease);
+    if (previousTargetId === invite.receiverDeviceId) {
+      await setRemoteOutputEnabled(true, lease);
+    }
+    return device;
   });
-  await setRemoteTargetDeviceId(device.id);
-  if (previousTargetId === invite.receiverDeviceId) {
-    await setRemoteOutputEnabled(true);
-  }
-  return device;
 };

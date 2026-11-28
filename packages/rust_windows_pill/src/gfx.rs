@@ -10,6 +10,36 @@ use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows_numerics::{Matrix3x2, Vector2};
 
+use crate::constants::{TOOLTIP_HEIGHT, WINDOW_H_TYPING, WINDOW_W_TYPING};
+
+/// How the fixed drawing canvas maps onto a surface of this size.
+///
+/// The renderer lays out on a fixed canvas, so a surface that is not canvas-sized
+/// has to be mapped rather than drawn into directly. Windows sizes the suggested
+/// rect by the new scale against the old one, so the surface's ratio to the canvas
+/// is the factor that keeps the pill the same size in points on screen, and it is
+/// read from the bitmap the target built, so the mapping and the surface cannot
+/// disagree. Both dimensions carry the same factor; the smaller absorbs rounding.
+fn surface_scale(width: i32, height: i32) -> f64 {
+    if width <= 0 || height <= 0 {
+        return 1.0;
+    }
+    let scale = (width as f64 / CANVAS_W as f64).min(height as f64 / CANVAS_H as f64);
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    }
+}
+
+/// The canvas every draw call, click region and hit test is laid out on. The
+/// window is this tall plus the below-selector slot, and a scale change shrinks
+/// the surface below it, so the mapping in `begin_frame` is what keeps the
+/// renderer and the surface describing the same pixels.
+pub(crate) const CANVAS_W: i32 = WINDOW_W_TYPING;
+pub(crate) const CANVAS_H: i32 =
+    WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
+
 enum ClipKind {
     AxisAligned,
     Layer,
@@ -28,8 +58,16 @@ pub(crate) struct Gfx {
     bitmap: HBITMAP,
     pub(crate) width: i32,
     pub(crate) height: i32,
+    /// Maps the fixed logical canvas onto the surface. It is 1.0 until a scale
+    /// change resizes the surface, so an unchanged window draws exactly as before.
+    content_scale: f64,
     save_stack: Vec<SaveState>,
     clip_kinds: Vec<ClipKind>,
+    /// Masks handed to `PushLayer`, which borrows a geometry for the lifetime of
+    /// the layer rather than taking a reference of its own. Pushed and popped in
+    /// lockstep with `clip_kinds`, so `layer_masks.last()` is the mask belonging to
+    /// the `ClipKind::Layer` at the same depth.
+    layer_masks: Vec<ID2D1Geometry>,
     current_transform: Matrix3x2,
 }
 
@@ -43,32 +81,29 @@ impl Drop for Gfx {
 }
 
 fn color(r: f64, g: f64, b: f64, a: f64) -> D2D1_COLOR_F {
-    D2D1_COLOR_F { r: r as f32, g: g as f32, b: b as f32, a: a as f32 }
+    D2D1_COLOR_F {
+        r: r as f32,
+        g: g as f32,
+        b: b as f32,
+        a: a as f32,
+    }
 }
 
-/// One stroke of the long-press ring: a segment with its own colour and width.
-///
-/// A named struct rather than a tuple because every segment carries six values
-/// and `clippy::type_complexity` rightly rejects the tuple form.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ShadedSegment {
-    pub(crate) x1: f64,
-    pub(crate) y1: f64,
-    pub(crate) x2: f64,
-    pub(crate) y2: f64,
-    pub(crate) rgba: [f64; 4],
-    pub(crate) width: f64,
+fn centered_scale(current: Matrix3x2, cx: f64, cy: f64, sx: f64, sy: f64) -> Matrix3x2 {
+    Matrix3x2::scale_around(sx as f32, sy as f32, vec2(cx, cy)) * current
 }
 
 fn vec2(x: f64, y: f64) -> Vector2 {
-    Vector2 { X: x as f32, Y: y as f32 }
+    Vector2 {
+        X: x as f32,
+        Y: y as f32,
+    }
 }
 
 impl Gfx {
     pub(crate) fn new(width: i32, height: i32) -> Result<Self> {
         unsafe {
-            let factory: ID2D1Factory =
-                D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
+            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
 
             let props = D2D1_RENDER_TARGET_PROPERTIES {
                 r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -86,8 +121,7 @@ impl Gfx {
             rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
 
             crate::font::install_embedded_satoshi();
-            let dw_factory: IDWriteFactory =
-                DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
+            let dw_factory: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
 
             let screen_dc = GetDC(None);
             let hdc = CreateCompatibleDC(Some(screen_dc));
@@ -105,22 +139,94 @@ impl Gfx {
                 bitmap,
                 width,
                 height,
+                // Read from the surface, not assumed: a window created at a
+                // display's own scale starts out larger than the canvas, and every
+                // caller that converts canvas units into window pixels has to know
+                // that from the first frame.
+                content_scale: surface_scale(width, height),
                 save_stack: Vec::new(),
                 clip_kinds: Vec::new(),
+                layer_masks: Vec::new(),
                 current_transform: Matrix3x2::identity(),
             })
         }
     }
 
+    /// Rebuild the drawing surface at a new size.
+    ///
+    /// A per-monitor scale change hands the window a suggested rect whose size
+    /// follows the new scale. The surface has to follow it, because every frame
+    /// presents exactly `width` by `height` pixels through
+    /// `UpdateLayeredWindow`: leaving the surface at its old size silently resizes
+    /// the window back on the next frame, which undoes the suggestion, throws away
+    /// the DPI handling, and leaves the pill rendered at the wrong scale until the
+    /// next resize. Growing and shrinking are both real, so both take effect.
+    pub(crate) fn resize(&mut self, width: i32, height: i32) -> Result<()> {
+        if width == self.width && height == self.height {
+            return Ok(());
+        }
+        if width <= 0 || height <= 0 {
+            // Nothing to rebuild at a degenerate size, and the caller keeps the
+            // surface it already has rather than binding an empty one.
+            return Ok(());
+        }
+        unsafe {
+            let bitmap = create_dib(self.hdc, width, height)?;
+            let _ = SelectObject(self.hdc, HGDIOBJ(bitmap.0));
+            // The old bitmap is released only after the replacement is selected,
+            // so the device context is never left pointing at a deleted object.
+            let _ = DeleteObject(HGDIOBJ(self.bitmap.0));
+            self.bitmap = bitmap;
+        }
+        self.width = width;
+        self.height = height;
+        self.content_scale = surface_scale(width, height);
+        Ok(())
+    }
+
+    /// How the canvas maps onto the surface this target actually holds. Read
+    /// rather than assumed, so a caller that publishes geometry cannot describe a
+    /// surface the target does not have.
+    pub(crate) fn content_scale(&self) -> f64 {
+        self.content_scale
+    }
+
     pub(crate) fn begin_frame(&mut self) {
         self.save_stack.clear();
         self.clip_kinds.clear();
+        self.layer_masks.clear();
         self.current_transform = Matrix3x2::identity();
         unsafe {
-            let rect = RECT { left: 0, top: 0, right: self.width, bottom: self.height };
+            let rect = RECT {
+                left: 0,
+                top: 0,
+                right: self.width,
+                bottom: self.height,
+            };
             self.rt.BindDC(self.hdc, &rect).ok();
             self.rt.BeginDraw();
+            // A surface that followed a scale change is smaller than the canvas
+            // the renderer lays out on, so the canvas is mapped onto it. Nothing
+            // else knows the surface moved: every draw call, click region and hit
+            // test works in canvas coordinates, which is what keeps the pill on
+            // screen when the window lands on a lower-scale display.
+            self.current_transform =
+                Matrix3x2::scale(self.content_scale as f32, self.content_scale as f32);
             self.rt.SetTransform(&self.current_transform);
+        }
+    }
+
+    /// Ends the layer the clip stack names and releases the mask D2D borrowed for
+    /// it. The mask has to outlive the `PushLayer` that took it and must die no
+    /// earlier than the matching `PopLayer`, which is why it is released here
+    /// rather than where it was created.
+    fn pop_layer(&mut self) {
+        // SAFETY: `clip_rounded_rect` pushes one `ClipKind::Layer` and exactly one
+        // mask for each `PushLayer` it makes, and nothing else touches either
+        // stack, so the two are always the same depth and this pop matches a push.
+        unsafe {
+            self.rt.PopLayer();
+            drop(self.layer_masks.pop());
         }
     }
 
@@ -129,7 +235,7 @@ impl Gfx {
             unsafe {
                 match kind {
                     ClipKind::AxisAligned => self.rt.PopAxisAlignedClip(),
-                    ClipKind::Layer => self.rt.PopLayer(),
+                    ClipKind::Layer => self.pop_layer(),
                 }
             }
         }
@@ -140,7 +246,9 @@ impl Gfx {
     }
 
     pub(crate) fn clear(&self) {
-        unsafe { self.rt.Clear(Some(&color(0.0, 0.0, 0.0, 0.0))); }
+        unsafe {
+            self.rt.Clear(Some(&color(0.0, 0.0, 0.0, 0.0)));
+        }
     }
 
     pub(crate) fn save(&mut self) {
@@ -157,55 +265,87 @@ impl Gfx {
                     unsafe {
                         match kind {
                             ClipKind::AxisAligned => self.rt.PopAxisAlignedClip(),
-                            ClipKind::Layer => self.rt.PopLayer(),
+                            ClipKind::Layer => self.pop_layer(),
                         }
                     }
                 }
             }
             self.current_transform = state.transform;
-            unsafe { self.rt.SetTransform(&self.current_transform); }
+            unsafe {
+                self.rt.SetTransform(&self.current_transform);
+            }
         }
     }
 
     pub(crate) fn translate(&mut self, dx: f64, dy: f64) {
-        self.current_transform = Matrix3x2::translation(dx as f32, dy as f32) * self.current_transform;
-        unsafe { self.rt.SetTransform(&self.current_transform); }
+        self.current_transform =
+            Matrix3x2::translation(dx as f32, dy as f32) * self.current_transform;
+        unsafe {
+            self.rt.SetTransform(&self.current_transform);
+        }
     }
 
     pub(crate) fn scale(&mut self, sx: f64, sy: f64) {
         self.current_transform = Matrix3x2::scale(sx as f32, sy as f32) * self.current_transform;
-        unsafe { self.rt.SetTransform(&self.current_transform); }
+        unsafe {
+            self.rt.SetTransform(&self.current_transform);
+        }
+    }
+
+    pub(crate) fn scale_around(&mut self, cx: f64, cy: f64, sx: f64, sy: f64) {
+        self.current_transform = centered_scale(self.current_transform, cx, cy, sx, sy);
+        unsafe {
+            self.rt.SetTransform(&self.current_transform);
+        }
     }
 
     pub(crate) fn clip_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
         unsafe {
             self.rt.PushAxisAlignedClip(
                 &D2D_RECT_F {
-                    left: x as f32, top: y as f32,
-                    right: (x + w) as f32, bottom: (y + h) as f32,
+                    left: x as f32,
+                    top: y as f32,
+                    right: (x + w) as f32,
+                    bottom: (y + h) as f32,
                 },
                 D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
             );
         }
         self.clip_kinds.push(ClipKind::AxisAligned);
-        if let Some(s) = self.save_stack.last_mut() { s.clip_count += 1; }
+        if let Some(s) = self.save_stack.last_mut() {
+            s.clip_count += 1;
+        }
     }
 
     pub(crate) fn clip_rounded_rect(&mut self, x: f64, y: f64, w: f64, h: f64, r: f64) {
         unsafe {
-            let geom = self.factory.CreateRoundedRectangleGeometry(&D2D1_ROUNDED_RECT {
-                rect: D2D_RECT_F {
-                    left: x as f32, top: y as f32,
-                    right: (x + w) as f32, bottom: (y + h) as f32,
-                },
-                radiusX: r as f32, radiusY: r as f32,
-            }).unwrap();
+            let geom = self
+                .factory
+                .CreateRoundedRectangleGeometry(&D2D1_ROUNDED_RECT {
+                    rect: D2D_RECT_F {
+                        left: x as f32,
+                        top: y as f32,
+                        right: (x + w) as f32,
+                        bottom: (y + h) as f32,
+                    },
+                    radiusX: r as f32,
+                    radiusY: r as f32,
+                })
+                .unwrap();
 
             let geom_id2d1: ID2D1Geometry = geom.cast().unwrap();
+            // `PushLayer` borrows this geometry until the matching `PopLayer`, and
+            // `ManuallyDrop` suppresses the drop that would otherwise release the
+            // reference `cast()` just took — one leaked geometry per call, and the
+            // draw pass makes five of these calls a frame. Keep a Rust-side owner
+            // so `pop_layer` can release it when the borrow actually ends.
+            self.layer_masks.push(geom_id2d1.clone());
             let params = D2D1_LAYER_PARAMETERS {
                 contentBounds: D2D_RECT_F {
-                    left: f32::MIN, top: f32::MIN,
-                    right: f32::MAX, bottom: f32::MAX,
+                    left: f32::MIN,
+                    top: f32::MIN,
+                    right: f32::MAX,
+                    bottom: f32::MAX,
                 },
                 geometricMask: ManuallyDrop::new(Some(geom_id2d1)),
                 maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
@@ -217,15 +357,16 @@ impl Gfx {
             self.rt.PushLayer(&params, None);
         }
         self.clip_kinds.push(ClipKind::Layer);
-        if let Some(s) = self.save_stack.last_mut() { s.clip_count += 1; }
+        if let Some(s) = self.save_stack.last_mut() {
+            s.clip_count += 1;
+        }
     }
 
     fn brush(&self, rgba: [f64; 4]) -> ID2D1SolidColorBrush {
         unsafe {
-            self.rt.CreateSolidColorBrush(
-                &color(rgba[0], rgba[1], rgba[2], rgba[3]),
-                None,
-            ).unwrap()
+            self.rt
+                .CreateSolidColorBrush(&color(rgba[0], rgba[1], rgba[2], rgba[3]), None)
+                .unwrap()
         }
     }
 
@@ -236,10 +377,13 @@ impl Gfx {
             self.rt.FillRoundedRectangle(
                 &D2D1_ROUNDED_RECT {
                     rect: D2D_RECT_F {
-                        left: x as f32, top: y as f32,
-                        right: (x + w) as f32, bottom: (y + h) as f32,
+                        left: x as f32,
+                        top: y as f32,
+                        right: (x + w) as f32,
+                        bottom: (y + h) as f32,
                     },
-                    radiusX: r as f32, radiusY: r as f32,
+                    radiusX: r as f32,
+                    radiusY: r as f32,
                 },
                 &brush,
             );
@@ -247,17 +391,29 @@ impl Gfx {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn stroke_rounded_rect(&self, x: f64, y: f64, w: f64, h: f64, r: f64, rgba: [f64; 4], width: f64) {
+    pub(crate) fn stroke_rounded_rect(
+        &self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        r: f64,
+        rgba: [f64; 4],
+        width: f64,
+    ) {
         let r = r.min(w / 2.0).min(h / 2.0);
         let brush = self.brush(rgba);
         unsafe {
             self.rt.DrawRoundedRectangle(
                 &D2D1_ROUNDED_RECT {
                     rect: D2D_RECT_F {
-                        left: x as f32, top: y as f32,
-                        right: (x + w) as f32, bottom: (y + h) as f32,
+                        left: x as f32,
+                        top: y as f32,
+                        right: (x + w) as f32,
+                        bottom: (y + h) as f32,
                     },
-                    radiusX: r as f32, radiusY: r as f32,
+                    radiusX: r as f32,
+                    radiusY: r as f32,
                 },
                 &brush,
                 width as f32,
@@ -271,8 +427,10 @@ impl Gfx {
         unsafe {
             self.rt.FillRectangle(
                 &D2D_RECT_F {
-                    left: x as f32, top: y as f32,
-                    right: (x + w) as f32, bottom: (y + h) as f32,
+                    left: x as f32,
+                    top: y as f32,
+                    right: (x + w) as f32,
+                    bottom: (y + h) as f32,
                 },
                 &brush,
             );
@@ -310,46 +468,26 @@ impl Gfx {
         }
     }
 
-    /// Draw many segments that share one colour/width in a single call, so the
-    /// brush and stroke style are created once instead of per segment.
-    pub(crate) fn draw_line_batch(
-        &self,
-        segments: &[(f64, f64, f64, f64)],
-        rgba: [f64; 4],
-        width: f64,
-    ) {
-        if segments.is_empty() {
-            return;
-        }
-        let brush = self.brush(rgba);
-        let style = self.round_stroke_style();
-        unsafe {
-            for &(x1, y1, x2, y2) in segments {
-                self.rt.DrawLine(
-                    vec2(x1, y1),
-                    vec2(x2, y2),
-                    &brush,
-                    width as f32,
-                    style.as_ref(),
-                );
-            }
-        }
-    }
-
     /// Draw many segments that each carry their own colour and width.
     ///
     /// Used by the long-press ring, where every segment has a different alpha.
     /// The brush and stroke style are COM objects, so creating a pair per
     /// segment would mean hundreds of allocations per frame; instead both are
     /// created once and the brush colour is mutated in place.
-    pub(crate) fn draw_line_shaded(&self, segments: &[ShadedSegment]) {
-        if segments.is_empty() {
+    pub(crate) fn draw_line_shaded<I: IntoIterator<Item = rust_pill_shared::RingSegment>>(
+        &self,
+        segments: I,
+    ) {
+        let mut segments = segments.into_iter();
+        // An empty frame must not pay for the brush, and a lazy iterator cannot
+        // be asked for its length up front.
+        let Some(first) = segments.next() else {
             return;
-        }
+        };
         let brush = self.brush([1.0, 1.0, 1.0, 1.0]);
         let style = self.round_stroke_style();
         unsafe {
-            for seg in segments {
+            for seg in std::iter::once(first).chain(segments) {
                 let [r, g, b, a] = seg.rgba;
                 brush.SetColor(&color(r, g, b, a));
                 self.rt.DrawLine(
@@ -360,6 +498,53 @@ impl Gfx {
                     style.as_ref(),
                 );
             }
+        }
+    }
+
+    /// Stroke an open polyline as a single path, in one colour and width.
+    ///
+    /// Accepts the `(x, y, dist)` triples produced by `resample_perimeter` so
+    /// callers can pass a sub-range without reallocating. Used by the
+    /// long-press ring shadow, where each of the layered passes shares one
+    /// colour and width: a single `DrawGeometry` per pass is far cheaper than
+    /// per-segment `DrawLine` calls.
+    ///
+    /// Degenerate input is a no-op: fewer than two points has no line to
+    /// stroke, and a non-positive width is backend-defined in D2D rather than
+    /// reliably invisible, so it is rejected here instead of being handed to
+    /// `DrawGeometry`.
+    pub(crate) fn stroke_polyline(&self, points: &[(f64, f64, f64)], rgba: [f64; 4], width: f64) {
+        if points.len() < 2 || width <= 0.0 {
+            return;
+        }
+        unsafe {
+            // Geometry creation talks to the D2D factory and the sink must be
+            // closed before the geometry can be drawn. Both can fail for real
+            // reasons (device loss, resource exhaustion) on a path that runs
+            // every frame while the ring is held, so failures skip this pass
+            // instead of panicking: one missing shadow layer is invisible,
+            // a panic would take the whole overlay down.
+            let Ok(geom) = self.factory.CreatePathGeometry() else {
+                return;
+            };
+            let Ok(sink) = geom.Open() else { return };
+            sink.BeginFigure(vec2(points[0].0, points[0].1), D2D1_FIGURE_BEGIN_HOLLOW);
+            for &(x, y, _) in &points[1..] {
+                sink.AddLine(vec2(x, y));
+            }
+            sink.EndFigure(D2D1_FIGURE_END_OPEN);
+            if sink.Close().is_err() {
+                // An unclosed sink leaves the geometry unusable — drawing it
+                // would be a no-op at best.
+                return;
+            }
+            let brush = self.brush(rgba);
+            self.rt.DrawGeometry(
+                &geom,
+                &brush,
+                width as f32,
+                self.round_stroke_style().as_ref(),
+            );
         }
     }
 
@@ -395,30 +580,46 @@ impl Gfx {
 
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn fill_gradient_rect(
-        &self, x: f64, y: f64, w: f64, h: f64,
-        sx: f64, sy: f64, ex: f64, ey: f64,
+        &self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        sx: f64,
+        sy: f64,
+        ex: f64,
+        ey: f64,
         stops: &[(f64, [f64; 4])],
     ) {
-        let d2d_stops: Vec<D2D1_GRADIENT_STOP> = stops.iter().map(|(pos, c)| {
-            D2D1_GRADIENT_STOP {
+        let d2d_stops: Vec<D2D1_GRADIENT_STOP> = stops
+            .iter()
+            .map(|(pos, c)| D2D1_GRADIENT_STOP {
                 position: *pos as f32,
                 color: color(c[0], c[1], c[2], c[3]),
-            }
-        }).collect();
+            })
+            .collect();
         unsafe {
-            let stop_col = self.rt.CreateGradientStopCollection(&d2d_stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP).unwrap();
-            let brush = self.rt.CreateLinearGradientBrush(
-                &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
-                    startPoint: vec2(sx, sy),
-                    endPoint: vec2(ex, ey),
-                },
-                None,
-                &stop_col,
-            ).unwrap();
+            let stop_col = self
+                .rt
+                .CreateGradientStopCollection(&d2d_stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)
+                .unwrap();
+            let brush = self
+                .rt
+                .CreateLinearGradientBrush(
+                    &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                        startPoint: vec2(sx, sy),
+                        endPoint: vec2(ex, ey),
+                    },
+                    None,
+                    &stop_col,
+                )
+                .unwrap();
             self.rt.FillRectangle(
                 &D2D_RECT_F {
-                    left: x as f32, top: y as f32,
-                    right: (x + w) as f32, bottom: (y + h) as f32,
+                    left: x as f32,
+                    top: y as f32,
+                    right: (x + w) as f32,
+                    bottom: (y + h) as f32,
                 },
                 &brush,
             );
@@ -426,10 +627,17 @@ impl Gfx {
     }
 
     pub(crate) fn fill_flame_tongue(
-        &self, cx: f64, base_y: f64, h: f64, hw: f64, sway: f64,
+        &self,
+        cx: f64,
+        base_y: f64,
+        h: f64,
+        hw: f64,
+        sway: f64,
         stops: &[(f64, f64, f64, f64, f64)],
     ) {
-        if h < 0.5 || hw < 0.5 { return; }
+        if h < 0.5 || hw < 0.5 {
+            return;
+        }
         let tip_x = cx + sway;
         let tip_y = base_y - h;
         let base_r = hw.min(h * 0.15);
@@ -457,7 +665,10 @@ impl Gfx {
             // Rounded bottom arc from right to left
             sink.AddArc(&D2D1_ARC_SEGMENT {
                 point: vec2(cx - hw, base_y - base_r),
-                size: D2D_SIZE_F { width: hw as f32, height: hw as f32 },
+                size: D2D_SIZE_F {
+                    width: hw as f32,
+                    height: hw as f32,
+                },
                 rotationAngle: 0.0,
                 sweepDirection: D2D1_SWEEP_DIRECTION_CLOCKWISE,
                 arcSize: D2D1_ARC_SIZE_SMALL,
@@ -466,22 +677,29 @@ impl Gfx {
             sink.EndFigure(D2D1_FIGURE_END_CLOSED);
             sink.Close().ok();
 
-            let d2d_stops: Vec<D2D1_GRADIENT_STOP> = stops.iter().map(|(pos, r, g, b, a)| {
-                D2D1_GRADIENT_STOP {
+            let d2d_stops: Vec<D2D1_GRADIENT_STOP> = stops
+                .iter()
+                .map(|(pos, r, g, b, a)| D2D1_GRADIENT_STOP {
                     position: *pos as f32,
                     color: color(*r, *g, *b, *a),
-                }
-            }).collect();
+                })
+                .collect();
 
-            let stop_col = self.rt.CreateGradientStopCollection(&d2d_stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP).unwrap();
-            let brush = self.rt.CreateLinearGradientBrush(
-                &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
-                    startPoint: vec2(cx, base_y),
-                    endPoint: vec2(cx, tip_y),
-                },
-                None,
-                &stop_col,
-            ).unwrap();
+            let stop_col = self
+                .rt
+                .CreateGradientStopCollection(&d2d_stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)
+                .unwrap();
+            let brush = self
+                .rt
+                .CreateLinearGradientBrush(
+                    &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                        startPoint: vec2(cx, base_y),
+                        endPoint: vec2(cx, tip_y),
+                    },
+                    None,
+                    &stop_col,
+                )
+                .unwrap();
 
             self.rt.FillGeometry(&geom, &brush, None);
         }
@@ -495,19 +713,29 @@ impl Gfx {
         let format = self.text_format(size, bold, false);
         let wide: Vec<u16> = text.encode_utf16().collect();
         unsafe {
-            let layout = self.dw_factory.CreateTextLayout(
-                &wide, &format, 10000.0, 1000.0,
-            ).unwrap();
+            let layout = self
+                .dw_factory
+                .CreateTextLayout(&wide, &format, 10000.0, 1000.0)
+                .unwrap();
             let mut metrics = DWRITE_TEXT_METRICS::default();
             layout.GetMetrics(&mut metrics).ok();
-            (metrics.widthIncludingTrailingWhitespace as f64, metrics.height as f64)
+            (
+                metrics.widthIncludingTrailingWhitespace as f64,
+                metrics.height as f64,
+            )
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_text_top_left(
-        &self, text: &str, x: f64, y: f64,
-        size: f64, bold: bool, italic: bool, rgba: [f64; 4],
+        &self,
+        text: &str,
+        x: f64,
+        y: f64,
+        size: f64,
+        bold: bool,
+        italic: bool,
+        rgba: [f64; 4],
     ) {
         let brush = self.brush(rgba);
         let format = self.text_format(size, bold, italic);
@@ -517,8 +745,10 @@ impl Gfx {
                 &wide,
                 &format,
                 &D2D_RECT_F {
-                    left: x as f32, top: y as f32,
-                    right: (x + 2000.0) as f32, bottom: (y + 2000.0) as f32,
+                    left: x as f32,
+                    top: y as f32,
+                    right: (x + 2000.0) as f32,
+                    bottom: (y + 2000.0) as f32,
                 },
                 &brush,
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
@@ -529,8 +759,15 @@ impl Gfx {
 
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_text_centered(
-        &self, text: &str, x: f64, y: f64, w: f64, h: f64,
-        size: f64, bold: bool, rgba: [f64; 4],
+        &self,
+        text: &str,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        size: f64,
+        bold: bool,
+        rgba: [f64; 4],
     ) {
         let (tw, th) = self.measure_text(text, size, bold);
         let tx = x + (w - tw) / 2.0;
@@ -558,4 +795,59 @@ unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> Result<HBITMAP> {
 
 pub fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn transformed_point(matrix: &Matrix3x2, x: f32, y: f32) -> (f32, f32) {
+        (
+            x * matrix.M11 + y * matrix.M21 + matrix.M31,
+            x * matrix.M12 + y * matrix.M22 + matrix.M32,
+        )
+    }
+
+    #[test]
+    fn a_canvas_sized_surface_maps_one_to_one() {
+        assert_eq!(surface_scale(CANVAS_W, CANVAS_H), 1.0);
+    }
+
+    #[test]
+    fn a_smaller_surface_maps_the_canvas_onto_itself() {
+        // Windows hands a lower-scale display a proportionally smaller rect, so
+        // the ratio is what keeps the pill the same size in points.
+        assert!((surface_scale(CANVAS_W / 2, CANVAS_H / 2) - 0.5).abs() < 1e-9);
+        assert!((surface_scale(CANVAS_W * 3 / 2, CANVAS_H * 3 / 2) - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_degenerate_surface_leaves_the_mapping_alone() {
+        // The resize refuses a non-positive size and keeps the old surface, so the
+        // mapping must stay usable rather than become zero or NaN.
+        assert_eq!(surface_scale(0, CANVAS_H), 1.0);
+        assert_eq!(surface_scale(CANVAS_W, -1), 1.0);
+    }
+
+    #[test]
+    fn a_non_uniform_surface_takes_the_smaller_ratio() {
+        // Rounding can make one dimension a pixel off the other. Taking the
+        // smaller keeps the whole canvas inside the bitmap, so nothing is clipped.
+        let scale = surface_scale(CANVAS_W / 2, CANVAS_H);
+        assert!((scale - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn centered_scale_keeps_the_pivot_and_parent_translation() {
+        for (sx, sy) in [(0.92, 1.04), (1.0, 1.0), (0.5, 0.5)] {
+            let parent = Matrix3x2::translation(40.0, 80.0);
+            let matrix = centered_scale(parent, 120.0, 180.0, sx, sy);
+            let pivot = transformed_point(&matrix, 120.0, 180.0);
+            assert!((pivot.0 - 160.0).abs() < 0.001);
+            assert!((pivot.1 - 260.0).abs() < 0.001);
+            let point = transformed_point(&matrix, 130.0, 170.0);
+            assert!((point.0 - (160.0 + 10.0 * sx as f32)).abs() < 0.001);
+            assert!((point.1 - (260.0 - 10.0 * sy as f32)).abs() < 0.001);
+        }
+    }
 }

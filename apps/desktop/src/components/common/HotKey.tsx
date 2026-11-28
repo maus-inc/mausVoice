@@ -1,180 +1,151 @@
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import { keyframes } from "@mui/material/styles";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
-import { produceAppState, useAppStore } from "../../store";
-import { setSnackbar } from "../../utils/app.utils";
+import { useAppStore } from "../../store";
+import { HotkeyBadge } from "./HotkeyBadge";
+import { hotkeyRecorderStyles } from "./hotkey-recorder.styles";
 import {
-  getPrettyKeyName,
-  isModifierOnlyCombo,
-} from "../../utils/keyboard.utils";
+  createRecorderHandlers,
+  describeRecorderA11y,
+  describeRecorderLabel,
+  useBlurWhenDisabled,
+  useRecordedCombo,
+  useRecorderOwnership,
+} from "./hotkey-recorder.utils";
+
+/** Muted is the placeholder and recording copy; strong is a real combo. */
+const TONE_COLOR = {
+  muted: "text.secondary",
+  strong: "text.primary",
+} as const;
 
 type HotKeyProps = {
   value?: string[];
   onChange?: (value: string[]) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+  ariaLabelledBy?: string;
 };
 
-const pulseBorder = keyframes`
-  0%, 100% {
-    border-color: color-mix(in srgb, var(--app-palette-blue) 50%, transparent);
+const RecorderDisplay = ({
+  describedBy,
+  tone,
+  value,
+  label,
+}: {
+  describedBy?: string;
+  tone: keyof typeof TONE_COLOR;
+  value?: string[];
+  label: string;
+}) => {
+  if (tone === "strong" && value && value.length > 0) {
+    return (
+      <Box
+        id={describedBy}
+        sx={{ display: "inline-flex", alignItems: "center" }}
+      >
+        <Box
+          component="span"
+          sx={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            overflow: "hidden",
+            clipPath: "inset(50%)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </Box>
+        <Box
+          component="span"
+          aria-hidden="true"
+          sx={{ display: "inline-flex" }}
+        >
+          <HotkeyBadge keys={value} appearance="3d" />
+        </Box>
+      </Box>
+    );
   }
-  50% {
-    border-color: var(--app-palette-blue);
-  }
-`;
+  return (
+    <Typography id={describedBy} variant="body2" color={TONE_COLOR[tone]}>
+      {label}
+    </Typography>
+  );
+};
 
-export const HotKey = ({ value, onChange }: HotKeyProps) => {
+export const HotKey = ({
+  value,
+  onChange,
+  disabled = false,
+  ariaLabel,
+  ariaLabelledBy,
+}: HotKeyProps) => {
   const intl = useIntl();
+  const valueId = useId();
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const recorderId = useRef(Symbol("hotkey recorder"));
   const [focused, setFocused] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
   const keysHeld = useAppStore((s) => s.keysHeld);
   const hotkeyStrategy = useAppStore((s) => s.hotkeyStrategy);
   const requireNonModifier = hotkeyStrategy === "bridge";
-
-  const lastEmittedRef = useRef<string[]>(value);
   const valueBeforeRecordingRef = useRef<string[] | undefined>(value);
-  useEffect(() => {
-    lastEmittedRef.current = value;
-  }, [value]);
 
-  useEffect(() => {
-    produceAppState((draft) => {
-      draft.isRecordingHotkey = focused;
-    });
-  }, [focused]);
+  useRecorderOwnership(recorderId);
+  useBlurWhenDisabled(disabled, boxRef);
+  useRecordedCombo({
+    value,
+    focused,
+    hasInteracted,
+    setHasInteracted,
+    requireNonModifier,
+    keysHeld,
+    onChange,
+    valueBeforeRecordingRef,
+    boxRef,
+    intl,
+  });
 
-  const previousKeysHeldRef = useRef<string[]>([]);
-
-  useEffect(() => {
-    if (!focused) {
-      previousKeysHeldRef.current = [];
-      return;
-    }
-
-    if (!hasInteracted) {
-      lastEmittedRef.current = [];
-    }
-
-    const seen = new Set<string>();
-    const held = keysHeld.filter((k: string) => {
-      if (seen.has(k)) {
-        return false;
-      }
-      seen.add(k);
-      return true;
-    });
-
-    const last = lastEmittedRef.current ?? [];
-
-    const previousHeld = previousKeysHeldRef.current;
-    if (
-      hasInteracted &&
-      previousHeld.length > 0 &&
-      held.length < previousHeld.length
-    ) {
-      if (requireNonModifier && isModifierOnlyCombo(previousHeld)) {
-        produceAppState((draft) => {
-          setSnackbar(
-            draft,
-            intl.formatMessage({
-              defaultMessage:
-                "Hotkey must include a non-modifier key (e.g. a letter or number)",
-            }),
-            { mode: "error" },
-          );
-        });
-        onChange?.(valueBeforeRecordingRef.current ?? []);
-        lastEmittedRef.current = valueBeforeRecordingRef.current;
-      } else if (requireNonModifier) {
-        produceAppState((draft) => {
-          setSnackbar(
-            draft,
-            intl.formatMessage({
-              defaultMessage:
-                "You may need to reload your compositor for changes to take effect.",
-            }),
-          );
-        });
-      }
-      boxRef.current?.blur();
-      previousKeysHeldRef.current = [];
-      return;
-    }
-
-    previousKeysHeldRef.current = held;
-
-    if (held.length === 0) {
-      return;
-    }
-
-    if (held.length === 1 && held[0] === "Escape") {
-      boxRef.current?.blur();
-      return;
-    }
-
-    setHasInteracted(true);
-
-    const lastSet = new Set(last);
-    const anyNewKey = held.some((k) => !lastSet.has(k));
-    if (held.length > last.length || anyNewKey) {
-      lastEmittedRef.current = held;
-      onChange?.(held);
-    }
-  }, [keysHeld, focused, onChange, hasInteracted, requireNonModifier, intl]);
-
-  const [empty, label] = useMemo(() => {
-    if (focused && !hasInteracted) {
-      return [
-        true,
-        intl.formatMessage({ defaultMessage: "Recording keys..." }),
-      ];
-    }
-    const v = value ?? [];
-    return v.length > 0
-      ? [false, v.map((k) => getPrettyKeyName(k)).join(" + ")]
-      : [true, intl.formatMessage({ defaultMessage: "Set hotkey" })];
-  }, [value, focused, hasInteracted, intl]);
+  const { label, tone } = useMemo(
+    () => describeRecorderLabel(intl, value, focused, hasInteracted),
+    [intl, value, focused, hasInteracted],
+  );
+  const a11y = describeRecorderA11y({
+    ariaLabel,
+    ariaLabelledBy,
+    disabled,
+    valueId,
+  });
+  const handlers = createRecorderHandlers({
+    boxRef,
+    recorderId,
+    value,
+    disabled,
+    valueBeforeRecordingRef,
+    setFocused,
+    setHasInteracted,
+  });
 
   return (
     <Box
       ref={boxRef}
-      tabIndex={0}
-      onClick={() => boxRef.current?.focus()}
-      onFocus={() => {
-        valueBeforeRecordingRef.current = value;
-        setFocused(true);
-      }}
-      onBlur={() => {
-        setFocused(false);
-        setHasInteracted(false);
-      }}
-      sx={{
-        width: 200,
-        height: 40,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        borderRadius: 1,
-        cursor: "pointer",
-        bgcolor: (t) =>
-          focused ? t.vars?.palette.level2 : t.vars?.palette.level1,
-        border: focused ? "2px solid" : "2px solid transparent",
-        animation: focused ? `${pulseBorder} 2s ease-in-out infinite` : "none",
-        outline: "none",
-        "&:hover": {
-          border: (t) =>
-            focused ? "2px solid" : `2px solid ${t.vars?.palette.divider}`,
-        },
-      }}
+      tabIndex={a11y.tabIndex}
+      role={a11y.role}
+      aria-label={ariaLabel}
+      aria-labelledby={a11y.labelledBy}
+      aria-describedby={a11y.describedBy}
+      aria-disabled={a11y.ariaDisabled}
+      {...handlers}
+      sx={hotkeyRecorderStyles(focused, 200, disabled)}
     >
-      <Typography
-        variant="body2"
-        color={empty ? "text.secondary" : "text.primary"}
-      >
-        {label}
-      </Typography>
+      <RecorderDisplay
+        describedBy={a11y.describedBy}
+        tone={tone}
+        value={value}
+        label={label}
+      />
     </Box>
   );
 };

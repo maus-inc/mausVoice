@@ -1,6 +1,6 @@
 mod constants;
-mod font;
 mod draw;
+mod font;
 mod input;
 mod ipc;
 mod pill;
@@ -21,7 +21,9 @@ fn main() {
     // The host app exports GDK_BACKEND=wayland to its children, so only our
     // own "x11" value is treated as the already-re-executed marker (this
     // also prevents an exec loop).
-    let already_x11 = std::env::var("GDK_BACKEND").map(|v| v == "x11").unwrap_or(false);
+    let already_x11 = std::env::var("GDK_BACKEND")
+        .map(|v| v == "x11")
+        .unwrap_or(false);
     if !already_x11 && !gtk_layer_shell::is_supported() {
         use gtk::prelude::*;
         let is_x11_display = gtk::gdk::Display::default()
@@ -30,7 +32,11 @@ fn main() {
         if !is_x11_display {
             if let Ok(exe) = std::env::current_exe() {
                 use std::os::unix::process::CommandExt;
+                // Carry the arguments across, or the re-executed process loses
+                // `--saved-position` and the pill silently re-homes to its
+                // default corner on every launch under XWayland.
                 let err = std::process::Command::new(exe)
+                    .args(std::env::args_os().skip(1))
                     .env("GDK_BACKEND", "x11")
                     .exec();
                 eprintln!("re-exec with GDK_BACKEND=x11 failed ({err}), staying on wayland");
@@ -38,7 +44,11 @@ fn main() {
         }
     }
 
+    // Wayland gives a client no way to query where its surface is, so a stored
+    // position cannot be applied there. The record is still parsed, and the
+    // backend decides whether it can use it.
+    let restored_position = rust_pill_shared::restore::saved_position_from_process_args();
     let (sender, receiver) = std::sync::mpsc::channel();
     ipc::start_stdin_reader(sender);
-    pill::run(receiver);
+    pill::run(receiver, restored_position);
 }

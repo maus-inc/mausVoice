@@ -5,7 +5,7 @@ sidebar:
   order: 9
 ---
 
-Open **Writing Styles** and choose **New style** or **Add Style → New style**. A style needs a name (up to 120 characters) and a non-empty prompt (up to 8,000 characters). In Based on app mode, creating from an app row immediately assigns the new style to that target.
+Open **Writing Styles** and choose **New style** or **Add Style → New style**. A style needs a name (up to 120 characters) and a non-empty prompt (up to 8,000 characters). In Based on app mode, creating from an app row immediately assigns the new style to that target. Closing a draft with changes asks whether to discard it; choose Cancel to keep editing. While creation is in progress, wait for it to finish before closing the wizard.
 
 A useful prompt says what to preserve as well as what to change:
 

@@ -74,19 +74,34 @@ export type SettingsState = {
   aiTranscriptionDialogOpen: boolean;
   aiPostProcessingDialogOpen: boolean;
   agentModeDialogOpen: boolean;
-  moreSettingsDialogOpen: boolean;
   multiDeviceDialogOpen: boolean;
   dictationLanguageDialogOpen: boolean;
+  styleHotkeysDialogOpen: boolean;
   appKeybindingsDialogOpen: boolean;
   elevationDeclinedDialogOpen: boolean;
+  /**
+   * True until the Windows startup-elevation gate resolves. Defaults true so
+   * heavy init (auth, dashboard) cannot race ahead of the elevation check on
+   * first paint; cleared immediately on non-Windows / non-main windows, or
+   * once the UAC decision is settled (including "Launch normally").
+   */
+  elevationStartupPending: boolean;
   diagnosticsDialogOpen: boolean;
   aiTranscription: SettingsTranscriptionState;
   aiPostProcessing: SettingsGenerativeState;
   agentMode: SettingsAgentModeState;
+  inDictationStyleSwitchingEnabled: boolean;
+  hallucinationFilterEnabled: boolean;
+  fastStyleShortDictationsEnabled: boolean;
+  reviewBeforeInsert: boolean;
+  agentEnabledTools: string[] | null;
+  agentMaxIterations: number;
+  agentPermissionTimeoutMs: number;
   apiKeys: SettingsApiKey[];
   apiKeysStatus: ActionStatus;
   hotkeyIds: string[];
   hotkeysStatus: ActionStatus;
+  hotkeysRequestId: string | null;
   autoLaunchEnabled: boolean;
   autoLaunchStatus: ActionStatus;
   openRouterModels: OpenRouterModel[];
@@ -94,6 +109,13 @@ export type SettingsState = {
   openRouterSearchQuery: string;
   openRouterProviders: OpenRouterProvider[];
   openRouterProvidersStatus: ActionStatus;
+  /**
+   * Whether the backend reports a capture stream held right now.
+   *
+   * `null` until it has been read. The switch reflects the preference; this
+   * reflects the device, and the two disagree whenever an open failed.
+   */
+  microphoneHeld: boolean | null;
 };
 
 export const createEmptyLocalTranscriptionModelStatusMap =
@@ -133,11 +155,12 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
   aiTranscriptionDialogOpen: false,
   aiPostProcessingDialogOpen: false,
   agentModeDialogOpen: false,
-  moreSettingsDialogOpen: false,
   multiDeviceDialogOpen: false,
   dictationLanguageDialogOpen: false,
+  styleHotkeysDialogOpen: false,
   appKeybindingsDialogOpen: false,
   elevationDeclinedDialogOpen: false,
+  elevationStartupPending: true,
   diagnosticsDialogOpen: false,
   aiTranscription: {
     mode: null,
@@ -165,10 +188,18 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
     openclawGatewayUrl: null,
     openclawToken: null,
   },
+  inDictationStyleSwitchingEnabled: false,
+  hallucinationFilterEnabled: true,
+  fastStyleShortDictationsEnabled: true,
+  reviewBeforeInsert: false,
+  agentEnabledTools: null,
+  agentMaxIterations: 20,
+  agentPermissionTimeoutMs: 60_000,
   apiKeys: [],
   apiKeysStatus: "idle",
   hotkeyIds: [],
   hotkeysStatus: "idle",
+  hotkeysRequestId: null,
   autoLaunchEnabled: false,
   autoLaunchStatus: "idle",
   openRouterModels: [],
@@ -176,4 +207,5 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
   openRouterSearchQuery: "",
   openRouterProviders: [],
   openRouterProvidersStatus: "idle",
+  microphoneHeld: null,
 };

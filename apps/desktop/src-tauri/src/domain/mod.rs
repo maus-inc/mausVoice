@@ -2,6 +2,7 @@ pub mod api_key;
 pub mod app_target;
 pub mod chat_message;
 pub mod conversation;
+pub mod daily_word_activity;
 pub mod hotkey;
 pub mod keyboard;
 pub mod monitor;
@@ -15,13 +16,18 @@ pub mod tone;
 pub mod transcription;
 pub mod user;
 
-pub use api_key::{ApiKey, ApiKeyCreateRequest, ApiKeyUpdateRequest, ApiKeyView};
+pub use api_key::{
+    ApiKey, ApiKeyCreateRequest, ApiKeyCredentialIssue, ApiKeyCredentialStatus,
+    ApiKeyUpdateRequest, ApiKeyView,
+};
 pub use app_target::{AppTarget, EVT_REGISTER_CURRENT_APP};
 pub use chat_message::ChatMessage;
 pub use conversation::Conversation;
+pub use daily_word_activity::DailyWordActivity;
 pub use hotkey::{CompositorBinding, Hotkey};
 pub use keyboard::{
-    KeyboardListenerHealthPayload, KeysHeldPayload, EVT_KEYBOARD_LISTENER_HEALTH, EVT_KEYS_HELD,
+    KeyboardListenerHealthPayload, KeysHeldPayload, EVT_DESKTOP_RESUME,
+    EVT_KEYBOARD_LISTENER_HEALTH, EVT_KEYS_HELD,
 };
 pub use monitor::{MonitorAtCursor, OverlayAnchor, ScreenVisibleArea};
 pub use overlay::{OverlayPhase, OverlayPhasePayload, PillWindowSize, EVT_OVERLAY_PHASE};

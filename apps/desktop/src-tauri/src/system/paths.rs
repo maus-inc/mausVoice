@@ -1,20 +1,38 @@
-use std::{fs, io, path::{Path, PathBuf}};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 use tauri::Manager;
 
 use super::models::WhisperModelSize;
 
 const MODELS_DIR_NAME: &str = "transcription-models";
 const LEGACY_MODELS_DIR_NAME: &str = "models";
-const STORAGE_DIR_NAME: &str = "storage";
+pub(crate) const STORAGE_DIR_NAME: &str = "storage";
 
 // Pre-rebrand values: the app identifier and database filename changed when
 // the product was renamed from Voquill to mausVoice. Tauri derives the config
-// directory from the identifier, so an upgraded install opens a brand-new
-// directory and a brand-new database. Copy the legacy database (plus any
-// WAL/SHM side files) into the current location once, idempotently, so
-// existing users keep their transcriptions, preferences, and stored API keys.
-const LEGACY_CONFIG_DIR_NAME: &str = "com.voquill.desktop";
-const LEGACY_DB_FILENAME: &str = "voquill.db";
+// and data directories from the bundle identifier, so we pair each mausVoice
+// flavor only with its matching Voquill flavor to avoid cross-flavor leakage.
+pub(crate) const LEGACY_PROD_IDENTIFIER: &str = "com.voquill.desktop";
+const LEGACY_DEV_IDENTIFIER: &str = "com.voquill.desktop.dev";
+const LEGACY_LOCAL_IDENTIFIER: &str = "com.voquill.desktop.local";
+pub(crate) const LEGACY_DB_FILENAME: &str = "voquill.db";
+
+pub(crate) fn legacy_identifier_for(current_identifier: &str) -> Option<&'static str> {
+    match current_identifier {
+        "com.mausinc.desktop" => Some(LEGACY_PROD_IDENTIFIER),
+        "com.mausinc.desktop.dev" => Some(LEGACY_DEV_IDENTIFIER),
+        "com.mausinc.desktop.local" => Some(LEGACY_LOCAL_IDENTIFIER),
+        _ => None,
+    }
+}
+
+pub(crate) fn sibling_legacy_dir(current_dir: &Path) -> Option<PathBuf> {
+    let leaf = current_dir.file_name()?.to_str()?;
+    let legacy_leaf = legacy_identifier_for(leaf)?;
+    current_dir.parent().map(|base| base.join(legacy_leaf))
+}
 
 pub fn database_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
     let mut path = app
@@ -23,62 +41,48 @@ pub fn database_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
         .map_err(|err| io::Error::other(err.to_string()))?;
     fs::create_dir_all(&path)?;
     path.push(crate::db::DB_FILENAME);
-
-    if !path.exists() {
-        migrate_legacy_database(app, &path)?;
-    }
-
     Ok(path)
 }
 
-fn migrate_legacy_database(app: &tauri::AppHandle, current_path: &Path) -> io::Result<()> {
-    let legacy_dir = match app.path().app_config_dir() {
-        Ok(dir) => dir
-            .parent()
-            .map(|base| base.join(LEGACY_CONFIG_DIR_NAME)),
-        Err(_) => None,
-    };
-    let Some(legacy_dir) = legacy_dir else {
-        return Ok(());
-    };
-    if !legacy_dir.is_dir() {
-        return Ok(());
-    }
-
-    let legacy_db = legacy_dir.join(LEGACY_DB_FILENAME);
-    if !legacy_db.exists() {
-        return Ok(());
-    }
-
-    if let Some(parent) = current_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    fs::copy(&legacy_db, current_path)?;
-    for sidecar in ["-wal", "-shm"] {
-        let legacy_sidecar = legacy_dir.join(format!("{LEGACY_DB_FILENAME}{sidecar}"));
-        if legacy_sidecar.exists() {
-            let _ = fs::copy(&legacy_sidecar, current_path.with_file_name(format!(
-                "{}{sidecar}",
-                crate::db::DB_FILENAME
-            )));
-        }
-    }
-    log::info!(
-        "Migrated legacy database from {:?} to {:?}",
-        legacy_db,
-        current_path
-    );
-
-    Ok(())
+pub(crate) fn legacy_voquill_config_dir(app: &tauri::AppHandle) -> io::Result<Option<PathBuf>> {
+    let current_config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    Ok(sibling_legacy_dir(&current_config_dir))
 }
 
-pub fn database_url(app: &tauri::AppHandle) -> io::Result<String> {
-    let path = database_path(app)?;
-    let path_str = path
-        .to_str()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid database path"))?;
-    Ok(format!("sqlite:{path_str}"))
+pub(crate) fn legacy_voquill_data_dir(app: &tauri::AppHandle) -> io::Result<Option<PathBuf>> {
+    let current_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    Ok(sibling_legacy_dir(&current_data_dir))
+}
+
+/// Delete the previous-brand database and SQLite sidecars during an explicit
+/// local-data clear. Normal migration preserves the legacy source untouched so
+/// users can recover or verify their old data; explicit local-data clear
+/// removes both the current database and the legacy database files so wiped
+/// user data does not remain behind on disk.
+pub fn delete_legacy_database(app: &tauri::AppHandle) -> io::Result<usize> {
+    let Some(legacy_dir) = legacy_voquill_config_dir(app)? else {
+        return Ok(0);
+    };
+    delete_legacy_database_files_in(&legacy_dir)
+}
+
+fn delete_legacy_database_files_in(legacy_dir: &Path) -> io::Result<usize> {
+    let mut deleted = 0;
+    for suffix in ["-journal", "-wal", "-shm", ""] {
+        let path = legacy_dir.join(format!("{LEGACY_DB_FILENAME}{suffix}"));
+        match fs::remove_file(path) {
+            Ok(()) => deleted += 1,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(deleted)
 }
 
 fn resolved_app_data_dir(app: &tauri::AppHandle) -> io::Result<PathBuf> {
@@ -106,9 +110,7 @@ pub fn migrate_legacy_models(app: &tauri::AppHandle) -> io::Result<()> {
     let migrated = migrate_model_files(&legacy_dir, &current_dir)?;
     if migrated > 0 {
         log::info!(
-            "Migrated {migrated} local transcription model file(s) from {:?} to {:?}",
-            legacy_dir,
-            current_dir
+            "Migrated {migrated} local transcription model file(s) from {legacy_dir:?} to {current_dir:?}"
         );
     }
 
@@ -148,8 +150,7 @@ fn migrate_model_files(legacy_dir: &Path, current_dir: &Path) -> io::Result<usiz
                     io::Error::new(
                         copy_error.kind(),
                         format!(
-                            "failed to migrate model file {:?} after rename error ({rename_error}): {copy_error}",
-                            source
+                            "failed to migrate model file {source:?} after rename error ({rename_error}): {copy_error}"
                         ),
                     )
                 })?;
@@ -163,12 +164,12 @@ fn migrate_model_files(legacy_dir: &Path, current_dir: &Path) -> io::Result<usiz
 }
 
 pub fn storage_dir(app: &tauri::AppHandle) -> io::Result<PathBuf> {
+    let _storage = crate::system::audio_store::open_storage_dir(app)?;
     let mut path = app
         .path()
         .app_data_dir()
         .map_err(|err| io::Error::other(err.to_string()))?;
     path.push(STORAGE_DIR_NAME);
-    fs::create_dir_all(&path)?;
     Ok(path)
 }
 
@@ -189,9 +190,35 @@ pub fn startup_diagnostics_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::migrate_model_files;
+    use super::{delete_legacy_database_files_in, migrate_model_files};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn deleting_legacy_database_removes_only_its_sqlite_files() {
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-legacy-db-clear-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock must be after the Unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("failed to create test directory");
+        for suffix in ["", "-journal", "-wal", "-shm"] {
+            fs::write(root.join(format!("voquill.db{suffix}")), b"legacy database")
+                .expect("failed to write legacy database fixture");
+        }
+        fs::write(root.join("keep.txt"), b"unrelated data")
+            .expect("failed to write unrelated fixture");
+
+        assert_eq!(delete_legacy_database_files_in(&root).unwrap(), 4);
+        for suffix in ["", "-journal", "-wal", "-shm"] {
+            assert!(!root.join(format!("voquill.db{suffix}")).exists());
+        }
+        assert_eq!(fs::read(root.join("keep.txt")).unwrap(), b"unrelated data");
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn migrates_legacy_files_without_overwriting_current_files() {

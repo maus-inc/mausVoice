@@ -1,47 +1,599 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-const read = (relativePath) =>
-  readFileSync(resolve(repoRoot, relativePath), "utf8");
+const rawText = new Map();
 
+// Verbatim bytes, memoized per path.
+const readRaw = (relativePath) => {
+  if (!rawText.has(relativePath)) {
+    rawText.set(
+      relativePath,
+      readFileSync(resolve(repoRoot, relativePath), "utf8"),
+    );
+  }
+  return rawText.get(relativePath);
+};
+
+// rustfmt is a CI gate across every crate and reflows a long signature across
+// lines, so matching the raw text made every guard a formatting change could
+// break. Collapsing runs of whitespace keeps each assertion reading as the code
+// it means while leaving it indifferent to how rustfmt wraps it.
+const collapse = (text) =>
+  text
+    .replace(/\s+/g, " ")
+    // rustfmt breaks a method chain across lines with the `.` leading the next
+    // line, which leaves a space before the dot once the newlines are collapsed.
+    .replace(/\s+\./g, ".");
+
+// Only the Rust sources are collapsed. rustfmt is what reflows them, while
+// prettier leaves the YAML, HTML, MDX and TypeScript files this file also reads
+// alone; collapsing those would match text no file holds, since `- .github/**`
+// reads as `-.github/**` and a multi-line YAML block becomes one line.
+const read = (relativePath) =>
+  relativePath.endsWith(".rs")
+    ? collapse(readRaw(relativePath))
+    : readRaw(relativePath);
+
+// Keep Rust line boundaries until comments and literals are gone. Block comments
+// nest and raw strings may themselves contain quotes and comment delimiters.
+function rustCode(text) {
+  const noise =
+    /\/\/[^\n]*|\/\*|\b[bc]?r(#*)"|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\\n])'/gu;
+  const chunks = [];
+  let end = 0;
+  for (let m; (m = noise.exec(text)); end = noise.lastIndex) {
+    chunks.push(text.slice(end, m.index), " ");
+    if (m[0] === "/*") {
+      const delimiter = /\/\*|\*\//g;
+      delimiter.lastIndex = noise.lastIndex;
+      let depth = 1;
+      while (depth) {
+        const next = delimiter.exec(text);
+        assert.ok(next, "unclosed Rust block comment");
+        depth += next[0] === "/*" ? 1 : -1;
+      }
+      noise.lastIndex = delimiter.lastIndex;
+    } else if (m[1] !== undefined) {
+      const terminator = `"${m[1]}`;
+      const close = text.indexOf(terminator, noise.lastIndex);
+      assert.notEqual(close, -1, "unclosed raw string");
+      noise.lastIndex = close + terminator.length;
+    }
+  }
+  return chunks.join("") + text.slice(end);
+}
+
+function routesPhase(raw, owner, bannerOwner) {
+  const code = raw.replace(/\s+/gu, "");
+  const arms = code.split("InMessage::Phase{phase,seq}=>");
+  if (arms.length !== 2) return false;
+  // Bound on the next arm rather than on `Levels`, because arm order differs
+  // per platform and the body is what this guard is about.
+  const body = arms[1].split(/InMessage::/u)[0].replace(/,$/u, "");
+  const call = `${owner}.indicator.apply_phase(phase,seq,reduced_motion,||clear_flash(${bannerOwner}))`;
+  return [call, `{${call}}`, `{${call};}`].includes(body);
+}
+
+// Every Rust file under a directory. A guard that has to prove a shape holds on
+// all of them cannot list them: the file it misses is the drift it exists for,
+// and a platform-gated file compiles only on that platform's CI job.
+const rustFilesUnder = (directory) => {
+  const found = [];
+  const walk = (relativePath) => {
+    for (const entry of readdirSync(join(repoRoot, relativePath), {
+      withFileTypes: true,
+    })) {
+      const child = `${relativePath}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else if (entry.name.endsWith(".rs")) found.push(child);
+    }
+  };
+  walk(directory);
+  return found.sort();
+};
+
+// The lines of the item declared at `marker`, up to and including the line that
+// closes it, collapsed as `read` collapses a whole file. A guard that inspects
+// one function cannot use the collapsed text: a `//` comment runs to the end of
+// its line, so collapsing first lets it swallow everything after it, and the
+// scope it then computes is the rest of the file rather than the function. The
+// first `}` at the item's own indentation is the item's, because rustfmt aligns
+// a function's closing brace with its `fn`.
+const scopeOf = (relativePath, marker) => {
+  const lines = readRaw(relativePath).split("\n");
+  const start = lines.findIndex((line) => line.includes(marker));
+  if (start === -1) return "";
+  const indent = /^ */.exec(lines[start])[0].length;
+  const closes = new RegExp(`^ {${indent}}\\}`);
+  let end = start + 1;
+  while (end < lines.length && !closes.test(lines[end])) end += 1;
+  return collapse(lines.slice(start, end + 1).join("\n"));
+};
+
+// The index just past a Rust string or line comment that starts at `i`, or `i`
+// when no literal starts there. Brace counting that walks raw text treats a
+// brace inside `"reset }"` as the end of the enclosing function, so a guard then
+// reads a truncated body and fails over code that is correct. Raw strings are
+// not handled: none of the scanned files use one inside a handler.
+const skipRustLiteral = (text, i, skipComments) => {
+  const ch = text[i];
+  // Only on raw text. A collapsed body has no newline to end a comment, so
+  // skipping to one would swallow the rest of the function.
+  if (skipComments && ch === "/" && text[i + 1] === "/") {
+    const end = text.indexOf("\n", i);
+    return end === -1 ? text.length : end;
+  }
+  // Only double-quoted strings. An apostrophe is a lifetime far more often than
+  // a char literal in this code, and treating `&'static` as an opening quote
+  // swallows the rest of the file. A `'{'` char literal is not handled for the
+  // same reason, and none appears in a scanned handler.
+  if (ch !== '"') return i;
+  for (let j = i + 1; j < text.length; j += 1) {
+    if (text[j] === "\\") {
+      j += 1;
+    } else if (text[j] === ch) {
+      return j + 1;
+    }
+  }
+  return text.length;
+};
+
+// The text inside the brace-delimited block whose opening `{` is at
+// `openIndex`. A pattern with `[\s\S]*?` can cross the block's closing brace and
+// match a `return` from a later branch, so a guard that cares whether *this*
+// branch returns has to read the block itself.
+const balancedBlock = (text, openIndex) => {
+  let depth = 0;
+  for (let i = openIndex; i < text.length; i += 1) {
+    const skip = skipRustLiteral(text, i, false);
+    if (skip > i) {
+      i = skip - 1;
+      continue;
+    }
+    if (text[i] === "{") depth += 1;
+    else if (text[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(openIndex + 1, i);
+    }
+  }
+  return "";
+};
+
+// The body of one message handler, whichever shape it has.
+//
+// A message used to be a match arm inline in the drain loop, so guards split the
+// file on the arm's pattern and read up to the next variant. Now each message is
+// its own function, and splitting on the arm would read an empty string -- every
+// assertion inside it then fails, or worse, a `doesNotMatch` passes for the wrong
+// reason. This finds the handler for a variant by its `fn on_*` name, then by the
+// arm that dispatches to it.
+const handlerBody = (path, variant) => {
+  // Reads the file itself: `source` is collapsed, and on collapsed text a comment
+  // that names a variant looks the same as the arm that matches it.
+  const text = readRaw(path);
+  const snake = variant.replace(/(?<!^)([A-Z])/g, "_$1").toLowerCase();
+  // The arm that dispatches to this variant, from its line to the next arm. Found
+  // by its own line rather than by substring, so a mention in a comment is not one.
+  const arm = new RegExp(`^ *InMessage::${variant}\\b`);
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => arm.test(line));
+  let armText = "";
+  if (start !== -1) {
+    const indent = /^ */.exec(lines[start])[0].length;
+    const next = new RegExp(`^ {0,${indent}}InMessage::[A-Z]`);
+    // The match closes before another arm appears when this one is last, and the
+    // text after that brace is not part of the arm. Without the stop, the arm ran
+    // to the end of the file and a handler defined below it read as a call.
+    const closes = new RegExp(`^ {0,${indent}}}`);
+    // The `=>` is found before the stop scan: a struct pattern can span lines and
+    // its closing brace sits at the arm's indent, so stopping at the first brace
+    // would cut the arm before the call that proves the handler is still used.
+    let end = start + 1;
+    while (end < lines.length && !lines[end].includes("=>")) {
+      if (next.test(lines[end]) || closes.test(lines[end])) break;
+      end += 1;
+    }
+    end += 1;
+    while (end < lines.length && !next.test(lines[end])) {
+      if (closes.test(lines[end])) break;
+      end += 1;
+    }
+    armText = lines.slice(start, end).join("\n");
+  }
+  const fnName = `on_${snake}`;
+  const fnAt = text.indexOf(`fn ${fnName}(`);
+  if (fnAt !== -1) {
+    // A named handler only counts while an arm still calls it. A function left
+    // behind by a removed arm reads as a handler while the runtime ignores the
+    // message, so every guard built on it would pass over dead code.
+    // A call in a comment is not a call. An arm that stopped calling its handler
+    // but kept the old call in a `//` comment reads as a handler to `includes()`,
+    // and every guard built on the arm then passes over an arm that does nothing.
+    const executable = armText.replace(/\/\/[^\n]*/g, "");
+    // The arm may handle the message inline while a same-named helper exists for
+    // something else. Then the arm is the handler, and returning an empty string
+    // failed a correct file; the caller reads the arm instead.
+    if (!new RegExp(`(?<!fn )${fnName}\\(`).test(executable)) {
+      return collapse(armText);
+    }
+    const fnStart = text.lastIndexOf("\n", fnAt) + 1;
+    let depth = 0;
+    for (let i = text.indexOf("{", fnAt); i < text.length; i += 1) {
+      const skip = skipRustLiteral(text, i, true);
+      if (skip > i) {
+        i = skip - 1;
+        continue;
+      }
+      if (text[i] === "{") depth += 1;
+      else if (text[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return collapse(text.slice(fnStart, i + 1));
+      }
+    }
+    return "";
+  }
+  return collapse(armText);
+};
+
+const PATHS = [
+  ["commands", "apps/desktop/src-tauri/src/commands.rs"],
+  ["tray", "apps/desktop/src-tauri/src/system/tray.rs"],
+  ["effects", "apps/desktop/src/components/root/AppSideEffects.tsx"],
+  ["macOverlay", "apps/desktop/src-tauri/src/platform/macos/overlay.rs"],
+  ["linuxOverlay", "apps/desktop/src-tauri/src/platform/linux/overlay.rs"],
+  ["windowsOverlay", "apps/desktop/src-tauri/src/platform/windows/overlay.rs"],
+  ["commonPlatform", "apps/desktop/src-tauri/src/platform/common.rs"],
+  ["macPill", "packages/rust_macos_pill/src/app.rs"],
+  ["gtkPill", "packages/rust_gtk_pill/src/pill.rs"],
+  ["gtkInput", "packages/rust_gtk_pill/src/input.rs"],
+  ["gtkX11", "packages/rust_gtk_pill/src/x11.rs"],
+  ["windowsPill", "packages/rust_windows_pill/src/pill.rs"],
+  ["macApp", "packages/rust_macos_pill/src/app.rs"],
+  ["pillProcess", "apps/desktop/src-tauri/src/pill_process.rs"],
+  ["pillPosition", "apps/desktop/src-tauri/src/pill_position.rs"],
+  ["restore", "packages/rust_pill_shared/src/restore.rs"],
+  ["windowsMain", "packages/rust_windows_pill/src/main.rs"],
+  ["macMain", "packages/rust_macos_pill/src/main.rs"],
+  ["layout", "packages/rust_pill_shared/src/layout.rs"],
+  ["gtkMain", "packages/rust_gtk_pill/src/main.rs"],
+  ["gtkIpc", "packages/rust_gtk_pill/src/ipc.rs"],
+  ["windowsIpc", "packages/rust_windows_pill/src/ipc.rs"],
+  ["macIpc", "packages/rust_macos_pill/src/ipc.rs"],
+  ["macState", "packages/rust_macos_pill/src/state.rs"],
+  ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
+  ["windowsState", "packages/rust_windows_pill/src/state.rs"],
+  ["sharedPill", "packages/rust_pill_shared/src/lib.rs"],
+  ["sharedIndicator", "packages/rust_pill_shared/src/indicator.rs"],
+  ["sharedMessages", "packages/rust_pill_shared/src/messages.rs"],
+  ["sharedHover", "packages/rust_pill_shared/src/hover.rs"],
+  ["sharedDrag", "packages/rust_pill_shared/src/drag.rs"],
+  ["sharedSpring", "packages/rust_pill_shared/src/spring.rs"],
+  ["macDraw", "packages/rust_macos_pill/src/draw.rs"],
+  ["macInput", "packages/rust_macos_pill/src/input.rs"],
+  ["gtkDraw", "packages/rust_gtk_pill/src/draw.rs"],
+  ["windowsDraw", "packages/rust_windows_pill/src/draw.rs"],
+  ["windowsGfx", "packages/rust_windows_pill/src/gfx.rs"],
+  ["recording", "apps/desktop/src-tauri/src/domain/recording.rs"],
+  ["audioChunks", "apps/desktop/src/sessions/audio-chunk-events.ts"],
+  ["intake", "apps/desktop/src/components/root/dictation-recording-intake.ts"],
+  ["integrationWorkflow", ".github/workflows/test-desktop-integration.yml"],
+  ["docsWorkflow", ".github/workflows/test-docs.yml"],
+  ["index", "index.html"],
+  ["astro", "apps/docs/astro.config.mjs"],
+  ["docsIndex", "apps/docs/src/content/docs/index.mdx"],
+  ["docsLlms", "apps/docs/public/llms.txt"],
+  ["docsRobots", "apps/docs/public/robots.txt"],
+];
+
+const pathOf = new Map(PATHS);
 const source = Object.fromEntries(
-  [
-    ["commands", "apps/desktop/src-tauri/src/commands.rs"],
-    ["tray", "apps/desktop/src-tauri/src/system/tray.rs"],
-    ["effects", "apps/desktop/src/components/root/AppSideEffects.tsx"],
-    ["macOverlay", "apps/desktop/src-tauri/src/platform/macos/overlay.rs"],
-    ["linuxOverlay", "apps/desktop/src-tauri/src/platform/linux/overlay.rs"],
-    [
-      "windowsOverlay",
-      "apps/desktop/src-tauri/src/platform/windows/overlay.rs",
-    ],
-    ["macPill", "packages/rust_macos_pill/src/app.rs"],
-    ["gtkPill", "packages/rust_gtk_pill/src/pill.rs"],
-    ["gtkX11", "packages/rust_gtk_pill/src/x11.rs"],
-    ["windowsPill", "packages/rust_windows_pill/src/pill.rs"],
-    ["macApp", "packages/rust_macos_pill/src/app.rs"],
-    ["pillProcess", "apps/desktop/src-tauri/src/pill_process.rs"],
-    ["macState", "packages/rust_macos_pill/src/state.rs"],
-    ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
-    ["windowsState", "packages/rust_windows_pill/src/state.rs"],
-    ["sharedPill", "packages/rust_pill_shared/src/lib.rs"],
-    ["macDraw", "packages/rust_macos_pill/src/draw.rs"],
-    ["gtkDraw", "packages/rust_gtk_pill/src/draw.rs"],
-    ["windowsDraw", "packages/rust_windows_pill/src/draw.rs"],
-    ["integrationWorkflow", ".github/workflows/test-desktop-integration.yml"],
-    ["docsWorkflow", ".github/workflows/test-docs.yml"],
-    ["index", "index.html"],
-    ["astro", "apps/docs/astro.config.mjs"],
-    ["docsIndex", "apps/docs/src/content/docs/index.mdx"],
-    ["docsLlms", "apps/docs/public/llms.txt"],
-    ["docsRobots", "apps/docs/public/robots.txt"],
-  ].map(([name, path]) => [name, read(path)]),
+  PATHS.map(([name, path]) => [name, read(path)]),
 );
+// One function's body, for the guards that read code rather than the file.
+const scope = (name, marker) => scopeOf(pathOf.get(name), marker);
+
+// The `jobs:` table of a workflow as { name, body } records. A guard that has to
+// prove a secret is inside a guarded job cannot scan the file as one string:
+// the guard and the secret are the same text wherever they both appear.
+const workflowJobs = (workflowText) => {
+  // Line endings are normalised here, at the one place the text is split, because every pattern
+  // below is anchored per line and `.` does not match `\r`. Left alone, a CRLF checkout fails
+  // every key pattern at once, no `if:` is found anywhere, and every job reads as unguarded --
+  // a total gate failure on a file GitHub Actions itself accepts. No workflow in the repo is
+  // CRLF today, and `.gitattributes` normalises only `*.sql`, so this is latent rather than
+  // firing; it is fixed because the failure is silent and total.
+  const lines = workflowText.replace(/\r\n?/g, "\n").split("\n");
+  const jobsAt = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  const jobs = [];
+  let name = null;
+  let body = [];
+  for (const line of lines.slice(jobsAt + 1)) {
+    // A trailing comment is allowed on the job key. Without this, `  provider:  # gated` is not
+    // recognised as a job at all, so `workflowJobs` returns nothing and the gate fails with
+    // "the workflow must declare at least one job" -- which points an author who DID declare a
+    // job at the wrong thing. Only the comment is tolerated here; a value after the colon is not
+    // a job key and still fails to match.
+    const job = /^ {2}([A-Za-z0-9_-]+):\s*(?:#.*)?$/.exec(line);
+    if (job) {
+      if (name) jobs.push({ name, body: body.join("\n") });
+      name = job[1];
+      body = [];
+      continue;
+    }
+    if (name) body.push(line);
+  }
+  if (name) jobs.push({ name, body: body.join("\n") });
+  return jobs;
+};
+
+// What this gate proves, and what it does not. It is worth being exact, because a security gate
+// that is read as stronger than it is has failed in the way that matters.
+//
+// PROVES: the guard text is the VALUE of an `if:` key, on either the job or the reading step, and
+// that the key is not inside a comment. That closes "the guard is mentioned somewhere in this job".
+//
+// DOES NOT PROVE: that the condition GATES. `if: <guard> || always()` names every path and admits
+// every fork, and passes. Settling that means evaluating a GitHub expression, which a text check
+// cannot do; this gate deliberately checks for the token and says so rather than approximating.
+//
+// Also not followed: a guard reached through an `env:` indirection in its own `if:` (`if: env.SAME
+// == 'true'`), and one literal spelling of the comparison (`== ` with single spaces, operands in
+// this order). Both are legal and both fail closed, which means a correctly gated workflow written
+// that way is rejected rather than admitted.
+const FORK_GUARD_SOURCE =
+  "github.event.pull_request.head.repo.full_name == github.repository";
+const FORK_GUARD_RE = new RegExp(FORK_GUARD_SOURCE.replace(/\./g, "\\."));
+
+/**
+ * Where the YAML comment starts on `line`, or -1 when the line has none.
+ *
+ * Three rules. A `#` only opens a comment after whitespace or at the start of the line, so
+ * `run: echo a#b` has no comment. A `#` inside a quoted scalar is data, and a backslash escapes
+ * the next character inside a double-quoted one, so `run: echo "a \" # b"` has no comment
+ * either. And cutting at the FIRST comment opener is sufficient: text after a comment cannot
+ * make a match appear, it can only remove text, so no later `#` needs finding.
+ *
+ * Every rule here can only REMOVE text, never add it, so a mistake in any of them rejects a
+ * correctly guarded job rather than admitting an unguarded one.
+ */
+const commentStart = (line) => {
+  let quote = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote !== null) {
+      if (char === "\\" && quote === '"') index += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === "#" && (index === 0 || /\s/.test(line[index - 1])))
+      return index;
+  }
+  return -1;
+};
+
+/**
+ * `text` with every line's trailing comment removed, so prose cannot satisfy a condition match.
+ *
+ * Whole-line comments are the easy half. A comment AFTER an `if:` value is the half that matters:
+ * `if: always()  # github.event.pull_request...` leaves the job unguarded on every fork, and the
+ * real workflow documents this rule in a comment directly above its own `if:`, which makes the
+ * trailing spelling the natural next one to try.
+ */
+const stripYamlComments = (text) =>
+  text
+    .split("\n")
+    .map((line) => {
+      const at = commentStart(line);
+      return at === -1 ? line : line.slice(0, at);
+    })
+    .join("\n");
+
+/**
+ * The value of the `if:` key at exactly `indent` spaces, comments already stripped.
+ *
+ * Key-anchored on purpose. A guard is a condition only when it is the VALUE of an `if:` key. The
+ * same text in a `run:` body, a `name:`, or an `env:` value gates nothing -- matching the guard
+ * anywhere in the job text is precisely what let a job with the guard only in prose pass.
+ *
+ * A block scalar body (`if: |`) continues at deeper indentation than its key, so the body is
+ * collected too. `FORK_GUARD_RE` needs the two halves concatenated, because a folded or split
+ * condition puts the guard somewhere other than the first physical line.
+ */
+const ifConditionAt = (text, indent) => {
+  const keyPattern = new RegExp(`^ {${indent}}([A-Za-z0-9_-]+):(.*)$`);
+  // A block scalar body is deeper than its key by at least one column. Deriving that threshold
+  // from `indent` rather than fixing it at 6 is what makes the sentence above true of a job-level
+  // key at 4 and a step-level key at 6 alike; the two shapes in use are 6 and 10 columns.
+  const bodyPattern = new RegExp(`^ {${indent + 1},}\\S`);
+  const parts = [];
+  let collecting = false;
+  for (const line of text.split("\n")) {
+    const key = keyPattern.exec(line);
+    if (key !== null) {
+      // Any other key ends the previous `if:` and only an `if:` starts a new one.
+      if (key[1] !== "if") collecting = false;
+      else {
+        collecting = true;
+        parts.push(key[2].trim());
+      }
+      continue;
+    }
+    if (collecting && bodyPattern.test(line)) {
+      parts.push(line.trim());
+      continue;
+    }
+    if (line.trim() !== "") collecting = false;
+  }
+  return parts.join(" ");
+};
+
+/**
+ * A job body split into the job's own keys (`header`) and its steps.
+ *
+ * Two shapes this has to get right, each of which a fixed-indent heuristic gets wrong:
+ *
+ *   - The step list ENDS where the job's own keys resume, so a job-level `if:` written AFTER
+ *     `steps:` is still a job-level `if:`. YAML mapping order carries no meaning, so reading only
+ *     the header above `steps:` rejects a correctly guarded job.
+ *   - The step indent comes from the first dash rather than being assumed, because a sequence item
+ *     may legally sit at its parent key's own indent (`steps:` at 4 with `- ` at 4). A split that
+ *     hardcoded 6 spaces could not see those, and would then attribute the secret to the header,
+ *     where only a job-level `if:` can gate it -- so a guarded job read as an unguarded one.
+ */
+const indentOf = (line) => line.length - line.trimStart().length;
+
+const splitJob = (jobBody) => {
+  const header = [];
+  const steps = [];
+  // Each step carries the indent of its OWN keys, which is the dash indent plus two. A step list
+  // written at its key's own indent has 4-column keys and a step list written conventionally has
+  // 8-column keys, so the value is recorded per step rather than assumed once.
+  let step = null;
+  let stepIndent = null;
+  let inSteps = false;
+
+  const flush = () => {
+    if (step !== null) {
+      steps.push({ text: step.join("\n"), keyIndent: stepIndent + 2 });
+      step = null;
+    }
+  };
+
+  const startsStep = (line) => {
+    if (!/^ *- /.test(line)) return false;
+    const indent = indentOf(line);
+    return indent <= 6 && (stepIndent === null || indent === stepIndent);
+  };
+
+  for (const line of jobBody.split("\n")) {
+    if (/^ {4}steps:/.test(line)) {
+      flush();
+      inSteps = true;
+      header.push(line);
+      continue;
+    }
+    if (inSteps && startsStep(line)) {
+      if (stepIndent === null) stepIndent = indentOf(line);
+      flush();
+      step = [line];
+      continue;
+    }
+    // A non-blank line at 4 columns or shallower, that is not a step, is the job's next key. This
+    // is what ends the step list, and dropping it lets a later `env:` value read as a job gate.
+    if (inSteps && line.trim() !== "" && indentOf(line) <= 4) {
+      flush();
+      inSteps = false;
+    }
+    if (step !== null) step.push(line);
+    else header.push(line);
+  }
+  flush();
+  return { header: header.join("\n"), steps };
+};
+
+/**
+ * A step with its leading dash replaced by indentation, so the step's own keys sit where a
+ * mapping's keys sit, and every one of them at the same column.
+ *
+ * Only the FIRST line is rewritten: a `- ` deeper in the block belongs to a nested list or a shell
+ * body, and shifting it left would move text the parser then misreads. `keyIndent` comes from the
+ * step's own dash rather than a constant, so a step written at its key's own indent still has its
+ * keys where `ifConditionAt` looks for them, and the whitespace after the dash is consumed so
+ * `-   if:` lands on the same column as `- if:`.
+ */
+const undashStep = (step, keyIndent) =>
+  step.replace(/^ *-\s+/, " ".repeat(keyIndent));
+
+const readsSecret = (text, secret) => text.includes(`secrets.${secret}`);
+
+/**
+ * Whether `job` is really gated, rather than merely mentioning the guard.
+ *
+ * Two things a text search over the job body cannot tell apart, and both are what a plausible edit
+ * produces: the guard is PROSE (a comment, a `run:` body, a `name:`), or it is on a DIFFERENT unit
+ * than the one that reads the secret. So the guard has to be the value of an `if:` key, and it has
+ * to gate the unit that reads.
+ *
+ * A job-level `if:` gates everything, including the reads no step can reach -- a job-level `env:`,
+ * and a `uses:` caller's `secrets:` block. That makes it the whole answer when the guard is in it,
+ * which is the shape the real workflow uses. Failing that, a read in the header has nothing that
+ * could gate it, and a read in a step must carry the step's own condition.
+ *
+ * Anything this cannot attribute to a unit REJECTS. A gate that admits too much is the cheaper
+ * mistake here: a gate that rejects a correctly guarded workflow teaches its author to delete a
+ * real guard.
+ *
+ * "Cannot attribute" is not hypothetical. A step written in flow style (`- { if: ..., run: ... }`)
+ * is not recognised as a step at all -- the dash is followed by `{`, not a space -- so its secret
+ * reads as a header read and the job is rejected. Prettier normalises that spelling, and no
+ * workflow here uses it, but it is the shape that fails closed.
+ */
+const jobIsForkGated = (jobBody, secret) => {
+  const code = stripYamlComments(jobBody);
+  if (FORK_GUARD_RE.test(ifConditionAt(code, 4))) return true;
+  const { header, steps } = splitJob(code);
+  if (readsSecret(header, secret)) return false;
+  const readers = steps.filter((step) => readsSecret(step.text, secret));
+  if (readers.length === 0) return false;
+  return readers.every((step) =>
+    FORK_GUARD_RE.test(
+      ifConditionAt(undashStep(step.text, step.keyIndent), step.keyIndent),
+    ),
+  );
+};
+
+// Every job that reads a provider secret is behind the origin guard. Asserting the guard and the
+// secret separately proves only that both exist somewhere in the file, which is what a secret
+// moved into an unguarded job, or an unguarded job added next to a guarded one, would pass.
+// Proving they are in the same JOB is necessary but not sufficient, and proving the guard is in
+// the job at all is weaker still -- see `jobIsForkGated` for the shapes that mention the guard
+// without being gated by it.
+const assertSecretsStayInsideTheGuardedJob = (workflowText, secret) => {
+  const jobs = workflowJobs(workflowText);
+  assert.ok(jobs.length > 0, "the workflow must declare at least one job");
+  const readers = jobs.filter((job) => job.body.includes(`secrets.${secret}`));
+  assert.ok(readers.length > 0, `the workflow must still read ${secret}`);
+  for (const { name, body } of readers) {
+    assert.ok(
+      jobIsForkGated(body, secret),
+      `job ${name} reads ${secret} without the fork guard that protects it`,
+    );
+  }
+};
+
+// The Linux and Windows overlays do not call `pill_process` themselves. Both
+// glob-re-export the shared notifier module, so the reset route reaches them
+// only through that glob, and the glob carries `notify_reset_position` only if
+// the module re-exports the name itself. Asserting the name anywhere in
+// `common.rs` would not prove either half: a doc comment on the module, or the
+// name left off the list, both read the same. Two tests below depend on this
+// route, so it is asserted once, here, rather than copied into each.
+const assertGlobReexportCarriesReset = () => {
+  for (const [platform, overlay] of [
+    ["linux", source.linuxOverlay],
+    ["windows", source.windowsOverlay],
+  ]) {
+    assert.match(
+      overlay,
+      /pub use crate::platform::common::notifications::\*/,
+      `the ${platform} overlay must re-export the shared reset notifier`,
+    );
+  }
+  assert.match(
+    source.commonPlatform,
+    /pub use crate::pill_process::\{[^}]*\bnotify_reset_position\b[^}]*\};/,
+    "the shared notifier module must re-export the reset command to the platforms that glob-import it",
+  );
+};
 
 describe("PR28 native reset contracts", () => {
   it("routes the reset command through every platform overlay", () => {
@@ -49,19 +601,17 @@ describe("PR28 native reset contracts", () => {
       source.commands,
       /crate::platform::overlay::notify_reset_position\(&app, &strategy\)/,
     );
+    // The reset hands the clear's declaration id to the pill so its answer
+    // retires exactly this declaration, not a later clear's.
     assert.match(
       source.macOverlay,
-      /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
+      /pill\.send\(InMessage::ResetPosition \{\s*strategy,\s*ack: Some\(declaration\),\s*\}\)/,
     );
+    assertGlobReexportCarriesReset();
     assert.match(
-      source.linuxOverlay,
-      /pill_process::notify_reset_position\(app, strategy\)/,
+      source.macPill,
+      /InMessage::ResetPosition \{ strategy, ack \}/,
     );
-    assert.match(
-      source.windowsOverlay,
-      /pill_process::notify_reset_position\(app, strategy\)/,
-    );
-    assert.match(source.macPill, /InMessage::ResetPosition \{ strategy \}/);
   });
 
   it("keeps tray reset state synchronized after native position events", () => {
@@ -82,52 +632,78 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
       /invoke\("reset_pill_position", \{ strategy \}\)/,
     );
     // The Rust command emits a typed reset_position payload to the pill
-    // process and returns an error (not a panic) when no pill is managed.
+    // process. It returns `Result` so a failure that leaves the stored row in
+    // place can reach the caller; a missing pill is not one of those, because the
+    // row is already gone and the next launch starts at the default corner.
+    // `commands.rs` returns that `Result` straight out of a `#[tauri::command]`,
+    // so the return type is part of the contract and is pinned with the
+    // parameters. The chain is `async` so the main thread does not wait on the
+    // local-data write gate, which a clear holds for its whole duration.
     assert.match(
       source.pillProcess,
-      /pub fn notify_reset_position\(app: &tauri::AppHandle, strategy: &str\)/,
+      /pub async fn notify_reset_position\(app: &tauri::AppHandle, strategy: &str\) -> Result<\(\), String>/,
     );
-    assert.match(source.pillProcess, /"type":"reset_position"/);
+    // Serialised rather than interpolated. The strategy is a `String` from an IPC
+    // argument, and the pill deserialises it into an enum that accepts only
+    // `current` and `cursor`, so hand-building the record meant an unvalidated
+    // value produced a message the pill rejected after the row was already gone.
+    assert.match(
+      source.pillProcess,
+      /serde_json::json!\(\{\s*"type": "reset_position",\s*"strategy": strategy,\s*"ack": declaration,\s*\}\)/,
+      "pillProcess: the reset record is interpolated instead of serialised",
+    );
     assert.match(
       source.pillProcess,
       /try_state::<std::sync::Arc<PillProcess>>\(\)/,
     );
     assert.match(
       source.pillProcess,
-      /Reset position requested with no managed pill process/,
+      /Reset the stored pill position with no managed pill process/,
+      "pillProcess: a reset with no pill to move is logged, not reported as a failure",
     );
-    // Each platform overlay routes the reset into its pill channel.
+    // Each platform overlay routes the reset into its pill channel, carrying the
+    // clear's declaration id so the pill's answer retires exactly it.
     assert.match(
       source.macOverlay,
-      /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
+      /pill\.send\(InMessage::ResetPosition \{\s*strategy,\s*ack: Some\(declaration\),\s*\}\)/,
     );
-    assert.match(
-      source.linuxOverlay,
-      /pill_process::notify_reset_position\(app, strategy\)/,
-    );
-    assert.match(
-      source.windowsOverlay,
-      /pill_process::notify_reset_position\(app, strategy\)/,
-    );
+    // Both overlays re-export the shared notifiers with a glob rather than
+    // naming each one, so the route lives in the module they pull from. What the
+    // contract needs is that the name resolves for a caller of the platform
+    // overlay module, which is what these check together.
+    assertGlobReexportCarriesReset();
     assert.match(
       source.gtkPill,
-      // The X11 drop position is still persisted (now via the shared
-      // clear_pointer_pin teardown, which both the release handler and the
-      // missed-release backstop call).
-      /x11::persist_drop_position\(/,
+      // The X11 drop position is still persisted through the shared
+      // clear_pointer_pin teardown, which the release handler, the motion
+      // stale-pin check, and the missed-release backstop all call. The
+      // persist_drop_position call itself moved into the x11 module, so it
+      // no longer carries the x11:: prefix at its pill.rs call sites.
+      /clear_pointer_pin\(/,
     );
-    assert.match(source.gtkPill, /x11_release_persisted\.set\(persisted\)/);
+    assert.match(source.gtkX11, /x11_release_persisted\.set\(true\)/);
     assert.match(source.gtkX11, /pub\(crate\) fn persist_drop_position/);
-    assert.match(source.gtkX11, /!state_tick\.x11_release_persisted\.replace\(false\)/);
+    // Reading the flag without clearing it is the point. Clearing it in the
+    // condition (`replace(false)`) consumed a release even when the save guard
+    // deferred or refused the save, so the missed-release net then had nothing left
+    // to act on and the drop was lost. The flag is only cleared by a save that
+    // actually happened.
+    // The net now lives in `settle_unrecorded_drop`, so the predicate is written
+    // against the borrowed state it is handed.
+    assert.match(
+      source.gtkX11,
+      /!was_dragging\.get\(\) \|\| state\.x11_release_persisted\.get\(\)/,
+    );
+    assert.doesNotMatch(
+      source.gtkX11,
+      /x11_release_persisted\.replace\(false\)/,
+    );
   });
 
   it("emits the frontend reset state event after a native position change", () => {
     // Native position change -> frontend enables/disables the tray reset item.
     assert.match(source.effects, /pill-position-changed/);
-    assert.match(
-      source.effects,
-      /invoke\("set_reset_pill_position_enabled"/,
-    );
+    assert.match(source.effects, /invoke\("set_reset_pill_position_enabled"/);
     // The command that the frontend invokes is registered in commands.rs.
     assert.match(source.commands, /reset_pill_position/);
     assert.match(source.commands, /set_reset_pill_position_enabled/);
@@ -137,26 +713,40 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
 describe("PR28 ring-alpha render-loop policy", () => {
   it("advances the ring every frame and invalidates on the zero crossing", () => {
     // Every platform routes its per-frame ring bookkeeping through the shared
-    // policy, so their timing cannot drift apart.
+    // policy, so their timing cannot drift apart: each pill calls the shared
+    // host tick, which owns the single `tick_ring` -> `advance_ring` path.
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /advance_ring/);
-      assert.match(pill, /fn tick_ring/);
+      assert.match(pill, /RingHost::tick_hold_and_ring\(state, dt\)/);
     }
+    assert.match(source.sharedPill, /fn tick_ring/);
+    assert.match(source.sharedPill, /advance_ring\(/);
     // GTK redraws the drawing area after updating alpha.
     assert.match(source.gtkPill, /da\.queue_draw\(\)/);
     // macOS marks the layer dirty after updating alpha.
     assert.match(source.macApp, /setNeedsDisplay:YES/);
-    // Windows must dirty the frame when the ring AND its arm pulse finish, so
-    // the final cleared frame repaints instead of leaving a ghost.
-    assert.match(source.windowsPill, /previous_alpha > 0\.0 && anim\.alpha == 0\.0/);
+    // The shared tick must report the frame that clears the ring AND its arm
+    // pulse, so the final cleared frame repaints instead of leaving a ghost.
     assert.match(
-      source.windowsPill,
-      /was_pulsing && !rust_pill_shared::pulse_is_running\(anim\.arm_pulse\)/,
+      source.sharedPill,
+      /previous_alpha > 0\.0 && anim\.alpha == 0\.0/,
     );
-    assert.match(source.windowsPill, /dirty\.set\(true\)/);
+    assert.match(
+      source.sharedPill,
+      /was_pulsing && !pulse_is_running\(anim\.arm_pulse\)/,
+    );
+    // Windows consumes that report through `ring_cleared`, which dirties the
+    // frame; without it the last painted state lingers.
+    assert.match(source.windowsState, /fn ring_cleared\(&self\)/);
+    assert.match(source.windowsState, /dirty\.set\(true\)/);
     // Shared fade policy stays unit-tested in the pill crate.
-    assert.match(source.sharedPill, /ring_alpha_fades_monotonically_after_release/);
-    assert.match(source.sharedPill, /advance_ring_pins_alpha_while_held_and_fades_after/);
+    assert.match(
+      source.sharedPill,
+      /ring_alpha_fades_monotonically_after_release/,
+    );
+    assert.match(
+      source.sharedPill,
+      /advance_ring_pins_alpha_while_held_and_fades_after/,
+    );
   });
 
   it("draws the ring from one continuous driver with no armed-state switch", () => {
@@ -176,31 +766,45 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(source.sharedPill, /head_is_fully_gone_before_completion/);
 
     for (const draw of [source.gtkDraw, source.macDraw, source.windowsDraw]) {
-      assert.match(draw, /ring_envelope/);
-      assert.match(draw, /ring_glimmer/);
-      assert.match(draw, /ring_head_fade/);
-      // The retired dash renderer must not linger anywhere.
+      // The ring layers come from the shared painter; each backend only
+      // supplies the drawing primitives, so no draw file reimplements them.
+      assert.match(draw, /paint_ring_frame\(/);
       assert.doesNotMatch(draw, /ring_dash_is_on/);
       assert.doesNotMatch(draw, /RING_SHIMMER_ALPHA/);
     }
+    // The envelope, glimmer and head discs live in the shared painter.
+    assert.match(source.sharedPill, /ring_envelope\(/);
+    assert.match(source.sharedPill, /ring_glimmer\(/);
+    assert.match(source.sharedPill, /head_discs\(\)/);
   });
 
   it("reuses one buffer for the resampled ring instead of allocating per frame", () => {
     assert.match(source.sharedPill, /pub fn resample_perimeter/);
     assert.match(source.sharedPill, /resample_reuses_the_caller_buffer/);
-    for (const state of [source.gtkState, source.macState, source.windowsState]) {
+    for (const state of [
+      source.gtkState,
+      source.macState,
+      source.windowsState,
+    ]) {
       assert.match(state, /ring_points:\s*RefCell<Vec<\(f64,\s*f64,\s*f64\)>>/);
     }
     for (const draw of [source.gtkDraw, source.macDraw, source.windowsDraw]) {
-      assert.match(draw, /ring_points\.borrow_mut\(\)/);
+      // Each backend hands its state to the shared painter rather than
+      // borrowing the resample buffer itself.
+      assert.match(draw, /paint_ring_frame\(/);
     }
+    // The single borrow of the caller's buffer lives in the shared painter.
+    assert.match(source.sharedPill, /ring_points\(\)\.borrow_mut\(\)/);
   });
 
   it("starts inflating mid-hold so arming continues the motion", () => {
     assert.match(source.sharedPill, /pub fn inflate_target/);
     assert.match(source.sharedPill, /inflate_starts_midway_through_the_hold/);
+    // The target is resolved once, inside the shared tick, instead of in each
+    // platform's frame loop.
+    assert.match(source.sharedPill, /inflate_target\(/);
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /rust_pill_shared::inflate_target\(/);
+      assert.match(pill, /RingHost::tick_hold_and_ring\(state, dt\)/);
       // The old binary "1.0 while dragging" target is gone.
       assert.doesNotMatch(
         pill,
@@ -213,22 +817,28 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // Dragging moves the pill's own window, so a fast drag outruns it and the
     // cursor hit test misses. Trusting that would collapse the pill to its
     // unhovered size mid-gesture and re-expand it on release.
-    assert.match(source.sharedPill, /pub fn resolve_hover/);
-    assert.match(source.sharedPill, /hover_survives_a_drag_that_outruns_the_window/);
+    assert.match(source.sharedHover, /pub struct HoverIntent/);
     assert.match(
-      source.sharedPill,
-      /hover_follows_the_cursor_once_the_button_is_released/,
+      source.sharedHover,
+      /pub fn advance\(&mut self, frame: &HoverFrame\)/,
+    );
+    assert.match(source.sharedHover, /fn enters_after_dwell_not_before/);
+    assert.match(source.sharedHover, /fn fast_pass_never_arms/);
+    assert.match(
+      source.sharedHover,
+      /fn pin_holds_while_down_regardless_of_probe/,
     );
 
     // The gate must be `pointer_down`, NOT the gesture flags. Moving past the
     // cancel threshold before the hold completes clears `long_press_active`
     // without setting `dragging`, so a gesture-keyed gate drops the pin while
-    // the button is still down — the "drag across without releasing" collapse.
-    assert.match(
-      source.sharedPill,
-      /hover_holds_when_a_cancelled_long_press_becomes_a_plain_drag/,
-    );
-    assert.match(source.sharedPill, /pub fn resolve_hover\(probed:\s*bool,\s*pointer_down:\s*bool\)/);
+    // the button is still down, which is the "drag across without releasing"
+    // collapse.
+    assert.match(source.sharedHover, /fn release_outside_exits_after_grace/);
+    assert.match(source.sharedHover, /pub probed: bool/);
+    assert.match(source.sharedHover, /pub pointer_down: bool/);
+    assert.match(source.sharedHover, /pub entered: bool/);
+    assert.match(source.sharedHover, /pub exited: bool/);
 
     for (const [pill, state] of [
       [source.gtkPill, source.gtkState],
@@ -236,21 +846,20 @@ describe("PR28 ring-alpha render-loop policy", () => {
       [source.windowsPill, source.windowsState],
     ]) {
       assert.match(state, /pointer_down: Cell<bool>/);
-      assert.match(pill, /resolve_hover\(/);
+      assert.match(pill, /hover_intent\.borrow_mut\(\)\.advance\(/);
       assert.match(pill, /pointer_down\.get\(\)/);
       assert.match(pill, /pointer_down\.set\(true\)/);
       assert.match(pill, /pointer_down\.set\(false\)/);
-      // A gesture-flag gate must not creep back in.
-      assert.doesNotMatch(
-        pill,
-        /resolve_hover\([\s\S]{0,200}?gesture_active/,
-      );
+      // The hover IPC fires only on entered/exited edges, so each transition
+      // reports exactly once instead of every frame.
+      assert.match(pill, /output\.entered \|\| output\.exited/);
     }
 
     // The pin must be released when the button comes up, or a drag finishing
     // away from the pill would leave it stuck open.
     assert.match(source.macApp, /update_hover\(ctx\.view, ctx\);/);
-    assert.match(source.gtkPill, /let now_hovered = input::is_over_pill_area/);
+    // Probes feed the shared controller, which decides once per frame.
+    assert.match(source.gtkPill, /input::is_over_pill_area/);
     assert.match(source.windowsPill, /check_hover\(hwnd, state\);/);
 
     // A release event can be missed (stolen grab, locked session), so every
@@ -265,12 +874,986 @@ describe("PR28 ring-alpha render-loop policy", () => {
     );
   });
 
-  it("confirms the arm with a pulse that survives the ring's own alpha", () => {
-    for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
-      assert.match(pill, /arm_pulse\.set\(rust_pill_shared::pulse_armed\(\)\)/);
-      // The idle sentinel is named, never an open-coded -1.0.
-      assert.match(pill, /arm_pulse: Cell::new\(rust_pill_shared::PULSE_IDLE\)/);
+  it("withdraws an erase that never happened", () => {
+    // A clear declares the erase before it deletes. If the delete fails, the reset
+    // wrappers return before telling the pill to forget, so no report ever arrives
+    // to spend the declaration -- and every drag after the failed reset is dropped.
+    // The rollback must be tied to its own declaration: a plain store can cancel a
+    // newer clear that started in the meantime.
+    const pos = read("apps/desktop/src-tauri/src/pill_position.rs");
+    // The declarations are a list under one lock. They were a flag plus a
+    // generation counter held as two atomics, and a reviewer showed the window in
+    // that: a withdraw could pass its comparison, then a second clear declared,
+    // then the withdraw stored `false` over it -- leaving a clear in flight with
+    // nothing protecting it. Even one merged word only fixes that instance: a
+    // single bit cannot say *which* clear is outstanding, so one clear taking its
+    // own declaration back would still drop another's. Each declaration is its own
+    // entry, and a withdraw removes exactly its own.
+    assert.match(
+      pos,
+      /static ERASE: Mutex<EraseState>/,
+      "the declarations are not behind one lock, so a withdraw can race a declaration",
+    );
+    assert.match(
+      pos,
+      /fn mark_position_erased\(\) -> u64/,
+      "the declaration does not report which one it made",
+    );
+    assert.match(pos, /fn withdraw_erase\(generation: u64\)/);
+    assert.match(
+      pos,
+      /state\.outstanding\.retain\(\|id\| \*id != generation\)/,
+      "the rollback is not tied to its own declaration, so it can cancel a newer clear",
+    );
+    // The list and the flag the save path reads are written under the same lock,
+    // and the flag is cleared only once nothing is outstanding.
+    assert.match(
+      pos,
+      /state\.outstanding\.retain\(\|id\| \*id != generation\);\s*if state\.outstanding\.is_empty\(\) \{\s*ERASE_DECLARED\.store\(false/,
+      "the flag can be cleared while a clear is still owed its answer",
+    );
+    // Every failure return from the clear has to withdraw.
+    const clear = pos.slice(
+      pos.indexOf("pub async fn clear_saved_position("),
+      pos.indexOf("pub fn saved_position_argument("),
+    );
+    // Per branch, not a count. A duplicate in one branch would satisfy a count
+    // while the other branch lost its withdrawal, and that branch is the one that
+    // leaves the declaration set and drops every later save.
+    for (const marker of ["else {", "Err(err) => {"]) {
+      const at = clear.indexOf(marker);
+      assert.ok(at >= 0, `the clear has no ${marker} exit to inspect`);
+      assert.match(
+        balancedBlock(clear, clear.indexOf("{", at)),
+        /withdraw_erase\(declaration\)/,
+        `the ${marker} exit leaves its declaration set and drops every later save`,
+      );
     }
+    // The successful clear keeps its declaration: the report that follows spends
+    // it, and retracting it first would let a publish land behind the wipe.
+    const okAt = clear.indexOf("Ok(()) =>");
+    assert.ok(okAt >= 0, "the clear has no success arm to inspect");
+    assert.doesNotMatch(
+      clear.slice(okAt, clear.indexOf("Err(err)", okAt)),
+      /withdraw_erase/,
+      "the successful clear retracts the declaration its own report spends",
+    );
+    // The declaration precedes the delete, which is what keeps a publish queued
+    // behind the clear from landing after it. Both have to be present before the
+    // comparison means anything: two `-1`s also compare as ordered.
+    const declarationAt = clear.indexOf(
+      "let declaration = mark_position_erased()",
+    );
+    const deleteAt = clear.indexOf("clear_pill_position");
+    assert.ok(declarationAt >= 0, "the clear never declares the erase");
+    assert.ok(deleteAt >= 0, "the clear never deletes the row");
+    assert.ok(
+      declarationAt < deleteAt,
+      "the declaration must precede the delete",
+    );
+  });
+
+  it("takes the write gate before the delivery order on every reset path", () => {
+    // The local-data clear holds the write gate for the whole wipe and then takes
+    // the delivery order to send its forget. A reset that took the delivery order
+    // first and then waited for the gate is the other half of an ABBA deadlock:
+    // the reset waits for a gate the clear holds, the clear waits for a delivery
+    // order the reset holds, and both operations stop until the app restarts.
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const reset = scope(name, "pub async fn notify_reset_position");
+      const gateAt = reset.indexOf("lock_local_data_write");
+      const deliveryAt = reset.indexOf("lock_clear_delivery");
+      assert.ok(gateAt >= 0, `${name}: the reset never takes the write gate`);
+      assert.ok(
+        deliveryAt >= 0,
+        `${name}: the reset never takes the delivery order`,
+      );
+      assert.ok(
+        gateAt < deliveryAt,
+        `${name}: the reset waits for the write gate while holding the delivery order, which deadlocks against a local-data clear`,
+      );
+      // The clear itself must not re-acquire the gate under the delivery order,
+      // which would deadlock the reset path against itself.
+      const clear = scope("pillPosition", "pub async fn clear_saved_position");
+      assert.ok(
+        !clear.includes("lock_local_data_write"),
+        "pillPosition: the clear takes the write gate again under the delivery order",
+      );
+      assert.match(
+        clear,
+        /_gate: &crate::db::local_data_write_gate::LocalDataWriteGuard/,
+        "pillPosition: the clear does not take the caller's write gate",
+      );
+    }
+  });
+
+  it("clears the retained drop with the gesture it belongs to", () => {
+    // `drop_frame` belongs to one gesture. Left behind by a reset, a forget or the
+    // next drag, the write `take()`s it and stores the previous drop instead.
+    const app = source.macApp;
+    // Three cancellations -- reset, forget and a drag starting -- each clears it.
+    // Checked per handler, because a count lets one handler drop its clear while
+    // another keeps two, and the handler that lost it still stores the old drop.
+    for (const marker of [
+      "fn on_reset_position(",
+      "fn on_forget_position(",
+      "fn tick_long_press(",
+    ]) {
+      assert.match(
+        scope("macApp", marker),
+        /drop_frame\.set\(None\)/,
+        `${marker} keeps the previous drop, so the next save stores it`,
+      );
+    }
+    // Each cancellation clears it next to the deadline it belongs to.
+    assert.match(
+      app,
+      /ctx\.state\.drag_save_due\.set\(None\);[\s\S]{0,400}?ctx\.state\.drop_frame\.set\(None\)/,
+      "a cancelled gesture keeps the previous drop, so the next save stores it",
+    );
+  });
+
+  it("keeps the retained drop's own display, not the one reconciliation moved it onto", () => {
+    // The display is read when the drop lands and retained with the frame. A retry
+    // runs after the layout hold, and reconciliation can have moved the window onto
+    // another panel by then; reading the live screen at retry time would pair the
+    // retained rectangle with that panel, so a restart restores the drop against a
+    // monitor it was never on.
+    const state = source.macState;
+    assert.match(
+      state,
+      /pub\(crate\) struct DropRecord \{[\s\S]{0,700}?monitor: Option<Rect>,[\s\S]{0,120}?display_id: Option<u64>/,
+      "macOS: the retained drop carries no display, so the retry must read the live screen",
+    );
+    // The pill centre is retained beside the frame. The live centre moves with the
+    // panel and hover state, and a retry that recomputed it could resolve a
+    // different display than the one the user dropped on.
+    assert.match(
+      state,
+      /pub\(crate\) struct DropRecord \{[\s\S]{0,450}?point: \(f64, f64\),/,
+      "macOS: the retained drop recomputes its centre from live state",
+    );
+    const write = scope("macApp", "fn write_drag_position(");
+    // The retained record is read whole, and its monitor and display go into the
+    // report rather than the live window's. The monitor is already an `Option`, so
+    // it is passed through as captured, never re-derived from the live screen.
+    assert.match(
+      write,
+      /Some\(record\) => \([\s\S]{0,200}?frame_from_tuple\(record\.frame\),\s*record\.monitor,\s*record\.display_id,\s*record\.primary_top,?\s*\)/,
+      "macOS: the retry reads the live display instead of the retained one",
+    );
+    assert.match(
+      write,
+      /report: rust_pill_shared::restore::PositionReport::new\(\s*true,\s*Some\(reported\),\s*monitor,\s*display_id,\s*\)/,
+      "macOS: the retained monitor is dropped",
+    );
+    // And the record is filled at the same instant the frame is, so the two cannot
+    // describe different panels, and the flip basis is captured with them.
+    assert.match(
+      write,
+      /let point = pill_drop_point\(state, frame\);[\s\S]{0,300}?drop_display_for_frame_point\(frame, point, window\)/,
+      "macOS: the display is not captured with the frame",
+    );
+    // A drop captured while no screen resolved is completed from its own frame
+    // rather than consumed unresolved, which the desktop would ignore.
+    assert.match(
+      write,
+      /Some\(record\) if record\.monitor\.is_none\(\) => \{[\s\S]{0,1600}?drop_display_for_frame\(frame, record\.point\)/,
+      "macOS: an unresolved drop is consumed instead of completed or kept owed",
+    );
+  });
+
+  it("drops the previous gesture's recorded drop when the next drag starts", () => {
+    // A drop the guard refused leaves `drop_record` recorded for the frame loop's
+    // retry. Left behind when a new drag starts, a destroy before this gesture
+    // settles would store the place the user moved away from.
+    const arm = source.windowsPill.slice(
+      source.windowsPill.indexOf("elapsed >= LONG_PRESS_DURATION"),
+      source.windowsPill.indexOf(
+        "arm_pulse.set(rust_pill_shared::pulse_armed())",
+      ),
+    );
+    assert.match(
+      arm,
+      /state\.drop_record\.set\(None\)/,
+      "windowsPill: the previous gesture's recorded drop survives into this one",
+    );
+  });
+
+  it("writes the recorded drop when shutdown drains an owed save", () => {
+    // A destroy has no frame loop after it, so the writer it calls must not read
+    // the live rect: reconciliation can have moved the window since the drop, and
+    // the user's release is not that move. The recorded origin wins, guard or not.
+    // The guarded writer and the shutdown writer both end in the one store, so the
+    // drop cannot mean two different things depending on which path ran.
+    const write = scope("windowsPill", "fn write_drag_position_unchecked(");
+    assert.match(
+      write,
+      /store_recorded_drop\(hwnd, state\)/,
+      "windowsPill: the shutdown write does not go through the shared store",
+    );
+    const store = scope("windowsPill", "fn store_recorded_drop(");
+    assert.match(store, /state\.drop_record\.take\(\)/);
+    assert.match(
+      store,
+      /let origin = \(record\.x, record\.y\);/,
+      "windowsPill: the shared store carries the live rect instead of the drop",
+    );
+    // And the guarded writer reaches the same store, so the two paths cannot drift.
+    const guarded = scope("windowsPill", "fn write_drag_position(");
+    assert.match(guarded, /store_recorded_drop\(hwnd, state\)/);
+    // The drain reaches it, and the guarded writer is not the path destroy takes
+    // (that one can defer and park a retry that never runs).
+    const destroy = scope("windowsPill", "unsafe fn on_wm_destroy(");
+    assert.match(destroy, /write_drag_position_unchecked\(hwnd, state\)/);
+  });
+
+  it("probes the visible pill's centre for the work area, not the window's", () => {
+    // The window is taller than the pill, so on vertically offset displays its
+    // centre can be on a different panel than the pill. The work area must come
+    // from the same footprint centre the display token is resolved from.
+    const helper = scope("windowsPill", "fn work_area_for_report(");
+    assert.match(
+      helper,
+      /visible_pill_centre\(\(published\.x, published\.y\), footprint\)/,
+      "windowsPill: the work area is probed from the pill's centre via visible_pill_centre",
+    );
+    // The arithmetic lives in the helper, so it is asserted there. A centre taken
+    // from the window corner would put a straddling window on the wrong panel.
+    const centre = scope("windowsPill", "fn visible_pill_centre(");
+    assert.match(
+      centre,
+      /origin\.0 \+ offset\.0 \+ size\.0 \/ 2\.0/,
+      "windowsPill: the centre adds the pill's horizontal offset and half its width",
+    );
+    assert.match(
+      centre,
+      /origin\.1 \+ offset\.1 \+ size\.1 \/ 2\.0/,
+      "windowsPill: the centre adds the pill's vertical offset and half its height",
+    );
+  });
+
+  it("seeds the layout baseline where the pill was placed", () => {
+    // A fresh poll treats its first observation as the baseline and reconciles
+    // nothing, so an output removed between the placement and that first sample is
+    // absorbed instead of reconciled. Seeding at realize makes the first poll
+    // compare against the arrangement the pill was placed on.
+    assert.match(
+      source.layout,
+      /pub fn seed\(&mut self, now: f64, signature: u64\)/,
+    );
+    const realize = source.gtkPill.slice(
+      source.gtkPill.indexOf("window.connect_realize("),
+      source.gtkPill.indexOf("window.connect_size_allocate("),
+    );
+    assert.match(
+      realize,
+      /seed_layout_baseline\(window, &state_realize\)/,
+      "gtkPill: the baseline is not seeded at realize",
+    );
+    const seed = scope("gtkPill", "fn seed_layout_baseline(");
+    assert.match(seed, /\.seed\(/);
+    assert.doesNotMatch(
+      seed,
+      /reconcile_display_layout/,
+      "gtkPill: the seed acts on the launch as if it were a display change",
+    );
+  });
+
+  it("honors reduced motion in the fireworks activation on every pill", () => {
+    // Rockets fly under gravity, which is the motion the setting asks to suppress.
+    // Every platform shares `Fireworks::restart`, so the reduced-motion decision is
+    // made once rather than re-derived at three call sites.
+    const fireworks = read("packages/rust_pill_shared/src/fireworks.rs");
+    assert.match(fireworks, /pub fn restart\(&self, reduced_motion: bool\)/);
+    assert.match(
+      fireworks,
+      /self\.active\.set\(!reduced_motion\)/,
+      "the shared restart no longer honors reduced motion",
+    );
+    for (const [name, src] of [
+      ["windowsPill", source.windowsPill],
+      ["macApp", source.macApp],
+      ["gtkPill", source.gtkPill],
+    ]) {
+      assert.match(
+        src,
+        /rust_pill_shared::fireworks::Fireworks \{[\s\S]{0,300}?\}\s*\.restart\(reduced_motion\(\)\)/,
+        `${name}: the fireworks activation does not go through the shared reduced-motion rule`,
+      );
+    }
+  });
+
+  it("reports the macOS drop in the desktop's coordinate space", () => {
+    // `window_frame` is Cocoa bottom-left; `pill_geometry` and restore are top-down.
+    // Copying origin.1 across would store a Y value in the wrong space, which is
+    // indistinguishable from the pill being parked somewhere else.
+    const write = scope("macApp", "fn write_drag_position(");
+    assert.match(
+      write,
+      /let reported = to_top_down\(frame, primary_top\)/,
+      "the report carries the Cocoa Y value instead of the converted one",
+    );
+    // And the conversion is shared with `pill_geometry`, not reimplemented.
+    assert.match(source.macApp, /fn primary_top_for\(window: id\) -> f64/);
+    const geometry = scope("macApp", "unsafe fn pill_geometry(");
+    assert.match(
+      geometry,
+      /let primary_top = primary_top_for\(window\);/,
+      "pill_geometry computes the flip point separately, so the two can disagree",
+    );
+  });
+
+  it("flips the macOS drop against the basis the monitor was converted with", () => {
+    // The record holds a Cocoa frame and a top-down monitor converted together at
+    // capture time. Flipping the frame at retry time against a fresh `primary_top`
+    // would pair the retained monitor with a rect measured against a later primary
+    // display height, so the two halves of one report would describe two
+    // arrangements. The basis is therefore retained with the drop and reused.
+    const write = scope("macApp", "fn write_drag_position(");
+    assert.match(
+      write,
+      /to_top_down\(frame, primary_top\)/,
+      "macOS: the retry re-reads the flip basis instead of the retained one",
+    );
+    assert.doesNotMatch(
+      write,
+      /to_top_down\(frame, unsafe \{ primary_top_for\(window\) \}\)/,
+      "macOS: the retry converts against the live primary top, not the capture-time one",
+    );
+    // The basis is captured with the frame and the display, in one record.
+    const capture = scope("macApp", "unsafe fn display_record(");
+    assert.match(
+      capture,
+      /-> \(Option<Rect>, Option<u64>, f64\)/,
+      "macOS: the drop capture does not return the flip basis",
+    );
+    assert.match(
+      capture,
+      /primary_top\)/,
+      "macOS: the drop capture does not return the flip basis",
+    );
+    assert.match(
+      source.macState,
+      /struct DropRecord \{[\s\S]*?primary_top: f64,[\s\S]*?\}/,
+      "macOS: DropRecord does not retain the flip basis",
+    );
+    assert.match(
+      write,
+      /record\.primary_top/,
+      "macOS: the retry does not read the retained flip basis",
+    );
+  });
+
+  it("never lets an erase discard the first genuine save", () => {
+    // A one-shot "drop the next publish" flag cannot tell a stale publish from the
+    // user's next drag: a clear with nothing in flight leaves the flag set, and the
+    // drop made right after it is thrown away -- the pill looks parked while the
+    // database is empty. The erase is declared instead, and retired by the report
+    // that names the clear's id, never by a save.
+    const pos = read("apps/desktop/src-tauri/src/pill_position.rs");
+    assert.match(
+      pos,
+      /fn note_report\(has_saved_position: bool, ack: Option<u64>\) -> bool/,
+    );
+    assert.match(
+      pos,
+      /has_saved_position \}/,
+      "a save must never be discarded by the erase accounting",
+    );
+    // The report retires exactly the declarations at or below the clear it names,
+    // so an earlier clear's answer cannot retract a later clear's declaration.
+    assert.match(
+      pos,
+      /state\.outstanding\.retain\(\|id\| \*id > ack\);\s*if state\.outstanding\.is_empty\(\) \{\s*ERASE_DECLARED\.store\(false/,
+      "the declaration is not retired by the answer that names it",
+    );
+    // The gate on the write is the declaration being unanswered, not a one-shot
+    // take, so the very next drag stores.
+    assert.match(pos, /if erase_is_undeclared\(\)/);
+    assert.doesNotMatch(pos, /take_erased_publish/);
+    // And every report is accounted for, not only the saves: reading only the
+    // saves would never see the answer that retires the declaration. The
+    // accounting lives in one shared handler, so the two pill paths cannot drift
+    // apart on it, and both of them have to go through that handler.
+    const apply = pos.slice(pos.indexOf("pub fn apply_published_position("));
+    assert.ok(apply, "the shared position handler is missing");
+    assert.match(
+      apply,
+      /note_report\(has_saved_position, ack\)/,
+      "the shared handler does not account for every report",
+    );
+    // The acknowledgement has to be the value the report carried. A call that
+    // passes `None` retires nothing, so the declaration stays open and every
+    // later drop is refused, which is exactly what the clear asked to avoid.
+    for (const [file, source] of [
+      [
+        "apps/desktop/src-tauri/src/pill_process.rs",
+        /let ack = val\.get\("ack"\)/,
+      ],
+      [
+        "apps/desktop/src-tauri/src/platform/macos/overlay.rs",
+        /let ack = report\.ack;/,
+      ],
+    ]) {
+      const text = read(file);
+      assert.match(
+        text,
+        /pill_position::apply_published_position\(/,
+        `${file}: a pill report bypasses the shared handler`,
+      );
+      assert.match(
+        text,
+        source,
+        `${file}: the report's acknowledgement is not read`,
+      );
+      assert.match(
+        text,
+        /apply_published_position\((?:(?!\);)[\s\S])*?\back\b/,
+        `${file}: the acknowledgement never reaches the shared handler`,
+      );
+    }
+  });
+
+  it("spends a cursor reset only after a placement lands", () => {
+    // `screens()` can be empty -- a lid closing, every display asleep -- and the
+    // tick returns without placing anything. Spending the reset before that return
+    // turns a reset that never happened into one that can never happen.
+    const app = source.macApp;
+    const spend = app.indexOf(".after_placement()");
+    // The bail that governs this spend, not the first one in the file: the launch
+    // placement runs the same rule higher up, and pairing the spend with that bail
+    // made the ordering assertion true for the wrong reason.
+    const bail = app.lastIndexOf(
+      "let Some((screen, frame)) = target else {",
+      spend,
+    );
+    assert.ok(
+      spend > 0 && bail > 0,
+      "the reset spend or the bail is not recognisable",
+    );
+    assert.ok(
+      spend > bail,
+      "macOS: the cursor reset is spent before the placement can fail",
+    );
+    // The bail is the only refusal on this path: macOS applies the frame without a
+    // return value. What the spend needs is that no other exit sits between the two
+    // and that it lands before the placement it describes, so a later path that
+    // returns early cannot consume the reset without placing the pill.
+    // From the end of the bail's own block, because the bail's body is a `return`.
+    const afterBail = app.indexOf("};", bail) + 2;
+    // Comments stripped: this region explains the rule in prose that says
+    // "return", and only code can exit.
+    assert.doesNotMatch(
+      app.slice(afterBail, spend).replace(/\/\/[^\n]*/g, ""),
+      /\breturn\b/,
+      "macOS: a placement path returns between the bail and the spend",
+    );
+    const resolveAt = app.indexOf(
+      "resolve_placement(state, screen, frame",
+      spend,
+    );
+    assert.ok(
+      resolveAt > spend,
+      "macOS: the cursor reset is spent after the placement it belongs to",
+    );
+  });
+
+  it("reports the drop on macOS too, not the window the retry found", () => {
+    const write = scope("macApp", "fn write_drag_position(");
+    assert.match(
+      write,
+      /state\.drop_frame\.set\(Some/,
+      "macOS: the refused drop is not recorded",
+    );
+    assert.match(
+      write,
+      /state\.drop_frame\.take\(\)/,
+      "macOS: the retry never reads the recorded drop",
+    );
+    assert.match(
+      write,
+      /let reported = to_top_down\(frame, primary_top\)/,
+      "macOS: the report is not flipped from the Cocoa drop into top-down space",
+    );
+    assert.match(write, /Some\(reported\)/);
+  });
+
+  it("leaves an unnamed restore destination unnamed on macOS", () => {
+    // The record's token names the display that went away -- that is why the
+    // restore ran. Falling back to it pairs the destination's geometry with the
+    // dead display's name, which is exactly what the restore is correcting.
+    const app = source.macApp;
+    assert.match(
+      app,
+      /saved_display_id: Cell::new\(restored\.and\(restored_display_id\)\)/,
+    );
+  });
+
+  it("reads save_owed after the settle net, so a refused drop is not parked away", () => {
+    // `settle_unrecorded_drop` can arm the deadline by refusing a save. If the
+    // idle timer reads `save_owed` before that call, the same tick falls through
+    // to the idle parking below and moves the window back to the pre-drop
+    // position before the frame retry can store the drop -- the retry then saves
+    // the place the pill was dragged away from. The read must come after.
+    const x11 = read("packages/rust_gtk_pill/src/x11.rs");
+    const net = x11.indexOf("settle_unrecorded_drop(&win_tick");
+    const owed = x11.indexOf(
+      "let save_owed = state_tick.drag_save_due.get().is_some();",
+    );
+    assert.ok(
+      net > 0 && owed > 0,
+      "the idle timer's net or save_owed read moved",
+    );
+    assert.ok(
+      owed > net,
+      "save_owed is read before the settle net, so a refused drop can be parked away",
+    );
+  });
+
+  it("arms the save deadline when the X11 fallback is refused", () => {
+    // A refusal that leaves `drag_save_due` unset leaves `save_owed` false, and the
+    // slow timer parks the window back at the pre-drop position on every pass -- so
+    // the retry it is kept for saves a place the pill was already moved away from.
+    const reduce = read("packages/rust_gtk_pill/src/x11.rs");
+    const at = reduce.indexOf("pub(crate) fn persist_drop_position(");
+    assert.ok(at > 0, "the fallback is not recognisable");
+    const refusal = reduce.slice(
+      at,
+      reduce.indexOf("let (root_x, root_y)", at),
+    );
+    assert.match(
+      refusal,
+      /state\.drag_save_due\.set\(due\)/,
+      "the refused fallback does not arm the deadline, so idle parking undoes the drop",
+    );
+  });
+
+  it("resets its fallback record when a new drag starts", () => {
+    // The X11 fallback saves a drag that ended without settling, and it records
+    // the drag end once because `drag_ended` starts the hold. `drag_started`
+    // clears that hold for the next gesture, so the flag has to be cleared with
+    // it: a second unsettled drop would otherwise be treated as already recorded,
+    // and `allows_save` answers false for a drag that never ended -- forever.
+    // The rule lives in `note_drag_holds`, which the timer calls while a drag is
+    // held or settling. It asserts the pairing rather than the placement: the flag
+    // is only correct next to the check that a drag is starting. Scoped to the
+    // function, because the collapsed file has no newlines to stop a slice at and
+    // a later `if dragging` block could satisfy the assertion.
+    const rule = scope("gtkX11", "fn note_drag_holds(");
+    assert.ok(rule.length > 0, "the drag-hold rule is not recognisable");
+    assert.match(
+      rule,
+      /if dragging \{\s*drop_recorded\.set\(false\);/,
+      "a new drag keeps the previous gesture's recorded drop",
+    );
+  });
+
+  it("publishes a position the system moved the window to", () => {
+    // `Relocation::Keep` adopts a move the system made. The desktop holds the
+    // record, so adopting it only in-process means a restart restores the pill to
+    // the place the system moved it away from.
+    const keep = (src, name) => {
+      const at = src.indexOf("Relocation::Keep");
+      assert.ok(at > 0, `${name}: the Keep arm is not recognisable`);
+      const end = src.indexOf("Relocation::", at + 20);
+      return src.slice(at, end > 0 ? end : at + 4000);
+    };
+    for (const [name, src] of [
+      ["windowsPill", source.windowsPill],
+      ["macApp", source.macApp],
+    ]) {
+      const arm = keep(src, name);
+      // The report is sent by the helper both arms call, so the arm itself names
+      // it rather than spelling out the message.
+      assert.match(
+        arm,
+        /PositionChanged|publish_current_position\(/,
+        `${name}: an adopted move is never published, so a restart restores the old origin`,
+      );
+      // The guard, not just the message: narrowed to `origin_moved`, a work area
+      // or display that changed under a stationary window stays unpublished, and
+      // the next restore remaps against a rectangle the display no longer has.
+      assert.match(
+        arm,
+        /if origin_moved \|\| area_changed \{/,
+        `${name}: a changed work area or display is never published`,
+      );
+    }
+  });
+
+  it("never adopts a frame a gesture still owns", () => {
+    // A drag in flight, the settle after one, and a drop whose save is still owed
+    // all describe a frame the user has not finished choosing. A display change
+    // arriving inside any of them runs the same reconciliation as an idle one, so
+    // without the ownership test the `Keep` arm adopts the mid-drag origin and
+    // publishes it over the last completed drop, and the `Move` arm writes the
+    // forced origin into the record. The `Move` itself still runs: a pill left
+    // off-screen is worse than one that moves under the pointer.
+    const arm = (src, name, marker) => {
+      const at = src.indexOf(marker);
+      assert.ok(at > 0, `${name}: the ${marker} arm is not recognisable`);
+      const end = src.indexOf("Relocation::", at + 20);
+      return src.slice(at, end > 0 ? end : at + 4000);
+    };
+    for (const [name, src] of [
+      ["windowsPill", source.windowsPill],
+      ["macApp", source.macApp],
+    ]) {
+      for (const marker of ["Relocation::Keep", "Relocation::Move"]) {
+        assert.match(
+          arm(src, name, marker),
+          /gesture_owns_window\(state, now\)/,
+          `${name}: ${marker} adopts a frame a gesture still owns`,
+        );
+      }
+      assert.equal(
+        src.match(/fn gesture_owns_window/g)?.length,
+        1,
+        `${name}: the ownership rule is not one function`,
+      );
+    }
+  });
+
+  it("keeps every GTK reconcile arm off the record a pending drop owes", () => {
+    // A settled drop whose save is deferred is the record that has to reach the
+    // store, and `drag_save_due` is what says so. A reconcile arm that adopts the
+    // layout-forced frame while that save is owed pairs the drop with a work area
+    // it was not dropped in, or stores the forced origin over it, and the user's
+    // drop is the record that loses.
+    const src = source.gtkPill;
+    const arm = (marker) => {
+      const at = src.indexOf(marker);
+      assert.ok(at > 0, `gtkPill: the ${marker} arm is not recognisable`);
+      const end = src.indexOf("Relocation::", at + 20);
+      return src.slice(at, end > 0 ? end : at + 4000);
+    };
+    // The polarity is the guard. A bare mention of `drag_save_due` passes with the
+    // test inverted, which turns "do not update the record" into "update only
+    // while a drop is owed". `Keep` updates the retained metadata only when no
+    // save is owed; `Move` skips the update while one is.
+    for (const [marker, predicate] of [
+      ["Relocation::Keep", /state\.drag_save_due\.get\(\)\.is_none\(\)/],
+      ["Relocation::Move", /state\.drag_save_due\.get\(\)\.is_some\(\)/],
+    ]) {
+      assert.match(
+        arm(marker),
+        predicate,
+        `gtkPill: ${marker} updates the record while a drop save is owed`,
+      );
+    }
+    // And an owed save must not strand the window off-screen: the move is applied
+    // before the record is considered, so the pill still lands where the layout
+    // put it and only the store is skipped.
+    const move = arm("Relocation::Move");
+    assert.ok(
+      move.indexOf("move_toplevel") > 0 &&
+        move.indexOf("move_toplevel") < move.indexOf("drag_save_due"),
+      "gtkPill: an owed drop save stops the window being kept on screen",
+    );
+  });
+
+  it("reports the drop it recorded, not the window the retry happened to find", () => {
+    // The desktop stores the rectangle in the report. A retry runs after a delay,
+    // and reconciliation can move the window in between, so reporting the live
+    // rect would store one place while `saved_x`/`saved_y` hold another.
+    // The store is one function now, shared by the guarded writer and the shutdown
+    // writer, so the assertions live on it rather than on one caller.
+    const write = scope("windowsPill", "fn store_recorded_drop(");
+    assert.match(write, /state\.drop_record\.take\(\)/);
+    assert.match(
+      write,
+      /let origin = \(record\.x, record\.y\);/,
+      "windowsPill: the report carries the live rect instead of the drop",
+    );
+    assert.match(
+      write,
+      /Some\(reported\)/,
+      "windowsPill: the reported rectangle is not the one built from the drop",
+    );
+    // The work area travels with the rectangle: restore clamps the origin into
+    // it, so a live *monitor* answered from wherever the window drifted to would
+    // make the desktop store an origin and a work area from different displays,
+    // and the next launch would remap one against the other.
+    //
+    // It is also the drop point, not the window, that picks the monitor: the
+    // window may have been reconciled away by the retry. And one resolution has to
+    // answer both the work area and the display token, because resolving them
+    // separately let a shrunk work area leave the enumerated list while
+    // `MonitorFromPoint` still found the display, so the report named one panel and
+    // stored another's geometry.
+    // Both fields come off the record the settle captured, so neither can be
+    // re-resolved against a layout the drop never saw.
+    assert.match(
+      write,
+      /let display_id = record\.display_id;/,
+      "windowsPill: the display token is re-resolved instead of read from the drop",
+    );
+    assert.match(
+      write,
+      /let monitor = record\.work_area\.map\(\|area\| Rect \{/,
+      "windowsPill: the work area is re-resolved instead of read from the drop",
+    );
+    // And the record itself is built from one monitor lookup at the settle.
+    const record = scope("windowsPill", "fn drop_record_at(");
+    assert.match(
+      record,
+      /let monitor_handle = monitor_for_point\(centre\)/,
+      "windowsPill: the drop record is not resolved from the pill's centre",
+    );
+    assert.match(
+      record,
+      /work_area: monitor_handle\.and_then\(query_monitor_info\)/,
+      "windowsPill: the drop record's work area is not resolved from the same handle",
+    );
+    assert.match(
+      record,
+      /display_id: monitor_handle\.and_then\(monitor_display_id\)/,
+      "windowsPill: the drop record's token is not resolved from the same handle",
+    );
+    // And nothing in the report may come from the live window: an origin, a
+    // work area, a display or a size resolved there can all disagree with the
+    // drop after reconciliation has moved the pill, and a DPI change can resize
+    // it while the save is deferred. The record captured at the settle already
+    // carries all four.
+    const afterSave = write.slice(
+      write.indexOf(".set(true)"),
+      write.indexOf("ipc::send"),
+    );
+    assert.ok(afterSave.length > 0, "the save path is not recognisable");
+    const geometryUses =
+      afterSave.match(/current_pill_geometry\(hwnd\)/g) ?? [];
+    assert.equal(
+      geometryUses.length,
+      0,
+      "the report reads the live window; the drop record already carries its size",
+    );
+    assert.match(
+      afterSave,
+      /width: record\.width,\s*height: record\.height,/,
+      "the reported size does not come from the drop record",
+    );
+    assert.match(
+      record,
+      /width: window\.0,\s*height: window\.1,/,
+      "the drop record does not capture the window size",
+    );
+  });
+
+  it("installs every piece of the toolchain, not just cargo", () => {
+    // Readiness was `$PREFIX/bin/cargo` existing. An install that failed after the
+    // binaries landed leaves the cross-target libraries, the vendor tree, the
+    // cargo config and the sysroot missing, and a retry would skip the whole block
+    // and announce a toolchain that cannot build the workspace.
+    const script = read("setup-toolchain.sh");
+    assert.match(script, /toolchain_installed\(\)/);
+    // Existence is not completion. An interrupted `tar` leaves a tree that looks
+    // whole by name, so each unpacked tree is published only after it succeeded and
+    // the retry asks for the marker, not the directory.
+    // Scoped to the readiness function: the payload path also appears in the copy
+    // step, so a whole-file search would pass with the check removed.
+    const readiness = script.slice(
+      script.indexOf("toolchain_installed() {"),
+      script.indexOf("\n}", script.indexOf("toolchain_installed() {")),
+    );
+    assert.ok(readiness.length > 0, "the readiness check is not recognisable");
+    for (const marker of [
+      ".install-complete",
+      "/tmp/cargo-vendor/.unpack-complete",
+      "/tmp/sysroot/.unpack-complete",
+      // The payload itself: with it gone and the outputs intact, setup used to skip
+      // the fetch and then fail on the missing source, and every later run repeated
+      // that failure instead of refetching.
+      "$SV/rust/cargo-config.toml",
+    ]) {
+      assert.ok(
+        readiness.includes(marker),
+        `the retry check does not look for ${marker}, so a half-unpacked tree passes`,
+      );
+    }
+    // Staged then published, for the trees and the config alike: a partial result
+    // must never be reachable under the name the check accepts.
+    assert.match(
+      script,
+      /mv \/tmp\/sysroot\.staging \/tmp\/sysroot/,
+      "the sysroot is extracted in place, so an interrupted untar looks complete",
+    );
+    assert.match(
+      script,
+      /mv "\$CARGO_HOME\/config\.toml\.tmp" "\$CARGO_HOME\/config\.toml"/,
+      "the cargo config is copied in place, so a truncated copy is kept",
+    );
+    // And the config is compared against the payload, not merely present.
+    assert.match(
+      script,
+      /cmp -s "\$SV\/rust\/cargo-config\.toml" "\$CARGO_HOME\/config\.toml"/,
+      "a truncated config.toml satisfies an existence check forever",
+    );
+  });
+
+  it("provisions the native payloads the transcription build scripts download", () => {
+    // Both `build.rs` scripts fetch release archives from GitHub Releases, which
+    // a restricted sandbox cannot reach. The vendor branch pre-seeds them under
+    // `native/`, so setup has to carry them and point the two env vars at them,
+    // or a transcription build fails on the download instead of using the payload.
+    const script = read("setup-toolchain.sh");
+    assert.match(
+      script,
+      /git archive FETCH_HEAD rust system native/,
+      "the payload fetch omits native/, so the archives are never present",
+    );
+    assert.match(
+      script,
+      /export MAUSVOICE_ORT_DYLIB_PATH="\$\(find \/tmp\/ort -name libonnxruntime\.so \| head -1\)"/,
+      "MAUSVOICE_ORT_DYLIB_PATH is not pointed at the unpacked payload",
+    );
+    assert.match(
+      script,
+      /export SHERPA_ONNX_ARCHIVE_DIR="\$SV\/native\/sherpa-onnx"/,
+      "SHERPA_ONNX_ARCHIVE_DIR is not pointed at the payload archive directory",
+    );
+  });
+
+  it("spends a cursor-reset once it has been carried out", () => {
+    // `ResetAtCursor` is the only anchor that both places and follows the
+    // pointer. If it survives the placement that satisfied it, every later frame
+    // reads "follow the pointer" and the pill hops to whatever display the
+    // cursor crosses onto -- the chasing a reset exists to stop.
+    const layout = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(layout, /pub fn after_placement\(self\) -> Self/);
+    assert.match(
+      layout,
+      /Self::ResetAtCursor\s*=>\s*Self::ResetAtCurrent/,
+      "the shared rule no longer spends the cursor-reset",
+    );
+    // Both pointer-capable pills must call it on the reset path. GTK's release
+    // path reaches the same place through the X11 timer, which demotes on apply.
+    assert.match(
+      source.macApp,
+      /if reset_placement \{\s*state\.anchor\.set\(state\.anchor\.get\(\)\.after_placement\(\)\);/,
+      "macOS: a cursor-reset is never spent, so the pill keeps chasing the pointer",
+    );
+    // Windows spends it after the placement lands, so a refused move keeps the
+    // request pending instead of dropping it on the floor.
+    assert.match(
+      source.windowsPill,
+      /if move_window\(hwnd, x, y, current\.left, current\.top\) \{[\s\S]{0,500}?anchor\.get\(\)\.after_placement\(\)/,
+      "windowsPill: a cursor-reset is spent without the move landing",
+    );
+    assert.match(
+      source.gtkPill,
+      /anchor\.set\(rust_pill_shared::layout::Anchor::ResetAtCurrent\)/,
+      "gtkPill: the applied reset is not demoted",
+    );
+  });
+
+  it("withholds the save flag from a report taken mid-gesture", () => {
+    // A report tells the desktop whether to store the record. While a gesture
+    // owns the window the geometry is where the pointer is, not where the user
+    // dropped the pill, so the flag has to be withheld: a report that authorizes
+    // the save stores a frame the user never chose.
+    // Each platform answers the request in its own handler, so the guard is read
+    // from the function rather than from a match arm.
+    const handlers = [["gtkPill", scope("gtkPill", "fn on_request_position(")]];
+    for (const name of ["windowsPill", "macPill"]) {
+      handlers.push([name, handlerBody(pathOf.get(name), "RequestPosition")]);
+    }
+    for (const [name, handler] of handlers) {
+      assert.ok(handler.length > 0, `${name}: no RequestPosition handler`);
+      assert.match(
+        handler,
+        /gesture_owns_window\(/,
+        `${name}: a report authorizes a save while a gesture owns the window`,
+      );
+    }
+  });
+
+  it("writes the drop the user made, not whatever the retry frame finds", () => {
+    // A refused save leaves `saved_x`/`saved_y` describing the position from
+    // before the drop. If the retry reads the live window instead of remembering
+    // the release, an idle placement in between means the stored position is one
+    // the user never chose.
+    assert.match(
+      source.windowsPill,
+      /drop_record: Cell::new\(None\)/,
+      "windowsPill: nothing remembers where the drop landed",
+    );
+    // The size is recorded with the origin, at the same instant: a DPI change
+    // while the save is deferred resizes the live window, and a size read then
+    // would describe a window the user never released.
+    assert.match(
+      source.windowsPill,
+      /state\s*\.drop_record\s*\.set\(Some\(drop_record_at\(origin, \(width, height\), state\)\)\)/,
+      "windowsPill: the settle never records the drop origin and size",
+    );
+    // The origin is the frame the move applied, not the one it asked for: a move
+    // across a DPI seam lands where `WM_DPICHANGED` put the window, and recording
+    // the requested origin would name a frame the pill does not occupy.
+    assert.match(
+      source.windowsPill,
+      /let \(origin, width, height\) = if settled_ok \{\s*\(\s*\(settled\.left, settled\.top\)/,
+      "windowsPill: the drop origin is the requested frame, not the applied one",
+    );
+    // The size is read after the final move, because a DPI change delivered by
+    // that move resizes the window before it returns.
+    assert.match(
+      source.windowsPill,
+      /GetWindowRect\(hwnd, &mut settled\)/,
+      "windowsPill: the drop size is read before the move that can resize it",
+    );
+    const write = scope("windowsPill", "fn store_recorded_drop(");
+    assert.match(
+      write,
+      /state\.drop_record\.take\(\)/,
+      "windowsPill: the retry writes the live rect instead of the drop",
+    );
+    assert.match(
+      write,
+      /state\.saved_x\.set\(origin\.0\)/,
+      "windowsPill: the recorded drop does not reach the saved position",
+    );
+  });
+
+  it("starts each drag with no save owed from the last one", () => {
+    // A drop the save guard refused leaves `drag_save_due` armed for the frame
+    // loop to retry. That retry belongs to the gesture the user already finished.
+    // If it survives into the next drag it fires mid-move and stores the window
+    // wherever it happens to be, which is a position nobody chose -- so each
+    // backend disarms it at the moment drag begins. The one place they can all
+    // agree on is the long-press arm, which is the only way into a drag.
+    for (const name of ["gtkPill", "macPill", "windowsPill"]) {
+      const pill = source[name];
+      // Anchor on the arm branch and the pulse that confirms it: both are inside
+      // `elapsed >= LONG_PRESS_DURATION`, so the slice is exactly the transition
+      // into drag. Nothing earlier in the file can satisfy the search.
+      const from = pill.indexOf("elapsed >= LONG_PRESS_DURATION");
+      // The arm confirmation moved behind `RingState::arm`, which sets the
+      // same pulse the inline call used to, so the slice ends at either.
+      const armCall = /\.ring\.arm\(\)/gu;
+      armCall.lastIndex = Math.max(0, from);
+      const armed = armCall.exec(pill);
+      const to = armed
+        ? armed.index
+        : pill.indexOf("arm_pulse.set(rust_pill_shared::pulse_armed())", from);
+      assert.ok(
+        from >= 0 && to > from,
+        `${name}: the arm branch is not recognisable`,
+      );
+      const arm = pill.slice(from, to);
+      assert.match(
+        arm,
+        /drag_save_due\.set\(None\)/,
+        `${name}: an owed save from the previous drag survives into this one`,
+      );
+    }
+  });
+
+  it("confirms the arm with a pulse that survives the ring's own alpha", () => {
+    // The pulse lives on the shared `RingState`, so the arm call and the idle
+    // sentinel are written once for all three platforms.
+    assert.match(source.sharedPill, /arm_pulse\.set\(pulse_armed\(\)\)/);
+    // The idle sentinel is named, never an open-coded -1.0.
+    assert.match(source.sharedPill, /arm_pulse: PULSE_IDLE/);
     // The sentinel is negative because 0.0 is a real value (the frame the pulse
     // starts), so every read goes through the named predicate rather than a
     // bare comparison that could be written backwards.
@@ -278,10 +1861,21 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(source.sharedPill, /pub fn pulse_is_running/);
     assert.match(source.sharedPill, /pub fn pulse_armed/);
     // Every source must keep the pulse alive for its full duration, since it
-    // outlives the ring's own alpha. Each platform therefore needs a liveness
-    // check; Windows is the strictest case — it culls frames aggressively, so
-    // without its own check the pulse would be dropped mid-flight.
-    for (const src of [source.windowsState, source.windowsDraw, source.macDraw, source.gtkDraw]) {
+    // outlives the ring's own alpha. Each backend therefore needs a liveness
+    // check. Windows is the strictest case: it culls frames aggressively, so
+    // without its own check the pulse would be dropped mid-flight. GTK and
+    // macOS share `RingPaint::resolve`, which returns `None` only when both the
+    // ring alpha and the pulse are gone.
+    assert.match(source.sharedPill, /fn resolve\(input: &RingPaintInput/);
+    assert.match(
+      source.sharedPill,
+      /if alpha <= 0\.0 && pulsing <= 0\.0 \{\s*return None;/,
+    );
+    for (const src of [
+      source.windowsState,
+      source.windowsDraw,
+      source.macDraw,
+    ]) {
       assert.match(src, /pulse_is_running\(/);
     }
   });
@@ -313,7 +1907,9 @@ describe("PR28 fork-workflow secret isolation", () => {
       shouldRunProviderJob({
         event_name: "pull_request",
         repository: "maus-inc/mausVoice",
-        pull_request: { head: { repo: { full_name: "contributor/mausVoice" } } },
+        pull_request: {
+          head: { repo: { full_name: "contributor/mausVoice" } },
+        },
       }),
       false,
     );
@@ -324,10 +1920,17 @@ describe("PR28 fork-workflow secret isolation", () => {
       /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/,
     );
     // Secrets are only referenced inside that guarded job.
-    assert.match(source.integrationWorkflow, /GROQ_API_KEY/);
+    assertSecretsStayInsideTheGuardedJob(
+      source.integrationWorkflow,
+      "GROQ_API_KEY",
+    );
     assert.match(
       source.integrationWorkflow,
-      /Keep fork PRs from[\s\S]*?withholds secrets/,
+      // The condition is the contract, not the YAML scalar style. A block scalar
+      // and a single-line `if:` express the same guard, and the fixtures above
+      // already accept both. `${{ }}` is GitHub's own expression delimiter and
+      // does not change the condition, so it is accepted too.
+      /if:\s*(?:\|\s*)?(?:\$\{\{\s*)?github\.event_name == 'push' \|\|\s*\(github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository\)\s*(?:\}\})?/,
     );
   });
 });
@@ -340,7 +1943,10 @@ describe("PR28 removed-enterprise-docs contracts", () => {
     );
     assert.doesNotMatch(source.astro, /enterprise/i);
     assert.doesNotMatch(source.docsIndex, /Enterprise/);
-    assert.doesNotMatch(source.docsLlms, /maus-inc\.github\.io\/mausVoice\/enterprise\//);
+    assert.doesNotMatch(
+      source.docsLlms,
+      /maus-inc\.github\.io\/mausVoice\/enterprise\//,
+    );
     assert.doesNotMatch(source.docsRobots, /enterprise documentation/i);
   });
 });
@@ -357,8 +1963,29 @@ describe("PR28 native placement contracts", () => {
 
   it("has monitor-disconnect recovery on every native platform", () => {
     assert.match(source.gtkPill, /still_connected/);
-    assert.match(source.macPill, /chosen_visible/);
+    // macOS resolves the containing screen into `chosen`. A display unplugged
+    // mid-drag leaves no screen containing the anchor, so the fallback takes the
+    // primary screen instead of freezing at stale coordinates.
+    //
+    // The fallback used to repeat the visible-frame and region resolution inside
+    // its own match arm, so the two paths could answer differently. Both now call
+    // `resolve_placement`, which is what makes the recovery provably the same
+    // placement as the fast path; the guard asks for that, and for the primary
+    // screen being the thing fallen back to.
+    assert.match(source.macPill, /let mut chosen = None;/);
+    assert.match(source.macPill, /count > 0\)\.then\(/);
     assert.match(source.macPill, /primary/);
+    assert.match(
+      scope("macPill", "fn resolve_placement("),
+      /screen_visible_frame\(screen\)/,
+    );
+    // Two call sites: the matched screen and the fallback. One of them is inside
+    // `reposition_window`, which is where the pair used to be written out.
+    assert.equal(
+      (source.macPill.match(/resolve_placement\(/g) || []).length,
+      2,
+      "macPill: the fallback and the fast path must share one resolution",
+    );
     assert.match(source.windowsPill, /MONITOR_DEFAULTTONEAREST/);
   });
 
@@ -368,15 +1995,17 @@ describe("PR28 native placement contracts", () => {
       source.macState,
       source.windowsState,
     ]) {
-      assert.match(state, /ring_alpha/);
-      assert.match(state, /LONG_PRESS_RING_FADE/);
+      // The ring fields are one shared record, so each pill state holds it
+      // rather than repeating the eight cells.
+      assert.match(state, /ring: rust_pill_shared::RingState/);
     }
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
       // Alpha is now advanced through the shared per-frame policy, which pins
       // it while held and eases it out after release.
-      assert.match(pill, /advance_ring/);
-      assert.match(pill, /ring_release_progress/);
+      assert.match(pill, /RingHost::tick_hold_and_ring\(state, dt\)/);
     }
+    assert.match(source.sharedPill, /release_progress: Cell<f64>/);
+    assert.match(source.sharedPill, /LONG_PRESS_RING_FADE/);
     assert.match(source.sharedPill, /pub fn ring_alpha/);
     assert.match(source.sharedPill, /ring_alpha_is_pinned_while_held/);
     assert.match(
@@ -388,11 +2017,849 @@ describe("PR28 native placement contracts", () => {
 
 describe("PR28 workflow and public-asset contracts", () => {
   it("does not expose provider secrets to fork pull requests", () => {
-    assert.match(
+    assertSecretsStayInsideTheGuardedJob(
       source.integrationWorkflow,
-      /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/,
+      "GROQ_API_KEY",
     );
-    assert.match(source.integrationWorkflow, /GROQ_API_KEY/);
+  });
+
+  // Two findings, and they are not the same defect, so the tests below are not the remedy for
+  // both. 4151834033 reported that the guard only had to exist SOMEWHERE in the workflow; that was
+  // already addressed before this change by `workflowJobs`, which proves the guard and the secret
+  // share a job. 4178853244 reported the narrower hole that survived it -- the guard was found
+  // anywhere in that job's text, so a comment or a step that does not read the secret satisfied
+  // it while the reading step ran unguarded on a fork. What follows covers the second, plus the
+  // shapes a later round of review turned up in the first attempt at covering it.
+  //
+  // The checks here fall into nested describes, one per concern: the guard appearing in prose,
+  // a trailing comment, a guard that is not on an `if:` key, a secret read where no step can gate
+  // it, and the header/step boundary. The `it`s directly below are the shapes that apply to more
+  // than one of those.
+  describe("the fork guard must be a real condition that gates the reader", () => {
+    const job = (name, body) =>
+      ["name: test", "on: pull_request", "jobs:", `  ${name}:`, body].join(
+        "\n",
+      );
+
+    // A `y` helper so no fixture body carries its own escape sequence.
+    const y = (...lines) => lines.join("\n");
+
+    // The guard must be an `if:` VALUE, not prose that merely contains the text. `if: always()`
+    // with the guard in a trailing comment is the exact bypass class the job was opened to close,
+    // and the real workflow puts a comment above its `if:`, which makes the trailing spelling the
+    // natural next one to try.
+    describe("a guard hidden in a trailing comment is not a guard", () => {
+      it("rejects a job-level if whose condition is always() and whose guard is a comment", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    if: always()  # github.event.pull_request.head.repo.full_name == github.repository",
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "the condition is always(); the guard is only a comment on it",
+        );
+      });
+
+      it("rejects a step-level if whose condition is always() and whose guard is a comment", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - name: transcribe",
+            "        if: always()  # github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "the step condition is always(); the guard is only a comment on it",
+        );
+      });
+
+      it("rejects a guard that is a comment inside a run body", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    if: always()",
+            "    steps:",
+            "      - name: transcribe",
+            "        run: |",
+            "          # github.event.pull_request.head.repo.full_name == github.repository",
+            "          echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "a comment in a run body is not a condition",
+        );
+      });
+
+      it("still accepts a condition that carries the guard AND a trailing comment", () => {
+        // The control: stripping the comment must not also strip the condition.
+        const workflow = job(
+          "provider",
+          y(
+            "    if: github.event.pull_request.head.repo.full_name == github.repository # forks skip",
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+    });
+
+    // The step path matched the guard ANYWHERE in the job text, so a `run:` body, a `name:` or an
+    // `env:` value that merely mentioned it counted. A guard has to sit on an `if:` key.
+    describe("only an if: key is a guard", () => {
+      it("rejects a guard that appears only in a step's run body", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - name: transcribe",
+            "        run: |",
+            "          echo gated on github.event.pull_request.head.repo.full_name == github.repository",
+            "          pnpm run integration ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "the guard is prose in a run body, not a condition",
+        );
+      });
+
+      it("rejects a guard that appears only in a step's name", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - name: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "a step name gates nothing",
+        );
+      });
+
+      it("rejects a guard that appears only in a step's env value", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - name: transcribe",
+            "        env:",
+            "          NOTE: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "an env value is not a condition",
+        );
+      });
+
+      it("accepts the guard on an if: key written on the dash line", () => {
+        // The control, and a shape the real workflows use: the condition can be the step's own
+        // first key, so there is no 8-space `if:` line for a key-anchored match to find.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+    });
+
+    // A secret can be read where no step can gate it: a job-level `env:`, or a `uses:` caller's
+    // `secrets:` block. The pre-change check accepted those and an early rewrite rejected them,
+    // which is the expensive direction -- an author facing a failing test on a correctly guarded
+    // job deletes the guard.
+    describe("a secret read outside a step needs a job-level guard", () => {
+      it("accepts a guarded job that passes the secret through env", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+            "    env:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+            "    steps:",
+            "      - run: pnpm run integration",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded job that passes the secret to a reusable workflow", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+            "    uses: maus-inc/mausVoice/.github/workflows/groq.yml@main",
+            "    secrets:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("rejects an unguarded job that passes the secret through env", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    env:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+            "    steps:",
+            "      - run: pnpm run integration",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "no step can gate a job-level env read",
+        );
+      });
+
+      it("rejects an unguarded job that passes the secret to a reusable workflow", () => {
+        const workflow = job(
+          "provider",
+          y(
+            "    uses: maus-inc/mausVoice/.github/workflows/groq.yml@main",
+            "    secrets:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "no step can gate a uses: caller's secrets block",
+        );
+      });
+
+      it("accepts a job-level if written after steps", () => {
+        // YAML mapping order carries no meaning, so a job-level `if:` after the step list is
+        // still a job-level `if:`. Reading only the header above `steps:` rejects this.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+            "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a step list whose dashes sit at the key's own indent", () => {
+        // Legal YAML, and a sequence item may sit at its parent key's indent. What this pins is
+        // only that a job-level gate still wins when the dashes sit there -- the job below IS
+        // gated at job level, so the answer is decided before the step split runs and hardcoding
+        // the step indent to 6 leaves this test green. The step indent itself is pinned by the
+        // step-level fixture in the nested describe below, which has no job-level gate at all.
+        const workflow = job(
+          "provider",
+          y(
+            "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+            "    steps:",
+            "    - run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("rejects a job whose guard sits in an expression after the step list", () => {
+        // Note what this does NOT pin: the reading step below is unguarded, so it is rejected
+        // whether or not the step list ends where it should. Where the list ENDS is pinned by the
+        // second fixture in the nested describe below, whose reading step carries its own guard.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+            "    env:",
+            "      NOTE: github.event.pull_request.head.repo.full_name == github.repository",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "an env value after the steps is a job key, not a gate",
+        );
+      });
+    });
+
+    it("rejects a job whose only mention of the guard is a comment", () => {
+      const workflow = job(
+        "provider",
+        [
+          "    # fork code must not receive secrets, so this job is skipped when",
+          "    # github.event.pull_request.head.repo.full_name == github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        /fork guard/,
+        "a comment is not a guard",
+      );
+    });
+
+    it("rejects a job whose guarded step does not read the secret", () => {
+      const workflow = job(
+        "provider",
+        [
+          "    steps:",
+          "      - name: lint",
+          "        if: github.event.pull_request.head.repo.full_name == github.repository",
+          "        run: echo lint",
+          "      - name: transcribe",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        /fork guard/,
+        "a guard on a different step does not guard the reader",
+      );
+    });
+
+    it("accepts a single-line job-level if carrying the guard", () => {
+      // A check that only recognises the block-scalar form rejects correct workflow, which is
+      // worse than a check that accepts too much: the author faces a failing test on a guarded
+      // job, and the cheapest repair is to delete the guard. The single-line `if:` is the shape
+      // most people actually write, so it has to be recognised too.
+      const workflow = job(
+        "provider",
+        [
+          "    if: github.event.pull_request.head.repo.full_name == github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.doesNotThrow(() =>
+        assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+      );
+    });
+
+    it("accepts a single-line job-level if that gates by disjunction", () => {
+      // The guard can also arrive as one half of a condition, which is how push-triggered jobs
+      // are written: run on push, or on a pull request from the same repository.
+      const workflow = job(
+        "provider",
+        [
+          "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.doesNotThrow(() =>
+        assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+      );
+    });
+
+    it("rejects a job-level if whose guard is negated", () => {
+      // The control for the two above. `!=` names the same two paths but admits every FORK, so
+      // matching on the bare token would accept it. Pins that the operator is part of the check.
+      const workflow = job(
+        "provider",
+        [
+          "    if: github.event.pull_request.head.repo.full_name != github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        /fork guard/,
+        "a negated guard admits every fork",
+      );
+    });
+
+    it("rejects a guard that is only a comment inside the reading step", () => {
+      // A comment stripping pass that is never exercised is a pass that does nothing, so this
+      // is the fixture that reaches the step-level path at all: there is NO job-level `if:`
+      // here, so the reader step's own guard is the only thing that could admit the job.
+      const workflow = job(
+        "provider",
+        [
+          "    steps:",
+          "      - name: transcribe",
+          "        # github.event.pull_request.head.repo.full_name == github.repository",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        /fork guard/,
+        "a comment inside the reading step is not a guard",
+      );
+    });
+
+    it("rejects a job where one of two reading steps is unguarded", () => {
+      // Pins `every` rather than `some`. With a single reader the two are indistinguishable --
+      // both say "not gated" -- so a weakening from `every` to `some` would pass every other
+      // fixture here.
+      const workflow = job(
+        "provider",
+        [
+          "    steps:",
+          "      - name: guarded",
+          "        if: github.event.pull_request.head.repo.full_name == github.repository",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          "      - name: unguarded",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        /fork guard/,
+        "one unguarded reader is enough to expose the secret",
+      );
+    });
+
+    it("accepts a job where every reading step carries its own guard", () => {
+      // The control for the pair above, so the two cannot be satisfied by rejecting everything.
+      const workflow = job(
+        "provider",
+        [
+          "    steps:",
+          "      - name: first",
+          "        if: github.event.pull_request.head.repo.full_name == github.repository",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          "      - name: second",
+          "        if: github.event.pull_request.head.repo.full_name == github.repository",
+          "        run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.doesNotThrow(() =>
+        assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+      );
+    });
+
+    it("accepts a block scalar body indented one column past its key", () => {
+      // A block scalar's content must be deeper than its key, and one column is legal. The body
+      // threshold is derived from the key's own indent rather than fixed at 6, so a 5-column body
+      // under a 4-column `if:` is read as the condition instead of leaving the guard invisible
+      // and the job looking ungated.
+      const workflow = job(
+        "provider",
+        y(
+          "    if: |",
+          "     github.event_name == 'push' ||",
+          "     (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ),
+      );
+      assert.doesNotThrow(() =>
+        assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+      );
+    });
+
+    // Line endings and job keys. Both of these made the gate fail in a way that looked like the
+    // author's problem rather than the check's: CRLF made every job look unguarded, and a comment
+    // after a job key made the workflow look like it declared no job at all.
+    describe("line endings and job keys", () => {
+      const crlfJob = (name, bodyLines) =>
+        [
+          "name: test",
+          "on: pull_request",
+          "jobs:",
+          `  ${name}:`,
+          ...bodyLines,
+        ].join("\r\n");
+
+      it("accepts a guarded job written with CRLF line endings", () => {
+        // Every pattern in the check is anchored per line and `.` does not match `\r`, so a CRLF
+        // checkout used to fail every key pattern at once, find no `if:` anywhere, and report every
+        // job as unguarded. The pre-change check was a substring match and did not care.
+        const workflow = crlfJob("provider", [
+          "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ]);
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("still rejects an unguarded job written with CRLF line endings", () => {
+        // The control. Normalising line endings must not become a blanket accept.
+        const workflow = crlfJob("provider", [
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ]);
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+        );
+      });
+
+      it("accepts a job whose key carries a trailing comment", () => {
+        // `  provider:  # gated` was not recognised as a job, so the gate failed with "the
+        // workflow must declare at least one job" -- an author who DID declare a job, told to
+        // declare one.
+        const workflow = y(
+          "name: test",
+          "on: pull_request",
+          "jobs:",
+          "  provider:  # reads a provider secret, so it is gated",
+          "    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+    });
+
+    // Which steps and which jobs count as readers. A reader test of `includes("secrets")` or of the
+    // bare secret name, or a reader filter that keeps everything, all make an ordinary workflow
+    // look unguarded. These are the shapes that catch them: a provider job with a lint step beside
+    // its reader, a workflow with a second job that reads nothing, and a step reading a different
+    // secret or merely printing this one.
+    describe("which steps and which jobs count as readers", () => {
+      const guard =
+        "github.event.pull_request.head.repo.full_name == github.repository";
+
+      it("accepts a guarded reader step beside an unguarded step that reads nothing", () => {
+        // The ordinary shape of a provider workflow. A filter that treated every step as a reader
+        // would reject this.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      - if: ${guard}`,
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+            "      - run: pnpm lint",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded reader job beside a second job that reads nothing", () => {
+        // The workflow-level twin. The real integration workflow declares exactly one job, so
+        // production data cannot catch a job filter that keeps every job.
+        const workflow = y(
+          "name: test",
+          "on: pull_request",
+          "jobs:",
+          "  provider:",
+          `    if: ${guard}`,
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+          "  docs:",
+          "    runs-on: ubuntu-latest",
+          "    steps:",
+          "      - run: pnpm docs:build",
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded reader step beside a step reading a different secret", () => {
+        // Matching the `secrets` prefix rather than `secrets.GROQ_API_KEY` would make the second
+        // step a reader of this secret and reject a workflow that is correctly gated for it.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      - if: ${guard}`,
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+            "      - run: curl ${{ secrets.TAVILY_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded reader step beside a step that only prints the secret's name", () => {
+        // The other direction: matching the bare name rather than the `secrets.` reference makes a
+        // diagnostic `echo` a reader.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      - if: ${guard}`,
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+            "      - run: echo GROQ_API_KEY is configured in CI",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+    });
+
+    // Three parser spellings that each silently lose the guard. All fail closed, so each of these
+    // rejects a workflow that is in fact gated.
+    describe("spellings the condition parser must not lose", () => {
+      const guard =
+        "github.event.pull_request.head.repo.full_name == github.repository";
+
+      it("accepts a guard inside a single-quoted scalar", () => {
+        // `char === "'"` has to open quote state too. With only `"` tracked, the ` # ` inside this
+        // string reads as a comment and the secret after it is truncated away.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      - if: ${guard}`,
+            "        run: sh -c 'echo a # b ${{ secrets.GROQ_API_KEY }}'",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts an if: key written after more than one space past the dash", () => {
+        // `-   if:` is three spaces wide. Consuming one space only leaves the key at column 10,
+        // where the step's own key column no longer matches and the guard goes unseen.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            `      -   if: ${guard}`,
+            "          run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guard split across the comparison in a block scalar", () => {
+        // The condition's lines are joined with a space, so a guard written across a line break
+        // reassembles. Joining with nothing leaves `==github.repository`, which is not the guard.
+        const workflow = job(
+          "provider",
+          y(
+            "    if: |",
+            "      (github.event_name == 'pull_request' &&",
+            "       github.event.pull_request.head.repo.full_name ==",
+            "       github.repository)",
+            "    steps:",
+            "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+    });
+
+    it("still accepts a job-level if that really gates the reader", () => {
+      // The control: the shape the real workflow uses, so the fix cannot pass by rejecting
+      // everything.
+      const workflow = job(
+        "provider",
+        [
+          "    if: |",
+          "      github.event_name == 'push' ||",
+          "      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)",
+          "    steps:",
+          "      - run: echo ${{ secrets.GROQ_API_KEY }}",
+        ].join("\n"),
+      );
+      assert.doesNotThrow(() =>
+        assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+      );
+    });
+
+    // Six fixtures written against MUTATIONS THAT SURVIVED the first proof. Each one failed to
+    // kill its mutation because an earlier check already produced the same verdict, so the
+    // mutation changed a behaviour nobody could observe. That is the state this project treats as
+    // a missing test: the branch exists, and nothing pins it.
+    describe("parsing the job: comments, the header and the steps", () => {
+      it("accepts a guarded step whose secret is read inside a quoted shell string", () => {
+        // Pins the quote handling in `commentStart`, and the `#` sits after a SPACE on purpose.
+        // A `#` right after a quote is already spared by the whitespace rule, so that spelling left
+        // the quote rule unpinned: deleting the entire quote state machine left the suite green.
+        // Here the whitespace rule alone would truncate the line, so the quote rule is what decides
+        // it -- and truncating loses the `secrets.` reference, which makes the job look like it has
+        // no reader, which fails closed and rejects a job that is genuinely guarded.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            '        run: sh -c \'curl "a # b" -H "auth: ${{ secrets.GROQ_API_KEY }}"\'',
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded step whose secret follows an escaped quote and a hash", () => {
+        // Pins the backslash rule in `commentStart`. Inside a YAML double-quoted scalar `\"` is an
+        // escaped quote, so it does not close the scalar, and the ` # ` after it is data rather
+        // than a comment. Reading `\"` as the closing quote ends the scalar early, the `#` that
+        // follows reads as a comment, and the `secrets.` reference after it is truncated away --
+        // which leaves the job looking like it has no reader and rejects a job that is guarded.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            '        run: "echo \\" # text\\" ${{ secrets.GROQ_API_KEY }}"',
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a guarded step whose secret is read after a URL fragment", () => {
+        // Pins the other half of YAML's comment rule: a `#` opens a comment only at the start of
+        // a line or after whitespace, so the `#` in `http://host/#v1` is part of the string. A
+        // reader that cuts there loses the `secrets.` reference that follows, the job then looks
+        // like it has no reader, and a correctly guarded job is rejected -- failing closed is
+        // right in general and still wrong here.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: curl http://host/#v1 --header auth:${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("rejects a guarded step when a job-level env read is not gated", () => {
+        // Pins that a step's own condition does NOT gate a job-level `env:`. The check treats a
+        // header read as ungateable by anything but a job-level `if:` -- a step condition names a
+        // step, so it is not consulted for a value that lives above the step list. The step reads
+        // the same secret and IS guarded, which is what makes the verdict depend on the header
+        // check rather than on the step.
+        const workflow = job(
+          "provider",
+          y(
+            "    env:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "a step condition does not gate a job-level env",
+        );
+      });
+
+      it("rejects a job whose only secret reference is inside a comment", () => {
+        // The caller selects a job as a reader from the RAW body, so a job can reach the check
+        // with nothing in the parsed code that reads anything. Fails closed rather than waving
+        // through a reference it cannot place.
+        const workflow = job(
+          "provider",
+          y(
+            "    # this job used to read ${{ secrets.GROQ_API_KEY }} on every fork",
+            "    steps:",
+            "      - run: echo lint",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "a reference in a comment is not a gate and not a reader",
+        );
+      });
+
+      it("accepts a step guard on a continuation line when dashes sit at the key's indent", () => {
+        // The dash-line fixture below puts the guard on the `- ` line. This one puts it on the
+        // step's next line instead, where the column is the step's OWN key indent -- 6 for a step
+        // written at 4, not the 8 a hardcoded column would assume.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "    - run: echo ${{ secrets.GROQ_API_KEY }}",
+            "      if: github.event.pull_request.head.repo.full_name == github.repository",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("accepts a step-level guard whose dashes sit at the key's own indent", () => {
+        // The sibling of the job-level fixture above. There the job-level check answered first, so
+        // the step indent was never exercised; here the STEP is the only gate, which is what makes
+        // the verdict depend on the step split.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "    - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "      run: echo ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.doesNotThrow(() =>
+          assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+        );
+      });
+
+      it("rejects a guarded step when the ungated job-level env read comes after steps", () => {
+        // YAML mapping order carries no meaning, so the same job as the third fixture with its
+        // keys in the other order must reach the same verdict. This is the pair that pins where
+        // the step list ENDS: if it never ended, these trailing keys would be absorbed into the
+        // preceding step and the step's own condition would be read as gating them.
+        const workflow = job(
+          "provider",
+          y(
+            "    steps:",
+            "      - if: github.event.pull_request.head.repo.full_name == github.repository",
+            "        run: echo ${{ secrets.GROQ_API_KEY }}",
+            "    env:",
+            "      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}",
+          ),
+        );
+        assert.throws(
+          () => assertSecretsStayInsideTheGuardedJob(workflow, "GROQ_API_KEY"),
+          /fork guard/,
+          "key order does not change whether the env read is gated",
+        );
+      });
+    });
   });
 
   it("keeps docs checks non-executable at install time and checks internal links", () => {
@@ -403,15 +2870,24 @@ describe("PR28 workflow and public-asset contracts", () => {
 
   it("assembles a complete project-Pages artifact at the documented base", () => {
     assert.match(source.astro, /const docsBase = "\/mausVoice\/docs\/"/);
-    assert.match(source.docsIndex, /link: \/mausVoice\/docs\/getting-started\//);
+    assert.match(
+      source.docsIndex,
+      /link: \/mausVoice\/docs\/getting-started\//,
+    );
     assert.match(source.docsWorkflow, /cp -r marketing publish\/marketing/);
-    assert.match(source.docsWorkflow, /cp -r apps\/docs\/dist\/. publish\/docs\//);
+    assert.match(
+      source.docsWorkflow,
+      /cp -r apps\/docs\/dist\/. publish\/docs\//,
+    );
     assert.match(
       source.docsWorkflow,
       /publish\/docs\/assets\/mausvoice-banner\.png/,
     );
     assert.match(source.docsWorkflow, /publish\/docs\/assets\/fonts/);
-    assert.match(source.docsWorkflow, /cp sitemap\.xml robots\.txt llms\.txt publish\//);
+    assert.match(
+      source.docsWorkflow,
+      /cp sitemap\.xml robots\.txt llms\.txt publish\//,
+    );
     assert.match(source.docsWorkflow, /publish\/docs\/llms\.txt/);
   });
 
@@ -421,9 +2897,67 @@ describe("PR28 workflow and public-asset contracts", () => {
     assert.match(source.index, /capTrack\.mode = show \? "showing" : "hidden"/);
     assert.match(source.index, /prefers-reduced-motion/);
     assert.match(source.index, /IntersectionObserver/);
-    assert.match(source.index, /window\.addEventListener\("resize", sizeStage\)/);
+    assert.match(
+      source.index,
+      /window\.addEventListener\("resize", sizeStage\)/,
+    );
     assert.match(source.index, /class="skip-link"/);
     assert.match(source.index, /:focus-visible/);
+  });
+
+  it("triggers on every path the contract guards read", () => {
+    // The `Test Docs` workflow is what runs this file, so its `paths:` filter
+    // must cover every source a guard below reads. When a refactor moved the
+    // ring driver into `rust_pill_shared`, eight guards went red on the branch
+    // but the workflow never ran, because no path it watched had changed. The
+    // drift then surfaced much later, on an unrelated docs edit. Deriving the
+    // requirement from `PATHS` means a new source in this map that the filter
+    // does not cover fails here, in the run that would otherwise stay silent.
+    const trigger = readRaw(".github/workflows/test-docs.yml")
+      .split("\n  workflow_dispatch:")[0]
+      .split("\n    paths:")[1];
+    assert.ok(trigger, "Test Docs must keep a push `paths:` filter");
+
+    const globs = trigger
+      .split("\n")
+      .map((line) => /^\s*-\s*"([^"]+)"/.exec(line)?.[1])
+      .filter(Boolean);
+
+    const matchesGlob = (glob, path) =>
+      glob.endsWith("/**")
+        ? path.startsWith(glob.slice(0, -3) + "/")
+        : glob === path;
+
+    // A filter is a union of positive globs minus its `!` exclusions, so a path
+    // needs a positive match and no exclusion. Testing only for a positive
+    // match would pass a path a later `!` pattern takes back out.
+    const covered = (path) =>
+      globs.some((glob) => !glob.startsWith("!") && matchesGlob(glob, path)) &&
+      !globs.some(
+        (glob) => glob.startsWith("!") && matchesGlob(glob.slice(1), path),
+      );
+
+    // Every source this file reads needs a trigger entry, not only the ones in
+    // `PATHS`: several guards read a file directly, and a hand-kept map drifts
+    // from them. The literal read arguments are taken from this file's own
+    // text, so narrowing the workflow globs to exact paths fails here for the
+    // direct reads too.
+    const literalReads = Array.from(
+      readRaw("scripts/ci/pr28-contracts.test.mjs").matchAll(
+        /read(?:Raw)?\("([^"]+)"\)/g,
+      ),
+      (match) => match[1],
+    );
+    const required = new Map([
+      ...PATHS,
+      ...literalReads.map((path) => [path, path]),
+    ]);
+    for (const [label, path] of required) {
+      assert.ok(
+        covered(path),
+        `Test Docs does not trigger on ${label} (${path}); add a matching path to .github/workflows/test-docs.yml or the guards go unrun when only that source changes`,
+      );
+    }
   });
 
   it("keeps every social metadata consumer on the checked-in asset", () => {
@@ -432,7 +2966,1953 @@ describe("PR28 workflow and public-asset contracts", () => {
     assert.match(source.index, /docs\/assets\/mausvoice-banner\.png/);
     assert.match(source.astro, /docsBase\}assets\/mausvoice-banner\.png/);
   });
-
 });
 
 await import("./pr37-contracts.test.mjs");
+
+describe("native gesture adapter contracts", () => {
+  it("rejects non-finite grab geometry before arming a drag", () => {
+    const begin = source.sharedDrag
+      .split("pub fn begin_drag(")[1]
+      .split("pub fn push_sample(")[0];
+    for (const field of ["grab_dx", "grab_dy", "window_x", "window_y"]) {
+      assert.ok(begin.includes(`!${field}.is_finite()`));
+    }
+    assert.ok(
+      begin.indexOf("is_finite()") <
+        begin.indexOf("self.phase = DragPhase::Held"),
+    );
+  });
+
+  it("holds unknown pointer frames before implicit re-grab arithmetic", () => {
+    const advance = source.sharedDrag
+      .split("pub fn advance(")[1]
+      .split("fn track_held(")[0];
+    assert.match(
+      advance,
+      /if frame\.held\s*&&\s*\(!frame\.pointer_x\.is_finite\(\) \|\| !frame\.pointer_y\.is_finite\(\)\)/,
+    );
+    assert.match(advance, /return self\.stationary_output\(\);/);
+    assert.ok(
+      advance.indexOf("return self.stationary_output()") <
+        advance.indexOf("match self.phase"),
+    );
+  });
+  for (const [platform, state] of [
+    ["gtk", "state_tick"],
+    ["mac", "ctx.state"],
+  ]) {
+    it(`cancels ${platform} pointer state rather than rearming a reset drag`, () => {
+      const pill = source[`${platform}Pill`];
+      const reset = handlerBody(pathOf.get(`${platform}Pill`), "ResetPosition");
+      for (const field of ["dragging", "pointer_down", "long_press_active"]) {
+        assert.ok(reset.includes(`${state}.${field}.set(false)`));
+      }
+      assert.ok(reset.includes(`${state}.drag_cancelled.set(true)`));
+      if (platform === "gtk")
+        assert.match(reset, /x11_release_persisted\.set\(true\)/);
+      assert.match(pill, /if !was_dragging && !.*drag_cancelled\.get\(\)/);
+    });
+  }
+
+  it("holds spring state before applying zero-time snap rules", () => {
+    for (const name of ["spring_01", "spring_px"]) {
+      const body = scope("sharedSpring", `pub fn ${name}(`);
+      assert.match(
+        body,
+        /if !target\.is_finite\(\) \|\| step_dt == 0\.0 \{\s*return;/,
+      );
+      assert.ok(
+        body.indexOf("step_dt == 0.0") < body.indexOf("spring_integrate("),
+      );
+    }
+  });
+
+  it("recovers invalid spring state without propagating it through integration", () => {
+    const pure = scope("sharedSpring", "pub fn spring_integrate(");
+    assert.match(
+      pure,
+      /if !value\.is_finite\(\) \{\s*return \(target, 0\.0\);/,
+    );
+    assert.match(pure, /velocity\.is_finite\(\)/);
+  });
+  for (const [platform, context] of [
+    ["windows", "gfx"],
+    ["mac", "ctx"],
+    ["gtk", "cr"],
+  ]) {
+    it(`keeps ${platform} pill outlines inside the same crossing paint transform`, () => {
+      const draw = source[`${platform}Draw`];
+      const overlays =
+        platform === "gtk"
+          ? ["draw_pill", "draw_flash_blue"]
+          : ["draw_pill", "draw_flash_blue", "draw_long_press_ring"];
+      for (const overlay of overlays) {
+        const expected = `paint_pill_attached(${context}, state, ww, wh, |${context}| { ${overlay}(${context}, state, ww, wh); });`;
+        assert.ok(
+          draw.replace(/\s+/g, " ").includes(expected),
+          `${platform}:${overlay}`,
+        );
+      }
+      const body = scope(`${platform}Draw`, "fn draw_pill(");
+      assert.doesNotMatch(body, /crossing\.borrow\(\)/);
+    });
+  }
+
+  it("cancels Windows gesture ownership before resetting its position", () => {
+    const reset = handlerBody(pathOf.get("windowsPill"), "ResetPosition");
+    assert.match(reset, /cancel_drag_gesture\(hwnd, state\)/);
+    assert.ok(
+      reset.indexOf("cancel_drag_gesture") <
+        reset.indexOf("reposition_to_cursor_monitor"),
+    );
+    const cancel =
+      source.windowsPill
+        .split("fn cancel_drag_gesture(")[1]
+        ?.split("fn end_drag(")[0] ?? "";
+    for (const field of ["long_press_active", "pointer_down"]) {
+      assert.ok(cancel.includes(`state.${field}.set(false)`));
+    }
+    assert.match(cancel, /end_drag\(hwnd, state, false\)/);
+    assert.match(cancel, /state\.drag_motion\.borrow_mut\(\)\.reset\(\)/);
+    assert.match(cancel, /state\.drag_cancelled\.set\(true\)/);
+    assert.match(
+      source.windowsPill,
+      /if !was_dragging && !state\.drag_cancelled\.get\(\)/,
+    );
+  });
+
+  it("measures Windows headroom from the current visible pill", () => {
+    const tick = source.windowsPill
+      .split("fn tick_selector_placement(")[1]
+      .split("fn advance_selector_placement(")[0];
+    // The tick reads the footprint the renderer draws, and answers the headroom
+    // from the pill's own top edge rather than the window's.
+    assert.match(tick, /live_pill_footprint\(state\)/);
+    assert.match(tick, /selector_space_above\(rect\.y, work\.y, offset\.1\)/);
+    // The footprint itself is the drawn pill, in window pixels.
+    const footprint = scope("windowsPill", "fn live_pill_footprint(");
+    assert.match(footprint, /draw::pill_position\(/);
+    const helper = source.windowsPill
+      .split("fn selector_space_above(")[1]
+      .split("fn tick_selector_placement(")[0];
+    assert.doesNotMatch(helper, /PILL_AREA_HEIGHT/);
+  });
+
+  it("anchors the Windows selector to live pill geometry instead of its reserved strip", () => {
+    assert.match(
+      source.windowsDraw,
+      /tooltip_rendered_origin\(\s*pill_position\(state, ww, wh\)/,
+    );
+    assert.doesNotMatch(
+      source.windowsDraw,
+      /draw_tooltip\(gfx, state, ww, pill_area_top\)/,
+    );
+  });
+  it("uses a shared monotonic clock instead of macOS wall time", () => {
+    for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
+      assert.match(pill, /rust_pill_shared::clock::monotonic_now/);
+    }
+    assert.doesNotMatch(source.macPill, /CFAbsoluteTimeGetCurrent/);
+  });
+
+  it("selects drag bounds using the shared release anchor on every absolute-position backend", () => {
+    for (const pill of [source.gtkX11, source.macPill, source.windowsPill]) {
+      assert.match(pill, /\.monitor_anchor\(/);
+    }
+  });
+
+  it("advances GTK hold and ring animations with the measured frame step", () => {
+    assert.match(source.gtkPill, /tick_long_press\(state, dt\)/);
+    // The ring tick moved into the shared host, which GTK calls with the same
+    // measured step, so the two cannot drift to different clocks.
+    assert.match(source.gtkPill, /RingHost::tick_hold_and_ring\(state, dt\)/);
+    assert.match(
+      source.sharedPill,
+      /fn tick_hold_and_ring\(&self, delta_seconds: f64\)/,
+    );
+  });
+
+  it("interrupts a running settle when a new press starts", () => {
+    for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
+      assert.match(pill, /\.interrupt_settle\(\)/);
+    }
+  });
+
+  it("shares the X11 applied position with idle placement and retains monitor fallbacks", () => {
+    assert.doesNotMatch(source.gtkX11, /let last_pos =/);
+    // The realized origin is the restored one when there is a stored position,
+    // else the pointer anchor. Both are published through the same applied cell
+    // so idle placement and the frame tick read one value.
+    // The restore also carries the display it landed on and the destination work
+    // area, so the origin is taken out of the triple rather than used bare.
+    assert.match(
+      source.gtkX11,
+      /let target = restored\.map_or\(init_pos, \|\(origin, _, _\)\| origin\)/,
+    );
+    // The retained area comes from the same sample as the origin and the token:
+    // keeping the record's area while adopting a remapped origin leaves
+    // reconciliation measuring this origin against the display the pill left.
+    assert.match(
+      source.gtkX11,
+      /if let Some\(\(\(x, y\), display_id, work_area\)\) = restored \{[\s\S]{0,400}?state\.saved_work_area\.set\(work_area\);/,
+      "gtkX11: the retained work area is not taken from the restore",
+    );
+    // The macOS retained area lives in Cocoa space, while `restore` answers in
+    // the published top-down one. Retaining the answer unflipped means every
+    // later reader flips an already top-down rect, and the first relaunch after a
+    // display change measures the pill against a rectangle it never had.
+    assert.match(
+      source.macApp,
+      /restored_work_area = Some\(flip_primary_basis\(work_area, primary_top\)\)/,
+      "macApp: the restored work area is retained in the frame it is read in",
+    );
+    assert.match(source.gtkX11, /state\.x11_drag_applied\.set\(target\)/);
+    assert.match(
+      source.gtkX11,
+      /let prev = state_tick\.x11_drag_applied\.get\(\)/,
+    );
+    const frame = source.gtkX11
+      .split("pub(crate) fn tick_drag_frame(")[1]
+      .split("pub(crate) fn setup_x11_window(")[0];
+    assert.match(frame, /monitor_at_window/);
+    assert.match(frame, /primary_monitor_bottom_centre/);
+  });
+
+  it("measures selector headroom before a saved drop and on Wayland", () => {
+    const headroom = source.gtkPill
+      .split("fn selector_headroom(")[1]
+      .split("fn tick_selector_placement(")[0];
+    assert.doesNotMatch(headroom, /has_saved_position|f64::INFINITY/);
+    assert.match(headroom, /state\.x11_drag_applied\.get\(\)/);
+    assert.match(headroom, /Backend::PlainWayland/);
+    assert.match(headroom, /window\.allocated_height\(\)/);
+  });
+
+  it("shares macOS painted selector geometry with both hit paths", () => {
+    assert.match(
+      source.macDraw,
+      /let \(tooltip_rx, tooltip_ry\) = tooltip_rendered_origin\(/,
+    );
+    assert.equal(
+      (source.macInput.match(/tooltip_rendered_origin\(/g) ?? []).length,
+      2,
+    );
+    assert.doesNotMatch(source.macInput, /placement::tooltip_origin/);
+  });
+
+  it("compensates macOS default placement for the below-content slot", () => {
+    // Applied to the frame's `ty` binding, whether it is bound on its own or
+    // built as one element of the frame's origin.
+    assert.match(
+      source.macPill,
+      /default_content_origin_y\(visible\.origin\.y, win_h\)/,
+    );
+    // The idle placement it compensates for is applied by `park_window`, which is
+    // the only caller that reaches the default anchor.
+    assert.match(source.macPill, /fn park_window\(/);
+    assert.match(
+      source.macPill,
+      /fn below_selector_slot_does_not_lift_the_content_canvas/,
+    );
+    assert.match(
+      source.macPill,
+      /fn native_entry_stays_inside_the_painted_input_row/,
+    );
+  });
+
+  it("captures X11 grab offsets using the press surface rather than the destination monitor", () => {
+    assert.match(
+      source.gtkPill,
+      /drag_press_offset\.set\(x11::physical_grab_offset/,
+    );
+    assert.match(source.gtkPill, /win_press\.scale_factor\(\)/);
+    assert.equal(
+      (source.gtkX11.match(/state\.drag_press_offset\.get\(\)/g) ?? []).length,
+      2,
+    );
+    assert.doesNotMatch(
+      source.gtkX11,
+      /drag_cursor_[xy]\.get\(\)\s*\*\s*p\.scale/,
+    );
+  });
+
+  it("refreshes GTK selector action targets before press and release dispatch", () => {
+    assert.equal(
+      (
+        source.gtkInput.match(
+          /crate::draw::refresh_selector_click_regions\(state\)/g,
+        ) ?? []
+      ).length,
+      2,
+    );
+    for (const name of ["is_on_pill_at", "handle_click"]) {
+      // Scoped to the function, and both names asserted present inside it:
+      // `indexOf` alone reports -1 for an absent name, which would satisfy the
+      // ordering below on any body that dropped the refresh.
+      const body = scope("gtkInput", `fn ${name}(`);
+      const refresh = body.indexOf("refresh_selector_click_regions");
+      const borrow = body.indexOf("state.click_regions.borrow()");
+      assert.notEqual(refresh, -1, `${name} must refresh the click regions`);
+      assert.notEqual(borrow, -1, `${name} must read the click regions`);
+      assert.ok(refresh < borrow, `${name} must refresh before it reads`);
+    }
+  });
+
+  it("invalidates Windows painting when selector placement changes without velocity", () => {
+    const body = scope("windowsPill", "fn tick_selector_placement(");
+    assert.match(body, /let changed = advance_selector_placement/);
+    assert.match(body, /if changed \{\s*state\.dirty\.set\(true\)/);
+  });
+
+  it("uses the created Windows height for initial placement", () => {
+    // A stored position is tried first, else the default corner for the height
+    // the window was created with.
+    // The restore also returns the display it landed on, so the binding is typed
+    // as a pair; the height it was clamped against is still the created one.
+    assert.match(
+      source.windowsPill,
+      /restore_position\(parked, win_h\)/,
+      "windowsPill: the restore is not clamped against the created height",
+    );
+    // A record whose display enumeration failed is kept for the cursor tick, so
+    // the launch still has to hand it to the state factory.
+    assert.match(
+      source.windowsPill,
+      /RestoreOutcome::NoDisplays => \{\s*pending_restore = Some\(parked\);/,
+      "windowsPill: a record the launch could not resolve is discarded",
+    );
+    // The window is created at the destination display's scale, so the default
+    // corner is measured against the physical height and that scale.
+    const body = scope("windowsPill", "fn default_position(");
+    assert.match(body, /let scale = scale_for_monitor\(monitor\);/);
+    assert.match(body, /default_pill_y\(wa\.top, wa_h, win_h, scale\)/);
+  });
+
+  it("restores against the visible footprint, not the transparent canvas", () => {
+    // The OS window is a large transparent canvas with the pill drawn inside it,
+    // and the window also reserves the selector slot below the pill. Clamping
+    // the canvas instead of the footprint puts an edge-parked pill hundreds of
+    // pixels inward, and the idle tick then disagrees with the restore, so the
+    // pill visibly moves after launch. One shared function, and a reserve that
+    // includes the slot, is what keeps the two paths on the same pixels.
+    for (const name of ["macPill", "windowsPill"]) {
+      const text = source[name];
+      assert.match(
+        text,
+        /rust_pill_shared::restore::footprint_bounds\(/,
+        `${name}: the restore must clamp the footprint`,
+      );
+      assert.match(
+        text,
+        /restore::centered_bottom_footprint\(/,
+        `${name}: the resting footprint must come from the shared helper`,
+      );
+      assert.match(
+        text,
+        /COLLAPSED_BOTTOM_INSET\s*\+\s*rust_pill_shared::placement::below_slot_extra\(/,
+        `${name}: the reserve must include the selector slot`,
+      );
+    }
+    // GTK draws inside a toplevel whose transparent margins differ per axis, so
+    // it passes the visible pill rect directly. The restore asks about the saved
+    // record's window size as well as this one, so the rect is carried to the size
+    // being asked about rather than reused for both.
+    assert.match(
+      source.gtkX11,
+      /scaled_footprint\(\s*\(\(fx, fy\), \(fw, fh\)\),\s*\(window_w, window_h\),\s*window,\s*\)/,
+    );
+    assert.match(
+      source.gtkX11,
+      /rust_pill_shared::restore::footprint_bounds\(work, offset, size\)/,
+    );
+  });
+
+  it("carries the saved position through the GTK X11 re-exec", () => {
+    // Under XWayland the GTK pill re-execs itself with GDK_BACKEND=x11. Without
+    // the arguments, the new process never sees `--saved-position` and the pill
+    // re-homes to its default corner on every launch on that backend.
+    const main = scope("gtkMain", "fn main(");
+    assert.match(main, /\.args\(std::env::args_os\(\)\.skip\(1\)\)/);
+  });
+
+  it("makes a running pill forget the position the clear wiped", () => {
+    // Clearing local data wipes the row, reopens writes, then reloads the window,
+    // which asks the pill for its geometry so the composer can anchor to it. The
+    // pill still holds the pre-clear position and would publish it straight back,
+    // so the clear has to tell it to forget first.
+    const clear = scope("commands", "pub async fn clear_local_data(");
+    assert.match(clear, /forget_running_pill_position/);
+    // Before the clear announces that the frontend may finish, otherwise the
+    // reload can land first.
+    assert.ok(
+      clear.indexOf("forget_running_pill_position") <
+        clear.indexOf("mark_ready_for_frontend_completion"),
+      "the pill must forget before writes reopen",
+    );
+    // Every pill understands the message, or one platform re-leaks the position.
+    // The clear hands its declaration id to the pill so the pill's answer retires
+    // exactly this declaration, not a later clear's.
+    // Every platform re-exports the shared message types, so the variant is
+    // asserted once against the module that defines it.
+    assert.match(
+      source.sharedMessages,
+      /ForgetPosition \{\s*#\[serde\(default\)\]\s*ack: Option<u64>,\s*\}/,
+      "sharedMessages: the variant is what serde turns into forget_position",
+    );
+    for (const name of ["gtkPill", "windowsPill", "macApp"]) {
+      assert.match(
+        source[name],
+        /InMessage::ForgetPosition \{ ack \}/,
+        `${name}: no handler, so this backend writes the cleared row back`,
+      );
+    }
+    // Every path that declares and delivers a clear takes the delivery lock, so
+    // arrival order at the pill matches declaration order. Without that, a clear
+    // declared second can reach the pill first, and its answer retires a
+    // declaration whose clear the pill has not applied.
+    assert.match(
+      source.pillPosition,
+      /pub async fn forget_running_pill_position\(app: &tauri::AppHandle\) -> ForgetOutcome/,
+    );
+    const forgetScope = scope(
+      "pillPosition",
+      "pub async fn forget_running_pill_position(app: &tauri::AppHandle) -> ForgetOutcome",
+    );
+    assert.match(
+      forgetScope,
+      /lock_clear_delivery\(\)\.await/,
+      "pillPosition: the forget path delivers without the ordering lock",
+    );
+    assert.ok(
+      forgetScope.indexOf("lock_clear_delivery") <
+        forgetScope.indexOf("mark_position_erased"),
+      "pillPosition: the forget path declares before it takes the ordering lock",
+    );
+    // A failed delivery keeps the declaration outstanding on purpose, and the
+    // branch must not withdraw it. The pill can have a saved-position report
+    // buffered on its stdout that describes the position this clear just deleted;
+    // the latch is what stops that report being stored. The reader's exit
+    // withdraws every declaration, so a latch left closed here cannot outlive the
+    // pill it is protecting against.
+    //
+    // `[\s\S]` rather than `[^}]`, because the log line in this branch
+    // interpolates `{err}` and the closing brace of that interpolation ended a
+    // `[^}]*` before the rest of the branch.
+    const forgetErrorBranch =
+      /Err\(err\) => \{[\s\S]*?ForgetOutcome::DeliveryFailed/;
+    assert.match(
+      forgetScope,
+      forgetErrorBranch,
+      "pillPosition: a failed delivery does not report a delivery failure",
+    );
+    const errorArm = forgetScope.slice(
+      forgetScope.indexOf("Err(err) => {"),
+      forgetScope.indexOf("ForgetOutcome::DeliveryFailed"),
+    );
+    assert.doesNotMatch(
+      errorArm,
+      /withdraw_erase\(declaration\)/,
+      "pillPosition: a failed delivery opens the latch over a report it never saw",
+    );
+    // An absent pill is the one case that completes the wipe without an answer,
+    // and it withdraws its declaration because no reader is left to do it.
+    assert.match(
+      forgetScope,
+      /pill_is_running\(app\)[\s\S]{0,600}?ForgetOutcome::NoPill/,
+      "pillPosition: an absent pill is not told apart from a failed delivery",
+    );
+    // The withdrawal is part of that branch, not a nearby line. The reader exited
+    // before this declaration existed, so its exit cannot withdraw it: without the
+    // call the wipe reports success with a declaration left outstanding.
+    const noPillBranch = forgetScope.slice(
+      forgetScope.indexOf("if !crate::platform::overlay::pill_is_running(app)"),
+      forgetScope.indexOf("ForgetOutcome::NoPill") +
+        "ForgetOutcome::NoPill".length,
+    );
+    assert.ok(
+      noPillBranch.length > 0,
+      "pillPosition: the absent-pill branch is not where this guard looks",
+    );
+    assert.match(
+      noPillBranch,
+      /withdraw_erase\(declaration\); return ForgetOutcome::NoPill/,
+      "pillPosition: the absent-pill branch leaves the declaration it made outstanding",
+    );
+    // Both reset paths hold it across the clear and the send.
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const body = scope(name, "pub async fn notify_reset_position(");
+      assert.match(
+        body,
+        /lock_clear_delivery\(\)\.await/,
+        `${name}: the reset path delivers without the ordering lock`,
+      );
+      assert.ok(
+        body.indexOf("lock_clear_delivery") <
+          body.indexOf("clear_saved_position"),
+        `${name}: the reset declares before it takes the ordering lock`,
+      );
+    }
+  });
+
+  it("reacts to a display change on every platform", () => {
+    // A pill whose display is unplugged, rescaled or rearranged is left at an
+    // origin no display covers: still running, still listening, invisible. Then
+    // its own save path stores that stranded origin over the good one. Every
+    // platform has to notice, and each has a different signal for it.
+    assert.match(
+      source.windowsPill,
+      /WM_DISPLAYCHANGE \| WM_SETTINGCHANGE/,
+      "windowsPill: no display-change message handled",
+    );
+    // Matched as an arm, not as a bare name: a mention in a comment or a
+    // renamed constant would satisfy a looser pattern while the message goes
+    // unhandled.
+    // Still matched as a dispatch, not a bare name: the handler is reachable only
+    // if `wndproc` routes the message to it.
+    assert.match(
+      source.windowsPill,
+      /WM_DPICHANGED => on_wm_dpichanged\(/,
+      "windowsPill: a scale change moves the pill and is never corrected",
+    );
+    // The suggested rect has to be adopted. Ignoring lParam makes Windows
+    // rescale the window itself, which moves the pill off its parked spot.
+    assert.match(
+      source.windowsPill,
+      /SetWindowPos\(hwnd, None, x, y, w, h, SWP_NOZORDER \| SWP_NOACTIVATE\)/,
+      "windowsPill: the DPI suggestion is ignored, so Windows rescales the pill",
+    );
+    assert.match(
+      source.macPill,
+      /NSApplicationDidChangeScreenParametersNotification/,
+      "macPill: no screen-parameter observer",
+    );
+    for (const name of ["windowsPill", "macPill", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::reconcile\(/,
+        `${name}: nothing re-resolves the position against the new layout`,
+      );
+      // The call, not the definition: a platform that stopped calling it would
+      // still match its own `fn reconcile_display_layout(`.
+      const poll = scope(name, "fn poll_display_layout(");
+      assert.ok(poll.length > 0, `${name}: no display poll`);
+      assert.match(
+        poll,
+        /reconcile_display_layout\(/,
+        `${name}: the poll never reconciles the arrangement it saw change`,
+      );
+    }
+  });
+
+  it("backs the display events with a poll that cannot miss a change", () => {
+    // A hidden window receives no WM_DPICHANGED, a macOS app that is not
+    // frontmost can miss the notification, and an unmapped X11 window can miss a
+    // RandR change. The poll is the backstop under those events.
+    for (const name of ["windowsPill", "macPill", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::layout_signature\(/,
+        `${name}: no poll backstop, so a missed event strands the pill`,
+      );
+    }
+  });
+
+  it("refuses to save a position the display change forced", () => {
+    // The OS moves pill windows during a display change, and the frame it leaves
+    // behind is indistinguishable from a drag. Saving it replaces the position
+    // the user chose with the one the system improvised.
+    // Scoped to the save path itself. An unscoped match passes on a mention
+    // anywhere in the file, which is exactly what a dropped check looks like.
+    // The guard check moved into the save-only writer that every drop path ends
+    // in: the entry point records when the drop happened, the writer decides
+    // whether it may be stored. Scoped to the writer so a mention elsewhere
+    // still fails.
+    const saves = [
+      ["windowsPill", "fn write_drag_position(", /allows_save\(now\)/],
+      ["macPill", "fn write_drag_position(", /allows_save\(now\)/],
+      [
+        "gtkX11",
+        "pub\(crate\) fn write_window_position(",
+        /allows_save\(now\)/,
+      ],
+    ];
+    for (const [name, marker, pattern] of saves) {
+      const save = scope(name, marker);
+      assert.match(
+        save,
+        /save_guard\.borrow\(\)\.allows_save\(/,
+        `${name}: the save path never asks the guard`,
+      );
+      assert.match(
+        save,
+        pattern,
+        `${name}: the guard's verdict is not what decides the save`,
+      );
+      // The refusal has to be a return, not a logged warning that falls through.
+      // The block is read to its own closing brace: a pattern that runs on can
+      // match a later branch's `return` and pass while the refusal falls through.
+      const refusalAt = save.indexOf(
+        "if !state.save_guard.borrow().allows_save(now) {",
+      );
+      assert.ok(
+        refusalAt >= 0,
+        `${name}: the guard's refusal is not recognisable`,
+      );
+      const refusal = balancedBlock(save, save.indexOf("{", refusalAt));
+      assert.match(
+        refusal,
+        /return;/,
+        `${name}: the refusal does not stop the save`,
+      );
+      // A `return` that only fires when the drop record is absent lets the branch
+      // fall through to the store with a record present, and `/return;/` alone
+      // would pass. The refusal has to keep the drop owed and store nothing.
+      assert.match(
+        refusal,
+        /drag_save_due\.set\(/,
+        `${name}: the refusal does not keep the drop owed`,
+      );
+      assert.doesNotMatch(
+        refusal,
+        /saved_x\.set\(|upsert_pill_position/,
+        `${name}: the refusal stores the frame it refused`,
+      );
+      // Windows stores through `store_recorded_drop`, macOS and GTK set the origin
+      // in place, so the tail is checked for either shape.
+      assert.match(
+        save.slice(save.indexOf("{", refusalAt) + refusal.length),
+        /saved_x\.set\(|store_/,
+        `${name}: a permitted save never records the origin`,
+      );
+    }
+    // A failed or partial enumeration must not read as an unplugged display.
+    for (const name of ["windowsPill", "macPill", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /layout_changed\(/,
+        `${name}: the save guard is never told the layout moved`,
+      );
+    }
+  });
+
+  it("names the display in the stored record instead of only its rectangle", () => {
+    // A rect is not an identity: two identical panels share one, and a
+    // resolution change moves the rect of a monitor that has not moved. Without
+    // a stable token a pill whose monitor is replugged lands on a different one.
+    for (const name of ["windowsPill", "macPill", "gtkX11"]) {
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::display_identity\(/,
+        `${name}: the display is never named, so the record carries only a rect`,
+      );
+    }
+    assert.match(
+      source.windowsPill,
+      /EnumDisplayDevicesW/,
+      "windowsPill: the monitor device path is the durable name on Windows",
+    );
+    assert.match(
+      source.macPill,
+      /CGDisplayCreateUUIDFromDisplayID/,
+      "macPill: CGDirectDisplayID is not stable, the UUID is",
+    );
+    // The token has to reach the database, or the pill cannot use it next launch.
+    assert.match(
+      source.pillProcess,
+      /display_id: Option<u64>/,
+      "pillProcess: the token is dropped before it is stored",
+    );
+    assert.match(
+      source.pillPosition,
+      /ParkedWindow::new_named\(/,
+      "pillPosition: the record is built without the display's identity",
+    );
+    assert.match(
+      source.restore,
+      /display_id: Option<u64>/,
+      "restore: the record has no field for the display's identity",
+    );
+    // Matching by token has to come first, or a display that changed resolution
+    // loses to whichever display now covers the rect it was saved with.
+    const choose = scope("restore", "fn choose_display(");
+    assert.match(
+      choose,
+      /parked\.display_id\s*\{[^}]*display\.id == Some\(saved\)/,
+      "restore: the token is stored but never matched",
+    );
+    assert.ok(
+      choose.indexOf("display.id == Some(saved)") <
+        choose.indexOf("same_geometry"),
+      "restore: geometry wins over the display's identity",
+    );
+    // A version bump is what stops an old row, which cannot name its display,
+    // from being read as a named one.
+    assert.match(source.restore, /pub const SCHEMA_VERSION: i64 = 2;/);
+  });
+
+  it("keeps the pill where it is when told to forget the position", () => {
+    // `ForgetPosition` exists because a local-data clear wipes the row and the
+    // pill would otherwise publish its pre-clear position straight back. Its
+    // contract is that the pill does not move, so an unsaved flag alone must not
+    // be read as "re-home to the default corner": that would move a visible,
+    // deliberate pill as a side effect of clearing a database.
+    //
+    // GTK already distinguishes the two, because its idle path anchors to the
+    // last applied origin when nothing is saved. Windows and macOS both fall
+    // through to their default corner, so both need the guard.
+    const guards = [
+      ["windowsPill", "fn reposition_to_cursor_monitor("],
+      ["macPill", "fn reposition_window("],
+    ];
+    for (const [name, marker] of guards) {
+      const reposition = scope(name, marker);
+      // The decision is the shared anchor, not a local pair of flags. A guard on
+      // the local expression would pass again the moment someone rebuilt the same
+      // two-flag check, which is exactly how Windows and macOS drifted apart.
+      assert.match(
+        source[name],
+        /rust_pill_shared::layout::Anchor::/,
+        `${name}: placement does not consult the shared anchor model`,
+      );
+      // macOS parks the window from a helper once the frame loop is split up, so
+      // the guard is read from its home rather than from the caller that reaches it.
+      assert.match(
+        source[name],
+        /if !anchor\.places\(\) \{[^}]*return;/,
+        `${name}: a cleared pill is placed anyway, so forgetting moves it`,
+      );
+    }
+    // The GTK equivalent is a fallback rather than a guard, and has to keep
+    // anchoring to the last applied origin.
+    const gtkAnchor = read("packages/rust_gtk_pill/src/x11.rs");
+    assert.match(
+      gtkAnchor,
+      /prev\.0 as f64 \+ center_x, prev\.1 as f64 \+ center_y/,
+      "gtkX11: the unsaved fallback stopped reusing the last applied origin",
+    );
+  });
+
+  it("reuses one display source for reconciliation and restore", () => {
+    // A record names its display, so the enumeration that resolves it has to carry
+    // the identity token. Restore used the token-less enumeration, which silently
+    // reduced every restore to geometry matching: a pill saved on a display that
+    // was resized or rearranged came back on whichever display sat nearest.
+    const restore = scope("windowsPill", "fn restore_position(");
+    assert.match(
+      restore,
+      /let Some\(work_areas\) = enumerate_work_areas_with_identity\(\) else \{\s*return RestoreOutcome::NoDisplays;/,
+      "windowsPill: restore enumerates displays without their identity, or treats a failed enumeration as a verdict on the record",
+    );
+    assert.doesNotMatch(restore, /enumerate_work_areas\(\)\?/);
+    // One callback serves both enumerations, so the token cannot be attached in
+    // one and forgotten in the other.
+    const windows = source.windowsPill;
+    assert.equal(
+      (windows.match(/unsafe extern "system" fn collect_monitor_rect\(/g) || [])
+        .length,
+      1,
+      "windowsPill: two enumeration callbacks, so their fields can diverge",
+    );
+    assert.match(windows, /fn enumerate_work_areas_with_identity\(\)/);
+    assert.match(windows, /candidate\.id = monitor_display_id\(monitor\)/);
+  });
+
+  it("gives every pill one anchor model instead of one flag per platform", () => {
+    // Three flags described the same thing in three dialects, which is how two of
+    // them came to answer "cleared" differently from the third.
+    const shared = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(shared, /pub enum Anchor \{/);
+    assert.match(
+      shared,
+      /pub fn pill_anchor\(saved: bool, restarted: bool\) -> Anchor/,
+    );
+    assert.match(shared, /pub fn places\(self\) -> bool/);
+    // No platform may keep its own reset-strategy field again: the anchor plus the
+    // follow-the-pointer flag are the whole state.
+    for (const name of ["windowsPill", "macApp", "gtkPill", "gtkX11"]) {
+      assert.doesNotMatch(
+        source[name],
+        /reset_strategy/,
+        `${name}: a private reset strategy is back alongside the shared anchor`,
+      );
+    }
+    // Every reset and every forget sets the anchor, so neither can leave it stale.
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      const handler = handlerBody(pathOf.get(name), "ResetPosition");
+      assert.match(
+        handler,
+        /Anchor::from_reset\(/,
+        `${name}: a reset leaves the anchor stale`,
+      );
+    }
+    // Forgetting is the other half. A cleared pill that keeps its old anchor
+    // still follows the pointer on the next launch, which is exactly the
+    // placement the clear was meant to cancel.
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      const handler = handlerBody(pathOf.get(name), "ForgetPosition");
+      assert.match(
+        handler,
+        /Anchor::from_forget\(\)/,
+        `${name}: a forget leaves the anchor stale`,
+      );
+    }
+  });
+
+  it("keeps a drop the display change held back instead of losing it", () => {
+    // The drop is reported once. A guard that returned here without recording a
+    // deadline lost the position outright: the pill reopened where it sat before
+    // the user moved it, on every platform, silently.
+    const shared = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(
+      shared,
+      /pub fn save_due_at\(&self, now: f64\) -> Option<f64>/,
+    );
+    // The deadline is parked by the writer the entry point hands the drop to.
+    for (const [name, persist] of [
+      [
+        "windowsPill",
+        "fn write_drag_position(hwnd: HWND, state: &PillState, now: f64)",
+      ],
+      [
+        "macApp",
+        "fn write_drag_position(state: &PillState, window: id, now: f64)",
+      ],
+      ["gtkX11", "pub(crate) fn write_window_position("],
+    ]) {
+      const body = scope(name, persist);
+      assert.match(
+        body,
+        /save_due_at\(now\)/,
+        `${name}: a refused save has no deadline, so the drop is lost`,
+      );
+      assert.match(
+        body,
+        /drag_save_due\.set\(due\)/,
+        `${name}: the deadline is computed and then dropped`,
+      );
+    }
+    // And something has to come back for it, otherwise the deadline is a comment.
+    // GTK's retry lives in the frame body, which used to be a closure inside
+    // `run` and is now the free `frame_tick`; naming `fn run` would read the
+    // launcher and pass on a comment rather than on the retry.
+    for (const [name, marker] of [
+      ["windowsPill", "fn on_anim_tick"],
+      ["macApp", "fn reposition_window"],
+      ["gtkPill", "fn frame_tick"],
+    ]) {
+      // Windows gates the retry on the stored deadline, so a record whose
+      // monitor could not be resolved is retried once the quarter second has
+      // passed rather than every frame. The other two re-check the guard inside
+      // the writer, which is the same retry with the check one call deeper.
+      assert.match(
+        scope(name, marker),
+        /drag_save_due\s*\.get\(\)\s*\.(?:is_some_and|is_some)\b/,
+        `${name}: nothing retries a held-back save`,
+      );
+    }
+    // Clearing local data must cancel the retry, or it writes the row back.
+    //
+    // GTK dispatches `ForgetPosition` to `on_forget_position`, so its clear
+    // lives in that helper rather than in the arm, while the other two clear
+    // inline. `handlerBody` covers both shapes; `scope` on the arm stops before
+    // the helper and would fail on a correct clear.
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      assert.match(
+        handlerBody(pathOf.get(name), "ForgetPosition"),
+        /drag_save_due\.set\(None\)/,
+        `${name}: a retry outlives the clear and recreates the row`,
+      );
+    }
+  });
+
+  it("never reads a negative X11 origin as an unmoved window", () => {
+    // X11 virtual screens are signed: a second monitor left of or above the
+    // primary one owns negative coordinates. `x < 0 && y < 0` therefore described
+    // a real window as unapplied, and unplugging that display left the pill with
+    // nothing to reconcile from.
+    assert.match(
+      source.gtkPill,
+      /pub\(crate\) const UNAPPLIED_ORIGIN: i32 = i32::MIN;/,
+    );
+    assert.doesNotMatch(
+      source.gtkPill,
+      /origin_x < 0\.0 && origin_y < 0\.0/,
+      "gtkPill: negative coordinates are real places, not an unset latch",
+    );
+    assert.doesNotMatch(
+      source.gtkPill,
+      /x11_drag_applied\.get\(\)\.1\s*==\s*i32::MIN/,
+      "gtkPill: one axis of the sentinel is not the sentinel",
+    );
+    assert.match(source.gtkPill, /if is_unapplied\(origin_x, origin_y\)/);
+  });
+
+  it("restores and reconciles against work areas, not full monitor rects", () => {
+    // The pill lives inside the work area. Asking for `rcMonitor` put the taskbar
+    // and the dock back into the space the pill may occupy, so restore could park
+    // it behind them and a saved work-area record stopped matching its display.
+    const marker = "fn enumerate_work_areas_with_identity";
+    const fn = scope("windowsPill", marker);
+    assert.match(
+      fn,
+      /enumerate_displays\(true\)/,
+      "windowsPill: the work-area enumeration asks for full monitor rects",
+    );
+    assert.doesNotMatch(fn, /enumerate_displays\(false\)/);
+  });
+
+  it("fails a reset whose stored record survived the clear", () => {
+    // A reset that reports success while the row is still there moves the window
+    // and then restores the old spot next launch. The clear has to answer, and the
+    // reset has to act on the answer. The clear now returns the declaration id when
+    // the record is gone, and `None` when it is not, so the reset binds it with
+    // `let ... else` and bails on `None`.
+    assert.match(
+      source.pillPosition,
+      /pub async fn clear_saved_position\(\s*app: &tauri::AppHandle,\s*_gate: &crate::db::local_data_write_gate::LocalDataWriteGuard,\s*\) -> Option<u64>/,
+    );
+    // Matched through the brace to the `return`, not just to the call: an `if`
+    // whose failure branch logged and carried on would satisfy a bare match while
+    // the reset moved the pill anyway, which is the exact outcome the guard exists
+    // to prevent. The branch has to leave the function.
+    // The branch has to fail, not merely leave: `return Ok(())` satisfies a bare
+    // `return` while the caller sees a successful reset whose row is still there.
+    const bails =
+      /let Some\(declaration\) = crate::pill_position::clear_saved_position\(app, &\w+\)\.await else \{\s*return Err\(/;
+    for (const [name, marker] of [
+      ["pillProcess", "pub async fn notify_reset_position"],
+    ]) {
+      const body = scope(name, marker);
+      assert.match(
+        body,
+        bails,
+        `${name}: a failed clear still resets, and the next launch undoes it`,
+      );
+      // And the move happens after the guard, so there is no path to it that the
+      // clear has not answered.
+      assert.ok(
+        body.indexOf("clear_saved_position") <
+          body.indexOf('"strategy": strategy'),
+        `${name}: the pill is told to re-home before the record is cleared`,
+      );
+    }
+    const macReset = read(
+      "apps/desktop/src-tauri/src/platform/macos/overlay.rs",
+    );
+    assert.match(
+      macReset,
+      bails,
+      "the macOS overlay reset has the same hole as the generic path",
+    );
+    assert.ok(
+      macReset.indexOf("clear_saved_position") <
+        macReset.indexOf("InMessage::ResetPosition"),
+      "the macOS pill is told to re-home before the record is cleared",
+    );
+  });
+
+  it("reads the published position as one record on every desktop path", () => {
+    // The variant carries a single `report`. A consumer that still destructured
+    // the pre-refactor fields compiled nowhere, so the only platform whose code
+    // path it lived on was the one that failed: the macOS overlay kept three
+    // fields through the whole refactor and only CI's macOS lint noticed.
+    const files = rustFilesUnder("apps/desktop/src-tauri/src");
+    const VARIANT = "OutMessage::PositionChanged";
+    for (const file of files) {
+      // A doc comment that names the variant is not a pattern, and splitting the
+      // raw text treated one as another consumer, failing a correct file for
+      // describing itself. An occurrence whose line already holds `//` is skipped;
+      // everything else is collapsed and checked as before.
+      const raw = readRaw(file);
+      const pieces = [];
+      for (
+        let at = raw.indexOf(VARIANT);
+        at !== -1;
+        at = raw.indexOf(VARIANT, at + 1)
+      ) {
+        const lineStart = raw.lastIndexOf("\n", at) + 1;
+        if (raw.slice(lineStart, at).includes("//")) continue;
+        pieces.push(collapse(raw.slice(at + VARIANT.length)));
+      }
+      for (const piece of pieces) {
+        // Only the pattern's own braces. A consumer may match
+        // `OutMessage::PositionChanged { report }` and then destructure the
+        // record's fields on the next line, which is legal; reading a fixed
+        // window past the pattern rejected that valid shape.
+        const pattern = /^\s*\{([^}]*)\}/.exec(piece);
+        assert.ok(
+          pattern,
+          `${file}: destructures the published position into loose fields again`,
+        );
+        // `report` or a rename of it, which is the same binding.
+        assert.match(
+          pattern[1],
+          /^\s*report\s*(:\s*\w+)?\s*,?\s*$/,
+          `${file}: destructures the published position into loose fields again`,
+        );
+        assert.doesNotMatch(
+          pattern[1],
+          /has_saved_position/,
+          `${file}: reads a field the shared record owns`,
+        );
+      }
+    }
+  });
+
+  it("polls the arrangement through one shared policy", () => {
+    // The baseline rule is the part that is easy to get wrong and invisible when
+    // wrong: acting on the first signature treats the launch as a display change
+    // and moves a pill that had just been restored.
+    const shared = read("packages/rust_pill_shared/src/layout.rs");
+    assert.match(shared, /pub fn poll_layout\(/);
+    assert.match(shared, /pub enum PollOutcome \{/);
+    // The pair a poll carries between frames is `LayoutPoll`, and the pills hold
+    // one. Keeping the two values as loose cells is what let a caller store one
+    // and not the other, which polls forever without ever looking wrong.
+    assert.match(shared, /pub struct LayoutPoll \{/);
+    for (const name of ["windowsPill", "macApp", "gtkPill"]) {
+      assert.match(
+        source[name],
+        /\.observe\(now, rust_pill_shared::layout::layout_signature\(&areas\)\)/,
+        `${name}: the layout poll is hand-rolled again`,
+      );
+      assert.match(
+        source[name],
+        /PollOutcome::Changed/,
+        `${name}: the poll does not gate reconciliation on a change`,
+      );
+    }
+    for (const [name, marker] of [
+      ["windowsState", "layout_poll"],
+      ["macState", "layout_poll"],
+      ["gtkState", "layout_poll"],
+    ]) {
+      assert.match(
+        source[name],
+        /layout_poll: RefCell<rust_pill_shared::layout::LayoutPoll>/,
+        `${name}: the poll state is back to loose cells`,
+      );
+      assert.doesNotMatch(
+        source[name],
+        /layout_polled_at|layout_signature/,
+        `${name}: a second copy of the poll state exists beside the first`,
+      );
+      assert.ok(marker);
+    }
+  });
+
+  it("clears the interrupted-drag latch when a drag starts", () => {
+    // The latch means "a layout change landed under this drag". Nothing cleared it
+    // on GTK, so one interrupted drag refused every later save and the pill
+    // silently stopped remembering its position at all.
+    const pill = read("packages/rust_gtk_pill/src/pill.rs");
+    // The reader collapses whitespace, so a comment between the two statements
+    // shows up as ordinary text and the guard has to span it.
+    assert.match(
+      pill,
+      /state\.dragging\.set\(true\);.*?state\.save_guard\.borrow_mut\(\)\.drag_started\(\);/,
+      "gtkPill: a drag starts without clearing the interrupted-drag latch",
+    );
+    // GTK's missed-release net publishes a position, so it takes the same guard.
+    const x11 = read("packages/rust_gtk_pill/src/x11.rs");
+    const fallback = scope("gtkX11", "pub(crate) fn persist_drop_position(");
+    assert.match(
+      fallback,
+      /!state\.save_guard\.borrow\(\)\.allows_save\(now\)/,
+      "gtkX11: the missed-release fallback saves without consulting the guard",
+    );
+  });
+
+  it("resizes the layered surface when the DPI suggestion resizes the window", () => {
+    // Every frame presents exactly the surface's own dimensions, so a surface left
+    // at its old size resizes the window back on the next frame and undoes
+    // WM_DPICHANGED entirely.
+    const gfx = read("packages/rust_windows_pill/src/gfx.rs");
+    assert.match(
+      gfx,
+      /pub\(crate\) fn resize\(&mut self, width: i32, height: i32\)/,
+    );
+    const dpi = scope("windowsPill", "unsafe fn on_wm_dpichanged(");
+    assert.match(
+      dpi,
+      /gfx\.resize\(w, h\)/,
+      "windowsPill: the surface ignores the DPI size",
+    );
+    // The surface is what UpdateLayeredWindow presents, so this is the only place
+    // the suggestion can survive.
+    const layered = scope("windowsPill", "fn update_layered(");
+    assert.match(layered, /cx: gfx\.width/);
+    assert.match(layered, /cy: gfx\.height/);
+  });
+
+  it("saves a pending final position before the window is destroyed", () => {
+    // The message arrives asynchronously, so latched input can still be pending
+    // with the pill's last position sitting in it. Once the window is gone the
+    // frame loop that would have delivered it never runs.
+    const destroy = scope("windowsPill", "unsafe fn on_wm_destroy(");
+    assert.match(destroy, /pending_drag_position\.get\(\)/);
+    assert.match(destroy, /persist_drag_position\(hwnd, state\)/);
+    const save = scope("windowsPill", "fn persist_drag_position(");
+    assert.match(
+      save,
+      /state\.pending_drag_position\.set\(false\)/,
+      "windowsPill: a consumed pending save is not cleared, so destroy stores it twice",
+    );
+    // Clearing the latch is not the same as having saved. While a save is owed
+    // the retry lives on the frame loop, and there is no frame loop after
+    // `WM_DESTROY`: a write that defers here is a position lost. The latch must
+    // only be cleared on the path that actually writes, so `write_drag_position`
+    // has to be reachable without an early return in between -- and the shared
+    // store it reaches must be the thing that leaves the drop.
+    const write = scope("windowsPill", "fn write_drag_position(");
+    assert.match(
+      save,
+      /write_drag_position\(hwnd, state, now\)/,
+      "windowsPill: the pending save never reaches the writer",
+    );
+    assert.match(
+      write,
+      /store_recorded_drop\(hwnd, state\)/,
+      "windowsPill: the writer does not leave the drop",
+    );
+    const store = scope("windowsPill", "fn store_recorded_drop(");
+    assert.match(
+      store,
+      /state\.drag_save_due\.set\(None\)/,
+      "windowsPill: a written drop leaves a retry owed, so destroy would store it twice",
+    );
+    // The destroy path must not be able to leave work on the frame loop, which
+    // no longer runs. `write_drag_position` defers while the guard refuses, so the
+    // only safe order is: destroy asks, the guard allows, the writer writes.
+    assert.doesNotMatch(
+      destroy,
+      /drag_save_due\.set\(/,
+      "windowsPill: destroy parks a retry that will never run",
+    );
+    // The drain must ask the deadline, not the pending flag. `persist_drag_position`
+    // clears `pending_drag_position` before the writer can defer, so a destroy that
+    // re-checks that flag skips the write and loses the drop. Asserting only that
+    // destroy avoids `drag_save_due.set(` left that swap passing.
+    assert.match(
+      destroy,
+      /drag_save_due\.get\(\)\.is_some\(\)/,
+      "windowsPill: destroy checks the cleared flag instead of the owed save",
+    );
+    assert.match(
+      destroy,
+      /write_drag_position_unchecked\(hwnd, state\)/,
+      "windowsPill: destroy sees the owed save and does not write it",
+    );
+  });
+
+  it("reads its own arguments without requiring Unicode", () => {
+    // `std::env::args()` panics on any argument that is not valid Unicode, and
+    // argv[0] is the executable path, which on Linux and macOS is a byte string
+    // that need not be UTF-8. A user with one such directory in the pill's
+    // install path would lose the whole overlay before its first frame, from a
+    // process that has no way to report anything.
+    const shared = read("packages/rust_pill_shared/src/restore.rs");
+    assert.match(shared, /pub fn saved_position_from_process_args\(\)/);
+    // `args_os` rather than `args`, and the non-Unicode argument is skipped rather
+    // than converted: the scan has to be able to walk past a path it cannot read.
+    assert.match(shared, /std::env::args_os\(\)/);
+    assert.match(
+      shared,
+      /into_string\(\)\.ok\(\)/,
+      "shared: a non-Unicode argument is converted instead of skipped",
+    );
+    // A repeated flag describes two positions, so it is answered the way the
+    // documentation says a repeated one is: `None`, not first-wins.
+    const reader = scope("restore", "pub fn saved_position_from_args");
+    assert.match(
+      reader,
+      /if records\.next\(\)\.is_some\(\) \{\s*return None;/,
+      "shared: a repeated --saved-position is ambiguous, not first-wins",
+    );
+    for (const name of ["gtkMain", "windowsMain", "macMain"]) {
+      assert.doesNotMatch(
+        source[name],
+        /std::env::args\(\)/,
+        `${name}: env::args panics on a non-Unicode argument`,
+      );
+      assert.match(
+        source[name],
+        /saved_position_from_process_args\(\)/,
+        `${name}: the panic-free reader is not what main uses`,
+      );
+    }
+  });
+
+  it("gates the position delete in the clear path", () => {
+    // Clearing the row is a local-data write like any other. Ungated, it can
+    // race a save that is already queued and the row comes back after the wipe.
+    //
+    // The gate is the caller's, not the clear's. The clear runs while the reset
+    // path holds the delivery order, and a gate acquired there would be taken in
+    // the other order from the local-data clear, which holds the gate and then
+    // takes the delivery order for its own forget. That is an ABBA deadlock, so
+    // the reset paths take the gate first and hand it in.
+    const clear = scope("pillPosition", "pub async fn clear_saved_position(");
+    assert.match(
+      clear,
+      /_gate: &crate::db::local_data_write_gate::LocalDataWriteGuard/,
+      "the clear does not run under the caller's write gate",
+    );
+    assert.ok(
+      !clear.includes("lock_local_data_write"),
+      "the clear takes the write gate again under the delivery order",
+    );
+    const deleteAt = clear.indexOf("clear_pill_position");
+    assert.ok(deleteAt >= 0, "the clear never deletes the row");
+
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const reset = scope(name, "pub async fn notify_reset_position");
+      const guard =
+        /let Ok\((\w+)\) = crate::db::local_data_write_gate::lock_local_data_write\(None\)/.exec(
+          reset,
+        );
+      assert.ok(guard, `${name}: the reset never takes the write gate`);
+      assert.notStrictEqual(
+        guard[1],
+        "_",
+        `${name}: an underscore binding drops the write gate immediately`,
+      );
+      const callAt = reset.indexOf("clear_saved_position");
+      assert.ok(callAt >= 0, `${name}: the reset never clears the record`);
+      assert.ok(
+        reset.indexOf(guard[0]) < callAt,
+        `${name}: the write gate has to be taken before the delete`,
+      );
+      assert.doesNotMatch(
+        reset.slice(0, callAt),
+        new RegExp(`drop\\(${guard[1]}\\)`),
+        `${name}: the write gate is dropped before the delete`,
+      );
+      // An explicit `drop` is not the only way to release the gate: a block that
+      // closes between the binding and the delete releases it too, and that
+      // leaves the same gap with no `drop` for the check above to find. The
+      // delete has to sit inside the scope the gate was taken in.
+      const between = reset.slice(
+        reset.indexOf(guard[0]) + guard[0].length,
+        callAt,
+      );
+      let depth = 0;
+      for (const char of between) {
+        if (char === "{") depth += 1;
+        if (char === "}") depth -= 1;
+        assert.ok(
+          depth >= 0,
+          `${name}: the write gate's scope closes before the delete, so the delete is ungated`,
+        );
+      }
+    }
+  });
+
+  it("seeds the Windows state from the position it created the window at", () => {
+    // The window is created at the restored origin, but the cursor tick parks
+    // the pill from `has_saved_position`/`saved_x`/`saved_y`. Left unsaved, the
+    // first tick 60 ms later re-homes the pill to the default corner and the
+    // restore looks like it was ignored.
+    // The seeding lives in the state factory now; `run` is still required to
+    // hand it the restored origin, so a caller that stops passing it fails here
+    // rather than silently starting unsaved.
+    const run = scope("windowsPill", "pub fn run(");
+    // `restored` also carries the display the placement chose, so the factory is
+    // handed the origin out of that pair plus the token and the work area it was
+    // saved against alongside it. The work area is what a later unplug remaps
+    // from, so a caller that stops passing it fails here.
+    assert.match(
+      run,
+      /initial_state\(\s*restored\.map\(\|placement\| placement\.origin\),\s*restored_display_id,\s*restored_work_area,\s*pending_restore,\s*\)/,
+      "windowsPill: run does not hand the factory the restored placement and any record it still owes",
+    );
+    const seeded = scope("windowsPill", "fn initial_state(");
+    assert.match(
+      seeded,
+      /has_saved_position: Cell::new\(restored\.is_some\(\)\)/,
+    );
+    assert.match(
+      seeded,
+      /saved_x: Cell::new\(restored\.map_or\(0, \|origin\| origin\.0\)\)/,
+    );
+    assert.match(
+      seeded,
+      /saved_y: Cell::new\(restored\.map_or\(0, \|origin\| origin\.1\)\)/,
+    );
+  });
+
+  it("anchors macOS selector geometry to the live pill instead of the area strip", () => {
+    const origin = source.macDraw
+      .split("pub(crate) fn tooltip_rendered_origin(")[1]
+      .split("fn draw_tooltip(")[0];
+    assert.doesNotMatch(origin, /PILL_AREA_HEIGHT/);
+    assert.match(
+      source.macDraw,
+      /pill_position\(state, ww, wh\), tooltip_w, tooltip_t, blend/,
+    );
+    assert.match(source.macInput, /refresh_selector_click_regions\(state\)/);
+  });
+
+  it("uses full macOS screen identity and keeps the x axis unchanged", () => {
+    const crossing = source.macPill
+      .split("unsafe fn pill_center_monitor(")[1]
+      .split("fn tick(")[0];
+    assert.doesNotMatch(crossing, /screen_visible_frame|primary_top - cx_up/);
+    assert.match(
+      crossing,
+      /crossing_identity\(frame, primary_top, cx_up, cy_up\)/,
+    );
+  });
+
+  it("samples macOS crossing geometry after rehoming rather than before", () => {
+    // The frame's ordering lives in `finish_frame`, which `perform_tick` calls
+    // once the queued messages are applied.
+    const frame = source.macPill
+      .split("fn finish_frame(")[1]
+      .split("fn end_drag(")[0];
+    const reposition = frame.indexOf("reposition_window(");
+    const spatial = frame.indexOf("tick_spatial_feedback(");
+    assert.ok(reposition >= 0 && spatial > reposition);
+  });
+
+  it("leaves monitor gaps unknown for Windows crossing detection", () => {
+    const lookup = source.windowsPill
+      .split("fn monitor_geometry_at(")[1]
+      .split("fn tick_crossing(")[0];
+    assert.match(lookup, /MONITOR_DEFAULTTONULL/);
+    assert.doesNotMatch(lookup, /MONITOR_DEFAULTTONEAREST/);
+  });
+
+  it("repaints Windows when crossing deformation snaps back to rest", () => {
+    const tick = source.windowsPill
+      .split("fn tick_crossing(")[1]
+      .split("fn tick_long_press(")[0];
+    assert.match(tick, /let \(out, changed\) = advance_crossing\(/);
+    assert.match(tick, /if changed \{\s*state\.dirty\.set\(true\)/);
+    assert.match(tick, /before != \(output\.scale_x, output\.scale_y\)/);
+  });
+
+  it("reports Cairo's latched errors at the frame boundary with a rate limit", () => {
+    assert.match(source.gtkPill, /if let Err\(error\) = cr\.status\(\)/);
+    assert.match(
+      source.gtkPill,
+      /last_draw_error\.get\(\).*Duration::from_secs\(2\)/,
+    );
+    assert.match(source.gtkPill, /last_draw_error\.set\(Some\(now\)\)/);
+  });
+
+  it("aborts failed Cairo saves before applying frame or crossing transforms", () => {
+    assert.match(
+      source.gtkDraw,
+      /if cr\.save\(\)\.is_err\(\) \{\s*return;\s*\}\s*cr\.translate\(ox, oy\)/,
+    );
+    assert.match(
+      source.gtkDraw,
+      /if cr\.save\(\)\.is_err\(\) \{\s*return;\s*\}\s*cr\.translate\(dcx, dcy\)/,
+    );
+  });
+
+  it("initializes the optional edge policy in the subframe native fixture", () => {
+    const fixture = source.sharedDrag
+      .split(
+        "fn subframe_flick_completes_a_settle_from_the_tracked_position()",
+      )[1]
+      .split("drag.end_drag(")[0];
+    assert.match(fixture, /edge_work: None/);
+  });
+
+  it("uses centered Windows scaling for both crossing and flash paint", () => {
+    assert.match(source.windowsGfx, /Matrix3x2::scale_around/);
+    assert.match(source.windowsDraw, /gfx\.scale_around\(dcx, dcy, dsx, dsy\)/);
+    assert.match(
+      source.windowsDraw,
+      /gfx\.scale_around\(center_x, center_y, scale, scale\)/,
+    );
+  });
+
+  it("uses the visible X11 pill monitor before the transparent host for placement", () => {
+    const monitor = source.gtkPill
+      .split("fn pill_monitor(")[1]
+      .split("fn selector_visible_headroom(")[0];
+    const visible = monitor.indexOf("x11_pill_monitor(window, state)");
+    assert.ok(
+      visible >= 0 && visible < monitor.indexOf("display.monitor_at_window"),
+    );
+  });
+
+  it("rejects unknown updater channels before making a request", () => {
+    const endpoint = source.commands
+      .split("fn channel_manifest_url(")[1]
+      .split("pub async fn check_for_channel_update(")[0];
+    assert.match(endpoint, /"stable" => \{?\s*Ok\(/);
+    assert.match(endpoint, /"beta" => Ok\(/);
+    assert.match(endpoint, /_ => Err\("Unsupported update channel"\)/);
+    assert.match(
+      source.commands,
+      /Url::parse\(channel_manifest_url\(channel.as_str\(\)\)\?\)/,
+    );
+  });
+
+  it("resolves GTK crossing from the live physical window position, even before the first save", () => {
+    // The live physical origin is read once in the shared center helper and
+    // consumed by the monitor resolver. Assert both halves so the contract
+    // pins that the seam math uses the applied drag origin, and not which
+    // function the read happens to sit in.
+    const center = source.gtkPill
+      .split("pub(crate) fn x11_pill_center(")[1]
+      .split("fn x11_pill_monitor(")[0];
+    assert.match(center, /state\.x11_drag_applied\.get\(\)/);
+    assert.doesNotMatch(
+      center,
+      /state\.(?:saved_x|saved_y|has_saved_position)/,
+    );
+
+    const crossing = source.gtkPill
+      .split("fn x11_pill_monitor(")[1]
+      .split("fn tick_crossing_frame(")[0];
+    assert.match(crossing, /x11_pill_center\(state, scale\)\?/);
+    assert.match(crossing, /center\.root\?/);
+    assert.doesNotMatch(
+      crossing,
+      /state\.(?:saved_x|saved_y|has_saved_position)/,
+    );
+    assert.match(crossing, /x11::monitor_at_physical_point/);
+    assert.match(
+      source.gtkX11,
+      /let monitor = monitor_at_physical_point\(display, anchor_x, anchor_y, scale\)\?/,
+    );
+  });
+
+  it("parks and clamps Windows content without counting transparent selector rows", () => {
+    // The clamp is the canvas as the window shows it, so it scales with the
+    // surface: clamping a 150% window to the logical 362 rows would let it hang
+    // below the work area by the difference.
+    assert.match(
+      source.windowsPill,
+      /let canvas = \(WINDOW_H_TYPING as f64 \* scale\)\.round\(\) as i32;/,
+    );
+    assert.match(source.windowsPill, /win_h\.clamp\(0, canvas\.max\(0\)\)/);
+    assert.match(
+      source.windowsPill,
+      /work_area_height - content_canvas_height\(win_h, scale\) - margin/,
+    );
+    assert.match(
+      source.windowsPill,
+      /wa\.bottom - content_canvas_height\(win_h, state\.content_scale\.get\(\)\)/,
+    );
+  });
+
+  it("reserves GTK selector rows outside the parked content canvas", () => {
+    assert.match(
+      source.gtkState,
+      /content_canvas_height\(ah, below_slot\) - dh - MARGIN_BOTTOM/,
+    );
+    assert.match(
+      source.gtkX11,
+      /content_canvas_height\(\s*alloc_h as f64, state\.below_slot_extra\(\)/,
+    );
+    assert.match(source.gtkX11, /p\.work_h - p\.content_h - p\.margin/);
+    assert.match(source.gtkPill, /ah - oy - dh/);
+    assert.match(source.gtkInput, /ox as i32, oy as i32/);
+  });
+
+  it("edge-maps the settle target once rather than each spring output", () => {
+    const settle = source.sharedDrag
+      .split("fn track_settle(")[1]
+      .split("fn estimate_velocity(")[0];
+    assert.equal(settle.match(/ease_point\(/g)?.length, 1);
+    const integration = settle.split("let (x, mut vx)")[1];
+    assert.doesNotMatch(integration, /ease_point\(/);
+    assert.match(integration, /clamp_point\(x, y\)/);
+  });
+
+  it("refreshes GTK hover after a missed release flushes the last drag move", () => {
+    const backstop = source.gtkPill
+      .split("fn release_pointer_if_button_up(")[1]
+      .split("fn clear_flash(")[0];
+    const afterRelease = backstop.split("clear_pointer_pin(state, window);")[1];
+    assert.match(afterRelease, /device_position\(&pointer\)/);
+    assert.match(
+      afterRelease,
+      /is_over_pill_area\(state, x as f64, y as f64\)/,
+    );
+    assert.match(afterRelease, /hover_probe_x\.set\(x as f64\)/);
+    assert.match(afterRelease, /hover_probe_y\.set\(y as f64\)/);
+  });
+
+  it("does not emit repeated settle-completion signals from idle", () => {
+    const idle = source.sharedDrag
+      .split("DragPhase::Idle => {")[1]
+      .split("DragPhase::Held => {")[0];
+    assert.match(idle, /self\.stationary_output\(\)/);
+    const stationary = source.sharedDrag
+      .split("fn stationary_output(")[1]
+      .split("fn track_held(")[0];
+    assert.match(stationary, /settled: false/);
+    assert.doesNotMatch(stationary, /settled: true/);
+  });
+
+  it("preserves cached Windows reduced motion on failed system queries", () => {
+    assert.match(
+      source.windowsPill,
+      /update_reduced_motion_cache\(cache, query_client_area_animation\(\)\)/,
+    );
+    assert.match(
+      source.windowsPill,
+      /if let Some\(enabled\) = queried_animation \{\s*cache\.set\(!enabled\)/,
+    );
+  });
+
+  it("queries Windows client-area animations rather than menu animations", () => {
+    assert.match(
+      source.windowsPill,
+      /SystemParametersInfoW\(\s*SPI_GETCLIENTAREAANIMATION,/,
+    );
+    assert.doesNotMatch(source.windowsPill, /SPI_GETMENUANIMATION|0x1002/);
+  });
+});
+
+describe("native review and monitor contracts", () => {
+  it("passes localized Edit captions through all three native review payloads", () => {
+    // The field is declared once on the shared `InMessage`, so a new platform
+    // cannot receive a review payload without it.
+    assert.match(
+      source.sharedMessages,
+      /#\[serde\(default\)\]\s*pub edit_label: Option<String>/,
+    );
+    for (const platform of ["gtk", "macos", "windows"]) {
+      const draw = read(`packages/rust_${platform}_pill/src/draw.rs`).split(
+        "fn draw_review_actions(",
+      )[1];
+      assert.match(draw, /review\.edit_label\.as_deref\(\)/);
+      assert.match(draw, /edit_label,\s*ClickAction::ReviewEdit/);
+      assert.doesNotMatch(draw, /"Edit",\s*ClickAction::ReviewEdit/);
+      assert.match(
+        draw,
+        /\(text_width \+ 20\.0\)\.max\(PERM_BUTTON_WIDTH \* 0\.8\)/,
+      );
+    }
+  });
+
+  it("centralizes fallible Win32 monitor-info initialization", () => {
+    const pill = source.windowsPill;
+    // `GetMonitorInfoW` belongs to the wrappers, not to their callers. There are
+    // exactly two, and both are the fallible-initialization pattern this guard
+    // exists for: the plain monitor info used for work areas, and the extended
+    // form whose `szDevice` names the display for the stored record. A third call
+    // site would be a caller doing its own struct plumbing.
+    assert.equal(pill.match(/GetMonitorInfoW\(/g)?.length, 2);
+    assert.ok((pill.match(/query_monitor_info\(/g)?.length ?? 0) >= 6);
+
+    // A caller binds the info in one of two ways, and both have to guard: a
+    // `?`, or a let-else whose block returns. Counting the two guarded shapes
+    // separately is what makes this bite -- a new binding with neither leaves
+    // one of them short of the total, and matching either shape on its own
+    // proved nothing about the other call sites. The argument is matched as an
+    // identifier rather than as the name `monitor`, because this same file
+    // already calls the wrapper with `mon` in one place: pinning the name
+    // would fail a guard that is proving the right thing about a renamed local.
+    const argument = "\\([A-Za-z_][A-Za-z0-9_]*\\)";
+    const bindings =
+      (pill.match(/let Some\(info\) = query_monitor_info\(/g)?.length ?? 0) +
+      (pill.match(/let info = query_monitor_info\(/g)?.length ?? 0);
+    const guarded =
+      (pill.match(
+        new RegExp(`let info = query_monitor_info${argument}\\?;`, "g"),
+      )?.length ?? 0) +
+      (pill.match(
+        new RegExp(
+          `let Some\\(info\\) = query_monitor_info${argument} else \\{[^}]*return[^}]*\\};?`,
+          "g",
+        ),
+      )?.length ?? 0);
+    assert.ok(bindings > 0, "the wrapper's callers bind the info");
+    assert.equal(
+      guarded,
+      bindings,
+      "every info binding is guarded by ? or a let-else that returns",
+    );
+  });
+});
+
+describe("crossing boundary geometry", () => {
+  it("passes full monitor dimensions instead of guessing normals from origins", () => {
+    const shared = read("packages/rust_pill_shared/src/deform.rs");
+    assert.match(shared, /pub monitor_width: f64/);
+    assert.match(shared, /pub monitor_height: f64/);
+    assert.match(shared, /fn boundary_axis\(/);
+    assert.doesNotMatch(shared, /\(frame\.monitor_x - self\.mon_x\)\.abs\(\)/);
+    for (const native of [source.gtkPill, source.macApp, source.windowsPill]) {
+      assert.match(native, /monitor_width: /);
+      assert.match(native, /monitor_height: /);
+    }
+  });
+});
+
+describe("selector transition visibility", () => {
+  it("shares opacity between selector drawing and native hit paths", () => {
+    const placement = read("packages/rust_pill_shared/src/placement.rs");
+    assert.match(placement, /pub fn tooltip_opacity\(/);
+    assert.doesNotMatch(placement, /above_y \+ \(below_y - above_y\) \* t/);
+    for (const platform of ["gtk", "macos", "windows"]) {
+      const state = read(`packages/rust_${platform}_pill/src/state.rs`);
+      const draw = read(`packages/rust_${platform}_pill/src/draw.rs`);
+      const input = read(`packages/rust_${platform}_pill/src/input.rs`);
+      assert.match(state, /pub\(crate\) fn tooltip_opacity\(/);
+      assert.match(draw, /let alpha = state\.tooltip_opacity\(\)/);
+      assert.match(draw, /state\.tooltip_opacity\(\) </);
+      assert.match(input, /refresh_selector_click_regions\(state\)/);
+    }
+    assert.match(
+      source.gtkInput,
+      /placement::tooltip_opacity\(tooltip_t, blend\)/,
+    );
+  });
+});
+
+describe("macOS saved-position scope", () => {
+  it("starts at the restored position and only captures origins from this instance's live canvas", () => {
+    // The pill starts saved only when the host restored a position for it, so a
+    // launch with nothing stored still parks at the default corner.
+    assert.match(
+      source.macApp,
+      /has_saved_position: Cell::new\(restored\.is_some\(\)\)/,
+    );
+    // Exactly one live capture, plus the one seed of the restored value at setup.
+    // Anything else means a second code path writes the saved origin.
+    const seeds =
+      source.macApp.match(/saved_x: Cell::new\(restored/g)?.length ?? 0;
+    assert.equal(seeds, 1, "the restored origin must be seeded exactly once");
+    // Four writers of the saved origin, each with its own reason: the drop, the
+    // retry that applies a record the launch could not resolve, the reconciliation
+    // that adopts a move AppKit already made, and the reconciliation that moves the
+    // pill itself. Anything else is another code path deciding where the pill was
+    // parked. The idle clamp is deliberately not one of them: its left bound
+    // narrows only while the assistant panel is open, and the inset origin it
+    // produces still fits the bare pill's bounds, so recording it would leave the
+    // pill inset after the panel closed.
+    //
+    // A refused drop is no longer one of them: it records the origin in
+    // `drop_origin` and the write reads it back, so the retry cannot save a
+    // repositioned frame, and the one writer that records it is the one above.
+    assert.equal(source.macApp.match(/saved_x\.set\(/g)?.length, 4);
+    assert.equal(source.macApp.match(/saved_y\.set\(/g)?.length, 4);
+    // The clamp holds the live window and must not reach the record: its bound
+    // depends on whether the assistant panel is open, so a recorded clamp outlives
+    // the panel that caused it.
+    assert.doesNotMatch(
+      source.macApp,
+      /state\.saved_x\.set\(target_x\)/,
+      "macApp: the transient clamp is written back into the record",
+    );
+    // The retry that applies a record the launch could not resolve has to publish
+    // where it landed, because the record it applied names the display it was saved
+    // on, not necessarily the one it was placed on.
+    const retry = source.macApp
+      .split("fn try_restore_pending(")[1]
+      .split("fn reposition_window(")[0];
+    assert.match(retry, /restore::restore\(/);
+    assert.match(retry, /publish_current_position\(/);
+    const capture = source.macApp
+      .split("fn persist_drag_position(")[1]
+      .split("fn reduced_motion(")[0];
+    // The capture writes the origin it recorded when the drop happened, not the
+    // frame it finds when the write runs: between the two, reconciliation can move
+    // the window, and a retry that read the live frame would store that move as the
+    // user's choice.
+    assert.match(capture, /state\.drop_frame\.take\(\)/);
+    assert.match(capture, /saved_x\.set\(frame\.origin\.x\)/);
+    assert.match(capture, /saved_y\.set\(frame\.origin\.y\)/);
+    assert.match(capture, /OutMessage::PositionChanged/);
+    const desktopCache = read("apps/desktop/src/utils/composer.utils.ts")
+      .split("export const setPillGeometry =")[1]
+      .split("export const getComposerWindowPosition")[0];
+    assert.match(desktopCache, /cachedPillRect = rect/);
+    assert.doesNotMatch(desktopCache, /localStorage|invoke\(|writeFile/);
+  });
+});
+
+describe("pill position persistence gate", () => {
+  it("takes the local-data write gate before storing a position", () => {
+    // The stored position is user data: the clear wipes the table, and the
+    // clear dialog promises the pill comes back to the default corner. Without
+    // the gate, a drag that lands mid-clear writes the row back afterwards.
+    const store = scope("pillPosition", "pub fn store_published_position(");
+    // The generation is checked as well as the lock: a clear can reopen the gate
+    // for the frontend's completion step while the pill still holds the pre-clear
+    // position, and nothing from that window may be stored.
+    assert.match(store, /current_write_generation\(\)/);
+    assert.match(store, /lock_local_data_write\(Some\(generation\)\)/);
+    assert.match(store, /upsert_pill_position/);
+    // A refused gate is the clear working as intended, so it is not logged as a
+    // failure the user should worry about.
+    assert.match(store, /current_write_generation\(\)\.is_none\(\)/);
+    // The guard has to live through the write, not just be taken near it. An
+    // inner block that closed before the upsert would satisfy every check above
+    // while leaving the write ungated, which is the race the gate exists to stop.
+    const guard =
+      /let (\w+) = crate::db::local_data_write_gate::lock_local_data_write\(Some\(generation\)\)/.exec(
+        store,
+      );
+    assert.ok(guard, "the store never binds the write gate");
+    assert.notStrictEqual(
+      guard[1],
+      "_",
+      "an underscore binding drops the write gate immediately",
+    );
+    const upsertAt = store.indexOf("upsert_pill_position");
+    assert.ok(upsertAt >= 0, "the store never writes the row");
+    assert.ok(
+      store.indexOf(guard[0]) < upsertAt,
+      "the write gate has to be taken before the write",
+    );
+    assert.doesNotMatch(
+      store.slice(0, upsertAt),
+      new RegExp(`drop\\(${guard[1]}\\)`),
+      "the write gate is dropped before the write",
+    );
+    let depth = 0;
+    for (const char of store.slice(
+      store.indexOf(guard[0]) + guard[0].length,
+      upsertAt,
+    )) {
+      if (char === "{") depth += 1;
+      if (char === "}") depth -= 1;
+      assert.ok(
+        depth >= 0,
+        "the write gate's scope closes before the write, so the write is ungated",
+      );
+    }
+  });
+
+  it("forgets the stored position when the user resets it", () => {
+    for (const name of ["pillProcess", "macOverlay"]) {
+      const reset = scope(name, "pub async fn notify_reset_position(");
+      assert.match(
+        reset,
+        /clear_saved_position/,
+        `${name}: a reset that only moves the pill leaves the next launch restoring the old spot`,
+      );
+      // The clear comes first: the pill republishes the corner it lands on, and
+      // that republish must not be what the next launch restores.
+      assert.ok(
+        reset.indexOf("clear_saved_position") < reset.search(/\.send\(/),
+        `${name}: the stored record must be cleared before the pill re-homes`,
+      );
+    }
+  });
+});
+
+describe("PR28 live audio chunk contract", () => {
+  it("sends the sample offset the webview requires to accept a chunk", () => {
+    // The webview discards any chunk whose offset is missing, because it
+    // cannot prove the stream is contiguous. That makes the native payload's
+    // `offset` field load bearing for whether live audio reaches a session at
+    // all, so the field and the emitter that fills it are both pinned here.
+    const payload = source.recording
+      .split("pub struct AudioChunkPayload {")[1]
+      .split("}")[0];
+    assert.match(payload, /pub offset: u64/);
+
+    // The payload also carries the owner and generation that route a chunk to
+    // the right recording, so the literal is read field by field rather than
+    // pinned to the exact text it had before those fields existed.
+    const chunkLiteral = source.commands
+      .split("let payload = AudioChunkPayload {")[1]
+      .split("};")[0];
+    assert.match(chunkLiteral, /samples,/);
+    assert.match(chunkLiteral, /offset,/);
+    assert.match(source.commands, /move \|samples: Vec<f32>, offset: u64\|/);
+  });
+
+  it("keeps the native and webview chunk contracts in step", () => {
+    // `offset` is optional in the webview type so an older native build
+    // degrades to a dropped chunk rather than a crash. The intake path must
+    // therefore still guard on it, or the "optional" default silently
+    // discards every chunk on a build that never sends one.
+    assert.match(source.audioChunks, /offset\?: number/);
+    assert.match(source.audioChunks, /payload\.offset \?\? null/);
+    assert.match(source.intake, /if \(offset === null\)/);
+  });
+});
+
+describe("native pill loading animation behind stage text", () => {
+  it("paints the dimmed loading bar before stage_text with balanced clip state on every platform", () => {
+    const shared = read("packages/rust_pill_shared/src/lib.rs");
+    assert.match(shared, /fn unit_progress\(value: f64\) -> f64/);
+    assert.match(shared, /pub fn active_stage_text\(/);
+    assert.match(shared, /pub fn loading_bar_layout\(/);
+    assert.match(shared, /pub const LOADING_DIMMED_TRACK_ALPHA: f64 = 0\.08;/);
+    assert.match(
+      shared,
+      /pub const LOADING_DIMMED_INDICATOR_ALPHA: f64 = 0\.22;/,
+    );
+
+    for (const platform of ["gtk", "macos", "windows"]) {
+      const rawDraw = readFileSync(
+        resolve(repoRoot, `packages/rust_${platform}_pill/src/draw.rs`),
+        "utf8",
+      );
+      const rawFn = rawDraw.split("fn draw_loading(")[1].split("\n}\n")[0];
+      const body = rawFn
+        .split("\n")
+        .map((line) => line.replace(/\/\/.*$/, ""))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      assert.doesNotMatch(
+        body,
+        /\breturn;/,
+        `${platform}: draw_loading must not return early when stage_text is present`,
+      );
+      assert.match(
+        body,
+        /rust_pill_shared::active_stage_text\(/,
+        `${platform}: draw_loading must normalize stage_text via active_stage_text`,
+      );
+      assert.match(
+        body,
+        /\bbar\.track_alpha\b/,
+        `${platform}: draw_loading must use shared bar.track_alpha`,
+      );
+      assert.match(
+        body,
+        /\bbar\.indicator_alpha\b/,
+        `${platform}: draw_loading must use shared bar.indicator_alpha`,
+      );
+      assert.match(
+        body,
+        /rust_pill_shared::loading_stage_text_alpha\(/,
+        `${platform}: draw_loading must use shared loading_stage_text_alpha`,
+      );
+      assert.doesNotMatch(
+        body,
+        /\b0\.15\b|\b0\.7\b|\b0\.9\b/,
+        `${platform}: draw_loading must not hardcode legacy alpha literals`,
+      );
+
+      const barIndex = body.indexOf("rust_pill_shared::loading_bar_layout(");
+      const indicatorIndex = body.indexOf("bar.indicator_span");
+      const stageIndex = body.indexOf("if let Some(stage) = stage");
+      const gradientIndex = body.indexOf("draw_edge_gradient(");
+
+      assert.ok(barIndex !== -1, `${platform}: missing loading_bar_layout`);
+      assert.ok(indicatorIndex !== -1, `${platform}: missing indicator_span`);
+      assert.ok(stageIndex !== -1, `${platform}: missing stage text block`);
+      assert.ok(
+        barIndex < indicatorIndex &&
+          indicatorIndex < stageIndex &&
+          stageIndex < gradientIndex,
+        `${platform}: loading bar must paint before stage_text, and edge gradient last`,
+      );
+      assert.equal(
+        body.match(/draw_edge_gradient\(/g)?.length,
+        1,
+        `${platform}: draw_edge_gradient must execute once per frame`,
+      );
+      assert.equal(
+        body.match(/\.save\(\)/g)?.length,
+        body.match(/\.restore\(\)/g)?.length,
+        `${platform}: save() and restore() calls must be balanced in draw_loading`,
+      );
+      assert.ok(
+        body.includes("rust_pill_shared::loading_stage_text_budget(") &&
+          body.includes("rust_pill_shared::text_fit::elide_to_width("),
+        `${platform}: draw_loading must fit stage_text via loading_stage_text_budget and elide_to_width`,
+      );
+    }
+  });
+
+  it("does not count a Phase route inside a comment or quoted example", () => {
+    const wire =
+      "state.indicator.apply_phase(phase, seq, reduced_motion, || clear_flash(state))";
+    const routes = (statement) =>
+      routesPhase(
+        rustCode(
+          `match msg { InMessage::Phase { phase, seq } => { ${statement}\n } InMessage::Levels { levels } => {} }`,
+        ),
+        "state",
+        "state",
+      );
+    assert.ok(routes(`/* banner */ ${wire};`));
+    for (const inactive of [
+      `// ${wire}`,
+      `/* outer /* nested */ ${wire} */`,
+      `"${wire}";`,
+      `r##"example " ${wire}"##;`,
+    ]) {
+      assert.equal(routes(inactive), false);
+    }
+  });
+
+  it("routes phase IPC to the shared indicator and preserves stage text and reduced-motion drawing", () => {
+    const shared = read("packages/rust_pill_shared/src/lib.rs");
+    assert.match(
+      shared,
+      /pub fn should_clear_stage_text_on_phase\(/,
+      "rust_pill_shared must define should_clear_stage_text_on_phase",
+    );
+    assert.match(
+      shared,
+      /pub fn advance_loading_offset\(/,
+      "rust_pill_shared must define advance_loading_offset",
+    );
+
+    for (const [label, path, owner] of [
+      ["gtk", "gtkPill", "state_tick"],
+      ["macos", "macApp", "ctx.state"],
+      ["windows", "windowsPill", "state"],
+    ]) {
+      const text = collapse(rustCode(readRaw(pathOf.get(path))));
+      // The shared Rust tests exercise ordering, stage text, reduced motion,
+      // and the idle reset. Here check that each actual Phase arm routes the
+      // wire sequence, OS preference and banner callback to that model.
+      const bannerOwner = label === "macos" ? `&${owner}` : owner;
+      assert.ok(
+        routesPhase(text, owner, bannerOwner),
+        `${label}: phase IPC must update this window's indicator and banner`,
+      );
+      assert.match(
+        text,
+        /rust_pill_shared::advance_loading_offset\(\s*state\.loading_offset\.get\(\),\s*LOADING_SPEED,\s*dt,\s*reduced_motion\(\),\s*\)/,
+        `${label}: tick must advance loading_offset via rust_pill_shared::advance_loading_offset with dt and reduced_motion()`,
+      );
+
+      const stageTextArm = handlerBody(
+        pathOf.get(
+          label === "macos"
+            ? "macPill"
+            : label === "gtk"
+              ? "gtkPill"
+              : "windowsPill",
+        ),
+        "StageText",
+      );
+      assert.match(
+        stageTextArm,
+        /let stage = rust_pill_shared::active_stage_text\(text\.as_deref\(\)\);\s*\*[\w.]*stage_text\.borrow_mut\(\) = stage\.map\(str::to_owned\);/,
+        `${label}: InMessage::StageText must normalize incoming text via active_stage_text`,
+      );
+    }
+
+    // The platform arms delegate to `DictationIndicator::apply_phase`, so the
+    // phase resets are asserted once against the module that owns them.
+    assert.match(
+      source.sharedIndicator,
+      /if should_clear_stage_text_on_phase\(\s*prev == P::LOADING,\s*phase == P::IDLE,\s*phase == P::LOADING,\s*\) \{\s*self\.stage_text\.take\(\);\s*\}/,
+      "sharedIndicator: apply_phase must clear stage_text via should_clear_stage_text_on_phase",
+    );
+    assert.match(
+      source.sharedIndicator,
+      /if phase == P::LOADING && prev != P::LOADING \{\s*self\.loading_offset\.set\(if reduced_motion\(\) \{ 0\.5 \} else \{ 0\.0 \}\);\s*\}/,
+      "sharedIndicator: apply_phase must initialize loading_offset (respecting reduced_motion)",
+    );
+    assert.match(
+      source.sharedIndicator,
+      /if phase == P::IDLE && prev != P::IDLE \{[\s\S]*?self\.loading_offset\.set\(0\.0\);/,
+      "sharedIndicator: apply_phase must reset loading_offset when returning to Phase::Idle",
+    );
+  });
+});

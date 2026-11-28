@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  ActiveRecordingClock,
   DEFAULT_DICTATION_LIMIT_MINUTES,
   getDictationRecordingTimerDurations,
   getEffectiveDictationLimitMinutes,
+  getProviderRecordingTimerDurations,
   MAX_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
+  parseDictationLimitMinutes,
   shouldEnableDictationLimit,
 } from "./dictation-limit.utils";
 
@@ -52,6 +55,32 @@ describe("shouldEnableDictationLimit", () => {
   });
 });
 
+describe("getProviderRecordingTimerDurations", () => {
+  it("warns at 178 minutes and stops at Gladia's 179-minute safety cap", () => {
+    expect(getProviderRecordingTimerDurations(179 * 60_000)).toEqual({
+      warningDurationMs: 178 * 60_000,
+      autoStopDurationMs: 179 * 60_000,
+    });
+  });
+
+  it("rejects invalid or unsafe provider timeout values", () => {
+    expect(getProviderRecordingTimerDurations(null)).toEqual({
+      warningDurationMs: null,
+      autoStopDurationMs: null,
+    });
+    expect(getProviderRecordingTimerDurations(Number.NaN)).toEqual({
+      warningDurationMs: null,
+      autoStopDurationMs: null,
+    });
+    expect(getProviderRecordingTimerDurations(Number.MAX_SAFE_INTEGER)).toEqual(
+      {
+        warningDurationMs: null,
+        autoStopDurationMs: null,
+      },
+    );
+  });
+});
+
 describe("getDictationRecordingTimerDurations", () => {
   it("disables both timers when the limit is zero", () => {
     expect(getDictationRecordingTimerDurations(0)).toEqual({
@@ -74,6 +103,25 @@ describe("getDictationRecordingTimerDurations", () => {
     });
   });
 
+  it("counts active segments, not pause time, towards the same limit", () => {
+    const clock = new ActiveRecordingClock();
+    expect(clock.resume(0)).toBe(0);
+    clock.pause(290_000);
+    expect(
+      getDictationRecordingTimerDurations(5, clock.resume(400_000)),
+    ).toEqual({
+      warningDurationMs: null,
+      autoStopDurationMs: 10_000,
+    });
+    clock.pause(410_000);
+    expect(
+      getDictationRecordingTimerDurations(5, clock.resume(500_000))
+        .autoStopDurationMs,
+    ).toBe(0);
+    clock.reset();
+    expect(clock.resume(600_000)).toBe(0);
+  });
+
   it("caps timer durations at the maximum supported timeout", () => {
     expect(
       getDictationRecordingTimerDurations(MAX_DICTATION_LIMIT_MINUTES + 100),
@@ -81,5 +129,31 @@ describe("getDictationRecordingTimerDurations", () => {
       warningDurationMs: (MAX_DICTATION_LIMIT_MINUTES - 1) * 60_000,
       autoStopDurationMs: MAX_DICTATION_LIMIT_MINUTES * 60_000,
     });
+  });
+});
+
+describe("parseDictationLimitMinutes", () => {
+  it("accepts whole minutes in range, including zero", () => {
+    expect(parseDictationLimitMinutes("0")).toBe(0);
+    expect(parseDictationLimitMinutes(" 12 ")).toBe(12);
+    expect(
+      parseDictationLimitMinutes(String(MAX_DICTATION_LIMIT_MINUTES)),
+    ).toBe(MAX_DICTATION_LIMIT_MINUTES);
+  });
+
+  it("refuses a fraction rather than saving a shorter limit", () => {
+    // The preference stores whole minutes, so flooring 1.9 would cap a
+    // recording at one minute while the field still read 1.9.
+    expect(parseDictationLimitMinutes("1.9")).toBeNull();
+    expect(parseDictationLimitMinutes("2.0")).toBe(2);
+  });
+
+  it("refuses values outside the range the timers can hold", () => {
+    expect(parseDictationLimitMinutes("")).toBeNull();
+    expect(parseDictationLimitMinutes("many")).toBeNull();
+    expect(parseDictationLimitMinutes("-1")).toBeNull();
+    expect(
+      parseDictationLimitMinutes(String(MAX_DICTATION_LIMIT_MINUTES + 1)),
+    ).toBeNull();
   });
 });

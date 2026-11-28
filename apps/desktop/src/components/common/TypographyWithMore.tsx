@@ -1,52 +1,63 @@
 import { Box, Button, Typography, type TypographyProps } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode, RefObject } from "react";
 import { FormattedMessage } from "react-intl";
+import {
+  defaultClampStyles,
+  resolveHiddenTypographySx,
+  resolveTypographySx,
+  toggleButtonSx,
+  type ToggleStyleOptions,
+} from "./typography-with-more.styles";
 
 type TypographyWithMoreProps = TypographyProps & {
   maxLines?: number;
   initiallyExpanded?: boolean;
-  moreLabel?: React.ReactNode;
-  lessLabel?: React.ReactNode;
+  moreLabel?: ReactNode;
+  lessLabel?: ReactNode;
   fontSize?: number | string;
   lineHeight?: number | string;
+  clampPaddingRight?: number | string;
+  inlineToggleRight?: number | string;
 };
 
-const defaultClampStyles = (maxLines: number) => ({
-  display: "-webkit-box",
-  WebkitLineClamp: maxLines,
-  WebkitBoxOrient: "vertical" as const,
-  overflow: "hidden",
-});
-
-const normalizeSxProp = (
-  baseClampStyles: Record<string, unknown>,
-  shouldClamp: boolean,
-  sx: TypographyProps["sx"],
-): TypographyProps["sx"] => {
-  if (!shouldClamp) {
-    return sx;
-  }
-
-  return { ...baseClampStyles, ...sx };
+type MoreToggleProps = ToggleStyleOptions & {
+  expanded: boolean;
+  moreLabel: ReactNode;
+  lessLabel: ReactNode;
+  onToggle: () => void;
 };
 
-export function TypographyWithMore({
-  children,
-  maxLines = 3,
-  initiallyExpanded = false,
-  moreLabel = <FormattedMessage defaultMessage="Show more" />,
-  lessLabel = <FormattedMessage defaultMessage="Show less" />,
-  sx,
-  fontSize,
-  lineHeight,
-  ...typographyProps
-}: TypographyWithMoreProps) {
-  const [expanded, setExpanded] = useState(initiallyExpanded);
+const MoreToggle = ({
+  expanded,
+  moreLabel,
+  lessLabel,
+  onToggle,
+  ...styleOptions
+}: MoreToggleProps) => (
+  <Button
+    size="small"
+    variant="text"
+    onClick={onToggle}
+    sx={toggleButtonSx(styleOptions)}
+  >
+    {expanded ? lessLabel : moreLabel}
+  </Button>
+);
+
+const MoreToggleSlot = ({
+  show,
+  ...toggle
+}: MoreToggleProps & { show: boolean }) =>
+  show ? <MoreToggle {...toggle} /> : null;
+
+/** Tracks whether the unclamped text is taller than its clamp. */
+const useOverflowMeasurement = (
+  maxLines: number,
+  hiddenTypographyRef: RefObject<HTMLElement | null>,
+  containerRef: RefObject<HTMLDivElement | null>,
+): { isOverflowing: boolean; measureOverflow: () => void } => {
   const [isOverflowing, setIsOverflowing] = useState(false);
-  const hiddenTypographyRef = useRef<HTMLElement | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const clampStyles = useMemo(() => defaultClampStyles(maxLines), [maxLines]);
 
   const measureOverflow = useCallback(() => {
     if (typeof window === "undefined" || !hiddenTypographyRef.current) {
@@ -66,7 +77,7 @@ export function TypographyWithMore({
     const collapsedHeight = lineHeight * maxLines;
     const fullHeight = hiddenNode.scrollHeight;
     setIsOverflowing(fullHeight - collapsedHeight > 1);
-  }, [maxLines]);
+  }, [maxLines, hiddenTypographyRef]);
 
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") {
@@ -82,120 +93,146 @@ export function TypographyWithMore({
     }
 
     const observer = new ResizeObserver(() => measureOverflow());
-
     if (hiddenNode) {
       observer.observe(hiddenNode);
     }
-
     if (containerNode) {
       observer.observe(containerNode);
     }
-
     measureOverflow();
 
     return () => {
       observer.disconnect();
     };
-  }, [measureOverflow]);
+  }, [measureOverflow, hiddenTypographyRef, containerRef]);
+
+  return { isOverflowing, measureOverflow };
+};
+
+type TypographyWithMoreState = {
+  containerRef: RefObject<HTMLDivElement | null>;
+  hiddenTypographyRef: RefObject<HTMLElement | null>;
+  expanded: boolean;
+  toggleExpanded: () => void;
+  typographySx: TypographyProps["sx"];
+  hiddenTypographySx: TypographyProps["sx"];
+  showInlineToggle: boolean;
+  showBlockToggle: boolean;
+};
+
+/** Clamp state, overflow measurement and both `sx` payloads for the surface. */
+const useTypographyWithMore = ({
+  maxLines,
+  initiallyExpanded,
+  children,
+  sx,
+  clampPaddingRight,
+  inlineToggleRight,
+}: {
+  maxLines: number;
+  initiallyExpanded: boolean;
+  children: ReactNode;
+  sx: TypographyProps["sx"];
+  clampPaddingRight: number | string | undefined;
+  inlineToggleRight: number | string | undefined;
+}): TypographyWithMoreState => {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
+  const hiddenTypographyRef = useRef<HTMLElement | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const { isOverflowing, measureOverflow } = useOverflowMeasurement(
+    maxLines,
+    hiddenTypographyRef,
+    containerRef,
+  );
+
+  const clampStyles = useMemo(() => defaultClampStyles(maxLines), [maxLines]);
+  const shouldClamp = isOverflowing && !expanded;
 
   useEffect(() => {
     measureOverflow();
   }, [measureOverflow, children]);
 
-  const toggleExpanded = () => setExpanded((prev) => !prev);
-  const shouldClamp = isOverflowing && !expanded;
-
-  const typographySx = useMemo(() => {
-    const normalized = normalizeSxProp(clampStyles, shouldClamp, sx);
-
-    if (!shouldClamp) {
-      return normalized;
-    }
-
-    const paddingAdjustment = { pr: 6 } as const;
-
-    if (Array.isArray(normalized)) {
-      return [...normalized, paddingAdjustment];
-    }
-
-    if (normalized) {
-      return [normalized, paddingAdjustment];
-    }
-
-    return paddingAdjustment;
-  }, [clampStyles, shouldClamp, sx]);
-  const hiddenTypographySx = useMemo(() => {
-    const baseDisplay = { display: "block" } as const;
-
-    if (!sx) {
-      return baseDisplay;
-    }
-
-    if (Array.isArray(sx)) {
-      return [baseDisplay, ...sx];
-    }
-
-    return [baseDisplay, sx];
-  }, [sx]);
-
-  const renderToggleButton = (inline: boolean) => (
-    <Button
-      size="small"
-      variant="text"
-      onClick={toggleExpanded}
-      sx={(theme) => {
-        const variantKey = typographyProps.variant ?? "body2";
-        const variantStyles =
-          (theme.typography as Record<string, any>)[variantKey] ??
-          theme.typography.body2;
-        const fontSizeResolved =
-          fontSize !== undefined ? fontSize : variantStyles.fontSize;
-        const lineHeightResolved =
-          lineHeight !== undefined
-            ? lineHeight
-            : (variantStyles.lineHeight ?? 1.35);
-
-        return {
-          px: 0,
-          minWidth: 0,
-          fontSize: fontSizeResolved,
-          lineHeight: lineHeightResolved,
-          textTransform: "none",
-          color: theme.vars?.palette.text.primary ?? theme.palette.text.primary,
-          ...(inline
-            ? {
-                position: "absolute" as const,
-                right: 0,
-                bottom: 0,
-                mt: 0,
-                py: 0,
-                borderRadius: 999,
-                backgroundColor:
-                  theme.vars?.palette.level0 ?? theme.palette.background.paper,
-                boxShadow: `-12px 0 12px ${
-                  theme.vars?.palette.level0 ?? theme.palette.background.paper
-                }`,
-              }
-            : {
-                mt: 0.5,
-                display: "block",
-                ml: "auto",
-              }),
-        };
-      }}
-    >
-      {expanded ? lessLabel : moreLabel}
-    </Button>
+  const typographySx = useMemo(
+    () =>
+      resolveTypographySx({
+        clampStyles,
+        shouldClamp,
+        sx,
+        clampPaddingRight,
+        inlineToggleRight,
+      }),
+    [clampPaddingRight, clampStyles, inlineToggleRight, shouldClamp, sx],
   );
+  const hiddenTypographySx = useMemo(
+    () => resolveHiddenTypographySx(clampPaddingRight, inlineToggleRight, sx),
+    [clampPaddingRight, inlineToggleRight, sx],
+  );
+
+  return {
+    containerRef,
+    hiddenTypographyRef,
+    expanded,
+    toggleExpanded: () => setExpanded((prev) => !prev),
+    typographySx,
+    hiddenTypographySx,
+    showInlineToggle: isOverflowing && shouldClamp,
+    showBlockToggle: isOverflowing && !shouldClamp,
+  };
+};
+
+export function TypographyWithMore({
+  children,
+  maxLines = 3,
+  initiallyExpanded = false,
+  moreLabel = <FormattedMessage defaultMessage="Show more" />,
+  lessLabel = <FormattedMessage defaultMessage="Show less" />,
+  sx,
+  fontSize,
+  lineHeight,
+  clampPaddingRight,
+  inlineToggleRight,
+  ...typographyProps
+}: TypographyWithMoreProps) {
+  const state = useTypographyWithMore({
+    maxLines,
+    initiallyExpanded,
+    children,
+    sx,
+    clampPaddingRight,
+    inlineToggleRight,
+  });
+  const toggleOptions: ToggleStyleOptions = {
+    inline: false,
+    fontSize,
+    lineHeight,
+    inlineToggleRight,
+    variant: typographyProps.variant,
+  };
 
   return (
     <Box>
-      <Box ref={containerRef} sx={{ position: "relative" }}>
-        <Typography {...typographyProps} sx={typographySx}>
+      <Box
+        ref={state.containerRef}
+        sx={{
+          position: "relative",
+          containerName: "typography-with-more",
+          containerType: "inline-size",
+        }}
+      >
+        <Typography {...typographyProps} sx={state.typographySx}>
           {children}
         </Typography>
 
-        {isOverflowing && shouldClamp ? renderToggleButton(true) : null}
+        <MoreToggleSlot
+          {...toggleOptions}
+          inline
+          show={state.showInlineToggle}
+          expanded={state.expanded}
+          moreLabel={moreLabel}
+          lessLabel={lessLabel}
+          onToggle={state.toggleExpanded}
+        />
 
         <Box
           sx={{
@@ -211,15 +248,22 @@ export function TypographyWithMore({
         >
           <Typography
             {...typographyProps}
-            ref={hiddenTypographyRef}
+            ref={state.hiddenTypographyRef}
             aria-hidden
-            sx={hiddenTypographySx}
+            sx={state.hiddenTypographySx}
           >
             {children}
           </Typography>
         </Box>
       </Box>
-      {isOverflowing && !shouldClamp ? renderToggleButton(false) : null}
+      <MoreToggleSlot
+        {...toggleOptions}
+        show={state.showBlockToggle}
+        expanded={state.expanded}
+        moreLabel={moreLabel}
+        lessLabel={lessLabel}
+        onToggle={state.toggleExpanded}
+      />
     </Box>
   );
 }

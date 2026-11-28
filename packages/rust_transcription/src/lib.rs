@@ -1,4 +1,5 @@
 mod api;
+mod audio;
 mod compute;
 mod config;
 mod downloads;

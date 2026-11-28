@@ -6,11 +6,13 @@ import { Outlet, useLocation } from "react-router-dom";
 import { trackPageView } from "../../utils/analytics.utils";
 import { getLogger } from "../../utils/log.utils";
 import { LoadingApp } from "./LoadingApp";
+import { MicrophoneReadinessSideEffects } from "./MicrophoneReadinessSideEffects";
 import { OverlaySyncSideEffects } from "./OverlaySyncSideEffects";
 import { PermissionSideEffects } from "./PermissionSideEffects";
 import { RootConfetti } from "./RootConfetti";
 import { RootDialogs } from "./RootDialogs";
 import { RootSideEffects } from "./RootSideEffects";
+import { ContextMenuProvider } from "../common/ContextMenu";
 
 function ErrorFallback({
   resetErrorBoundary,
@@ -20,7 +22,7 @@ function ErrorFallback({
   return (
     <Box sx={{ padding: 2 }}>
       <h2>
-        <FormattedMessage defaultMessage="Something went wrong:" />
+        <FormattedMessage defaultMessage="Something went wrong." />
       </h2>
       <FormattedMessage defaultMessage="The application encountered an unexpected error." />
       <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
@@ -48,11 +50,14 @@ export default function Root() {
   }, [location.pathname]);
 
   return (
-    <>
+    <ContextMenuProvider>
       <PermissionSideEffects />
       <RootConfetti />
       <RootSideEffects />
       <OverlaySyncSideEffects />
+      {/* Owns the held capture device, so it renders wherever a recording can be
+          started: the main window and every dictation surface. */}
+      <MicrophoneReadinessSideEffects />
       <RootDialogs />
       {/* resetKeys auto-retries the crashed subtree once the route changes, so
           a transient commit fault can never strand the user on the fallback;
@@ -74,6 +79,6 @@ export default function Root() {
           </Box>
         </Suspense>
       </ErrorBoundary>
-    </>
+    </ContextMenuProvider>
   );
 }

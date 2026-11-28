@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-Open **Settings → Processing → AI transcription**, **AI post processing**, or **Assistant mode**. Each dialog filters the key list to providers registered for that task. A saved credential is a reusable record; the selected card determines which record that task uses.
+Open **Settings → AI and processing → AI transcription**, **AI post processing**, or **Assistant mode**. Each dialog filters the key list to providers registered for that task. A saved credential is a reusable record; the selected card determines which record that task uses.
 
 ## Add and select a record
 
@@ -13,7 +13,7 @@ Choose **Add API key** or **Add another key**, enter a descriptive **Key name**,
 
 Saving creates and selects the record. If a task has compatible records but no selected ID, the dialog automatically selects the first displayed one. A generic model picker may load provider models and also accepts a typed model name. A model must match the task: a chat model cannot transcribe merely because the same credential can access both.
 
-**Test** makes a provider-specific network call. It checks basic credentials or endpoint reachability, not the exact selected model in every case, available quota, streaming behavior, language support, future requests, or provider retention. For example, the OpenAI-compatible test lists models, and the Speaches test calls `/health`.
+**Test** makes a provider-specific network call. It checks basic credentials or endpoint reachability, not the exact selected model in every case, available quota, streaming behavior, language support, future requests, or provider retention. For example, the OpenAI-compatible test lists models, Speaches calls `/health`, and Gladia performs an authenticated pre-recorded-list request that does not create a billable transcription job.
 
 ## Quick Groq and Deepgram rows
 
@@ -22,6 +22,8 @@ The top-level rows are more than duplicate password fields:
 - Saving **Personal Deepgram** prefers that record for transcription when the current choice is unset, Local, or already one of the managed personal records.
 - Saving **Personal Groq** assigns `whisper-large-v3-turbo` for transcription and `openai/gpt-oss-20b` for generation when those model fields need defaults. It can make Groq the transcription fallback and set post-processing and the Assistant backend to API when those choices are unset or already managed by this personal record.
 - An unrelated provider record you explicitly selected is preserved. The separate Assistant feature switch remains its own control.
+- Both dialogs include an explicit **Test key** action so you can verify a newly entered or re-entered key on demand before saving. mausVoice never auto-probes keys in the background on launch or dialog open.
+- If a saved personal or task key was imported from Voquill's older encryption format or cannot be decrypted on this device, **Settings → AI & Models** displays **Re-enter key** instead of **Configured**, and runtime dispatch falls back safely until you re-enter and save the key.
 
 Use the full task dialog when you need another record name, provider, or model.
 

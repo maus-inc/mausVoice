@@ -1,0 +1,10 @@
+{
+  "ariaDisabled": "true",
+  "nativelyDisabled": false,
+  "tabIndex": 0,
+  "checked": true,
+  "baseOpacity": "0.5",
+  "cursor": "not-allowed",
+  "checkedClass": true,
+  "hasExplainCaption": true
+}

@@ -50,21 +50,21 @@ function StylingSubtitle() {
     <HotkeyBadge
       keys={backwardCombos[0]}
       onClick={openShortcuts}
-      sx={{ mx: 0.25 }}
+      sx={{ mx: 0.25, verticalAlign: "middle", transform: "scale(0.8)" }}
     />
   ) : null;
   const forwardHotkey = forwardCombos[0] ? (
     <HotkeyBadge
       keys={forwardCombos[0]}
       onClick={openShortcuts}
-      sx={{ mx: 0.25 }}
+      sx={{ mx: 0.25, verticalAlign: "middle", transform: "scale(0.8)" }}
     />
   ) : null;
 
   if (backwardHotkey && forwardHotkey) {
     return (
       <FormattedMessage
-        defaultMessage="Choose different writing styles to change how you sound. While dictating, press {backwardHotkey} or {forwardHotkey} to cycle between them."
+        defaultMessage="Use {backwardHotkey} or {forwardHotkey} while dictating to switch writing styles and change how you sound."
         values={{ backwardHotkey, forwardHotkey }}
       />
     );
@@ -104,7 +104,7 @@ export function ManualStylingLayout() {
             mx: "auto",
           }}
         >
-          <Typography variant="h6">
+          <Typography variant="h6" component="h2">
             <FormattedMessage defaultMessage="No styles yet" />
           </Typography>
           <Typography variant="body2">

@@ -1,0 +1,14 @@
+/*
+ * Failure-state rescue for metal-fx (see useFirstFrameRescue in
+ * MetalChrome.tsx).
+ *
+ * This class is only present when the library still has the wrapper hidden
+ * well after mount, i.e. the shader never painted a first frame. It is removed
+ * again as soon as the library reveals the wrapper itself. The important flag
+ * is required to beat the library's inline style, and is deliberately scoped
+ * to this explicit, inspectable failure state; the normal path is untouched.
+ */
+.mv-metal-chrome--rescued {
+  opacity: 1 !important;
+  visibility: visible !important;
+}

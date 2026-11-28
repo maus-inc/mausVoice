@@ -13,12 +13,25 @@ import {
   Transcription,
   User,
 } from "@maus-inc/types";
-import type { AppState, SnackbarMode } from "../state/app.state";
+import type {
+  AppState,
+  SnackbarAction,
+  SnackbarMode,
+} from "../state/app.state";
+
+/**
+ * How many pending requests the queue keeps.
+ *
+ * Large enough that no realistic batch loses a message, small enough that the
+ * array cannot grow for the life of the session.
+ */
+export const SNACKBAR_QUEUE_LIMIT = 20;
 
 export type ShowSnackbarOpts = {
   duration?: number;
   transitionDuration?: number;
   mode?: SnackbarMode;
+  action?: SnackbarAction;
 };
 
 export const setSnackbar = (
@@ -26,11 +39,36 @@ export const setSnackbar = (
   message: string,
   opts?: ShowSnackbarOpts,
 ): void => {
+  const counter = draft.snackbarCounter + 1;
+  const mode = opts?.mode ?? "info";
+  const duration = opts?.duration ?? 3000;
+  draft.snackbarRequests.push({
+    counter,
+    message,
+    mode,
+    duration,
+    transitionDuration: opts?.transitionDuration,
+    action: opts?.action,
+  });
+  // Bounded, because entries are only ever removed by this line: the emitter
+  // reads the queue and never trims it. A long session raises hundreds of these
+  // and each holds a closure while its action is queued. The limit is far above
+  // the number of requests that can be pending at once -- the emitter drains the
+  // whole queue in one pass -- so a trim only ever drops requests that were
+  // already shown, never one that was waiting.
+  const overflow = draft.snackbarRequests.length - SNACKBAR_QUEUE_LIMIT;
+  if (overflow > 0) {
+    draft.snackbarRequests.splice(0, overflow);
+  }
+  // The scalars stay as a mirror of the newest request. They used to be the
+  // only copy, so a second message raised in the same tick overwrote the first
+  // and the first was never shown; the queue above is the real store now.
   draft.snackbarMessage = message;
-  draft.snackbarCounter++;
-  draft.snackbarMode = opts?.mode ?? "info";
-  draft.snackbarDuration = opts?.duration ?? 3000;
+  draft.snackbarCounter = counter;
+  draft.snackbarMode = mode;
+  draft.snackbarDuration = duration;
   draft.snackbarTransitionDuration = opts?.transitionDuration;
+  draft.snackbarAction = opts?.action;
 };
 
 export const registerUsers = (draft: AppState, users: User[]): void => {
@@ -48,6 +86,19 @@ export const registerTranscriptions = (
   }
 };
 
+/**
+ * Every written value in the user's dictionary: each source plus each
+ * replacement destination. Glossary terms carry an empty destination, so
+ * they contribute only their source. Consumers use this to dedupe against
+ * existing dictionary values.
+ */
+export const collectTermValues = (state: AppState): string[] =>
+  Object.values(state.termById).flatMap((term) =>
+    term.destinationValue
+      ? [term.sourceValue, term.destinationValue]
+      : [term.sourceValue],
+  );
+
 export const registerTerms = (draft: AppState, terms: Term[]): void => {
   for (const term of terms) {
     draft.termById[term.id] = term;
@@ -58,6 +109,14 @@ export const registerHotkeys = (draft: AppState, hotkeys: Hotkey[]): void => {
   for (const hotkey of hotkeys) {
     draft.hotkeyById[hotkey.id] = hotkey;
   }
+};
+
+export const upsertHotkey = (draft: AppState, hotkey: Hotkey): void => {
+  registerHotkeys(draft, [hotkey]);
+  if (!draft.settings.hotkeyIds.includes(hotkey.id)) {
+    draft.settings.hotkeyIds.push(hotkey.id);
+  }
+  draft.settings.hotkeysStatus = "success";
 };
 
 export const registerApiKeys = (draft: AppState, apiKeys: ApiKey[]): void => {

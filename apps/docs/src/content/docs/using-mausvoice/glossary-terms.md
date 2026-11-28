@@ -12,3 +12,11 @@ Enter the canonical spelling you want the recognizer to favor. Do not add severa
 Provider behavior differs. Some APIs expose prompt, keyword, or vocabulary features with different limits, and local models may consume context differently. mausVoice passes the available hints through its transcription layer where implemented, but cannot promise identical weighting across providers.
 
 After adding a term, make three normal-speed test recordings with it in different sentence positions. If the raw transcript still returns a consistent alternative, add a replacement rule from that observed alternative to the canonical text.
+
+mausVoice can also add terms for you. Turn on **Settings → Privacy and data → Auto-learn dictionary**, then correct a transcription in History. The corrected names become glossary terms automatically. The heuristic adds proper nouns, skips common words, and never creates a replacement rule.
+
+Terms are not added while [Incognito mode](../configuration/incognito-mode/) is on. Learned terms are proper nouns copied out of what you said, so a correction in Incognito updates the transcript in memory and leaves the dictionary untouched. The confirmation toast says so rather than reporting words that were never saved.
+
+With **Settings → Privacy and data → Learn from corrections** you can also let mausVoice watch the target app after dictation. When you fix a name in place, the dictation pill offers to add the corrected spelling. You confirm each addition, so nothing enters the dictionary without your approval.
+
+The watcher waits until you stop editing before it offers anything, so it never prompts for a half-typed word. It compares only the text mausVoice inserted against how that same text reads now, so text that was already in that field is never offered as a correction. Letting the prompt time out keeps it from asking about the same word again during that dictation. Choosing Ignore stops it for good, and also applies to later dictations.

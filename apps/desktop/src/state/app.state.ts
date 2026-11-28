@@ -22,6 +22,8 @@ import { OverlayPhase } from "../types/overlay.types";
 import { PermissionMap } from "../types/permission.types";
 
 import { AgentRunState } from "./agent.state";
+import { HomeState, INITIAL_HOME_STATE } from "./home.state";
+import { AutoLearnState, INITIAL_AUTO_LEARN_STATE } from "./auto-learn.state";
 import { ChatState, INITIAL_CHAT_STATE } from "./chat.state";
 import { DictionaryState, INITIAL_DICTIONARY_STATE } from "./dictionary.state";
 import { INITIAL_LOCAL_STATE, LocalState } from "./local.state";
@@ -41,8 +43,34 @@ import {
   TranscriptionsState,
 } from "./transcriptions.state";
 import { INITIAL_UPDATER_STATE, UpdaterState } from "./updater.state";
+import {
+  INITIAL_VOQUILL_MIGRATION_STATE,
+  type VoquillMigrationState,
+} from "./voquill-migration.state";
 
 export type SnackbarMode = "info" | "success" | "error";
+export type SnackbarAction = {
+  label: string;
+  onClick: () => void;
+  /** Optional deadline and focus handling for time-limited undo actions. */
+  expiresAt?: number;
+  focusOnShow?: boolean;
+  onFocusReturn?: (undone: boolean) => void;
+};
+/**
+ * One queued snackbar, with its own counter.
+ *
+ * `counter` rather than a synthetic id, because the emitter already dedupes on
+ * the counter and the counter is what survives a StrictMode remount.
+ */
+export type SnackbarRequest = {
+  counter: number;
+  message: string;
+  mode: SnackbarMode;
+  duration: number;
+  transitionDuration?: number;
+  action?: SnackbarAction;
+};
 export type HotkeyStrategy = "listener" | "bridge";
 export type PasteKeybindSupport = "disabled" | "per-app" | "global";
 
@@ -77,6 +105,7 @@ export type AssistantInputMode = "voice" | "type";
 export type AppState = {
   initialized: boolean;
   auth: Nullable<AuthUser>;
+  authSessionNonce: number;
   keysHeld: string[];
   isRecordingHotkey: boolean;
   activeRecordingMode: Nullable<RecordingMode>;
@@ -106,26 +135,60 @@ export type AppState = {
   toolInfoById: Record<string, ToolInfo>;
   toolPermissionById: Record<string, ToolPermission>;
   agentStateByConversationId: Record<string, AgentRunState>;
-  streamingMessageById: Record<string, StreamingMessageState>;
+  // Entries exist only while their message is streaming. Missing IDs are normal.
+  streamingMessageById: Partial<Record<string, StreamingMessageState>>;
 
   local: LocalState;
   onboarding: OnboardingState;
   transcriptions: TranscriptionsState;
   dictionary: DictionaryState;
+  autoLearn: AutoLearnState;
   tones: TonesState;
   toneEditor: ToneEditorState;
   settings: SettingsState;
   updater: UpdaterState;
+  voquillMigration: VoquillMigrationState;
   login: LoginState;
   pillConversationId: Nullable<string>;
   assistantInputMode: AssistantInputMode;
+  /**
+   * Transcript currently shown on the native pill for review before insert.
+   * Only the review at the head of the queue is published here; the rest wait
+   * in `pill-review.actions`.
+   */
+  pendingPillReview: Nullable<{ id: string; text: string }>;
+  home: HomeState;
   chat: ChatState;
 
+  /**
+   * Every snackbar request in the order it was made, each with the counter
+   * value the emitter uses to tell a new request from a re-render.
+   *
+   * A single `snackbarMessage` slot was not enough. React batches, so two
+   * messages raised in one tick left the state holding only the second, and
+   * `SnackbarEmitter` -- which re-runs on the counter rather than per message --
+   * showed only that one. The first was never displayed and never would be: a
+   * message that loses the race is not delayed, it is dropped. It is a queue
+   * because the requests are not interchangeable -- "Saved" followed by
+   * "Upload failed" must not resolve to "Saved".
+   */
+  snackbarRequests: SnackbarRequest[];
+  /** Mirrors the newest request, for the readers that only care about that. */
   snackbarMessage?: string;
   snackbarCounter: number;
   snackbarMode: SnackbarMode;
   snackbarDuration: number;
   snackbarTransitionDuration?: number;
+  snackbarAction?: SnackbarAction;
+
+  /** Accumulated dictation segments while no editable target was focused.
+   *  Drained on the first editable-focus event or on transcription completion.
+   *  Cleared at session start — never carried across sessions. */
+  dictationBacklog: string[];
+  /** Monotonically incremented each time a new dictation session begins.
+   *  Any code reading the backlog must verify the nonce hasn't advanced
+   *  (i.e. a new session started) before acting on stale backlog data. */
+  dictationBacklogNonce: number;
 
   overlayCursor: Nullable<Vector2>;
   hotkeyTriggers: Record<string, number>;
@@ -165,13 +228,17 @@ export const INITIAL_APP_STATE: AppState = {
   },
   hotkeyById: {},
   auth: null,
+  authSessionNonce: 0,
   confettiCounter: 0,
   keysHeld: [],
   initialized: false,
+  snackbarRequests: [],
   snackbarCounter: 0,
   snackbarMode: "info",
   snackbarDuration: 3000,
   snackbarTransitionDuration: undefined,
+  dictationBacklog: [],
+  dictationBacklogNonce: 0,
   overlayCursor: null,
   hotkeyTriggers: {},
   hotkeyStrategy: null,
@@ -180,14 +247,18 @@ export const INITIAL_APP_STATE: AppState = {
   supportsPasteKeybinds: "disabled",
   pillConversationId: null,
   assistantInputMode: "voice",
+  pendingPillReview: null,
+  home: INITIAL_HOME_STATE,
   local: INITIAL_LOCAL_STATE,
   chat: INITIAL_CHAT_STATE,
   onboarding: INITIAL_ONBOARDING_STATE,
   transcriptions: INITIAL_TRANSCRIPTIONS_STATE,
   dictionary: INITIAL_DICTIONARY_STATE,
+  autoLearn: INITIAL_AUTO_LEARN_STATE,
   tones: INITIAL_TONES_STATE,
   toneEditor: INITIAL_TONE_EDITOR_STATE,
   settings: INITIAL_SETTINGS_STATE,
   updater: INITIAL_UPDATER_STATE,
+  voquillMigration: INITIAL_VOQUILL_MIGRATION_STATE,
   login: INITIAL_LOGIN_STATE,
 };

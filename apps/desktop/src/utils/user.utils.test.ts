@@ -1,12 +1,22 @@
-import type { Hotkey, User, UserPreferences } from "@maus-inc/types";
+import type {
+  Hotkey,
+  Transcription,
+  User,
+  UserPreferences,
+} from "@maus-inc/types";
 import { describe, expect, it } from "vitest";
 import { AppState, INITIAL_APP_STATE } from "../state/app.state";
 import {
+  API_KEY_WARNING_CODES,
   getActiveDictationLanguage,
   getConfiguredDictationLanguageCodes,
+  getDictationSpeed,
+  getGenerativePrefs,
   getMyDictationLanguage,
+  getMyProfileImage,
   getTranscriptionPrefs,
   LOCAL_USER_ID,
+  setUserPreferences,
 } from "./user.utils";
 
 const additionalLanguageHotkey = (language: string): Hotkey => ({
@@ -44,6 +54,12 @@ const makeState = (args: {
     hotkeyById,
   };
 };
+
+it("treats a missing persisted profile image map as no image", () => {
+  const state = makeState({});
+  state.local = { ...state.local, profileImageByUserId: undefined as never };
+  expect(getMyProfileImage(state)).toBeNull();
+});
 
 describe("getConfiguredDictationLanguageCodes", () => {
   it("always includes auto", () => {
@@ -173,6 +189,20 @@ describe("getMyDictationLanguage", () => {
 });
 
 describe("getTranscriptionPrefs stale-selection guard", () => {
+  it("does not resolve an inherited API key as a configured provider", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "inherited";
+    state.apiKeyById = Object.create({
+      inherited: {
+        id: "inherited",
+        provider: "deepgram",
+        keyFull: "not-an-own-key",
+      },
+    }) as AppState["apiKeyById"];
+    expect(getTranscriptionPrefs(state).mode).toBe("local");
+  });
+
   it("falls back to local mode when the selected provider is not transcription-capable (Ollama)", () => {
     const state = structuredClone(INITIAL_APP_STATE);
     state.settings.aiTranscription.mode = "api";
@@ -238,5 +268,137 @@ describe("getTranscriptionPrefs stale-selection guard", () => {
       expect(prefs.provider).toBe("speaches");
       expect(prefs.apiKeyValue).toBe("");
     }
+  });
+});
+
+describe("getDictationSpeed", () => {
+  it("ignores failed transcription markers even when failed audio was retained", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    const transcription = (
+      id: string,
+      transcript: string,
+      durationMs: number,
+    ): Transcription => ({
+      id,
+      transcript,
+      createdAt: "2026-10-08T12:00:00.000Z",
+      createdByUserId: LOCAL_USER_ID,
+      isDeleted: false,
+      audio: { filePath: `preview://${id}`, durationMs },
+    });
+    state.transcriptionById.failed = transcription(
+      "failed",
+      "[Transcription Failed]",
+      60_000,
+    );
+    state.transcriptionById.successful = transcription(
+      "successful",
+      "one two",
+      10_000,
+    );
+    state.transcriptions.transcriptionIds = ["failed", "successful"];
+
+    expect(getDictationSpeed(state)).toEqual({ wpm: 14, sampleCount: 1 });
+  });
+});
+
+describe("setUserPreferences realtime/review exclusivity", () => {
+  it("normalizes a legacy dual-true pair loaded from disk (realtime wins)", () => {
+    const draft = structuredClone(INITIAL_APP_STATE);
+    const legacyBothOn = {
+      userId: LOCAL_USER_ID,
+      realtimeOutputEnabled: true,
+      reviewBeforeInsert: true,
+    } as unknown as UserPreferences;
+    setUserPreferences(draft, legacyBothOn);
+    expect(draft.userPrefs?.realtimeOutputEnabled).toBe(true);
+    expect(draft.userPrefs?.reviewBeforeInsert).toBe(false);
+    // The derived settings surface mirrors the same decision.
+    expect(draft.settings.reviewBeforeInsert).toBe(false);
+  });
+
+  it("leaves single-true and dual-false pairs alone", () => {
+    const draft = structuredClone(INITIAL_APP_STATE);
+    setUserPreferences(draft, {
+      userId: LOCAL_USER_ID,
+      realtimeOutputEnabled: false,
+      reviewBeforeInsert: true,
+    } as unknown as UserPreferences);
+    expect(draft.userPrefs?.reviewBeforeInsert).toBe(true);
+    expect(draft.settings.reviewBeforeInsert).toBe(true);
+  });
+});
+
+describe("getTranscriptionPrefs credential truthfulness", () => {
+  it("falls back to local mode when credentialStatus needs re-entry even if keyFull is populated", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.apiKeyById["legacy-groq"] = {
+      id: "legacy-groq",
+      name: "Groq",
+      provider: "groq",
+      keyFull: "gsk_stale",
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    state.settings.aiTranscription = {
+      ...state.settings.aiTranscription,
+      mode: "api",
+      selectedApiKeyId: "legacy-groq",
+    };
+
+    const prefs = getTranscriptionPrefs(state);
+    expect(prefs.mode).toBe("local");
+    expect(prefs.warnings).toContain(
+      API_KEY_WARNING_CODES.transcriptionNeedsReentry,
+    );
+  });
+
+  it("falls back to local mode when the selected API key needs re-entry with null keyFull", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.apiKeyById["legacy-groq"] = {
+      id: "legacy-groq",
+      name: "Groq",
+      provider: "groq",
+      keyFull: null,
+      credentialStatus: "needs_reentry",
+      credentialIssue: "legacy_encryption",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    state.settings.aiTranscription = {
+      ...state.settings.aiTranscription,
+      mode: "api",
+      selectedApiKeyId: "legacy-groq",
+    };
+
+    const prefs = getTranscriptionPrefs(state);
+    expect(prefs.mode).toBe("local");
+    expect(prefs.warnings).toContain(
+      API_KEY_WARNING_CODES.transcriptionNeedsReentry,
+    );
+  });
+
+  it("emits localized-ready warning codes for unusable generative keys", () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.apiKeyById["bad-endpoint"] = {
+      id: "bad-endpoint",
+      name: "Custom",
+      provider: "openai-compatible",
+      keyFull: "",
+      credentialStatus: "invalid_format",
+      credentialIssue: "missing_endpoint",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    state.settings.aiPostProcessing = {
+      ...state.settings.aiPostProcessing,
+      mode: "api",
+      selectedApiKeyId: "bad-endpoint",
+    };
+
+    const prefs = getGenerativePrefs(state);
+    expect(prefs.mode).toBe("none");
+    expect(prefs.warnings).toContain(
+      API_KEY_WARNING_CODES.postProcessingIncomplete,
+    );
   });
 });

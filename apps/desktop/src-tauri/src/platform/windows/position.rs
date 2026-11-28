@@ -1,4 +1,5 @@
 use crate::domain::{MonitorAtCursor, OverlayAnchor};
+use crate::platform::common::{anchor_rect, anchored_bounds, Rect};
 use tauri::WebviewWindow;
 
 pub fn set_overlay_position(
@@ -16,33 +17,15 @@ pub fn set_overlay_position(
     //
     // Monitor values are in physical pixels, convert to logical for calculation
     let scale = monitor.scale_factor;
+    let visible = Rect::visible_area_of(monitor).in_logical_points(scale);
 
-    let visible_x = monitor.visible_x / scale;
-    let visible_y = monitor.visible_y / scale;
-    let visible_width = monitor.visible_width / scale;
-    let visible_height = monitor.visible_height / scale;
-
-    let (target_x, target_y) = match anchor {
-        OverlayAnchor::BottomCenter => {
-            let x = visible_x + (visible_width - window_width) / 2.0;
-            let y = visible_y + visible_height - window_height - margin;
-            (x, y)
-        }
-        OverlayAnchor::TopRight => {
-            let x = visible_x + visible_width - window_width - margin;
-            let y = visible_y + margin;
-            (x, y)
-        }
-        OverlayAnchor::TopLeft => {
-            let x = visible_x + margin;
-            let y = visible_y + margin;
-            (x, y)
-        }
-    };
+    // `visible` has already been scaled to logical points, so this is not the
+    // helper's expression and calls `anchor_rect` directly on purpose.
+    let target = anchor_rect(visible, anchor, window_width, window_height, margin);
 
     // Convert back to physical pixels
-    let physical_x = (target_x * scale) as i32;
-    let physical_y = (target_y * scale) as i32;
+    let physical_x = (target.x * scale) as i32;
+    let physical_y = (target.y * scale) as i32;
 
     let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
         physical_x, physical_y,
@@ -60,38 +43,14 @@ pub fn is_cursor_in_bounds(
     let scale = monitor.scale_factor;
 
     // Scale the logical dimensions to physical
-    let physical_bounds_width = bounds_width * scale;
-    let physical_bounds_height = bounds_height * scale;
-    let physical_margin = margin * scale;
-
-    // Calculate bounds position in physical coordinates (same logic as set_overlay_position)
-    let (bounds_x, bounds_y) = match anchor {
-        OverlayAnchor::BottomCenter => {
-            let x = monitor.visible_x + (monitor.visible_width - physical_bounds_width) / 2.0;
-            let y = monitor.visible_y + monitor.visible_height
-                - physical_bounds_height
-                - physical_margin;
-            (x, y)
-        }
-        OverlayAnchor::TopRight => {
-            let x =
-                monitor.visible_x + monitor.visible_width - physical_bounds_width - physical_margin;
-            let y = monitor.visible_y + physical_margin;
-            (x, y)
-        }
-        OverlayAnchor::TopLeft => {
-            let x = monitor.visible_x + physical_margin;
-            let y = monitor.visible_y + physical_margin;
-            (x, y)
-        }
-    };
+    let bounds = anchored_bounds(
+        monitor,
+        anchor,
+        bounds_width * scale,
+        bounds_height * scale,
+        margin * scale,
+    );
 
     // Cursor is already in physical coordinates
-    let cursor_x = monitor.cursor_x;
-    let cursor_y = monitor.cursor_y;
-
-    cursor_x >= bounds_x
-        && cursor_x <= bounds_x + physical_bounds_width
-        && cursor_y >= bounds_y
-        && cursor_y <= bounds_y + physical_bounds_height
+    bounds.contains(monitor.cursor_x, monitor.cursor_y)
 }

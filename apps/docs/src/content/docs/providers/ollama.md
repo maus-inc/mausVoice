@@ -12,7 +12,7 @@ Ollama is implemented for post-processing and the API-backed Assistant. Start Ol
 - The model picker checks the base URL and reads `/api/tags`; it does not download models.
 - Generation uses Ollama's OpenAI-compatible API beneath `{base URL}/v1`.
 
-Choose a model that appears in `ollama list`, or type its exact tag. Post-processing needs ordinary chat generation. Assistant use additionally depends on the model and Ollama version handling streaming, tool definitions, and tool-call responses correctly. A model working for cleanup may still fail in an Assistant conversation.
+Choose a model that appears in `ollama list`, or type its exact tag. Post-processing needs ordinary chat generation. Assistant use also depends on the model and Ollama version handling streaming, tool definitions, and tool-call responses correctly. A model working for cleanup may still fail in an Assistant conversation.
 
 **Test** only checks whether a request to the base URL returns an HTTP success. It does not run the selected model. Verify with a short post-processing request before depending on it.
 

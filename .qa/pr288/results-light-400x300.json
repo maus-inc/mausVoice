@@ -1,0 +1,128 @@
+[
+  {
+    "name": "overview",
+    "url": "/dashboard/settings",
+    "expected": "Overview",
+    "landed": true,
+    "errors": [],
+    "file": "overview-light-400x300.jpg",
+    "text": "​\n​\nOverview\nDictation\nAI and models\nShortcuts\nAppearance\nPrivacy and data\nSystem\nAccount\nOverview\n\nThe shortcuts you use most, and the models doing the work right now.\n\nShortcuts\nAll shortcuts\n\nHold to dictate\n\n⌥\nSpace\n\nCancel transcription\n\nEscape\n\nAdd to dictionary\n\nNot set\n\nPrevious writing style\n\n←\n\nNext writing style\n\n→\nYour models\nManage models\nAI transcription\n\nWhisper Small (488 MB)\n\nOn this computer\n\nAI post processing\n\nOff\n\nAssistant mode\n\nOff"
+  },
+  {
+    "name": "account",
+    "url": "/dashboard/settings/account",
+    "expected": "Account",
+    "landed": true,
+    "errors": [],
+    "file": "account-light-400x300.jpg",
+    "text": "​\n​\nOverview\nDictation\nAI and models\nShortcuts\nAppearance\nPrivacy and data\nSystem\nAccount\nAccount\n\nYour profile, your sign-in, and your account.\n\nProfile\nML\n\nName\n\nHow you appear in mausVoice, and the name it writes with on your behalf.\n\nMorgan Lee\n\nEdit\nSecurity\n\nSign out\n\nEnds this session on this computer. Your data stays where it is.\n\nDANGER ZONE\n\nClear local data\n\nRemoves stored history, audio snapshots, your photo, and settings from this computer. This cannot be undone.\n\nClear data\n\nDelete account\n\nDeletes your profile and everything mausVoice stores for you on this device. This cannot be undone.\n\nDelete"
+  },
+  {
+    "name": "dictation",
+    "url": "/dashboard/settings/dictation",
+    "expected": "Dictation",
+    "landed": true,
+    "errors": [],
+    "file": "dictation-light-400x300.jpg",
+    "text": "​\n​\nOverview\nDictation\nAI and models\nShortcuts\nAppearance\nPrivacy and data\nSystem\nAccount\nDictation\n\nHow mausVoice listens and what it does with the words it hears.\n\nMicrophone and feedback\n\nMicrophone\n\nWhich input captures your voice, and how it is tested.\n\nAudio\n\nThe chime that marks recording start and stop, and how far everything else dims while you speak.\n\nLanguage\n\nDictation language\n\nThe language mausVoice expects to hear. Auto follows your system language.\n\nEnglish\n​\n\nMultiple languages\n\nGive each language its own hotkey, so you can switch without coming back here.\n\nWhile you dictate\n\nSpoken commands\n\nTurns phrases like \"new line\", \"comma\", and \"scratch that\" into formatting, even in Verbatim. Requires an English dictation language, because Auto does not apply them.\n\nSilence hallucination filter\n\nDiscards the phrases transcription models invent when the microphone hears silence or noise.\n\nSwitch style while dictating\n\nHold the dictation key and press Left or Right Arrow to cycl"
+  },
+  {
+    "name": "ai-models",
+    "url": "/dashboard/settings/ai-models",
+    "expected": "AI and models",
+    "landed": true,
+    "errors": [],
+    "file": "ai-models-light-400x300.jpg",
+    "text": "​\n​\nOverview\nDictation\nAI and models\nShortcuts\nAppearance\nPrivacy and data\nSystem\nAccount\nAI and models\n\nWhich models transcribe your speech, and which provider polishes it.\n\nAdd an AI provider for polishing\n\nDictation works on its own, but styles and cleanup need a text-generation provider. Add one to unlock polishing, rewrites, and the assistant.\n\nTranscription\n\nDeepgram API key\n\nYour own Deepgram key, for fast streaming transcription.\n\nNot configured\n\nAI transcription\n\nWhere speech becomes text: on this computer, or through a provider.\n\nPost processing\n\nGroq API key\n\nYour own Groq key, for transcription and text generation.\n\nNot configured\n\nAI post processing\n\nCleanup and rewriting applied to dictated text before it is inserted.\n\nAssistant\n\nAssistant mode\n\nAsk questions, edit text, and run tools from the same place you dictate.\n\nBeta\nStyles\n\nStyling mode\n\nBased on app picks the style from whatever you are writing into. Manual keeps one style until you say otherwise.\n\nBased on app\nMa"
+  },
+  {
+    "name": "appearance",
+    "url": "/dashboard/settings/appearance",
+    "expected": "Appearance",
+    "landed": true,
+    "errors": [],
+    "file": "appearance-light-400x300.jpg",
+    "text": "​\n​\nOverview\nDictation\nAI and models\nShortcuts\nAppearance\nPrivacy and data\nSystem\nAccount\nAppearance\n\nHow the pill, the menu bar icon, and celebrations look and behave.\n\nPill\n\nDictation pill visibility\n\nPersistent keeps the pill on screen, While active shows it only during a recording, and Hidden removes it entirely.\n\nPersistent\nWhile active\nHidden\n\nReset pill position\n\nWhich screen the pill returns to when you reset its position from the tray. This does not move it now.\n\nCurrent monitor\nCursor monitor\nMenu bar\n\nShow menu bar icon\n\nKeeps the mausVoice icon in the menu bar. Leave another way to open the app before hiding it.\n\nCelebrations\n\nStreak celebrations\n\nFlame and firework animations on the pill when you hit a streak milestone."
+  },
+  {
+    "name": "shortcuts",
+    "url": "/dashboard/settings/shortcuts",
+    "expected": "Shortcuts",
+    "landed": true,
+    "errors": [],
+    "file": "shortcuts-light-400x300.jpg",
+    "text": "​\n​\nOverview\nDictation\nAI and models\nShortcuts\nAppearance\nPrivacy and data\nSystem\nAccount\nShortcuts\n\nThe keys that start dictation and the keys that switch styles.\n\nDictation\n\nHotkey shortcuts\n\nThe key that starts and stops dictation, and every other shortcut mausVoice listens for.\n\nStyles\n\nStyle hotkeys\n\nBind a key to each writing style, so you can switch without opening the app."
+  },
+  {
+    "name": "privacy",
+    "url": "/dashboard/settings/privacy-data",
+    "expected": "Privacy and data",
+    "landed": true,
+    "errors": [],
+    "file": "privacy-light-400x300.jpg",
+    "text": "​\n​\nOverview\nDictation\nAI and models\nShortcuts\nAppearance\nPrivacy and data\nSystem\nAccount\nPrivacy and data\n\nWhat stays on this computer, what leaves it, and how to remove it.\n\nHistory and storage\n\nIncognito mode\n\nStops mausVoice saving transcription history and audio snapshots.\n\nPreserve audio on failure\n\nKeeps the audio of a failed transcription so you can replay it from History. Incognito recordings are never kept.\n\nDictionary learning\n\nAuto-learn dictionary\n\nAdds the names and words you correct to your dictionary automatically.\n\nLearn from corrections\n\nWatches for the edits you make after dictating, and offers to add the corrected names to your dictionary.\n\nDevices\n\nMulti-device\n\nPair and manage remote devices for dictation."
+  },
+  {
+    "name": "system",
+    "url": "/dashboard/settings/system",
+    "expected": "System",
+    "landed": true,
+    "errors": [],
+    "file": "system-light-400x300.jpg",
+    "text": "​\n​\nOverview\nDictation\nAI and models\nShortcuts\nAppearance\nPrivacy and data\nSystem\nAccount\nSystem\n\nStartup, input permissions, updates, diagnostics, and legal.\n\nStartup\n\nStart on system startup\n\nLaunches mausVoice when you sign in, so dictation is ready before you are.\n\nInput permissions\n\nRequests Accessibility and Microphone access so the pill can type for you. You will be prompted in System Settings.\n\nConfigure input permissions\n\nRuns the setup that lets the pill capture your keys and type for you.\n\nUpdates\n\nSoftware update\n\nVersion 0.1.6-preview. Not checked yet.\n\nCheck now\n\nAutomatically show updates\n\nOpens the update window by itself when a new version is available.\n\nTry beta builds early\n\nStable ships tested releases. The beta channel offers prereleases early, and you can switch back at any time from settings.\n\nUpdate channel\n\nStable ships tested releases. Beta offers prereleases early and may wait for a newer stable before switching back.\n\nStable\nBeta\nSupport\n\nDiagnostics\n\nVersio"
+  },
+  {
+    "name": "home",
+    "url": "/dashboard",
+    "expected": "Welcome back",
+    "landed": true,
+    "errors": [],
+    "file": "home-light-400x300.jpg",
+    "text": "Welcome back, Morgan\nPress your hotkey to dictate anywhere\n⌥\nSpace\n12\n\nDay streak\n\n12,840\n\nWords this month\n\n84,120\n\nWords total\n\n188 WPM\n4.7x faster than typing\n\nDaily activity\n\nWords dictated over the past year\n\n28 active days\n\nM\nW\nF\nS\nOct 27, 2025: 0 words\nOct 28, 2025: 0 words\nOct 29, 2025: 0 words\nOct 30, 2025: 0 words\nOct 31, 2025: 0 words\nNov 1, 2025: 0 words\nNov 2, 2025: 0 words\nNov 3, 2025: 0 words\nNov 4, 2025: 0 words\nNov 5, 2025: 0 words\nNov 6, 2025: 0 words\nNov 7, 2025: 0 words\nNov 8, 2025: 0 words\nNov 9, 2025: 0 words\nNov 10, 2025: 0 words\nNov 11, 2025: 0 words\nNov 12, 2025: 0 words\nNov 13, 2025: 0 words\nNov 14, 2025: 0 words\nNov 15, 2025: 410 words\nNov 16, 2025: 0 words\nNov 17, 2025: 0 words\nNov 18, 2025: 0 words\nNov 19, 2025: 0 words\nNov 20, 2025: 0 words\nNov 21, 2025: 0 words\nNov 22, 2025: 0 words\nNov 23, 2025: 0 words\nNov 24, 2025: 0 words\nNov 25, 2025: 0 words\nNov 26, 2025: 0 words\nNov 27, 2025: 0 words\nNov 28, 2025: 0 words\nNov 29, 2025: 0 words\nNov 30, 2025: 0 words"
+  },
+  {
+    "name": "history",
+    "url": "/dashboard/transcriptions",
+    "expected": "History",
+    "landed": true,
+    "errors": [],
+    "file": "history-light-400x300.jpg",
+    "text": "Review before it inserts\n\nReview mode holds each transcript on the pill first, so you can edit or cancel before a word reaches your document.\n\nHistory\nImport audio\n3 transcriptions\nYESTERDAY\nOct 30, 2026, 8:46 AM\n\nThe new onboarding flow should make the microphone check feel optional until people are ready to try dictation. Walk them through picking a hotkey first, then show the floating pill and explain what each state means — idle, recording, thinking, and pasting. End with a short practice prompt they can repeat out loud, and only then mention the history page where every transcription lands with its audio attached.\n\nShow more\n\n0:13\n\nEARLIER\nOct 29, 2026, 3:20 PM\n\nDesign review: simplify the empty state, tighten the heading, and make the primary action more explicit.\n\n0:10\n\nOct 27, 2026, 11:10 AM\n\nHi team, the prototype is ready for feedback. Please add comments before Thursday afternoon. Thanks, Morgan.\n\n0:14"
+  },
+  {
+    "name": "dictionary",
+    "url": "/dashboard/dictionary",
+    "expected": "Dictionary",
+    "landed": true,
+    "errors": [],
+    "file": "dictionary-light-400x300.jpg",
+    "text": "Dictionary\nAdd\nmausVoice may misunderstand you on occasion. Add glossary terms to bias recognition toward the names and words you use, or define a replacement rule to fix the spelling automatically.\n​\n​\n​\n​"
+  },
+  {
+    "name": "styles",
+    "url": "/dashboard/styling",
+    "expected": "Writing styles",
+    "landed": true,
+    "errors": [],
+    "file": "styles-light-400x300.jpg",
+    "text": "Teach mausVoice how you write\n\nStyles reshape your dictation into your voice: emails, notes, code comments. Create one from a sample and it applies on every insert.\n\nBrowse styles\nWriting Styles\nAdd Style\nUse \n←\n or \n→\n while dictating to switch writing styles and change how you sound.\n\nPolished\n\nNatural, well-written text that preserves your voice and word choices.\n\nEmail\n\nProfessional email formatting with a greeting, body, and sign-off.\n\nNotes\n\nCapture organized notes, decisions, and next steps."
+  },
+  {
+    "name": "help",
+    "url": "/dashboard/help",
+    "expected": "Help",
+    "landed": true,
+    "errors": [],
+    "file": "help-light-400x300.jpg",
+    "text": "Help and onboarding\n\nShort guides for the features first run skips. Dismissed tips can be shown again here.\n\nAdd an AI provider for polishing\n\nDictation works on its own, but styles and cleanup need a text-generation provider. Add one to unlock polishing, rewrites, and the assistant.\n\nOpen settings\nTeach mausVoice how you write\n\nStyles reshape your dictation into your voice: emails, notes, code comments. Create one from a sample and it applies on every insert.\n\nBrowse styles\nTalk to the assistant\n\nBeyond dictation, the assistant answers questions, edits text, and runs tools in this chat. Anything you dictate can become a question.\n\nOpen chat\nReview before it inserts\n\nReview mode holds each transcript on the pill first, so you can edit or cancel before a word reaches your document.\n\nSee history\nTry beta builds early\n\nStable ships tested releases. The beta channel offers prereleases early, and you can switch back at any time from settings.\n\nOpen settings"
+  },
+  {
+    "name": "chats",
+    "url": "/dashboard/chats",
+    "expected": "Plan a design review",
+    "landed": true,
+    "errors": [],
+    "file": "chats-light-400x300.jpg",
+    "text": "Chats\nPlan a design review\n\nTalk to the assistant\n\nBeyond dictation, the assistant answers questions, edits text, and runs tools in this chat. Anything you dictate can become a question.\n\nCreate a short agenda for a design review of the new onboarding flow.\n\nCopy message\nEdit and resend\nOnboarding design review\nRevisit the first-run promise and primary action.\nWalk through microphone and accessibility permission states.\nReview empty, loading, and recovery states.\nAgree owners and the next prototype checkpoint.\nRetry\nCopy message"
+  }
+]

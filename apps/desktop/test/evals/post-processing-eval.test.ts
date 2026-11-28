@@ -3,9 +3,9 @@ import {
   buildPostProcessingPrompt,
   buildSystemPostProcessingTonePrompt,
   PostProcessingPromptInput,
-  PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
-  PROCESSED_TRANSCRIPTION_SCHEMA,
+  PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
 } from "../../src/utils/prompt.utils";
+import { resolveProcessedTranscription } from "../../src/utils/ai.utils";
 import { ToneConfig } from "../../src/utils/tone.utils";
 import {
   Eval,
@@ -14,6 +14,7 @@ import {
   runEval,
   toneFromPrompt,
 } from "../helpers/eval.utils";
+import { hasGroqApiKey } from "../helpers/env.utils";
 
 vi.setConfig({ testTimeout: 30000 });
 
@@ -44,6 +45,7 @@ const postProcess = async ({
     dictationLanguage: language,
     tone,
     userName,
+    glossary: { sources: [], replacements: [] },
   };
   const ppSystem = buildSystemPostProcessingTonePrompt(promptInput);
   const ppPrompt = buildPostProcessingPrompt(promptInput);
@@ -51,15 +53,13 @@ const postProcess = async ({
   const output = await getGroqGentextRepo().generateText({
     system: ppSystem,
     prompt: ppPrompt,
-    jsonResponse: {
-      name: "transcription_cleaning",
-      description: "JSON response with the processed transcription",
-      schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
-    },
+    jsonResponse: PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
   });
 
-  const parsed = PROCESSED_TRANSCRIPTION_SCHEMA.parse(JSON.parse(output.text));
-  return parsed.result;
+  const resolution = resolveProcessedTranscription(output.text, transcription);
+  return resolution.status === "cleaned"
+    ? resolution.transcript
+    : transcription;
 };
 
 const runPostProcessingEval = async ({
@@ -95,7 +95,7 @@ const runPostProcessingEval = async ({
   });
 };
 
-describe("post-processing evals", { retry: 0 }, () => {
+describe.skipIf(!hasGroqApiKey())("post-processing evals", { retry: 0 }, () => {
   describe("default style", () => {
     test("basic transcription1", async () => {
       await runPostProcessingEval({

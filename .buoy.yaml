@@ -1,0 +1,6 @@
+drift:
+  ignore:
+    - type: hardcoded-color
+      file: guide-markers.css
+      value: "3"
+      reason: "Ignored via PR #349"

@@ -1,8 +1,8 @@
 #![windows_subsystem = "windows"]
 
 mod constants;
-mod font;
 mod draw;
+mod font;
 mod gfx;
 mod input;
 mod ipc;
@@ -11,7 +11,8 @@ mod state;
 
 fn main() {
     font::install_embedded_satoshi();
+    let saved_position = rust_pill_shared::restore::saved_position_from_process_args();
     let (sender, receiver) = std::sync::mpsc::channel();
     ipc::start_stdin_reader(sender);
-    pill::run(receiver);
+    pill::run(receiver, saved_position);
 }

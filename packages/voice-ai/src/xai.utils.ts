@@ -1,44 +1,37 @@
-import { countWords, retry } from "@maus-inc/utilities";
+import { countWords, retry, throwHttpError } from "@maus-inc/utilities";
+import { probeProviderEndpoint } from "./provider-probe.utils";
+import type { CustomFetch } from "./types";
 
 const XAI_BASE_URL = "https://api.x.ai/v1";
-
-export const XAI_TRANSCRIPTION_MODELS = ["grok-stt"] as const;
-export type XaiTranscriptionModel = (typeof XAI_TRANSCRIPTION_MODELS)[number];
 
 export const XAI_TTS_VOICES = ["eve", "ara", "rex", "sal", "leo"] as const;
 export type XaiTtsVoice = (typeof XAI_TTS_VOICES)[number];
 
 export type XaiTestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const xaiTestIntegration = async ({
   apiKey,
-}: XaiTestIntegrationArgs): Promise<boolean> => {
-  const response = await fetch(`${XAI_BASE_URL}/models`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${apiKey.trim()}`,
+  customFetch,
+}: XaiTestIntegrationArgs): Promise<boolean> =>
+  probeProviderEndpoint({
+    label: "xAI",
+    url: `${XAI_BASE_URL}/models`,
+    init: {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey.trim()}` },
     },
+    customFetch,
   });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(
-      detail
-        ? `xAI responded ${response.status}: ${detail}`
-        : `xAI responded with status ${response.status}`,
-    );
-  }
-  return true;
-};
 
 export type XaiTranscriptionArgs = {
   apiKey: string;
-  model?: XaiTranscriptionModel;
   blob: ArrayBuffer | Buffer;
   ext: string;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
 export type XaiTranscribeAudioOutput = {
@@ -46,12 +39,12 @@ export type XaiTranscribeAudioOutput = {
   wordsUsed: number;
 };
 
-export const xaiTranscribeAudio = async ({
+export const xaiTranscribeAudio = ({
   apiKey,
-  model = "grok-stt",
   blob,
   ext,
   language,
+  customFetch = fetch,
 }: XaiTranscriptionArgs): Promise<XaiTranscribeAudioOutput> => {
   return retry({
     retries: 3,
@@ -60,14 +53,16 @@ export const xaiTranscribeAudio = async ({
       const bodyData =
         blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
       const audioBlob = new Blob([bodyData], { type: `audio/${ext}` });
-      formData.append("file", audioBlob, `audio.${ext}`);
-      formData.append("model", model);
-      formData.append("format", "json");
+      // xAI requires a specific language when `format=true`; container audio
+      // formats are detected from the uploaded file without this field.
       if (language && language !== "auto") {
+        formData.append("format", "true");
         formData.append("language", language);
       }
+      // xAI requires the multipart file field to be appended last.
+      formData.append("file", audioBlob, `audio.${ext}`);
 
-      const response = await fetch(`${XAI_BASE_URL}/stt`, {
+      const response = await customFetch(`${XAI_BASE_URL}/stt`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey.trim()}`,
@@ -76,10 +71,10 @@ export const xaiTranscribeAudio = async ({
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
-          `xAI STT request failed with status ${response.status}: ${errorText}`,
-        );
+        await throwHttpError(response, {
+          message: (errorText) =>
+            `xAI STT request failed with status ${response.status}: ${errorText}`,
+        });
       }
 
       const data = (await response.json()) as { text?: string };
@@ -99,6 +94,7 @@ export type XaiSpeakArgs = {
   text: string;
   voice?: XaiTtsVoice;
   language?: string;
+  customFetch?: CustomFetch;
 };
 
 export const xaiGenerateSpeech = async ({
@@ -106,8 +102,9 @@ export const xaiGenerateSpeech = async ({
   text,
   voice = "eve",
   language = "en",
+  customFetch = fetch,
 }: XaiSpeakArgs): Promise<ArrayBuffer> => {
-  const response = await fetch(`${XAI_BASE_URL}/tts`, {
+  const response = await customFetch(`${XAI_BASE_URL}/tts`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey.trim()}`,
@@ -121,10 +118,10 @@ export const xaiGenerateSpeech = async ({
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "Unknown error");
-    throw new Error(
-      `xAI TTS request failed with status ${response.status}: ${errorText}`,
-    );
+    await throwHttpError(response, {
+      message: (errorText) =>
+        `xAI TTS request failed with status ${response.status}: ${errorText}`,
+    });
   }
 
   return response.arrayBuffer();

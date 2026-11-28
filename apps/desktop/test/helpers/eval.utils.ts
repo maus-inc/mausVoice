@@ -1,6 +1,5 @@
 import { expect } from "vitest";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   BaseGenerateTextRepo,
   GroqGenerateTextRepo,
@@ -10,9 +9,9 @@ import {
   buildPostProcessingPrompt,
   buildSystemPostProcessingTonePrompt,
   PostProcessingPromptInput,
-  PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
-  PROCESSED_TRANSCRIPTION_SCHEMA,
+  PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
 } from "../../src/utils/prompt.utils";
+import { resolveProcessedTranscription } from "../../src/utils/ai.utils";
 import {
   getDefaultSystemTones,
   StyleToneConfig,
@@ -27,8 +26,9 @@ const EVAL_RESULT_SCHEMA = z.object({
   reason: z.string(),
 });
 
-const EVAL_RESULT_JSON_SCHEMA =
-  zodToJsonSchema(EVAL_RESULT_SCHEMA, "Schema").definitions?.Schema ?? {};
+const EVAL_RESULT_JSON_SCHEMA = z.toJSONSchema(EVAL_RESULT_SCHEMA, {
+  target: "draft-7",
+});
 
 export function getOpenAIGentextRepo(model = "gpt-5.4"): BaseGenerateTextRepo {
   const apiKey = getOpenAIApiKey();
@@ -91,24 +91,29 @@ export async function runEval({
   await Promise.all(promises);
 }
 
-export const postProcess = async ({
+type PostProcessInput = {
+  tone: ToneConfig;
+  transcription: string;
+  language?: string;
+  userName?: string;
+  repo?: Pick<BaseGenerateTextRepo, "generateText">;
+  signal?: AbortSignal;
+};
+
+export const postProcessResolution = async ({
   tone,
   transcription,
   language = "en",
   userName = "Thomas Gundan",
   repo,
-}: {
-  tone: ToneConfig;
-  transcription: string;
-  language?: string;
-  userName?: string;
-  repo?: BaseGenerateTextRepo;
-}): Promise<string> => {
+  signal,
+}: PostProcessInput) => {
   const promptInput: PostProcessingPromptInput = {
     transcript: transcription,
     dictationLanguage: language,
     tone,
     userName,
+    glossary: { sources: [], replacements: [] },
   };
   const ppSystem = buildSystemPostProcessingTonePrompt(promptInput);
   const ppPrompt = buildPostProcessingPrompt(promptInput);
@@ -116,15 +121,20 @@ export const postProcess = async ({
   const output = await (repo ?? getGroqGentextRepo()).generateText({
     system: ppSystem,
     prompt: ppPrompt,
-    jsonResponse: {
-      name: "transcription_cleaning",
-      description: "JSON response with the processed transcription",
-      schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
-    },
+    signal,
+    jsonResponse: PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
   });
 
-  const parsed = PROCESSED_TRANSCRIPTION_SCHEMA.parse(JSON.parse(output.text));
-  return parsed.result;
+  return resolveProcessedTranscription(output.text, transcription);
+};
+
+// Quality evals score what would be delivered, including the raw fallback.
+// A test of model cleanup must inspect the resolution instead.
+export const postProcess = async (input: PostProcessInput): Promise<string> => {
+  const resolution = await postProcessResolution(input);
+  return resolution.status === "cleaned"
+    ? resolution.transcript
+    : input.transcription;
 };
 
 export const toneFromPrompt = (promptTemplate: string): StyleToneConfig => ({

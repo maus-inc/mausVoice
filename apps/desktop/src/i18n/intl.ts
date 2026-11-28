@@ -1,4 +1,9 @@
-import { createIntl, createIntlCache } from "react-intl";
+import {
+  createIntl,
+  createIntlCache,
+  type IntlShape,
+  type MessageDescriptor,
+} from "react-intl";
 import { DEFAULT_LOCALE, Locale, SUPPORTED_LOCALES } from "./config";
 import deMessages from "./locales/de.json";
 import enMessages from "./locales/en.json";
@@ -81,11 +86,41 @@ export const getIntlConfig = () => {
   };
 };
 
+const idTolerantFormatMessage = (intl: IntlShape) => {
+  const rawFormat = intl.formatMessage;
+  /**
+   * `react-intl` requires an `id` and throws without one, which every call site
+   * in this repo omits on purpose (the repo rule is `defaultMessage`, never an
+   * `id` prop). The `defaultMessage` is used as the lookup key in its place, and
+   * the values are still handed to the formatter, so a descriptor carrying ICU
+   * placeholders never ships a literal `{count}` to the user.
+   *
+   * Nothing else is wrapped. A malformed ICU string or a missing value is a bug
+   * in the call site, and catching it here would ship an unformatted sentence
+   * with nothing logged; `formatMessage` already reports those through its own
+   * `onError` and falls back to the default message.
+   */
+  const format = <T extends MessageDescriptor>(
+    descriptor: T,
+    ...rest: unknown[]
+  ) =>
+    descriptor.id
+      ? rawFormat(descriptor, ...(rest as [never, never]))
+      : rawFormat(
+          { ...descriptor, id: descriptor.defaultMessage },
+          ...(rest as [never, never]),
+        );
+  // Both `IntlShape` overloads are preserved by construction: `format` is
+  // generic over the descriptor and forwards the remaining arguments untouched,
+  // so the return type is whatever the underlying overload produces.
+  return format as IntlShape["formatMessage"];
+};
+
 // Helper to get intl instance for non-React contexts
 export function getIntl(locale?: Locale) {
   const cache = createIntlCache();
   const detectedLocale = locale ?? detectLocale();
-  return createIntl(
+  const intl = createIntl(
     {
       locale: detectedLocale,
       defaultLocale: DEFAULT_LOCALE,
@@ -93,4 +128,5 @@ export function getIntl(locale?: Locale) {
     },
     cache,
   );
+  return { ...intl, formatMessage: idTolerantFormatMessage(intl) };
 }

@@ -1,8 +1,4 @@
-import AddIcon from "@mui/icons-material/Add";
-import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
-import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
-import CloseIcon from "@mui/icons-material/Close";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import { ArrowDown, ArrowUp, ChevronDown, Plus, X } from "lucide-react";
 import {
   Box,
   Checkbox,
@@ -179,6 +175,12 @@ export const OpenRouterProviderRouting = ({
           cursor: disabled ? "default" : "pointer",
           opacity: disabled ? 0.5 : 1,
           py: 0.5,
+          // The chevron rests muted and lifts to the title's tone on hover, so
+          // the header answers the pointer. Without the resting colour it would
+          // inherit `text.primary` and the hover rule would change nothing.
+          "& .expand-icon": {
+            color: disabled ? "action.disabled" : "text.secondary",
+          },
           "&:hover": {
             "& .expand-icon": {
               color: disabled ? "action.disabled" : "text.primary",
@@ -186,11 +188,11 @@ export const OpenRouterProviderRouting = ({
           },
         }}
       >
-        <ExpandMoreIcon
+        <ChevronDown
           className="expand-icon"
-          fontSize="small"
-          color="action"
-          sx={{
+          size={20}
+          strokeWidth={1.9}
+          style={{
             transition: "transform 0.2s ease",
             transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
           }}
@@ -272,7 +274,7 @@ export const OpenRouterProviderRouting = ({
                           onClick={() => handleMoveProvider(index, "up")}
                           sx={{ p: 0.25 }}
                         >
-                          <ArrowUpwardIcon fontSize="small" />
+                          <ArrowUp size={20} strokeWidth={1.9} />
                         </IconButton>
                         <IconButton
                           size="small"
@@ -280,7 +282,7 @@ export const OpenRouterProviderRouting = ({
                           onClick={() => handleMoveProvider(index, "down")}
                           sx={{ p: 0.25 }}
                         >
-                          <ArrowDownwardIcon fontSize="small" />
+                          <ArrowDown size={20} strokeWidth={1.9} />
                         </IconButton>
                       </Stack>
                       <Typography variant="body2" sx={{ flex: 1 }}>
@@ -291,7 +293,7 @@ export const OpenRouterProviderRouting = ({
                         onClick={() => handleRemoveProvider(index)}
                         sx={{ p: 0.25 }}
                       >
-                        <CloseIcon fontSize="small" />
+                        <X size={20} strokeWidth={1.9} />
                       </IconButton>
                     </Paper>
                   ))}
@@ -309,7 +311,11 @@ export const OpenRouterProviderRouting = ({
                     label={<FormattedMessage defaultMessage="Add provider" />}
                     onChange={(e) => handleAddProvider(e.target.value)}
                     startAdornment={
-                      <AddIcon fontSize="small" sx={{ mr: 0.5 }} />
+                      <Plus
+                        size={20}
+                        strokeWidth={1.9}
+                        style={{ marginRight: 4, flexShrink: 0 }}
+                      />
                     }
                   >
                     {availableToAdd.map((provider) => (

@@ -1,4 +1,4 @@
-import { ArrowOutwardRounded, Download } from "@mui/icons-material";
+import { ArrowUpRight, Download } from "lucide-react";
 import {
   Button,
   Dialog,
@@ -13,9 +13,10 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { appLogDir } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { logMicrophoneReadiness } from "../../actions/native.actions";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { produceAppState, useAppStore } from "../../store";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
@@ -135,6 +136,8 @@ const InfoRow = ({ label, value }: InfoRowProps) => (
       variant="body2"
       sx={{
         fontWeight: 500,
+        minWidth: 0,
+        overflowWrap: "anywhere",
         textAlign: "right",
       }}
     >
@@ -157,6 +160,7 @@ const SectionTitle = ({ children }: { children: React.ReactNode }) => (
 );
 
 export const DiagnosticsDialog = () => {
+  const titleId = useId();
   const open = useAppStore((state) => state.settings.diagnosticsDialogOpen);
   const data = useDiagnosticsData();
   const intl = useIntl();
@@ -171,6 +175,10 @@ export const DiagnosticsDialog = () => {
   const handleDownload = async () => {
     setExporting(true);
     try {
+      // Written to the log before the bundle is collected, so the export carries
+      // whether the microphone was held and what the last capture start spent
+      // its time on. Best effort: a failure here must not block the export.
+      await logMicrophoneReadiness();
       const diagnosticsInfo = buildDiagnosticsText(data);
       const saved = await invoke<boolean>("export_diagnostics", {
         diagnosticsInfo,
@@ -192,15 +200,24 @@ export const DiagnosticsDialog = () => {
   const version = data.version.state === "success" ? data.version.data : "...";
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="xs">
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      fullWidth
+      maxWidth="xs"
+      aria-labelledby={titleId}
+    >
       <DialogTitle
+        id={`${titleId}-wrapper`}
         sx={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
         }}
       >
-        <FormattedMessage defaultMessage="Diagnostics" />
+        <span id={titleId}>
+          <FormattedMessage defaultMessage="Diagnostics" />
+        </span>
         <Link
           component="button"
           variant="body2"
@@ -212,10 +229,10 @@ export const DiagnosticsDialog = () => {
           sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
         >
           <FormattedMessage defaultMessage="Open" />
-          <ArrowOutwardRounded sx={{ fontSize: 14 }} />
+          <ArrowUpRight size={14} strokeWidth={1.9} />
         </Link>
       </DialogTitle>
-      <DialogContent sx={{ minWidth: 400 }}>
+      <DialogContent sx={{ minWidth: "min(400px, 100%)" }}>
         <Stack spacing={0.5}>
           <SectionTitle>
             <FormattedMessage defaultMessage="Version" />
@@ -260,7 +277,7 @@ export const DiagnosticsDialog = () => {
         </Button>
         <Button
           variant="contained"
-          startIcon={<Download />}
+          startIcon={<Download size={20} strokeWidth={1.9} />}
           onClick={handleDownload}
           disabled={exporting}
         >

@@ -24,15 +24,28 @@ export type JsonResponse = {
 
 export type TranscriptionMode = "local" | "api";
 
+/** Post-processing configured by the user. Persisted as a preference. */
 export type PostProcessingMode = "none" | "api";
+
+/**
+ * Post-processing actually performed on one transcription, which is recorded
+ * on the row. It differs from the preference because "fast" is a deterministic
+ * local transform with no LLM call, so it is never a selectable preference.
+ */
+export type PostProcessingRunMode = PostProcessingMode | "fast";
 
 export type AgentMode = PostProcessingMode | "openclaw";
 
 export type DictationPillVisibility = "hidden" | "while_active" | "persistent";
 
+/** Which modifier double-tap replays the pill's outline, or none. */
+export type PillLocateGestureModifier = "none" | "alt" | "shift" | "control";
+
 export type PillResetMonitorStrategy = "current" | "cursor";
 
-export type PullStatus = "in_progress" | "error" | "complete";
+export type PillPlacement = "top" | "bottom";
+
+export type UpdateChannel = "stable" | "beta";
 
 export const STYLING_MODES = ["app", "manual"] as const;
 export type StylingMode = (typeof STYLING_MODES)[number];

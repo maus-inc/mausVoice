@@ -1,0 +1,7 @@
+# Pin the desktop clippy/test toolchain. Latest stable started failing
+# `cargo clippy -- -D warnings` and `cargo test --lib` on this crate
+# (exit 101) across Linux/macOS/Windows. 1.88 is new enough for Tauri 2
+# and old enough to avoid the current stable lint/API churn.
+[toolchain]
+channel = "1.88.0"
+components = ["clippy", "rustfmt"]

@@ -1,68 +1,35 @@
-import CloseIcon from "@mui/icons-material/Close";
-import { IconButton, Snackbar, useTheme } from "@mui/material";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useAppStore } from "../../store";
+import { emitSnackbarIfNew } from "./snackbar-emit";
+import { SonnerToaster } from "./SonnerToaster";
 
+/**
+ * Route each queued snackbar to sonner, in the order it was raised.
+ *
+ * Depend only on the counter, so a re-render does not re-run the effect; dedup
+ * lives in module scope so a StrictMode remount cannot replay a counter.
+ *
+ * Every request above the last emitted one is drained, not just the newest.
+ * Two messages raised in the same tick leave two entries in the queue and one
+ * counter increase, so reading only the newest silently dropped the other --
+ * and reading them one at a time would have been no better, because React
+ * batches the two state updates into a single effect run.
+ */
 export const SnackbarEmitter = () => {
   const snackbarCounter = useAppStore((state) => state.snackbarCounter);
-  const snackbarMessage = useAppStore((state) => state.snackbarMessage);
-  const snackbarDuration = useAppStore((state) => state.snackbarDuration);
-  const snackbarTransitionDuration = useAppStore(
-    (state) => state.snackbarTransitionDuration,
-  );
-  const snackbarMode = useAppStore((state) => state.snackbarMode);
-  const theme = useTheme();
-  const [open, setOpen] = useState(false);
-
-  const handleClose = (_: unknown, reason?: string) => {
-    if (reason === "clickaway") {
-      return;
-    }
-
-    setOpen(false);
-  };
 
   useEffect(() => {
-    if (snackbarCounter > 0) {
-      setOpen(true);
+    const { snackbarRequests } = useAppStore.getState();
+    for (const request of snackbarRequests) {
+      emitSnackbarIfNew({
+        snackbarCounter: request.counter,
+        snackbarMessage: request.message,
+        snackbarDuration: request.duration,
+        snackbarMode: request.mode,
+        snackbarAction: request.action,
+      });
     }
   }, [snackbarCounter]);
 
-  let backgroundColor: string;
-  if (snackbarMode === "error") {
-    backgroundColor = theme.palette.error.main;
-  } else if (snackbarMode === "success") {
-    backgroundColor = theme.palette.success.main;
-  } else {
-    backgroundColor = theme.palette.primary.main;
-  }
-
-  return (
-    <Snackbar
-      key={snackbarCounter}
-      open={open}
-      transitionDuration={snackbarTransitionDuration}
-      autoHideDuration={snackbarDuration}
-      onClose={handleClose}
-      message={<span style={{ color: "#fff" }}>{snackbarMessage}</span>}
-      anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      action={
-        <IconButton
-          size="small"
-          aria-label="close"
-          color="inherit"
-          onClick={() => setOpen(false)}
-        >
-          <CloseIcon fontSize="small" style={{ color: "#fff" }} />
-        </IconButton>
-      }
-      slotProps={{
-        content: {
-          style: {
-            backgroundColor,
-          },
-        },
-      }}
-    />
-  );
+  return <SonnerToaster />;
 };

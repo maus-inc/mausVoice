@@ -1,6 +1,6 @@
 use std::env;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -10,7 +10,8 @@ use sha2::{Digest, Sha256};
 use tar::Archive;
 
 const ORT_VERSION: &str = "1.23.2";
-const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
+
+mod ort_download;
 
 struct RuntimeAsset {
     archive_name: &'static str,
@@ -27,12 +28,17 @@ enum ArchiveKind {
 fn main() {
     println!("cargo:rerun-if-env-changed=MAUSVOICE_ORT_DYLIB_PATH");
     println!("cargo:rerun-if-env-changed=ORT_DYLIB_PATH");
+    println!("cargo:rerun-if-env-changed=MAUSVOICE_ORT_DOWNLOAD_BASE_URLS");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=ort_download.rs");
 
     let target = env::var("TARGET").expect("Cargo did not provide TARGET");
+    if target.contains("apple-darwin") {
+        link_clang_runtime_for_metal_availability_checks();
+    }
     let library_name = runtime_library_name(&target);
-    let runtime_path = configured_runtime()
-        .unwrap_or_else(|| provision_runtime(&target, library_name));
+    let runtime_path =
+        configured_runtime().unwrap_or_else(|| provision_runtime(&target, library_name));
 
     // Keep a copy beside normal binaries and test executables. This makes the
     // standalone sidecar useful outside the Tauri bundle and gives Cargo tests
@@ -46,6 +52,35 @@ fn main() {
         "cargo:rustc-env=MAUSVOICE_BUILD_ORT_DYLIB={}",
         runtime_path.display()
     );
+}
+
+/// ggml-metal's `@available` checks compile to calls to
+/// `__isPlatformVersionAtLeast` whenever the deployment target is older than
+/// the check, and that symbol lives in clang's runtime library, which rustc
+/// does not link on its own. The Xcode 16.4 toolchain on the macos-15 runners
+/// lowers those checks where the macos-14 toolchain constant-folded them, so
+/// the sidecar link failed with the symbol undefined. Name the archive
+/// explicitly; the file is universal, so it serves both halves of the
+/// universal-apple-darwin build.
+fn link_clang_runtime_for_metal_availability_checks() {
+    let Ok(output) = std::process::Command::new("clang")
+        .arg("-print-resource-dir")
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let resource_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if resource_dir.is_empty() {
+        return;
+    }
+    let darwin_dir = Path::new(&resource_dir).join("lib").join("darwin");
+    if darwin_dir.join("libclang_rt.osx.a").is_file() {
+        println!("cargo:rustc-link-search=native={}", darwin_dir.display());
+        println!("cargo:rustc-link-lib=static=clang_rt.osx");
+    }
 }
 
 fn configured_runtime() -> Option<PathBuf> {
@@ -113,91 +148,52 @@ fn verify_file_digest(path: &Path, expected_sha256: &str) -> bool {
 }
 
 fn download_verified(asset: &RuntimeAsset, archive_path: &Path) {
-    let url = format!(
-        "https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VERSION}/{}",
-        asset.archive_name
-    );
-    let temporary_path = archive_path.with_extension(format!(
-        "{}.{}.part",
-        archive_path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or("archive"),
-        std::process::id()
-    ));
-
     let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .timeout_connect(Some(Duration::from_secs(30)))
-            .timeout_recv_body(Some(Duration::from_secs(300)))
-            .build(),
+        ort_download::download_config(Duration::from_secs(30)).build(),
     );
-    let mut last_error = String::new();
-    for attempt in 1..=3 {
-        let result = (|| -> Result<(), String> {
-            let mut response = agent
-                .get(&url)
-                .call()
-                .map_err(|error| format!("request failed: {error}"))?;
-            let mut reader = response
-                .body_mut()
-                .with_config()
-                .limit(MAX_DOWNLOAD_BYTES)
-                .reader();
-            let mut output = File::create(&temporary_path)
-                .map_err(|error| format!("failed to create download: {error}"))?;
-            let mut hasher = Sha256::new();
-            let mut buffer = [0_u8; 64 * 1024];
+    if let Err(error) = ort_download::download_verified(
+        (asset.archive_name, asset.sha256),
+        archive_path,
+        &download_base_urls(),
+        &agent,
+        thread::sleep,
+    ) {
+        panic!("{error}");
+    }
+}
 
-            loop {
-                let count = reader
-                    .read(&mut buffer)
-                    .map_err(|error| format!("failed while downloading: {error}"))?;
-                if count == 0 {
-                    break;
-                }
-                output
-                    .write_all(&buffer[..count])
-                    .map_err(|error| format!("failed to write download: {error}"))?;
-                hasher.update(&buffer[..count]);
-            }
-            output
-                .sync_all()
-                .map_err(|error| format!("failed to flush download: {error}"))?;
-
-            let actual = format!("{:x}", hasher.finalize());
-            if actual != asset.sha256 {
-                return Err(format!(
-                    "SHA-256 mismatch (expected {}, got {actual})",
-                    asset.sha256
-                ));
-            }
-            Ok(())
-        })();
-
-        match result {
-            Ok(()) => {
-                fs::rename(&temporary_path, archive_path).unwrap_or_else(|error| {
-                    panic!(
-                        "failed to store verified ONNX Runtime archive '{}': {error}",
-                        archive_path.display()
-                    )
-                });
-                return;
-            }
-            Err(error) => {
-                last_error = error;
-                let _ = fs::remove_file(&temporary_path);
-                if attempt < 3 {
-                    thread::sleep(Duration::from_secs(attempt * 2));
-                }
-            }
+/// Base URLs for the ONNX Runtime release archive, tried in order.
+///
+/// The upstream GitHub Releases asset is the primary source. It can disappear
+/// without notice: Microsoft made `microsoft/onnxruntime` and its sibling
+/// repositories private on 2026-11-17, which removed the repository, its tags and
+/// every release asset at once, so a build that only knew that one URL failed with
+/// a 404. The second entry is a byte-for-byte mirror of the same published
+/// archives. Every candidate is verified against the SHA-256 pinned in
+/// `runtime_asset`, so a mirror cannot substitute different bytes, it can only
+/// serve the file the pin already names or be rejected.
+///
+/// `MAUSVOICE_ORT_DOWNLOAD_BASE_URLS` overrides the list with a
+/// comma-separated set of bases, each used as `<base>/<archive_name>`. This is the
+/// escape hatch for an internal mirror or an air-gapped release build.
+fn download_base_urls() -> Vec<String> {
+    if let Some(override_urls) = env::var_os("MAUSVOICE_ORT_DOWNLOAD_BASE_URLS") {
+        let urls: Vec<String> = override_urls
+            .to_string_lossy()
+            .split(',')
+            .map(str::trim)
+            .filter(|base| !base.is_empty())
+            .map(|base| base.trim_end_matches('/').to_string())
+            .collect();
+        if !urls.is_empty() {
+            return urls;
         }
     }
 
-    panic!(
-        "failed to download verified ONNX Runtime archive from '{url}' after 3 attempts: {last_error}"
-    );
+    vec![
+        format!("https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VERSION}"),
+        format!("https://registry.npmmirror.com/-/binary/onnxruntime/v{ORT_VERSION}"),
+    ]
 }
 
 fn extract_runtime(

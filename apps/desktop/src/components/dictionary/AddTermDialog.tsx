@@ -12,7 +12,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 type AddTermDialogProps = {
@@ -29,6 +29,8 @@ export const AddTermDialog = ({
   onAddReplacement,
 }: AddTermDialogProps) => {
   const intl = useIntl();
+  const titleId = useId();
+  const replacementLabelId = useId();
   const [isReplacement, setIsReplacement] = useState(false);
   const [glossaryText, setGlossaryText] = useState("");
   const [sourceValue, setSourceValue] = useState("");
@@ -77,10 +79,16 @@ export const AddTermDialog = ({
   ]);
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="sm"
+      fullWidth
+      aria-labelledby={titleId}
+    >
+      <DialogTitle id={`${titleId}-container`}>
         <Box sx={{ display: "flex", alignItems: "center" }}>
-          <Typography variant="h6" sx={{ flex: 1 }}>
+          <Typography id={titleId} variant="h6" sx={{ flex: 1 }}>
             <FormattedMessage defaultMessage="Add term" />
           </Typography>
           <Stack
@@ -91,6 +99,7 @@ export const AddTermDialog = ({
             }}
           >
             <Typography
+              id={replacementLabelId}
               variant="body2"
               sx={{
                 color: "text.secondary",
@@ -99,8 +108,8 @@ export const AddTermDialog = ({
               <FormattedMessage defaultMessage="Replacement" />
             </Typography>
             <Switch
-              size="small"
               checked={isReplacement}
+              slotProps={{ input: { "aria-labelledby": replacementLabelId } }}
               onChange={(_, checked) => setIsReplacement(checked)}
             />
           </Stack>
@@ -116,6 +125,13 @@ export const AddTermDialog = ({
               placeholder={intl.formatMessage({
                 defaultMessage: "Original term",
               })}
+              slotProps={{
+                htmlInput: {
+                  "aria-label": intl.formatMessage({
+                    defaultMessage: "Original term",
+                  }),
+                },
+              }}
               value={sourceValue}
               onChange={(e) => setSourceValue(e.target.value)}
             />
@@ -142,6 +158,13 @@ export const AddTermDialog = ({
               placeholder={intl.formatMessage({
                 defaultMessage: "Replacement term",
               })}
+              slotProps={{
+                htmlInput: {
+                  "aria-label": intl.formatMessage({
+                    defaultMessage: "Replacement term",
+                  }),
+                },
+              }}
               value={destinationValue}
               onChange={(e) => setDestinationValue(e.target.value)}
             />
@@ -152,9 +175,17 @@ export const AddTermDialog = ({
             fullWidth
             multiline
             minRows={3}
+            maxRows={8}
             placeholder={intl.formatMessage({
               defaultMessage: "Enter a term",
             })}
+            slotProps={{
+              htmlInput: {
+                "aria-label": intl.formatMessage({
+                  defaultMessage: "Enter a term",
+                }),
+              },
+            }}
             value={glossaryText}
             onChange={(e) => setGlossaryText(e.target.value)}
             helperText={

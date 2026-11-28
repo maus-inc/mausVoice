@@ -1,29 +1,23 @@
+import {
+  jsonResponse,
+  mockAssemblyAITranscription,
+} from "../../test/helpers/assemblyai-fetch-mock";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assemblyaiTranscribeAudio } from "@maus-inc/voice-ai";
+import {
+  assemblyaiTestIntegration,
+  assemblyaiTranscribeAudio,
+} from "@maus-inc/voice-ai";
 
 const UPLOAD_URL = "https://cdn.assemblyai.com/upload/abc123";
 
-const jsonResponse = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status });
-
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("assemblyaiTranscribeAudio", () => {
   it("uploads raw bytes with the token header and returns the completed text", async () => {
-    let uploadInit: RequestInit | undefined;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith("/v2/upload")) {
-        uploadInit = init;
-        return jsonResponse({ upload_url: UPLOAD_URL });
-      }
-      if (url.endsWith("/v2/transcript")) {
-        return jsonResponse({ id: "t1", status: "queued" });
-      }
-      return jsonResponse({ id: "t1", status: "completed", text: "hello" });
-    });
+    const requests = mockAssemblyAITranscription("hello");
 
     const { text } = await assemblyaiTranscribeAudio({
       apiKey: "aa-key",
@@ -31,28 +25,17 @@ describe("assemblyaiTranscribeAudio", () => {
     });
 
     expect(text).toBe("hello");
-    expect(uploadInit?.method).toBe("POST");
-    expect(uploadInit?.headers).toMatchObject({
+    expect(requests.uploadInit?.method).toBe("POST");
+    expect(requests.uploadInit?.headers).toMatchObject({
       Authorization: "aa-key",
       "Content-Type": "application/octet-stream",
     });
     // Buffer payloads are converted to a raw ArrayBuffer before upload.
-    expect(uploadInit?.body).toBeInstanceOf(ArrayBuffer);
+    expect(requests.uploadInit?.body).toBeInstanceOf(ArrayBuffer);
   });
 
   it("sends language_code and omits language_detection for an explicit language", async () => {
-    let createBody: Record<string, unknown> | null = null;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith("/v2/upload")) {
-        return jsonResponse({ upload_url: UPLOAD_URL });
-      }
-      if (url.endsWith("/v2/transcript") && init?.method === "POST") {
-        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
-        return jsonResponse({ id: "t1", status: "queued" });
-      }
-      return jsonResponse({ id: "t1", status: "completed", text: "bonjour" });
-    });
+    const requests = mockAssemblyAITranscription("bonjour");
 
     const { text } = await assemblyaiTranscribeAudio({
       apiKey: "aa-key",
@@ -61,22 +44,14 @@ describe("assemblyaiTranscribeAudio", () => {
     });
 
     expect(text).toBe("bonjour");
-    expect(createBody).toEqual({ audio_url: UPLOAD_URL, language_code: "fr" });
+    expect(requests.createBody).toEqual({
+      audio_url: UPLOAD_URL,
+      language_code: "fr",
+    });
   });
 
   it("omits language_code and requests detection when language is not provided", async () => {
-    let createBody: Record<string, unknown> | null = null;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith("/v2/upload")) {
-        return jsonResponse({ upload_url: UPLOAD_URL });
-      }
-      if (url.endsWith("/v2/transcript") && init?.method === "POST") {
-        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
-        return jsonResponse({ id: "t1", status: "queued" });
-      }
-      return jsonResponse({ id: "t1", status: "completed", text: "hola" });
-    });
+    const requests = mockAssemblyAITranscription("hola");
 
     const { text } = await assemblyaiTranscribeAudio({
       apiKey: "aa-key",
@@ -84,11 +59,11 @@ describe("assemblyaiTranscribeAudio", () => {
     });
 
     expect(text).toBe("hola");
-    expect(createBody).toEqual({
+    expect(requests.createBody).toEqual({
       audio_url: UPLOAD_URL,
       language_detection: true,
     });
-    expect(createBody).not.toHaveProperty("language_code");
+    expect(requests.createBody).not.toHaveProperty("language_code");
   });
 
   it("surfaces upload HTTP failures without retrying non-transient 4xx", async () => {
@@ -191,20 +166,12 @@ describe("assemblyaiTranscribeAudio", () => {
   });
 
   it("retries a transient upload failure", async () => {
-    let uploadCalls = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/v2/upload")) {
-        uploadCalls++;
-        if (uploadCalls === 1) {
+    const requests = mockAssemblyAITranscription("retried", {
+      upload: (_init, attempt) => {
+        if (attempt === 1) {
           return new Response("upstream blip", { status: 502 });
         }
-        return jsonResponse({ upload_url: UPLOAD_URL });
-      }
-      if (url.endsWith("/v2/transcript")) {
-        return jsonResponse({ id: "t1", status: "queued" });
-      }
-      return jsonResponse({ id: "t1", status: "completed", text: "retried" });
+      },
     });
 
     const { text } = await assemblyaiTranscribeAudio({
@@ -213,24 +180,16 @@ describe("assemblyaiTranscribeAudio", () => {
     });
 
     expect(text).toBe("retried");
-    expect(uploadCalls).toBeGreaterThanOrEqual(2);
+    expect(requests.calls.upload).toBeGreaterThanOrEqual(2);
   });
 
   it("retries a transient status-poll failure", async () => {
-    let statusCalls = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/v2/upload")) {
-        return jsonResponse({ upload_url: UPLOAD_URL });
-      }
-      if (url.endsWith("/v2/transcript")) {
-        return jsonResponse({ id: "t1", status: "queued" });
-      }
-      statusCalls++;
-      if (statusCalls === 1) {
-        return new Response("upstream blip", { status: 502 });
-      }
-      return jsonResponse({ id: "t1", status: "completed", text: "recovered" });
+    const requests = mockAssemblyAITranscription("recovered", {
+      status: (_init, attempt) => {
+        if (attempt === 1) {
+          return new Response("upstream blip", { status: 502 });
+        }
+      },
     });
 
     const { text } = await assemblyaiTranscribeAudio({
@@ -239,31 +198,19 @@ describe("assemblyaiTranscribeAudio", () => {
     });
 
     expect(text).toBe("recovered");
-    expect(statusCalls).toBeGreaterThanOrEqual(2);
+    expect(requests.calls.status).toBeGreaterThanOrEqual(2);
   });
 
   it("honors Retry-After when retrying a 429 response", async () => {
-    let uploadCalls = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/v2/upload")) {
-        uploadCalls++;
-        if (uploadCalls === 1) {
+    const requests = mockAssemblyAITranscription("rate recovered", {
+      upload: (_init, attempt) => {
+        if (attempt === 1) {
           return new Response("rate limited", {
             status: 429,
             headers: { "retry-after": "0" },
           });
         }
-        return jsonResponse({ upload_url: UPLOAD_URL });
-      }
-      if (url.endsWith("/v2/transcript")) {
-        return jsonResponse({ id: "t1", status: "queued" });
-      }
-      return jsonResponse({
-        id: "t1",
-        status: "completed",
-        text: "rate recovered",
-      });
+      },
     });
 
     const { text } = await assemblyaiTranscribeAudio({
@@ -272,43 +219,37 @@ describe("assemblyaiTranscribeAudio", () => {
     });
 
     expect(text).toBe("rate recovered");
-    expect(uploadCalls).toBe(2);
+    expect(requests.calls.upload).toBe(2);
   });
 
   it("honors an HTTP-date Retry-After header", async () => {
-    let uploadCalls = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/v2/upload")) {
-        uploadCalls++;
-        if (uploadCalls === 1) {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-23T00:00:00Z"));
+    const requests = mockAssemblyAITranscription("date retried", {
+      upload: (_init, attempt) => {
+        if (attempt === 1) {
           // RFC 7231 allows an absolute date; the retry must wait until then
           // instead of falling back to exponential backoff.
-          const retryAt = new Date(Date.now() + 50).toUTCString();
+          const retryAt = new Date(Date.now() + 2000).toUTCString();
           return new Response("rate limited", {
             status: 429,
             headers: { "retry-after": retryAt },
           });
         }
-        return jsonResponse({ upload_url: UPLOAD_URL });
-      }
-      if (url.endsWith("/v2/transcript")) {
-        return jsonResponse({ id: "t1", status: "queued" });
-      }
-      return jsonResponse({
-        id: "t1",
-        status: "completed",
-        text: "date retried",
-      });
+      },
     });
 
-    const { text } = await assemblyaiTranscribeAudio({
+    const pending = assemblyaiTranscribeAudio({
       apiKey: "aa-key",
       blob: new ArrayBuffer(8),
     });
 
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(requests.calls.upload).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    const { text } = await pending;
     expect(text).toBe("date retried");
-    expect(uploadCalls).toBe(2);
+    expect(requests.calls.upload).toBe(2);
   });
 
   it("prefixes the error label when retries are exhausted on a network error", async () => {
@@ -325,13 +266,10 @@ describe("assemblyaiTranscribeAudio", () => {
   });
 
   it("drains the response body before retrying a transient failure", async () => {
-    let uploadCalls = 0;
     let firstBodyDrained = false;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/v2/upload")) {
-        uploadCalls++;
-        if (uploadCalls === 1) {
+    const requests = mockAssemblyAITranscription("drained retried", {
+      upload: (_init, attempt) => {
+        if (attempt === 1) {
           const response = new Response("upstream blip", { status: 502 });
           // Simulate an undici-style runtime: the connection is only released
           // once the body is consumed. Track consumption to assert the retry
@@ -343,16 +281,7 @@ describe("assemblyaiTranscribeAudio", () => {
           };
           return response;
         }
-        return jsonResponse({ upload_url: UPLOAD_URL });
-      }
-      if (url.endsWith("/v2/transcript")) {
-        return jsonResponse({ id: "t1", status: "queued" });
-      }
-      return jsonResponse({
-        id: "t1",
-        status: "completed",
-        text: "drained retried",
-      });
+      },
     });
 
     const { text } = await assemblyaiTranscribeAudio({
@@ -361,88 +290,33 @@ describe("assemblyaiTranscribeAudio", () => {
     });
 
     expect(text).toBe("drained retried");
-    expect(uploadCalls).toBe(2);
+    expect(requests.calls.upload).toBe(2);
     expect(firstBodyDrained).toBe(true);
   });
 
-  it("aborts a status request that never settles and reports a timeout", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-      const url = String(input);
-      if (url.endsWith("/v2/upload")) {
-        return Promise.resolve(jsonResponse({ upload_url: UPLOAD_URL }));
-      }
-      if (url.endsWith("/v2/transcript")) {
-        return Promise.resolve(jsonResponse({ id: "t1", status: "queued" }));
-      }
-      // The status request never settles on its own; it must be aborted when
-      // the overall deadline expires.
-      return new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => {
-          reject(new DOMException("aborted", "AbortError"));
-        });
+  it.each(["upload", "create", "status"] as const)(
+    "aborts a %s request that never settles and reports a timeout",
+    async (stage) => {
+      mockAssemblyAITranscription("unreachable", {
+        [stage]: (init: RequestInit | undefined) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("aborted", "AbortError"));
+            });
+          }),
       });
-    });
-
-    const startedAt = Date.now();
-    await expect(
-      assemblyaiTranscribeAudio({
-        apiKey: "aa-key",
-        blob: new ArrayBuffer(8),
-        timeoutMs: 150,
-        pollIntervalMs: 20,
-      }),
-    ).rejects.toThrow(/timed out/);
-    // Must not hang beyond the configured budget.
-    expect(Date.now() - startedAt).toBeLessThan(5000);
-  });
-
-  it("aborts an upload request that never settles and reports a timeout", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
-      // The upload never settles; it must be aborted by the shared deadline
-      // rather than hanging the whole operation.
-      return new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => {
-          reject(new DOMException("aborted", "AbortError"));
-        });
-      });
-    });
-
-    const startedAt = Date.now();
-    await expect(
-      assemblyaiTranscribeAudio({
-        apiKey: "aa-key",
-        blob: new ArrayBuffer(8),
-        timeoutMs: 150,
-        pollIntervalMs: 20,
-      }),
-    ).rejects.toThrow(/timed out/);
-    expect(Date.now() - startedAt).toBeLessThan(5000);
-  });
-
-  it("aborts a transcript-create request that never settles and reports a timeout", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-      if (String(input).endsWith("/v2/upload")) {
-        return Promise.resolve(jsonResponse({ upload_url: UPLOAD_URL }));
-      }
-      // The create never settles; it must be aborted by the shared deadline.
-      return new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => {
-          reject(new DOMException("aborted", "AbortError"));
-        });
-      });
-    });
-
-    const startedAt = Date.now();
-    await expect(
-      assemblyaiTranscribeAudio({
-        apiKey: "aa-key",
-        blob: new ArrayBuffer(8),
-        timeoutMs: 150,
-        pollIntervalMs: 20,
-      }),
-    ).rejects.toThrow(/timed out/);
-    expect(Date.now() - startedAt).toBeLessThan(5000);
-  });
+      const startedAt = Date.now();
+      await expect(
+        assemblyaiTranscribeAudio({
+          apiKey: "aa-key",
+          blob: new ArrayBuffer(8),
+          timeoutMs: 150,
+          pollIntervalMs: 20,
+        }),
+      ).rejects.toThrow(/timed out/);
+      expect(Date.now() - startedAt).toBeLessThan(5000);
+    },
+  );
 
   it("surfaces a clean error when the upload response is not JSON", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -516,5 +390,133 @@ describe("assemblyaiTranscribeAudio", () => {
 
     // Validation happens before any request is issued.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends the Universal-2 fallback pair when Universal-3.5 Pro is selected", async () => {
+    const requests = mockAssemblyAITranscription();
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      model: "universal-3-5-pro",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("hi");
+    expect(requests.createBody).toMatchObject({
+      audio_url: UPLOAD_URL,
+      speech_models: ["universal-3-5-pro", "universal-2"],
+    });
+  });
+
+  it("sends only Universal-2 when Universal-2 is selected", async () => {
+    const requests = mockAssemblyAITranscription();
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      model: "universal-2",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("hi");
+    expect(requests.createBody).toMatchObject({
+      audio_url: UPLOAD_URL,
+      speech_models: ["universal-2"],
+    });
+  });
+
+  it.each([
+    ["best", ["universal-3-5-pro", "universal-2"]],
+    ["nano", ["universal-2"]],
+  ] as const)(
+    "migrates the legacy %s tier to its successor",
+    async (model, expected) => {
+      const requests = mockAssemblyAITranscription();
+
+      await assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        model,
+        blob: new ArrayBuffer(8),
+      });
+
+      expect(requests.createBody).toMatchObject({
+        audio_url: UPLOAD_URL,
+        speech_models: expected,
+      });
+    },
+  );
+
+  it("omits speech_models when no model is selected", async () => {
+    const requests = mockAssemblyAITranscription();
+
+    await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(requests.createBody).not.toHaveProperty("speech_models");
+  });
+
+  it("rejects an unknown speech model before any network call", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse({ upload_url: UPLOAD_URL }));
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        model: "whisper-1",
+        blob: new ArrayBuffer(8),
+      }),
+    ).rejects.toThrow(/Unknown AssemblyAI speech model "whisper-1"/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("assemblyaiTestIntegration", () => {
+  it("validates the API key without any network call when the model is unknown", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(
+      assemblyaiTestIntegration({ apiKey: "aa-key", model: "whisper-1" }),
+    ).rejects.toThrow(/Unknown AssemblyAI speech model "whisper-1"/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("migrates a legacy model instead of failing the key test", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("[]", { status: 200 }),
+    );
+
+    await expect(
+      assemblyaiTestIntegration({ apiKey: "aa-key", model: "best" }),
+    ).resolves.toBe(true);
+    await expect(
+      assemblyaiTestIntegration({ apiKey: "aa-key", model: "nano" }),
+    ).resolves.toBe(true);
+  });
+
+  it("validates the API key when the selected model is supported", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("[]", { status: 200 }),
+    );
+
+    await expect(
+      assemblyaiTestIntegration({
+        apiKey: "aa-key",
+        model: "universal-3-5-pro",
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("still validates the API key when no model is selected", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("[]", { status: 200 }),
+    );
+
+    await expect(assemblyaiTestIntegration({ apiKey: "aa-key" })).resolves.toBe(
+      true,
+    );
   });
 });

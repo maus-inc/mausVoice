@@ -1,3 +1,4 @@
+import { useReducedMotion } from "framer-motion";
 import Confetti from "react-confetti";
 import { useEffectDebounced, useWindowSize } from "../../hooks/helper.hooks";
 import { produceAppState, useAppStore } from "../../store";
@@ -5,6 +6,7 @@ import { produceAppState, useAppStore } from "../../store";
 export const RootConfetti = () => {
   const { width, height } = useWindowSize();
   const counter = useAppStore((state) => state.confettiCounter);
+  const reduceMotion = useReducedMotion();
 
   useEffectDebounced(
     10_000,
@@ -18,7 +20,7 @@ export const RootConfetti = () => {
     [counter],
   );
 
-  if (counter <= 0) {
+  if (counter <= 0 || reduceMotion) {
     return null;
   }
 

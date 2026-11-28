@@ -1,0 +1,110 @@
+[
+  {
+    "text": "Microphone settings",
+    "fontSize": 20,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Preferred microphone",
+    "fontSize": 15,
+    "ratio": 17.3,
+    "bold": true
+  },
+  {
+    "text": "Choose which microphone mausVoice should use when recording.",
+    "fontSize": 13.5,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Microphone",
+    "fontSize": 15,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Automatic",
+    "fontSize": 15,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Recommended",
+    "fontSize": 13,
+    "ratio": 17.87,
+    "bold": false
+  },
+  {
+    "text": "Microphone",
+    "fontSize": 11.25,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Refresh devices",
+    "fontSize": 15,
+    "ratio": 17.3,
+    "bold": true
+  },
+  {
+    "text": "Keep the microphone ready",
+    "fontSize": 15,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Start dictating instantly by opening the microphone ahead of",
+    "fontSize": 13.5,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Audio kept before the press",
+    "fontSize": 13.5,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "0.5 s",
+    "fontSize": 13.5,
+    "ratio": 4.61,
+    "bold": false
+  },
+  {
+    "text": "How much speech to keep from just before you press, so a wor",
+    "fontSize": 12,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Stay ready after a dictation",
+    "fontSize": 15,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Keeps the microphone open for a few seconds after each recor",
+    "fontSize": 13.5,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Test your microphone",
+    "fontSize": 15,
+    "ratio": 17.3,
+    "bold": true
+  },
+  {
+    "text": "Start a short test to see live audio levels and play back wh",
+    "fontSize": 13.5,
+    "ratio": 17.3,
+    "bold": false
+  },
+  {
+    "text": "Close",
+    "fontSize": 15,
+    "ratio": 17.3,
+    "bold": true
+  }
+]
