@@ -107,6 +107,68 @@ it("yields between rows instead of finishing a whole raster in one task", async 
   }
 });
 
+it("defers local allocation and cancels before allocating abandoned work", async () => {
+  const allocate = vi.fn(function (width: number, height: number) {
+    return new TestImageData(width, height);
+  });
+  vi.stubGlobal("ImageData", allocate);
+  vi.useFakeTimers();
+  try {
+    const { getCapRasterAsync } = await import("./keycap3d.raster");
+    const options = {
+      layout: layoutKeycap({ size: 29, view: "front" }),
+      grain: 0.17,
+      scale: 1,
+    };
+    const controller = new AbortController();
+    const cancelled = getCapRasterAsync(options, controller.signal);
+    expect(allocate).not.toHaveBeenCalled();
+    controller.abort();
+    await expect(cancelled).rejects.toThrow("cancelled");
+    await vi.runAllTimersAsync();
+    expect(allocate).not.toHaveBeenCalled();
+    const retained = getCapRasterAsync(options, new AbortController().signal);
+    expect(allocate).not.toHaveBeenCalled();
+    await vi.runAllTimersAsync();
+    await expect(retained).resolves.toMatchObject({
+      width: expect.any(Number),
+    });
+    expect(allocate).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("bounds the completed cache and retains recently used rasters", async () => {
+  vi.stubGlobal("ImageData", TestImageData);
+  const { getCapRaster, getCachedCapRaster } =
+    await import("./keycap3d.raster");
+  const options = {
+    layout: layoutKeycap({ size: 4, view: "front" }),
+    grain: 0,
+    scale: 1,
+  };
+  const first = getCapRaster(options);
+  for (let grain = 1; grain < 8; grain += 1) {
+    getCapRaster({ ...options, grain });
+  }
+  expect(getCachedCapRaster(options)).toBe(first);
+  getCapRaster({ ...options, grain: 8 });
+  expect(getCachedCapRaster({ ...options, grain: 1 })).toBeUndefined();
+  expect(getCachedCapRaster(options)).toBe(first);
+});
+
+it("uses the display scale without exceeding the raster budget", async () => {
+  const { capRasterOptions } = await import("./keycap3d.raster");
+  const small = layoutKeycap({ size: 34, view: "front" });
+  const large = layoutKeycap({ size: 250, view: "angle" });
+  for (const dpr of [0, 0.5, 1, 1.25, 2, 3]) {
+    expect(capRasterOptions(small, 0.2, dpr).scale).toBe(Math.max(1, dpr));
+  }
+  const { scale } = capRasterOptions(large, 0.2, 3);
+  expect(Math.ceil(Math.max(large.width, large.height) * scale)).toBe(420);
+});
+
 it("propagates local allocation failures and allows a retry", async () => {
   vi.stubGlobal(
     "ImageData",

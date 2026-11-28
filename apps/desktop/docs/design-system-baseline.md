@@ -81,6 +81,10 @@ disabled, and loading where relevant.
 - **Each route owns its scroll.** A surface that needs room puts
   `overflow-y: auto` on a box that is already constrained. Never re-enable the
   document scroller to make one page fit.
+- **Settings layout responds to its own content width.** At a 680px
+  container width, use a 208px side rail and a 32px gap, leaving 416px for the
+  reading column after the 24px outer inset. Below that threshold, wrap the
+  navigation links above the content instead of horizontally scrolling them.
 - **Sighted-silent content imports `visuallyHidden`** from `styles/a11y.ts`
   instead of copying the declaration set. The helper pins the clipped box with
   `top` and `left`; an unpinned box keeps its static position and the last

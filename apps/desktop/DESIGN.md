@@ -33,7 +33,7 @@ The two schemes have their own temperature rather than being inversions of each 
 - **One family** for product UI: `uiFont = "Satoshi", system-ui`. Display face `TAN-PARADISO` only for the logo wordmark and welcome/name, never in body/settings.
 - Scale is tight Operate: display/hint/title/body/label. No exaggerated contrast. Body measure target 65-75ch for prose; dense UI can run narrower.
 - `tabular-nums` applied globally. Stable digit width across dates, timers, WPM, and metrics prevents side-by-side width jitter.
-- Rail sidebars ~224–240px, icon 22px, dense rows 32–36px.
+- General rail sidebars ~224–240px, icon 22px, dense rows 32–36px. Settings is the responsive exception: at a 680px content-container width, its rail is 208px, leaving a 416px reading column after the 24px inset and 32px gap; below that, its navigation wraps above the content.
 
 ## Shape / spacing
 

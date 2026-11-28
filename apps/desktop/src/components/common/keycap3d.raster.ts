@@ -21,6 +21,21 @@ export type RasterOptions = {
   scale: number;
 };
 
+const MAX_RASTER = 420;
+
+export const capRasterOptions = (
+  layout: RasterOptions["layout"],
+  grain: number,
+  pixelRatio: number,
+): RasterOptions => ({
+  layout,
+  grain,
+  scale: Math.min(
+    Math.max(pixelRatio || 1, 1),
+    MAX_RASTER / Math.max(layout.width, layout.height),
+  ),
+});
+
 type PixelSampler = (x: number, y: number) => [number, number, number] | null;
 
 const fillCentrePixels = (
@@ -212,7 +227,10 @@ const cachedRaster = (key: string): ImageData | undefined => {
   return cached;
 };
 
-const cacheRaster = (key: string, image: ImageData): ImageData => {
+export const getCachedCapRaster = (options: RasterOptions) =>
+  cachedRaster(rasterCacheKey(options));
+
+export const cacheCapRaster = (key: string, image: ImageData): ImageData => {
   rasterCache.set(key, image);
   if (rasterCache.size > MAX_CACHED_RASTERS) {
     const oldest = rasterCache.keys().next().value;
@@ -223,7 +241,7 @@ const cacheRaster = (key: string, image: ImageData): ImageData => {
 
 export const getCapRaster = (options: RasterOptions): ImageData => {
   const key = rasterCacheKey(options);
-  return cachedRaster(key) ?? cacheRaster(key, rasteriseCap(options));
+  return cachedRaster(key) ?? cacheCapRaster(key, rasteriseCap(options));
 };
 
 /** Yield between rows when no worker is available so input and paint can proceed. */
@@ -244,18 +262,12 @@ const rasteriseCapIncrementally = (
       reject(new Error("Keycap raster request cancelled"));
     };
     signal.addEventListener("abort", cancel, { once: true });
-    let raster: ReturnType<typeof createRaster>;
-    try {
-      raster = createRaster(options);
-    } catch (error) {
-      signal.removeEventListener("abort", cancel);
-      reject(error);
-      return;
-    }
-    const { image, mask, sample } = raster;
+    let raster: ReturnType<typeof createRaster> | undefined;
     let row = 0;
     const step = () => {
       try {
+        raster ??= createRaster(options);
+        const { image, mask, sample } = raster;
         const deadline = performance.now() + 8;
         do {
           if (row < image.height) {
@@ -267,7 +279,7 @@ const rasteriseCapIncrementally = (
           row += 1;
           if (row === image.height * 2) {
             signal.removeEventListener("abort", cancel);
-            resolve(cacheRaster(key, image));
+            resolve(cacheCapRaster(key, image));
             return;
           }
         } while (performance.now() < deadline);
