@@ -181,6 +181,14 @@ const readRestoreTarget = async (
   }
 };
 
+/**
+ * Reads the live maximize state, for a press that landed before the bar's own
+ * first measurement. A failed read is treated as not maximized, which degrades
+ * to the old plain drag rather than skipping the restore the person expected.
+ */
+const readMaximized = (win: TauriWindow) =>
+  win.isMaximized().catch(() => false);
+
 const startWindowDrag = (win: TauriWindow) =>
   win.startDragging().catch(showErrorSnackbar);
 
@@ -207,6 +215,11 @@ type Gesture = {
   origin: DragPoint;
   /** Whether the press landed on a maximized window. */
   maximized: boolean;
+  /**
+   * Set when the bar had no measurement yet at press time, so `maximized` is a
+   * placeholder rather than a reading. The restore decides on a live query.
+   */
+  maximizedUnknown: boolean;
   /** Set once the gesture has committed to restoring, so it happens once. */
   restored: boolean;
   /**
@@ -237,14 +250,26 @@ type Gesture = {
  */
 const restoreAndDrag = async (gesture: Gesture) => {
   const { win } = gesture;
-  const restore = armRestoreWait(win);
+  // Armed immediately before the restore is requested, not at the top: the
+  // settle allowance is measured from the request, so writing it on early and
+  // then spending it on two native reads would let the timer expire first and
+  // place the window against pre-restore geometry.
+  let restore: ReturnType<typeof armRestoreWait> | null = null;
   try {
-    const grab = await readGrab(win, gesture.origin);
-    if (grab === null) {
-      restore.stop();
-      startWindowDrag(win);
+    if (gesture.maximizedUnknown) gesture.maximized = await readMaximized(win);
+    if (!gesture.maximized) {
+      // Measured after the press: the window is not maximized after all, so
+      // this is an ordinary drag and nothing needs restoring.
+      if (!gesture.released) await startWindowDrag(win);
       return;
     }
+    const grab = await readGrab(win, gesture.origin);
+    if (grab === null) {
+      // Still a drag the person is making; just not one this side can place.
+      if (!gesture.released) await startWindowDrag(win);
+      return;
+    }
+    restore = armRestoreWait(win);
     await win.unmaximize();
     await restore.wait();
     if (gesture.released) return;
@@ -253,7 +278,7 @@ const restoreAndDrag = async (gesture: Gesture) => {
     await startWindowDrag(win);
   } catch (error) {
     // A failed restore must not leave its listener armed for the next one.
-    restore.stop();
+    restore?.stop();
     showErrorSnackbar(error);
   }
 };
@@ -297,20 +322,26 @@ const bindDeferredDrag = (
     // `drag_window` posts `WM_NCLBUTTONDOWN(HTCAPTION)` on Windows, and that
     // restores the window at its saved rectangle rather than keeping the grab
     // point on the bar, so the gesture restores first and then hands over.
-    if (gesture.maximized && !gesture.restored) {
+    if ((gesture.maximized || gesture.maximizedUnknown) && !gesture.restored) {
       gesture.restored = true;
       // The press's listeners go away with `cleanup()`, so the release that
       // ends the gesture has to be watched for separately: a restore that lands
       // after the button came up must not start moving the window.
       const watchRelease = new AbortController();
-      window.addEventListener(
-        "mouseup",
-        () => {
-          gesture.released = true;
-          watchRelease.abort();
-        },
-        { capture: true, signal: watchRelease.signal },
-      );
+      // A blur means the interaction is over even though no button came up,
+      // and a secondary button release must not cancel a primary drag.
+      const release = (event?: MouseEvent) => {
+        if (event && event.button !== 0) return;
+        gesture.released = true;
+        watchRelease.abort();
+      };
+      window.addEventListener("mouseup", release, {
+        capture: true,
+        signal: watchRelease.signal,
+      });
+      window.addEventListener("blur", () => release(), {
+        signal: watchRelease.signal,
+      });
       restoreAndDrag(gesture)
         .catch(showErrorSnackbar)
         .finally(() => {
@@ -384,7 +415,7 @@ export type TitleBarDragHandlers = {
  * at that press, not as it stood at the last render.
  */
 export const useWindowDrag = (
-  maximizedRef: React.MutableRefObject<boolean>,
+  maximizedRef: React.MutableRefObject<boolean | undefined>,
   toggleMaximized: () => void,
 ): TitleBarDragHandlers => {
   const dragCleanupRef = useRef<(() => void) | null>(null);
@@ -421,7 +452,8 @@ export const useWindowDrag = (
       const gesture: Gesture = {
         win: getCurrentWindow(),
         origin: { x: event.clientX, y: event.clientY },
-        maximized: maximizedRef.current,
+        maximized: maximizedRef.current ?? false,
+        maximizedUnknown: maximizedRef.current === undefined,
         restored: false,
         released: false,
       };

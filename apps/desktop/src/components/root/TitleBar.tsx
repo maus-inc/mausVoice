@@ -181,7 +181,12 @@ const useWindowMetrics = (platform: Platform) => {
   // without discarding the latest width measurement for `setCompact`.
   const sizeTicketRef = useRef(0);
   const maxTicketRef = useRef(0);
-  const maximizedRef = useRef(false);
+  // `undefined` until the first measurement lands. A plain `false` initial
+  // value is indistinguishable from a measured "not maximized", so a press that
+  // arrives before that first read resolves would treat a maximized window as
+  // restored and hand it straight to the OS move loop, which restores it at its
+  // saved rectangle instead of under the pointer.
+  const maximizedRef = useRef<boolean | undefined>(undefined);
   const pendingMaximizedRef = useRef<PendingMaximized | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -351,7 +356,7 @@ const runWindowControl = async (
 
 const useWindowControls = (
   applyMaximized: (value: boolean) => void,
-  maximizedRef: React.MutableRefObject<boolean>,
+  maximizedRef: React.MutableRefObject<boolean | undefined>,
   pendingMaximizedRef: React.MutableRefObject<PendingMaximized | null>,
 ) => {
   const togglePendingRef = useRef(false);
@@ -369,6 +374,8 @@ const useWindowControls = (
     if (!isTauriRuntime() || togglePendingRef.current) return;
     const win = getCurrentWindow();
     const previous = maximizedRef.current;
+    // An unmeasured window toggles as if it were not maximized; the read that
+    // lands next corrects the flag either way.
     const next = !previous;
     togglePendingRef.current = true;
     maximizedRef.current = next;

@@ -58,7 +58,7 @@ import { useWindowDrag } from "./useWindowDrag";
 ensureUiHarness();
 
 type Harness = {
-  maximizedRef: { current: boolean };
+  maximizedRef: { current: boolean | undefined };
   toggleMaximized: () => void;
   handlers: ReturnType<typeof useWindowDrag> | null;
 };
@@ -66,7 +66,10 @@ type Harness = {
 let container: HTMLDivElement;
 let root: Root;
 
-const renderHook = async (maximized: boolean, toggleMaximized = vi.fn()) => {
+const renderHook = async (
+  maximized: boolean | undefined,
+  toggleMaximized = vi.fn(),
+) => {
   const harness: Harness = {
     maximizedRef: { current: maximized },
     toggleMaximized,
@@ -285,6 +288,94 @@ describe("Windows drag-to-restore", () => {
     expect(order).toEqual(["subscribe", "unmaximize"]);
   });
 
+  it("spends the settle allowance after the restore is requested", async () => {
+    // The allowance exists for the restore, not for the measurement before it.
+    // A slow `innerSize`/`scaleFactor` pair must not eat it, or the timeout
+    // expires first and the placement reads pre-restore geometry.
+    const order: string[] = [];
+    windowMocks.innerSize.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          order.push("measure");
+          window.setTimeout(() => {
+            order.push("measure:done");
+            resolve({ width: 1600, height: 1000 });
+          }, 20);
+        }),
+    );
+    windowMocks.onResized.mockImplementation(
+      (handler: () => void): Promise<() => void> => {
+        order.push("arm");
+        handler();
+        return Promise.resolve(() => undefined);
+      },
+    );
+    windowMocks.unmaximize.mockImplementation(() => {
+      order.push("unmaximize");
+      return Promise.resolve(undefined);
+    });
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 400, y: 20 });
+    await move(1, 400, 60);
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 60));
+    });
+
+    // `scaleFactor` is read in the same `Promise.all`, so the meaningful
+    // guarantee is that arming comes after the measurement finishes.
+    expect(order.indexOf("arm")).toBeGreaterThan(order.indexOf("measure:done"));
+    expect(order.indexOf("arm")).toBeLessThan(order.indexOf("unmaximize"));
+  });
+
+  it("still cancels the handoff when the window loses focus", async () => {
+    // A blur ends the interaction with no button release to observe, so the
+    // pending restore must not go on to start a native drag.
+    let fireResize: (() => void) | null = null;
+    windowMocks.onResized.mockImplementation(
+      (handler: () => void): Promise<() => void> => {
+        fireResize = handler;
+        return Promise.resolve(() => undefined);
+      },
+    );
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 400, y: 20 });
+    await move(1, 400, 60);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("blur"));
+      fireResize?.();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(windowMocks.unmaximize).toHaveBeenCalledTimes(1);
+    expect(windowMocks.startDragging).not.toHaveBeenCalled();
+  });
+
+  it("keeps the handoff when a secondary button is released mid-restore", async () => {
+    // Only the primary button ends a primary drag. A right-click release while
+    // the left button is still down must not cancel the move.
+    let fireResize: (() => void) | null = null;
+    windowMocks.onResized.mockImplementation(
+      (handler: () => void): Promise<() => void> => {
+        fireResize = handler;
+        return Promise.resolve(() => undefined);
+      },
+    );
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 400, y: 20 });
+    await move(1, 400, 60);
+
+    await act(async () => {
+      window.dispatchEvent(
+        new MouseEvent("mouseup", { bubbles: true, button: 2 }),
+      );
+      fireResize?.();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps one unit on a scaled display", async () => {
     // Every Tauri read here is physical: `innerSize`, `cursorPosition` and the
     // monitor work area. The browser press is CSS pixels, so it has to be
@@ -334,6 +425,31 @@ describe("Windows drag-to-restore", () => {
       x: (800 - (200 / 1600) * 1600) / 2,
       y: -40 / 2,
     });
+  });
+
+  it("restores when the press lands before the bar has measured the window", async () => {
+    // The bar's maximize flag is only known after its first asynchronous read.
+    // A press before that used to look like a restored window and hand a
+    // maximized one to the OS move loop, which lands it at its saved rectangle.
+    windowMocks.isMaximized.mockResolvedValue(true);
+    const { handlers } = await renderHook(undefined);
+    await press(handlers!, 1, { x: 400, y: 20 });
+    await move(1, 400, 60);
+
+    expect(windowMocks.isMaximized).toHaveBeenCalled();
+    expect(windowMocks.unmaximize).toHaveBeenCalledTimes(1);
+    expect(windowMocks.setPosition).toHaveBeenCalledTimes(1);
+    expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not restore when the late measurement says the window is restored", async () => {
+    windowMocks.isMaximized.mockResolvedValue(false);
+    const { handlers } = await renderHook(undefined);
+    await press(handlers!, 1, { x: 400, y: 20 });
+    await move(1, 400, 60);
+
+    expect(windowMocks.unmaximize).not.toHaveBeenCalled();
+    expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
   });
 
   it("restores on a sideways drag that stays on the bar", async () => {
