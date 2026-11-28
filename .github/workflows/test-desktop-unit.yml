@@ -48,6 +48,7 @@ on:
       - "scripts/ci/check-workspace-hygiene.test.mjs"
       - ".deepsource.toml"
       - "scripts/ci/cargo-lock-builds.test.mjs"
+      - "scripts/ci/portable-cpu-baseline.test.mjs"
       - "scripts/ci/dev-surface-contracts.test.mjs"
       - "scripts/ci/dev-surface-config.mjs"
       - "scripts/ci/alsa-fault-tests.test.mjs"
@@ -100,6 +101,12 @@ jobs:
         run: node --test scripts/ci/run-with-diagnostics.test.mjs
       - name: Test Cargo lock enforcement in builds
         run: node --test scripts/ci/cargo-lock-builds.test.mjs
+      - name: Test the sidecar CPU baseline
+        # The release sidecar is a static ggml build with no runtime dispatch
+        # between instruction-set variants, so the toolchain files decide which
+        # CPUs can run it. `GGML_NATIVE=OFF` alone still enables AVX2/BMI2/FMA,
+        # which is the edit this guard exists to stop coming back.
+        run: node --test scripts/ci/portable-cpu-baseline.test.mjs
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test the dev surface config guards

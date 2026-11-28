@@ -1007,6 +1007,32 @@ static PRIVATE_HTTP_CANCELLATIONS: once_cell::sync::Lazy<
     std::sync::Mutex<std::collections::HashMap<String, PrivateHttpCancellationState>>,
 > = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
+/// Describes why a loopback exchange failed, without echoing the request URL.
+///
+/// This string reaches the renderer and the user-visible toast, so it carries
+/// no port, pinned address, or header value. It still separates the cases an
+/// operator acts on differently: nothing listening yet, a connection that
+/// timed out, and a connection that died with the response half-read. The last
+/// one is what a sidecar that crashes mid-inference looks like from here, and
+/// it used to be indistinguishable from every other failure.
+fn private_http_transport_failure(error: &reqwest::Error) -> String {
+    let category = if error.is_timeout() {
+        "the connection timed out"
+    } else if error.is_connect() {
+        "the connection was refused or could not be established"
+    } else if error.is_body() || error.is_decode() {
+        "the response body was interrupted"
+    } else if error.is_request() {
+        // reqwest reports a peer that closes before the response headers as a
+        // request-level failure; this is the shape a crashed sidecar leaves.
+        "the connection closed before the response completed"
+    } else {
+        "the exchange failed before a response completed"
+    };
+
+    format!("Private-network request failed: {category}")
+}
+
 fn prune_private_http_prestart_cancellations(
     requests: &mut std::collections::HashMap<String, PrivateHttpCancellationState>,
 ) {
@@ -1826,7 +1852,7 @@ async fn execute_http_request(
         let next_response = tokio::select! {
             _ = &mut cancellation => return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string()),
             result = builder.send() => result
-                .map_err(|_| "Private-network request failed".to_string())?,
+                .map_err(|error| private_http_transport_failure(&error))?,
         };
 
         let status = next_response.status();
@@ -10455,6 +10481,50 @@ mod tests {
             &public,
         )
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn private_http_transport_failure_names_a_refused_connection() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let error = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .send()
+            .await
+            .expect_err("a closed loopback port must fail the request");
+
+        let message = private_http_transport_failure(&error);
+        assert_eq!(
+            message,
+            "Private-network request failed: the connection was refused or could not be established"
+        );
+        assert!(!message.contains(&port.to_string()));
+    }
+
+    #[tokio::test]
+    async fn private_http_transport_failure_names_a_connection_closed_mid_response() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            // Accept the request, then close without writing a response. That
+            // is what a sidecar that faults mid-inference leaves behind.
+            let (socket, _) = listener.accept().await.unwrap();
+            drop(socket);
+        });
+
+        let error = reqwest::Client::new()
+            .get(format!("http://{address}/health"))
+            .send()
+            .await
+            .expect_err("a connection closed before the response must fail");
+        server.await.unwrap();
+
+        assert_eq!(
+            private_http_transport_failure(&error),
+            "Private-network request failed: the connection closed before the response completed"
+        );
     }
 
     #[tokio::test]

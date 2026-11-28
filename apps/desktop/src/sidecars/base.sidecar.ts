@@ -24,6 +24,50 @@ export type SidecarRuntime = {
   child: ShellChildProcess;
 };
 
+/**
+ * Longest stderr line carried into an exit message.
+ *
+ * The line is quoted in the error an operator reads after a startup failure,
+ * so it has to survive a stack trace or a compiler-style diagnostic without
+ * turning the message into a wall of text.
+ */
+const SIDECAR_STDERR_DETAIL_LIMIT = 200;
+
+/**
+ * Removes the SGR colour sequences the sidecar's tracing subscriber emits.
+ *
+ * Written without a literal escape in a regular-expression source, because a
+ * control character there is a lint warning and reads as a typo.
+ */
+const stripAnsiColor = (value: string): string => {
+  const escape = String.fromCharCode(27);
+
+  return value
+    .split(escape)
+    .map((part, index) =>
+      index === 0 ? part : part.replace(/^\[[0-9;]*m/, ""),
+    )
+    .join("");
+};
+
+/**
+ * Tracks the most recent non-empty stderr line of a sidecar.
+ *
+ * Shell chunks split on arbitrary boundaries and the sidecar's tracing output
+ * carries ANSI colour, so this strips the escapes, drops empty lines and keeps
+ * only the last real one. A chunk that ends mid-line keeps the previous line
+ * until a complete one arrives.
+ */
+const nextStderrDetail = (chunk: string, previous: string): string => {
+  const cleaned = stripAnsiColor(chunk);
+  const lines = cleaned
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  return (lines.at(-1) ?? previous).slice(0, SIDECAR_STDERR_DETAIL_LIMIT);
+};
+
 export abstract class BaseSidecar {
   private runtime: SidecarRuntime | null = null;
   private startupPromise: Promise<SidecarRuntime> | null = null;
@@ -185,6 +229,7 @@ export abstract class BaseSidecar {
     let stdoutBuffer = "";
     let childPid = -1;
     let child: ShellChildProcess | null = null;
+    let stderrDetail = "";
 
     const failReady = (message: string) => {
       ready.reject(new Error(message));
@@ -211,6 +256,7 @@ export abstract class BaseSidecar {
         getLogger().warning(
           `[${this.config.logPrefix}:${childPid}] ${chunk.trimEnd()}`,
         );
+        stderrDetail = nextStderrDetail(chunk, stderrDetail);
       },
       onClose: (payload) => {
         if (this.stoppingPid === childPid) {
@@ -222,9 +268,14 @@ export abstract class BaseSidecar {
           this.runtime = null;
         }
 
+        // A sidecar that refuses to start explains itself on stderr — a CPU
+        // without the required instruction set, a missing runtime DLL, a bad
+        // models directory. Without the detail the operator only saw
+        // "Sidecar exited (code=...)" and had nowhere to go.
+        const detail = stderrDetail.length > 0 ? `: ${stderrDetail}` : "";
         const message =
           `Sidecar exited (code=${payload.code ?? "unknown"}, ` +
-          `signal=${payload.signal ?? "unknown"})`;
+          `signal=${payload.signal ?? "unknown"})${detail}`;
         getLogger().warning(`[${this.config.logPrefix}] ${message}`);
         this.onError(message);
         failReady(message);

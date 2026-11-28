@@ -18,6 +18,8 @@ Routes cover health, device enumeration, model download/job status/delete/valida
 
 Model IDs are the six whisper.cpp sizes (`tiny`, `base`, `small`, `medium`, `turbo`, `large`), the three ONNX Runtime models `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, and `canary-1b`, and the sherpa-onnx **SenseVoice** model (`sense-voice`, aliases `sensevoice`, `sense_voice`). SenseVoice is a multilingual INT8 checkpoint (~226 MB, `model.int8.onnx` + `tokens.txt`) with automatic language detection and no punctuation. Whisper URLs default to the repositories recorded in `models.rs` and can be overridden with `RUST_TRANSCRIPTION_MODEL_URL_<ID>`. ONNX and SenseVoice artifact URLs are pinned to immutable revisions and verified where upstream SHA-256 digests are available; they intentionally cannot be overridden at runtime. Host, port, and model directory also have environment overrides. Never bind the desktop-managed service to a public interface.
 
+The release and CI builds pass `packages/rust_transcription/cmake/{linux,macos,windows}-ci-toolchain.cmake` to CMake. Those files pin ggml to an AVX baseline: `GGML_NATIVE=OFF` is not portable on its own, because it leaves AVX2, BMI2, FMA and F16C enabled (MSVC then compiles ggml with `/arch:AVX2`), and this static build has no runtime dispatch between instruction-set variants. A binary built with those defaults dies with an illegal instruction on pre-Haswell CPUs. `src/cpu_requirements.rs` checks for AVX before the sidecar binds its socket, so a CPU below the baseline produces one explicit startup error instead of a process that disappears mid-request. Local, non-release builds keep the native defaults.
+
 Run the binary-level integration suite with:
 
 ```bash

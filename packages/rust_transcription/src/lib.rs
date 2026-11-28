@@ -2,6 +2,7 @@ mod api;
 mod audio;
 mod compute;
 mod config;
+mod cpu_requirements;
 mod downloads;
 mod errors;
 mod models;
@@ -23,6 +24,11 @@ use crate::config::SidecarConfig;
 use crate::state::AppState;
 
 pub async fn run_server(mode: ComputeMode) -> Result<(), String> {
+    // Before anything allocates, binds, or loads a model: a CPU that cannot
+    // execute the shipped kernels must fail here, with the reason, rather than
+    // fault later while the desktop waits on a request.
+    cpu_requirements::check()?;
+
     let config = SidecarConfig::from_env(mode)?;
 
     tokio::fs::create_dir_all(&config.models_dir)
