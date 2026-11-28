@@ -2,7 +2,7 @@
 
 Issue #364 fixes hover interference on the Home activity heatmap (`ActivityHeatmap`).
 Previously, each cell's MUI `Tooltip` rendered an interactive popper (`pointer-events: auto`)
-with default `100ms` enter delay and `200ms` Grow exit duration. Because each heatmap cell is
+with default `100ms` enter delay and `150ms` Grow exit duration (`theme.transitions.duration.shorter`). Because each heatmap cell is
 a `10px x 10px` square (`4px` gap), the tooltip above a hovered cell covered roughly three
 rows and thirteen columns above it, intercepting upward pointer movement and leaving stacked
 fading tooltips during rapid sweeps.
@@ -35,7 +35,7 @@ fading tooltips during rapid sweeps.
 | Tooltip after continuing up `Nov 27 -> Nov 26` | Stuck on `Nov 28, 2026: 612 words` | `Nov 26, 2026: 1,042 words` |
 | Peak simultaneous `[role="tooltip"]` during rapid 20ms/cell horizontal sweep | `3` overlapping tooltips | `1` (zero overlap or ghosting) |
 | Peak simultaneous `[role="tooltip"]` during 1px vertical crawl across the 4px gap | Blocked by tooltip | `1`, cleanly transitions to `Nov 27` |
-| Pointer leaves heatmap | `0` tooltips after ~200ms exit fade | `0` tooltips immediately |
+| Pointer leaves heatmap | `0` tooltips after ~150ms exit fade | `0` tooltips immediately |
 | `Escape` key dismissal | `0` tooltips | `0` tooltips |
-| `prefers-reduced-motion: reduce` | `200ms` Grow animation | `0ms` enter/exit, positioned cleanly above `Nov 28` (`rect.y=295.4`), `Nov 27` (`rect.y=281.4`), and `Nov 26` (`rect.y=267.4`) |
+| `prefers-reduced-motion: reduce` | `150ms` Grow animation | `0ms` enter/exit, positioned cleanly above `Nov 28` (`rect.y=295.4`), `Nov 27` (`rect.y=281.4`), and `Nov 26` (`rect.y=267.4`) |
 | Keyboard focus (`tabIndex={0}` region) and screen-reader list (`370` daily items) | Present | Unchanged |
