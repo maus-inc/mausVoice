@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createTheme } from "@mui/material";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "react-intl";
@@ -24,6 +25,27 @@ import { LAST_SETTINGS_PAGE_STORAGE_KEY } from "../../utils/local-storage.utils"
 import { SettingsEntryRedirect, SettingsLayout } from "./SettingsLayout";
 
 ensureUiHarness();
+
+const cssRuleBodies = (styles: string, selector: string): string[] => {
+  const marker = `${selector}{`;
+  const bodies: string[] = [];
+  let searchFrom = 0;
+
+  while (true) {
+    const start = styles.indexOf(marker, searchFrom);
+    if (start === -1) return bodies;
+
+    let depth = 1;
+    for (let index = start + marker.length; index < styles.length; index += 1) {
+      if (styles[index] === "{") depth += 1;
+      if (styles[index] === "}" && --depth === 0) {
+        bodies.push(styles.slice(start + marker.length, index));
+        searchFrom = index + 1;
+        break;
+      }
+    }
+  }
+};
 
 /**
  * The settings surface is a shell around routed pages, so what matters here is
@@ -129,6 +151,83 @@ describe("SettingsLayout", () => {
     await render("/dashboard/settings/privacy-data");
 
     expect(container.textContent).toContain("Privacy and data");
+  });
+
+  it("switches to a side rail only when the Settings area has room for its content", async () => {
+    await render("/dashboard/settings/shortcuts");
+
+    const frame = requireElement(
+      container.querySelector(".settings-layout-frame"),
+      "the named settings container",
+    );
+    const rail = requireElement(
+      container.querySelector(".settings-layout-rail"),
+      "the settings rail",
+    );
+    const split = requireElement(
+      container.querySelector(".settings-layout-split"),
+      "the settings layout",
+    );
+    const navigation = requireElement(
+      container.querySelector(".settings-layout-navigation"),
+      "the compact settings navigation",
+    );
+    const findClass = (element: Element) =>
+      Array.from(element.classList).find((name) => name.startsWith("css-"));
+    const frameClass = findClass(frame);
+    const railClass = findClass(rail);
+    const splitClass = findClass(split);
+    const navigationClass = findClass(navigation);
+    const generatedStyles = Array.from(
+      document.querySelectorAll("style[data-emotion]"),
+      (style) => style.textContent ?? "",
+    )
+      .join("\n")
+      .replace(/\s+/g, "");
+    const frameRule = generatedStyles.match(
+      new RegExp(`\\.${frameClass}\\{[^}]*\\}`),
+    )?.[0];
+    const wideQueryRules = cssRuleBodies(
+      generatedStyles,
+      "@containersettings-layout(min-width:680px)",
+    );
+
+    expect(frameClass).toBeDefined();
+    expect(railClass).toBeDefined();
+    expect(splitClass).toBeDefined();
+    expect(navigationClass).toBeDefined();
+    expect(frameRule).toContain("container-name:settings-layout;");
+    expect(frameRule).toContain("container-type:inline-size;");
+    expect(frame.contains(split)).toBe(true);
+    expect(
+      wideQueryRules.some(
+        (rule) =>
+          rule.includes(`.${splitClass}{`) &&
+          rule.includes("-webkit-flex-direction:row;") &&
+          rule.includes("flex-direction:row;gap:32px;"),
+      ),
+    ).toBe(true);
+    expect(
+      wideQueryRules.some((rule) =>
+        rule.includes(`.${railClass}{width:208px;`),
+      ),
+    ).toBe(true);
+    expect(generatedStyles).toMatch(
+      new RegExp(`\\.${navigationClass}\\{[^}]*flex-wrap:wrap;`),
+    );
+    expect(generatedStyles).not.toMatch(/overflow-x:(?:auto|scroll|overlay)/);
+    const secondaryTextColor = createTheme().palette.text.secondary.replace(
+      /\s+/g,
+      "",
+    );
+    const placeholderRules = Array.from(
+      generatedStyles.matchAll(/input::placeholder\{([^}]*)\}/g),
+      (match) => match[1],
+    );
+    expect(placeholderRules).toContain(
+      `color:${secondaryTextColor};opacity:1;`,
+    );
+    expect(generatedStyles).not.toContain("@media(min-width:900px)");
   });
 
   it("reopens the page the settings routes remembered", async () => {

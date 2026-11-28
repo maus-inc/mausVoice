@@ -14,14 +14,32 @@ const HARNESS_BASE =
   "http://127.0.0.1:5193/verify-harness/settings.html";
 
 /** The window sizes `src-tauri/tauri.conf.json` allows, plus a wide one. */
-const SIZES = [
+const DEFAULT_SIZES = [
   { width: 1280, height: 900 },
   { width: 1100, height: 700 },
   { width: 800, height: 600 },
 ];
+const SIZES = process.env.SETTINGS_VIEWPORTS
+  ? process.env.SETTINGS_VIEWPORTS.split(",").map((entry) => {
+      const match = /^(\d+)x(\d+)$/.exec(entry.trim());
+      if (!match) {
+        throw new Error(
+          `Invalid SETTINGS_VIEWPORTS entry "${entry}"; use WIDTHxHEIGHT, e.g. 900x900`,
+        );
+      }
+      const [, width, height] = match;
+      return { width: Number(width), height: Number(height) };
+    })
+  : DEFAULT_SIZES;
+if (
+  SIZES.length === 0 ||
+  SIZES.some(({ width, height }) => width < 320 || height < 320)
+) {
+  throw new Error("SETTINGS_VIEWPORTS must contain viewports at least 320x320");
+}
 
 /** Route ids, in rail order. */
-const PAGES = [
+const DEFAULT_PAGES = [
   "home",
   "dictation",
   "ai-models",
@@ -31,6 +49,15 @@ const PAGES = [
   "system",
   "account",
 ];
+const PAGES = process.env.SETTINGS_PAGES
+  ? process.env.SETTINGS_PAGES.split(",").map((page) => page.trim())
+  : DEFAULT_PAGES;
+const unknownPages = PAGES.filter((page) => !DEFAULT_PAGES.includes(page));
+if (PAGES.length === 0 || unknownPages.length > 0) {
+  throw new Error(
+    `Invalid SETTINGS_PAGES; expected one or more of ${DEFAULT_PAGES.join(", ")}${unknownPages.length ? ` (unknown: ${unknownPages.join(", ")})` : ""}`,
+  );
+}
 
 const problems = [];
 const note = (label, detail) => problems.push(`${label}: ${detail}`);
