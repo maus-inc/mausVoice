@@ -85,7 +85,8 @@ import { getIsDevMode, isWindows } from "../../utils/env.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
   getStyleSwitchActionNamesForKey,
-  listenerDeliversKeys,
+  listenerIsProvenHealthy,
+  seedListenerHealth,
   syncHotkeyCombosToNative,
 } from "../../utils/keyboard.utils";
 import { getLogger, initLogging } from "../../utils/log.utils";
@@ -206,6 +207,9 @@ export const AppSideEffects = () => {
   // Tracks whether we've already notified about the current listener-failure episode, so the
   // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
   const listenerFailureNotifiedRef = useRef(false);
+  // Set when a `keyboard_listener_health` event lands, so the startup seed can tell
+  // whether its snapshot is still the newest value by the time it arrives.
+  const healthEventAppliedRef = useRef(false);
   const versionData = useAsyncData(getVersion, []);
   const userId = useAppStore((state) => state.auth?.uid ?? "");
   const initialized = useAppStore((state) => state.initialized);
@@ -271,14 +275,20 @@ export const AppSideEffects = () => {
 
     // Seed health from the current value: transition events emitted before the
     // `keyboard_listener_health` subscription was registered would otherwise be missed,
-    // leaving the store stuck at its initial "stopped".
+    // leaving the store stuck at its initial "stopped". An event that lands while the
+    // read is in flight is newer than the snapshot, and the native side does not repeat
+    // an unchanged state, so the snapshot must not overwrite it.
+    healthEventAppliedRef.current = false;
     try {
-      const health = await invoke<KeyboardListenerHealth>(
-        "get_key_listener_health",
+      await seedListenerHealth(
+        () => invoke<KeyboardListenerHealth>("get_key_listener_health"),
+        () => healthEventAppliedRef.current,
+        (health) => {
+          produceAppState((draft) => {
+            draft.keyboardListenerHealth = health;
+          });
+        },
       );
-      produceAppState((draft) => {
-        draft.keyboardListenerHealth = health;
-      });
     } catch (error) {
       getLogger().warning(`Failed to read keyboard listener health: ${error}`);
     }
@@ -499,12 +509,15 @@ export const AppSideEffects = () => {
   useTauriListen<KeyboardListenerHealthPayload>(
     "keyboard_listener_health",
     (payload) => {
+      healthEventAppliedRef.current = true;
       if (getAppState().keyboardListenerHealth === payload.state) {
         return;
       }
       // Reset the failure notification once the listener genuinely recovers, so a later
-      // failure episode can notify again.
-      if (listenerDeliversKeys(payload.state)) {
+      // failure episode can notify again. Proof, not merely a start: `connected` is
+      // reported by the same child that was declared failed a moment ago, so resetting
+      // there would re-notify on every reconnect of a listener that cannot stay up.
+      if (listenerIsProvenHealthy(payload.state)) {
         listenerFailureNotifiedRef.current = false;
       }
       if (payload.state === "failed" && !listenerFailureNotifiedRef.current) {

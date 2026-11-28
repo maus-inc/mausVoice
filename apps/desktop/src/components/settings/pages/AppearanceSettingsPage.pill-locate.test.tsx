@@ -137,6 +137,45 @@ describe("AppearanceSettingsPage pill locate row", () => {
     expect(row()).toBeNull();
   });
 
+  it("is offered on a listener platform while the listener is live", () => {
+    // Windows, macOS and Linux X11 all report the listener strategy, so this is
+    // the Windows configuration: a strategy of `listener` with a listener that
+    // is publishing snapshots. `connected` and `fallback_starting` are the two
+    // live states before the grace window proves the path alive, and Windows
+    // passes through both after every wake, unlock and elevation relaunch.
+    for (const health of [
+      "connected",
+      "healthy_grab",
+      "fallback_starting",
+      "degraded_listen_fallback",
+    ] as const) {
+      act(() => setState("listener", health));
+      render();
+      expect({ health, visible: row() !== null }).toEqual({
+        health,
+        visible: true,
+      });
+    }
+  });
+
+  it("is absent when the listener has stopped publishing snapshots", () => {
+    // Offering the dropdown here would promise a gesture nothing is listening
+    // for, so every state without a publishing listener keeps the row out.
+    for (const health of [
+      "starting",
+      "grab_failed",
+      "failed",
+      "stopped",
+    ] as const) {
+      act(() => setState("listener", health));
+      render();
+      expect({ health, visible: row() !== null }).toEqual({
+        health,
+        visible: false,
+      });
+    }
+  });
+
   it("is absent until the listener reports its health", () => {
     act(() => setState("listener", "stopped"));
     render();

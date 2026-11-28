@@ -474,10 +474,19 @@ const workspaceSnapshot = (
   const preferences = createPreviewPreferences();
   const state = clone(INITIAL_APP_STATE);
   state.initialized = true;
-  // The browser preview has no native keyboard listener. Model the common
-  // listener platform so settings that depend on a global key source are
-  // visible instead of hiding behind an unknown capability.
+  // The browser preview has no native keyboard listener, so model the common
+  // listener platform and its health rather than leaving both unknown: a
+  // strategy without a live listener owns the global-shortcut rows but not the
+  // ones built on a key stream, and previews exist to review rows. Health
+  // follows the accessibility permission the scenario models, because that is
+  // what the native side reports: with the hook able to install the child is
+  // `healthy_grab`, and with accessibility denied it cannot install and the
+  // child reports `grab_failed`. Seeding the denied scenario as healthy would
+  // offer rows that a real machine hides.
   state.hotkeyStrategy = "listener";
+  state.keyboardListenerHealth = options.permissionsDenied
+    ? "grab_failed"
+    : "healthy_grab";
   // Dashboard preview scenarios should show the dashboard, not the one-time
   // desktop release dialog. A dedicated scenario can opt into that UI later.
   state.local.featureSeenAt = CURRENT_FEATURE_DATE;

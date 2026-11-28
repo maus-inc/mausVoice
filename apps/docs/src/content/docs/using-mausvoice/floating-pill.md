@@ -23,6 +23,8 @@ The pill can sit on any display. Under Settings, Appearance, Pill, choose Alt, S
 
 The setting starts at Disabled and stays disabled after an upgrade. The gesture never starts a recording, moves the pill, or changes its saved visibility. A hidden pill appears for the outline and hides again when it ends.
 
+On Windows and macOS the gesture reads the same global keyboard listener dictation uses, so it works while another application has focus. The gesture itself consumes no keys, so normal modifier shortcuts and typing are unaffected.
+
 On Linux, the gesture needs a global keyboard listener. An X11 session has one. A Wayland session does not, so the setting stays hidden there.
 
 On macOS, choosing Control means a double-tap also starts the system Dictation shortcut. If both are enabled, a Control double-tap can start Dictation and play the pill animation. Choose Alt or Shift if that conflict matters.
