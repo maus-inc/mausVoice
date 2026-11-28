@@ -45,6 +45,12 @@ export const activityHeatmap = {
   dark: ["#281C14", "#573822", "#92512F", "#CA6D39", "#EF8F50"],
 } as const;
 
+/** Neutral, theme-aware placeholder fills for the activity heatmap skeleton. */
+export const activityHeatmapSkeleton = {
+  light: surfaces.light.level3,
+  dark: surfaces.dark.level3,
+} as const;
+
 const hexToRgb = (hex: string) => {
   const value = Number.parseInt(hex.replace("#", ""), 16);
   return `${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}`;

@@ -13,6 +13,7 @@ import {
   pressScale,
   pressTransition,
   riseVariants,
+  skeletonPulse,
   springSnappy,
   springSoft,
 } from "./motion";
@@ -52,5 +53,13 @@ describe("motion profiles", () => {
   it("drives layout continuity and emphasis with springs", () => {
     expect(layoutTransition).toBe(springSoft);
     expect(emphasisTransition).toMatchObject({ type: "spring" });
+  });
+
+  it("keeps the skeleton breathing pulse slow, symmetric, and low-amplitude", () => {
+    expect(skeletonPulse.duration).toBeGreaterThanOrEqual(1.2);
+    expect(skeletonPulse.ease).toBe(easeInOutCubic);
+    expect(skeletonPulse.minOpacity).toBeGreaterThan(0.3);
+    expect(skeletonPulse.maxOpacity).toBeLessThanOrEqual(1);
+    expect(skeletonPulse.minOpacity).toBeLessThan(skeletonPulse.maxOpacity);
   });
 });

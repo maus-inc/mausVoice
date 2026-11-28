@@ -34,7 +34,9 @@ export const HomeSideEffects = ({ today }: HomeSideEffectsProps) => {
     const requestId = ++activityRequestRef.current;
     const range = getActivityDateRange(today);
     produceAppState((draft) => {
-      draft.home.dailyActivityStatus = "loading";
+      if (draft.home.dailyActivityStatus !== "success") {
+        draft.home.dailyActivityStatus = "loading";
+      }
     });
     try {
       const activity = await getDailyActivityRepo().listDailyActivity(
