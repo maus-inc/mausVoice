@@ -1,10 +1,11 @@
 import type { ChatMessage, ChatPart, ToolPermission } from "@maus-inc/types";
 import { Box, Button, Stack, TextField, Typography } from "@mui/material";
 import { keyframes, useTheme } from "@mui/material/styles";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { createMarkdownLink } from "../common/markdown-link";
 import {
   ReasoningPart,
   RunNotePart,
@@ -38,44 +39,136 @@ const thinkingShimmer = keyframes`
   100% { background-position: -200% 50%; }
 `;
 
-const bubbleSx = (isMe: boolean) => ({
-  maxWidth: "75%",
-  px: 2,
-  py: 1,
-  borderRadius: 1,
-  bgcolor: isMe ? "primary.main" : "action.hover",
-  color: isMe ? "primary.contrastText" : "text.primary",
-  "& p": { m: 0 },
-  "& p + p": { mt: 1 },
-  "& pre": {
-    my: 1,
-    p: 1,
-    borderRadius: 0.5,
-    bgcolor: "action.selected",
-    overflow: "auto",
+export const chatBubbleMaxWidth = {
+  xs: "86%",
+  sm: "78%",
+} as const;
+
+const ChatMarkdownTable = ({ children, ...props }: ComponentProps<"table">) => (
+  <Box data-chat-table-scroll="" sx={{ maxWidth: "100%", overflowX: "auto" }}>
+    <table {...props}>{children}</table>
+  </Box>
+);
+
+const markdownComponents: Components = {
+  a: createMarkdownLink("a link in the chat"),
+  table: ChatMarkdownTable,
+};
+
+const markdownBlockSx = (filled: boolean) => ({
+  "& > *": { mt: 0, mb: 0 },
+  "& > * + *": { mt: 1 },
+  "& > * + h1, & > * + h2, & > * + h3, & > * + h4, & > * + h5, & > * + h6": {
+    mt: 1.5,
   },
-  "& code": {
+  "& h1 + *, & h2 + *, & h3 + *, & h4 + *, & h5 + *, & h6 + *": { mt: 0.75 },
+  "& p, & li": { textWrap: "wrap" },
+  "& h1, & h2, & h3, & h4, & h5, & h6": {
+    fontWeight: 600,
+    lineHeight: 1.3,
+    letterSpacing: "-0.01em",
+    textWrap: "wrap",
+  },
+  "& h1": { fontSize: "1.125rem" },
+  "& h2": { fontSize: "1.0625rem" },
+  "& h3, & h4, & h5, & h6": { fontSize: "1rem" },
+  "& ul, & ol": { pl: 2.5 },
+  "& li + li": { mt: 0.375 },
+  "& li > p": { m: 0 },
+  "& li > p + p": { mt: 0.5 },
+  "& blockquote": {
+    pl: 1.5,
+    borderLeft: 2,
+    borderColor: filled ? "currentColor" : "divider",
+    opacity: filled ? 0.88 : 1,
+    color: filled ? "inherit" : "text.secondary",
+    "& > *": { m: 0 },
+    "& > * + *": { mt: 0.75 },
+  },
+  "& hr": {
+    border: 0,
+    borderTop: 1,
+    borderColor: filled ? "currentColor" : "divider",
+    opacity: filled ? 0.24 : 1,
+  },
+  "& a": {
+    color: "inherit",
+    textDecoration: "underline",
+    textUnderlineOffset: "0.18em",
+    textDecorationThickness: "1px",
+  },
+});
+
+const markdownCodeAndTableSx = (filled: boolean) => ({
+  "& :not(pre) > code": {
+    px: 0.625,
+    py: 0.125,
+    borderRadius: 0.375,
+    bgcolor: filled ? "rgba(128, 128, 128, 0.24)" : "action.selected",
     fontSize: "0.85em",
+    overflowWrap: "anywhere",
   },
-  "& ul, & ol": { my: 0.5, pl: 2.5 },
-  "& table": {
+  "& pre": {
+    p: 1.25,
+    maxWidth: "100%",
+    borderRadius: 0.5,
+    bgcolor: filled ? "rgba(128, 128, 128, 0.2)" : "action.selected",
+    overflowX: "auto",
+    overflowWrap: "normal",
+    wordBreak: "normal",
+  },
+  "& pre code": {
+    p: 0,
+    bgcolor: "transparent",
+    fontSize: "0.85em",
+    whiteSpace: "pre",
+    overflowWrap: "normal",
+    wordBreak: "normal",
+  },
+  "& [data-chat-table-scroll] > table": {
     borderCollapse: "collapse",
-    my: 1,
-    width: "100%",
+    width: "max-content",
+    minWidth: "100%",
   },
   "& th, & td": {
     border: 1,
-    borderColor: "divider",
+    borderColor: filled ? "rgba(128, 128, 128, 0.32)" : "divider",
     px: 1,
-    py: 0.5,
+    py: 0.625,
     textAlign: "left",
+    verticalAlign: "top",
+    overflowWrap: "break-word",
+    wordBreak: "normal",
   },
   "& th": {
-    bgcolor: "action.selected",
+    bgcolor: filled ? "rgba(128, 128, 128, 0.2)" : "action.selected",
     fontWeight: 600,
+    whiteSpace: "nowrap",
   },
-  fontSize: "0.875rem",
 });
+
+export const bubbleSx = (isMe: boolean, editing = false) => {
+  const filled = isMe && !editing;
+  return {
+    minWidth: 0,
+    width: editing ? "100%" : "fit-content",
+    maxWidth: chatBubbleMaxWidth,
+    px: 2,
+    py: 1.5,
+    borderRadius: 1,
+    border: editing ? 1 : 0,
+    borderColor: editing ? "divider" : "transparent",
+    bgcolor: filled ? "primary.main" : "action.hover",
+    color: filled ? "primary.contrastText" : "text.primary",
+    fontSize: "0.9375rem",
+    lineHeight: 1.55,
+    overflowWrap: "anywhere",
+    wordBreak: "normal",
+    "& button": { overflowWrap: "normal", wordBreak: "normal" },
+    ...markdownBlockSx(filled),
+    ...markdownCodeAndTableSx(filled),
+  };
+};
 
 export const MessageEditForm = ({
   draft,
@@ -127,7 +220,14 @@ export const MessageEditForm = ({
           defaultMessage: "Edit message",
         })}
       />
-      <Stack direction="row" spacing={1} sx={{ justifyContent: "flex-end" }}>
+      <Stack
+        direction="row"
+        sx={{
+          justifyContent: "flex-end",
+          flexWrap: "wrap",
+          gap: 1,
+        }}
+      >
         <Button size="small" variant="text" onClick={onCancel}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
@@ -181,24 +281,46 @@ const MessageBody = ({
   isMe: boolean;
 }) => {
   if (!editor && texts.length === 0 && !isStreaming) return null;
-  const normalBody =
-    texts.length === 0 ? (
-      <ThinkingMessage />
-    ) : (
-      <Stack spacing={1}>
-        {texts.map((part) => (
-          <Markdown key="text" remarkPlugins={[remarkGfm]}>
-            {part.text}
-          </Markdown>
+  let normalBody: ReactNode;
+  if (texts.length === 0) {
+    normalBody = <ThinkingMessage />;
+  } else if (texts.length === 1) {
+    normalBody = (
+      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {texts[0].text}
+      </Markdown>
+    );
+  } else {
+    normalBody = (
+      <Stack spacing={1} sx={{ minWidth: 0 }}>
+        {texts.map((part, index) => (
+          <Box
+            key={index}
+            sx={{
+              minWidth: 0,
+              "& > *": { mt: 0, mb: 0 },
+              "& > * + *": { mt: 1 },
+            }}
+          >
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
+              {part.text}
+            </Markdown>
+          </Box>
         ))}
       </Stack>
     );
+  }
   return (
     <Stack
       direction="row"
-      sx={{ justifyContent: isMe ? "flex-end" : "flex-start" }}
+      sx={{ minWidth: 0, justifyContent: isMe ? "flex-end" : "flex-start" }}
     >
-      <Box sx={bubbleSx(isMe)}>{editor ?? normalBody}</Box>
+      <Box data-chat-bubble="" sx={bubbleSx(isMe, Boolean(editor))}>
+        {editor ?? normalBody}
+      </Box>
     </Stack>
   );
 };

@@ -32,9 +32,11 @@ const PermissionActions = ({
   return (
     <Stack
       direction="row"
-      spacing={1}
       sx={{
         justifyContent: overlay ? "flex-end" : "flex-start",
+        flexWrap: "wrap",
+        gap: 1,
+        rowGap: 0.5,
         mt: overlay ? 0.75 : 0,
       }}
     >
@@ -90,7 +92,7 @@ const PermissionDetails = ({
       }
     : { heading: undefined, secondary: "text.secondary", iconSize: 16 };
   return (
-    <Stack spacing={0.25}>
+    <Stack spacing={0.25} sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
       <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
         <Typography
           variant="body2"
@@ -168,10 +170,11 @@ export const ToolPermissionPrompt = ({
     );
   }
   return (
-    <Stack direction="row" sx={{ justifyContent: "flex-start" }}>
+    <Stack direction="row" sx={{ minWidth: 0, justifyContent: "flex-start" }}>
       <Box
         sx={{
-          maxWidth: "75%",
+          minWidth: 0,
+          maxWidth: { xs: "86%", sm: "78%" },
           px: 2,
           py: 1.5,
           borderRadius: 2.5,

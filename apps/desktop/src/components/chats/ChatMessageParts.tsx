@@ -243,10 +243,15 @@ export const RunNotePart = ({
   part: Extract<ChatPart, { kind: "status" | "error" }>;
   conversationId: string;
 }) => (
-  <Stack direction="row" spacing={1} sx={{ alignItems: "center", px: 0.5 }}>
+  <Stack
+    direction="row"
+    spacing={1}
+    sx={{ alignItems: "center", px: 0.5, minWidth: 0, flexWrap: "wrap" }}
+  >
     <Typography
       variant="caption"
       color={part.kind === "error" ? "error" : "text.secondary"}
+      sx={{ minWidth: 0, overflowWrap: "anywhere" }}
     >
       {part.text}
     </Typography>

@@ -10,6 +10,7 @@ import {
 } from "../../actions/pending-paste-review.actions";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import { getIntl } from "../../i18n/intl";
+import { chatBubbleMaxWidth } from "./ChatMessageContent";
 
 type PendingPasteReviewBubbleProps = {
   message: ChatMessage;
@@ -80,17 +81,18 @@ export const PendingPasteReviewBubble = ({
   return (
     <Box
       sx={{
-        maxWidth: "75%",
-        px: 1.5,
-        py: 1.25,
+        minWidth: 0,
+        maxWidth: chatBubbleMaxWidth,
+        px: 2,
+        py: 1.5,
         border: 1,
         borderColor: "divider",
         borderRadius: 1,
         bgcolor: "action.hover",
       }}
     >
-      <Stack spacing={1}>
-        <Box>
+      <Stack spacing={1} sx={{ minWidth: 0 }}>
+        <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
           <Typography variant="subtitle2">
             <FormattedMessage defaultMessage="Paste action waiting for you" />
           </Typography>

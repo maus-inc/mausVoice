@@ -596,6 +596,39 @@ describe("the visible action row", () => {
       (node.textContent ?? "").includes("Copy message"),
     );
 
+  it("aligns actions to the right for user messages and to the left for assistant replies", async () => {
+    mocks.state.chatMessageById["msg-1"] = {
+      id: "msg-1",
+      conversationId: "conv-1",
+      role: "user",
+      content: "User prompt",
+      metadata: null,
+      createdAt: "2026-09-23T00:00:00.000Z",
+    };
+    await renderBubble();
+    const userActionsRow = copyAction()?.parentElement;
+    expect(userActionsRow).toBeTruthy();
+    expect(getComputedStyle(userActionsRow as HTMLElement).justifyContent).toBe(
+      "flex-end",
+    );
+
+    act(() => root.unmount());
+    mocks.state.chatMessageById["msg-1"] = {
+      id: "msg-1",
+      conversationId: "conv-1",
+      role: "assistant",
+      content: "Assistant reply",
+      metadata: null,
+      createdAt: "2026-09-23T00:00:00.000Z",
+    };
+    await renderBubble();
+    const assistantActionsRow = copyAction()?.parentElement;
+    expect(assistantActionsRow).toBeTruthy();
+    expect(
+      getComputedStyle(assistantActionsRow as HTMLElement).justifyContent,
+    ).toBe("flex-start");
+  });
+
   it("keeps the actions reachable instead of hiding them from the pointer", async () => {
     await renderBubble();
     const copy = copyAction();
