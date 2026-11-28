@@ -99,12 +99,16 @@ const markdownBlockSx = (filled: boolean) => ({
   },
 });
 
+const filledChipBg = "color-mix(in srgb, currentColor 14%, transparent)";
+const filledBlockBg = "color-mix(in srgb, currentColor 11%, transparent)";
+const filledBorder = "color-mix(in srgb, currentColor 22%, transparent)";
+
 const markdownCodeAndTableSx = (filled: boolean) => ({
   "& :not(pre) > code": {
     px: 0.625,
     py: 0.125,
     borderRadius: 0.375,
-    bgcolor: filled ? "rgba(128, 128, 128, 0.24)" : "action.selected",
+    bgcolor: filled ? filledChipBg : "action.selected",
     fontSize: "0.85em",
     overflowWrap: "anywhere",
   },
@@ -112,7 +116,7 @@ const markdownCodeAndTableSx = (filled: boolean) => ({
     p: 1.25,
     maxWidth: "100%",
     borderRadius: 0.5,
-    bgcolor: filled ? "rgba(128, 128, 128, 0.2)" : "action.selected",
+    bgcolor: filled ? filledBlockBg : "action.selected",
     overflowX: "auto",
     overflowWrap: "normal",
     wordBreak: "normal",
@@ -132,7 +136,7 @@ const markdownCodeAndTableSx = (filled: boolean) => ({
   },
   "& th, & td": {
     border: 1,
-    borderColor: filled ? "rgba(128, 128, 128, 0.32)" : "divider",
+    borderColor: filled ? filledBorder : "divider",
     px: 1,
     py: 0.625,
     textAlign: "left",
@@ -141,7 +145,7 @@ const markdownCodeAndTableSx = (filled: boolean) => ({
     wordBreak: "normal",
   },
   "& th": {
-    bgcolor: filled ? "rgba(128, 128, 128, 0.2)" : "action.selected",
+    bgcolor: filled ? filledBlockBg : "action.selected",
     fontWeight: 600,
     whiteSpace: "nowrap",
   },

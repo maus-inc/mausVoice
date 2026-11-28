@@ -130,7 +130,10 @@ export const PendingPasteReviewBubble = ({
           size="small"
         />
         {pending.status === "pending" && (
-          <Stack direction="row" spacing={1}>
+          <Stack
+            direction="row"
+            sx={{ flexWrap: "wrap", gap: 1, alignItems: "center" }}
+          >
             <Button
               size="small"
               variant="contained"
