@@ -7,6 +7,8 @@ import type {
 } from "../../types/home.types";
 import type { DictationSpeed } from "../../utils/user.utils";
 import { activityHeatmapGeometry } from "../../styles/activity-heatmap";
+import { activityHeatmap } from "../../styles/palette";
+import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 import { ActivityHeatmap } from "./ActivityHeatmap";
 import { HomeMetricCard } from "./HomeMetricCard";
 
@@ -30,6 +32,10 @@ export const HomeAnalyticsGrid = ({
   today,
 }: HomeAnalyticsGridProps) => {
   const intl = useIntl();
+  const isDark = useIsDarkMode();
+  const streakFlame = isDark
+    ? activityHeatmap.dark[4]
+    : activityHeatmap.light[4];
 
   return (
     <Box
@@ -47,7 +53,7 @@ export const HomeAnalyticsGrid = ({
         "@container home-page (min-width: 560px)": {
           width: "calc(100% - 4px)",
           gridTemplateColumns:
-            "minmax(140px, 0.97fr) minmax(0, 1.82fr) minmax(140px, 0.99fr)",
+            "minmax(140px, 1fr) minmax(0, 1.82fr) minmax(140px, 1fr)",
           gridTemplateRows: "repeat(2, minmax(76px, auto))",
           rowGap: 1.375,
           gridTemplateAreas: dictationSpeed
@@ -63,7 +69,7 @@ export const HomeAnalyticsGrid = ({
         <HomeMetricCard
           value={intl.formatNumber(streak)}
           label={<FormattedMessage defaultMessage="Day streak" />}
-          icon={<Flame size={22} strokeWidth={2} color="#FF6B35" />}
+          icon={<Flame size={22} strokeWidth={1.9} color={streakFlame} />}
         />
       </Box>
       <Box data-home-grid-area="month" sx={{ gridArea: "month", minWidth: 0 }}>

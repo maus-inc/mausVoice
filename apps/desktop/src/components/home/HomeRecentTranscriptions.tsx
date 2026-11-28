@@ -23,7 +23,7 @@ export const HomeRecentTranscriptions = () => {
       <Typography
         id="home-recent-transcriptions-heading"
         variant="h6"
-        sx={{ fontWeight: 600, mb: 0.5 }}
+        sx={{ fontWeight: 600, mb: 1.5 }}
       >
         <FormattedMessage defaultMessage="Recent transcriptions" />
       </Typography>
