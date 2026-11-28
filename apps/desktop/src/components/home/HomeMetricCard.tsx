@@ -22,9 +22,9 @@ export const HomeMetricCard = ({
     <Card sx={{ height: "100%" }}>
       <CardContent
         sx={{
-          py: 1.1875,
+          py: 1.5,
           px: 2,
-          "&:last-child": { pb: 1.1875 },
+          "&:last-child": { pb: 1.5 },
         }}
       >
         <Stack

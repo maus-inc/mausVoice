@@ -38,15 +38,16 @@ export default function HomePage() {
         data-testid="home-page-frame"
         sx={{
           width: "100%",
-          maxWidth: 620,
+          maxWidth: 676,
           minWidth: 0,
           mx: "auto",
+          px: 3.5,
           containerName: "home-page",
           containerType: "inline-size",
         }}
       >
         <Stack sx={{ minWidth: 0 }}>
-          <Box sx={{ px: 3.5, mb: 4.75 }}>
+          <Box sx={{ mb: 4.5 }}>
             <Typography variant="h4" sx={{ fontWeight: 500, mb: 0.5 }}>
               <FormattedMessage
                 defaultMessage="Welcome back, {name}"
@@ -68,7 +69,7 @@ export default function HomePage() {
             <DictationInstruction use3dKeycaps />
           </Box>
 
-          <Box sx={{ px: 3.5, mb: 3, "&:empty": { display: "none" } }}>
+          <Box sx={{ mb: 3, "&:empty": { display: "none" } }}>
             <VoquillMigrationBanner />
           </Box>
 
@@ -82,13 +83,18 @@ export default function HomePage() {
             today={today}
           />
 
-          <Box sx={{ mt: 3.5 }}>
+          <Box
+            sx={{
+              mt: 4,
+              pt: 3.5,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
             <Box sx={{ "&:empty": { display: "none" }, mb: 3 }}>
               <GettingStartedList />
             </Box>
-            <Box sx={{ px: 3.5 }}>
-              <HomeRecentTranscriptions />
-            </Box>
+            <HomeRecentTranscriptions />
           </Box>
         </Stack>
       </Box>

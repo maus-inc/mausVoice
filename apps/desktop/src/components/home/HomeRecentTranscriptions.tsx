@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { Box, Chip, Typography } from "@mui/material";
+import { Box, Chip, Stack, Typography } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { useAppStore } from "../../store";
@@ -23,16 +23,18 @@ export const HomeRecentTranscriptions = () => {
       <Typography
         id="home-recent-transcriptions-heading"
         variant="h6"
-        sx={{ fontWeight: 600, mb: 0.5 }}
+        sx={{ fontWeight: 600, mb: 1.5 }}
       >
         <FormattedMessage defaultMessage="Recent transcriptions" />
       </Typography>
       {topIds.length > 0 ? (
         <>
-          {topIds.map((id) => (
-            <TranscriptionRow key={id} id={id} compactTranscript />
-          ))}
-          <Box sx={{ display: "flex", justifyContent: "center", mt: 1.5 }}>
+          <Stack spacing={1}>
+            {topIds.map((id) => (
+              <TranscriptionRow key={id} id={id} compactTranscript />
+            ))}
+          </Stack>
+          <Box sx={{ display: "flex", justifyContent: "center", mt: 2 }}>
             <Chip
               label={<FormattedMessage defaultMessage="View all" />}
               variant="outlined"

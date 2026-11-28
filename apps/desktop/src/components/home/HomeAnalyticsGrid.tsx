@@ -45,11 +45,9 @@ export const HomeAnalyticsGrid = ({
         gap: 1.5,
         alignItems: "stretch",
         "@container home-page (min-width: 560px)": {
-          width: "calc(100% - 4px)",
           gridTemplateColumns:
-            "minmax(140px, 0.97fr) minmax(0, 1.82fr) minmax(140px, 0.99fr)",
+            "minmax(140px, 1fr) minmax(0, 1.82fr) minmax(140px, 1fr)",
           gridTemplateRows: "repeat(2, minmax(76px, auto))",
-          rowGap: 1.375,
           gridTemplateAreas: dictationSpeed
             ? '"streak activity total" "month activity speed"'
             : '"streak activity total" "month activity total"',
