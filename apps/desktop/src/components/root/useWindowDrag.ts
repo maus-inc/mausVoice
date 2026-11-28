@@ -1,5 +1,6 @@
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import {
+  availableMonitors,
   currentMonitor,
   cursorPosition,
   getCurrentWindow,
@@ -162,12 +163,12 @@ const readRestoreTarget = async (
     // All four of these are physical pixels, so they combine directly. The
     // result stays physical and is converted to the logical position
     // `setPosition` takes, which is the one place the two spaces meet.
-    const [size, pointer, monitor, scale] = await Promise.all([
+    const [size, pointer, scale] = await Promise.all([
       win.innerSize(),
       cursorPosition(),
-      currentMonitor(),
       win.scaleFactor(),
     ]);
+    const monitor = await monitorUnderPointer(pointer);
     const target = restoredPosition(
       grab,
       size,
@@ -178,6 +179,36 @@ const readRestoreTarget = async (
     return new LogicalPosition(target.x / factor, target.y / factor);
   } catch {
     return null;
+  }
+};
+
+/**
+ * The monitor whose work area contains the pointer, falling back to the
+ * window's own monitor.
+ *
+ * `currentMonitor()` reports where the window is, and a restored window is
+ * placed under the pointer. When the press happens on a maximized window that
+ * spans two displays, the pointer can be on the other one, and the top clamp
+ * would then use an origin from a monitor the window is not being dragged onto.
+ * Enumerating is best effort: a host that cannot list monitors keeps the
+ * window's own.
+ */
+const monitorUnderPointer = async (pointer: { x: number; y: number }) => {
+  const own = await currentMonitor();
+  try {
+    const monitors = await availableMonitors();
+    const under = monitors.find((monitor) => {
+      const { position, size } = monitor.workArea;
+      return (
+        pointer.x >= position.x &&
+        pointer.x < position.x + size.width &&
+        pointer.y >= position.y &&
+        pointer.y < position.y + size.height
+      );
+    });
+    return under ?? own;
+  } catch {
+    return own;
   }
 };
 

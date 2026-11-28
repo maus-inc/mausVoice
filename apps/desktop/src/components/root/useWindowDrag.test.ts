@@ -22,6 +22,22 @@ const { platformState, windowMocks, showError } = vi.hoisted(() => ({
     currentMonitor: vi.fn(() =>
       Promise.resolve({ workArea: { position: { x: 0, y: 0 } } }),
     ),
+    // The placement prefers the monitor under the pointer; an empty list keeps
+    // the existing tests on the window's own monitor, which is the fallback.
+    // Structural stand-in for the Tauri `Monitor`: the placement only reads the
+    // work-area rectangle, and a real `Monitor` needs IPC-class instances.
+    availableMonitors: vi.fn(
+      (): Promise<
+        {
+          position?: { x: number; y: number };
+          size?: { width: number; height: number };
+          workArea: {
+            position: { x: number; y: number };
+            size: { width: number; height: number };
+          };
+        }[]
+      > => Promise.resolve([]),
+    ),
     setPosition: vi.fn((_position: { x: number; y: number }) =>
       Promise.resolve(undefined),
     ),
@@ -51,6 +67,7 @@ vi.mock("@tauri-apps/api/window", () => ({
   // as window methods, so the mock has to carry them too.
   cursorPosition: () => windowMocks.cursorPosition(),
   currentMonitor: () => windowMocks.currentMonitor(),
+  availableMonitors: () => windowMocks.availableMonitors(),
 }));
 
 import { useWindowDrag } from "./useWindowDrag";
@@ -141,6 +158,11 @@ beforeEach(() => {
   platformState.value = "windows";
   platformState.native = true;
   windowMocks.innerSize.mockResolvedValue({ width: 1920, height: 1040 });
+  // Every fake that a test overrides has to come back here, or the override
+  // leaks: a `scaleFactor` of 2 left behind by the scaled-display test silently
+  // halved a later test's expectations.
+  windowMocks.scaleFactor.mockResolvedValue(1);
+  windowMocks.availableMonitors.mockResolvedValue([]);
   windowMocks.innerPosition.mockResolvedValue({ x: 0, y: 0 });
   windowMocks.cursorPosition.mockResolvedValue({ x: 400, y: 300 });
   windowMocks.currentMonitor.mockResolvedValue({
@@ -450,6 +472,68 @@ describe("Windows drag-to-restore", () => {
 
     expect(windowMocks.unmaximize).not.toHaveBeenCalled();
     expect(windowMocks.startDragging).toHaveBeenCalledTimes(1);
+  });
+
+  it("clamps against the monitor under the pointer, not the window", async () => {
+    // A maximized window can span two displays with different work areas. The
+    // window's own monitor would supply the wrong top origin for a pointer
+    // that is on the other one, and the clamp would use it.
+    // The restore has already landed here, so the size is the restored one:
+    // the fresh window reads 1600 physical px while the maximized press was
+    // measured against 3200, making the grab 200px in and 20px down.
+    let phase = "maximized";
+    windowMocks.innerSize.mockImplementation(() => {
+      if (phase === "maximized")
+        return Promise.resolve({ width: 3200, height: 1000 });
+      return new Promise((resolve) =>
+        window.setTimeout(() => resolve({ width: 1600, height: 1000 }), 0),
+      );
+    });
+    windowMocks.onResized.mockImplementation(
+      (handler: () => void): Promise<() => void> => {
+        phase = "restored";
+        handler();
+        return Promise.resolve(() => undefined);
+      },
+    );
+    // The pointer is a little above the left monitor's work area, so the
+    // unclamped top would sit under the taskbar and the clamp has to act.
+    windowMocks.cursorPosition.mockResolvedValue({ x: -1810, y: -235 });
+    windowMocks.currentMonitor.mockResolvedValue({
+      workArea: { position: { x: 0, y: 0 } },
+    });
+    windowMocks.availableMonitors.mockResolvedValue([
+      {
+        position: { x: 0, y: 0 },
+        size: { width: 1920, height: 1080 },
+        workArea: {
+          position: { x: 0, y: 0 },
+          size: { width: 1920, height: 1040 },
+        },
+      },
+      {
+        position: { x: -1920, y: -200 },
+        size: { width: 1920, height: 1080 },
+        workArea: {
+          position: { x: -1920, y: -240 },
+          size: { width: 1920, height: 1040 },
+        },
+      },
+    ]);
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 100, y: 10 });
+    await move(1, 100, 60);
+    // Let the restore chain run to the placement before reading the call.
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    });
+
+    // The pointer is on the left-hand monitor, whose work area starts at
+    // -240. The grab is 100 physical px in against a 3200 wide maximized
+    // window, which is 50 px of the restored 1600, so x is -1810 - 50. The
+    // unclamped top is -235 - 10 = -245, which the clamp lifts to -240.
+    const [placed] = windowMocks.setPosition.mock.calls[0];
+    expect({ x: placed.x, y: placed.y }).toEqual({ x: -1860, y: -240 });
   });
 
   it("restores on a sideways drag that stays on the bar", async () => {
