@@ -1,4 +1,4 @@
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Divider, Stack, Typography } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { useAppStore } from "../../store";
 import { useLocalToday } from "../../hooks/use-local-today";
@@ -46,7 +46,7 @@ export default function HomePage() {
         }}
       >
         <Stack sx={{ minWidth: 0 }}>
-          <Box sx={{ px: 3.5, mb: 4.75 }}>
+          <Box sx={{ px: 3.5, mb: 3.5 }}>
             <Typography variant="h4" sx={{ fontWeight: 500, mb: 0.5 }}>
               <FormattedMessage
                 defaultMessage="Welcome back, {name}"
@@ -82,11 +82,23 @@ export default function HomePage() {
             today={today}
           />
 
-          <Box sx={{ mt: 3.5 }}>
-            <Box sx={{ "&:empty": { display: "none" }, mb: 3 }}>
+          <Box sx={{ mt: 4 }}>
+            <Box
+              sx={{
+                // Keep narrow windows full width so the first checklist row
+                // keeps room for its app icons; inset only when the frame
+                // reaches the wide map and the text sections inset.
+                "@container home-page (min-width: 560px)": {
+                  px: 3.5,
+                },
+                "&:empty": { display: "none" },
+                mb: 3.5,
+              }}
+            >
               <GettingStartedList />
             </Box>
             <Box sx={{ px: 3.5 }}>
+              <Divider data-testid="home-section-divider" sx={{ mb: 3 }} />
               <HomeRecentTranscriptions />
             </Box>
           </Box>

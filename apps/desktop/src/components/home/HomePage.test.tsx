@@ -161,6 +161,39 @@ describe("HomePage analytics", () => {
     ]);
   });
 
+  it("separates the analytics section from recent transcriptions with a divider", () => {
+    act(() => {
+      root.render(
+        <IntlProvider locale="en" messages={en}>
+          <MemoryRouter initialEntries={["/dashboard"]}>
+            <HomePage />
+          </MemoryRouter>
+        </IntlProvider>,
+      );
+    });
+
+    const divider = container.querySelector(
+      '[data-testid="home-section-divider"]',
+    );
+    expect(divider).not.toBeNull();
+    const analytics = container.querySelector(
+      '[data-testid="home-analytics-grid"]',
+    );
+    const heading = container.querySelector(
+      "#home-recent-transcriptions-heading",
+    );
+    expect(analytics).not.toBeNull();
+    expect(heading).not.toBeNull();
+    expect(
+      analytics!.compareDocumentPosition(divider!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      divider!.compareDocumentPosition(heading!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("keeps the total metric in the right compact column without speed data", () => {
     const state = structuredClone(getAppState());
     state.transcriptions.transcriptionIds = [];
