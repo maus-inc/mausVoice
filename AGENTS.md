@@ -274,7 +274,7 @@ Do not mark the draft ready until the protocol is complete.
 - `pnpm --filter desktop i18n`, extract/prune messages and synchronize the locale catalogs after changing user-facing strings.
 - `pnpm --filter desktop dev:mac` / `dev:windows` / `dev:linux`, run the desktop app for a specific platform.
 - `pnpm --filter @maus-inc/preview dev`, the preview app on port 5193. This is the visual verification surface. It accepts `PREVIEW_ALLOWED_HOSTS` when you are not on localhost.
-- `pnpm --filter desktop test:webdriver`, the WebDriver end to end suite. It needs `tauri-driver`, a built debug binary, and on Linux WebKitWebDriver. See `engineering/sandbox-coverage-gaps.md` before you try it in the Arena agent sandbox.
+- `pnpm --filter desktop test:webdriver`, the WebDriver end to end suite. It needs `tauri-driver`, a built debug binary, and on Linux `WebKitWebDriver`. In a restricted Linux sandbox, fetch the driver chain and sysroot from `vendor/sandbox-toolchain` per `engineering/sandbox-vendored-toolchain.md`.
 - `pnpm --filter @maus-inc/preview gen:specs`, regenerate the 39 specs under `apps/preview/specs/`. Nothing in CI runs it, so the specs can drift from the code.
 - `node --test scripts/ci/*.test.mjs`, the CI guard tests. Run them whenever you touch `scripts/ci` or a workflow.
 
@@ -290,7 +290,7 @@ pnpm run build                    # turbo build, packages first, then the apps
 pnpm run test                     # turbo test across the packages and apps
 pnpm run format:check             # repo-wide prettier check
 pnpm run skills:verify            # every vendored skill matches skills-lock.json
-pnpm run test:secret-scan         # the secret scan configuration tests
+pnpm run test:secret-scan         # secret-scan config and live gitleaks history tests (live phase checks /usr/local/bin/gitleaks, /usr/bin/gitleaks, or /opt/homebrew/bin/gitleaks; fetch gitleaks from vendor/sandbox-toolchain when absent)
 node --test scripts/ci/*.test.mjs # the CI guard tests
 ```
 
@@ -327,7 +327,7 @@ Run the gate the way CI runs it. A piped command reports the exit code of the pi
 
 The class this section exists to stop: measure one machine, then write that measurement into the repository as a standing fact. The damage runs both ways. An agent on an unrestricted host reads the limit as its own, reports a gate as impossible, or withholds work it could have run. A developer reads a snapshot of one sandbox as a property of the project.
 
-- Name the environment in every environment claim: an Arena agent sandbox, a GitHub Actions runner, a developer machine, or the user's machine. "crates.io is unreachable" states nothing. "crates.io has no route from the Arena agent sandbox, measured with one curl on 2026-11-05" states something a reader can check and can falsify on their own host.
+- Name the environment in every environment claim: an Arena agent sandbox, a GitHub Actions runner, a developer machine, or the user's machine. "crates.io is unreachable" states nothing. "crates.io returned HTTP 000 from this Arena agent sandbox" states something a reader can check and falsify on another host.
 - Measure before you claim. One `curl -m 8 -o /dev/null -w '%{http_code}'`, one `command -v`, one version command. A limitation you copied out of a document is a hypothesis until this run confirms it.
 - Do not carry a limit across environments in either direction. A blocked sandbox does not mean blocked CI, and a green CI run does not mean the gate runs here.
 - Write durable documents in conditional form. A repository doc says what to do when a host is unreachable. A document that describes one host says which host, in its first paragraph.
@@ -335,35 +335,27 @@ The class this section exists to stop: measure one machine, then write that meas
 
 ## Blocked sandbox toolchain
 
-This section describes one environment. It is the Arena agent sandbox that runs this repository's agent, measured on 2026-11-05, and it is not a property of the project. It reaches `github.com`, `codeload.github.com`, `api.github.com`, `registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach `sh.rustup.rs`, `crates.io`, `static.rust-lang.org`, `huggingface.co`, `googlechromelabs.github.io`, `objects.githubusercontent.com`, `cdn.playwright.dev`, `dl.google.com`, `nodejs.org` or any Debian mirror, and `apt-get update` fails against every mirror even though `sudo` works. GitHub Release assets answer 302 to `release-assets.githubusercontent.com`, which is blocked, so a `build.rs` that downloads a release tarball fails and so does any tool fetched from a release.
+When a Linux x86-64 sandbox blocks upstream mirrors, crate registries, or GitHub Release redirects (`release-assets.githubusercontent.com` and `objects.githubusercontent.com`), check the orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` before reporting any gate or tool as unavailable. This rule applies to every task, including TypeScript, UI, security, and Rust work.
 
-On a host that reaches the wider internet, none of this applies. Install the toolchain the normal way and run the gates. Check before you assume either state: one `curl` per host, and a version command per tool.
+On a host that reaches upstream hosts directly, install tooling normally and ignore the vendored payload. Probe before assuming either case.
 
-From the blocked environment, fetch the orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` before you report a Rust gate as unrunnable. It carries the Rust 1.88.0 components, the cargo dependency tree for all seven workspaces, a Debian 12 sysroot, the missing command line tools, the two native archives, the second-delivery groups G9 to G13 (media tools, model weights, the WebDriver driver chain, the cross-target Rust standard libraries and the gitleaks binary), the third-delivery groups G16 to G22 (debuggers and tracers, native build tools including the autotools, database clients, OCR, shell and crypto tooling, cross compilers with emulation, and supply-chain scanners), and the fourth-delivery groups G23 to G27 (the native C/C++ compiler and binutils, fontconfig with fonts plus `tzdata` and `locales`, Chromium, the OpenJDK 17 JRE, Ruby, CPython and Perl, and the document, media-metadata and debugging tools). Follow its `FETCH.md`.
+`engineering/sandbox-vendored-toolchain.md` maps each repository gate and task to its branch path and wiring steps. The branch carries `gitleaks`, headless Chromium, `ffmpeg`, `ffprobe`, `gifsicle`, `tesseract`, `tauri-driver`, `chromedriver`, `WebKitWebDriver`, Rust 1.88.0 with vendored crates and Windows/macOS `rust-std`, the Debian 12 development sysroot, native ONNX Runtime and sherpa-onnx archives, Whisper (`ggml-tiny`, `ggml-base`) and SenseVoice models, and general CLI, compiler, debugging, database, cross-compile, supply-chain, runtime, and document tools. Exact versions, digests, and setup commands live in `FETCH.md`, `README.md`, `MANIFEST.sha256`, and `system/PKGS.txt` on the branch.
 
-```bash
-set -euo pipefail
-SV_SHA=3025c92b50c9d8977941b689a779068997896d38   # pin the commit you reviewed, not the branch head
-SV="$(mktemp -d)"                                  # private root, so concurrent runs cannot clash
-curl -sSL -o "$SV.tar.gz" "https://codeload.github.com/maus-inc/mausVoice/tar.gz/$SV_SHA"
-tar xzf "$SV.tar.gz" -C "$SV" --strip-components=1 && cd "$SV"
-for f in $(grep -o '^[a-f0-9]\{64\}  .*\.part-00$' MANIFEST.sha256 | sed 's/.*  //; s/\.part-00$//'); do cat "$f".part-* > "$f"; chmod --reference="$f.part-00" "$f"; done
-sha256sum -c MANIFEST.sha256 && cd - >/dev/null && echo "payload root: $SV"
-```
+Fetch rules for `vendor/sandbox-toolchain`:
 
-Extract to `/tmp`, never into the workspace, because the workspace is snapshotted against a size and file cap and the extracted payload is about 8.3 GB. Pin the commit you reviewed and re-run `sha256sum -c` on every fetch: `MANIFEST.sha256` travels with the payload, so it proves the download was intact, not that the branch head is still the commit you reviewed.
+- Inspect files or `system/PKGS.txt` over `gh api` before downloading the full archive.
+- For standalone static binaries such as `gitleaks`, fetch the single file via `gh api` raw content, verify its SHA-256 against the branch manifest, and avoid downloading the multi-gigabyte archive. For `pnpm run test:secret-scan` Phase 2, install `gitleaks` at `/usr/local/bin/gitleaks` because `scripts/ci/test-secret-history-scan.mjs` checks only trusted absolute paths rather than `PATH`.
+- For the Rust toolchain, sysroot, Chromium, WebDriver drivers, models, or dynamically linked tools, download the branch tarball from `codeload.github.com` into a private `/tmp` directory, reassemble `.part-*` files preserving executable bits, verify `sha256sum -c MANIFEST.sha256`, delete the tarball, and follow `FETCH.md`.
+- Never run `git fetch origin vendor/sandbox-toolchain` inside the repository checkout, and never extract vendor files, `CARGO_HOME`, or `CARGO_TARGET_DIR` inside `/home/user`. Keep everything under `/tmp` so workspace snapshot caps are never exceeded.
 
-Five facts decide whether a gate can pass:
+Wiring contracts that decide whether local gates pass in a restricted sandbox:
 
-- `pnpm install --frozen-lockfile` needs `CHROMEDRIVER_SKIP_DOWNLOAD=true`, because `chromedriver@152.0.0` is in `onlyBuiltDependencies` and its install script fetches Chrome for Testing metadata from a blocked host. `--ignore-scripts` also works. A bare install fails with `ELIFECYCLE Command failed with exit code 1`, which is a wiring gap rather than a missing payload.
-- `cargo clippy` and `cargo test` read the vendor tree through `$CARGO_HOME/config.toml` with `CARGO_NET_OFFLINE=true`. `cargo --config <path>` does not reach external subcommands, so `cargo --config <path> clippy` fails with `no matching package named base64`.
-- `MAUSVOICE_ORT_DYLIB_PATH` and `SHERPA_ONNX_ARCHIVE_DIR` must point at the pre-seeded `native/` archives. Without them both `build.rs` files try GitHub Releases and fail.
-- `cmake` from `system/tools/bin` must be on `PATH` before any build of `packages/rust_transcription`. `packages/rust_gtk_pill` needs `xvfb-run -a`.
-- A gate the payload still cannot serve is a gap to report, not a limit to accept. `engineering/sandbox-coverage-gaps.md` lists each one with its measurement, the stage it blocks and what to vendor. The second delivery shipped G9 to G13 on 2026-11-05 and the fourth shipped G23 to G27 on 2026-11-09, so the media tools for `ui-capture`, the model weights, the WebDriver driver chain, the cross-target standard libraries, the gitleaks binary, the native C/C++ compiler, font and timezone data, Chromium, the language runtimes and the document tools are all in the payload. What remains is a `dmg`/`msi` packer for a release build (gap G14) and the accepted gaps. Name the gap number in the PR body when one of them stops you.
+- Set `CHROMEDRIVER_SKIP_DOWNLOAD=true` on `pnpm install --frozen-lockfile` (or `--ignore-scripts` for `vitest` and `tsc` only, not `turbo run build`) because `chromedriver` postinstall queries `googlechromelabs.github.io`.
+- Place the vendored Cargo source replacement in `$CARGO_HOME/config.toml` with `CARGO_NET_OFFLINE=true`. Do not use `cargo --config <path> clippy`, because Cargo does not forward `--config` to external subcommands.
+- Point `MAUSVOICE_ORT_DYLIB_PATH` and `SHERPA_ONNX_ARCHIVE_DIR` at the pre-seeded `native/` files, keep `cmake` from `system/tools/bin` on `PATH` for `packages/rust_transcription`, and run `packages/rust_gtk_pill` under `xvfb-run -a`.
+- Report a gate as blocked only when an open gap or accepted environment limit in `engineering/sandbox-coverage-gaps.md` genuinely stops it after checking `vendor/sandbox-toolchain`, and cite the gap ID in the PR body.
 
-Measured in that sandbox on 2026-11-05, after `pnpm install --frozen-lockfile --ignore-scripts`: `pnpm run check-types` passed with 9 turbo tasks in 49 seconds, and `pnpm run build` with 11 tasks in 68 seconds. The TypeScript half of the cycle ran with no payload. The Rust half did not start, because no Rust toolchain was installed there.
-
-`engineering/rust-toolchain.md` holds the offline cargo environment, the per-crate gate commands and the measured results. Run `.agents/PREFLIGHT.md` before any push. The build specification for the payload is `docs/sandbox-toolchain-vendor-spec.md`, and the procedure to rebuild it is `engineering/sandbox-vendor-handoff-prompt.md`.
+`engineering/rust-toolchain.md` holds the offline Cargo setup and per-crate commands. Run `.agents/PREFLIGHT.md` before every push. Rebuild details live in `docs/sandbox-toolchain-vendor-spec.md` and `engineering/sandbox-vendor-handoff-prompt.md`.
 
 ## Code research gate
 
@@ -587,7 +579,7 @@ Inspect the demo group covering your change in light mode and in dark mode. Say 
 
 The evidence goes in the pull request description, embedded as images above the folds, before anybody has to dig. Dark frames are what you attach, kept few so the description stays readable; light is captured and inspected for every touched surface and stated in the description, with a light frame attached only when light is the subject. Pair before and head by commit, list any surface you could not capture and why, and re-attach after the code moves. `scripts/ci/check-visual-evidence.mjs` enforces this in the `PR Body Fold Check` workflow: a diff that touches a UI path with no unfolded image in the description fails the check. Run `node scripts/ci/check-visual-evidence.mjs <body.md> --base <sha>` locally before pushing a body, and update the description whenever the change it shows changes.
 
-The recording path exists and is gated on the sandbox. `apps/desktop/webdriver/` holds a WebdriverIO suite (`pnpm --filter desktop test:webdriver`) that drives a real Tauri build through `tauri-driver` and WebKitWebDriver on Linux and through `chromedriver` on macOS. The `ui-capture` skill needs `ffmpeg`, `ffprobe` and `gifsicle` plus a Chromium. The second delivery ships the three media tools and the driver chain, and the fourth delivery ships Chromium 156 in `system/tools/bin` (gap G25 in `engineering/sandbox-coverage-gaps.md`), so a Linux x86-64 recording can run. When a capture cannot run, say that plainly in the pull request, name the gap, and give the inspection you did instead. Never attach a recording you did not watch, and never describe a capture you did not make.
+The recording and WebDriver paths run on Linux x86-64 through the vendored payload when host tooling is absent. `apps/desktop/webdriver/` holds a WebdriverIO suite (`pnpm --filter desktop test:webdriver`) that drives a real Tauri build through `tauri-driver` and `WebKitWebDriver` on Linux and through `chromedriver` on macOS. The `ui-capture` skill uses `ffmpeg`, `ffprobe`, `gifsicle`, `tesseract`, and Chromium. All of those tools ship on `vendor/sandbox-toolchain` (see `engineering/sandbox-vendored-toolchain.md`). When a capture still cannot run, say so plainly in the pull request, name the gap from `engineering/sandbox-coverage-gaps.md`, and report the inspection you ran instead. Never attach a recording you did not watch, and never describe a capture you did not make.
 
 ## Skills
 
@@ -773,7 +765,7 @@ Keep pruning the four kinds that never belonged here: Postgres and ORM tutorials
 
 ## Facts about this repository
 
-Measured on 2026-11-05. Re-measure rather than trusting a number that has moved.
+Re-measure rather than trusting a count or configuration note that may have moved.
 
 - The app is a Tauri 2 shell around a React 19 and MUI renderer, with a Zustand store as the single source of client state. Rust lives in `apps/desktop/src-tauri`.
 - Fourteen workspace projects: the root, `apps/desktop`, `apps/docs`, `apps/preview`, `apps/windows-installer`, and the shared packages under `packages/`.

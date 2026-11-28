@@ -1,78 +1,48 @@
 # Rust toolchain in agent sandboxes
 
-This file describes one environment, not the world: the Arena agent sandbox that runs
-this repository's agent, measured on 2026-11-05. It is not a property of the repository,
-of CI, or of your machine. On a host that reaches the wider internet, install rustup
-normally and run the gates directly; read this file only for the `$CARGO_HOME` and
-`CARGO_BUILD_JOBS` notes.
+This guide applies when a Linux x86-64 sandbox cannot reach upstream Rust, crate, Debian, or GitHub Release hosts. It is not a property of the repository, CI, or an unrestricted developer machine. On a host that reaches upstream hosts directly, install `rustup` normally and run the gates directly; read this file only for the `$CARGO_HOME` and `CARGO_BUILD_JOBS` notes.
 
-Probe before you trust any line below: `command -v cargo`, `cargo --version`, and one
-`curl -m 8 -o /dev/null -w '%{http_code}'` for `https://sh.rustup.rs`,
-`https://static.rust-lang.org` and `https://index.crates.io`. Three `200`s settle it in
-favour of installing upstream; the installer needs the first two and the gates need the
-third.
+Probe before assuming the environment is restricted: run `command -v cargo`, `cargo --version`, and `curl -m 8 -o /dev/null -w '%{http_code}'` against `https://sh.rustup.rs`, `https://static.rust-lang.org`, and `https://index.crates.io`. Three `200` responses mean upstream installation works directly.
 
-That sandbox reaches `github.com`, `codeload.github.com`, `api.github.com`,
-`registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org`. It cannot reach
-`sh.rustup.rs`, `static.rust-lang.org`, `crates.io`, `index.crates.io`,
-`static.crates.io` or `huggingface.co`. `apt-get update` fails against every Debian
-mirror, so no system package can be installed even though `sudo` works. GitHub Release
-assets redirect to `objects.githubusercontent.com`, which is also blocked, so a
-`build.rs` that downloads a release tarball fails at link time.
+When a sandbox blocks `sh.rustup.rs`, `static.rust-lang.org`, `crates.io`, `huggingface.co`, Debian mirrors, or GitHub Release redirects (`objects.githubusercontent.com` and `release-assets.githubusercontent.com`), `apt-get update` fails and any `build.rs` that downloads a release tarball fails at link time. Use `vendor/sandbox-toolchain` instead.
 
-This repository has seven Rust workspaces, not one:
+This repository has seven Rust workspaces:
 
 | Workspace                          | Cargo.lock | Notes                                       |
 | ---------------------------------- | ---------- | ------------------------------------------- |
-| `apps/desktop/src-tauri`           | yes        | the main Tauri app, 906 packages            |
-| `apps/windows-installer/src-tauri` | yes        | 497 packages, not gated on Linux            |
-| `packages/rust_transcription`      | yes        | 314 packages, whisper.cpp plus ONNX sidecar |
-| `packages/rust_gtk_pill`           | yes        | 90 packages, needs a display                |
-| `packages/rust_macos_pill`         | yes        | 27 packages, fmt only on Linux              |
-| `packages/rust_windows_pill`       | yes        | 24 packages, fmt only on Linux              |
-| `packages/rust_pill_shared`        | yes        | 1 package, shared pill logic                |
+| `apps/desktop/src-tauri`           | yes        | main Tauri app                              |
+| `apps/windows-installer/src-tauri` | yes        | Windows installer, not gated on Linux       |
+| `packages/rust_transcription`      | yes        | whisper.cpp plus ONNX transcription sidecar |
+| `packages/rust_gtk_pill`           | yes        | Linux pill overlay, requires a display      |
+| `packages/rust_macos_pill`         | yes        | macOS pill overlay, fmt only on Linux       |
+| `packages/rust_windows_pill`       | yes        | Windows pill overlay, fmt only on Linux     |
+| `packages/rust_pill_shared`        | yes        | shared pill logic                           |
 
-`rust-toolchain.toml` pins `channel = "1.88.0"` with the `clippy` and `rustfmt`
-components. The file records why: newer stable started failing
-`cargo clippy -- -D warnings` and `cargo test --lib` with exit 101 on the desktop
-crate. None of the seven `Cargo.lock` files and no `Cargo.toml` in the tree carries a
-`rust-version` field, so nothing in this repo needs a toolchain above 1.88.0. Do not
-bump the pin to chase an upstream MSRV the way another project had to.
+`rust-toolchain.toml` pins `channel = "1.88.0"` with the `clippy` and `rustfmt` components. Newer stable toolchains fail `cargo clippy -- -D warnings` and `cargo test --lib` on the desktop crate. No `Cargo.toml` in the tree declares a `rust-version` floor above 1.88.0, so never pass `--ignore-rust-version` or bump the pin for sandbox convenience.
 
 ## Source 1, the vendor branch
 
-The orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` carries the Rust
-1.88.0 components, the cargo dependency tree for all seven workspaces, a Debian 12
-development sysroot for the Tauri and GTK stack, the missing command line tools, and
-the two native archives the `build.rs` scripts would otherwise download.
+The orphan branch `vendor/sandbox-toolchain` on `maus-inc/mausVoice` carries the Rust 1.88.0 components, cross-target `rust-std` archives (`x86_64-pc-windows-msvc` and `aarch64-apple-darwin`), the vendored Cargo crate tree for all seven workspaces, a Debian 12 development sysroot for Tauri and GTK, required CLI tools (`pkg-config`, `cmake`, `patchelf`, `file`), native `build.rs` archives, and non-Rust sandbox tooling. See `engineering/sandbox-vendored-toolchain.md` for the full lookup table and safe `/tmp` fetch commands.
 
-Fetch it, extract it under `/tmp`, and follow its `FETCH.md`. It is the only
-instruction file you need. Commit `3025c92b50c9d8977941b689a779068997896d38`, 22476 blobs
-and the G1 to G8, G9 to G13, G16 to G22 and G23 to G27 groups, no parents, nothing merged
-into `main`.
-The branch is a single orphan commit that each delivery moves, so pin the SHA you reviewed
-rather than the branch head.
+Download the tarball via `codeload.github.com` into `/tmp`, reassemble `.part-*` files preserving executable bits, verify `sha256sum -c MANIFEST.sha256`, and follow `FETCH.md` on the branch. Exact versions, digests, and gate verification records live in `README.md` and `FETCH.md` on `vendor/sandbox-toolchain`.
 
-Measured with that payload, as recorded in the branch `README.md`:
+Standard Rust gates supported by the vendored payload:
 
-| Gate                | Command                                                                                                 | Result                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| Toolchain           | `rustc`, `cargo`, `cargo clippy`, `cargo fmt` `--version`                                               | 1.88.0 / 1.88.0 / 0.1.88 / 1.8.0-stable |
-| Offline resolve     | `CARGO_NET_OFFLINE=true cargo metadata --locked`, all seven manifests                                   | 7 of 7 exit 0                           |
-| Path patches        | `cargo tree -i block`, `-i sherpa-onnx-sys`, `-i rdev`                                                  | all three resolve from `/src/patches/`  |
-| Format              | `cargo fmt --check` in six crates                                                                       | 6 of 6 pass                             |
-| Clippy              | `cargo clippy --locked -- -D warnings` in `apps/desktop/src-tauri`                                      | 0 warnings, 6m 13s                      |
-| Desktop tests       | `cargo test --locked --lib`                                                                             | 363 passed, 0 failed, 1 ignored         |
-| Transcription tests | `cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --lib`                      | 64 passed, 0 failed, 1 ignored          |
-| pill_shared tests   | `cargo test --locked --manifest-path packages/rust_pill_shared/Cargo.toml`                              | 242 passed, 0 failed                    |
-| GTK pill tests      | `xvfb-run -a cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml`                     | 42 passed, 0 failed                     |
-| Sidecar integration | `cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --test sidecar_integration` | 7 passed, 0 failed, 4 ignored           |
+| Gate                | Command                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| Toolchain           | `rustc --version`, `cargo --version`, `cargo clippy --version`, `cargo fmt --version`                   |
+| Offline resolve     | `CARGO_NET_OFFLINE=true cargo metadata --locked` across all seven manifests                             |
+| Path patches        | `cargo tree -i block`, `-i sherpa-onnx-sys`, `-i rdev` resolve from `patches/`                          |
+| Format              | `cargo fmt --check` in the six Linux-formatted crates                                                   |
+| Clippy              | `cargo clippy --locked -- -D warnings` in `apps/desktop/src-tauri` and `packages/rust_pill_shared`      |
+| Desktop tests       | `CARGO_BUILD_JOBS=1 cargo test --locked --lib` in `apps/desktop/src-tauri`                              |
+| Transcription tests | `CARGO_BUILD_JOBS=1 cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --lib`   |
+| Pill shared tests   | `cargo test --locked --manifest-path packages/rust_pill_shared/Cargo.toml`                              |
+| GTK pill tests      | `xvfb-run -a cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml`                     |
+| Sidecar integration | `cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --test sidecar_integration` |
+| Cross-target check  | `cargo check --locked --target x86_64-pc-windows-msvc` and `--target aarch64-apple-darwin`              |
 
-The six fmt crates are `apps/desktop/src-tauri`, `packages/rust_pill_shared`,
-`packages/rust_gtk_pill`, `packages/rust_macos_pill`, `packages/rust_windows_pill`
-and `packages/rust_transcription`. `apps/windows-installer/src-tauri` is not in that
-loop. `cargo fmt --check` does not resolve dependencies, so it is the one gate that
-survives without the vendor branch, provided a rustfmt binary exists.
+The six formatted crates are `apps/desktop/src-tauri`, `packages/rust_pill_shared`, `packages/rust_gtk_pill`, `packages/rust_macos_pill`, `packages/rust_windows_pill`, and `packages/rust_transcription`. `apps/windows-installer/src-tauri` is excluded from that loop. `cargo fmt --check` does not resolve dependencies, so it can run with only a `rustfmt` binary.
 
 ## Source 2, npm, format only
 
@@ -145,30 +115,16 @@ crate that cannot run. `SHERPA_ONNX_LIB_DIR` bypasses the digest check. Use
 `SHERPA_ONNX_ARCHIVE_DIR` and let the build script verify the archive it expects.
 Pre-seeding only the extracted directory does not work, so pre-seed the archive.
 
-The `--ignored` tests in `packages/rust_transcription/tests/sidecar_integration.rs`
-download models from `huggingface.co`, which the Arena agent sandbox cannot reach.
-They cannot run there, and the code offers no mirror override for those artifact URLs.
-Say which gate you ran instead in the PR body rather than reporting them as passed.
+The `#[ignore]` tests in `packages/rust_transcription/tests/sidecar_integration.rs` load real models. `vendor/sandbox-toolchain` ships Whisper `ggml-tiny.bin`, Whisper `ggml-base.bin`, and the SenseVoice ONNX bundle under `models/`. Copy them to a `/tmp` directory and export `RUST_TRANSCRIPTION_MODELS_DIR` (following `FETCH.md` on the branch) to run those tests offline. Whisper weights also honor `RUST_TRANSCRIPTION_MODEL_URL_<UPPERCASE_ID>`. Only the Parakeet CTC, Parakeet TDT, and Canary 1B bundles remain unvendored (gap G10 in `engineering/sandbox-coverage-gaps.md`); report G10 for those unvendored bundles rather than claiming all ignored sidecar tests are blocked.
 
 ## Do not repeat these mistakes
 
-- Do not add a Rust toolchain as a project dependency. It edits `package.json` and
-  `pnpm-lock.yaml` for no reason. This repo has no root `test:rust` script and does
-  not need one.
-- Do not run rustfmt across every `**/*.rs` file in one pass. The tree is already
-  formatted, and a repo-wide reformat is an unrelated change that needs a decision.
-- Do not treat `echo "Exit code: $?"` after a pipe as the cargo result. A pipe such as
-  `cargo ... | head` hides the real exit code. Redirect to a file and check `$?`.
-- Do not set `CARGO_HOME`, `CARGO_TARGET_DIR`, `RUSTUP_HOME` or the extracted payload
-  inside `/home/user`. Everything under the workspace root is snapshotted against a
-  cap. Keep all of it in `/tmp`.
-- Do not commit a `.cargo/config.toml` into the repo. The vendored replacement is
-  sandbox plumbing and would break a normal `cargo build` for every other contributor.
-- Do not copy `cargo-fmt` into the cargo bin directory. Both `cargo-fmt` and
-  `cargo-clippy` are already on `PATH` once the toolchain `bin/` is.
-- Do not claim a Rust gate is unrunnable before fetching the vendor branch. Every gate
-  in the table above has run against this repository.
+- Do not add a Rust toolchain as a project dependency. It edits `package.json` and `pnpm-lock.yaml` for no reason. This repo has no root `test:rust` script and does not need one.
+- Do not run rustfmt across every `**/*.rs` file in one pass. The tree is already formatted, and a repo-wide reformat is an unrelated change that needs a decision.
+- Do not treat `echo "Exit code: $?"` after a pipe as the cargo result. A pipe such as `cargo ... | head` hides the real exit code. Redirect to a file and check `$?`.
+- Do not run `git fetch origin vendor/sandbox-toolchain` inside the repository checkout, and do not set `CARGO_HOME`, `CARGO_TARGET_DIR`, `RUSTUP_HOME`, or the extracted payload inside `/home/user`. Everything under the workspace root is snapshotted against a cap. Fetch via `codeload.github.com` and keep all of it in `/tmp`.
+- Do not commit a `.cargo/config.toml` into the repo. The vendored replacement is sandbox plumbing and would break a normal `cargo build` for every other contributor.
+- Do not copy `cargo-fmt` into the cargo bin directory. Both `cargo-fmt` and `cargo-clippy` are already on `PATH` once the toolchain `bin/` is.
+- Do not claim any Rust gate is unrunnable before checking `engineering/sandbox-vendored-toolchain.md` and `vendor/sandbox-toolchain`.
 
-Detail, provenance and the full gate matrix live on the branch in `README.md` and
-`FETCH.md`. The build specification for that payload is
-`docs/sandbox-toolchain-vendor-spec.md`.
+Detail, provenance, and setup steps live on `vendor/sandbox-toolchain` in `README.md` and `FETCH.md`. The build specification for that payload is `docs/sandbox-toolchain-vendor-spec.md`.

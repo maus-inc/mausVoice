@@ -48,7 +48,7 @@ Replace the verification heading through this first fold with the accepted `last
 - `pnpm run test`: <passed, failed, or not run with reason>
 - `pnpm run format:check`: <passed, failed, or not run with reason>
 - `pnpm run skills:verify`: <passed, failed, or not run with reason>
-- `pnpm run test:secret-scan`: <passed, failed, or not run with reason>
+- `pnpm run test:secret-scan`: <passed, failed, or not run with reason; live Phase 2 needs `/usr/local/bin/gitleaks`, available from `vendor/sandbox-toolchain`>
 - `node --test scripts/ci/*.test.mjs`: <passed, failed, or not run with reason>
 - `pnpm gen:bindings` produced no diff: <yes, no, or not applicable>
 
@@ -69,7 +69,7 @@ Rust gates, when the change touches any of the seven Cargo workspaces:
 - `CARGO_BUILD_JOBS=1 cargo test --locked --lib` in `apps/desktop/src-tauri` and `packages/rust_transcription`, `cargo test --locked` in `packages/rust_pill_shared`, and `xvfb-run -a cargo test --locked` in `packages/rust_gtk_pill`: <one line each>
 - `packages/rust_transcription/tests/sidecar_integration.rs`: <the seven that run, and the four `#[ignore]` ones named with their gap number>
 
-Every `not run` entry needs a reason. When the gate could have run on this diff, add the substitute command that ran instead. When it does not apply to this diff, write `not applicable` and say which path or package it would have covered. A sandbox that cannot reach the network is not a reason on its own: follow `engineering/sandbox-vendored-toolchain.md` first, then report what still cannot run.
+Every `not run` entry needs a reason. When the gate could have run on this diff, add the substitute command that ran instead. When it does not apply to this diff, write `not applicable` and say which path or package it would have covered. A sandbox that cannot reach the network is not a reason on its own: check `engineering/sandbox-vendored-toolchain.md` and `vendor/sandbox-toolchain` for any missing tool (`gitleaks`, Chromium, media or OCR tools, WebDriver drivers, Rust toolchain, whisper or SenseVoice models) first, then report what still cannot run with its gap ID from `engineering/sandbox-coverage-gaps.md`.
 
 <details>
 <summary>Changes</summary>
