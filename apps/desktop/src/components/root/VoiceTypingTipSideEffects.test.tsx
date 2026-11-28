@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
     >
   >(() => Promise.resolve({ status: "ok", data: "eligible" })),
   windowVisible: true,
+  windowFocused: true,
   toastHandler: null as ((payload: ToastActionPayload) => void) | null,
   showToast: vi.fn(() => Promise.resolve()),
   dismissToast: vi.fn(() => Promise.resolve()),
@@ -35,6 +36,7 @@ vi.mock("@maus-inc/desktop-native-apis", () => ({
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     isVisible: () => Promise.resolve(mocks.windowVisible),
+    isFocused: () => Promise.resolve(mocks.windowFocused),
   }),
 }));
 
@@ -177,6 +179,7 @@ describe("VoiceTypingTipSideEffects", () => {
       data: "eligible",
     });
     mocks.windowVisible = true;
+    mocks.windowFocused = true;
     mocks.toastHandler = null;
     mocks.showToast.mockClear();
     mocks.dismissToast.mockClear();
@@ -260,6 +263,7 @@ describe("VoiceTypingTipSideEffects", () => {
   it("mirrors to the persistent pill when the main window is hidden and correlates pill actions by proposalId", async () => {
     hasFocusSpy.mockReturnValue(false);
     mocks.windowVisible = false;
+    mocks.windowFocused = false;
     mocks.checkEligibility.mockResolvedValue({
       status: "ok",
       data: "eligible",
@@ -291,6 +295,24 @@ describe("VoiceTypingTipSideEffects", () => {
     });
     expect(getAppState().voiceTypingTipPrompt).toBeNull();
     expect(getAppState().local.voiceTypingTip.snoozedUntilMs).not.toBeNull();
+  });
+
+  it("mirrors to the pill when the main window is visible but not foregrounded", async () => {
+    hasFocusSpy.mockReturnValue(false);
+    mocks.windowVisible = true;
+    mocks.windowFocused = false;
+    mocks.checkEligibility.mockResolvedValue({
+      status: "ok",
+      data: "eligible",
+    });
+
+    await mountEffects();
+    await typeSustainedViaKeysHeld();
+
+    const prompt = getAppState().voiceTypingTipPrompt;
+    expect(prompt).not.toBeNull();
+    expect(prompt?.mirroredOnPill).toBe(true);
+    expect(mocks.showToast).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to webview KeyboardEvent.code when hotkeyStrategy is bridge", async () => {

@@ -1081,6 +1081,7 @@
   "the_microphone_is_blocked_so_it_cannot_be_kept_ready_allow_m": "The microphone is blocked, so it cannot be kept ready. Allow microphone access in your system settings and it will open automatically.",
   "the_microphone_stopped_partway_through_the_preview_is_shorte": "The microphone stopped partway through. The preview is shorter than the test.",
   "the_microphone_stopped_recording_after_captured_of_expected": "The microphone stopped recording after {captured} of {expected} seconds. Check that it is still connected.",
+  "the_no_thanks_option_is_now_available": "The \"No thanks\" option is now available.",
   "the_online_styling_reply_was_unusable_and_the_transcript_cou": "The online styling reply was unusable, and the transcript could not be saved in History.",
   "the_online_styling_reply_was_unusable_the_original_transcrip": "The online styling reply was unusable. The original transcript is available in this session, but was not saved in History.",
   "the_original_transcript_was_saved_because_the_online_styling": "The original transcript was saved because the online styling reply was unusable.",

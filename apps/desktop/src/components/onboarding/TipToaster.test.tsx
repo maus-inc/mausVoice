@@ -426,4 +426,35 @@ describe("TipToaster", () => {
     await renderToaster("/dashboard/styling");
     expect(liveRegion().textContent).toBe(before);
   });
+
+  it("announces the delayed No thanks reveal through the same live region", async () => {
+    const prompt: import("../../utils/voice-typing-tip").VoiceTypingTipPromptState =
+      {
+        id: 9,
+        variantIndex: 0,
+        ctaKind: "try",
+        shortcutCombo: ["AltLeft", "Space"],
+        shownAtMs: Date.now(),
+        noThanksRevealAtMs: Date.now() + 10_000,
+        noThanksVisible: false,
+        mirroredOnPill: false,
+      };
+    mocks.state.voiceTypingTipPrompt = prompt;
+    await renderToaster("/dashboard/help");
+
+    // The prompt itself is announced first, without the hidden action.
+    expect(liveRegion().textContent).toContain("Tip:");
+    expect(liveRegion().textContent).not.toContain("No thanks");
+
+    // The reveal is its own announcement through the same region, and
+    // unrelated re-renders do not replay it.
+    mocks.state.voiceTypingTipPrompt = { ...prompt, noThanksVisible: true };
+    await renderToaster("/dashboard/help");
+    expect(liveRegion().textContent).toContain(
+      'The "No thanks" option is now available.',
+    );
+    const afterReveal = liveRegion().textContent;
+    await renderToaster("/dashboard/help");
+    expect(liveRegion().textContent).toBe(afterReveal);
+  });
 });

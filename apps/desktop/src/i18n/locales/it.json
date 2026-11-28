@@ -1081,6 +1081,7 @@
   "the_microphone_is_blocked_so_it_cannot_be_kept_ready_allow_m": "Il microfono è bloccato, quindi non può essere tenuto pronto. Consenti l'accesso al microfono nelle impostazioni di sistema e si aprirà automaticamente.",
   "the_microphone_stopped_partway_through_the_preview_is_shorte": "Il microfono si è fermato a metà test. L'anteprima è più corta del test.",
   "the_microphone_stopped_recording_after_captured_of_expected": "Il microfono ha interrotto la registrazione dopo {captured} di {expected} secondi. Verifica che sia ancora collegato.",
+  "the_no_thanks_option_is_now_available": "L'opzione \"No, grazie\" è ora disponibile.",
   "the_online_styling_reply_was_unusable_and_the_transcript_cou": "La risposta di formattazione online non era utilizzabile e non è stato possibile salvare la trascrizione nella Cronologia.",
   "the_online_styling_reply_was_unusable_the_original_transcrip": "La risposta di formattazione online non era utilizzabile. La trascrizione originale è disponibile in questa sessione, ma non è stata salvata nella Cronologia.",
   "the_original_transcript_was_saved_because_the_online_styling": "La trascrizione originale è stata salvata perché la risposta di formattazione online non era utilizzabile.",

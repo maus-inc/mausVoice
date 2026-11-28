@@ -1081,6 +1081,7 @@
   "the_microphone_is_blocked_so_it_cannot_be_kept_ready_allow_m": "Le microphone est bloqué, il ne peut donc pas être maintenu prêt. Autorisez l'accès au micro dans les réglages du système et il s'ouvrira automatiquement.",
   "the_microphone_stopped_partway_through_the_preview_is_shorte": "Le microphone s'est arrêté en cours de test. L'aperçu est plus court que le test.",
   "the_microphone_stopped_recording_after_captured_of_expected": "Le microphone a arrêté l'enregistrement après {captured} sur {expected} secondes. Vérifiez qu'il est toujours connecté.",
+  "the_no_thanks_option_is_now_available": "L'option \"Non merci\" est maintenant disponible.",
   "the_online_styling_reply_was_unusable_and_the_transcript_cou": "La réponse de mise en forme en ligne était inutilisable et la transcription n'a pas pu être enregistrée dans l'historique.",
   "the_online_styling_reply_was_unusable_the_original_transcrip": "La réponse de mise en forme en ligne était inutilisable. La transcription d'origine est disponible dans cette session, mais n'a pas été enregistrée dans l'historique.",
   "the_original_transcript_was_saved_because_the_online_styling": "La transcription d’origine a été enregistrée, car la réponse de mise en forme en ligne était inutilisable.",

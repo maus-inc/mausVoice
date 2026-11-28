@@ -1081,6 +1081,7 @@
   "the_microphone_is_blocked_so_it_cannot_be_kept_ready_allow_m": "麥克風被封鎖，無法保持就緒。請在系統設定中允許麥克風存取，它就會自動開啟。",
   "the_microphone_stopped_partway_through_the_preview_is_shorte": "麥克風在測試中途停止。預覽比測試短。",
   "the_microphone_stopped_recording_after_captured_of_expected": "麥克風在 {expected} 秒中的第 {captured} 秒後停止錄音。請檢查它是否仍連接。",
+  "the_no_thanks_option_is_now_available": "「不用了」選項現在可以使用。",
   "the_online_styling_reply_was_unusable_and_the_transcript_cou": "線上潤飾回覆無法使用，轉錄文字無法儲存至歷史記錄。",
   "the_online_styling_reply_was_unusable_the_original_transcrip": "線上潤飾回覆無法使用。原始轉錄文字可在本工作階段中查看，但未儲存至歷史記錄。",
   "the_original_transcript_was_saved_because_the_online_styling": "線上潤飾回覆無法使用，因此已儲存原始轉錄文字。",

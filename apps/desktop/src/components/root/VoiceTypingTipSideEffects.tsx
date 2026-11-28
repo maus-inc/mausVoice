@@ -49,18 +49,16 @@ const isEligibleHostWindow = (): boolean => {
   }
 };
 
-const isMainWindowCurrentlyVisible = async (): Promise<boolean> => {
+const isMainWindowCurrentlyFocused = async (): Promise<boolean> => {
   if (!isTauriRuntime()) {
-    return typeof document === "undefined"
-      ? true
-      : document.visibilityState !== "hidden";
+    return typeof document === "undefined" ? true : document.hasFocus();
   }
   try {
-    return await getCurrentWindow().isVisible();
+    // Visibility is not enough: a visible-but-backgrounded window is one the
+    // user is not reading, so the reminder belongs on the pill they can see.
+    return await getCurrentWindow().isFocused();
   } catch {
-    return typeof document === "undefined"
-      ? true
-      : document.visibilityState !== "hidden";
+    return typeof document === "undefined" ? true : document.hasFocus();
   }
 };
 
@@ -102,7 +100,7 @@ const resolveExternalPromptMirrorMode = async (): Promise<boolean | null> => {
   if (nativeResult.status !== "ok" || nativeResult.data !== "eligible") {
     return null;
   }
-  if (await isMainWindowCurrentlyVisible()) {
+  if (await isMainWindowCurrentlyFocused()) {
     return false;
   }
   const pillVisibility = getEffectivePillVisibility(

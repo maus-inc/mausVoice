@@ -1081,6 +1081,7 @@
   "the_microphone_is_blocked_so_it_cannot_be_kept_ready_allow_m": "O microfone está bloqueado, por isso não pode ser mantido pronto. Permite o acesso ao microfone nas definições do sistema e ele abre automaticamente.",
   "the_microphone_stopped_partway_through_the_preview_is_shorte": "O microfone parou a meio do teste. A pré-visualização é mais curta do que o teste.",
   "the_microphone_stopped_recording_after_captured_of_expected": "O microfone parou de gravar após {captured} de {expected} segundos. Verifica se continua ligado.",
+  "the_no_thanks_option_is_now_available": "A opção \"Não, obrigado\" já está disponível.",
   "the_online_styling_reply_was_unusable_and_the_transcript_cou": "A resposta de estilização online era inutilizável e a transcrição não pôde ser guardada no Histórico.",
   "the_online_styling_reply_was_unusable_the_original_transcrip": "A resposta de estilização online era inutilizável. A transcrição original está disponível nesta sessão, mas não foi guardada no Histórico.",
   "the_original_transcript_was_saved_because_the_online_styling": "A transcrição original foi guardada porque não foi possível usar a resposta de estilização online.",

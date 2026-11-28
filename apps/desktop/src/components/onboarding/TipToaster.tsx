@@ -1,7 +1,12 @@
 import { stripTrailingCharacters } from "@maus-inc/utilities";
 import { Box, Portal } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
-import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
+import {
+  FormattedMessage,
+  defineMessage,
+  useIntl,
+  type IntlShape,
+} from "react-intl";
 import { useLocation } from "react-router-dom";
 import { formatVoiceTypingTipBody } from "../../actions/voice-typing-tip.actions";
 import { useAppStore } from "../../store";
@@ -23,6 +28,12 @@ type LiveAnnouncement =
   | { kind: "onboarding"; id: OnboardingTipId }
   | { kind: "voice-typing"; text: string }
   | null;
+
+// The delayed "No thanks" action appears after the prompt was announced, so
+// its arrival gets its own polite notice through the same live region.
+const NO_THANKS_REVEAL_ANNOUNCEMENT = defineMessage({
+  defaultMessage: 'The "No thanks" option is now available.',
+});
 
 const shouldShiftVoiceTipToLeft = (): boolean => {
   if (typeof window === "undefined" || typeof document === "undefined") {
@@ -84,6 +95,22 @@ const useTipLiveAnnouncement = (
     setAnnouncement({
       kind: "voice-typing",
       text: formatVoiceTypingTipBody(voiceTypingTipPrompt, intl),
+    });
+  }, [intl, voiceTypingTipPrompt]);
+
+  const announcedNoThanksRevealForIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const prompt = voiceTypingTipPrompt;
+    if (!prompt?.noThanksVisible) {
+      return;
+    }
+    if (announcedNoThanksRevealForIdRef.current === prompt.id) {
+      return;
+    }
+    announcedNoThanksRevealForIdRef.current = prompt.id;
+    setAnnouncement({
+      kind: "voice-typing",
+      text: intl.formatMessage(NO_THANKS_REVEAL_ANNOUNCEMENT),
     });
   }, [intl, voiceTypingTipPrompt]);
 

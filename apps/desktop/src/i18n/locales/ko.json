@@ -1081,6 +1081,7 @@
   "the_microphone_is_blocked_so_it_cannot_be_kept_ready_allow_m": "마이크가 차단되어 준비 상태로 유지할 수 없습니다. 시스템 설정에서 마이크 접근을 허용하면 자동으로 열립니다.",
   "the_microphone_stopped_partway_through_the_preview_is_shorte": "마이크가 테스트 도중에 멈췄습니다. 미리보기가 테스트보다 짧습니다.",
   "the_microphone_stopped_recording_after_captured_of_expected": "마이크가 {expected}초 중 {captured}초 후에 녹음을 멈쳤습니다. 마이크가 연결되어 있는지 확인하세요.",
+  "the_no_thanks_option_is_now_available": "\"괜찮습니다\" 옵션을 이제 사용할 수 있습니다.",
   "the_online_styling_reply_was_unusable_and_the_transcript_cou": "온라인 스타일링 응답을 사용할 수 없었고, 텍스트를 기록에 저장할 수 없었습니다.",
   "the_online_styling_reply_was_unusable_the_original_transcrip": "온라인 스타일링 응답을 사용할 수 없었습니다. 원본 텍스트는 이 세션에서 확인할 수 있지만 기록에는 저장되지 않았습니다.",
   "the_original_transcript_was_saved_because_the_online_styling": "온라인 스타일링 응답을 사용할 수 없어 원본 텍스트를 저장했습니다.",

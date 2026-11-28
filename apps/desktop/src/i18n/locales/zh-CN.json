@@ -1081,6 +1081,7 @@
   "the_microphone_is_blocked_so_it_cannot_be_kept_ready_allow_m": "麦克风被阻止，无法保持就绪。请在系统设置中允许麦克风访问，它就会自动打开。",
   "the_microphone_stopped_partway_through_the_preview_is_shorte": "麦克风在测试中途停止。预览比测试短。",
   "the_microphone_stopped_recording_after_captured_of_expected": "麦克风在 {expected} 秒中的第 {captured} 秒后停止了录音。请检查它是否仍连接。",
+  "the_no_thanks_option_is_now_available": "“不用了”选项现已可用。",
   "the_online_styling_reply_was_unusable_and_the_transcript_cou": "在线润色回复无法使用，转录文本无法保存到历史记录。",
   "the_online_styling_reply_was_unusable_the_original_transcrip": "在线润色回复无法使用。原始转录文本可在此会话中查看，但未保存到历史记录。",
   "the_original_transcript_was_saved_because_the_online_styling": "在线润色回复无法使用，因此已保存原始转录文本。",
