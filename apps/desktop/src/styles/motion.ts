@@ -24,6 +24,14 @@ export const spinContinuous = {
   ease: "linear",
 } as const;
 
+/** Quiet skeleton breathing cycle: slow symmetric opacity pulse, no bounce. */
+export const skeletonPulse = {
+  duration: duration.base * 9,
+  ease: easeInOutCubic,
+  minOpacity: 0.48,
+  maxOpacity: 0.85,
+} as const;
+
 export const springSnappy = {
   type: "spring" as const,
   stiffness: 420,
