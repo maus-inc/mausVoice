@@ -108,9 +108,8 @@ const App = () => {
         const { INITIAL_APP_STATE } = await import("@desktop/state/app.state");
         const { createDefaultPreferences } =
           await import("@desktop/actions/user-actions-core");
-        // No cast: `AppState` is exactly what this is, and the cast is what
-        // let an invalid health value through, so every settings capture of a
-        // listener platform hid the rows that need a delivering key stream.
+        // No cast: it is an `AppState`, and the cast is what let the invalid
+        // `"healthy"` health below through, hiding rows in every capture.
         const state = structuredClone(INITIAL_APP_STATE);
         state.userPrefs = createDefaultPreferences();
         state.settings.apiKeysStatus = "success";

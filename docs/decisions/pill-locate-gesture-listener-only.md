@@ -54,14 +54,12 @@ the `desktop_resume` event that calls `restart_key_listener`, and the elevation
 relaunch starts a new process. The row disappeared for the length of each one.
 
 Windows also removes a low-level hook that overruns `LowLevelHooksTimeout`
-without telling the process. That removal is not one of those triggers, and
-nothing here watches for it: the child keeps running, the socket stays open, and
-no exit or EOF reaches the respawn loop, which restarts the child only after the
-connection drops. A listener in that state stays `connected` with a hook that is
-no longer installed, and the row keeps offering a gesture that has gone quiet
-until the next wake, unlock or relaunch respawns the child. Detecting it would
-need a watchdog the native listener does not have; this change does not add one
-and does not claim the state is observable.
+without telling the process. That is not one of those triggers and nothing here
+watches for it: the child keeps running, the socket stays open, and the respawn
+loop only restarts after the connection drops. A listener in that state stays
+`connected` with no hook behind it, offering a gesture that has gone quiet, until
+the next wake, unlock or relaunch respawns the child. Seeing it needs a watchdog
+the native listener does not have; this change adds none and claims no more.
 
 The rule also lived in two places. The settings row asked the strategy and the
 health, and the detector asked only the strategy, so the two disagreed in both
@@ -72,8 +70,9 @@ states through `listenerIsProvenHealthy`, because a child that connects and dies
 inside the grace window would otherwise reset the notice on every flap.
 
 The preview seeds are part of the same defect. `preview/scenarios.ts` modelled
-the listener strategy without a health state, and the settings verify harness
-set `"healthy"`, which is not a member of `KeyboardListenerHealth`. Both left
-the row out of every capture, which is how a row that ships can be reviewed as
-missing. The harness now types the state it seeds, so an invalid value is a
-compile error rather than a silently hidden row.
+the strategy without a health state, and the verify harness set `"healthy"`,
+which is not a member of `KeyboardListenerHealth`; both left the row out of every
+capture, which is how a row that ships gets reviewed as missing. The harness now
+types the value it seeds, and the scenario seeds `grab_failed` where the
+accessibility permission it models is denied, so an invalid or impossible state
+cannot pass quietly.
