@@ -23,6 +23,7 @@ const repoMocks = vi.hoisted(() => ({
   rejectNextUpdate: false,
   rejectNextCreate: false,
   rejectNextConversationCreate: false,
+  rejectNextConversationList: false,
   rejectNextDelete: false,
   rejectNextList: false,
   rejectNextMessageDelete: false,
@@ -116,7 +117,13 @@ vi.mock("../utils/log.utils", () => ({ getLogger: () => getLoggerMock }));
 
 vi.mock("../repos", () => ({
   getConversationRepo: () => ({
-    listConversations: () => Promise.resolve([...conversationStorage.values()]),
+    listConversations: () => {
+      if (repoMocks.rejectNextConversationList) {
+        repoMocks.rejectNextConversationList = false;
+        return Promise.reject(new Error("conversation list rejected"));
+      }
+      return Promise.resolve([...conversationStorage.values()]);
+    },
     createConversation: (conversation: Conversation) => {
       conversationCreateSpy(conversation);
       if (repoMocks.deferNextConversationCreate) {
@@ -165,7 +172,9 @@ import {
   editAndResend,
   laterMessagesHaveToolActivity,
   loadChatMessages,
+  loadConversations,
   requestNewConversation,
+  resolveReusableEmptyConversation,
   retryAssistant,
   sendChatMessage,
 } from "./chat.actions";
@@ -899,12 +908,23 @@ describe("editAndResend", () => {
   });
 });
 
+const requireCallback = <Args extends unknown[], Result>(
+  fn: ((...args: Args) => Result) | null,
+  label: string,
+): ((...args: Args) => Result) => {
+  if (!fn) {
+    throw new Error(`Expected ${label} callback to be captured`);
+  }
+  return fn;
+};
+
 describe("requestNewConversation and empty-thread reuse", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     repoMocks.rejectNextUpdate = false;
     repoMocks.rejectNextCreate = false;
     repoMocks.rejectNextConversationCreate = false;
+    repoMocks.rejectNextConversationList = false;
     repoMocks.rejectNextDelete = false;
     repoMocks.rejectNextList = false;
     repoMocks.rejectNextMessageDelete = false;
@@ -963,7 +983,7 @@ describe("requestNewConversation and empty-thread reuse", () => {
 
   it("deduplicates concurrent requestNewConversation calls while creation is pending", async () => {
     seed({ withExistingMessage: true });
-    let finishCreate!: () => void;
+    let finishCreate: (() => void) | null = null;
     repoMocks.deferNextConversationCreate = (conversation) =>
       new Promise((resolve) => {
         finishCreate = () => resolve(conversation);
@@ -975,7 +995,7 @@ describe("requestNewConversation and empty-thread reuse", () => {
     await vi.waitFor(() =>
       expect(conversationCreateSpy).toHaveBeenCalledTimes(1),
     );
-    finishCreate();
+    requireCallback(finishCreate, "finishCreate")();
 
     const [r1, r2] = await Promise.all([first, second]);
     expect(conversationCreateSpy).toHaveBeenCalledTimes(1);
@@ -1014,7 +1034,7 @@ describe("requestNewConversation and empty-thread reuse", () => {
     state.chat.conversationIds = ["conv-unloaded"];
     setAppState(state, true);
 
-    let resolveList!: (messages: ChatMessage[]) => void;
+    let resolveList: ((messages: ChatMessage[]) => void) | null = null;
     repoMocks.deferNextMessageList = () =>
       new Promise((resolve) => {
         resolveList = resolve;
@@ -1027,7 +1047,7 @@ describe("requestNewConversation and empty-thread reuse", () => {
     );
     expect(conversationCreateSpy).not.toHaveBeenCalled();
 
-    resolveList([]);
+    requireCallback(resolveList, "resolveList")([]);
     await loadPromise;
     const result = await requestPromise;
 
@@ -1039,7 +1059,7 @@ describe("requestNewConversation and empty-thread reuse", () => {
   });
 
   it("does not treat a thread with a pending send as empty", async () => {
-    let releaseSend: (() => void) | undefined;
+    let releaseSend: (() => void) | null = null;
     repoMocks.deferNextMessageList = () =>
       new Promise((resolve) => {
         releaseSend = () => resolve([]);
@@ -1047,7 +1067,7 @@ describe("requestNewConversation and empty-thread reuse", () => {
     const sendPromise = sendChatMessage("conv-1", "First message");
     expect(canReuseEmptyConversation("conv-1")).toBe(false);
     await vi.waitFor(() => expect(releaseSend).toBeTypeOf("function"));
-    releaseSend!();
+    requireCallback(releaseSend, "releaseSend")();
     await sendPromise;
     expect(canReuseEmptyConversation("conv-1")).toBe(false);
   });
@@ -1077,7 +1097,7 @@ describe("requestNewConversation and empty-thread reuse", () => {
     delete state.chatMessageIdsByConversationId["conv-1"];
     setAppState(state, true);
 
-    let resolveList!: (messages: ChatMessage[]) => void;
+    let resolveList: ((messages: ChatMessage[]) => void) | null = null;
     repoMocks.deferNextMessageList = () =>
       new Promise((resolve) => {
         resolveList = resolve;
@@ -1085,7 +1105,7 @@ describe("requestNewConversation and empty-thread reuse", () => {
     const first = loadChatMessages("conv-1");
     const second = loadChatMessages("conv-1");
     await vi.waitFor(() => expect(messageListSpy).toHaveBeenCalledTimes(1));
-    resolveList([]);
+    requireCallback(resolveList, "resolveList")([]);
     await Promise.all([first, second]);
     expect(messageListSpy).toHaveBeenCalledTimes(1);
     expect(canReuseEmptyConversation("conv-1")).toBe(true);
@@ -1095,17 +1115,59 @@ describe("requestNewConversation and empty-thread reuse", () => {
     const state2 = structuredClone(getAppState());
     delete state2.chatMessageIdsByConversationId["conv-1"];
     setAppState(state2, true);
-    let resolveLateLoad!: (messages: ChatMessage[]) => void;
+    let resolveLateLoad: ((messages: ChatMessage[]) => void) | null = null;
     repoMocks.deferNextMessageList = () =>
       new Promise((resolve) => {
         resolveLateLoad = resolve;
       });
     const lateLoad = loadChatMessages("conv-1");
     const deleting = deleteConversation("conv-1");
-    resolveLateLoad([]);
+    requireCallback(resolveLateLoad, "resolveLateLoad")([]);
     await Promise.all([lateLoad, deleting]);
     expect(
       getAppState().chatMessageIdsByConversationId["conv-1"],
     ).toBeUndefined();
+  });
+
+  it("preserves hydrated messages when an overlapping delete fails", async () => {
+    const existing: ChatMessage = {
+      id: "msg-kept",
+      conversationId: "conv-1",
+      role: "user",
+      content: "Keep me on delete failure",
+      createdAt: "2026-08-20T10:01:00.000Z",
+      metadata: null,
+    };
+    const state = structuredClone(getAppState());
+    delete state.chatMessageIdsByConversationId["conv-1"];
+    setAppState(state, true);
+
+    let resolveLoad: ((messages: ChatMessage[]) => void) | null = null;
+    repoMocks.deferNextMessageList = () =>
+      new Promise((resolve) => {
+        resolveLoad = resolve;
+      });
+    repoMocks.rejectNextDelete = true;
+
+    const loading = loadChatMessages("conv-1");
+    const deleting = deleteConversation("conv-1");
+    await vi.waitFor(() => expect(resolveLoad).toBeTypeOf("function"));
+    requireCallback(resolveLoad, "resolveLoad")([existing]);
+
+    await expect(deleting).rejects.toThrow("delete rejected");
+    await loading;
+    expect(getAppState().chatMessageIdsByConversationId["conv-1"]).toEqual([
+      "msg-kept",
+    ]);
+    expect(getAppState().chatMessageById["msg-kept"]?.content).toBe(
+      "Keep me on delete failure",
+    );
+  });
+
+  it("records error status without rejecting when loadConversations fails", async () => {
+    repoMocks.rejectNextConversationList = true;
+    await expect(loadConversations()).resolves.toBeUndefined();
+    expect(getAppState().chat.status).toBe("error");
+    expect(await resolveReusableEmptyConversation("conv-missing")).toBeNull();
   });
 });

@@ -293,7 +293,10 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
 
     const newThreadButton = mounted.container.querySelector<HTMLButtonElement>(
       "[data-conversation-new]",
-    )!;
+    );
+    if (!newThreadButton) {
+      throw new Error("Expected New Thread button");
+    }
     await mounted.click(newThreadButton);
     await mounted.waitFor(
       () =>
@@ -340,7 +343,7 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
 
   it("retains an empty existing thread when New Thread is clicked while its messages are loading", async () => {
     seed("empty-existing", "New conversation", 0);
-    let resolveMessages!: (messages: unknown[]) => void;
+    let resolveMessages: ((messages: unknown[]) => void) | null = null;
     listChatMessages.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -358,13 +361,19 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
 
     const newThreadButton = mounted.container.querySelector<HTMLButtonElement>(
       "[data-conversation-new]",
-    )!;
+    );
+    if (!newThreadButton) {
+      throw new Error("Expected New Thread button");
+    }
     await act(async () => {
       newThreadButton.click();
     });
     expect(createConversation).not.toHaveBeenCalled();
 
     await act(async () => {
+      if (!resolveMessages) {
+        throw new Error("Expected pending listChatMessages resolver");
+      }
       resolveMessages([]);
     });
     await mounted.settle();
@@ -377,7 +386,7 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
   });
 
   it("creates at most one thread when activating the empty-state chip repeatedly", async () => {
-    let resolveCreate!: (value: Conversation) => void;
+    let resolveCreate: (() => void) | null = null;
     createConversation.mockImplementationOnce(
       (conversation: Conversation) =>
         new Promise<Conversation>((resolve) => {
@@ -394,10 +403,13 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
 
     const chip = [
       ...mounted.container.querySelectorAll('[role="button"]'),
-    ].find((el) => el.textContent === "Create new chat")!;
+    ].find((el) => el.textContent === "Create new chat");
     const newThreadButton = mounted.container.querySelector<HTMLButtonElement>(
       "[data-conversation-new]",
-    )!;
+    );
+    if (!chip || !newThreadButton) {
+      throw new Error("Expected empty-state chip and New Thread button");
+    }
     await act(async () => {
       chip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       newThreadButton.click();
@@ -405,7 +417,10 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
     expect(createConversation).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      resolveCreate(createConversation.mock.calls[0][0] as Conversation);
+      if (!resolveCreate) {
+        throw new Error("Expected pending createConversation resolver");
+      }
+      resolveCreate();
     });
     await mounted.waitFor(
       () =>
@@ -417,7 +432,7 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
 
   it("creates at most one thread under rapid repeated clicks while creation is pending", async () => {
     seedPopulated("recent", "Quarterly report numbers", 0);
-    let resolveCreate!: (value: Conversation) => void;
+    let resolveCreate: (() => void) | null = null;
     createConversation.mockImplementationOnce(
       (conversation: Conversation) =>
         new Promise<Conversation>((resolve) => {
@@ -437,7 +452,10 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
 
     const newThreadButton = mounted.container.querySelector<HTMLButtonElement>(
       "[data-conversation-new]",
-    )!;
+    );
+    if (!newThreadButton) {
+      throw new Error("Expected New Thread button");
+    }
     await act(async () => {
       newThreadButton.click();
       newThreadButton.click();
@@ -446,7 +464,10 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
     expect(createConversation).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      resolveCreate(createConversation.mock.calls[0][0] as Conversation);
+      if (!resolveCreate) {
+        throw new Error("Expected pending createConversation resolver");
+      }
+      resolveCreate();
     });
     await mounted.waitFor(
       () =>

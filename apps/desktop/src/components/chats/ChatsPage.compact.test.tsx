@@ -27,7 +27,7 @@ vi.mock("../../actions/chat.actions", () => ({
     return Array.isArray(ids) && ids.length === 0;
   },
   deleteConversation: vi.fn(),
-  loadChatMessages: vi.fn(),
+  loadChatMessages: vi.fn(async () => undefined),
   requestNewConversation: chatActionMocks.requestNewConversation,
   resolveReusableEmptyConversation: vi.fn(async () => null),
 }));
@@ -258,15 +258,24 @@ it("closes the compact list when activating New Thread on an already empty conve
         </MemoryRouter>,
       ),
     );
-    const button = (text: string) =>
-      [...host.querySelectorAll("button")].find(
+    const button = (text: string) => {
+      const found = [...host.querySelectorAll("button")].find(
         (item) => item.textContent === text,
-      )!;
+      );
+      if (!found) {
+        throw new Error(`Expected button with text "${text}"`);
+      }
+      return found;
+    };
     await act(async () => button("Chats").click());
     const draft = host.querySelector<HTMLInputElement>(
       'input[aria-label="Draft"]',
-    )!;
-    expect(getComputedStyle(draft.parentElement!).display).toBe("none");
+    );
+    const draftWrapper = draft?.parentElement;
+    if (!draftWrapper) {
+      throw new Error("Expected draft input wrapper");
+    }
+    expect(getComputedStyle(draftWrapper).display).toBe("none");
 
     const newButton = button("New");
     const origMatches = newButton.matches.bind(newButton);
@@ -281,7 +290,7 @@ it("closes the compact list when activating New Thread on an already empty conve
     );
 
     expect(chatActionMocks.requestNewConversation).not.toHaveBeenCalled();
-    expect(getComputedStyle(draft.parentElement!).display).not.toBe("none");
+    expect(getComputedStyle(draftWrapper).display).not.toBe("none");
     expect(document.activeElement).toBe(button("Chats"));
   } finally {
     vi.restoreAllMocks();

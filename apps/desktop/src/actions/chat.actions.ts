@@ -26,6 +26,7 @@ export {
 const conversationCreations = createAsyncMutationTracker();
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
 const pendingMessageLoads = new Map<string, Promise<void>>();
+const activeDeletesByConversationId = new Map<string, Promise<void>>();
 let pendingConversationLoad: Promise<void> | null = null;
 let pendingNewThreadCreation: Promise<Conversation> | null = null;
 // Retry and edit share a reservation because both replace conversation history.
@@ -228,7 +229,6 @@ export const loadConversations = async (): Promise<void> => {
       produceAppState((draft) => {
         draft.chat.status = "error";
       });
-      throw error;
     }
   })();
 
@@ -339,7 +339,9 @@ export const canReuseEmptyConversation = (
 export const resolveReusableEmptyConversation = async (
   conversationId: string | null | undefined,
 ): Promise<Conversation | null> => {
-  if (!conversationId) return null;
+  if (!conversationId || deletingConversationIds.has(conversationId)) {
+    return null;
+  }
   if (canReuseEmptyConversation(conversationId)) {
     return getAppState().conversationById[conversationId] ?? null;
   }
@@ -349,6 +351,10 @@ export const resolveReusableEmptyConversation = async (
     : null;
   if (waitConversationLoad) {
     await waitConversationLoad.catch(() => undefined);
+  }
+
+  if (deletingConversationIds.has(conversationId)) {
+    return null;
   }
 
   const waitMessageLoad =
@@ -432,6 +438,12 @@ export const deleteConversation = async (id: string): Promise<void> => {
   deletingConversationIds.add(id);
   abortAgent(id);
 
+  let finishDelete: () => void = () => {};
+  const deleteGate = new Promise<void>((resolve) => {
+    finishDelete = resolve;
+  });
+  activeDeletesByConversationId.set(id, deleteGate);
+
   try {
     // Wait without holding a write lease. A queued send may still need one to
     // settle, so acquiring the lease before this wait would deadlock the queue.
@@ -458,6 +470,10 @@ export const deleteConversation = async (id: string): Promise<void> => {
     });
   } finally {
     deletingConversationIds.delete(id);
+    if (activeDeletesByConversationId.get(id) === deleteGate) {
+      activeDeletesByConversationId.delete(id);
+    }
+    finishDelete();
   }
 };
 
@@ -469,8 +485,21 @@ export const loadChatMessages = (conversationId: string): Promise<void> => {
     const messages =
       await getChatMessageRepo().listChatMessages(conversationId);
 
+    // Wait for any overlapping delete to settle so a succeeded delete never
+    // gets re-seeded while a failed delete still keeps hydrated messages.
+    while (true) {
+      const pendingDelete = activeDeletesByConversationId.get(conversationId);
+      if (!pendingDelete) break;
+      await pendingDelete;
+    }
+
     produceAppState((draft) => {
-      if (deletingConversationIds.has(conversationId)) return;
+      if (
+        deletingConversationIds.has(conversationId) ||
+        !draft.conversationById[conversationId]
+      ) {
+        return;
+      }
       registerChatMessages(draft, conversationId, messages);
     });
   })().finally(() => {

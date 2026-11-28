@@ -11,9 +11,24 @@ import { getAppState, produceAppState, setAppState } from "../../store";
 const mocks = vi.hoisted(() => ({
   deleteConversation: vi.fn(),
   requestNewConversation: vi.fn(),
-  resolveReusableEmptyConversation: vi.fn(),
   showErrorSnackbar: vi.fn(),
 }));
+const findButton = (host: HTMLElement, label: string): HTMLButtonElement => {
+  const button = [...host.querySelectorAll("button")].find(
+    (b) => b.textContent === label,
+  );
+  if (!button) {
+    throw new Error(`Expected button "${label}"`);
+  }
+  return button;
+};
+const readOutput = (host: HTMLElement): string => {
+  const output = host.querySelector("output");
+  if (!output) {
+    throw new Error("Expected output element");
+  }
+  return output.textContent ?? "";
+};
 const isEmptyInStore = (id: string | null | undefined) => {
   if (!id) return false;
   const state = getAppState();
@@ -33,15 +48,12 @@ vi.mock("../../actions/chat.actions", () => ({
   canReuseEmptyConversation: (id: string | null | undefined) =>
     isEmptyInStore(id),
   requestNewConversation: mocks.requestNewConversation,
-  resolveReusableEmptyConversation: async (id: string | null | undefined) => {
-    const overridden = await mocks.resolveReusableEmptyConversation(id);
-    if (overridden !== undefined) return overridden;
-    return isEmptyInStore(id)
+  resolveReusableEmptyConversation: async (id: string | null | undefined) =>
+    isEmptyInStore(id)
       ? (getAppState().conversationById[id as string] ?? null)
-      : null;
-  },
+      : null,
   deleteConversation: mocks.deleteConversation,
-  loadChatMessages: vi.fn(),
+  loadChatMessages: vi.fn(async () => undefined),
 }));
 vi.mock("./ChatsSideEffects", () => ({ ChatsSideEffects: () => null }));
 vi.mock("./ConversationLayout", () => ({ ConversationLayout: () => null }));
@@ -133,7 +145,7 @@ it.each(["delete", "create"])(
       s.chat.conversationIds = ["one"];
       s.conversationById.one = { id: "one", title: "one" } as Conversation;
     });
-    let finish!: () => void;
+    let finish: (() => void) | null = null;
     if (operation === "delete") {
       mocks.deleteConversation.mockImplementation(
         () =>
@@ -172,15 +184,14 @@ it.each(["delete", "create"])(
         ),
       );
       const click = async (label: string) =>
-        act(async () =>
-          [...host.querySelectorAll("button")]
-            .find((b) => b.textContent === label)!
-            .click(),
-        );
+        act(async () => findButton(host, label).click());
       await click(operation === "delete" ? "Delete one" : "New");
       await click("Leave");
-      await act(async () => finish());
-      expect(host.querySelector("output")!.textContent).toBe("/other");
+      await act(async () => {
+        if (!finish) throw new Error("Expected finish callback");
+        finish();
+      });
+      expect(readOutput(host)).toBe("/other");
     } finally {
       act(() => root.unmount());
       host.remove();
@@ -234,7 +245,7 @@ it("does not replace a newer selection when a new thread finishes creating", asy
     for (const id of s.chat.conversationIds)
       s.conversationById[id] = { id, title: id } as Conversation;
   });
-  let finish!: () => void;
+  let finish: (() => void) | null = null;
   mocks.requestNewConversation.mockImplementation(
     (_currentId: string | null, conversation: Conversation) =>
       new Promise((resolve) => {
@@ -254,15 +265,14 @@ it("does not replace a newer selection when a new thread finishes creating", asy
       ),
     );
     const click = async (label: string) =>
-      act(async () =>
-        [...host.querySelectorAll("button")]
-          .find((b) => b.textContent === label)!
-          .click(),
-      );
+      act(async () => findButton(host, label).click());
     await click("New");
     await click("Select three");
-    await act(async () => finish());
-    expect(host.querySelector("output")!.textContent).toBe("?id=three");
+    await act(async () => {
+      if (!finish) throw new Error("Expected finish callback");
+      finish();
+    });
+    expect(readOutput(host)).toBe("?id=three");
   } finally {
     act(() => root.unmount());
     host.remove();
@@ -279,7 +289,7 @@ it("deduplicates rapid repeated new-thread clicks while creation is pending", as
     s.chatMessageIdsByConversationId.one = ["msg-1"];
   });
   let createdId = "";
-  let finish!: () => void;
+  let finish: (() => void) | null = null;
   mocks.requestNewConversation.mockImplementation(
     (_currentId: string | null, conversation: Conversation) =>
       new Promise((resolve) => {
@@ -299,17 +309,18 @@ it("deduplicates rapid repeated new-thread clicks while creation is pending", as
         </MemoryRouter>,
       ),
     );
-    const button = [...host.querySelectorAll("button")].find(
-      (b) => b.textContent === "New",
-    )!;
+    const button = findButton(host, "New");
     await act(async () => {
       button.click();
       button.click();
       button.click();
     });
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
-    await act(async () => finish());
-    expect(host.querySelector("output")!.textContent).toBe(`?id=${createdId}`);
+    await act(async () => {
+      if (!finish) throw new Error("Expected finish callback");
+      finish();
+    });
+    expect(readOutput(host)).toBe(`?id=${createdId}`);
   } finally {
     act(() => root.unmount());
     host.remove();
@@ -328,7 +339,7 @@ it("reuses the pending new-thread request after switching threads and activating
     }
   });
   let createdId = "";
-  let finish!: () => void;
+  let finish: (() => void) | null = null;
   mocks.requestNewConversation.mockImplementation(
     (_currentId: string | null, conversation: Conversation) =>
       new Promise((resolve) => {
@@ -349,17 +360,16 @@ it("reuses the pending new-thread request after switching threads and activating
       ),
     );
     const click = async (label: string) =>
-      act(async () =>
-        [...host.querySelectorAll("button")]
-          .find((b) => b.textContent === label)!
-          .click(),
-      );
+      act(async () => findButton(host, label).click());
     await click("New");
     await click("Select three");
     await click("New");
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
-    await act(async () => finish());
-    expect(host.querySelector("output")!.textContent).toBe(`?id=${createdId}`);
+    await act(async () => {
+      if (!finish) throw new Error("Expected finish callback");
+      finish();
+    });
+    expect(readOutput(host)).toBe(`?id=${createdId}`);
   } finally {
     act(() => root.unmount());
     host.remove();
@@ -377,7 +387,7 @@ it("retains an already empty thread when selected while another creation finishe
     s.chatMessageIdsByConversationId.one = ["msg-1"];
     s.chatMessageIdsByConversationId.three = [];
   });
-  let finish!: () => void;
+  let finish: (() => void) | null = null;
   mocks.requestNewConversation.mockImplementation(
     (_currentId: string | null, conversation: Conversation) =>
       new Promise((resolve) => {
@@ -397,17 +407,16 @@ it("retains an already empty thread when selected while another creation finishe
       ),
     );
     const click = async (label: string) =>
-      act(async () =>
-        [...host.querySelectorAll("button")]
-          .find((b) => b.textContent === label)!
-          .click(),
-      );
+      act(async () => findButton(host, label).click());
     await click("New");
     await click("Select three");
     await click("New");
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
-    await act(async () => finish());
-    expect(host.querySelector("output")!.textContent).toBe("?id=three");
+    await act(async () => {
+      if (!finish) throw new Error("Expected finish callback");
+      finish();
+    });
+    expect(readOutput(host)).toBe("?id=three");
   } finally {
     act(() => root.unmount());
     host.remove();
@@ -435,19 +444,79 @@ it("retains an already empty selected conversation without calling creation", as
         </MemoryRouter>,
       ),
     );
-    const button = [...host.querySelectorAll("button")].find(
-      (b) => b.textContent === "New",
-    )!;
+    const button = findButton(host, "New");
     await act(async () => {
       button.click();
       button.click();
     });
     expect(mocks.requestNewConversation).not.toHaveBeenCalled();
-    expect(host.querySelector("output")!.textContent).toBe("?id=one");
+    expect(readOutput(host)).toBe("?id=one");
   } finally {
     act(() => root.unmount());
     host.remove();
     mocks.requestNewConversation.mockReset();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  }
+});
+
+it("exits cleanly without looping when unmounted before a pending new-thread request decides creation", async () => {
+  setAppState(structuredClone(INITIAL_APP_STATE), true);
+  produceAppState((s) => {
+    s.chat.conversationIds = ["one"];
+    s.conversationById.one = { id: "one", title: "one" } as Conversation;
+    s.chatMessageIdsByConversationId.one = ["msg-1"];
+  });
+  let finishHydration: (() => void) | null = null;
+  mocks.requestNewConversation.mockImplementation(
+    async (
+      _currentId: string | null,
+      conversation: Conversation,
+      options?: { shouldCreate?: () => boolean },
+    ) => {
+      await new Promise<void>((resolve) => {
+        finishHydration = resolve;
+      });
+      if (options?.shouldCreate && !options.shouldCreate()) {
+        return null;
+      }
+      return { conversation, created: true };
+    },
+  );
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/dashboard/chats?id=one"]}>
+          <ChatsPage />
+          <Location />
+        </MemoryRouter>,
+      ),
+    );
+    const button = findButton(host, "New");
+    await act(async () => {
+      button.click();
+    });
+    expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
+
+    act(() => root.unmount());
+    await act(async () => {
+      if (!finishHydration)
+        throw new Error("Expected finishHydration callback");
+      finishHydration();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
+    expect(mocks.showErrorSnackbar).not.toHaveBeenCalled();
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+    mocks.requestNewConversation.mockReset();
+    mocks.showErrorSnackbar.mockReset();
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   }
 });
@@ -460,7 +529,7 @@ it("reports a failed new-thread request once without changing selection and perm
     s.chatMessageIdsByConversationId.one = ["msg-1"];
   });
   const failure = new Error("create failed");
-  let rejectFirst!: (error: unknown) => void;
+  let rejectFirst: ((error: unknown) => void) | null = null;
   mocks.requestNewConversation.mockImplementationOnce(
     () =>
       new Promise((_resolve, reject) => {
@@ -479,18 +548,19 @@ it("reports a failed new-thread request once without changing selection and perm
         </MemoryRouter>,
       ),
     );
-    const button = [...host.querySelectorAll("button")].find(
-      (b) => b.textContent === "New",
-    )!;
+    const button = findButton(host, "New");
     await act(async () => {
       button.click();
       button.click();
     });
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
-    await act(async () => rejectFirst(failure));
+    await act(async () => {
+      if (!rejectFirst) throw new Error("Expected rejectFirst callback");
+      rejectFirst(failure);
+    });
     expect(mocks.showErrorSnackbar).toHaveBeenCalledTimes(1);
     expect(mocks.showErrorSnackbar).toHaveBeenCalledWith(failure);
-    expect(host.querySelector("output")!.textContent).toBe("?id=one");
+    expect(readOutput(host)).toBe("?id=one");
 
     let retryId = "";
     mocks.requestNewConversation.mockImplementationOnce(
@@ -501,7 +571,7 @@ it("reports a failed new-thread request once without changing selection and perm
     );
     await act(async () => button.click());
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(2);
-    expect(host.querySelector("output")!.textContent).toBe(`?id=${retryId}`);
+    expect(readOutput(host)).toBe(`?id=${retryId}`);
   } finally {
     act(() => root.unmount());
     host.remove();
