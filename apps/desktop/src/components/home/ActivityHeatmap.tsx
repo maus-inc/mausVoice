@@ -1,6 +1,5 @@
 import {
   Box,
-  LinearProgress,
   Stack,
   Tooltip,
   type TooltipProps,
@@ -8,7 +7,15 @@ import {
   useMediaQuery,
   useTheme,
 } from "@mui/material";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { keyframes } from "@mui/material/styles";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type UIEvent,
+} from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import type {
   DailyActivityStatus,
@@ -21,20 +28,44 @@ import {
   type ActivityGridCell,
 } from "../../utils/activity-grid.utils";
 import { visuallyHidden } from "../../styles/a11y";
-import { activityHeatmap } from "../../styles/palette";
+import { activityHeatmap, activityHeatmapSkeleton } from "../../styles/palette";
 import { activityHeatmapGeometry } from "../../styles/activity-heatmap";
 import {
   cssEase,
   duration,
   easeOutQuint,
   reducedMotionQuery,
+  skeletonPulse,
 } from "../../styles/motion";
 import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 
 const MS_PER_SECOND = 1000;
 const HEATMAP_TOOLTIP_ENTER_MS = Math.round(duration.instant * MS_PER_SECOND);
+const CELL_BORDER_RADIUS = 0.15;
+// Matches the 4-character 9px monospace "Less"/"More" labels while the 10px
+// swatches govern the legend row height.
+const LEGEND_LABEL_PLACEHOLDER_WIDTH = 22;
+const LEGEND_LABEL_PLACEHOLDER_HEIGHT = 6;
+const SKELETON_FUTURE_CELL_SX = {
+  width: activityHeatmapGeometry.cellSize,
+  height: activityHeatmapGeometry.cellSize,
+  borderRadius: CELL_BORDER_RADIUS,
+  bgcolor: "transparent",
+  pointerEvents: "none" as const,
+} as const;
+
+const skeletonBreath = keyframes`
+  0%, 100% {
+    opacity: ${skeletonPulse.maxOpacity};
+  }
+  50% {
+    opacity: ${skeletonPulse.minOpacity};
+  }
+`;
 
 type HeatmapColors = readonly string[];
+type HeatmapPresentation = "skeleton" | "error" | "ready";
+type SettledActivityStatus = Exclude<DailyActivityStatus, "loading">;
 type CellDescription = (localDate: string, wordCount: number) => string;
 type WeekdayRow = {
   localDate: string;
@@ -76,56 +107,62 @@ const compactIntensity = (intensity: ActivityGridCell["intensity"]): number => {
   return 2;
 };
 
-const ActivityHeatmapHeader = ({
-  status,
-  activeDaysLabel,
-}: {
-  status: DailyActivityStatus;
-  activeDaysLabel: string;
-}) => (
-  <Box sx={visuallyHidden}>
-    <Typography id="home-activity-heading">
-      <FormattedMessage defaultMessage="Daily activity" />
-    </Typography>
-    <Typography>
-      <FormattedMessage defaultMessage="Words dictated over the past year" />
-    </Typography>
-    {status === "success" ? <Typography>{activeDaysLabel}</Typography> : null}
-  </Box>
-);
+const resolveHeatmapPresentation = (
+  status: DailyActivityStatus,
+  hasActivityData: boolean,
+  lastSettledStatus: SettledActivityStatus,
+): HeatmapPresentation => {
+  if (status === "error") return "error";
+  if (status === "success") return "ready";
+  if (status === "idle") return "skeleton";
+  // Keep an already-rendered heatmap visible during refreshes rather than
+  // flashing a skeleton over cached data; retries after an error still load via
+  // the skeleton.
+  if (lastSettledStatus === "success") return "ready";
+  if (lastSettledStatus === "idle" && hasActivityData) return "ready";
+  return "skeleton";
+};
 
-const ActivityHeatmapGrid = ({
-  grid,
-  colors,
-  accessibleSummary,
-  weekdayRows,
-  describeCell,
-}: {
-  grid: ActivityGrid;
-  colors: HeatmapColors;
-  accessibleSummary: string;
-  weekdayRows: WeekdayRow[];
-  describeCell: CellDescription;
-}) => {
-  const theme = useTheme();
-  const prefersReducedMotion = useMediaQuery(reducedMotionQuery);
+const useHeatmapPresentation = (
+  status: DailyActivityStatus,
+  hasActivityData: boolean,
+): HeatmapPresentation => {
+  const [prevStatus, setPrevStatus] = useState(status);
+  const [lastSettledStatus, setLastSettledStatus] =
+    useState<SettledActivityStatus>(status === "loading" ? "idle" : status);
+
+  if (status !== prevStatus) {
+    setPrevStatus(status);
+    if (status !== "loading") {
+      setLastSettledStatus(status);
+    }
+  }
+
+  return resolveHeatmapPresentation(status, hasActivityData, lastSettledStatus);
+};
+
+const heatmapGridSx = (weekCount: number) => ({
+  display: "grid",
+  gridTemplateColumns: `repeat(${weekCount}, ${activityHeatmapGeometry.cellSize}px)`,
+  gridTemplateRows: `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
+  columnGap: `${activityHeatmapGeometry.cellGap}px`,
+  rowGap: `${activityHeatmapGeometry.cellGap}px`,
+  alignItems: "center",
+});
+
+const skeletonPulseSx = (prefersReducedMotion: boolean) => ({
+  opacity: skeletonPulse.maxOpacity,
+  animation: prefersReducedMotion
+    ? "none"
+    : `${skeletonBreath} ${skeletonPulse.duration}s ${cssEase(skeletonPulse.ease)} infinite`,
+  "@media (prefers-reduced-motion: reduce)": {
+    animation: "none",
+  },
+});
+
+const useLatestWeekScroll = (endDate: string) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const followsLatestWeek = useRef(true);
-
-  // Heatmap cells are 10px squares, so the tooltip sits over neighboring rows.
-  // Non-interactive poppers with instant exit keep pointer sweeps unobstructed.
-  const tooltipSlotProps = useMemo<TooltipProps["slotProps"]>(
-    () => ({
-      tooltip: { sx: { fontFamily: "var(--font-data)" } },
-      transition: {
-        exit: false,
-        timeout: {
-          enter: prefersReducedMotion ? 0 : HEATMAP_TOOLTIP_ENTER_MS,
-        },
-      },
-    }),
-    [prefersReducedMotion],
-  );
 
   // Keep recent weeks visible on load and after responsive resizing, without
   // pulling readers back after they scroll into older history.
@@ -147,10 +184,81 @@ const ActivityHeatmapGrid = ({
     const resizeObserver = new ResizeObserver(keepLatestWeekVisible);
     resizeObserver.observe(viewport);
     return () => resizeObserver.disconnect();
-  }, [grid.endDate]);
+  }, [endDate]);
+
+  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+    const viewport = event.currentTarget;
+    followsLatestWeek.current =
+      viewport.scrollLeft + viewport.clientWidth >= viewport.scrollWidth - 1;
+  };
+
+  return { viewportRef, handleScroll };
+};
+
+const ActivityHeatmapWeekdayRail = ({
+  weekdayRows,
+}: {
+  weekdayRows: WeekdayRow[];
+}) => {
+  const theme = useTheme();
 
   return (
     <Box
+      aria-hidden="true"
+      data-testid="activity-heatmap-labels"
+      sx={{
+        flex: `0 0 ${activityHeatmapGeometry.labelColumnWidth}px`,
+        display: "grid",
+        gridTemplateRows: `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
+        rowGap: `${activityHeatmapGeometry.cellGap}px`,
+        alignItems: "center",
+        // Start the rail on the first row of the plot, not on the room the
+        // viewport reserves above it for the top row's hover treatment.
+        pt: `${activityHeatmapGeometry.cellHoverReach}px`,
+        "@container home-page (min-width: 560px)": {
+          flex: `0 0 ${activityHeatmapGeometry.desktopLabelColumnWidth}px`,
+        },
+      }}
+    >
+      {weekdayRows.map(({ localDate, label, gridRow, visible }) => (
+        <Typography
+          key={localDate}
+          aria-hidden="true"
+          variant="caption"
+          sx={{
+            gridRow,
+            color: "text.secondary",
+            fontFamily: "var(--font-data)",
+            fontSize: 9,
+            lineHeight: `${activityHeatmapGeometry.cellSize}px`,
+            textAlign: "right",
+            pr: theme.spacing(0.5),
+            visibility: visible ? "visible" : "hidden",
+          }}
+        >
+          {label}
+        </Typography>
+      ))}
+    </Box>
+  );
+};
+
+const ActivityHeatmapFrame = ({
+  weekdayRows,
+  endDate,
+  interactive,
+  children,
+}: {
+  weekdayRows: WeekdayRow[];
+  endDate: string;
+  interactive: boolean;
+  children: ReactNode;
+}) => {
+  const { viewportRef, handleScroll } = useLatestWeekScroll(endDate);
+
+  return (
+    <Box
+      aria-hidden={interactive ? undefined : true}
       data-testid="activity-heatmap-layout"
       sx={{
         display: "flex",
@@ -158,55 +266,14 @@ const ActivityHeatmapGrid = ({
         columnGap: `${activityHeatmapGeometry.cellGap}px`,
       }}
     >
-      <Box
-        aria-hidden="true"
-        data-testid="activity-heatmap-labels"
-        sx={{
-          flex: `0 0 ${activityHeatmapGeometry.labelColumnWidth}px`,
-          display: "grid",
-          gridTemplateRows: `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
-          rowGap: `${activityHeatmapGeometry.cellGap}px`,
-          alignItems: "center",
-          // Start the rail on the first row of the plot, not on the room the
-          // viewport reserves above it for the top row's hover treatment.
-          pt: `${activityHeatmapGeometry.cellHoverReach}px`,
-          "@container home-page (min-width: 560px)": {
-            flex: `0 0 ${activityHeatmapGeometry.desktopLabelColumnWidth}px`,
-          },
-        }}
-      >
-        {weekdayRows.map(({ localDate, label, gridRow, visible }) => (
-          <Typography
-            key={localDate}
-            aria-hidden="true"
-            variant="caption"
-            sx={{
-              gridRow,
-              color: "text.secondary",
-              fontFamily: "var(--font-data)",
-              fontSize: 9,
-              lineHeight: `${activityHeatmapGeometry.cellSize}px`,
-              textAlign: "right",
-              pr: theme.spacing(0.5),
-              visibility: visible ? "visible" : "hidden",
-            }}
-          >
-            {label}
-          </Typography>
-        ))}
-      </Box>
+      <ActivityHeatmapWeekdayRail weekdayRows={weekdayRows} />
       <Box
         ref={viewportRef}
-        role="region"
-        aria-labelledby="home-activity-heading"
-        tabIndex={0}
+        role={interactive ? "region" : undefined}
+        aria-labelledby={interactive ? "home-activity-heading" : undefined}
+        tabIndex={interactive ? 0 : undefined}
         data-testid="activity-heatmap-viewport"
-        onScroll={(event) => {
-          const viewport = event.currentTarget;
-          followsLatestWeek.current =
-            viewport.scrollLeft + viewport.clientWidth >=
-            viewport.scrollWidth - 1;
-        }}
+        onScroll={handleScroll}
         sx={{
           flex: "1 1 auto",
           minWidth: 0,
@@ -225,111 +292,235 @@ const ActivityHeatmapGrid = ({
             mx: "auto",
           }}
         >
-          <Box
-            role="img"
-            aria-label={accessibleSummary}
-            sx={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${grid.weeks.length}, ${activityHeatmapGeometry.cellSize}px)`,
-              gridTemplateRows: `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
-              columnGap: `${activityHeatmapGeometry.cellGap}px`,
-              rowGap: `${activityHeatmapGeometry.cellGap}px`,
-              alignItems: "center",
-            }}
-          >
-            {grid.weeks.flatMap((week, weekIndex) =>
-              week.map((cell, dayIndex) => (
-                <Tooltip
-                  key={cell.localDate}
-                  title={
-                    cell.isFuture
-                      ? ""
-                      : describeCell(cell.localDate, cell.wordCount)
-                  }
-                  arrow
-                  placement="top"
-                  disableInteractive
-                  disableHoverListener={cell.isFuture}
-                  enterDelay={0}
-                  enterNextDelay={0}
-                  leaveDelay={0}
-                  slotProps={tooltipSlotProps}
-                >
-                  <Box
-                    aria-hidden="true"
-                    data-date={cell.localDate}
-                    data-word-count={cell.wordCount}
-                    data-intensity={cell.intensity}
-                    data-testid="activity-day"
-                    sx={{
-                      gridColumn: weekIndex + 1,
-                      gridRow: dayIndex + 1,
-                      width: activityHeatmapGeometry.cellSize,
-                      height: activityHeatmapGeometry.cellSize,
-                      borderRadius: 0.15,
-                      bgcolor: cell.isFuture
-                        ? "transparent"
-                        : colors[compactIntensity(cell.intensity)],
-                      outline: cell.isToday
-                        ? `1px solid ${theme.palette.text.secondary}`
-                        : "none",
-                      outlineOffset: 1,
-                      pointerEvents: cell.isFuture ? "none" : "auto",
-                      transformOrigin: "center",
-                      transition: `transform ${duration.fast}s ${cssEase(easeOutQuint)}`,
-                      "@media (hover: hover) and (pointer: fine)": cell.isFuture
-                        ? {}
-                        : {
-                            "&:hover": {
-                              transform: `scale(${activityHeatmapGeometry.cellHoverScale})`,
-                              outline: `1px solid ${theme.palette.text.primary}`,
-                              zIndex: 1,
-                            },
-                          },
-                      "@media (prefers-reduced-motion: reduce)": {
-                        transition: "none",
-                        "&:hover": { transform: "none" },
-                      },
-                    }}
-                  />
-                </Tooltip>
-              )),
-            )}
-          </Box>
+          {children}
         </Box>
       </Box>
     </Box>
   );
 };
 
-const ActivityHeatmapStatus = ({
-  status,
+const ActivityHeatmapHeader = ({
+  isReady,
+  activeDaysLabel,
+}: {
+  isReady: boolean;
+  activeDaysLabel: string;
+}) => (
+  <Box sx={visuallyHidden}>
+    <Typography id="home-activity-heading">
+      <FormattedMessage defaultMessage="Daily activity" />
+    </Typography>
+    <Typography>
+      <FormattedMessage defaultMessage="Words dictated over the past year" />
+    </Typography>
+    {isReady ? <Typography>{activeDaysLabel}</Typography> : null}
+  </Box>
+);
+
+const ActivityHeatmapSkeleton = ({
+  grid,
+  weekdayRows,
+  skeletonColor,
+  prefersReducedMotion,
+}: {
+  grid: ActivityGrid;
+  weekdayRows: WeekdayRow[];
+  skeletonColor: string;
+  prefersReducedMotion: boolean;
+}) => {
+  const intl = useIntl();
+  // Keep grid placement in inline styles so all 371 placeholder cells share
+  // two Emotion classes instead of generating a class per coordinate.
+  const cellSx = useMemo(
+    () => ({
+      width: activityHeatmapGeometry.cellSize,
+      height: activityHeatmapGeometry.cellSize,
+      borderRadius: CELL_BORDER_RADIUS,
+      bgcolor: skeletonColor,
+      pointerEvents: "none" as const,
+    }),
+    [skeletonColor],
+  );
+
+  return (
+    <Box
+      role="status"
+      aria-label={intl.formatMessage({
+        defaultMessage: "Loading daily activity",
+      })}
+      data-testid="activity-heatmap-skeleton"
+    >
+      <ActivityHeatmapFrame
+        weekdayRows={weekdayRows}
+        endDate={grid.endDate}
+        interactive={false}
+      >
+        <Box
+          data-testid="activity-heatmap-skeleton-grid"
+          sx={{
+            ...heatmapGridSx(grid.weeks.length),
+            ...skeletonPulseSx(prefersReducedMotion),
+          }}
+        >
+          {grid.weeks.flatMap((week, weekIndex) =>
+            week.map((cell, dayIndex) => (
+              <Box
+                key={cell.localDate}
+                aria-hidden="true"
+                data-future={cell.isFuture ? "true" : undefined}
+                data-testid="activity-heatmap-skeleton-cell"
+                style={{
+                  gridColumn: weekIndex + 1,
+                  gridRow: dayIndex + 1,
+                }}
+                sx={cell.isFuture ? SKELETON_FUTURE_CELL_SX : cellSx}
+              />
+            )),
+          )}
+        </Box>
+      </ActivityHeatmapFrame>
+    </Box>
+  );
+};
+
+const ActivityHeatmapGrid = ({
   grid,
   colors,
   accessibleSummary,
   weekdayRows,
   describeCell,
+  prefersReducedMotion,
 }: {
-  status: DailyActivityStatus;
   grid: ActivityGrid;
   colors: HeatmapColors;
   accessibleSummary: string;
   weekdayRows: WeekdayRow[];
   describeCell: CellDescription;
+  prefersReducedMotion: boolean;
 }) => {
-  const intl = useIntl();
   const theme = useTheme();
 
-  if (status === "loading" || status === "idle") {
+  // Heatmap cells are 10px squares, so the tooltip sits over neighboring rows.
+  // Non-interactive poppers with instant exit keep pointer sweeps unobstructed.
+  const tooltipSlotProps = useMemo<TooltipProps["slotProps"]>(
+    () => ({
+      tooltip: { sx: { fontFamily: "var(--font-data)" } },
+      transition: {
+        exit: false,
+        timeout: {
+          enter: prefersReducedMotion ? 0 : HEATMAP_TOOLTIP_ENTER_MS,
+        },
+      },
+    }),
+    [prefersReducedMotion],
+  );
+
+  return (
+    <ActivityHeatmapFrame
+      weekdayRows={weekdayRows}
+      endDate={grid.endDate}
+      interactive
+    >
+      <Box
+        role="img"
+        aria-label={accessibleSummary}
+        sx={heatmapGridSx(grid.weeks.length)}
+      >
+        {grid.weeks.flatMap((week, weekIndex) =>
+          week.map((cell, dayIndex) => (
+            <Tooltip
+              key={cell.localDate}
+              title={
+                cell.isFuture
+                  ? ""
+                  : describeCell(cell.localDate, cell.wordCount)
+              }
+              arrow
+              placement="top"
+              disableInteractive
+              disableHoverListener={cell.isFuture}
+              enterDelay={0}
+              enterNextDelay={0}
+              leaveDelay={0}
+              slotProps={tooltipSlotProps}
+            >
+              <Box
+                aria-hidden="true"
+                data-date={cell.localDate}
+                data-word-count={cell.wordCount}
+                data-intensity={cell.intensity}
+                data-testid="activity-day"
+                sx={{
+                  gridColumn: weekIndex + 1,
+                  gridRow: dayIndex + 1,
+                  width: activityHeatmapGeometry.cellSize,
+                  height: activityHeatmapGeometry.cellSize,
+                  borderRadius: CELL_BORDER_RADIUS,
+                  bgcolor: cell.isFuture
+                    ? "transparent"
+                    : colors[compactIntensity(cell.intensity)],
+                  outline: cell.isToday
+                    ? `1px solid ${theme.palette.text.secondary}`
+                    : "none",
+                  outlineOffset: 1,
+                  pointerEvents: cell.isFuture ? "none" : "auto",
+                  transformOrigin: "center",
+                  transition: `transform ${duration.fast}s ${cssEase(easeOutQuint)}`,
+                  "@media (hover: hover) and (pointer: fine)": cell.isFuture
+                    ? {}
+                    : {
+                        "&:hover": {
+                          transform: `scale(${activityHeatmapGeometry.cellHoverScale})`,
+                          outline: `1px solid ${theme.palette.text.primary}`,
+                          zIndex: 1,
+                        },
+                      },
+                  "@media (prefers-reduced-motion: reduce)": {
+                    transition: "none",
+                    "&:hover": { transform: "none" },
+                  },
+                }}
+              />
+            </Tooltip>
+          )),
+        )}
+      </Box>
+    </ActivityHeatmapFrame>
+  );
+};
+
+const ActivityHeatmapStatus = ({
+  presentation,
+  grid,
+  colors,
+  skeletonColor,
+  accessibleSummary,
+  weekdayRows,
+  describeCell,
+  prefersReducedMotion,
+}: {
+  presentation: HeatmapPresentation;
+  grid: ActivityGrid;
+  colors: HeatmapColors;
+  skeletonColor: string;
+  accessibleSummary: string;
+  weekdayRows: WeekdayRow[];
+  describeCell: CellDescription;
+  prefersReducedMotion: boolean;
+}) => {
+  const theme = useTheme();
+
+  if (presentation === "skeleton") {
     return (
-      <LinearProgress
-        aria-label={intl.formatMessage({
-          defaultMessage: "Loading daily activity",
-        })}
+      <ActivityHeatmapSkeleton
+        grid={grid}
+        weekdayRows={weekdayRows}
+        skeletonColor={skeletonColor}
+        prefersReducedMotion={prefersReducedMotion}
       />
     );
   }
-  if (status === "error") {
+  if (presentation === "error") {
     return (
       <Typography
         role="status"
@@ -347,6 +538,7 @@ const ActivityHeatmapStatus = ({
       accessibleSummary={accessibleSummary}
       weekdayRows={weekdayRows}
       describeCell={describeCell}
+      prefersReducedMotion={prefersReducedMotion}
     />
   );
 };
@@ -374,45 +566,52 @@ const AccessibleActivityList = ({
 );
 
 const ActivityHeatmapResults = ({
-  status,
+  presentation,
   grid,
   colors,
+  skeletonColor,
   accessibleSummary,
   weekdayRows,
   describeCell,
   visibleCells,
   activeDays,
+  prefersReducedMotion,
 }: {
-  status: DailyActivityStatus;
+  presentation: HeatmapPresentation;
   grid: ActivityGrid;
   colors: HeatmapColors;
+  skeletonColor: string;
   accessibleSummary: string;
   weekdayRows: WeekdayRow[];
   describeCell: CellDescription;
   visibleCells: ActivityGridCell[];
   activeDays: number;
+  prefersReducedMotion: boolean;
 }) => {
   const theme = useTheme();
   const intl = useIntl();
+  const isReady = presentation === "ready";
 
   return (
     <>
       <ActivityHeatmapStatus
-        status={status}
+        presentation={presentation}
         grid={grid}
         colors={colors}
+        skeletonColor={skeletonColor}
         accessibleSummary={accessibleSummary}
         weekdayRows={weekdayRows}
         describeCell={describeCell}
+        prefersReducedMotion={prefersReducedMotion}
       />
-      {status === "success" ? (
+      {isReady ? (
         <AccessibleActivityList
           cells={visibleCells}
           describeCell={describeCell}
           intl={intl}
         />
       ) : null}
-      {status === "success" && activeDays === 0 ? (
+      {isReady && activeDays === 0 ? (
         <Typography
           variant="body2"
           sx={{ color: "text.secondary", mt: theme.spacing(1) }}
@@ -421,6 +620,64 @@ const ActivityHeatmapResults = ({
         </Typography>
       ) : null}
     </>
+  );
+};
+
+const ActivityHeatmapLegendSkeleton = ({
+  swatchKeys,
+  skeletonColor,
+  prefersReducedMotion,
+}: {
+  swatchKeys: HeatmapColors;
+  skeletonColor: string;
+  prefersReducedMotion: boolean;
+}) => {
+  const theme = useTheme();
+
+  return (
+    <Stack
+      aria-hidden="true"
+      data-testid="activity-heatmap-legend-skeleton"
+      direction="row"
+      spacing={0.75}
+      sx={{
+        justifyContent: "flex-end",
+        alignItems: "center",
+        mt: theme.spacing(2.25),
+        ...skeletonPulseSx(prefersReducedMotion),
+      }}
+    >
+      <Box
+        data-testid="activity-heatmap-legend-label-skeleton"
+        sx={{
+          width: LEGEND_LABEL_PLACEHOLDER_WIDTH,
+          height: LEGEND_LABEL_PLACEHOLDER_HEIGHT,
+          borderRadius: CELL_BORDER_RADIUS,
+          bgcolor: skeletonColor,
+        }}
+      />
+      {swatchKeys.map((swatchKey) => (
+        <Box
+          key={swatchKey}
+          data-testid="activity-heatmap-legend-swatch-skeleton"
+          sx={{
+            width: activityHeatmapGeometry.cellSize,
+            height: activityHeatmapGeometry.cellSize,
+            borderRadius: CELL_BORDER_RADIUS,
+            bgcolor: skeletonColor,
+          }}
+        />
+      ))}
+      <Box
+        data-testid="activity-heatmap-legend-label-skeleton"
+        sx={{
+          width: LEGEND_LABEL_PLACEHOLDER_WIDTH,
+          height: LEGEND_LABEL_PLACEHOLDER_HEIGHT,
+          borderRadius: CELL_BORDER_RADIUS,
+          bgcolor: skeletonColor,
+        }}
+      />
+    </Stack>
   );
 };
 
@@ -460,7 +717,7 @@ const ActivityHeatmapLegend = ({ colors }: { colors: HeatmapColors }) => {
           sx={{
             width: activityHeatmapGeometry.cellSize,
             height: activityHeatmapGeometry.cellSize,
-            borderRadius: 0.15,
+            borderRadius: CELL_BORDER_RADIUS,
             bgcolor: color,
           }}
         />
@@ -486,13 +743,18 @@ export const ActivityHeatmap = ({
   today,
 }: ActivityHeatmapProps) => {
   const intl = useIntl();
+  const isDark = useIsDarkMode();
+  const prefersReducedMotion = useMediaQuery(reducedMotionQuery);
+  const presentation = useHeatmapPresentation(status, activity.length > 0);
+  const isSkeleton = presentation === "skeleton";
   const grid = useMemo(
     () => buildActivityGrid(activity, today),
     [activity, today],
   );
-  const palette = useIsDarkMode()
-    ? activityHeatmap.dark
-    : activityHeatmap.light;
+  const palette = isDark ? activityHeatmap.dark : activityHeatmap.light;
+  const skeletonColor = isDark
+    ? activityHeatmapSkeleton.dark
+    : activityHeatmapSkeleton.light;
   const colors: HeatmapColors = [palette[0], palette[1], palette[4]];
   const { visibleCells, activeDays, totalWords } = useMemo(
     () => summarizeActivityGrid(grid),
@@ -520,12 +782,13 @@ export const ActivityHeatmap = ({
       },
       { date: dateFromLocalDateKey(localDate), wordCount },
     );
-  const weekdayRows = makeWeekdayRows(intl);
+  const weekdayRows = useMemo(() => makeWeekdayRows(intl), [intl]);
 
   return (
     <Box
       component="section"
       aria-labelledby="home-activity-heading"
+      aria-busy={isSkeleton ? true : undefined}
       data-testid="home-activity-heatmap"
       sx={{
         minWidth: 0,
@@ -537,20 +800,30 @@ export const ActivityHeatmap = ({
       }}
     >
       <ActivityHeatmapHeader
-        status={status}
+        isReady={presentation === "ready"}
         activeDaysLabel={activeDaysLabel}
       />
       <ActivityHeatmapResults
-        status={status}
+        presentation={presentation}
         grid={grid}
         colors={colors}
+        skeletonColor={skeletonColor}
         accessibleSummary={accessibleSummary}
         weekdayRows={weekdayRows}
         describeCell={describeCell}
         visibleCells={visibleCells}
         activeDays={activeDays}
+        prefersReducedMotion={prefersReducedMotion}
       />
-      <ActivityHeatmapLegend colors={colors} />
+      {isSkeleton ? (
+        <ActivityHeatmapLegendSkeleton
+          swatchKeys={colors}
+          skeletonColor={skeletonColor}
+          prefersReducedMotion={prefersReducedMotion}
+        />
+      ) : (
+        <ActivityHeatmapLegend colors={colors} />
+      )}
     </Box>
   );
 };

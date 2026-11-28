@@ -24,8 +24,17 @@ vi.mock("react-intl", async (importOriginal) => {
 });
 import en from "../../i18n/locales/en.json";
 import { activityHeatmapGeometry } from "../../styles/activity-heatmap";
-import { duration, reducedMotionQuery } from "../../styles/motion";
-import type { DailyWordActivity } from "../../types/home.types";
+import {
+  duration,
+  reducedMotionQuery,
+  skeletonPulse,
+} from "../../styles/motion";
+import { activityHeatmapSkeleton } from "../../styles/palette";
+import type {
+  DailyActivityStatus,
+  DailyWordActivity,
+} from "../../types/home.types";
+import { ACTIVITY_HEATMAP_WEEKS } from "../../utils/activity-grid.utils";
 import { ActivityHeatmap } from "./ActivityHeatmap";
 
 ensureUiHarness();
@@ -52,7 +61,7 @@ describe("ActivityHeatmap", () => {
 
   const renderHeatmap = (
     wordCount: number,
-    status: "success" | "loading" = "success",
+    status: DailyActivityStatus = "success",
     dark = false,
   ) => {
     useIsDarkModeMock.mockReturnValue(dark);
@@ -537,5 +546,351 @@ describe("ActivityHeatmap", () => {
       vi.advanceTimersByTime(1500);
     });
     expect(openTooltipTexts()).toEqual([]);
+  });
+
+  it.each(["idle", "loading"] as const)(
+    "renders a geometry-matched skeleton instead of LinearProgress for %s status",
+    (status) => {
+      const scrollWidth = vi
+        .spyOn(HTMLElement.prototype, "scrollWidth", "get")
+        .mockReturnValue(activityHeatmapGeometry.dayGridWidth);
+      const clientWidth = vi
+        .spyOn(HTMLElement.prototype, "clientWidth", "get")
+        .mockReturnValue(
+          activityHeatmapGeometry.viewportWidth -
+            activityHeatmapGeometry.labelColumnWidth -
+            activityHeatmapGeometry.cellGap,
+        );
+
+      try {
+        renderHeatmap(0, status);
+
+        const section = container.querySelector<HTMLElement>(
+          '[data-testid="home-activity-heatmap"]',
+        );
+        const skeleton = container.querySelector<HTMLElement>(
+          '[data-testid="activity-heatmap-skeleton"]',
+        );
+        const weekdayRail = container.querySelector<HTMLElement>(
+          '[data-testid="activity-heatmap-labels"]',
+        );
+        const viewport = container.querySelector<HTMLElement>(
+          '[data-testid="activity-heatmap-viewport"]',
+        );
+        const skeletonGrid = container.querySelector<HTMLElement>(
+          '[data-testid="activity-heatmap-skeleton-grid"]',
+        );
+        const skeletonCells = container.querySelectorAll<HTMLElement>(
+          '[data-testid="activity-heatmap-skeleton-cell"]',
+        );
+        const legendSkeleton = container.querySelector<HTMLElement>(
+          '[data-testid="activity-heatmap-legend-skeleton"]',
+        );
+        const legendSwatches = container.querySelectorAll<HTMLElement>(
+          '[data-testid="activity-heatmap-legend-swatch-skeleton"]',
+        );
+
+        expect(container.querySelector('[role="progressbar"]')).toBeNull();
+        expect(container.querySelector(".MuiLinearProgress-root")).toBeNull();
+        expect(section?.getAttribute("aria-busy")).toBe("true");
+        expect(skeleton?.getAttribute("role")).toBe("status");
+        expect(skeleton?.getAttribute("aria-label")).toBe(
+          "Loading daily activity",
+        );
+
+        expect(weekdayRail).not.toBeNull();
+        expect(viewport).not.toBeNull();
+        expect(skeletonGrid).not.toBeNull();
+        expect(legendSkeleton).not.toBeNull();
+        expect(
+          container.querySelector('[aria-label="Activity level legend"]'),
+        ).toBeNull();
+        expect(
+          container.querySelectorAll('[data-testid="activity-day"]'),
+        ).toHaveLength(0);
+
+        expect(skeletonCells).toHaveLength(ACTIVITY_HEATMAP_WEEKS * 7);
+        expect(legendSwatches).toHaveLength(3);
+
+        // Seven weekday rows and shared geometry constants.
+        const railStyle = window.getComputedStyle(weekdayRail!);
+        const viewportStyle = window.getComputedStyle(viewport!);
+        const gridStyle = window.getComputedStyle(skeletonGrid!);
+        expect(railStyle.gridTemplateRows).toBe(
+          `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
+        );
+        expect(railStyle.rowGap).toBe(`${activityHeatmapGeometry.cellGap}px`);
+        expect(parseFloat(railStyle.paddingTop)).toBe(
+          activityHeatmapGeometry.cellHoverReach,
+        );
+        expect(viewportStyle.overflowX).toBe("auto");
+        expect(viewportStyle.overflowY).toBe("clip");
+        expect(parseFloat(viewportStyle.paddingTop)).toBe(
+          activityHeatmapGeometry.cellHoverReach,
+        );
+        expect(parseFloat(viewportStyle.paddingBottom)).toBe(
+          activityHeatmapGeometry.cellHoverReach,
+        );
+        expect(viewport!.scrollLeft).toBe(490);
+        // Decorative skeleton viewport stays non-focusable inside aria-hidden.
+        expect(viewport!.getAttribute("tabindex")).toBeNull();
+
+        expect(gridStyle.gridTemplateColumns).toBe(
+          `repeat(${ACTIVITY_HEATMAP_WEEKS}, ${activityHeatmapGeometry.cellSize}px)`,
+        );
+        expect(gridStyle.gridTemplateRows).toBe(
+          `repeat(7, ${activityHeatmapGeometry.cellSize}px)`,
+        );
+        expect(gridStyle.columnGap).toBe(
+          `${activityHeatmapGeometry.cellGap}px`,
+        );
+        expect(gridStyle.rowGap).toBe(`${activityHeatmapGeometry.cellGap}px`);
+
+        const firstCellStyle = window.getComputedStyle(skeletonCells[0]!);
+        expect(firstCellStyle.width).toBe(
+          `${activityHeatmapGeometry.cellSize}px`,
+        );
+        expect(firstCellStyle.height).toBe(
+          `${activityHeatmapGeometry.cellSize}px`,
+        );
+        expect(parseFloat(firstCellStyle.borderRadius)).toBeGreaterThan(0);
+
+        const firstSwatchStyle = window.getComputedStyle(legendSwatches[0]!);
+        expect(firstSwatchStyle.width).toBe(
+          `${activityHeatmapGeometry.cellSize}px`,
+        );
+        expect(firstSwatchStyle.height).toBe(
+          `${activityHeatmapGeometry.cellSize}px`,
+        );
+
+        for (const box of viewport!.querySelectorAll("*")) {
+          expect(window.getComputedStyle(box).overflowY).toBe("visible");
+        }
+      } finally {
+        scrollWidth.mockRestore();
+        clientWidth.mockRestore();
+      }
+    },
+  );
+
+  it("uses theme-aware neutral skeleton fills in light and dark modes without leaking activity colors", () => {
+    const hexToRgb = (hex: string) => {
+      const value = Number.parseInt(hex.slice(1), 16);
+      const red = (value >> 16) & 255;
+      const green = (value >> 8) & 255;
+      const blue = value & 255;
+      return `rgb(${red}, ${green}, ${blue})`;
+    };
+
+    const expectedLightRgb = hexToRgb(activityHeatmapSkeleton.light);
+    const expectedDarkRgb = hexToRgb(activityHeatmapSkeleton.dark);
+
+    renderHeatmap(0, "loading", false);
+    const lightCells = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-testid="activity-heatmap-skeleton-cell"]',
+      ),
+    );
+    const lightPastCell = lightCells.find(
+      (cell) => cell.dataset.future !== "true",
+    );
+    const lightFutureCell = lightCells.find(
+      (cell) => cell.dataset.future === "true",
+    );
+    const lightSwatch = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-legend-swatch-skeleton"]',
+    );
+
+    expect(window.getComputedStyle(lightPastCell!).backgroundColor).toBe(
+      expectedLightRgb,
+    );
+    expect(window.getComputedStyle(lightSwatch!).backgroundColor).toBe(
+      expectedLightRgb,
+    );
+    expect(window.getComputedStyle(lightFutureCell!).backgroundColor).toBe(
+      "rgba(0, 0, 0, 0)",
+    );
+
+    renderHeatmap(0, "loading", true);
+    const darkCells = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-testid="activity-heatmap-skeleton-cell"]',
+      ),
+    );
+    const darkPastCell = darkCells.find(
+      (cell) => cell.dataset.future !== "true",
+    );
+    const darkSwatch = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-legend-swatch-skeleton"]',
+    );
+
+    expect(window.getComputedStyle(darkPastCell!).backgroundColor).toBe(
+      expectedDarkRgb,
+    );
+    expect(window.getComputedStyle(darkSwatch!).backgroundColor).toBe(
+      expectedDarkRgb,
+    );
+    expect(expectedDarkRgb).not.toBe(expectedLightRgb);
+  });
+
+  it("disables skeleton pulse animation when reduced motion is preferred", () => {
+    renderHeatmap(0, "loading");
+    const animatedGrid = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-skeleton-grid"]',
+    );
+    const animatedLegend = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-legend-skeleton"]',
+    );
+    const animatedGridCss = window.getComputedStyle(animatedGrid!).animation;
+    const animatedLegendCss = window.getComputedStyle(
+      animatedLegend!,
+    ).animation;
+    expect(animatedGridCss).toContain(`${skeletonPulse.duration}s`);
+    expect(animatedGridCss).toContain("infinite");
+    expect(animatedLegendCss).toContain(`${skeletonPulse.duration}s`);
+    expect(animatedLegendCss).toContain("infinite");
+
+    const gridClass = Array.from(animatedGrid!.classList).find((name) =>
+      name.startsWith("css-"),
+    );
+    const emotionCss = Array.from(
+      document.querySelectorAll("style[data-emotion]"),
+      (style) => style.textContent ?? "",
+    )
+      .join("\n")
+      .replace(/\s+/g, "");
+    expect(emotionCss).toContain(
+      `@media(prefers-reduced-motion:reduce){.${gridClass}{`,
+    );
+    expect(emotionCss).toContain("animation:none");
+
+    setMatchMedia((query) => query === reducedMotionQuery);
+    renderHeatmap(0, "loading");
+
+    const staticGrid = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-skeleton-grid"]',
+    );
+    const staticLegend = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-legend-skeleton"]',
+    );
+    expect(window.getComputedStyle(staticGrid!).animation).toBe("none");
+    expect(window.getComputedStyle(staticLegend!).animation).toBe("none");
+  });
+
+  it("preserves identical layout geometry when transitioning from loading to success", () => {
+    const readLayoutMetrics = () => {
+      const layout = container.querySelector<HTMLElement>(
+        '[data-testid="activity-heatmap-layout"]',
+      );
+      const rail = container.querySelector<HTMLElement>(
+        '[data-testid="activity-heatmap-labels"]',
+      );
+      const viewport = container.querySelector<HTMLElement>(
+        '[data-testid="activity-heatmap-viewport"]',
+      );
+      const gridWrapper = viewport?.firstElementChild as HTMLElement | null;
+      const grid = gridWrapper?.firstElementChild as HTMLElement | null;
+      const legend =
+        container.querySelector<HTMLElement>(
+          '[data-testid="activity-heatmap-legend-skeleton"]',
+        ) ??
+        container.querySelector<HTMLElement>(
+          '[aria-label="Activity level legend"]',
+        );
+
+      return {
+        layoutColumnGap: window.getComputedStyle(layout!).columnGap,
+        railFlex: window.getComputedStyle(rail!).flex,
+        railRows: window.getComputedStyle(rail!).gridTemplateRows,
+        railRowGap: window.getComputedStyle(rail!).rowGap,
+        railPaddingTop: window.getComputedStyle(rail!).paddingTop,
+        viewportPadding: window.getComputedStyle(viewport!).padding,
+        viewportOverflowX: window.getComputedStyle(viewport!).overflowX,
+        viewportOverflowY: window.getComputedStyle(viewport!).overflowY,
+        gridMinWidth: window.getComputedStyle(gridWrapper!).minWidth,
+        gridColumns: window.getComputedStyle(grid!).gridTemplateColumns,
+        gridRows: window.getComputedStyle(grid!).gridTemplateRows,
+        gridColumnGap: window.getComputedStyle(grid!).columnGap,
+        gridRowGap: window.getComputedStyle(grid!).rowGap,
+        legendMarginTop: window.getComputedStyle(legend!).marginTop,
+      };
+    };
+
+    renderHeatmap(0, "loading");
+    const loadingMetrics = readLayoutMetrics();
+    expect(
+      container.querySelector('[data-testid="activity-heatmap-skeleton"]'),
+    ).not.toBeNull();
+
+    renderHeatmap(120, "success");
+    const readyMetrics = readLayoutMetrics();
+    expect(
+      container.querySelector('[data-testid="activity-heatmap-skeleton"]'),
+    ).toBeNull();
+    expect(
+      container
+        .querySelector('[data-testid="home-activity-heatmap"]')
+        ?.getAttribute("aria-busy"),
+    ).toBeNull();
+    expect(
+      container.querySelectorAll('[data-testid="activity-day"]'),
+    ).toHaveLength(ACTIVITY_HEATMAP_WEEKS * 7);
+    expect(
+      container.querySelector('[aria-label="Activity level legend"]'),
+    ).not.toBeNull();
+
+    expect(readyMetrics).toEqual(loadingMetrics);
+  });
+
+  it("renders the real empty heatmap for zero activity and keeps the error message on failure", () => {
+    renderHeatmap(0, "success");
+    expect(
+      container.querySelector('[data-testid="activity-heatmap-skeleton"]'),
+    ).toBeNull();
+    expect(
+      container.querySelectorAll('[data-testid="activity-day"]'),
+    ).toHaveLength(ACTIVITY_HEATMAP_WEEKS * 7);
+    expect(container.textContent).toContain(
+      "Your dictation activity will appear here.",
+    );
+
+    renderHeatmap(0, "error");
+    expect(
+      container.querySelector('[data-testid="activity-heatmap-skeleton"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain(
+      "Daily activity could not be loaded.",
+    );
+  });
+
+  it("avoids flashing a skeleton during refreshes when activity data is already available", () => {
+    // Direct loading render with cached activity keeps the heatmap visible.
+    renderHeatmap(42, "loading");
+    expect(
+      container.querySelector('[data-testid="activity-heatmap-skeleton"]'),
+    ).toBeNull();
+    expect(
+      container.querySelectorAll('[data-testid="activity-day"]'),
+    ).toHaveLength(ACTIVITY_HEATMAP_WEEKS * 7);
+
+    // Refreshing after a settled zero-activity load also stays on the empty heatmap.
+    renderHeatmap(0, "success");
+    renderHeatmap(0, "loading");
+    expect(
+      container.querySelector('[data-testid="activity-heatmap-skeleton"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain(
+      "Your dictation activity will appear here.",
+    );
+
+    // Recovering from an error still displays the skeleton while retrying.
+    renderHeatmap(0, "error");
+    expect(container.textContent).toContain(
+      "Daily activity could not be loaded.",
+    );
+    renderHeatmap(0, "loading");
+    expect(
+      container.querySelector('[data-testid="activity-heatmap-skeleton"]'),
+    ).not.toBeNull();
   });
 });
