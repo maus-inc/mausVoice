@@ -3,7 +3,9 @@ import {
   LinearProgress,
   Stack,
   Tooltip,
+  type TooltipProps,
   Typography,
+  useMediaQuery,
   useTheme,
 } from "@mui/material";
 import { useLayoutEffect, useMemo, useRef } from "react";
@@ -21,8 +23,15 @@ import {
 import { visuallyHidden } from "../../styles/a11y";
 import { activityHeatmap } from "../../styles/palette";
 import { activityHeatmapGeometry } from "../../styles/activity-heatmap";
-import { cssEase, duration, easeOutQuint } from "../../styles/motion";
+import {
+  cssEase,
+  duration,
+  easeOutQuint,
+  reducedMotionQuery,
+} from "../../styles/motion";
 import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
+
+const HEATMAP_TOOLTIP_ENTER_MS = duration.instant * 1000;
 
 type HeatmapColors = readonly string[];
 type CellDescription = (localDate: string, wordCount: number) => string;
@@ -98,8 +107,24 @@ const ActivityHeatmapGrid = ({
   describeCell: CellDescription;
 }) => {
   const theme = useTheme();
+  const prefersReducedMotion = useMediaQuery(reducedMotionQuery);
   const viewportRef = useRef<HTMLDivElement>(null);
   const followsLatestWeek = useRef(true);
+
+  // Heatmap cells are 10px squares, so the tooltip sits over neighboring rows.
+  // Non-interactive poppers with instant exit keep pointer sweeps unobstructed.
+  const tooltipSlotProps = useMemo<TooltipProps["slotProps"]>(
+    () => ({
+      tooltip: { sx: { fontFamily: "var(--font-data)" } },
+      transition: {
+        exit: false,
+        timeout: {
+          enter: prefersReducedMotion ? 0 : HEATMAP_TOOLTIP_ENTER_MS,
+        },
+      },
+    }),
+    [prefersReducedMotion],
+  );
 
   // Keep recent weeks visible on load and after responsive resizing, without
   // pulling readers back after they scroll into older history.
@@ -222,10 +247,12 @@ const ActivityHeatmapGrid = ({
                   }
                   arrow
                   placement="top"
+                  disableInteractive
                   disableHoverListener={cell.isFuture}
-                  slotProps={{
-                    tooltip: { sx: { fontFamily: "var(--font-data)" } },
-                  }}
+                  enterDelay={0}
+                  enterNextDelay={0}
+                  leaveDelay={0}
+                  slotProps={tooltipSlotProps}
                 >
                   <Box
                     aria-hidden="true"
