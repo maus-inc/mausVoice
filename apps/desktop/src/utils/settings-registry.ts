@@ -105,6 +105,7 @@ export const SETTING_GROUPS: SettingGroupMeta[] = [
   { key: "language", page: "dictation" },
   { key: "while_you_dictate", page: "dictation" },
   { key: "output", page: "dictation" },
+  { key: "reminders", page: "dictation" },
 
   { key: "transcription", page: "ai-models" },
   { key: "post_processing", page: "ai-models" },
@@ -176,6 +177,16 @@ export const SETTING_ENTRIES: SettingEntry[] = [
     review_before_insert: ["review", "composer", "approve"],
     dictation_limit: ["max length", "timeout", "limit"],
     hands_free_output_delay: ["delay", "handsfree", "wait"],
+  }),
+  ...settingsForGroup("dictation", "reminders", {
+    voice_typing_tip: [
+      "typing tip",
+      "reminder",
+      "nudge",
+      "snooze",
+      "no thanks",
+      "voice typing",
+    ],
   }),
 
   ...settingsForGroup("ai-models", "transcription", {

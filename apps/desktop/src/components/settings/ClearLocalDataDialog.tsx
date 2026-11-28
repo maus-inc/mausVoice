@@ -17,6 +17,7 @@ import { ConfirmationField } from "./ConfirmationField";
 import { ConsequenceList } from "./ConsequenceList";
 import { BusyButtonLabel } from "../common/BusyButtonLabel";
 import { resetAutoLearnSessionState } from "../../actions/edit-watch.actions";
+import { resetVoiceTypingTipSessionState } from "../../actions/voice-typing-tip.actions";
 import {
   clearAppLocalStorage,
   removeLocalDataClearPendingMarker,
@@ -178,6 +179,7 @@ export const ClearLocalDataDialog = () => {
       await invoke("clear_local_data");
       resetPendingTranscriptionDeletes();
       resetAutoLearnSessionState();
+      resetVoiceTypingTipSessionState();
       clearAppLocalStorage();
 
       if (subsystemStopFailed) {

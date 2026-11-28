@@ -18,6 +18,15 @@ const CONFIRM_CANCEL_TOAST_ACTION_LABEL = defineMessage({
 });
 const ADD_TOAST_ACTION_LABEL = defineMessage({ defaultMessage: "Add" });
 const IGNORE_TOAST_ACTION_LABEL = defineMessage({ defaultMessage: "Ignore" });
+const TRY_VOICE_TYPING_TOAST_ACTION_LABEL = defineMessage({
+  defaultMessage: "Try voice typing",
+});
+const SET_UP_VOICE_TYPING_TOAST_ACTION_LABEL = defineMessage({
+  defaultMessage: "Set up voice typing",
+});
+const NO_THANKS_TOAST_ACTION_LABEL = defineMessage({
+  defaultMessage: "No thanks",
+});
 
 /** Every action's button wording, keyed so no path can fall off the end. */
 const TOAST_ACTION_LABELS: Record<ToastAction, MessageDescriptor> = {
@@ -29,6 +38,9 @@ const TOAST_ACTION_LABELS: Record<ToastAction, MessageDescriptor> = {
   confirm_cancel_transcription: CONFIRM_CANCEL_TOAST_ACTION_LABEL,
   auto_learn_accept: ADD_TOAST_ACTION_LABEL,
   auto_learn_reject: IGNORE_TOAST_ACTION_LABEL,
+  voice_typing_tip_try: TRY_VOICE_TYPING_TOAST_ACTION_LABEL,
+  voice_typing_tip_setup: SET_UP_VOICE_TYPING_TOAST_ACTION_LABEL,
+  voice_typing_tip_no_thanks: NO_THANKS_TOAST_ACTION_LABEL,
 };
 
 export const getToastActionLabel = (action: ToastAction): string =>

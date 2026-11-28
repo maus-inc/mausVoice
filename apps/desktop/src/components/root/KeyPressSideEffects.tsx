@@ -56,7 +56,7 @@ const HTML_TO_RDEV: Record<string, string> = {
   NumpadEqual: "KpEqual",
 };
 
-const htmlCodeToRdevLabel = (code: string): string => {
+export const htmlCodeToRdevLabel = (code: string): string => {
   return HTML_TO_RDEV[code] ?? code;
 };
 

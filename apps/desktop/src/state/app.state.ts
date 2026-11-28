@@ -43,6 +43,7 @@ import {
   TranscriptionsState,
 } from "./transcriptions.state";
 import { INITIAL_UPDATER_STATE, UpdaterState } from "./updater.state";
+import type { VoiceTypingTipPromptState } from "./voice-typing-tip.state";
 import {
   INITIAL_VOQUILL_MIGRATION_STATE,
   type VoquillMigrationState,
@@ -157,6 +158,11 @@ export type AppState = {
    * in `pill-review.actions`.
    */
   pendingPillReview: Nullable<{ id: string; text: string }>;
+  /**
+   * Active sustained-typing voice tip prompt, kept transient outside `local` so
+   * appearance and the 10-second "No thanks" reveal never write localStorage.
+   */
+  voiceTypingTipPrompt: Nullable<VoiceTypingTipPromptState>;
   home: HomeState;
   chat: ChatState;
 
@@ -248,6 +254,7 @@ export const INITIAL_APP_STATE: AppState = {
   pillConversationId: null,
   assistantInputMode: "voice",
   pendingPillReview: null,
+  voiceTypingTipPrompt: null,
   home: INITIAL_HOME_STATE,
   local: INITIAL_LOCAL_STATE,
   chat: INITIAL_CHAT_STATE,

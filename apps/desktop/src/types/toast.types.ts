@@ -9,6 +9,9 @@ const TOAST_ACTIONS = [
   "confirm_cancel_transcription",
   "auto_learn_accept",
   "auto_learn_reject",
+  "voice_typing_tip_try",
+  "voice_typing_tip_setup",
+  "voice_typing_tip_no_thanks",
 ] as const;
 
 export type ToastAction = (typeof TOAST_ACTIONS)[number];

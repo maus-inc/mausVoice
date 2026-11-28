@@ -15,6 +15,10 @@ import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage, sendPillStageText } from "./overlay.utils";
 import { markPipeline, type PipelineTrace } from "./pipeline-trace";
+import {
+  beginSimulatedTypingGuard,
+  endSimulatedTypingGuard,
+} from "./simulated-typing-guard";
 import { sanitizeIndentation } from "./string.utils";
 import { getMyUserPreferences } from "./user.utils";
 import { withLocalDataWrite } from "./local-data-write-gate";
@@ -142,6 +146,7 @@ export const insertLocalTranscriptOutputViaTyping = async (
     }
   };
   window.addEventListener("keydown", keydownHandler);
+  beginSimulatedTypingGuard();
 
   try {
     return await invoke<SimulatedTypingOutcome>("simulate_type", {
@@ -149,6 +154,7 @@ export const insertLocalTranscriptOutputViaTyping = async (
       delayMs,
     });
   } finally {
+    endSimulatedTypingGuard();
     window.removeEventListener("blur", handleCancel);
     window.removeEventListener("keydown", keydownHandler);
   }

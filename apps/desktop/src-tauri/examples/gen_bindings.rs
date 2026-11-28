@@ -23,6 +23,7 @@ fn main() {
         check_focused_paste_target,
         check_for_channel_update,
         check_microphone_permission,
+        check_typing_tip_target_eligibility,
         clear_local_data,
         close_microphone,
         complete_local_data_clear,

@@ -12,6 +12,7 @@ import { PermissionSideEffects } from "./PermissionSideEffects";
 import { RootConfetti } from "./RootConfetti";
 import { RootDialogs } from "./RootDialogs";
 import { RootSideEffects } from "./RootSideEffects";
+import { VoiceTypingTipSideEffects } from "./VoiceTypingTipSideEffects";
 import { ContextMenuProvider } from "../common/ContextMenu";
 
 function ErrorFallback({
@@ -55,6 +56,7 @@ export default function Root() {
       <RootConfetti />
       <RootSideEffects />
       <OverlaySyncSideEffects />
+      <VoiceTypingTipSideEffects />
       {/* Owns the held capture device, so it renders wherever a recording can be
           started: the main window and every dictation surface. */}
       <MicrophoneReadinessSideEffects />

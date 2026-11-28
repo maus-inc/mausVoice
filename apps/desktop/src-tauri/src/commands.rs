@@ -6189,6 +6189,21 @@ pub async fn check_focused_paste_target() -> Result<PasteTargetState, String> {
 
 #[tauri::command]
 #[specta::specta]
+pub async fn check_typing_tip_target_eligibility(
+) -> Result<crate::platform::typing_tip::TypingTipTargetEligibility, String> {
+    tokio::time::timeout(
+        std::time::Duration::from_millis(750),
+        tauri::async_runtime::spawn_blocking(
+            crate::platform::typing_tip::check_typing_tip_target_eligibility,
+        ),
+    )
+    .await
+    .map_err(|_| "check_typing_tip_target_eligibility timed out".to_string())?
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn get_keyboard_language() -> Result<String, String> {
     crate::platform::keyboard_language::get_keyboard_language()
 }
