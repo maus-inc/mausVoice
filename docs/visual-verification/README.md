@@ -78,9 +78,10 @@ cover, such as a dashboard route reached only through the mocked desktop app.
 The documented pattern, from that record: a `/tmp` directory outside the repository,
 `puppeteer-core` plus one Chromium payload, and a script that walks the routes.
 
-The repository's own installer is the shortest path, and it needs no download host:
-`@sparticuz/chromium` is on npm, carries a brotli-compressed browser plus its shared
-libraries, and resolves from the npm cache when the machine already has one.
+The repository provides two throwaway Chromium paths on restricted Linux x86-64 hosts, neither requiring browser download CDNs:
+
+- **Lightweight screenshot path (when npm is reachable).** `node scripts/verify/install-chromium.mjs --dir /tmp/chr` unpacks `@sparticuz/chromium` and its shared libraries into `/tmp/chr` without downloading the full vendor archive.
+- **Full vendored path (offline or when recording video/GIFs).** `vendor/sandbox-toolchain` carries headless Chromium at `system/tools/bin/chromium` along with `ffmpeg`, `ffprobe`, `gifsicle`, `tesseract`, and the WebDriver driver chain. Follow `engineering/sandbox-vendored-toolchain.md` and `FETCH.md` on the branch to extract and reassemble it in `/tmp`.
 
 ```bash
 node scripts/verify/install-chromium.mjs --dir /tmp/chr
@@ -157,7 +158,7 @@ Three rules for the capture itself:
   frame each run, and a pair that differs for that reason proves nothing.
 - **Dismiss what covers the surface.** Tip cards and one-time announcements sit over
   exactly the rows a reviewer needs to see, and they render per route, so a route that
-  looks clean today can carry one after a copy change. Dismiss every tip, wait, and
+  looks clean on one revision can carry one after a copy change. Dismiss every tip, wait, and
   assert none remains before the shutter, as the loop above does. A capture that throws
   that error is a real finding, not a flake: the surface under review was covered.
 - **One viewport per claim.** Capture at the size the claim is about. A 1157×727 window
