@@ -4,6 +4,7 @@ import {
   EarOff,
   Globe,
   Hourglass,
+  Keyboard,
   Languages,
   Mic,
   Pilcrow,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 import { Link, Stack, Typography } from "@mui/material";
 import type { ChangeEvent } from "react";
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { produceAppState, useAppStore } from "../../../store";
@@ -30,7 +31,14 @@ import {
   setReviewBeforeInsert,
   setSpokenCommandsEnabled,
 } from "../../../actions/user.actions";
+import { setVoiceTypingTipEnabled } from "../../../actions/voice-typing-tip.actions";
 import { loadTones } from "../../../actions/tone.actions";
+import {
+  VOICE_TYPING_TIP_SNOOZE_MS,
+  getVoiceTypingTipSnoozeRemainingMs,
+  isVoiceTypingTipSnoozed,
+  type VoiceTypingTipLocalState,
+} from "../../../utils/voice-typing-tip";
 import {
   MAX_DICTATION_LIMIT_MINUTES,
   getEffectiveDictationLimitMinutes,
@@ -95,10 +103,69 @@ const selectDictationState = (state: AppState) => {
   ] as const;
 };
 
+const useVoiceTypingTipStatus = (): {
+  voiceTypingTip: VoiceTypingTipLocalState;
+  snoozedUntilMs: number | null;
+  snoozeMinutesLeft: number;
+  autoDisabledByDismissLimit: boolean;
+} => {
+  const voiceTypingTip = useAppStore((state) => state.local.voiceTypingTip);
+  const [statusClockMs, setStatusClockMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    setStatusClockMs(Date.now());
+    if (!voiceTypingTip.enabled || !isVoiceTypingTipSnoozed(voiceTypingTip)) {
+      return;
+    }
+    const interval = setInterval(() => {
+      const nowMs = Date.now();
+      setStatusClockMs(nowMs);
+      // Stop ticking once the snooze lapses: the caption has already flipped
+      // back to its default, so nothing here needs the clock anymore.
+      if (!isVoiceTypingTipSnoozed(voiceTypingTip, nowMs)) {
+        clearInterval(interval);
+      }
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [voiceTypingTip]);
+
+  const snoozed = isVoiceTypingTipSnoozed(voiceTypingTip, statusClockMs);
+  const snoozedUntilMs =
+    snoozed && voiceTypingTip.snoozedUntilMs !== null
+      ? Math.min(
+          voiceTypingTip.snoozedUntilMs,
+          statusClockMs + VOICE_TYPING_TIP_SNOOZE_MS,
+        )
+      : null;
+  const snoozeMinutesLeft = Math.max(
+    1,
+    Math.ceil(
+      getVoiceTypingTipSnoozeRemainingMs(voiceTypingTip, statusClockMs) /
+        60_000,
+    ),
+  );
+  const autoDisabledByDismissLimit =
+    !voiceTypingTip.enabled &&
+    voiceTypingTip.disabledReason === "auto_dismiss_limit";
+
+  return {
+    voiceTypingTip,
+    snoozedUntilMs,
+    snoozeMinutesLeft,
+    autoDisabledByDismissLimit,
+  };
+};
+
 export default function DictationSettingsPage() {
   const intl = useIntl();
   const navigate = useNavigate();
   const availability = useSettingsAvailability();
+  const {
+    voiceTypingTip,
+    snoozedUntilMs,
+    snoozeMinutesLeft,
+    autoDisabledByDismissLimit,
+  } = useVoiceTypingTipStatus();
 
   const [
     dictationLanguage,
@@ -413,6 +480,59 @@ export default function DictationSettingsPage() {
               step={0.5}
             />
           }
+        />
+      </SettingGroup>
+
+      <SettingGroup title={<FormattedMessage defaultMessage="Reminders" />}>
+        <SettingToggleRow
+          settingKey="voice_typing_tip"
+          title={<FormattedMessage defaultMessage="Voice typing tip" />}
+          description={
+            <Stack component="span" spacing={0.5} sx={{ display: "flex" }}>
+              <Typography
+                variant="body2"
+                component="span"
+                sx={{ color: "inherit" }}
+              >
+                <FormattedMessage defaultMessage="Shows a quiet tip after sustained typing to remind you that you can dictate instead." />
+              </Typography>
+              {snoozedUntilMs !== null && (
+                <Typography
+                  variant="caption"
+                  component="span"
+                  data-voice-typing-tip-status="snoozed"
+                  sx={{ color: "text.secondary" }}
+                >
+                  <FormattedMessage
+                    defaultMessage="Snoozed until {time} ({minutes, plural, one {# min left} other {# min left}})."
+                    values={{
+                      time: intl.formatTime(snoozedUntilMs, {
+                        hour: "numeric",
+                        minute: "2-digit",
+                      }),
+                      minutes: snoozeMinutesLeft,
+                    }}
+                  />
+                </Typography>
+              )}
+              {autoDisabledByDismissLimit && (
+                <Typography
+                  variant="caption"
+                  component="span"
+                  data-voice-typing-tip-status="auto-disabled"
+                  sx={{ color: "text.secondary" }}
+                >
+                  <FormattedMessage defaultMessage='Turned off automatically after selecting "No thanks" 5 times in 7 days. Turn back on anytime.' />
+                </Typography>
+              )}
+            </Stack>
+          }
+          icon={<Keyboard {...settingGlyphProps} />}
+          checked={voiceTypingTip.enabled}
+          onChange={togglePageSetting(
+            (enabled) => setVoiceTypingTipEnabled(enabled),
+            "settings page: setVoiceTypingTipEnabled",
+          )}
         />
       </SettingGroup>
     </>

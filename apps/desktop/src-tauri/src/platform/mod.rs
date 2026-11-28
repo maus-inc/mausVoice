@@ -162,6 +162,7 @@ pub mod mic_usage;
 pub mod stream_fault;
 
 pub mod paste_keybind;
+pub mod typing_tip;
 
 #[cfg(desktop)]
 pub mod keyboard;

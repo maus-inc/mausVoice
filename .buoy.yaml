@@ -4,3 +4,11 @@ drift:
       file: guide-markers.css
       value: "3"
       reason: "Ignored via PR #349"
+    - type: hardcoded-color
+      file: TipToaster.tsx
+      value: "1100"
+      reason: "Ignored via PR #394"
+    - type: hardcoded-color
+      file: TipToaster.tsx
+      value: "1100"
+      reason: "Ignored via PR #394"

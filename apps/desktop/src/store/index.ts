@@ -8,6 +8,7 @@ import {
 import { createWithEqualityFn } from "zustand/traditional";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { INITIAL_LOCAL_STATE } from "../state/local.state";
+import { normalizeVoiceTypingTipLocalState } from "../state/voice-typing-tip.state";
 import {
   LOCAL_STATE_STORAGE_KEY,
   PREVIEW_LOCAL_STATE_STORAGE_KEY,
@@ -103,6 +104,9 @@ export const useAppStore = createWithEqualityFn<AppState>()(
           // An ephemeral session is scoped to one run of the app. Restoring it
           // would leave persistence suppressed with no session in progress.
           ephemeralSessionActive: INITIAL_LOCAL_STATE.ephemeralSessionActive,
+          voiceTypingTip: normalizeVoiceTypingTipLocalState(
+            stored.local?.voiceTypingTip,
+          ),
         },
       };
     },

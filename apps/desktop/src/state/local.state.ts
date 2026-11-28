@@ -1,5 +1,9 @@
 import type { OnboardingPageKey } from "./onboarding.state";
 import type { TimingAggregate } from "../utils/pipeline-trace";
+import {
+  INITIAL_VOICE_TYPING_TIP_LOCAL_STATE,
+  type VoiceTypingTipLocalState,
+} from "./voice-typing-tip.state";
 
 export type LocalState = {
   assistantModeEnabled: boolean;
@@ -34,6 +38,11 @@ export type LocalState = {
    * file that was chosen.
    */
   profileImageByUserId: Record<string, string>;
+  /**
+   * Sustained-typing voice tip preference, 1-hour snooze deadline, rolling
+   * 7-day "No thanks" timestamps, and auto-opt-out state.
+   */
+  voiceTypingTip: VoiceTypingTipLocalState;
 };
 
 export const INITIAL_LOCAL_STATE: LocalState = {
@@ -56,4 +65,5 @@ export const INITIAL_LOCAL_STATE: LocalState = {
   onboardingSessionUserId: null,
   providerTiming: {},
   profileImageByUserId: {},
+  voiceTypingTip: INITIAL_VOICE_TYPING_TIP_LOCAL_STATE,
 };

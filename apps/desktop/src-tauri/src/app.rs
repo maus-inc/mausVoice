@@ -1061,6 +1061,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::read_accessibility_field_values,
             crate::commands::resolve_app_pids,
             crate::commands::check_focused_paste_target,
+            crate::commands::check_typing_tip_target_eligibility,
             crate::commands::run_terminal_command,
             crate::commands::get_hotkey_strategy,
             crate::commands::supports_app_detection,

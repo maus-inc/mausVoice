@@ -20,6 +20,7 @@ import { AppViewport } from "../components/root/AppViewport";
 import { RootConfetti } from "../components/root/RootConfetti";
 import { RootDialogs } from "../components/root/RootDialogs";
 import { SnackbarEmitter } from "../components/root/SnackbarEmitter";
+import { VoiceTypingTipSideEffects } from "../components/root/VoiceTypingTipSideEffects";
 import { applyPreviewScenario, getActivePreviewScenario } from "./runtime";
 import {
   PREVIEW_SCENARIO_DEFINITIONS,
@@ -185,6 +186,7 @@ export const PreviewRoot = () => {
       <AppViewport>
         <RootConfetti />
         <SnackbarEmitter />
+        <VoiceTypingTipSideEffects />
         <RootDialogs />
         <Outlet />
         <PreviewToolbar />

@@ -1046,6 +1046,171 @@ unsafe fn check_focused_paste_target_impl() -> crate::commands::PasteTargetState
     PasteTargetState::NotEditable
 }
 
+#[link(name = "Carbon", kind = "framework")]
+extern "C" {
+    fn IsSecureEventInputEnabled() -> u8;
+}
+
+unsafe fn frontmost_bundle_and_name() -> (Option<String>, Option<String>) {
+    use cocoa::base::{id, nil};
+    use objc::{class, msg_send, sel, sel_impl};
+    use std::ffi::CStr;
+    use std::os::raw::c_char;
+
+    unsafe fn ns_to_string(ns: id) -> Option<String> {
+        if ns == nil {
+            return None;
+        }
+        let utf8: *const c_char = msg_send![ns, UTF8String];
+        if utf8.is_null() {
+            return None;
+        }
+        Some(CStr::from_ptr(utf8).to_string_lossy().into_owned())
+    }
+
+    let pool: id = msg_send![class!(NSAutoreleasePool), new];
+    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+    if workspace == nil {
+        let _: () = msg_send![pool, drain];
+        return (None, None);
+    }
+    let app: id = msg_send![workspace, frontmostApplication];
+    if app == nil {
+        let _: () = msg_send![pool, drain];
+        return (None, None);
+    }
+    let bundle_ns: id = msg_send![app, bundleIdentifier];
+    let name_ns: id = msg_send![app, localizedName];
+    let pair = (ns_to_string(bundle_ns), ns_to_string(name_ns));
+    let _: () = msg_send![pool, drain];
+    pair
+}
+
+pub(crate) fn check_typing_tip_target_eligibility(
+) -> crate::platform::typing_tip::TypingTipTargetEligibility {
+    use crate::platform::typing_tip::TypingTipTargetEligibility;
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        check_typing_tip_target_eligibility_impl()
+    }))
+    .unwrap_or(TypingTipTargetEligibility::Unknown)
+}
+
+unsafe fn check_typing_tip_target_eligibility_impl(
+) -> crate::platform::typing_tip::TypingTipTargetEligibility {
+    use crate::platform::typing_tip::{
+        classify_context_metadata, classify_macos_focus, MacosFocusMetadata,
+        TypingTipTargetEligibility,
+    };
+
+    if IsSecureEventInputEnabled() != 0 {
+        return TypingTipTargetEligibility::SecureInput;
+    }
+
+    let (bundle_id, workspace_app_name) = frontmost_bundle_and_name();
+    if let Some(early) =
+        classify_context_metadata(&[bundle_id.as_deref(), workspace_app_name.as_deref()], None)
+    {
+        return early;
+    }
+
+    let ax_focused_ui_element = CFString::new("AXFocusedUIElement");
+    let ax_role = CFString::new("AXRole");
+    let ax_subrole = CFString::new("AXSubrole");
+    let ax_parent = CFString::new("AXParent");
+    let ax_title = CFString::new("AXTitle");
+    let ax_value = CFString::new("AXValue");
+    let ax_selected_text = CFString::new("AXSelectedText");
+
+    let system_wide = AXUIElementCreateSystemWide();
+    if system_wide.is_null() {
+        return TypingTipTargetEligibility::Unknown;
+    }
+
+    let mut focused: CFTypeRef = ptr::null();
+    let result = AXUIElementCopyAttributeValue(
+        system_wide,
+        ax_focused_ui_element.as_concrete_TypeRef(),
+        &mut focused,
+    );
+    CFRelease(system_wide);
+
+    if result != AX_ERROR_SUCCESS {
+        return TypingTipTargetEligibility::Unknown;
+    }
+    if focused.is_null() {
+        return TypingTipTargetEligibility::NotEditable;
+    }
+
+    let role = get_string_attribute(focused, ax_role.as_concrete_TypeRef());
+    let subrole = get_string_attribute(focused, ax_subrole.as_concrete_TypeRef());
+
+    let mut window_title: Option<String> = None;
+    let mut ax_app_name: Option<String> = None;
+    let mut current = focused;
+    let mut levels = 0;
+    while levels < MAX_LEVELS_UP {
+        let mut parent: CFTypeRef = ptr::null();
+        let parent_result =
+            AXUIElementCopyAttributeValue(current, ax_parent.as_concrete_TypeRef(), &mut parent);
+        if parent_result != AX_ERROR_SUCCESS || parent.is_null() {
+            break;
+        }
+        let parent_role = get_string_attribute(parent, ax_role.as_concrete_TypeRef());
+        let mut stop = false;
+        match parent_role.as_deref() {
+            Some("AXWindow") if window_title.is_none() => {
+                window_title = get_string_attribute(parent, ax_title.as_concrete_TypeRef());
+            }
+            Some("AXApplication") => {
+                ax_app_name = get_string_attribute(parent, ax_title.as_concrete_TypeRef());
+                stop = true;
+            }
+            _ => {}
+        }
+        if current != focused {
+            CFRelease(current);
+        }
+        if stop {
+            CFRelease(parent);
+            current = focused;
+            break;
+        }
+        current = parent;
+        levels += 1;
+    }
+    if current != focused {
+        CFRelease(current);
+    }
+
+    let inside_web_area = is_element_inside_web_area(focused);
+
+    let mut selected_text_settable = false;
+    let _ = AXUIElementIsAttributeSettable(
+        focused,
+        ax_selected_text.as_concrete_TypeRef(),
+        &mut selected_text_settable,
+    );
+    let mut value_settable = false;
+    let _ = AXUIElementIsAttributeSettable(
+        focused,
+        ax_value.as_concrete_TypeRef(),
+        &mut value_settable,
+    );
+    CFRelease(focused);
+
+    classify_macos_focus(&MacosFocusMetadata {
+        secure_event_input_enabled: false,
+        bundle_id,
+        app_name: workspace_app_name.or(ax_app_name),
+        window_title,
+        ax_role: role,
+        ax_subrole: subrole,
+        is_inside_web_area: inside_web_area,
+        selected_text_settable,
+        value_settable,
+    })
+}
+
 pub fn get_selected_text() -> Option<String> {
     use std::{thread, time::Duration};
 

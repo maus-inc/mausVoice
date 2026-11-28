@@ -2088,6 +2088,46 @@ pub fn check_focused_paste_target() -> crate::commands::PasteTargetState {
     }
 }
 
+pub(crate) fn check_typing_tip_target_eligibility(
+) -> crate::platform::typing_tip::TypingTipTargetEligibility {
+    use crate::platform::typing_tip::{classify_windows_focus, WindowsFocusMetadata};
+
+    let fg = super::input::get_foreground_window_target_info();
+    let uia_probe = run_on_uia_thread(|| {
+        with_automation(|automation| unsafe {
+            let focused = automation.GetFocusedElement()?;
+            let is_password = focused.CurrentIsPassword()?.as_bool();
+            let control_type = get_control_type(&focused);
+            let pid = focused.CurrentProcessId().ok().unwrap_or(0);
+            let identity = if pid > 0 {
+                capture_app_identity(pid as u32)
+            } else {
+                None
+            };
+            Ok((
+                is_password,
+                is_non_text_control(control_type),
+                identity.as_ref().and_then(|id| id.exe_name.clone()),
+                identity.and_then(|id| id.exe_path),
+            ))
+        })
+    });
+
+    let (is_password, is_non_text, exe_name, exe_path) = match uia_probe {
+        Ok((pw, non_text, name, path)) => (Some(pw), Some(non_text), name, path),
+        Err(_) => (None, None, None, None),
+    };
+
+    classify_windows_focus(&WindowsFocusMetadata {
+        window_class: fg.class_name,
+        window_title: fg.title,
+        exe_name,
+        exe_path,
+        is_password,
+        is_non_text_control: is_non_text,
+    })
+}
+
 fn try_get_selected_text_uia() -> Result<Option<String>, windows::core::Error> {
     with_automation(|automation| unsafe {
         let focused = automation.GetFocusedElement()?;

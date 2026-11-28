@@ -1,87 +1,182 @@
 import { stripTrailingCharacters } from "@maus-inc/utilities";
 import { Box, Portal } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import {
+  FormattedMessage,
+  defineMessage,
+  useIntl,
+  type IntlShape,
+} from "react-intl";
 import { useLocation } from "react-router-dom";
+import { formatVoiceTypingTipBody } from "../../actions/voice-typing-tip.actions";
 import { useAppStore } from "../../store";
 import { visuallyHidden } from "../../styles/a11y";
-import { ONBOARDING_TIPS, type OnboardingTipId } from "../../utils/tips";
+import {
+  ONBOARDING_TIPS,
+  type OnboardingTip,
+  type OnboardingTipId,
+} from "../../utils/tips";
+import {
+  classifyWebviewActiveElement,
+  doesElementOverlapBottomRightCorner,
+  type VoiceTypingTipPromptState,
+} from "../../utils/voice-typing-tip";
 import { TIP_COPY, TipCard } from "./TipCard";
+import { VoiceTypingTipCard } from "./VoiceTypingTipCard";
 
-/**
- * The floating tip stack: live onboarding tips render here, bottom-right in
- * the app's toast corner, instead of anchored at the top of their page.
- * Where a tip sits in the page flow it reads as a banner pinned over the
- * content; as a floating row it reads as what it is, a nudge that can be
- * dismissed, the same family as the transient toasts that share the corner.
- *
- * Each tip shows only on the route its feature lives on
- * (`ONBOARDING_TIPS.href`) and while it has not been dismissed. The Help
- * page keeps the in-flow listing of all of them.
- *
- * Mounted once in `DashboardPage`: it must be inside the router (it gates on
- * the route) and an ancestor of every tip route. The Portal keeps the stack
- * out of the content area's overflow. The z-index keeps it under the
- * transient Sonner toasts and the MUI overlays, since a confirmation toast
- * may sit on a tip for a few seconds, but a tip must never sit on a toast.
- *
- * A hidden `role="status"` region announces a tip's title and body the
- * moment it first appears, matching the `aria-live="polite"` region
- * sonner's own toaster already wraps every other toast in. Without it, a
- * screen reader would get no signal at all for a notification a sighted
- * user sees slide into the corner.
- */
-export const TipToaster = () => {
-  const { pathname } = useLocation();
-  const dismissed = useAppStore((s) => s.local.dismissedTipIds ?? []);
-  // React Router renders existing routes with a trailing slash and keeps it
-  // in `pathname`, so strip it before matching, or a trailing-slash URL would
-  // hide the tip.
+type LiveAnnouncement =
+  | { kind: "onboarding"; id: OnboardingTipId }
+  | { kind: "voice-typing"; text: string }
+  | null;
+
+// The delayed "No thanks" action appears after the prompt was announced, so
+// its arrival gets its own polite notice through the same live region.
+const NO_THANKS_REVEAL_ANNOUNCEMENT = defineMessage({
+  defaultMessage: 'The "No thanks" option is now available.',
+});
+
+const shouldShiftVoiceTipToLeft = (): boolean => {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return false;
+  }
+  const active = document.activeElement;
+  if (!active || classifyWebviewActiveElement(active) !== "eligible") {
+    return false;
+  }
+  return doesElementOverlapBottomRightCorner(
+    active.getBoundingClientRect(),
+    window.innerWidth,
+    window.innerHeight,
+  );
+};
+
+const filterRouteOnboardingTips = (
+  pathname: string,
+  dismissed: readonly string[],
+): OnboardingTip[] => {
   const route = stripTrailingCharacters(pathname, "/") || "/";
-  // A tip's href is the page its feature lives on, and it may carry a
-  // `#setting-<key>` anchor for the deep link it opens. The stack matches the
-  // page only, so an anchor in the href does not hide the tip on its own route.
-  const tips = ONBOARDING_TIPS.filter((tip) => {
+  return ONBOARDING_TIPS.filter((tip) => {
     if (!tip.href) return false;
     const path = stripTrailingCharacters(tip.href.split("#")[0], "/") || "/";
     return path === route && !dismissed.includes(tip.id);
   });
+};
 
-  // Sonner's own toaster renders its whole stack with `aria-live="polite"`
-  // (see `SonnerToaster.tsx`), so every ordinary confirmation toast is
-  // announced to a screen reader the moment it appears. This stack holds
-  // its own announcement instead of inheriting one, so a tip gets the same
-  // signal. A stable, comma-joined id string (not the filtered array
-  // itself, a new reference on every render) is the dependency, so the
-  // effect below only runs when the visible set actually changes.
-  const [announcedTip, setAnnouncedTip] = useState<OnboardingTipId | null>(
-    null,
-  );
+const useTipLiveAnnouncement = (
+  tips: readonly OnboardingTip[],
+  voiceTypingTipPrompt: VoiceTypingTipPromptState | null,
+  intl: IntlShape,
+): LiveAnnouncement => {
+  const [announcement, setAnnouncement] = useState<LiveAnnouncement>(null);
   const previousIdsRef = useRef("");
   const currentIds = tips.map((tip) => tip.id).join(",");
+
   useEffect(() => {
     const previousIds = previousIdsRef.current
       ? previousIdsRef.current.split(",")
       : [];
     const newlyShown = tips.find((tip) => !previousIds.includes(tip.id));
-    if (newlyShown) setAnnouncedTip(newlyShown.id);
+    if (newlyShown) {
+      setAnnouncement({ kind: "onboarding", id: newlyShown.id });
+    }
     previousIdsRef.current = currentIds;
-    // `tips` is rebuilt every render; `currentIds` is its stable summary,
-    // and that summary is what should gate this effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentIds]);
 
+  const lastAnnouncedVoicePromptIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (
+      !voiceTypingTipPrompt ||
+      lastAnnouncedVoicePromptIdRef.current === voiceTypingTipPrompt.id
+    ) {
+      return;
+    }
+    lastAnnouncedVoicePromptIdRef.current = voiceTypingTipPrompt.id;
+    setAnnouncement({
+      kind: "voice-typing",
+      text: formatVoiceTypingTipBody(voiceTypingTipPrompt, intl),
+    });
+  }, [intl, voiceTypingTipPrompt]);
+
+  const announcedNoThanksRevealForIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const prompt = voiceTypingTipPrompt;
+    if (!prompt?.noThanksVisible) {
+      return;
+    }
+    if (announcedNoThanksRevealForIdRef.current === prompt.id) {
+      return;
+    }
+    announcedNoThanksRevealForIdRef.current = prompt.id;
+    setAnnouncement({
+      kind: "voice-typing",
+      text: intl.formatMessage(NO_THANKS_REVEAL_ANNOUNCEMENT),
+    });
+  }, [intl, voiceTypingTipPrompt]);
+
+  return announcement;
+};
+
+const useVoiceTypingTipDockLeft = (
+  voiceTypingTipPrompt: VoiceTypingTipPromptState | null,
+): boolean => {
+  const [dockBottomLeft, setDockBottomLeft] = useState(false);
+
+  useEffect(() => {
+    if (!voiceTypingTipPrompt) {
+      setDockBottomLeft(false);
+      return;
+    }
+    const updateDock = () => {
+      setDockBottomLeft(shouldShiftVoiceTipToLeft());
+    };
+    updateDock();
+    window.addEventListener("resize", updateDock);
+    window.addEventListener("focusin", updateDock);
+    // Scroll events do not bubble, so listen in the capture phase to catch
+    // inner scrollable panes moving a focused field into the bottom-right.
+    window.addEventListener("scroll", updateDock, true);
+    return () => {
+      window.removeEventListener("resize", updateDock);
+      window.removeEventListener("focusin", updateDock);
+      window.removeEventListener("scroll", updateDock, true);
+    };
+  }, [voiceTypingTipPrompt]);
+
+  return dockBottomLeft;
+};
+
+/**
+ * The floating tip stack: live onboarding tips and the sustained-typing voice
+ * tip render here, bottom-right in the app's toast corner (shifting the voice
+ * tip to bottom-left when the focused text field occupies the bottom-right).
+ *
+ * A single hidden `role="status"` region announces newly shown tips to screen
+ * readers the moment they appear.
+ */
+export const TipToaster = () => {
+  const intl = useIntl();
+  const { pathname } = useLocation();
+  const dismissed = useAppStore((s) => s.local.dismissedTipIds ?? []);
+  const voiceTypingTipPrompt = useAppStore((s) => s.voiceTypingTipPrompt);
+
+  const tips = filterRouteOnboardingTips(pathname, dismissed);
+  const announcement = useTipLiveAnnouncement(tips, voiceTypingTipPrompt, intl);
+  const dockBottomLeft = useVoiceTypingTipDockLeft(voiceTypingTipPrompt);
+  const rightStackBottom = import.meta.env.MODE === "preview" ? 68 : 16;
+
   return (
     <Portal>
-      {/* Always mounted, even with nothing to say: a live region only
-          announces content that changes after it already exists in the
-          DOM, so this span has to be here before `announcedTip` is ever
-          set, not inserted already populated alongside the first tip. */}
       <Box component="span" role="status" sx={visuallyHidden}>
-        {announcedTip && (
+        {announcement?.kind === "onboarding" && (
           <>
             <FormattedMessage defaultMessage="Tip:" />{" "}
-            {TIP_COPY[announcedTip].title}. {TIP_COPY[announcedTip].body}
+            {TIP_COPY[announcement.id].title}. {TIP_COPY[announcement.id].body}
+          </>
+        )}
+        {announcement?.kind === "voice-typing" && (
+          <>
+            <FormattedMessage defaultMessage="Tip:" /> {announcement.text}
           </>
         )}
       </Box>
@@ -89,7 +184,7 @@ export const TipToaster = () => {
         sx={{
           position: "fixed",
           right: 16,
-          bottom: 16,
+          bottom: rightStackBottom,
           zIndex: 1100,
           display: "flex",
           flexDirection: "column",
@@ -98,12 +193,34 @@ export const TipToaster = () => {
           pointerEvents: "none",
         }}
       >
+        {!dockBottomLeft && (
+          <Box
+            data-voice-typing-tip-dock="bottom-right"
+            sx={{ pointerEvents: "auto" }}
+          >
+            <VoiceTypingTipCard />
+          </Box>
+        )}
         {tips.map((tip) => (
           <Box key={tip.id} sx={{ pointerEvents: "auto" }}>
             <TipCard id={tip.id} />
           </Box>
         ))}
       </Box>
+      {dockBottomLeft && (
+        <Box
+          data-voice-typing-tip-dock="bottom-left"
+          sx={{
+            position: "fixed",
+            left: 16,
+            bottom: 16,
+            zIndex: 1100,
+            pointerEvents: "auto",
+          }}
+        >
+          <VoiceTypingTipCard />
+        </Box>
+      )}
     </Portal>
   );
 };

@@ -38,6 +38,7 @@ The overview brings frequently used shortcuts and the currently selected models 
 - **Review before insert** opens the pill's editable panel after processing and before insertion. See [Text insertion options](../using-mausvoice/text-insertion/).
 - **Dictation limit (minutes)** caps one recording, where `0` means no timer. The row shows for the current Local and API transcription modes.
 - **Hands-free output delay (seconds)** sets how long the app waits after you stop speaking before delivering hands-free output.
+- **Voice typing tip** shows a gentle, non-modal reminder to try voice typing after sustained manual typing in standard text fields without reading typed text, field values, or clipboard contents. Selecting **No thanks** after ten seconds snoozes the reminder for one hour, and five dismissals within seven days turn the reminder off automatically until you re-enable it here.
 
 ## AI and models
 

@@ -170,6 +170,14 @@ async checkMicrophonePermission() : Promise<Result<PermissionStatus, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async checkTypingTipTargetEligibility() : Promise<Result<TypingTipTargetEligibility, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_typing_tip_target_eligibility") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async clearLocalData() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("clear_local_data") };
@@ -1622,6 +1630,15 @@ pcm16Le: number[]; sampleRate: number }
 export type TranscriptionAudioSamplesData = { samples: number[]; sampleRate: number }
 export type TranscriptionAudioSnapshot = { filePath: string; durationMs: number }
 export type TrayLanguageMenuItem = { code: string; label: string; checked: boolean }
+/**
+ * Target-safety classification for the sustained-typing voice tip.
+ * 
+ * Kept free of any field-value, selection, or clipboard reads: only structural
+ * roles, secure-input flags, process/bundle identifiers, and window-level
+ * private-browsing markers are inspected, and only the coarse eligibility
+ * verdict crosses IPC.
+ */
+export type TypingTipTargetEligibility = "eligible" | "secure_input" | "private_context" | "not_editable" | "unknown"
 export type User = { id: string; name: string; bio: string; company?: string | null; title?: string | null; onboarded: boolean; preferredMicrophone?: string | null; preferredLanguage?: string | null; wordsThisMonth?: number; wordsThisMonthMonth?: string | null; wordsTotal?: number; playInteractionChime?: boolean; interactionFeedbackVolume?: number | null; hasFinishedTutorial?: boolean; hasMigratedPreferredMicrophone?: boolean; cohort?: string | null; stylingMode?: string | null; selectedToneId?: string | null; activeToneIds?: string | null; streak?: number | null; streakRecordedAt?: string | null; referralSource?: string | null; 
 /**
  * When the profile row was first written. `None` for rows that predate
