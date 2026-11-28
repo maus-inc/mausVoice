@@ -34,19 +34,21 @@ THEME=dark OUT_DIR=/tmp/ui-shots/before-dark \
 # Stop the base preview, start it from the PR-head checkout, and repeat with
 # OUT_DIR=/tmp/ui-shots/after-light and /tmp/ui-shots/after-dark.
 
-# Compose matched full-size pairs; retain only intentional review artifacts.
+# Compose matched full-size pairs outside the repository; pin them in one commit,
+# embed their raw/<pin-sha>/... URLs in the PR description, and delete them in the
+# immediately following commit so review artifacts never land in the base branch.
 montage -background '#101216' -fill '#f5f5f5' -font DejaVu-Sans -pointsize 18 \
   -label "BASE ${BASE_SHA:0:7} · Appearance · light · 900x900" \
   /tmp/ui-shots/before-light/settings-900-appearance.png \
   -label "HEAD ${HEAD_SHA:0:7} · Appearance · light · 900x900" \
   /tmp/ui-shots/after-light/settings-900-appearance.png \
   -tile 2x1 -geometry '900x900+12+38' \
-  docs/visual-verification/<topic>/appearance-light-before-after.png
+  /tmp/ui-shots/appearance-light-before-after.png
 ```
 
 `shot-settings.mjs` defaults to all eight pages at the supported 1280×900, 1100×700, and 800×600 sizes. `SETTINGS_VIEWPORTS=WIDTHxHEIGHT,...` and `SETTINGS_PAGES=route,...` narrow or extend the capture matrix for a specific review; valid route ids are `home`, `dictation`, `ai-models`, `shortcuts`, `appearance`, `privacy-data`, `system`, and `account`. `THEME` selects one scheme and `OUT_DIR` keeps temporary screenshots and geometry JSON outside the source tree. The script verifies the rendered heading, Satoshi font, MUI spacing token, layout geometry, and browser errors; inspect each selected image at full resolution too.
 
-Keep only the final, clearly labeled before/after comparisons and a short Markdown verification note in `docs/visual-verification/<topic>/`. Do not commit transient per-route PNGs, raw measurements, browser profiles, or duplicate screenshot matrices. In the PR description, embed the relevant comparison images with Markdown image links to the committed files so reviewers can see the evidence without browsing the repository. State the base/head SHAs, viewport/theme, browser version, what the harness fakes, what was visually checked, and any limitations; do not claim native-app behavior from the preview harness.
+Do not leave per-PR screenshots, transient per-route PNGs, raw measurements, browser profiles, duplicate screenshot matrices, or per-PR Markdown verification docs in the final PR tree under `docs/visual-verification/` or `docs/assets/` — they bloat the PR and do not need to land in the base branch. Follow the pin-then-delete flow in `docs/visual-verification/README.md`: commit the final comparison images on the PR branch to pin them at a full SHA (`<pin-sha>`), embed those `raw/<pin-sha>/...` Markdown image links above the folds in the PR description, delete the temporary image files in the immediately following commit, and repeat that pin-and-delete cycle whenever subsequent UI changes occur. Put the verification record (base/head SHAs, pinned screenshot SHA, viewport/theme matrix, browser version, what the harness fakes, layout measurements, what was visually checked, and any limitations) inside a folded `<details><summary>Visual verification</summary>` block in the PR description rather than committing a Markdown file to `docs/visual-verification/`; do not claim native-app behavior from the preview harness.
 
 ## Run the verification scripts
 
@@ -81,6 +83,6 @@ The settings capture defaults to light mode. Set `THEME=dark` to check the other
 
 `click-settings.mjs` exercises the eight-page rail, active-page state, settings search (matching and empty results), slash/Escape keyboard behavior, and the Overview actions in both themes. It also checks that rendered switches expose their state and accessible labels, and tabs expose selection. This harness intentionally stubs Tauri and does not mount the full app shell, so global dialogs and preference persistence are verified by the desktop component tests rather than by this click-through.
 
-For group actions, compare the action's measured right edge with the first row's content edge in the geometry JSON emitted to `OUT_DIR`; the values should match. Keep only intentional, reviewer-facing image pairs in `docs/visual-verification/`, not generated measurement dumps.
+For group actions, compare the action's measured right edge with the first row's content edge in the geometry JSON emitted to `OUT_DIR`; the values should match. Keep generated measurement dumps outside the tree and follow the pin-then-delete screenshot flow in `docs/visual-verification/README.md` so no PR-only images or verification records land in the base branch.
 
 `shot-help.mjs` checks `HelpPage`, sibling `DictionaryPage` heading alignment, and live `TipCard` rendering at `1280x900`, `1100x700`, `800x600`, and `560x700` in light and dark themes. It verifies `document.fonts.check('16px Satoshi')`, `--app-spacing`, applied `data-mui-color-scheme`, served tree markers (`[data-tip-title="true"]` on head vs absent on `EXPECTED_TREE=base`), unrounded WCAG AA contrast (`>= 4.5`), card rail alignment, and zero overflow, writing geometry JSON into `OUT_DIR`. `click-help.mjs` verifies `Show again`, gated assistant routing (`off` and `on`), live `TipCard` in-page action and keyboard dismissal, target sizes, keyboard Tab focus traversal with `:focus-visible`, and `320px` reflow, clipped-text, RTL, and tripled-text viewport stress in both themes.
