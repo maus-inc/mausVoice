@@ -160,45 +160,6 @@ const useChatNavigation = ({
     if (keyboard) focusIfUnmoved(focused, () => backRef.current);
   };
 
-  const settleCreatedConversation = async (
-    createdConversationId: string,
-    targetAtRequest: PendingNewChatTarget,
-    settledTarget: PendingNewChatTarget,
-  ): Promise<void> => {
-    let currentTarget = settledTarget;
-    while (
-      currentTarget.selectionAtStart !== targetAtRequest.selectionAtStart
-    ) {
-      const reusable = await resolveReusableEmptyConversation(
-        currentTarget.selectionAtStart,
-      );
-      const latest = latestNewChatTargetRef.current;
-      if (
-        !pageRef.current ||
-        !latest ||
-        navigationIntent.current !== latest.intent
-      ) {
-        return;
-      }
-      if (latest.intent !== currentTarget.intent) {
-        currentTarget = latest;
-        continue;
-      }
-      if (
-        selectedIdRef.current !== currentTarget.selectionAtStart &&
-        selectedIdRef.current !== createdConversationId
-      ) {
-        return;
-      }
-      if (reusable) {
-        finishNewChatSelection(currentTarget, reusable.id);
-        return;
-      }
-      break;
-    }
-    finishNewChatSelection(currentTarget, createdConversationId);
-  };
-
   const isTargetCurrent = (
     target: PendingNewChatTarget | null,
   ): target is PendingNewChatTarget =>
@@ -212,6 +173,36 @@ const useChatNavigation = ({
   ): boolean =>
     selectedIdRef.current === target.selectionAtStart ||
     selectedIdRef.current === resolvedId;
+
+  const settleCreatedConversation = async (
+    createdConversationId: string,
+    selectionAtRequest: string | null,
+    settledTarget: PendingNewChatTarget,
+  ): Promise<void> => {
+    let currentTarget = settledTarget;
+    while (currentTarget.selectionAtStart !== selectionAtRequest) {
+      const reusable = await resolveReusableEmptyConversation(
+        currentTarget.selectionAtStart,
+      );
+      const latest = latestNewChatTargetRef.current;
+      if (!isTargetCurrent(latest)) {
+        return;
+      }
+      if (latest.intent !== currentTarget.intent) {
+        currentTarget = latest;
+        continue;
+      }
+      if (!isSelectionConsistent(currentTarget, createdConversationId)) {
+        return;
+      }
+      finishNewChatSelection(
+        currentTarget,
+        reusable ? reusable.id : createdConversationId,
+      );
+      return;
+    }
+    finishNewChatSelection(currentTarget, createdConversationId);
+  };
 
   const isTargetReadyForCreate = (target: PendingNewChatTarget): boolean =>
     Boolean(
@@ -238,7 +229,7 @@ const useChatNavigation = ({
     if (result.created) {
       await settleCreatedConversation(
         result.conversation.id,
-        target,
+        target.selectionAtStart,
         settledTarget,
       );
       return "done";
@@ -249,8 +240,9 @@ const useChatNavigation = ({
 
   const executeNewChatRun = async () => {
     try {
-      while (isTargetCurrent(latestNewChatTargetRef.current)) {
+      while (true) {
         const target = latestNewChatTargetRef.current;
+        if (!isTargetCurrent(target)) return;
         const now = new Date().toISOString();
         const result = await requestNewConversation(
           target.selectionAtStart,

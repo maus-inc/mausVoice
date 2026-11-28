@@ -13,12 +13,12 @@ const conversationStorage = new Map<string, Conversation>();
 const messagesByConversation = new Map<string, unknown[]>();
 // Referenced lazily inside the factory (see the repo mock below) so the hoisted
 // module never reads it before initialisation.
-const listChatMessages = vi.fn(async (conversationId: string) => [
-  ...(messagesByConversation.get(conversationId) ?? []),
-]);
-const createConversation = vi.fn(async (conversation: Conversation) => {
+const listChatMessages = vi.fn((conversationId: string) =>
+  Promise.resolve([...(messagesByConversation.get(conversationId) ?? [])]),
+);
+const createConversation = vi.fn((conversation: Conversation) => {
   conversationStorage.set(conversation.id, conversation);
-  return conversation;
+  return Promise.resolve(conversation);
 });
 
 // The page tree stays real. Only the persistence boundary is faked, matching
@@ -243,6 +243,16 @@ describe("ChatsPage message loading", () => {
   });
 });
 
+const requireCallback = <Args extends unknown[], Result>(
+  fn: ((...args: Args) => Result) | null,
+  label: string,
+): ((...args: Args) => Result) => {
+  if (!fn) {
+    throw new Error(`Expected pending ${label}`);
+  }
+  return fn;
+};
+
 describe("ChatsPage New Thread deduplication and reuse", () => {
   let page: ReturnType<typeof mountPage> | null = null;
 
@@ -253,15 +263,13 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
     messagesByConversation.clear();
     listChatMessages
       .mockReset()
-      .mockImplementation(async (id: string) => [
-        ...(messagesByConversation.get(id) ?? []),
-      ]);
-    createConversation
-      .mockReset()
-      .mockImplementation(async (conv: Conversation) => {
-        conversationStorage.set(conv.id, conv);
-        return conv;
-      });
+      .mockImplementation((id: string) =>
+        Promise.resolve([...(messagesByConversation.get(id) ?? [])]),
+      );
+    createConversation.mockReset().mockImplementation((conv: Conversation) => {
+      conversationStorage.set(conv.id, conv);
+      return Promise.resolve(conv);
+    });
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
@@ -371,10 +379,7 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
     expect(createConversation).not.toHaveBeenCalled();
 
     await act(async () => {
-      if (!resolveMessages) {
-        throw new Error("Expected pending listChatMessages resolver");
-      }
-      resolveMessages([]);
+      requireCallback(resolveMessages, "listChatMessages resolver")([]);
     });
     await mounted.settle();
 
@@ -417,10 +422,7 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
     expect(createConversation).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      if (!resolveCreate) {
-        throw new Error("Expected pending createConversation resolver");
-      }
-      resolveCreate();
+      requireCallback(resolveCreate, "createConversation resolver")();
     });
     await mounted.waitFor(
       () =>
@@ -464,10 +466,7 @@ describe("ChatsPage New Thread deduplication and reuse", () => {
     expect(createConversation).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      if (!resolveCreate) {
-        throw new Error("Expected pending createConversation resolver");
-      }
-      resolveCreate();
+      requireCallback(resolveCreate, "createConversation resolver")();
     });
     await mounted.waitFor(
       () =>

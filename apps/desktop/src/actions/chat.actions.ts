@@ -299,7 +299,7 @@ const hasConversationPermission = (
   state: AppState,
   conversationId: string,
 ): boolean =>
-  Object.values(state.toolPermissionById ?? {}).some(
+  Object.values(state.toolPermissionById).some(
     (permission) => permission.conversationId === conversationId,
   );
 
@@ -375,7 +375,7 @@ export type RequestNewConversationResult = {
   created: boolean;
 };
 
-const createSingleFlightConversation = async (
+const createSingleFlightConversation = (
   conversation: Conversation,
 ): Promise<Conversation> => {
   if (pendingNewThreadCreation) {

@@ -29,6 +29,15 @@ const readOutput = (host: HTMLElement): string => {
   }
   return output.textContent ?? "";
 };
+const requireCallback = <Args extends unknown[], Result>(
+  fn: ((...args: Args) => Result) | null,
+  label: string,
+): ((...args: Args) => Result) => {
+  if (!fn) {
+    throw new Error(`Expected ${label} callback`);
+  }
+  return fn;
+};
 const isEmptyInStore = (id: string | null | undefined) => {
   if (!id) return false;
   const state = getAppState();
@@ -189,10 +198,7 @@ it.each(["delete", "create"])(
         act(async () => findButton(host, label).click());
       await click(operation === "delete" ? "Delete one" : "New");
       await click("Leave");
-      await act(async () => {
-        if (!finish) throw new Error("Expected finish callback");
-        finish();
-      });
+      await act(async () => requireCallback(finish, "finish")());
       expect(readOutput(host)).toBe("/other");
     } finally {
       act(() => root.unmount());
@@ -270,10 +276,7 @@ it("does not replace a newer selection when a new thread finishes creating", asy
       act(async () => findButton(host, label).click());
     await click("New");
     await click("Select three");
-    await act(async () => {
-      if (!finish) throw new Error("Expected finish callback");
-      finish();
-    });
+    await act(async () => requireCallback(finish, "finish")());
     expect(readOutput(host)).toBe("?id=three");
   } finally {
     act(() => root.unmount());
@@ -318,10 +321,7 @@ it("deduplicates rapid repeated new-thread clicks while creation is pending", as
       button.click();
     });
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      if (!finish) throw new Error("Expected finish callback");
-      finish();
-    });
+    await act(async () => requireCallback(finish, "finish")());
     expect(readOutput(host)).toBe(`?id=${createdId}`);
   } finally {
     act(() => root.unmount());
@@ -367,10 +367,7 @@ it("reuses the pending new-thread request after switching threads and activating
     await click("Select three");
     await click("New");
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      if (!finish) throw new Error("Expected finish callback");
-      finish();
-    });
+    await act(async () => requireCallback(finish, "finish")());
     expect(readOutput(host)).toBe(`?id=${createdId}`);
   } finally {
     act(() => root.unmount());
@@ -414,10 +411,7 @@ it("retains an already empty thread when selected while another creation finishe
     await click("Select three");
     await click("New");
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      if (!finish) throw new Error("Expected finish callback");
-      finish();
-    });
+    await act(async () => requireCallback(finish, "finish")());
     expect(readOutput(host)).toBe("?id=three");
   } finally {
     act(() => root.unmount());
@@ -505,11 +499,9 @@ it("exits cleanly without looping when unmounted before a pending new-thread req
 
     mounted = false;
     act(() => root.unmount());
-    await act(async () => {
-      if (!finishHydration)
-        throw new Error("Expected finishHydration callback");
-      finishHydration();
-    });
+    await act(async () =>
+      requireCallback(finishHydration, "finishHydration")(),
+    );
     await act(async () => {
       await Promise.resolve();
     });
@@ -560,10 +552,7 @@ it("reports a failed new-thread request once without changing selection and perm
       button.click();
     });
     expect(mocks.requestNewConversation).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      if (!rejectFirst) throw new Error("Expected rejectFirst callback");
-      rejectFirst(failure);
-    });
+    await act(async () => requireCallback(rejectFirst, "rejectFirst")(failure));
     expect(mocks.showErrorSnackbar).toHaveBeenCalledTimes(1);
     expect(mocks.showErrorSnackbar).toHaveBeenCalledWith(failure);
     expect(readOutput(host)).toBe("?id=one");
