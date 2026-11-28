@@ -310,6 +310,61 @@ describe("Windows drag-to-restore", () => {
     expect(order).toEqual(["subscribe", "unmaximize"]);
   });
 
+  it("reports an unmeasurable placement instead of skipping it silently", async () => {
+    // The drag still continues, because the window is restored and following
+    // the pointer; what must not happen is the placement vanishing without a
+    // word, which is the difference between a quiet no-op and a bug report.
+    windowMocks.cursorPosition.mockRejectedValue(new Error("no pointer"));
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 400, y: 20 });
+    await move(1, 400, 60);
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    });
+
+    expect(windowMocks.setPosition).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(windowMocks.startDragging).toHaveBeenCalled();
+  });
+
+  it("registers the resize listener before it asks for the restore", async () => {
+    // `onResized` is an IPC round trip, so the listener is not live the moment
+    // it is called. A restore that lands during that window is missed, and the
+    // wait then falls back to its timeout and places against stale geometry.
+    // The subscription here resolves late, which is what a real round trip
+    // does and what the synchronous fake could not show.
+    const order: string[] = [];
+    windowMocks.onResized.mockImplementation(
+      (handler: () => void): Promise<() => void> =>
+        new Promise((resolve) => {
+          order.push("subscribe-requested");
+          window.setTimeout(() => {
+            order.push("subscribe-registered");
+            handler();
+            resolve(() => undefined);
+          }, 20);
+        }),
+    );
+    windowMocks.unmaximize.mockImplementation(() => {
+      order.push("unmaximize");
+      return Promise.resolve(undefined);
+    });
+    const { handlers } = await renderHook(true);
+    await press(handlers!, 1, { x: 400, y: 20 });
+    await move(1, 400, 60);
+    // Drain the deferred subscription, so its timer cannot fire inside the
+    // next test and reorder that test's call log.
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 60));
+    });
+
+    expect(order).toEqual([
+      "subscribe-requested",
+      "subscribe-registered",
+      "unmaximize",
+    ]);
+  });
+
   it("spends the settle allowance after the restore is requested", async () => {
     // The allowance exists for the restore, not for the measurement before it.
     // A slow `innerSize`/`scaleFactor` pair must not eat it, or the timeout

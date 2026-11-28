@@ -105,10 +105,12 @@ const readGrab = async (
  * can still return the maximized geometry. The resize event is the observable
  * that says the window now has its restored size.
  *
- * The subscription is made before the restore is requested, because
- * `onResized` only listens from now on and does not replay a resize that has
- * already happened. Waiting for the event before asking for the restore is what
- * makes a fast restore impossible to miss.
+ * Registration is awaited before the restore is requested, because `onResized`
+ * only listens from the moment its command reaches the backend and never
+ * replays a resize that has already happened. `onResized` is an IPC round trip,
+ * so calling `unmaximize` on the next line can reach the window manager first
+ * and a fast restore is then missed. `waitForRegistration` is what makes that
+ * ordering hold, and it is the only reason the wait has two phases.
  */
 const armRestoreWait = (win: TauriWindow) => {
   let settled = false;
@@ -139,6 +141,13 @@ const armRestoreWait = (win: TauriWindow) => {
     .catch(finish);
 
   return {
+    /**
+     * Resolves once the listener is actually registered, or once that failed.
+     *
+     * The restore must not be requested before this settles, or the resize can
+     * land first and be missed.
+     */
+    waitForRegistration: () => subscribed,
     /** Resolves when the window has resized, or when the fallback expires. */
     wait: async () => {
       await subscribed;
@@ -234,7 +243,18 @@ const startWindowDrag = (win: TauriWindow) =>
 const placeRestoredWindow = async (win: TauriWindow, grab: RestoreGrab) => {
   try {
     const target = await readRestoreTarget(win, grab);
-    if (target !== null) await win.setPosition(target);
+    if (target === null) {
+      // The window is already restored and following the pointer, so the drag
+      // continues either way. The placement is the one part that did not
+      // happen, and swallowing that silently is how it stays broken.
+      showErrorSnackbar(
+        new Error(
+          "Could not measure the window to place it under the pointer.",
+        ),
+      );
+      return;
+    }
+    await win.setPosition(target);
   } catch (error) {
     showErrorSnackbar(error);
   }
@@ -301,6 +321,7 @@ const restoreAndDrag = async (gesture: Gesture) => {
       return;
     }
     restore = armRestoreWait(win);
+    await restore.waitForRegistration();
     await win.unmaximize();
     await restore.wait();
     if (gesture.released) return;
