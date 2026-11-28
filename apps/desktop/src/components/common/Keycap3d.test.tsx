@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -19,6 +19,7 @@ vi.mock("./keycap3d.worker-client", () => ({
 }));
 import { keycapGrain } from "../../styles/keycap";
 import { Keycap3d, keycapLabelFontSize } from "./Keycap3d";
+import { capRasterOptions, getCapRaster } from "./keycap3d.raster";
 import {
   ANGLE_VIEW,
   FRONT_VIEW,
@@ -177,6 +178,38 @@ describe("Keycap3d", () => {
     expect(parts("label")[0].textContent).toBe("Shift");
   });
 
+  it("paints a warmed raster before paint on the first mount and after navigation", () => {
+    const { paint, restore } = mockCanvas();
+    const size = 51.125;
+    const image = getCapRaster(
+      capRasterOptions(
+        layoutKeycap({ size, view: "front" }),
+        keycapGrain,
+        window.devicePixelRatio,
+      ),
+    );
+    const observed: number[] = [];
+    const Page = () => {
+      useLayoutEffect(() => {
+        observed.push(paint.mock.calls.length);
+      });
+      return <Keycap3d label="K" size={size} />;
+    };
+    try {
+      render(<Page />);
+      expect(observed).toEqual([1]);
+      expect(paint).toHaveBeenCalledWith(image, 0, 0);
+      expect(styleOf(parts("cap")[0]).visibility).toBe("visible");
+      expect(styleOf(parts("label")[0]).transform).toContain("matrix3d(");
+      render(null);
+      render(<Page />);
+      expect(observed).toEqual([1, 2]);
+      expect(workerRequest).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
   it("shows a readable fallback when canvas is unavailable", () => {
     const context = vi
       .spyOn(HTMLCanvasElement.prototype, "getContext")
@@ -210,6 +243,7 @@ describe("Keycap3d", () => {
 
   it("shows the fallback when local raster creation fails", async () => {
     const { restore } = mockCanvas();
+    vi.useFakeTimers();
     vi.stubGlobal(
       "ImageData",
       vi.fn(function () {
@@ -219,11 +253,12 @@ describe("Keycap3d", () => {
     try {
       render(<Keycap3d label="K" size={37.125} />);
       await act(async () => {
-        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(0);
       });
       expect(box().getAttribute("data-keycap-fallback")).toBe("true");
       expect(styleOf(parts("label")[0]).visibility).toBe("visible");
     } finally {
+      vi.useRealTimers();
       restore();
     }
   });
@@ -565,7 +600,7 @@ describe("Keycap3d", () => {
     (view) => {
       const { restore } = mockCanvas();
       try {
-        render(<Keycap3d size={34} view={view} />);
+        render(<Keycap3d size={34.125} view={view} />);
         expect(workerRequest).toHaveBeenCalledWith(
           expect.objectContaining({ grain: keycapGrain }),
         );

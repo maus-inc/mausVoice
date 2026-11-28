@@ -1,4 +1,9 @@
-import { rasterCacheKey, type RasterOptions } from "./keycap3d.raster";
+import {
+  cacheCapRaster,
+  getCachedCapRaster,
+  rasterCacheKey,
+  type RasterOptions,
+} from "./keycap3d.raster";
 
 type Pending = {
   id: number;
@@ -69,7 +74,7 @@ const getWorker = (): Worker | null => {
       watchdog = undefined;
       active = undefined;
       forget(request);
-      if (data.image) request.resolve(data.image);
+      if (data.image) request.resolve(cacheCapRaster(request.key, data.image));
       else request.reject(new Error(data.error ?? "Worker returned no image"));
       dispatch();
     };
@@ -86,6 +91,8 @@ const getWorker = (): Worker | null => {
 export const requestCapRaster = (
   options: RasterOptions,
 ): Promise<ImageData> | null => {
+  const cached = getCachedCapRaster(options);
+  if (cached) return Promise.resolve(cached);
   if (!getWorker()) return null;
   const key = rasterCacheKey(options);
   const existing = byKey.get(key);
