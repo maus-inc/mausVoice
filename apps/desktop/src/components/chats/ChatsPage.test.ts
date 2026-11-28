@@ -6,10 +6,20 @@ import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import type { Conversation } from "@maus-inc/types";
 
+import { INITIAL_APP_STATE } from "../../state/app.state";
+import { getAppState, produceAppState, setAppState } from "../../store";
+
 const conversationStorage = new Map<string, Conversation>();
+const messagesByConversation = new Map<string, unknown[]>();
 // Referenced lazily inside the factory (see the repo mock below) so the hoisted
 // module never reads it before initialisation.
-const listChatMessages = vi.fn(async (_conversationId: string) => []);
+const listChatMessages = vi.fn((conversationId: string) =>
+  Promise.resolve([...(messagesByConversation.get(conversationId) ?? [])]),
+);
+const createConversation = vi.fn((conversation: Conversation) => {
+  conversationStorage.set(conversation.id, conversation);
+  return Promise.resolve(conversation);
+});
 
 // The page tree stays real. Only the persistence boundary is faked, matching
 // the convention the action tests use. listConversations sorts by recency
@@ -22,6 +32,8 @@ vi.mock("../../repos", () => ({
           (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
         ),
       ),
+    createConversation: (conversation: Conversation) =>
+      createConversation(conversation),
   }),
   getChatMessageRepo: () => ({
     listChatMessages: (conversationId: string) =>
@@ -228,5 +240,239 @@ describe("ChatsPage message loading", () => {
 
     expect(listChatMessages).toHaveBeenCalledTimes(1);
     expect(listChatMessages).toHaveBeenCalledWith("legacy");
+  });
+});
+
+const requireCallback = <Args extends unknown[], Result>(
+  fn: ((...args: Args) => Result) | null,
+  label: string,
+): ((...args: Args) => Result) => {
+  if (!fn) {
+    throw new Error(`Expected pending ${label}`);
+  }
+  return fn;
+};
+
+describe("ChatsPage New Thread deduplication and reuse", () => {
+  let page: ReturnType<typeof mountPage> | null = null;
+
+  afterEach(() => {
+    page?.cleanup();
+    page = null;
+    conversationStorage.clear();
+    messagesByConversation.clear();
+    listChatMessages
+      .mockReset()
+      .mockImplementation((id: string) =>
+        Promise.resolve([...(messagesByConversation.get(id) ?? [])]),
+      );
+    createConversation.mockReset().mockImplementation((conv: Conversation) => {
+      conversationStorage.set(conv.id, conv);
+      return Promise.resolve(conv);
+    });
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  const seedPopulated = (id: string, title: string, updatedDaysAgo: number) => {
+    seed(id, title, updatedDaysAgo);
+    messagesByConversation.set(id, [
+      {
+        id: `msg-${id}`,
+        conversationId: id,
+        role: "user",
+        content: "Hello",
+        createdAt: new Date(baseTime - DAY_MS * updatedDaysAgo).toISOString(),
+        metadata: null,
+      },
+    ]);
+  };
+
+  it("creates one new thread from a populated conversation and retains it on repeated New Thread clicks", async () => {
+    seedPopulated("recent", "Quarterly report numbers", 0);
+
+    const mounted = mountPage({ strict: false });
+    page = mounted;
+    await mounted.waitFor(
+      () =>
+        mounted.container.querySelectorAll(".MuiListItemButton-root").length ===
+        1,
+    );
+    await mounted.settle();
+
+    const newThreadButton = mounted.container.querySelector<HTMLButtonElement>(
+      "[data-conversation-new]",
+    );
+    if (!newThreadButton) {
+      throw new Error("Expected New Thread button");
+    }
+    await mounted.click(newThreadButton);
+    await mounted.waitFor(
+      () =>
+        mounted.container.querySelectorAll(".MuiListItemButton-root").length ===
+        2,
+    );
+    await mounted.settle();
+    expect(createConversation).toHaveBeenCalledTimes(1);
+
+    const createdId = getAppState().chat.conversationIds[0];
+    // Repeated activations while viewing the empty thread must not create another.
+    await mounted.click(newThreadButton);
+    await mounted.click(newThreadButton);
+    await mounted.settle();
+
+    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(
+      mounted.container.querySelectorAll(".MuiListItemButton-root"),
+    ).toHaveLength(2);
+    expect(getAppState().chat.conversationIds[0]).toBe(createdId);
+
+    // Once that thread receives a message, New Thread creates a fresh thread again.
+    await act(async () => {
+      produceAppState((draft) => {
+        draft.chatMessageById["msg-new"] = {
+          id: "msg-new",
+          conversationId: createdId,
+          role: "user",
+          content: "Follow-up",
+          createdAt: new Date().toISOString(),
+          metadata: null,
+        };
+        draft.chatMessageIdsByConversationId[createdId] = ["msg-new"];
+      });
+    });
+    await mounted.click(newThreadButton);
+    await mounted.waitFor(
+      () =>
+        mounted.container.querySelectorAll(".MuiListItemButton-root").length ===
+        3,
+    );
+    expect(createConversation).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains an empty existing thread when New Thread is clicked while its messages are loading", async () => {
+    seed("empty-existing", "New conversation", 0);
+    let resolveMessages: ((messages: unknown[]) => void) | null = null;
+    listChatMessages.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveMessages = resolve;
+        }),
+    );
+
+    const mounted = mountPage({ strict: false });
+    page = mounted;
+    await mounted.waitFor(
+      () =>
+        mounted.container.querySelectorAll(".MuiListItemButton-root").length ===
+        1,
+    );
+
+    const newThreadButton = mounted.container.querySelector<HTMLButtonElement>(
+      "[data-conversation-new]",
+    );
+    if (!newThreadButton) {
+      throw new Error("Expected New Thread button");
+    }
+    await act(async () => {
+      newThreadButton.click();
+    });
+    expect(createConversation).not.toHaveBeenCalled();
+
+    await act(async () => {
+      requireCallback(resolveMessages, "listChatMessages resolver")([]);
+    });
+    await mounted.settle();
+
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(
+      mounted.container.querySelectorAll(".MuiListItemButton-root"),
+    ).toHaveLength(1);
+    expect(getAppState().chat.conversationIds).toEqual(["empty-existing"]);
+  });
+
+  it("creates at most one thread when activating the empty-state chip repeatedly", async () => {
+    let resolveCreate: (() => void) | null = null;
+    createConversation.mockImplementationOnce(
+      (conversation: Conversation) =>
+        new Promise<Conversation>((resolve) => {
+          conversationStorage.set(conversation.id, conversation);
+          resolveCreate = () => resolve(conversation);
+        }),
+    );
+
+    const mounted = mountPage({ strict: false });
+    page = mounted;
+    await mounted.waitFor(
+      () => mounted.container.textContent?.includes("Create new chat") ?? false,
+    );
+
+    const chip = [
+      ...mounted.container.querySelectorAll('[role="button"]'),
+    ].find((el) => el.textContent === "Create new chat");
+    const newThreadButton = mounted.container.querySelector<HTMLButtonElement>(
+      "[data-conversation-new]",
+    );
+    if (!chip || !newThreadButton) {
+      throw new Error("Expected empty-state chip and New Thread button");
+    }
+    await act(async () => {
+      chip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      newThreadButton.click();
+    });
+    expect(createConversation).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      requireCallback(resolveCreate, "createConversation resolver")();
+    });
+    await mounted.waitFor(
+      () =>
+        mounted.container.querySelectorAll(".MuiListItemButton-root").length ===
+        1,
+    );
+    expect(createConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates at most one thread under rapid repeated clicks while creation is pending", async () => {
+    seedPopulated("recent", "Quarterly report numbers", 0);
+    let resolveCreate: (() => void) | null = null;
+    createConversation.mockImplementationOnce(
+      (conversation: Conversation) =>
+        new Promise<Conversation>((resolve) => {
+          conversationStorage.set(conversation.id, conversation);
+          resolveCreate = () => resolve(conversation);
+        }),
+    );
+
+    const mounted = mountPage({ strict: false });
+    page = mounted;
+    await mounted.waitFor(
+      () =>
+        mounted.container.querySelectorAll(".MuiListItemButton-root").length ===
+        1,
+    );
+    await mounted.settle();
+
+    const newThreadButton = mounted.container.querySelector<HTMLButtonElement>(
+      "[data-conversation-new]",
+    );
+    if (!newThreadButton) {
+      throw new Error("Expected New Thread button");
+    }
+    await act(async () => {
+      newThreadButton.click();
+      newThreadButton.click();
+      newThreadButton.click();
+    });
+    expect(createConversation).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      requireCallback(resolveCreate, "createConversation resolver")();
+    });
+    await mounted.waitFor(
+      () =>
+        mounted.container.querySelectorAll(".MuiListItemButton-root").length ===
+        2,
+    );
+    expect(createConversation).toHaveBeenCalledTimes(1);
   });
 });

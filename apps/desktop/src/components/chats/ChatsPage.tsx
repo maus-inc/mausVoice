@@ -12,13 +12,16 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useSearchParams } from "react-router-dom";
 import {
-  createConversation,
+  canReuseEmptyConversation,
   deleteConversation,
   loadChatMessages,
+  requestNewConversation,
+  resolveReusableEmptyConversation,
 } from "../../actions/chat.actions";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { useAppStore } from "../../store";
 import { createId } from "../../utils/id.utils";
+import { getLogger } from "../../utils/log.utils";
 import { ChatsSideEffects } from "./ChatsSideEffects";
 import { ConversationLayout } from "./ConversationLayout";
 import { ConversationListLayout } from "./ConversationListLayout";
@@ -90,6 +93,13 @@ const usePaneFocus = ({
   return { listRef, backRef, lastFocused, focusIfUnmoved };
 };
 
+type PendingNewChatTarget = {
+  intent: number;
+  selectionAtStart: string | null;
+  keyboard: boolean;
+  focused: Element | null;
+};
+
 const useChatNavigation = ({
   compact,
   selectedId,
@@ -117,9 +127,29 @@ const useChatNavigation = ({
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
   const navigationIntent = useRef(0);
+  const latestNewChatTargetRef = useRef<PendingNewChatTarget | null>(null);
+  const activeNewChatRunRef = useRef<Promise<void> | null>(null);
+
+  const bumpNavigationIntent = () => {
+    navigationIntent.current++;
+    latestNewChatTargetRef.current = null;
+  };
+
+  const finishNewChatSelection = (
+    target: Pick<PendingNewChatTarget, "keyboard" | "focused">,
+    conversationId?: string,
+  ) => {
+    if (conversationId && selectedIdRef.current !== conversationId) {
+      setSearchParams({ id: conversationId }, { replace: true });
+    }
+    closeList();
+    if (target.keyboard) {
+      focusIfUnmoved(target.focused, () => backRef.current);
+    }
+  };
 
   const handleSelect = (id: string) => {
-    navigationIntent.current++;
+    bumpNavigationIntent();
     const focused = document.activeElement;
     const keyboard =
       compact &&
@@ -130,35 +160,141 @@ const useChatNavigation = ({
     if (keyboard) focusIfUnmoved(focused, () => backRef.current);
   };
 
-  const handleNewChat = async () => {
+  const isTargetCurrent = (
+    target: PendingNewChatTarget | null,
+  ): target is PendingNewChatTarget =>
+    Boolean(
+      pageRef.current && target && navigationIntent.current === target.intent,
+    );
+
+  const isSelectionConsistent = (
+    target: PendingNewChatTarget,
+    resolvedId: string,
+  ): boolean =>
+    selectedIdRef.current === target.selectionAtStart ||
+    selectedIdRef.current === resolvedId;
+
+  const settleCreatedConversation = async (
+    createdConversationId: string,
+    selectionAtRequest: string | null,
+    settledTarget: PendingNewChatTarget,
+  ): Promise<void> => {
+    let currentTarget = settledTarget;
+    while (currentTarget.selectionAtStart !== selectionAtRequest) {
+      const reusable = await resolveReusableEmptyConversation(
+        currentTarget.selectionAtStart,
+      );
+      const latest = latestNewChatTargetRef.current;
+      if (!isTargetCurrent(latest)) {
+        return;
+      }
+      if (latest.intent !== currentTarget.intent) {
+        currentTarget = latest;
+        continue;
+      }
+      if (!isSelectionConsistent(currentTarget, createdConversationId)) {
+        return;
+      }
+      finishNewChatSelection(
+        currentTarget,
+        reusable ? reusable.id : createdConversationId,
+      );
+      return;
+    }
+    finishNewChatSelection(currentTarget, createdConversationId);
+  };
+
+  const isTargetReadyForCreate = (target: PendingNewChatTarget): boolean =>
+    Boolean(
+      pageRef.current &&
+      latestNewChatTargetRef.current?.intent === target.intent &&
+      navigationIntent.current === target.intent,
+    );
+
+  const settleNewChatResult = async (
+    result: Awaited<ReturnType<typeof requestNewConversation>>,
+    target: PendingNewChatTarget,
+  ): Promise<"continue" | "done"> => {
+    const settledTarget = latestNewChatTargetRef.current;
+    if (!isTargetCurrent(settledTarget)) return "done";
+    if (!result) {
+      return settledTarget.intent !== target.intent ? "continue" : "done";
+    }
+    if (!result.created && settledTarget.intent !== target.intent) {
+      return "continue";
+    }
+    if (!isSelectionConsistent(settledTarget, result.conversation.id)) {
+      return "done";
+    }
+    if (result.created) {
+      await settleCreatedConversation(
+        result.conversation.id,
+        target.selectionAtStart,
+        settledTarget,
+      );
+      return "done";
+    }
+    finishNewChatSelection(settledTarget, result.conversation.id);
+    return "done";
+  };
+
+  const executeNewChatRun = async () => {
+    try {
+      while (true) {
+        const target = latestNewChatTargetRef.current;
+        if (!isTargetCurrent(target)) return;
+        const now = new Date().toISOString();
+        const result = await requestNewConversation(
+          target.selectionAtStart,
+          {
+            id: createId(),
+            title: intl.formatMessage({ defaultMessage: "New conversation" }),
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            shouldCreate: () => isTargetReadyForCreate(target),
+          },
+        );
+        const status = await settleNewChatResult(result, target);
+        if (status === "done") return;
+      }
+    } catch (error) {
+      showErrorSnackbar(error);
+    } finally {
+      latestNewChatTargetRef.current = null;
+      activeNewChatRunRef.current = null;
+    }
+  };
+
+  const handleNewChat = () => {
     const focused = document.activeElement;
     const keyboard =
       compact &&
       focused instanceof HTMLElement &&
       focused.matches(":focus-visible");
-    const intent = ++navigationIntent.current;
     const selectionAtStart = selectedIdRef.current;
-    const now = new Date().toISOString();
-    try {
-      const saved = await createConversation({
-        id: createId(),
-        title: intl.formatMessage({ defaultMessage: "New conversation" }),
-        createdAt: now,
-        updatedAt: now,
-      });
-      if (
-        !pageRef.current ||
-        navigationIntent.current !== intent ||
-        (selectedIdRef.current !== selectionAtStart &&
-          selectedIdRef.current !== saved.id)
-      )
-        return;
-      setSearchParams({ id: saved.id }, { replace: true });
-      closeList();
-      if (keyboard) focusIfUnmoved(focused, () => backRef.current);
-    } catch (error) {
-      showErrorSnackbar(error);
+
+    if (canReuseEmptyConversation(selectionAtStart)) {
+      bumpNavigationIntent();
+      finishNewChatSelection({ keyboard, focused });
+      return Promise.resolve();
     }
+
+    const intent = ++navigationIntent.current;
+    latestNewChatTargetRef.current = {
+      intent,
+      selectionAtStart,
+      keyboard,
+      focused,
+    };
+    if (activeNewChatRunRef.current) {
+      return activeNewChatRunRef.current;
+    }
+
+    const run = executeNewChatRun();
+    activeNewChatRunRef.current = run;
+    return run;
   };
 
   const handleDelete = async (id: string) => {
@@ -178,9 +314,7 @@ const useChatNavigation = ({
     handleSelect,
     handleNewChat,
     handleDelete,
-    bumpNavigationIntent: () => {
-      navigationIntent.current++;
-    },
+    bumpNavigationIntent,
   };
 };
 
@@ -356,7 +490,9 @@ export default function ChatsPage() {
   // decide that a read is due.
   useEffect(() => {
     if (selectedId) {
-      void loadChatMessages(selectedId);
+      void loadChatMessages(selectedId).catch((error) => {
+        getLogger().error("Failed to load chat messages", error);
+      });
     }
   }, [selectedId]);
 
