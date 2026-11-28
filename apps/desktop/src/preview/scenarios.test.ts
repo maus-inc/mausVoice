@@ -88,6 +88,17 @@ describe("browser preview scenarios", () => {
     expect(snapshot.state.permissions.accessibility?.state).toBe("denied");
   });
 
+  it("models listener health after the permission each scenario reports", () => {
+    // A hook cannot install without accessibility, so the denied scenario must
+    // not seed the healthy state a granted machine reports.
+    expect(
+      createPreviewScenario("permission-denied").state.keyboardListenerHealth,
+    ).toBe("grab_failed");
+    expect(
+      createPreviewScenario("populated").state.keyboardListenerHealth,
+    ).toBe("healthy_grab");
+  });
+
   it("exposes an explicit Voquill migration workspace with keys needing re-entry", () => {
     const snapshot = createPreviewScenario("voquill-migration");
 

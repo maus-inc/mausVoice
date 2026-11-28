@@ -12,7 +12,7 @@ import {
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
-import { listenerDeliversKeys } from "../../utils/keyboard.utils";
+import { globalKeyStreamIsLive } from "../../utils/keyboard.utils";
 import { getPlatform } from "../../utils/platform.utils";
 import { isPillPlacementAvailable } from "./PillPlacementSetting";
 import type { SettingAvailability } from "../../utils/settings-registry";
@@ -49,17 +49,29 @@ export const useSettingsAvailability = (): SettingAvailability => {
       supportsCorrectionWatch: platform === "macos" || platform === "windows",
       isWindows: platform === "windows",
       pillPlacementAvailable: isPillPlacementAvailable(),
-      // Unknown until the native side reports its strategy. A Wayland session
-      // has no global key source, so the double-tap cannot be detected there
-      // and the row stays hidden instead of offering a switch that does
-      // nothing. A listener strategy without a live listener, such as a
-      // revoked accessibility permission, cannot see a tap either, so the row
-      // follows the listener's own health rather than the strategy alone.
+      // Unknown until the native side reports its strategy. The row needs a
+      // global key stream, and the listener is the only source that publishes
+      // one while another application has focus. A Wayland session runs the
+      // compositor bridge instead, where a modifier-only double tap cannot be
+      // registered as a chord, so the row stays hidden there rather than
+      // offering a choice that does nothing. A listener that has not started,
+      // has failed, or is stopped, such as a revoked accessibility permission,
+      // cannot see a tap either, so the row follows the listener's own health
+      // rather than the strategy alone.
+      //
+      // Health is asked through `globalKeyStreamIsLive`, the same predicate the
+      // detector uses. `connected` and `fallback_starting` count as live
+      // because the listener is already publishing snapshots in both; Windows
+      // passes through them after every connect, wake, unlock and elevation
+      // relaunch, and hiding the row for those windows is what made the gesture
+      // look absent on Windows.
       locateGestureAvailable:
         state.hotkeyStrategy === null
           ? undefined
-          : state.hotkeyStrategy === "listener" &&
-            listenerDeliversKeys(state.keyboardListenerHealth),
+          : globalKeyStreamIsLive(
+              state.hotkeyStrategy,
+              state.keyboardListenerHealth,
+            ),
       changePassword: loggedIn && getHasEmailProvider(state),
       signOut: loggedIn,
       deleteAccount: loggedIn,
