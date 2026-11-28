@@ -108,11 +108,13 @@ const App = () => {
         const { INITIAL_APP_STATE } = await import("@desktop/state/app.state");
         const { createDefaultPreferences } =
           await import("@desktop/actions/user-actions-core");
-        const state = structuredClone(INITIAL_APP_STATE) as any;
+        // No cast: it is an `AppState`, and the cast is what let the invalid
+        // `"healthy"` health below through, hiding rows in every capture.
+        const state = structuredClone(INITIAL_APP_STATE);
         state.userPrefs = createDefaultPreferences();
         state.settings.apiKeysStatus = "success";
         state.hotkeyStrategy = "listener";
-        state.keyboardListenerHealth = "healthy";
+        state.keyboardListenerHealth = "healthy_grab";
         setAppState(state, true);
         setReady(true);
       } catch (cause) {

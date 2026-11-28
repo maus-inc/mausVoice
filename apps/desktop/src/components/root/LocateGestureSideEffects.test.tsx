@@ -16,7 +16,10 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 import type { PillLocateGestureModifier } from "@maus-inc/types";
-import { INITIAL_APP_STATE } from "../../state/app.state";
+import {
+  INITIAL_APP_STATE,
+  type KeyboardListenerHealth,
+} from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 import { LocateGestureSideEffects } from "./LocateGestureSideEffects";
@@ -30,10 +33,20 @@ const setKeys = (keys: string[]) =>
     });
   });
 
-const setModifier = (modifier: PillLocateGestureModifier) =>
+/**
+ * Selects a modifier on a delivering listener, which is the configuration the
+ * settings row offers. `connected` on purpose: it is the state a Windows
+ * listener sits in for the grace window after every connect, and a tap there is
+ * still a tap.
+ */
+const setModifier = (
+  modifier: PillLocateGestureModifier,
+  health: KeyboardListenerHealth = "connected",
+) =>
   act(() => {
     produceAppState((draft) => {
       draft.hotkeyStrategy = "listener";
+      draft.keyboardListenerHealth = health;
       draft.userPrefs = {
         pillLocateGestureModifier: modifier,
       } as typeof draft.userPrefs;
@@ -123,6 +136,46 @@ describe("LocateGestureSideEffects", () => {
     setKeys(["Alt"]);
     setModifier("none");
     setModifier("alt");
+    setKeys([]);
+    setKeys(["Alt"]);
+    setKeys([]);
+    spy.mockRestore();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("sends through the live-but-unproven state a Windows listener reports", () => {
+    // `connected` is the grace window after the child connects. The child is
+    // already publishing snapshots there, so a tap must count; waiting for the
+    // proof that promotes the health state would drop it.
+    setModifier("alt", "connected");
+    doubleTap("Alt", [0, 80, 200, 280]);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not send once the listener has stopped delivering", () => {
+    for (const health of ["stopped", "failed"] as const) {
+      invoke.mockClear();
+      setModifier("alt", health);
+      doubleTap("Alt", [0, 80, 200, 280]);
+      expect({ health, sent: invoke.mock.calls.length }).toEqual({
+        health,
+        sent: 0,
+      });
+    }
+  });
+
+  it("does not pair a tap that was held across a dead listener", () => {
+    // A hold whose release is dropped must not seed the first tap of a pair:
+    // the release is the only place a tap's length is known, and the listener
+    // was not publishing snapshots when this one ended.
+    const spy = vi.spyOn(performance, "now");
+    for (const value of [0, 10, 200, 280, 320, 380]) {
+      spy.mockReturnValueOnce(value);
+    }
+    setModifier("alt", "healthy_grab");
+    setKeys(["Alt"]);
+    setModifier("alt", "failed");
+    setModifier("alt", "healthy_grab");
     setKeys([]);
     setKeys(["Alt"]);
     setKeys([]);
