@@ -219,4 +219,63 @@ describe("HomePage analytics", () => {
     expect(cards[1]?.textContent).toContain("0");
     expect(cards[1]?.textContent).not.toContain("12,340");
   });
+
+  it("preserves the analytics grid layout across loading and loaded activity states", () => {
+    const state = structuredClone(getAppState());
+    state.home.dailyActivity = [];
+    state.home.dailyActivityStatus = "loading";
+    setAppState(state, true);
+
+    act(() => {
+      root.render(
+        <IntlProvider locale="en" messages={en}>
+          <MemoryRouter initialEntries={["/dashboard"]}>
+            <HomePage />
+          </MemoryRouter>
+        </IntlProvider>,
+      );
+    });
+
+    expect(
+      container.querySelector('[data-testid="activity-heatmap-skeleton"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="activity-heatmap-labels"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="activity-heatmap-legend-skeleton"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      Array.from(container.querySelectorAll("[data-home-grid-area]"), (item) =>
+        item.getAttribute("data-home-grid-area"),
+      ),
+    ).toEqual(["streak", "month", "total", "speed", "activity"]);
+
+    const loadingGridClass = container
+      .querySelector<HTMLElement>('[data-testid="home-analytics-grid"]')
+      ?.className.split(" ")
+      .find((className) => className.startsWith("css-"));
+
+    const loaded = structuredClone(getAppState());
+    loaded.home.dailyActivity = [{ localDate: "2026-10-08", wordCount: 324 }];
+    loaded.home.dailyActivityStatus = "success";
+
+    act(() => {
+      setAppState(loaded, true);
+    });
+
+    expect(
+      container.querySelector('[data-testid="activity-heatmap-skeleton"]'),
+    ).toBeNull();
+    expect(
+      container.querySelectorAll('[data-testid="activity-day"]').length,
+    ).toBe(371);
+    const loadedGridClass = container
+      .querySelector<HTMLElement>('[data-testid="home-analytics-grid"]')
+      ?.className.split(" ")
+      .find((className) => className.startsWith("css-"));
+    expect(loadedGridClass).toBe(loadingGridClass);
+  });
 });

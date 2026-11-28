@@ -238,17 +238,26 @@ evidence that is not read.
   section the reader meets before any fold. Do not bury the frames in a `<details>`
   block, a review comment or a link to a run artifact. `scripts/ci/check-visual-evidence.mjs`
   fails the pull request when the description carries no image.
-- **Pin the commit in a repository image URL.** `.../raw/HEAD/docs/assets/x.png` resolves
-  `HEAD` to the default branch, not to the pull request, so a frame committed on a feature
-  branch 404s from the description that shows it. Every `raw/HEAD` image in an earlier
-  revision of this evidence was a broken link that looked fine in the markdown. Use
-  `.../raw/<full-head-sha>/docs/assets/x.png`, and re-check each one after a push:
-  `curl -s -o /dev/null -w '%{http_code}' <url>` should print 302, not 404.
-- **Attach, do not link a local path.** Use the URL GitHub returns when you upload a
-  file through the API, or a repository `docs/assets/` path for an image worth keeping.
-  `docs/assets/` is for evidence that stays: a before/after pair for a shipped change, a
-  figure a document references. A nine-frame sweep is a pull request attachment, not a
-  repository commit.
+- **Pin in one commit, delete in the next commit.** PR-only verification screenshots
+  do not need to land in the base branch. Stage and commit the captured images on the
+  PR branch in a pin commit, for example under `docs/assets/`. Push that commit, note
+  its full SHA as `<pin-sha>`, and embed
+  `https://github.com/maus-inc/mausVoice/raw/<pin-sha>/...` above the folds in the PR
+  description. Delete those screenshot files with `git rm` in the very next commit.
+  GitHub continues serving the pinned images from `<pin-sha>` in branch history, and
+  the final PR diff stays free of image bloat. Never use `raw/HEAD/...`, because `HEAD`
+  resolves to the default branch and returns 404 on a feature branch. Verify each URL
+  after pushing with `curl -s -o /dev/null -w '%{http_code}' <url>`, expecting `302` or
+  `200` rather than `404`. Do not rebase or squash `<pin-sha>` away while the PR is
+  open.
+- **Update whenever UI changes occur.** An image from an earlier commit misrepresents
+  the head. After any edit that changes a rendered surface, re-capture the affected
+  frames, commit them in a new pin commit as `<new-pin-sha>`, delete them in the next
+  commit, and update the PR description URLs in place to `<new-pin-sha>`.
+- **Attach, do not link a local path.** Use a GitHub attachment URL or the pin and
+  delete commit URL flow above. Keep permanent files under `docs/assets/` only for
+  assets referenced by shipped documentation or `README.md`, not for PR-only
+  before/after evidence.
 - **Dark mode is what you attach; light mode is what you inspect.** Keep the description
   to the dark frames so it does not bloat. Capture light for every surface you touched
   and look at it with the same care, then state in the description that the light pass
@@ -259,9 +268,6 @@ evidence that is not read.
   labelled with the commit so the pair can be reproduced.
 - **State which surfaces were not captured**, and why, in the same section. A missing
   frame that is admitted is honest; a missing frame that is implied is a wrong claim.
-- Re-attach after the code changes. An image from an earlier commit is a false statement
-  about the head, and this is the step everyone forgets: the pull request body is part
-  of the diff's meaning.
 
 Update the description in place. Do not append a new section per round:
 `scripts/ci/check-pr-body.mjs` keeps the unfolded body to one screen, records fold, and
@@ -281,19 +287,27 @@ so a committed UI change that is no longer staged names no UI path and the image
 requirement never runs; the failure then appears only after the push. Pass the base commit
 or branch the pull request targets.
 
-The visual section belongs under `## Summary` as its own visible heading that the fold
-rules allow, with the frames as markdown images and the light-mode statement and the
-uncaptured list as short bullets. Long tables of per-row readings belong in the visual
-verification record under `docs/visual-verification/`, linked from the description.
+Put the visual section under `## Summary` with the pinned frames unfolded as markdown
+images. `check-visual-evidence.mjs` fails if any image sits inside a `<details>` fold.
+Keep the light-mode statement and uncaptured list as short bullets. Put long tables of
+per-row readings, bounding-box deltas, and detailed verification notes inside a folded
+`<details><summary>Visual verification</summary>` block in the PR description instead of
+committing a new Markdown file under `docs/visual-verification/`.
+
+After deleting the temporary screenshots in the next commit, run `standards-review.mjs`
+on the clean post-deletion HEAD. Every path cited in `CS01` through `CS08` must exist in
+the final `base...head` diff, so do not cite deleted screenshot paths.
 
 ## 6. Record what you saw
 
-For anything beyond a trivial change, write the record beside the change:
-`docs/visual-verification/<issue-or-pr>-<surface>.md`, following
-`docs/visual-verification/pr-293-home-metric-grid.md`. It carries the capture method, the
-commit each frame came from, the measurements behind each claim, what looked wrong and
-what was changed because of it, and the manual flow a person can follow without running
-anything.
+Record the visual verification details in the pull request description inside a folded
+`<details><summary>Visual verification</summary>` block. Do not commit a new per-PR file
+under `docs/visual-verification/`, because PR verification records do not need to land in
+the base branch. Include the capture method, the base and head SHAs, the pinned screenshot
+commit SHA, the measurements behind each claim, what looked wrong and what changed
+because of it, and the manual steps a reviewer can follow. Add a permanent Markdown
+record under `docs/visual-verification/` only when a human asks to keep one in the
+repository.
 
 Name every frame you attached and every frame you looked at but did not attach. The
 distinction is the honest part.
@@ -306,8 +320,8 @@ distinction is the honest part.
 - [ ] Dark and light captured at the claim's viewport; motion reduced; overlays dismissed.
 - [ ] Every frame inspected, including the upper-left region and the dialog round trip.
 - [ ] What looked wrong changed the code, or came to the human with both options.
-- [ ] Before/after dark frames embedded in the pull request description, named by commit.
+- [ ] Before/after dark frames pinned in a commit, embedded above the folds in the PR description via `raw/<pin-sha>/...`, and deleted in the next commit. Repeated after every subsequent UI edit.
 - [ ] Light pass stated in the description; any light frame attached only where it is the subject.
 - [ ] Uncaptured surfaces and the reason listed.
-- [ ] `check-pr-body.mjs` and `check-visual-evidence.mjs --base <sha>` pass locally.
-- [ ] `docs/visual-verification/` record updated; `AGENTS.md` references still accurate.
+- [ ] Detailed measurements and visual verification notes recorded in a folded `<details>` block in the PR description, with no per-PR verification doc or temporary PNGs left in the final tree.
+- [ ] `check-pr-body.mjs`, `check-visual-evidence.mjs --base <sha>`, and `standards-review.mjs` pass on the clean post-deletion HEAD.

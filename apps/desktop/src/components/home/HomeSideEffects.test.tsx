@@ -140,4 +140,91 @@ describe("HomeSideEffects daily activity refresh", () => {
       expect.stringContaining("Failed to load daily activity"),
     );
   });
+
+  it("marks initial load as loading, avoids regressing status on subsequent refreshes, and retries from error", async () => {
+    let resolveInitial!: (
+      value: { localDate: string; wordCount: number }[],
+    ) => void;
+    mocks.listActivity.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveInitial = resolve;
+        }),
+    );
+
+    act(() => {
+      root.render(<HomeSideEffects today={today} />);
+    });
+    expect(getAppState().home.dailyActivityStatus).toBe("loading");
+
+    await act(async () => {
+      resolveInitial([{ localDate: "2026-10-08", wordCount: 42 }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getAppState().home.dailyActivityStatus).toBe("success");
+
+    // Returning to Home (unmount + remount) or focusing the window must keep
+    // status at "success" while refreshing so the rendered heatmap does not
+    // flash back to a skeleton.
+    let resolveRefresh!: (
+      value: { localDate: string; wordCount: number }[],
+    ) => void;
+    mocks.listActivity.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    act(() => {
+      root.render(<HomeSideEffects today={today} />);
+    });
+    expect(getAppState().home.dailyActivityStatus).toBe("success");
+
+    await act(async () => {
+      resolveRefresh([{ localDate: "2026-10-08", wordCount: 84 }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getAppState().home.dailyActivity).toEqual([
+      { localDate: "2026-10-08", wordCount: 84 },
+    ]);
+    expect(getAppState().home.dailyActivityStatus).toBe("success");
+
+    // After a failure, retrying on focus transitions back through "loading".
+    mocks.listActivity.mockRejectedValueOnce(new Error("temporary failure"));
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getAppState().home.dailyActivityStatus).toBe("error");
+
+    let resolveRetry!: (
+      value: { localDate: string; wordCount: number }[],
+    ) => void;
+    mocks.listActivity.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve;
+        }),
+    );
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(getAppState().home.dailyActivityStatus).toBe("loading");
+
+    await act(async () => {
+      resolveRetry([{ localDate: "2026-10-08", wordCount: 99 }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getAppState().home.dailyActivityStatus).toBe("success");
+    expect(getAppState().home.dailyActivity).toEqual([
+      { localDate: "2026-10-08", wordCount: 99 },
+    ]);
+  });
 });

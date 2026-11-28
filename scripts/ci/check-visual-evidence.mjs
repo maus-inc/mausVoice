@@ -183,7 +183,7 @@ const localPathFailures = (sources) =>
     .filter((source) => LOCAL_PATH.test(source))
     .map((source) => ({
       rule: "V5",
-      message: `image "${source}" is a local path a reviewer cannot open. Upload it and use the returned URL, or commit it under docs/assets/`,
+      message: `image "${source}" is a local path a reviewer cannot open. Upload it and use the returned URL, or pin it in a commit and delete it in the next commit per docs/visual-verification/README.md`,
     }));
 
 /** V4: a surface changed and the description shows nothing at all. */
