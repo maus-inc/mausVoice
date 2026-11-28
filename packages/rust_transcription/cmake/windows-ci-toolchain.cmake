@@ -6,10 +6,10 @@ set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 # AVX2 into /arch:AVX2 plus the GGML_AVX2/GGML_FMA/GGML_F16C defines for the
 # whole ggml-cpu target. This static build has no runtime dispatch between
 # instruction-set variants, so a release binary built that way executes AVX2
-# in the first quantized kernel it reaches and faults with an illegal
-# instruction (0xC000001D) on pre-Haswell CPUs. Pin the shipped baseline to
-# AVX (Intel Sandy Bridge / AMD Bulldozer, 2011 and later) and leave every
-# wider extension off so the same binary runs on any supported CPU.
+# in the first quantized kernel it reaches and dies on pre-Haswell CPUs with
+# the Windows exception code 0xC000001D. Pin the shipped baseline to AVX, the
+# level Intel Sandy Bridge and AMD Bulldozer introduced in 2011, and leave
+# every wider extension off so the same binary runs on any supported CPU.
 # src/cpu_requirements.rs checks the AVX requirement at startup.
 set(GGML_AVX2 OFF CACHE BOOL "" FORCE)
 set(GGML_AVX_VNNI OFF CACHE BOOL "" FORCE)

@@ -70,20 +70,59 @@ describe("transcription sidecar CPU baseline", () => {
     });
   }
 
+  const toolchainNames = Object.values(TOOLCHAINS).map((path) =>
+    path.split("/").at(-1),
+  );
+
   for (const workflow of WORKFLOWS) {
     it(`selects the portable toolchains from ${workflow}`, () => {
       const source = read(workflow);
+      // Every line that sets the variable, not merely every workflow that
+      // names a file: a filename in a comment or a stale echo would satisfy a
+      // substring search while CMake still used its default baseline.
+      const assignments = source
+        .split("\n")
+        .filter((line) => line.includes("CMAKE_TOOLCHAIN_FILE"));
 
-      for (const path of Object.values(TOOLCHAINS)) {
-        const toolchain = path.split("/").at(-1);
-        assert.match(
-          source,
-          new RegExp(toolchain.replaceAll(".", "\\.")),
-          `${workflow} must pass ${toolchain} to CMake`,
+      assert.ok(
+        assignments.length > 0,
+        `${workflow} never sets CMAKE_TOOLCHAIN_FILE, so CMake keeps its default baseline`,
+      );
+      for (const line of assignments) {
+        assert.ok(
+          toolchainNames.some((name) => line.includes(name)),
+          `${workflow} points CMAKE_TOOLCHAIN_FILE somewhere else: ${line.trim()}`,
+        );
+      }
+      for (const name of toolchainNames) {
+        assert.ok(
+          assignments.some((line) => line.includes(name)),
+          `${workflow} must pass ${name} to CMake`,
         );
       }
     });
   }
+
+  it("lets the sidecar build inherit the toolchain from the environment", () => {
+    const source = read("apps/desktop/scripts/prepare-sidecars.mjs");
+    const cargoSpawn = source.slice(
+      source.indexOf("spawnSync(command, args"),
+      source.indexOf("spawnSync(command, args") + 200,
+    );
+
+    // CMake reads CMAKE_TOOLCHAIN_FILE from the environment, so the cargo
+    // child has to inherit it. An explicit env object here would silently
+    // drop the variable and rebuild the sidecar for the runner's own CPU.
+    assert.ok(
+      cargoSpawn.includes('stdio: "inherit"'),
+      "the sidecar build should still spawn cargo directly",
+    );
+    assert.doesNotMatch(
+      cargoSpawn,
+      /\benv:/,
+      "the cargo spawn must inherit CMAKE_TOOLCHAIN_FILE rather than pass its own env",
+    );
+  });
 
   it("documents the AVX requirement next to the startup guard", () => {
     assert.match(

@@ -7,9 +7,9 @@ set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 # built that way executes AVX2 in the first quantized kernel it reaches and
 # faults with an illegal instruction on pre-Haswell CPUs, which the desktop
 # can only observe as a sidecar that vanished mid-request. Pin the shipped
-# baseline to AVX (Intel Sandy Bridge / AMD Bulldozer, 2011 and later) and
-# leave every wider extension off so the same binary runs on any supported
-# CPU. src/cpu_requirements.rs checks the AVX requirement at startup.
+# baseline to AVX, the level Intel Sandy Bridge and AMD Bulldozer introduced in
+# 2011, and leave every wider extension off so the same binary runs on any
+# supported CPU. src/cpu_requirements.rs checks the AVX requirement at startup.
 set(GGML_AVX2 OFF CACHE BOOL "" FORCE)
 set(GGML_AVX_VNNI OFF CACHE BOOL "" FORCE)
 set(GGML_BMI2 OFF CACHE BOOL "" FORCE)

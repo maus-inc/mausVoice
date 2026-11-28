@@ -125,6 +125,41 @@ describe("BaseSidecar exit diagnostics", () => {
     ).toBe(true);
   });
 
+  it("joins a stderr line the shell split across two chunks", async () => {
+    const sidecar = new TestSidecar();
+    const spawn = captureSpawn();
+
+    const started = sidecar.ensureStarted();
+    started.catch(() => {});
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+
+    // The shell cuts at a buffer boundary, not at a newline: the first chunk
+    // has no terminator, so quoting it would show half a sentence.
+    spawn.onStderr?.("\u001b[31mERROR\u001b[0m weights are corr");
+    spawn.onStderr?.("upt\n");
+    spawn.onClose?.({ code: 1, signal: null });
+
+    await expect(started).rejects.toThrow(
+      "Sidecar exited (code=1, signal=unknown): ERROR weights are corrupt",
+    );
+  });
+
+  it("does not let an unterminated fragment replace a complete line", async () => {
+    const sidecar = new TestSidecar();
+    const spawn = captureSpawn();
+
+    const started = sidecar.ensureStarted();
+    started.catch(() => {});
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+
+    spawn.onStderr?.("first failure line\nsecond line that never ends");
+    spawn.onClose?.({ code: 1, signal: null });
+
+    await expect(started).rejects.toThrow(
+      "Sidecar exited (code=1, signal=unknown): first failure line",
+    );
+  });
+
   it("bounds the quoted detail so a long diagnostic cannot flood the message", async () => {
     const sidecar = new TestSidecar();
     const spawn = captureSpawn();

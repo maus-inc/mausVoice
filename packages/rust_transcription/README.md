@@ -43,13 +43,15 @@ cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --b
 ### CPU baseline for shipped builds
 
 CI and release builds pass `packages/rust_transcription/cmake/{linux,macos,windows}-ci-toolchain.cmake`
-to CMake. Those files pin ggml to an AVX baseline: `GGML_NATIVE=OFF` is not portable on its own,
-because it leaves AVX2, BMI2, FMA and F16C enabled (MSVC then compiles ggml with `/arch:AVX2`), and
-this static build has no runtime dispatch between instruction-set variants. A binary built with
-those defaults dies with an illegal instruction on pre-Haswell CPUs. `src/cpu_requirements.rs`
-checks for AVX before the sidecar binds its socket, so a CPU below the baseline produces one
-explicit startup error instead of a process that disappears mid-request. Local, non-release builds
-keep the native defaults.
+to CMake. Those files pin ggml to an AVX baseline. `GGML_NATIVE=OFF` alone is not portable: ggml
+then enables AVX2, BMI2, FMA and F16C, MSVC compiles ggml with `/arch:AVX2`, and this static build
+has no runtime dispatch between instruction-set variants. A binary built that way dies with an
+illegal instruction on every CPU older than Intel Haswell or AMD Excavator, which covers machines
+sold from 2011 through 2013. `src/cpu_requirements.rs` checks for AVX before the sidecar binds its
+socket, so a CPU below the baseline produces one explicit startup error instead of a process that
+disappears mid-request. Set `RUST_TRANSCRIPTION_ALLOW_UNSUPPORTED_CPU=1` to start anyway; that only
+makes sense for a build compiled on the same machine. Local builds leave the native defaults in
+place, so they compile for the host and never need the override.
 
 ## Run
 

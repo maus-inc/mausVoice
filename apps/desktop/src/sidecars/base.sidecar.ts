@@ -36,10 +36,14 @@ const SIDECAR_STDERR_DETAIL_LIMIT = 200;
 /**
  * Removes the SGR colour sequences the sidecar's tracing subscriber emits.
  *
+ * It strips colour only, which is all the subscriber writes. Cursor movement
+ * and OSC title sequences keep their bytes, so the name says SGR rather than
+ * claiming to handle ANSI generally.
+ *
  * Written without a literal escape in a regular-expression source, because a
  * control character there is a lint warning and reads as a typo.
  */
-const stripAnsiColor = (value: string): string => {
+const stripSgrColor = (value: string): string => {
   const escape = String.fromCodePoint(27);
 
   return value
@@ -51,21 +55,44 @@ const stripAnsiColor = (value: string): string => {
 };
 
 /**
- * Tracks the most recent non-empty stderr line of a sidecar.
+ * Longest unterminated stderr tail carried between chunks.
  *
- * Shell chunks split on arbitrary boundaries and the sidecar's tracing output
- * carries ANSI colour, so this strips the escapes, drops empty lines and keeps
- * only the last real one. A chunk that ends mid-line keeps the previous line
- * until a complete one arrives.
+ * Only the quoted line matters, so the buffer never has to hold a whole log;
+ * the cap keeps a sidecar that streams one giant line from growing it without
+ * bound.
  */
-const nextStderrDetail = (chunk: string, previous: string): string => {
-  const cleaned = stripAnsiColor(chunk);
-  const lines = cleaned
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+const SIDECAR_STDERR_PENDING_LIMIT = 4_096;
 
-  return (lines.at(-1) ?? previous).slice(0, SIDECAR_STDERR_DETAIL_LIMIT);
+/** The quoted line plus the tail of a line the shell has not terminated yet. */
+type StderrLines = { detail: string; pending: string };
+
+/**
+ * Reads stderr chunks into whole lines and reports the last complete one.
+ *
+ * Shell chunks split on arbitrary boundaries, so a chunk can stop in the
+ * middle of a line. The unterminated tail waits in `pending` and is joined to
+ * the next chunk instead of being quoted as if it were a whole line, which is
+ * what keeps a two-part `ERROR` line readable and stops a fragment from
+ * replacing a complete line.
+ */
+const readStderr = (chunk: string, previous: StderrLines): StderrLines => {
+  const buffered = `${previous.pending}${stripSgrColor(chunk)}`.slice(
+    -SIDECAR_STDERR_PENDING_LIMIT,
+  );
+  const lines = buffered.split(/\r?\n/);
+  const pending = lines.pop() ?? "";
+  const lastComplete = lines
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .at(-1);
+
+  return {
+    pending,
+    detail: (lastComplete ?? previous.detail).slice(
+      0,
+      SIDECAR_STDERR_DETAIL_LIMIT,
+    ),
+  };
 };
 
 export abstract class BaseSidecar {
@@ -229,7 +256,7 @@ export abstract class BaseSidecar {
     let stdoutBuffer = "";
     let childPid = -1;
     let child: ShellChildProcess | null = null;
-    let stderrDetail = "";
+    let stderrLines: StderrLines = { detail: "", pending: "" };
 
     const failReady = (message: string) => {
       ready.reject(new Error(message));
@@ -256,7 +283,7 @@ export abstract class BaseSidecar {
         getLogger().warning(
           `[${this.config.logPrefix}:${childPid}] ${chunk.trimEnd()}`,
         );
-        stderrDetail = nextStderrDetail(chunk, stderrDetail);
+        stderrLines = readStderr(chunk, stderrLines);
       },
       onClose: (payload) => {
         if (this.stoppingPid === childPid) {
@@ -272,7 +299,8 @@ export abstract class BaseSidecar {
         // without the required instruction set, a missing runtime DLL, a bad
         // models directory. Without the detail the operator only saw
         // "Sidecar exited (code=...)" and had nowhere to go.
-        const detail = stderrDetail.length > 0 ? `: ${stderrDetail}` : "";
+        const detail =
+          stderrLines.detail.length > 0 ? `: ${stderrLines.detail}` : "";
         const message =
           `Sidecar exited (code=${payload.code ?? "unknown"}, ` +
           `signal=${payload.signal ?? "unknown"})${detail}`;
