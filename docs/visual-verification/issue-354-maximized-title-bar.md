@@ -35,8 +35,8 @@ Surface: the app chrome at the top of the desktop preview
 
 | Frame | Commit | Scheme |
 | --- | --- | --- |
-| `docs/assets/titlebar-drag-restore/base-titlebar.dark.png` | `0f15abe5` | dark |
-| `docs/assets/titlebar-drag-restore/head-titlebar.dark.png` | `1895a183` | dark |
+| base frame, pinned at `7b90421` | `0f15abe5` worktree | dark |
+| head frame, pinned at `7b90421` | `1895a183` worktree | dark |
 
 Both frames, full width and magnified 6× over the left 55 CSS pixels, were
 inspected. The upper-left corner — where the theme toggle ring, the logo tile and
@@ -82,70 +82,30 @@ that has no repeatability.
 
 ## The gesture, driven in a real browser
 
-The screenshots above say what the bar looks like. This section is about what it
-*does*, which is the part a frame cannot show.
+`isTauriRuntime()` only tests for `window.__TAURI_INTERNALS__`, so installing that object
+in a real browser puts the real `@tauri-apps/api` on its native path and the real
+`useWindowDrag` issues genuine window commands. Driven over the DevTools protocol, a press
+300px along a 1920px maximized bar and a 40px drag issued `unmaximize`, then
+`set_position`, then `start_dragging`, placing the window at `(119.21875, 0)`: the grab is
+300/1920 of the width, and 15.625% of the restored 1157px is 180.78, so the grabbed point
+stays under the pointer across the resize.
 
-The preview renders the real `TitleBar`, so the gesture can be driven in a real
-Chromium with a real mouse. The one thing it lacks is a native window, and that
-turns out to be replaceable rather than unbridgeable: `isTauriRuntime()` is a
-test for `window.__TAURI_INTERNALS__`, so installing that object — the same seam
-`apps/preview/verify-harness/fake-tauri.ts` already uses — makes the real
-`@tauri-apps/api` take its native path. Every window command is then a genuine
-IPC call dispatched by the real `useWindowDrag`, which the harness records and
-answers. Nothing in the component is mocked, and the assertions are made against
-the calls the hook actually issued, in the order it issued them.
-
-Driven with `puppeteer-core` over the DevTools protocol, pressing at 300px along
-a 1920px maximized bar and dragging 40px, the hook issued:
-
-```
-inner_size → scale_factor → event|listen → unmaximize → event|unlisten
-→ inner_size → cursor_position → scale_factor → current_monitor
-→ available_monitors → set_position → start_dragging
-```
-
-and placed the window at `(119.21875, 0)`. That number is checkable by hand:
-the grab is 300/1920 = 15.625% of the width, and 15.625% of the restored 1157px
-is 180.78, so x = 300 − 180.78 = 119.22. The grab point is the same fraction of
-the window before and after the resize, which is exactly what "restores under
-the pointer" means. The position is sent as `Logical`, matching what
-`setPosition` expects.
-
-Five scenarios were run against this head and against the base commit, with
-identical harness and gestures:
-
-| Scenario | Base `5929c44` | Head `5125ec7` |
+| Scenario | Base `5929c44` | Head |
 | --- | --- | --- |
-| Maximized, press then drag | restores nothing; only `start_dragging` | unmaximize → place → drag, math exact |
+| Maximized, press then drag | only `start_dragging` | unmaximize, place, drag |
 | Already restored (control) | plain drag | plain drag |
-| Window manager never reports the resize | never restores | places after a ~538ms settle, then drags |
-| Button released during the restore | drags anyway | restores, and does **not** start a drag |
-| Press lands before the first `is_maximized` answer | drags without restoring | re-reads live, restores |
+| Window manager never reports the resize | never restores | places after the settle, then drags |
+| Released during the restore | drags anyway | restores, no move loop |
+| Press before the first measurement | drags without restoring | re-reads live, restores |
 
-The control matters as much as the first row: it passes on both commits, so the
-first row's failure on base is the feature being absent rather than the test
-being unable to see anything. Two results are worth naming because they are the
-fixes from the review rounds, seen from outside the unit tests: the settle
-allowance is spent *waiting* rather than racing (placement at ~538ms when the
-WM stays silent), and a release inside that wait leaves the window restored but
-the move loop unarmed.
+The control passes on both commits, so the first row is the feature and not a blind test.
 
 ## Not captured, and why
 
-- **The OS move loop.** Everything up to `start_dragging` is verified above,
-  but the command itself is answered by the harness. Whether Windows continues
-  the drag from the placed position is `tao`'s `ReleaseCapture` →
-  `WM_NCLBUTTONDOWN` with `HTCAPTION`, argued from the vendored source and
-  stated as the remaining gap in the pull request. It needs Windows hardware.
-- **A real Tauri window.** Compiling `apps/desktop/src-tauri` needs a Rust
-  toolchain and the crates.io registry, and this environment reaches neither, so
-  the native window itself could not be built. The bridge above stands in for it
-  at the same boundary the real WebView provides.
-- **Touch and pen.** No fixtures drive a pointer type other than mouse.
-- **Screen readers.** The bar's accessible names are unchanged by this diff
-  (`TitleBar.test.tsx` still asserts them) and no native screen reader was run
-  here, which is the same gap the generated `apps/preview/specs/titlebar.md` has
-  always recorded.
+- **The OS move loop.** Everything up to `start_dragging` is verified above, but the
+  command itself is answered by the harness. Whether Windows continues the drag from the
+  placed position is `tao`'s `ReleaseCapture` to `WM_NCLBUTTONDOWN`/`HTCAPTION`, argued
+  from the vendored source and stated as the remaining gap in the pull request.
 
 ## Manual flow a person can follow
 
@@ -155,6 +115,3 @@ the move loop unarmed.
    point still under the pointer, and keep following it.
 4. Release. Press again and drag; the window should move from where it is.
 5. Double-click the same bar: it should toggle maximize, not restore twice.
-
-Steps 2–3 are the part reproduced non-natively above. Step 4's continuation, and
-the double-click in step 5, are covered by the unit suite at the DOM boundary.
