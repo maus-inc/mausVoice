@@ -80,17 +80,17 @@ type StderrLines = { detail: string; pending: string };
 const readStderr = (chunk: string, previous: StderrLines): StderrLines => {
   const lines = `${previous.pending}${chunk}`.split(/\r?\n/);
   const pending = (lines.pop() ?? "").slice(-SIDECAR_STDERR_PENDING_LIMIT);
-  const lastComplete = lines
-    .map((line) => stripSgrColor(line).trim())
-    .filter((line) => line.length > 0)
-    .at(-1);
+  let lastComplete = previous.detail;
+  for (const line of lines) {
+    const cleaned = stripSgrColor(line).trim();
+    if (cleaned.length > 0) {
+      lastComplete = cleaned;
+    }
+  }
 
   return {
     pending,
-    detail: (lastComplete ?? previous.detail).slice(
-      0,
-      SIDECAR_STDERR_DETAIL_LIMIT,
-    ),
+    detail: lastComplete.slice(0, SIDECAR_STDERR_DETAIL_LIMIT),
   };
 };
 
