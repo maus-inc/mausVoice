@@ -24,6 +24,79 @@ export type SidecarRuntime = {
   child: ShellChildProcess;
 };
 
+/**
+ * Longest stderr line carried into an exit message.
+ *
+ * The line is quoted in the error an operator reads after a startup failure,
+ * so it has to survive a stack trace or a compiler-style diagnostic without
+ * turning the message into a wall of text.
+ */
+const SIDECAR_STDERR_DETAIL_LIMIT = 200;
+
+/**
+ * Removes the SGR colour sequences the sidecar's tracing subscriber emits.
+ *
+ * It strips colour only, which is all the subscriber writes. Cursor movement
+ * and OSC title sequences keep their bytes, so the name says SGR rather than
+ * claiming to handle ANSI generally.
+ *
+ * Written without a literal escape in a regular-expression source, because a
+ * control character there is a lint warning and reads as a typo.
+ */
+const stripSgrColor = (value: string): string => {
+  const escape = String.fromCodePoint(27);
+
+  return value
+    .split(escape)
+    .map((part, index) =>
+      index === 0 ? part : part.replace(/^\[[0-9;]*m/, ""),
+    )
+    .join("");
+};
+
+/**
+ * Longest unterminated stderr tail carried between chunks.
+ *
+ * Only the quoted line matters, so the buffer never has to hold a whole log;
+ * the cap keeps a sidecar that streams one giant line from growing it without
+ * bound.
+ */
+const SIDECAR_STDERR_PENDING_LIMIT = 4_096;
+
+/** The quoted line plus the tail of a line the shell has not terminated yet. */
+type StderrLines = { detail: string; pending: string };
+
+/**
+ * Reads stderr chunks into whole lines and reports the last complete one.
+ *
+ * Shell chunks split on arbitrary boundaries, so a chunk can stop in the
+ * middle of a line, or even inside a colour sequence. The raw text is therefore
+ * buffered first and only whole lines are cleaned: stripping per chunk would
+ * leave `[31m` behind when the escape itself was split, and quoting the
+ * unterminated tail would show half a sentence. The tail waits in `pending` and
+ * is joined to the next chunk. Only that tail is capped, so a long complete
+ * line still contributes its first characters instead of being dropped.
+ */
+const readStderr = (chunk: string, previous: StderrLines): StderrLines => {
+  const lines = `${previous.pending}${chunk}`.split(/\r?\n/);
+  // The head of an unterminated line is the part worth keeping: it carries the
+  // level and the first words, and the quoted detail is the first 200
+  // characters anyway. Keeping the tail would quote the middle of a sentence.
+  const pending = (lines.pop() ?? "").slice(0, SIDECAR_STDERR_PENDING_LIMIT);
+  let lastComplete = previous.detail;
+  for (const line of lines) {
+    const cleaned = stripSgrColor(line).trim();
+    if (cleaned.length > 0) {
+      lastComplete = cleaned;
+    }
+  }
+
+  return {
+    pending,
+    detail: lastComplete.slice(0, SIDECAR_STDERR_DETAIL_LIMIT),
+  };
+};
+
 export abstract class BaseSidecar {
   private runtime: SidecarRuntime | null = null;
   private startupPromise: Promise<SidecarRuntime> | null = null;
@@ -185,6 +258,7 @@ export abstract class BaseSidecar {
     let stdoutBuffer = "";
     let childPid = -1;
     let child: ShellChildProcess | null = null;
+    let stderrLines: StderrLines = { detail: "", pending: "" };
 
     const failReady = (message: string) => {
       ready.reject(new Error(message));
@@ -211,6 +285,7 @@ export abstract class BaseSidecar {
         getLogger().warning(
           `[${this.config.logPrefix}:${childPid}] ${chunk.trimEnd()}`,
         );
+        stderrLines = readStderr(chunk, stderrLines);
       },
       onClose: (payload) => {
         if (this.stoppingPid === childPid) {
@@ -222,9 +297,15 @@ export abstract class BaseSidecar {
           this.runtime = null;
         }
 
+        // A sidecar that refuses to start explains itself on stderr — a CPU
+        // without the required instruction set, a missing runtime DLL, a bad
+        // models directory. Without the detail the operator only saw
+        // "Sidecar exited (code=...)" and had nowhere to go.
+        const detail =
+          stderrLines.detail.length > 0 ? `: ${stderrLines.detail}` : "";
         const message =
           `Sidecar exited (code=${payload.code ?? "unknown"}, ` +
-          `signal=${payload.signal ?? "unknown"})`;
+          `signal=${payload.signal ?? "unknown"})${detail}`;
         getLogger().warning(`[${this.config.logPrefix}] ${message}`);
         this.onError(message);
         failReady(message);

@@ -40,6 +40,20 @@ cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --b
 cargo build --manifest-path packages/rust_transcription/Cargo.toml --release --bin rust-transcription-gpu --features gpu,gpu-vulkan  # Linux/Windows
 ```
 
+### CPU baseline for shipped builds
+
+CI and release builds pass `packages/rust_transcription/cmake/{linux,macos,windows}-ci-toolchain.cmake`
+to CMake. Those files pin ggml to an AVX baseline. `GGML_NATIVE=OFF` alone is not portable: ggml
+then enables AVX2, BMI2, FMA and F16C, MSVC compiles ggml with `/arch:AVX2`, and this static build
+has no runtime dispatch between instruction-set variants. A binary built that way dies with an
+illegal instruction on every CPU older than Intel Haswell or AMD Excavator, which covers machines
+sold from 2011 through 2013. `src/cpu_requirements.rs` checks for AVX before the sidecar binds its
+socket, so a CPU below the baseline produces one explicit startup error instead of a process that
+disappears mid-request. A host without AVX can still run a sidecar that was compiled for it, which is
+what a local build on that host produces, because local builds leave ggml on the native defaults.
+That pairing needs `RUST_TRANSCRIPTION_ALLOW_UNSUPPORTED_CPU=1`, since the startup check cannot tell
+the two builds apart. Hosts with AVX need nothing set.
+
 ## Run
 
 CPU sidecar:
