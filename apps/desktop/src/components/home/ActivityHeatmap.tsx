@@ -31,7 +31,8 @@ import {
 } from "../../styles/motion";
 import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 
-const HEATMAP_TOOLTIP_ENTER_MS = duration.instant * 1000;
+const MS_PER_SECOND = 1000;
+const HEATMAP_TOOLTIP_ENTER_MS = Math.round(duration.instant * MS_PER_SECOND);
 
 type HeatmapColors = readonly string[];
 type CellDescription = (localDate: string, wordCount: number) => string;
