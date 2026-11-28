@@ -22,10 +22,17 @@ const getLoggerMock = vi.hoisted(() => ({
 const repoMocks = vi.hoisted(() => ({
   rejectNextUpdate: false,
   rejectNextCreate: false,
+  rejectNextConversationCreate: false,
   rejectNextDelete: false,
   rejectNextList: false,
   rejectNextMessageDelete: false,
+  deferNextConversationCreate: null as
+    ((conversation: Conversation) => Promise<Conversation>) | null,
+  deferNextMessageList: null as
+    ((conversationId: string) => Promise<ChatMessage[]>) | null,
 }));
+const conversationCreateSpy = vi.hoisted(() => vi.fn());
+const messageListSpy = vi.hoisted(() => vi.fn());
 
 const abortAgentLoopMock = vi.hoisted(() => vi.fn());
 
@@ -65,6 +72,12 @@ const chatMessageRepoStub = () => ({
     return Promise.resolve(message);
   },
   listChatMessages: (conversationId: string) => {
+    messageListSpy(conversationId);
+    if (repoMocks.deferNextMessageList) {
+      const custom = repoMocks.deferNextMessageList;
+      repoMocks.deferNextMessageList = null;
+      return custom(conversationId);
+    }
     if (repoMocks.rejectNextList) {
       repoMocks.rejectNextList = false;
       repoMocks.rejectNextMessageDelete = false;
@@ -103,6 +116,24 @@ vi.mock("../utils/log.utils", () => ({ getLogger: () => getLoggerMock }));
 
 vi.mock("../repos", () => ({
   getConversationRepo: () => ({
+    listConversations: () => Promise.resolve([...conversationStorage.values()]),
+    createConversation: (conversation: Conversation) => {
+      conversationCreateSpy(conversation);
+      if (repoMocks.deferNextConversationCreate) {
+        const custom = repoMocks.deferNextConversationCreate;
+        repoMocks.deferNextConversationCreate = null;
+        return custom(conversation).then((saved) => {
+          conversationStorage.set(saved.id, saved);
+          return saved;
+        });
+      }
+      if (repoMocks.rejectNextConversationCreate) {
+        repoMocks.rejectNextConversationCreate = false;
+        return Promise.reject(new Error("conversation create rejected"));
+      }
+      conversationStorage.set(conversation.id, conversation);
+      return Promise.resolve(conversation);
+    },
     updateConversation: (conversation: Conversation) => {
       if (repoMocks.rejectNextUpdate) {
         repoMocks.rejectNextUpdate = false;
@@ -128,9 +159,13 @@ vi.mock("../repos", () => ({
 }));
 
 import {
+  canReuseEmptyConversation,
+  createConversation,
   deleteConversation,
   editAndResend,
   laterMessagesHaveToolActivity,
+  loadChatMessages,
+  requestNewConversation,
   retryAssistant,
   sendChatMessage,
 } from "./chat.actions";
@@ -861,5 +896,216 @@ describe("editAndResend", () => {
       "u2",
     ]);
     expect(runAgentMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("requestNewConversation and empty-thread reuse", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    repoMocks.rejectNextUpdate = false;
+    repoMocks.rejectNextCreate = false;
+    repoMocks.rejectNextConversationCreate = false;
+    repoMocks.rejectNextDelete = false;
+    repoMocks.rejectNextList = false;
+    repoMocks.rejectNextMessageDelete = false;
+    repoMocks.deferNextConversationCreate = null;
+    repoMocks.deferNextMessageList = null;
+    conversationStorage.clear();
+    messageStorage.clear();
+    seed();
+  });
+
+  const makeConversation = (id: string): Conversation => ({
+    id,
+    title: "New conversation",
+    createdAt: "2026-08-20T10:05:00.000Z",
+    updatedAt: "2026-08-20T10:05:00.000Z",
+  });
+
+  it("initializes an empty message list on createConversation", async () => {
+    const created = await createConversation(makeConversation("conv-created"));
+    expect(created.id).toBe("conv-created");
+    expect(
+      getAppState().chatMessageIdsByConversationId["conv-created"],
+    ).toEqual([]);
+    expect(canReuseEmptyConversation("conv-created")).toBe(true);
+  });
+
+  it("reuses an already empty conversation without creating a duplicate", async () => {
+    const result = await requestNewConversation(
+      "conv-1",
+      makeConversation("conv-dup"),
+    );
+
+    expect(result).toEqual({
+      conversation: getAppState().conversationById["conv-1"],
+      created: false,
+    });
+    expect(conversationCreateSpy).not.toHaveBeenCalled();
+    expect(conversationStorage.size).toBe(0);
+  });
+
+  it("creates one new conversation from a populated thread", async () => {
+    seed({ withExistingMessage: true });
+
+    const result = await requestNewConversation(
+      "conv-1",
+      makeConversation("conv-next"),
+    );
+
+    expect(result).toEqual({
+      conversation: getAppState().conversationById["conv-next"],
+      created: true,
+    });
+    expect(conversationCreateSpy).toHaveBeenCalledTimes(1);
+    expect(getAppState().chat.conversationIds[0]).toBe("conv-next");
+  });
+
+  it("deduplicates concurrent requestNewConversation calls while creation is pending", async () => {
+    seed({ withExistingMessage: true });
+    let finishCreate!: () => void;
+    repoMocks.deferNextConversationCreate = (conversation) =>
+      new Promise((resolve) => {
+        finishCreate = () => resolve(conversation);
+      });
+
+    const first = requestNewConversation("conv-1", makeConversation("conv-a"));
+    const second = requestNewConversation("conv-1", makeConversation("conv-b"));
+
+    await vi.waitFor(() =>
+      expect(conversationCreateSpy).toHaveBeenCalledTimes(1),
+    );
+    finishCreate();
+
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(conversationCreateSpy).toHaveBeenCalledTimes(1);
+    expect(r1).toEqual(r2);
+    expect(r1?.created).toBe(true);
+    expect(r1?.conversation.id).toBe("conv-a");
+    expect(
+      getAppState().chat.conversationIds.filter((id) => id === "conv-a"),
+    ).toHaveLength(1);
+    expect(getAppState().conversationById["conv-b"]).toBeUndefined();
+  });
+
+  it("releases the single-flight creation guard after a repo rejection", async () => {
+    seed({ withExistingMessage: true });
+    repoMocks.rejectNextConversationCreate = true;
+
+    await expect(
+      requestNewConversation("conv-1", makeConversation("conv-fail")),
+    ).rejects.toThrow("conversation create rejected");
+
+    const retry = await requestNewConversation(
+      "conv-1",
+      makeConversation("conv-retry"),
+    );
+    expect(retry?.created).toBe(true);
+    expect(retry?.conversation.id).toBe("conv-retry");
+    expect(conversationCreateSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for an in-flight loadChatMessages before deciding reuse vs creation", async () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.conversationById["conv-unloaded"] = {
+      ...baseConversation,
+      id: "conv-unloaded",
+    };
+    state.chat.conversationIds = ["conv-unloaded"];
+    setAppState(state, true);
+
+    let resolveList!: (messages: ChatMessage[]) => void;
+    repoMocks.deferNextMessageList = () =>
+      new Promise((resolve) => {
+        resolveList = resolve;
+      });
+
+    const loadPromise = loadChatMessages("conv-unloaded");
+    const requestPromise = requestNewConversation(
+      "conv-unloaded",
+      makeConversation("conv-new"),
+    );
+    expect(conversationCreateSpy).not.toHaveBeenCalled();
+
+    resolveList([]);
+    await loadPromise;
+    const result = await requestPromise;
+
+    expect(result).toEqual({
+      conversation: getAppState().conversationById["conv-unloaded"],
+      created: false,
+    });
+    expect(conversationCreateSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a thread with a pending send as empty", async () => {
+    let releaseSend: (() => void) | undefined;
+    repoMocks.deferNextMessageList = () =>
+      new Promise((resolve) => {
+        releaseSend = () => resolve([]);
+      });
+    const sendPromise = sendChatMessage("conv-1", "First message");
+    expect(canReuseEmptyConversation("conv-1")).toBe(false);
+    await vi.waitFor(() => expect(releaseSend).toBeTypeOf("function"));
+    releaseSend!();
+    await sendPromise;
+    expect(canReuseEmptyConversation("conv-1")).toBe(false);
+  });
+
+  it("does not treat a thread with an active agent or pending delete as empty", async () => {
+    const withAgent = structuredClone(getAppState());
+    withAgent.agentStateByConversationId["conv-1"] = {
+      status: "calling-llm",
+      agentType: "chat",
+      iteration: 1,
+      maxIterations: 10,
+      toolCalls: [],
+      currentToolIndex: 0,
+      aborted: false,
+    };
+    setAppState(withAgent, true);
+    expect(canReuseEmptyConversation("conv-1")).toBe(false);
+
+    seed();
+    const deletePromise = deleteConversation("conv-1");
+    expect(canReuseEmptyConversation("conv-1")).toBe(false);
+    await deletePromise;
+  });
+
+  it("coalesces concurrent loadChatMessages reads and skips deleted threads", async () => {
+    const state = structuredClone(getAppState());
+    delete state.chatMessageIdsByConversationId["conv-1"];
+    setAppState(state, true);
+
+    let resolveList!: (messages: ChatMessage[]) => void;
+    repoMocks.deferNextMessageList = () =>
+      new Promise((resolve) => {
+        resolveList = resolve;
+      });
+    const first = loadChatMessages("conv-1");
+    const second = loadChatMessages("conv-1");
+    await vi.waitFor(() => expect(messageListSpy).toHaveBeenCalledTimes(1));
+    resolveList([]);
+    await Promise.all([first, second]);
+    expect(messageListSpy).toHaveBeenCalledTimes(1);
+    expect(canReuseEmptyConversation("conv-1")).toBe(true);
+
+    // If a conversation starts deleting while loadChatMessages is in flight,
+    // the finished load must not re-seed chatMessageIdsByConversationId.
+    const state2 = structuredClone(getAppState());
+    delete state2.chatMessageIdsByConversationId["conv-1"];
+    setAppState(state2, true);
+    let resolveLateLoad!: (messages: ChatMessage[]) => void;
+    repoMocks.deferNextMessageList = () =>
+      new Promise((resolve) => {
+        resolveLateLoad = resolve;
+      });
+    const lateLoad = loadChatMessages("conv-1");
+    const deleting = deleteConversation("conv-1");
+    resolveLateLoad([]);
+    await Promise.all([lateLoad, deleting]);
+    expect(
+      getAppState().chatMessageIdsByConversationId["conv-1"],
+    ).toBeUndefined();
   });
 });

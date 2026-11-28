@@ -25,6 +25,9 @@ export {
 
 const conversationCreations = createAsyncMutationTracker();
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
+const pendingMessageLoads = new Map<string, Promise<void>>();
+let pendingConversationLoad: Promise<void> | null = null;
+let pendingNewThreadCreation: Promise<Conversation> | null = null;
 // Retry and edit share a reservation because both replace conversation history.
 // Agent status alone cannot guard the asynchronous persistence/preparation gap.
 const resendingConversationIds = new Set<string>();
@@ -200,31 +203,42 @@ export const editAndResend = async (
 };
 
 export const loadConversations = async (): Promise<void> => {
-  produceAppState((draft) => {
-    draft.chat.status = "loading";
-  });
-
-  try {
-    while (true) {
-      const beforeWait = conversationCreations.revision();
-      await conversationCreations.wait();
-      const revision = conversationCreations.revision();
-      if (beforeWait !== revision) continue;
-      const conversations = await getConversationRepo().listConversations();
-      if (revision !== conversationCreations.revision()) continue;
-      produceAppState((draft) => {
-        registerConversations(draft, conversations);
-        draft.chat.conversationIds = conversations.map((c) => c.id);
-        draft.chat.status = "success";
-      });
-      break;
-    }
-  } catch (error) {
-    getLogger().error("Failed to load conversations", error);
+  const work = (async () => {
     produceAppState((draft) => {
-      draft.chat.status = "error";
+      draft.chat.status = "loading";
     });
-    throw error;
+
+    try {
+      while (true) {
+        const beforeWait = conversationCreations.revision();
+        await conversationCreations.wait();
+        const revision = conversationCreations.revision();
+        if (beforeWait !== revision) continue;
+        const conversations = await getConversationRepo().listConversations();
+        if (revision !== conversationCreations.revision()) continue;
+        produceAppState((draft) => {
+          registerConversations(draft, conversations);
+          draft.chat.conversationIds = conversations.map((c) => c.id);
+          draft.chat.status = "success";
+        });
+        break;
+      }
+    } catch (error) {
+      getLogger().error("Failed to load conversations", error);
+      produceAppState((draft) => {
+        draft.chat.status = "error";
+      });
+      throw error;
+    }
+  })();
+
+  pendingConversationLoad = work;
+  try {
+    await work;
+  } finally {
+    if (pendingConversationLoad === work) {
+      pendingConversationLoad = null;
+    }
   }
 };
 
@@ -268,7 +282,10 @@ export function createConversation(
 
         produceAppState((draft) => {
           registerConversations(draft, [saved]);
-          draft.chat.conversationIds.unshift(saved.id);
+          if (!draft.chat.conversationIds.includes(saved.id)) {
+            draft.chat.conversationIds.unshift(saved.id);
+          }
+          draft.chatMessageIdsByConversationId[saved.id] ??= [];
           condition?.onRegister(draft, saved);
         }, lease);
 
@@ -277,6 +294,122 @@ export function createConversation(
     existingLease,
   );
 }
+
+const hasConversationPermission = (
+  state: AppState,
+  conversationId: string,
+): boolean =>
+  Object.values(state.toolPermissionById ?? {}).some(
+    (permission) => permission.conversationId === conversationId,
+  );
+
+/**
+ * True when `conversationId` is loaded in memory with zero messages and no
+ * pending send, edit, agent run, permission prompt, or deletion.
+ */
+export const canReuseEmptyConversation = (
+  conversationId: string | null | undefined,
+): boolean => {
+  if (!conversationId) return false;
+  const state = getAppState();
+  if (!state.conversationById[conversationId]) return false;
+  if (deletingConversationIds.has(conversationId)) return false;
+  if (
+    sendQueuesByConversationId.has(conversationId) ||
+    resendingConversationIds.has(conversationId) ||
+    isAgentRunning(conversationId)
+  ) {
+    return false;
+  }
+  if (
+    state.pillConversationId === conversationId &&
+    state.activeRecordingMode === "agent"
+  ) {
+    return false;
+  }
+  if (hasConversationPermission(state, conversationId)) return false;
+  const messageIds = state.chatMessageIdsByConversationId[conversationId];
+  return Array.isArray(messageIds) && messageIds.length === 0;
+};
+
+/**
+ * Resolves `conversationId` when it is already an idle empty conversation,
+ * waiting for any in-flight conversation or message load for that thread first.
+ */
+export const resolveReusableEmptyConversation = async (
+  conversationId: string | null | undefined,
+): Promise<Conversation | null> => {
+  if (!conversationId) return null;
+  if (canReuseEmptyConversation(conversationId)) {
+    return getAppState().conversationById[conversationId] ?? null;
+  }
+
+  const waitConversationLoad = !getAppState().conversationById[conversationId]
+    ? pendingConversationLoad
+    : null;
+  if (waitConversationLoad) {
+    await waitConversationLoad.catch(() => undefined);
+  }
+
+  const waitMessageLoad =
+    getAppState().chatMessageIdsByConversationId[conversationId] === undefined
+      ? pendingMessageLoads.get(conversationId)
+      : undefined;
+  if (waitMessageLoad) {
+    await waitMessageLoad.catch(() => undefined);
+  }
+
+  return canReuseEmptyConversation(conversationId)
+    ? (getAppState().conversationById[conversationId] ?? null)
+    : null;
+};
+
+export type RequestNewConversationResult = {
+  conversation: Conversation;
+  created: boolean;
+};
+
+const createSingleFlightConversation = async (
+  conversation: Conversation,
+): Promise<Conversation> => {
+  if (pendingNewThreadCreation) {
+    return pendingNewThreadCreation;
+  }
+
+  const creation = createConversation(conversation).finally(() => {
+    if (pendingNewThreadCreation === creation) {
+      pendingNewThreadCreation = null;
+    }
+  });
+  pendingNewThreadCreation = creation;
+  return creation;
+};
+
+/**
+ * Returns the active conversation when it is already an idle empty thread, or
+ * creates at most one new thread at a time across concurrent requests.
+ */
+export const requestNewConversation = async (
+  currentConversationId: string | null,
+  conversation: Conversation,
+  options?: {
+    shouldCreate?: () => boolean;
+  },
+): Promise<RequestNewConversationResult | null> => {
+  const existing = await resolveReusableEmptyConversation(
+    currentConversationId,
+  );
+  if (existing) {
+    return { conversation: existing, created: false };
+  }
+
+  if (options?.shouldCreate && !options.shouldCreate()) {
+    return null;
+  }
+
+  const saved = await createSingleFlightConversation(conversation);
+  return { conversation: saved, created: true };
+};
 
 export const updateConversation = (
   conversation: Conversation,
@@ -328,14 +461,26 @@ export const deleteConversation = async (id: string): Promise<void> => {
   }
 };
 
-export const loadChatMessages = async (
-  conversationId: string,
-): Promise<void> => {
-  const messages = await getChatMessageRepo().listChatMessages(conversationId);
+export const loadChatMessages = (conversationId: string): Promise<void> => {
+  const existing = pendingMessageLoads.get(conversationId);
+  if (existing) return existing;
 
-  produceAppState((draft) => {
-    registerChatMessages(draft, conversationId, messages);
+  const work = (async () => {
+    const messages =
+      await getChatMessageRepo().listChatMessages(conversationId);
+
+    produceAppState((draft) => {
+      if (deletingConversationIds.has(conversationId)) return;
+      registerChatMessages(draft, conversationId, messages);
+    });
+  })().finally(() => {
+    if (pendingMessageLoads.get(conversationId) === work) {
+      pendingMessageLoads.delete(conversationId);
+    }
   });
+
+  pendingMessageLoads.set(conversationId, work);
+  return work;
 };
 
 export const deleteChatMessages = (

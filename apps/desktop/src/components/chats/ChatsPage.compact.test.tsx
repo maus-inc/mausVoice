@@ -6,8 +6,11 @@ import type { Conversation } from "@maus-inc/types";
 import { expect, it, vi } from "vitest";
 import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 import { INITIAL_APP_STATE } from "../../state/app.state";
-import { produceAppState, setAppState } from "../../store";
+import { getAppState, produceAppState, setAppState } from "../../store";
 const media = vi.hoisted(() => ({ compact: true }));
+const chatActionMocks = vi.hoisted(() => ({
+  requestNewConversation: vi.fn(),
+}));
 vi.mock("@mui/material", async (original) => ({
   ...(await original<typeof import("@mui/material")>()),
   useMediaQuery: () => media.compact,
@@ -18,9 +21,15 @@ vi.mock("react-intl", async (original) => {
   return reactIntlMockModule(original);
 });
 vi.mock("../../actions/chat.actions", () => ({
-  createConversation: vi.fn(),
+  canReuseEmptyConversation: (id: string | null | undefined) => {
+    if (!id) return false;
+    const ids = getAppState().chatMessageIdsByConversationId[id];
+    return Array.isArray(ids) && ids.length === 0;
+  },
   deleteConversation: vi.fn(),
   loadChatMessages: vi.fn(),
+  requestNewConversation: chatActionMocks.requestNewConversation,
+  resolveReusableEmptyConversation: vi.fn(async () => null),
 }));
 vi.mock("./ChatsSideEffects", () => ({ ChatsSideEffects: () => null }));
 vi.mock("./ConversationLayout", () => ({
@@ -29,12 +38,17 @@ vi.mock("./ConversationLayout", () => ({
 vi.mock("./ConversationListLayout", () => ({
   ConversationListLayout: ({
     onSelect,
+    onNewChat,
   }: {
     onSelect: (id: string) => void;
+    onNewChat: () => void;
   }) => (
-    <button aria-current="true" onClick={() => onSelect("one")}>
-      First conversation
-    </button>
+    <>
+      <button aria-current="true" onClick={() => onSelect("one")}>
+        First conversation
+      </button>
+      <button onClick={onNewChat}>New</button>
+    </>
   ),
 }));
 import ChatsPage from "./ChatsPage";
@@ -217,6 +231,63 @@ it("does not steal focus from an external control when resizing", async () => {
     host.remove();
     outside.remove();
     media.compact = true;
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  }
+});
+
+it("closes the compact list when activating New Thread on an already empty conversation", async () => {
+  media.compact = true;
+  chatActionMocks.requestNewConversation.mockReset();
+  setAppState(structuredClone(INITIAL_APP_STATE), true);
+  produceAppState((s) => {
+    s.chat.conversationIds = ["one"];
+    s.conversationById.one = {
+      id: "one",
+      title: "New conversation",
+    } as Conversation;
+    s.chatMessageIdsByConversationId.one = [];
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/dashboard/chats?id=one"]}>
+          <ChatsPage />
+        </MemoryRouter>,
+      ),
+    );
+    const button = (text: string) =>
+      [...host.querySelectorAll("button")].find(
+        (item) => item.textContent === text,
+      )!;
+    await act(async () => button("Chats").click());
+    const draft = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Draft"]',
+    )!;
+    expect(getComputedStyle(draft.parentElement!).display).toBe("none");
+
+    const newButton = button("New");
+    const origMatches = newButton.matches.bind(newButton);
+    vi.spyOn(newButton, "matches").mockImplementation((selector: string) =>
+      selector === ":focus-visible" ? true : origMatches(selector),
+    );
+    act(() => newButton.focus());
+    await act(async () => newButton.click());
+    await act(
+      async () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+
+    expect(chatActionMocks.requestNewConversation).not.toHaveBeenCalled();
+    expect(getComputedStyle(draft.parentElement!).display).not.toBe("none");
+    expect(document.activeElement).toBe(button("Chats"));
+  } finally {
+    vi.restoreAllMocks();
+    act(() => root.unmount());
+    host.remove();
+    chatActionMocks.requestNewConversation.mockReset();
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   }
 });
