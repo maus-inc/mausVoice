@@ -65,17 +65,32 @@ const isMainWindowCurrentlyVisible = async (): Promise<boolean> => {
 };
 
 const isFocusedWebviewEligible = async (): Promise<boolean> => {
-  if (classifyWebviewActiveElement(document.activeElement) !== "eligible") {
+  // Capture the focused element up front: the IPC round trip below is async,
+  // and a focus change during it must not act on a stale verdict.
+  const activeElement = document.activeElement;
+  if (classifyWebviewActiveElement(activeElement) !== "eligible") {
     return false;
   }
   if (!isTauriRuntime()) {
     return true;
   }
   const nativeResult = await commands.checkTypingTipTargetEligibility();
-  return !(
-    nativeResult.status === "ok" &&
-    (nativeResult.data === "secure_input" ||
-      nativeResult.data === "private_context")
+  if (nativeResult.status !== "ok") {
+    // Fail closed when the OS probe itself fails. A successful `unknown`
+    // answer stays non-blocking: the renderer already proved editability
+    // for our own webview, and some platforms cannot classify webview
+    // content natively at all.
+    return false;
+  }
+  if (
+    nativeResult.data === "secure_input" ||
+    nativeResult.data === "private_context"
+  ) {
+    return false;
+  }
+  return (
+    document.activeElement === activeElement &&
+    classifyWebviewActiveElement(document.activeElement) === "eligible"
   );
 };
 
@@ -265,9 +280,25 @@ export const VoiceTypingTipSideEffects = () => {
     };
 
     window.addEventListener("keydown", handleFallbackKeyDown, true);
+    // A prompt that outlives its typing context must not linger over a
+    // password or otherwise masked field the user moves into. Context-driven
+    // clears apply no cooldown and never count toward the "No thanks"
+    // auto-disable history.
+    const handleFocusIn = (event: FocusEvent) => {
+      const state = getAppState();
+      if (state.voiceTypingTipPrompt === null) {
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      if (classifyWebviewActiveElement(target) === "secure_input") {
+        dismissVoiceTypingTip({ applyCooldown: false });
+      }
+    };
+    window.addEventListener("focusin", handleFocusIn, true);
     return () => {
       probeGeneration += 1;
       window.removeEventListener("keydown", handleFallbackKeyDown, true);
+      window.removeEventListener("focusin", handleFocusIn, true);
       unsubscribe();
       registerVoiceTypingTipCooldownListener(null);
       resetVoiceTypingTipSessionState();

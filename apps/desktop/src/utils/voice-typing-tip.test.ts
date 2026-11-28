@@ -247,6 +247,25 @@ describe("classifyWebviewActiveElement", () => {
     readOnly.readOnly = true;
     expect(classifyWebviewActiveElement(readOnly)).toBe("not_editable");
   });
+
+  it("treats class-based text masking as secure through the computed style", () => {
+    const maskedByClass = document.createElement("input");
+    maskedByClass.type = "text";
+    maskedByClass.className = "masked-field";
+
+    const computedSpy = vi.spyOn(window, "getComputedStyle").mockReturnValue({
+      getPropertyValue: (property: string) =>
+        property === "-webkit-text-security" ? "disc" : "",
+    } as CSSStyleDeclaration);
+    expect(classifyWebviewActiveElement(maskedByClass)).toBe("secure_input");
+
+    computedSpy.mockReturnValue({
+      getPropertyValue: (property: string) =>
+        property === "-webkit-text-security" ? "none" : "",
+    } as CSSStyleDeclaration);
+    expect(classifyWebviewActiveElement(maskedByClass)).toBe("eligible");
+    computedSpy.mockRestore();
+  });
 });
 
 describe("snooze, rolling 7-day auto-opt-out, and clock-skew normalization", () => {

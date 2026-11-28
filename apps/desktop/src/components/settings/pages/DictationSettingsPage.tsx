@@ -114,14 +114,20 @@ const useVoiceTypingTipStatus = (): {
 
   useEffect(() => {
     setStatusClockMs(Date.now());
-    if (!voiceTypingTip.enabled || voiceTypingTip.snoozedUntilMs === null) {
+    if (!voiceTypingTip.enabled || !isVoiceTypingTipSnoozed(voiceTypingTip)) {
       return;
     }
     const interval = setInterval(() => {
-      setStatusClockMs(Date.now());
+      const nowMs = Date.now();
+      setStatusClockMs(nowMs);
+      // Stop ticking once the snooze lapses: the caption has already flipped
+      // back to its default, so nothing here needs the clock anymore.
+      if (!isVoiceTypingTipSnoozed(voiceTypingTip, nowMs)) {
+        clearInterval(interval);
+      }
     }, 15_000);
     return () => clearInterval(interval);
-  }, [voiceTypingTip.enabled, voiceTypingTip.snoozedUntilMs]);
+  }, [voiceTypingTip]);
 
   const snoozed = isVoiceTypingTipSnoozed(voiceTypingTip, statusClockMs);
   const snoozedUntilMs =

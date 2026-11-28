@@ -482,13 +482,21 @@ export type WebviewFocusClassification =
 
 const hasMaskedTextSecurity = (element: HTMLElement): boolean => {
   const inlineStyle = element.getAttribute("style")?.toLowerCase() ?? "";
-  if (!inlineStyle.includes("text-security")) {
-    return false;
+  if (inlineStyle.includes("text-security")) {
+    return (
+      !inlineStyle.includes("text-security: none") &&
+      !inlineStyle.includes("text-security:none")
+    );
   }
-  return (
-    !inlineStyle.includes("text-security: none") &&
-    !inlineStyle.includes("text-security:none")
-  );
+  // Class- or stylesheet-based masking leaves the inline style attribute
+  // empty, so the computed value is the authoritative signal. Reading the
+  // used style never touches field values or selection state.
+  const computed = window
+    .getComputedStyle(element)
+    .getPropertyValue("-webkit-text-security")
+    .trim()
+    .toLowerCase();
+  return computed !== "" && computed !== "none";
 };
 
 const hasSensitiveElementAttributes = (element: HTMLElement): boolean => {

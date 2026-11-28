@@ -88,6 +88,7 @@ describe("DictationSettingsPage voice typing tip setting", () => {
     }
     host?.remove();
     host = null;
+    vi.useRealTimers();
   });
 
   it("renders the Reminders group and Voice typing tip toggle, reflects snooze and auto-disabled states, and resets cleanly on re-enable", async () => {
@@ -150,5 +151,47 @@ describe("DictationSettingsPage voice typing tip setting", () => {
     expect(restored.snoozedUntilMs).toBeNull();
     expect(restored.noThanksTimestampsMs).toEqual([]);
     expect(restored.autoDisabledAtMs).toBeNull();
+  });
+
+  it("stops the snooze countdown clock once the snooze lapses", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-28T10:00:00Z"));
+    const clearSpy = vi.spyOn(globalThis, "clearInterval");
+    setAppState((prev) => ({
+      ...prev,
+      local: {
+        ...prev.local,
+        voiceTypingTip: {
+          ...prev.local.voiceTypingTip,
+          enabled: true,
+          snoozedUntilMs: Date.now() + 20_000,
+        },
+      },
+    }));
+
+    await renderPage();
+
+    expect(
+      document.querySelector('[data-voice-typing-tip-status="snoozed"]'),
+    ).not.toBeNull();
+    const clearsBeforeExpiry = clearSpy.mock.calls.length;
+
+    // The first 15s tick lands after the 20s snooze expiry: the caption flips
+    // back to its default and the ticking stops instead of re-rendering the
+    // page every 15s for as long as it stays open.
+    await act(async () => {
+      vi.advanceTimersByTime(35_000);
+    });
+    expect(
+      document.querySelector('[data-voice-typing-tip-status="snoozed"]'),
+    ).toBeNull();
+    expect(clearSpy.mock.calls.length).toBeGreaterThan(clearsBeforeExpiry);
+    const clearsAfterExpiry = clearSpy.mock.calls.length;
+
+    await act(async () => {
+      vi.advanceTimersByTime(120_000);
+    });
+    expect(clearSpy.mock.calls.length).toBe(clearsAfterExpiry);
+    clearSpy.mockRestore();
   });
 });

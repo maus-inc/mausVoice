@@ -106,9 +106,13 @@ const useVoiceTypingTipDockLeft = (
     updateDock();
     window.addEventListener("resize", updateDock);
     window.addEventListener("focusin", updateDock);
+    // Scroll events do not bubble, so listen in the capture phase to catch
+    // inner scrollable panes moving a focused field into the bottom-right.
+    window.addEventListener("scroll", updateDock, true);
     return () => {
       window.removeEventListener("resize", updateDock);
       window.removeEventListener("focusin", updateDock);
+      window.removeEventListener("scroll", updateDock, true);
     };
   }, [voiceTypingTipPrompt]);
 

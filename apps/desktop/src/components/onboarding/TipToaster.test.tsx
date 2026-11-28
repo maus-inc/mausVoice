@@ -17,7 +17,11 @@ vi.mock("react-intl", async (importOriginal) => {
 });
 
 const mocks = vi.hoisted(() => ({
-  state: { local: { dismissedTipIds: [] as string[] } },
+  state: {
+    local: { dismissedTipIds: [] as string[] },
+    voiceTypingTipPrompt: null as
+      import("../../utils/voice-typing-tip").VoiceTypingTipPromptState | null,
+  },
   dismissTip: vi.fn(),
 }));
 
@@ -27,6 +31,10 @@ vi.mock("../../store", () => ({
 
 vi.mock("../../actions/onboarding.actions", () => ({
   dismissTip: mocks.dismissTip,
+}));
+
+vi.mock("../../utils/platform.utils", () => ({
+  getPlatform: () => "macos",
 }));
 
 // jsdom cannot play the real exit animation, so the presence wrapper keeps
@@ -186,6 +194,7 @@ const dismissButtonIn = (titleText: string): HTMLButtonElement => {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.state.local.dismissedTipIds = [];
+  mocks.state.voiceTypingTipPrompt = null;
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -260,6 +269,54 @@ describe("TipToaster", () => {
     // Below the transient Sonner toasts and the MUI overlay surfaces, above
     // the page content: a toast may sit on a tip, a tip never on a toast.
     expect(style.zIndex).toBe("1100");
+  });
+
+  it("re-docks the voice tip to the bottom-left when scrolling moves the focused field under it", async () => {
+    mocks.state.voiceTypingTipPrompt = {
+      id: 7,
+      variantIndex: 0,
+      ctaKind: "try",
+      shortcutCombo: ["AltLeft", "Space"],
+      shownAtMs: Date.now(),
+      noThanksRevealAtMs: Date.now() + 10_000,
+      noThanksVisible: false,
+      mirroredOnPill: false,
+    };
+
+    const rectAt = (left: number, top: number): DOMRect =>
+      ({
+        left,
+        right: left + 200,
+        top,
+        bottom: top + 100,
+        width: 200,
+        height: 100,
+      }) as DOMRect;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    document.body.appendChild(input);
+    input.focus();
+    input.getBoundingClientRect = () => rectAt(0, 0);
+
+    await renderToaster("/dashboard/help");
+
+    expect(
+      document.querySelector('[data-voice-typing-tip-dock="bottom-right"]'),
+    ).not.toBeNull();
+
+    // Scrolling moves the still-focused field into the toast corner without
+    // any resize or focus event, so the dock must recompute on scroll alone.
+    input.getBoundingClientRect = () =>
+      rectAt(window.innerWidth - 250, window.innerHeight - 150);
+    await act(async () => {
+      input.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(
+      document.querySelector('[data-voice-typing-tip-dock="bottom-left"]'),
+    ).not.toBeNull();
+    input.remove();
   });
 
   it("persists the dismissal once the exit finishes and clears the slot", async () => {

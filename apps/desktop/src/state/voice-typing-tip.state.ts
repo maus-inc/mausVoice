@@ -5,7 +5,9 @@ export const VOICE_TYPING_TIP_NO_THANKS_DELAY_MS = 10_000;
 export const VOICE_TYPING_TIP_SNOOZE_MS = 60 * 60 * 1_000;
 export const VOICE_TYPING_TIP_DISMISS_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 export const VOICE_TYPING_TIP_AUTO_DISABLE_THRESHOLD = 5;
-export const VOICE_TYPING_TIP_POST_CLOSE_COOLDOWN_MS = 60_000;
+// Re-prompting is a session-level courtesy window, not a short timer: a
+// dismissed or accepted prompt stays away for 30 minutes of continued typing.
+export const VOICE_TYPING_TIP_POST_CLOSE_COOLDOWN_MS = 30 * 60 * 1_000;
 export const VOICE_TYPING_TIP_COPY_VARIANT_COUNT = 4;
 
 export type VoiceTypingTipDisabledReason =

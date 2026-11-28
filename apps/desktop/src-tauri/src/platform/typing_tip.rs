@@ -38,6 +38,24 @@ const SENSITIVE_APP_MARKERS: &[&str] = &[
     "pinentry",
     "gcr-prompter",
     "ssh-askpass",
+    // Dedicated terminal emulators: shell sessions routinely receive typed
+    // secrets (ssh, sudo, password prompts) and dictation output is unsafe
+    // there, so sustained typing in them never earns the voice tip.
+    "terminal",
+    "iterm",
+    "warp",
+    "alacritty",
+    "kitty",
+    "wezterm",
+    "konsole",
+    "xterm",
+    "tilix",
+    "windowsterminal",
+    "wt.exe",
+    "cmd.exe",
+    "powershell",
+    "conemu",
+    "cmder",
 ];
 
 // Localized browser private/incognito window markers across Chromium, Firefox,
@@ -284,6 +302,30 @@ mod tests {
         }
         assert!(!is_sensitive_app_identifier("com.apple.Notes"));
         assert!(!is_sensitive_app_identifier("Code.exe"));
+    }
+
+    #[test]
+    fn detects_terminal_emulators_as_sensitive() {
+        for sample in [
+            "com.apple.Terminal",
+            "com.googlecode.iterm2",
+            "dev.warp.Warp-Stable",
+            "Alacritty.exe",
+            "kitty",
+            "org.wezfurlong.wezterm",
+            "org.kde.konsole",
+            "xfce4-terminal",
+            "xterm",
+            "WindowsTerminal.exe",
+            "wt.exe",
+            "cmd.exe",
+            "powershell.exe",
+        ] {
+            assert!(
+                is_sensitive_app_identifier(sample),
+                "expected {sample} to classify as sensitive"
+            );
+        }
     }
 
     #[test]

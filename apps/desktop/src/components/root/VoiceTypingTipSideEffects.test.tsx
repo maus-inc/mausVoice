@@ -15,7 +15,10 @@ import { VoiceTypingTipSideEffects } from "./VoiceTypingTipSideEffects";
 
 const mocks = vi.hoisted(() => ({
   checkEligibility: vi.fn<
-    () => Promise<{ status: "ok"; data: TypingTipTargetEligibility }>
+    () => Promise<
+      | { status: "ok"; data: TypingTipTargetEligibility }
+      | { status: "error"; data: string }
+    >
   >(() => Promise.resolve({ status: "ok", data: "eligible" })),
   windowVisible: true,
   toastHandler: null as ((payload: ToastActionPayload) => void) | null,
@@ -400,5 +403,82 @@ describe("VoiceTypingTipSideEffects", () => {
 
     expect(getAppState().voiceTypingTipPrompt).toBeNull();
     editable.remove();
+  });
+
+  it("suppresses the prompt when the native target probe fails", async () => {
+    mocks.checkEligibility.mockResolvedValue({
+      status: "error",
+      data: "ipc unavailable",
+    });
+
+    const editable = document.createElement("textarea");
+    document.body.appendChild(editable);
+    editable.focus();
+
+    await mountEffects();
+    await typeSustainedViaKeysHeld();
+
+    expect(mocks.checkEligibility).toHaveBeenCalled();
+    expect(getAppState().voiceTypingTipPrompt).toBeNull();
+    editable.remove();
+  });
+
+  it("drops the verdict when focus moves to a password field during the probe", async () => {
+    let resolveProbe:
+      | ((value: { status: "ok"; data: TypingTipTargetEligibility }) => void)
+      | null = null;
+    mocks.checkEligibility.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+    );
+
+    const editable = document.createElement("textarea");
+    document.body.appendChild(editable);
+    editable.focus();
+
+    await mountEffects();
+    await typeSustainedViaKeysHeld();
+
+    expect(mocks.checkEligibility).toHaveBeenCalledTimes(1);
+
+    const pw = document.createElement("input");
+    pw.type = "password";
+    document.body.appendChild(pw);
+    pw.focus();
+
+    await act(async () => {
+      resolveProbe?.({ status: "ok", data: "eligible" });
+      await Promise.resolve();
+    });
+
+    expect(getAppState().voiceTypingTipPrompt).toBeNull();
+    editable.remove();
+    pw.remove();
+  });
+
+  it("clears a visible prompt without cooldown or dismissal history when focus enters a password field", async () => {
+    const editable = document.createElement("textarea");
+    document.body.appendChild(editable);
+    editable.focus();
+
+    await mountEffects();
+    await typeSustainedViaKeysHeld();
+
+    expect(getAppState().voiceTypingTipPrompt).not.toBeNull();
+
+    const pw = document.createElement("input");
+    pw.type = "password";
+    document.body.appendChild(pw);
+    await act(async () => {
+      pw.focus();
+      pw.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+
+    expect(getAppState().voiceTypingTipPrompt).toBeNull();
+    expect(getAppState().local.voiceTypingTip.noThanksTimestampsMs).toEqual([]);
+    editable.remove();
+    pw.remove();
   });
 });
