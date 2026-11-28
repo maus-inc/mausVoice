@@ -40,7 +40,7 @@ const SIDECAR_STDERR_DETAIL_LIMIT = 200;
  * control character there is a lint warning and reads as a typo.
  */
 const stripAnsiColor = (value: string): string => {
-  const escape = String.fromCharCode(27);
+  const escape = String.fromCodePoint(27);
 
   return value
     .split(escape)
