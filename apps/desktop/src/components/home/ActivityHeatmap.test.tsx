@@ -12,7 +12,10 @@ const { useIsDarkModeMock } = vi.hoisted(() => ({
 vi.mock("../../hooks/color-scheme.hooks", () => ({
   useIsDarkMode: useIsDarkModeMock,
 }));
-import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
+import {
+  ensureUiHarness,
+  setMatchMedia,
+} from "../../../test/helpers/jsdom-ui-harness";
 
 vi.mock("react-intl", async (importOriginal) => {
   const { reactIntlWithIdsModule } =
@@ -21,6 +24,8 @@ vi.mock("react-intl", async (importOriginal) => {
 });
 import en from "../../i18n/locales/en.json";
 import { activityHeatmapGeometry } from "../../styles/activity-heatmap";
+import { duration, reducedMotionQuery } from "../../styles/motion";
+import type { DailyWordActivity } from "../../types/home.types";
 import { ActivityHeatmap } from "./ActivityHeatmap";
 
 ensureUiHarness();
@@ -40,6 +45,8 @@ describe("ActivityHeatmap", () => {
 
   afterEach(() => {
     if (!rootUnmounted) act(() => root.unmount());
+    vi.useRealTimers();
+    setMatchMedia(false);
     container.remove();
   });
 
@@ -65,6 +72,33 @@ describe("ActivityHeatmap", () => {
       );
     });
   };
+
+  const renderActivity = (activity: DailyWordActivity[]) => {
+    useIsDarkModeMock.mockReturnValue(false);
+    act(() => {
+      root.render(
+        <IntlProvider locale="en" messages={en}>
+          <ThemeProvider theme={createTheme()}>
+            <ActivityHeatmap
+              activity={activity}
+              status="success"
+              today={new Date(2026, 9, 8, 12)}
+            />
+          </ThemeProvider>
+        </IntlProvider>,
+      );
+    });
+  };
+
+  const openTooltipTexts = () =>
+    Array.from(document.querySelectorAll('[role="tooltip"]'), (el) =>
+      el.textContent?.trim(),
+    );
+
+  const getActivityCell = (date: string) =>
+    container.querySelector<HTMLElement>(
+      `[data-testid="activity-day"][data-date="${date}"]`,
+    );
 
   it("uses the compact reference geometry for its year grid", () => {
     expect(activityHeatmapGeometry).toEqual({
@@ -337,5 +371,171 @@ describe("ActivityHeatmap", () => {
     if (accessibleList === null) return;
     expect(window.getComputedStyle(accessibleList).width).toBe("1px");
     expect(window.getComputedStyle(accessibleList).height).toBe("1px");
+  });
+
+  it("keeps tooltips non-interactive so they cannot trap pointer sweeps over neighboring cells", () => {
+    vi.useFakeTimers();
+    renderActivity([
+      { localDate: "2026-10-08", wordCount: 120 },
+      { localDate: "2026-10-07", wordCount: 45 },
+    ]);
+
+    const oct8 = getActivityCell("2026-10-08");
+    expect(oct8).not.toBeNull();
+    if (oct8 === null) return;
+
+    act(() => {
+      oct8.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+
+    const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]');
+    expect(tooltip).not.toBeNull();
+    if (tooltip === null) return;
+    expect(tooltip.textContent).toBe("Oct 8, 2026: 120 words");
+    expect(tooltip.classList.contains("MuiTooltip-popperInteractive")).toBe(
+      false,
+    );
+    expect(window.getComputedStyle(tooltip).pointerEvents).toBe("none");
+    const tooltipContent = tooltip.querySelector<HTMLElement>(
+      ".MuiTooltip-tooltip",
+    );
+    expect(tooltipContent?.style.transition).toContain(
+      `${duration.instant * 1000}ms`,
+    );
+
+    // Moving off the cell onto the tooltip's screen position must still close it.
+    act(() => {
+      oct8.dispatchEvent(
+        new MouseEvent("mouseout", { bubbles: true, relatedTarget: tooltip }),
+      );
+      tooltip.dispatchEvent(
+        new MouseEvent("mouseover", { bubbles: true, relatedTarget: oct8 }),
+      );
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(openTooltipTexts()).toEqual([]);
+  });
+
+  it("switches immediately between adjacent cells without overlapping tooltips and closes on leave", () => {
+    vi.useFakeTimers();
+    renderActivity([
+      { localDate: "2026-10-08", wordCount: 120 },
+      { localDate: "2026-10-07", wordCount: 45 },
+      { localDate: "2026-10-06", wordCount: 0 },
+    ]);
+
+    const oct8 = getActivityCell("2026-10-08");
+    const oct7 = getActivityCell("2026-10-07");
+    const oct6 = getActivityCell("2026-10-06");
+    expect(oct8).not.toBeNull();
+    expect(oct7).not.toBeNull();
+    expect(oct6).not.toBeNull();
+    if (!oct8 || !oct7 || !oct6) return;
+
+    act(() => {
+      oct8.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    expect(openTooltipTexts()).toEqual(["Oct 8, 2026: 120 words"]);
+
+    act(() => {
+      oct8.dispatchEvent(
+        new MouseEvent("mouseout", { bubbles: true, relatedTarget: oct7 }),
+      );
+      oct7.dispatchEvent(
+        new MouseEvent("mouseover", { bubbles: true, relatedTarget: oct8 }),
+      );
+      vi.advanceTimersByTime(0);
+    });
+    expect(openTooltipTexts()).toEqual(["Oct 7, 2026: 45 words"]);
+
+    act(() => {
+      oct7.dispatchEvent(
+        new MouseEvent("mouseout", { bubbles: true, relatedTarget: oct6 }),
+      );
+      oct6.dispatchEvent(
+        new MouseEvent("mouseover", { bubbles: true, relatedTarget: oct7 }),
+      );
+      vi.advanceTimersByTime(0);
+    });
+    expect(openTooltipTexts()).toEqual(["Oct 6, 2026: 0 words"]);
+
+    act(() => {
+      oct6.dispatchEvent(
+        new MouseEvent("mouseout", {
+          bubbles: true,
+          relatedTarget: document.body,
+        }),
+      );
+      vi.advanceTimersByTime(0);
+    });
+    expect(openTooltipTexts()).toEqual([]);
+  });
+
+  it("preserves Escape dismissal, touch long-press, future-cell suppression, keyboard focus, and reduced motion", () => {
+    vi.useFakeTimers();
+    setMatchMedia((query) => query === reducedMotionQuery);
+    renderActivity([{ localDate: "2026-10-08", wordCount: 120 }]);
+
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="activity-heatmap-viewport"]',
+    );
+    expect(viewport?.tabIndex).toBe(0);
+    expect(
+      container.querySelector('[aria-label="Daily word counts"]'),
+    ).not.toBeNull();
+
+    const oct8 = getActivityCell("2026-10-08");
+    const oct9Future = getActivityCell("2026-10-09");
+    expect(oct8).not.toBeNull();
+    expect(oct9Future).not.toBeNull();
+    if (!oct8 || !oct9Future) return;
+
+    act(() => {
+      oct9Future.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      vi.advanceTimersByTime(200);
+    });
+    expect(openTooltipTexts()).toEqual([]);
+
+    act(() => {
+      oct8.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    const tooltipPopper =
+      document.querySelector<HTMLElement>('[role="tooltip"]');
+    const tooltipContent = tooltipPopper?.querySelector<HTMLElement>(
+      ".MuiTooltip-tooltip",
+    );
+    expect(tooltipPopper).not.toBeNull();
+    expect(tooltipContent).not.toBeNull();
+    if (!tooltipPopper || !tooltipContent) return;
+    // Keeping the enter transition mounted with a 0ms timeout preserves
+    // Popper's onEnter positioning hook while removing enter animation.
+    expect(tooltipPopper.getAttribute("data-popper-placement")).toBe("top");
+    expect(tooltipContent.style.transition).toContain("0ms");
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(tooltipContent.style.opacity).toBe("1");
+    expect(tooltipContent.style.transform).toBe("none");
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    expect(openTooltipTexts()).toEqual([]);
+
+    // Touch long-press still opens and closes on the default MUI touch schedule.
+    act(() => {
+      oct8.dispatchEvent(new Event("touchstart", { bubbles: true }));
+      vi.advanceTimersByTime(700);
+    });
+    expect(openTooltipTexts()).toEqual(["Oct 8, 2026: 120 words"]);
+
+    act(() => {
+      oct8.dispatchEvent(new Event("touchend", { bubbles: true }));
+      vi.advanceTimersByTime(1500);
+    });
+    expect(openTooltipTexts()).toEqual([]);
   });
 });
