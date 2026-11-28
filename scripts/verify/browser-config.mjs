@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export const CHROMIUM_LAUNCH_FLAGS = [
   "--headless=new",
@@ -11,9 +12,7 @@ export const CHROMIUM_LAUNCH_FLAGS = [
 ];
 
 export function createReportDirectory() {
-  const output =
-    process.env.OUT_DIR ||
-    fileURLToPath(new URL("../../reports/ui-verify/", import.meta.url));
+  const output = process.env.OUT_DIR || join(tmpdir(), "mausvoice-ui-verify");
   mkdirSync(output, { recursive: true });
   return output;
 }

@@ -15,6 +15,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ContextMenuProvider } from "../components/common/ContextMenu";
+import { usePrewarmDashboardKeycap } from "../components/common/keycap3d.prewarm";
 import { AppViewport } from "../components/root/AppViewport";
 import { RootConfetti } from "../components/root/RootConfetti";
 import { RootDialogs } from "../components/root/RootDialogs";
@@ -176,14 +177,18 @@ const PreviewToolbar = () => {
  * Root's window, microphone, sidecar, permission polling, and native startup
  * effects while retaining production dialogs, snackbar feedback, and pages.
  */
-export const PreviewRoot = () => (
-  <ContextMenuProvider>
-    <AppViewport>
-      <RootConfetti />
-      <SnackbarEmitter />
-      <RootDialogs />
-      <Outlet />
-      <PreviewToolbar />
-    </AppViewport>
-  </ContextMenuProvider>
-);
+export const PreviewRoot = () => {
+  usePrewarmDashboardKeycap();
+
+  return (
+    <ContextMenuProvider>
+      <AppViewport>
+        <RootConfetti />
+        <SnackbarEmitter />
+        <RootDialogs />
+        <Outlet />
+        <PreviewToolbar />
+      </AppViewport>
+    </ContextMenuProvider>
+  );
+};
